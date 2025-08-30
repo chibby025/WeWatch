@@ -1,0 +1,34 @@
+# Node.js
+node_modules/
+npm-debug.log
+.env
+*.log
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+Gopkg.lock
+Gopkg.toml
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build directories
+dist/
+build/
+coverage/
+
+# Database
+*.db
+uploads/
