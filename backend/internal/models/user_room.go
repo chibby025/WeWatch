@@ -13,4 +13,6 @@ type UserRoom struct {
     UserRole string `gorm:"type:varchar(20);default:'member'" json:"user_role"`
     // User is the associated user (will be preloaded)
     User     *User  `gorm:"foreignKey:UserID" json:"user,omitempty"`
+    SeatRow *int `json:"seat_row"` // pointer = nullable
+    SeatCol *int `json:"seat_col"`
 }

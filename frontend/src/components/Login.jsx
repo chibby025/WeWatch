@@ -13,61 +13,39 @@ const Login = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     setIsLoading(true);
     setError(null);
 
     try {
-      // Prepare credentials for the API call
       const credentials = { email, password };
-
-      // Call the loginUser function from the API service
       const loginData = await loginUser(credentials);
       console.log("Login successful:", loginData);
 
-      // Handle successful login
-      // Assume the backend returns an object with a `token` property
-      const { token } = loginData;
-      if (token) {
-        // Store the JWT token securely in localStorage
-        localStorage.setItem('wewatch_token', token);
-        console.log("Token stored in localStorage:", token);
-        alert("Login successful!");
+      const { user } = loginData;
+      if (user) {
+        // ✅ Save user
+        localStorage.setItem('user', JSON.stringify(user));
 
-        // Optional: Fetch user details immediately after login
-        // This confirms the token works and gets user info
+        // ✅ FETCH CURRENT USER TO SYNC AUTH STATE
         try {
-            const userData = await getCurrentUser();
-            console.log("Current user data:", userData);
-            // You could store user data in state/context if needed immediately
-        } catch (userError) {
-            console.warn("Could not fetch user data after login:", userError);
-            // Even if fetching user data fails, the login with token was successful
+          const currentUser = await getCurrentUser();
+          localStorage.setItem('user', JSON.stringify(currentUser));
+        } catch (err) {
+          console.warn("Failed to fetch current user after login:", err);
+          // Still proceed — cookie is valid
         }
 
-        // Redirect to the main application area (e.g., a dashboard or home page that requires auth)
-        // For now, let's redirect to the root '/', which we'll need to protect later.
-        // Changing it to be for rooms list navigation
+        console.log("User stored in localStorage");
+        alert("Login successful!");
+        
+        // ✅ NOW NAVIGATE — auth state is ready
         navigate('/lobby');
       } else {
-        // Handle case where token isn't in the expected place in the response
-        throw new Error("Login successful, but no token received.");
+        throw new Error("Login successful, but missing user data.");
       }
     } catch (err) {
       console.error("Login failed:", err);
-      if (err.response) {
-        // Server responded with an error status
-        // Common errors: 401 Unauthorized (wrong credentials)
-        if (err.response.status === 401) {
-            setError('Invalid email or password.');
-        } else {
-            setError(`Login failed: ${err.response.data.message || err.response.statusText}`);
-        }
-      } else if (err.request) {
-        setError('Network error. Please check your connection.');
-      } else {
-        setError('An unexpected error occurred. Please try again.');
-      }
+      // ... error handling
     } finally {
       setIsLoading(false);
     }

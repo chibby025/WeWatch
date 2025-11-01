@@ -2,7 +2,7 @@
 import React from 'react';
 import MessageItem from './MessageItem';
 
-const MessageList = ({ messages, currentUserID, onReact }) => {
+const MessageList = ({ messages, currentUserID, onReact, onDelete }) => {
   if (messages.length === 0) {
     return (
       <div className="text-center py-8 text-gray-500">
@@ -15,10 +15,13 @@ const MessageList = ({ messages, currentUserID, onReact }) => {
     <div className="space-y-4">
       {messages.map((message) => (
         <MessageItem 
-          key={message.timestamp} 
+          key={message.ID} 
           message={message} 
-          isOwnMessage={message.user_id === currentUserID}
+          isOwnMessage={message.UserID === currentUserID}
           onReact={onReact}
+          onDelete={onDelete}
+          authenticatedUserID={currentUserID}
+          // Pass formatted time to MessageItem if needed
         />
       ))}
     </div>

@@ -111,7 +111,6 @@ func RegisterHandler(c *gin.Context) {
 
 // LoginHandler handles the POST /api/auth/login endpoint.
 func LoginHandler(c *gin.Context) {
-    // Bind the incoming JSON request body to the LoginInput struct.
     var input LoginInput
     if err := c.ShouldBindJSON(&input); err != nil {
         log.Printf("Error binding login input: %v", err)
@@ -119,72 +118,100 @@ func LoginHandler(c *gin.Context) {
         return
     }
 
-    // Find the user by email
     var user models.User
     result := DB.Where("email = ?", input.Email).First(&user)
     if result.Error != nil {
         if result.Error == gorm.ErrRecordNotFound {
-            // User not found
-            log.Printf("Login failed: User with email '%s' not found", input.Email)
-            // Security best practice: Don't reveal if email exists.
-            // Generic error message.
             c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
             return
         } else {
-            // Database error
             log.Printf("Database error finding user for login: %v", result.Error)
             c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
             return
         }
     }
 
-    // User found, now check the password
     if !utils.CheckPasswordHash(input.Password, user.PasswordHash) {
-        // Password doesn't match
-        log.Printf("Login failed: Incorrect password for user ID %d", user.ID)
-        // Again, generic error message for security.
         c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
         return
     }
 
-    // Password is correct. Login successful!
-
-    // Generate a JWT token for the logged-in user
     tokenString, err := utils.GenerateJWT(user.ID)
     if err != nil {
-        log.Printf("Error generating JWT for logged-in user: %v", err)
+        log.Printf("Error generating JWT: %v", err)
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
         return
     }
 
+    // ✅ SET HTTP-ONLY COOKIE (instead of sending token in response)
+    cookie := &http.Cookie{
+        Name:     "wewatch_token",
+        Value:    tokenString,
+        Path:     "/",
+        MaxAge:   7 * 24 * 60 * 60, // 7 days
+        HttpOnly: true,
+        Secure:   false, // Set to true in production with HTTPS
+        SameSite: http.SameSiteLaxMode,
+    }
+    http.SetCookie(c.Writer, cookie)
+
     log.Printf("User logged in successfully: ID=%d, Username=%s", user.ID, user.Username)
 
-    // Respond with success and the token.
+    // ✅ DO NOT send token in response body
     c.JSON(http.StatusOK, gin.H{
         "message": "Login successful",
-        "user": gin.H{ // Return simplified user info
+        "user": gin.H{
             "id":       user.ID,
             "username": user.Username,
             "email":    user.Email,
         },
-        "token": tokenString,
     })
 }
+
+// Handle user logout
+func LogoutHandler(c *gin.Context) {
+    // Clear the cookie
+    cookie := &http.Cookie{
+        Name:     "wewatch_token",
+        Value:    "",
+        Path:     "/",
+        MaxAge:   -1, // Expire immediately
+        HttpOnly: true,
+        Secure:   false,
+        SameSite: http.SameSiteLaxMode,
+    }
+    http.SetCookie(c.Writer, cookie)
+
+    c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
+}
+
+// CookieToAuthHeaderMiddleware converts wewatch_token cookie to Authorization header
+func CookieToAuthHeaderMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get token from cookie
+		token, err := c.Cookie("wewatch_token")
+		if err == nil && token != "" {
+			// Inject into Authorization header
+			c.Request.Header.Set("Authorization", "Bearer "+token)
+		}
+		c.Next()
+	}
+}
+
+
 
 // GetCurrentUserHandler handles the GET /api/auth/me endpoint.
 // This requires authentication, so it should be protected by a middleware.
 // For now, we'll assume a middleware sets the user ID in the context.
+// GetCurrentUserHandler handles the GET /api/auth/me endpoint.
 func GetCurrentUserHandler(c *gin.Context) {
-    // This assumes an auth middleware has run and set the user ID in the context.
-    // The key used by the middleware to store the user ID must match here.
-    userID, exists := c.Get("user_id") // Key must match middleware
+    userID, exists := c.Get("user_id")
     if !exists {
         log.Println("Unauthorized access to /api/auth/me: user_id not found in context")
         c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
         return
     }
 
-    // Assert the type of userID (it should be uint)
     id, ok := userID.(uint)
     if !ok {
         log.Println("Error: user_id in context is not uint")
@@ -192,9 +219,8 @@ func GetCurrentUserHandler(c *gin.Context) {
         return
     }
 
-    // Fetch the user details from the database using the ID from the token/context
     var user models.User
-    result := DB.First(&user, id) // Find user by primary key (ID)
+    result := DB.First(&user, id)
     if result.Error != nil {
         if result.Error == gorm.ErrRecordNotFound {
             log.Printf("User not found for ID %d (from token)", id)
@@ -207,86 +233,103 @@ func GetCurrentUserHandler(c *gin.Context) {
         }
     }
 
-    // User found, return user details (excluding password hash)
-    log.Printf("Fetched current user details: ID=%d, Username=%s", user.ID, user.Username)
-    c.JSON(http.StatusOK, gin.H{
+    // ✅ DEV-ONLY: Include token for WebSocket (remove before production)
+    token, _ := c.Cookie("wewatch_token")
+    response := gin.H{
         "user": gin.H{
             "id":        user.ID,
             "username":  user.Username,
             "email":     user.Email,
-            "created_at": user.CreatedAt, // You can include other non-sensitive fields
-            // Don't include PasswordHash or DeletedAt unless needed
+            "created_at": user.CreatedAt,
         },
-    })
+    }
+    if token != "" {
+        response["ws_token"] = token // Only for WebSocket setup in dev
+    }
+
+    log.Printf("Fetched current user details: ID=%d, Username=%s", user.ID, user.Username)
+    c.JSON(http.StatusOK, response)
 }
 
+// Profile Handler
+func UpdateProfileHandler(c *gin.Context) {
+    userIDValue, exists := c.Get("user_id")
+    if !exists {
+        c.JSON(401, gin.H{"error": "Unauthorized"})
+        return
+    }
+    userID, ok := userIDValue.(uint)
+    if !ok {
+        c.JSON(500, gin.H{"error": "Server error"})
+        return
+    }
+    var req struct {
+        AvatarURL string `json:"avatar_url" binding:"required,url"`
+    }
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(400, gin.H{"error": "Invalid request"})
+        return
+    }
+    // ✅ FIXED: Added missing ) after &models.User{}
+    // ✅ FIXED: Removed extra . after req.AvatarURL
+    DB.Model(&models.User{}).Where("id = ?", userID).Updates(models.User{
+        AvatarURL: req.AvatarURL, // ← No dot here
+    })
+    c.JSON(200, gin.H{"message": "Profile updated"})
+}
 
 
 // AuthMiddleware is a Gin middleware function to protect routes.
 // It checks for a valid JWT Bearer token in the Authorization header or query parameter (for WebSockets).
 func AuthMiddleware() gin.HandlerFunc {
     return func(c *gin.Context) {
-        // --- GET THE JWT TOKEN ---
-
-        // 1. Try to get the token from the Authorization header (standard for HTTP requests)
-        authHeader := c.GetHeader("Authorization")
         tokenString := ""
 
-        if authHeader != "" {
-            // Check if it starts with "Bearer "
-            const bearerPrefix = "Bearer "
-            if len(authHeader) > len(bearerPrefix) && authHeader[:len(bearerPrefix)] == bearerPrefix {
-                // Extract the token string (remove "Bearer " prefix)
-                tokenString = authHeader[len(bearerPrefix):]
-                log.Printf("AuthMiddleware: Token found in Authorization header")
-            } else {
-                // --- FIX 1: Accurate Log Message ---
-                log.Println("AuthMiddleware: Authorization header format invalid") // <-- BETTER LOG
-                c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
-                c.Abort()
-                return
-            }
-        }
-
-        // 2. --- NEW: If no token in header, try to get it from query parameter ---
-        // This is primarily for WebSocket connections where custom headers are hard to send.
-        // Check if it's a WebSocket upgrade request (GET method and Upgrade header)
-        // Only proceed if tokenString is still empty after header check
-        if tokenString == "" && c.Request.Method == "GET" && c.GetHeader("Upgrade") == "websocket" {
-            // Try to get the token from the 'token' query parameter
-            queryToken := c.Query("token") // Get the 'token' query parameter
-            if queryToken != "" {
+        // 1. For WebSocket upgrade, prioritize query param
+        if c.Request.Method == "GET" && c.GetHeader("Upgrade") == "websocket" {
+            if queryToken := c.Query("token"); queryToken != "" {
                 tokenString = queryToken
-                log.Printf("AuthMiddleware: Token found in query parameter for WebSocket request")
-            } else {
-                // --- FIX 2: More Specific Log Message ---
-                log.Println("AuthMiddleware: No token found in 'token' query parameter for WebSocket request") // <-- MORE SPECIFIC LOG
+                log.Printf("AuthMiddleware: Token from query param (WebSocket)")
             }
         }
-        // --- --- ---
 
-        // 3. If no token was found in either header or query parameter, return 401
+        // 2. For all other requests, or if query param not set, try Authorization header
         if tokenString == "" {
-            log.Println("AuthMiddleware: Authorization header or query parameter required")
-            c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header or query parameter required"})
+            authHeader := c.GetHeader("Authorization")
+            if authHeader != "" {
+                const bearerPrefix = "Bearer "
+                if len(authHeader) > len(bearerPrefix) && authHeader[:len(bearerPrefix)] == bearerPrefix {
+                    tokenString = authHeader[len(bearerPrefix):]
+                    log.Printf("AuthMiddleware: Token from Authorization header")
+                }
+            }
+        }
+
+        // 3. Try cookie if still not set
+        if tokenString == "" {
+            if cookie, err := c.Cookie("wewatch_token"); err == nil && cookie != "" {
+                tokenString = cookie
+                log.Printf("AuthMiddleware: Token from wewatch_token cookie")
+            }
+        }
+
+        if tokenString == "" {
+            log.Println("AuthMiddleware: No token found in header, cookie, or query")
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization required"})
             c.Abort()
             return
         }
 
-        // 4. --- VALIDATE THE JWT TOKEN ---
-        // Validate the token using the utility function (from utils/jwt.go)
+        // Validate token
         userID, err := utils.ValidateJWT(tokenString)
         if err != nil {
-            log.Printf("AuthMiddleware: Token validation failed: %v", err)
+            log.Printf("AuthMiddleware: Invalid token: %v", err)
             c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
             c.Abort()
             return
         }
 
-        // 5. Token is valid. Store the user ID in the context for the next handler to use.
-        c.Set("user_id", userID) // Set user ID in Gin context
-
-        // 6. Continue to the next handler/middleware in the chain
+        c.Set("user_id", userID)
         c.Next()
     }
 }

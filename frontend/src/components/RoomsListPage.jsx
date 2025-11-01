@@ -1,9 +1,10 @@
 // WeWatch/frontend/src/components/RoomsListPage.jsx
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getRooms } from '../services/api'; // Import the getRooms function
+import { getRooms, deleteRoom } from '../services/api';
+import { TrashIcon } from '@heroicons/react/24/solid';
 
-const RoomsListPage = () => {
+const RoomsListPage = ({ currentUserID }) => {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -29,7 +30,27 @@ const RoomsListPage = () => {
   }, []); // Empty dependency array means this runs once on mount
 
   const handleCreateRoom = () => {
-    navigate('/rooms/create'); // Navigate to the create room page
+    navigate('/rooms/create');
+  };
+
+  const handleDeleteRoom = async (roomId) => {
+    if (!window.confirm('Are you sure you want to delete this room? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await deleteRoom(roomId);
+      setRooms(rooms.filter(room => room.id !== roomId));
+      console.log(`Room ${roomId} deleted successfully`);
+    } catch (err) {
+      console.error('Error deleting room:', err);
+      setError('Failed to delete room. Please try again.');
+      const data = await getRooms();
+      setRooms(data.rooms || []);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
@@ -82,11 +103,24 @@ const RoomsListPage = () => {
                   <h2 className="text-xl font-semibold mb-2 text-blue-600 hover:underline">{room.name}</h2>
                 </Link>
                 <p className="text-gray-600 mb-4">{room.description || 'No description provided.'}</p>
-                <div className="flex justify-between text-sm text-gray-500">
+                <div className="flex justify-between text-sm text-gray-500 mb-4">
                   <span>Host: User {room.host_id}</span>
                   <span>Created: {new Date(room.created_at).toLocaleDateString()}</span>
                 </div>
-                {/* You can add more room details here like media status, member count if available */}
+                
+                {/* Delete button - only show for host */}
+                {currentUserID && currentUserID === room.host_id && (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => handleDeleteRoom(room.id)}
+                      className="bg-red-500 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-sm flex items-center"
+                      title="Delete Room"
+                    >
+                      <TrashIcon className="h-4 w-4 mr-1" />
+                      Delete
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}

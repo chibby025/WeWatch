@@ -2,7 +2,7 @@
 import React from 'react';
 import { UserIcon } from '@heroicons/react/24/outline';
 
-const MemberList = ({ members, onClose, isHost }) => {
+const MemberList = ({ members, onClose, isHost, authenticatedUserID }) => {
   return (
     <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-4 mt-2">
       <div className="flex justify-between items-center mb-3">

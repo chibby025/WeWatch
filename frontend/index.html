@@ -5,6 +5,15 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vite + React</title>
+    <!-- ✅ ADD INTER FONT FROM GOOGLE FONTS -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- ✅ POLYFILL FOR simple-peer -->
+    <script>
+      if (typeof global === 'undefined') {
+        window.global = window; // Polyfill 'global' with 'window'
+      }
+    </script>
+    <!-- ✅ END POLYFILL -->
   </head>
   <body>
     <div id="root"></div>

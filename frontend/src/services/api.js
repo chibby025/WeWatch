@@ -1,31 +1,76 @@
 import axios from "axios";
-
+console.log("🔧 API_BASE_URL from .env.local:", import.meta.env.VITE_API_BASE_URL);
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-const apiClient = axios.create({
+export const apiClient = axios.create({
     baseURL: API_BASE_URL,
     timeout: 10000,
+    withCredentials: true,
     headers: {
         'Content-Type': 'application/json',
         // Authorization header will be added dynamically based on token
     },
 });
 
-apiClient.interceptors.request.use(
-    (config) => {
-        // Get the token from localStorage (or wherever it is stored)
-        const token = localStorage.getItem('wewatch_token');
-        // If a token exists, add it to the Authorization header
-        if (token) {
-            config.headers['Authorization'] = `Bearer ${token}`;
-        }
-        return config;
-    },
-    (error) => {
-        console.error('API Request Error:', error);
-        return Promise.reject(error);
+
+
+
+/**
+ * Send a reaction to a room
+ * @param {string|number} roomId - The ID of the room
+ * @param {string} emoji - The emoji to send
+ * @returns {Promise<Object>} Promise that resolves to the reaction data
+ */
+export const sendReaction = async (roomId, emoji) => {
+  try {
+    console.log(`sendReaction: Sending reaction ${emoji} to room ${roomId}`);
+    
+    const response = await apiClient.post(`/api/rooms/${roomId}/reactions`, {
+      emoji: emoji
+    });
+    
+    console.log(`sendReaction: Response received for room ${roomId}:`, response.data);
+    
+    return response.data;
+  } catch (error) {
+    console.error('API Error (sendReaction):', error);
+    if (error.response) {
+      // Server responded with error status (4xx, 5xx)
+      throw new Error(`Failed to send reaction: ${error.response.data.error || error.response.statusText}`);
+    } else if (error.request) {
+      // Request was made but no response received (network issue)
+      throw new Error('Network error. Please check your connection.');
+    } else {
+      // Something else happened in setting up the request
+      throw new Error('An unexpected error occurred while sending reaction.');
     }
-);
+  }
+};
+
+// --- NEW: Get Reactions (optional) ---
+export const getReactions = async (roomId) => {
+  try {
+    console.log(`getReactions: Fetching reactions for room ${roomId}`);
+    
+    const response = await apiClient.get(`/api/rooms/${roomId}/reactions`);
+    console.log(`getReactions: Response received for room ${roomId}:`, response.data);
+    
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getReactions):', error);
+    if (error.response) {
+      throw new Error(`Failed to fetch reactions: ${error.response.data.error || error.response.statusText}`);
+    } else if (error.request) {
+      throw new Error('Network error. Please check your connection.');
+    } else {
+      throw new Error('An unexpected error occurred while fetching reactions.');
+    }
+  }
+};
+
+
+
+
 
 // --- Response Interceptor ---
 // Runs after each response is recieved success/error
@@ -60,6 +105,19 @@ export const registerUser = async (userData) => {
         console.error('Error registering user:', error);
         throw error;
     }
+};
+
+// Delete room
+export const deleteRoom = async (roomId) => {
+  try {
+    console.log(`Deleting room ${roomId}...`);
+    const response = await apiClient.delete(`/api/rooms/${roomId}`);
+    console.log(`Room ${roomId} deleted successfully`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (deleteRoom):', error);
+    throw error;
+  }
 };
 
 /**
@@ -144,6 +202,46 @@ export const getRoom = async(roomId) => {
     }
 };
 
+// For the Room Overrides
+export const updateRoomOverrides = async (roomId, overrides) => {
+  try {
+    console.log(`Updating overrides for room ${roomId}:`, overrides);
+    const response = await apiClient.put(`/api/rooms/${roomId}/overrides`, overrides);
+    console.log(`Room overrides updated successfully for room ${roomId}`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (updateRoomOverrides):', error);
+    throw error;
+  }
+};
+
+
+export const updateMediaOrder = async (roomId, orderUpdates) => {
+  try {
+    console.log(`Updating media order for room ${roomId}:`, orderUpdates);
+    const response = await apiClient.put(`/api/rooms/${roomId}/media/order`, orderUpdates);
+    console.log(`Media order updated successfully for room ${roomId}`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (updateMediaOrder):', error);
+    throw error;
+  }
+};
+
+// Loop Mode
+export const updateRoomLoopMode = async (roomId, loopMode) => {
+  try {
+    console.log(`Updating loop mode for room ${roomId}:`, loopMode);
+    const response = await apiClient.put(`/api/rooms/${roomId}/loop-mode`, { loop_mode: loopMode });
+    console.log(`Loop mode updated successfully for room ${roomId}`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (updateRoomLoopMode):', error);
+    throw error;
+  }
+};
+
+
 /**
  * Fetch media items for a specific room
  * @param {string|number} roomId - The ID of the room
@@ -159,6 +257,133 @@ export const getMediaItemsForRoom = async (roomId) => {
         throw error;
     }
 };
+
+// Delete a chat message
+export const deleteChatMessage = async (roomId, messageId) => {
+  console.log(`➡️ DELETE /api/rooms/${roomId}/chat/${messageId}`);
+  try {
+    const response = await apiClient.delete(`/api/rooms/${roomId}/chat/${messageId}`);
+    return response.data;
+  } catch (error) {
+    console.error("API delete request failed:", error);
+    throw error;
+  }
+};
+
+// Create a scheduled event
+export const createScheduledEvent = async (roomId, eventData) => {
+  try {
+    const response = await apiClient.post(`/api/rooms/${roomId}/scheduled-events`, eventData);
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
+// Get scheduled events for a room
+export const getScheduledEvents = async (roomId) => {
+  try {
+    const response = await apiClient.get(`/api/rooms/${roomId}/scheduled-events`);
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
+// Delete a scheduled event
+export const deleteScheduledEvent = async (eventId) => {
+  try {
+    const response = await apiClient.delete(`/api/scheduled-events/${eventId}`);
+    return response.data
+  } catch (error) {
+    throw error;
+  }
+};
+
+// Update a scheduled event
+export const updateScheduledEvent = async (eventId, eventData) => {
+  try {
+    const response = await apiClient.put(`/api/scheduled-events/${eventId}`, eventData);
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
+// Download iCal file
+export const downloadICal = async (eventId) => {
+  try {
+    const response = await apiClient.get(`/api/scheduled-events/${eventId}/ical`, {
+      responseType: 'blob', // Important for file download
+    });
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
+
+
+// Add this function to your api.js file
+export const joinRoom = async (roomId) => {
+  try {
+    console.log(`joinRoom: Joining room ${roomId}`);
+    
+    const response = await apiClient.post(`/api/rooms/${roomId}/join`);
+    console.log(`joinRoom: Response received for room ${roomId}:`, response.data);
+    
+    return response.data;
+  } catch (error) {
+    console.error('API Error (joinRoom):', error);
+    if (error.response) {
+      // Server responded with error status (4xx, 5xx)
+      throw new Error(`Failed to join room: ${error.response.data.error || error.response.statusText}`);
+    } else if (error.request) {
+      // Request was made but no response received (network issue)
+      throw new Error('Network error. Please check your connection.');
+    } else {
+      // Something else happened in setting up the request
+      throw new Error('An unexpected error occurred while joining room.');
+    }
+  }
+};
+
+/**
+ * Fetches the list of temporary media items for a specific room
+ * @param {string|number} roomId - The ID of the room
+ * @returns {Promise} Axios promise resolving to the response data (array of temporary media items)
+ */
+export const getTemporaryMediaItemsForRoom = async (roomId) => {
+    try {
+        console.log(`📥 API: Fetching temporary media items for room ${roomId}`);
+        const response = await apiClient.get(`/api/rooms/${roomId}/temporary-media`);
+        console.log(`📥 API Response (getTemporaryMediaItemsForRoom):`, response.data);
+        // Ensure it always returns an array, even if empty
+        return response.data.temporary_media_items || response.data || [];
+    } catch (error) {
+        console.error('API Error (getTemporaryMediaItemsForRoom):', error);
+        throw error;
+    }
+};
+
+/**
+ * Deletes all temporary media items for a specific room (Host only)
+ * @param {string|number} roomId - The ID of the room
+ * @returns {Promise} Axios promise resolving to the response data
+ */
+export const deleteTemporaryMediaItemsForRoom = async (roomId) => {
+    try {
+        console.log(`🗑️ API: Deleting temporary media items for room ${roomId}`);
+        const response = await apiClient.delete(`/api/rooms/${roomId}/temporary-media`);
+        console.log(`🗑️ API Response (deleteTemporaryMediaItemsForRoom):`, response.data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error (deleteTemporaryMediaItemsForRoom):', error);
+        throw error;
+    }
+};
+
+
 
 /**
  * Fetches the list of members in a specific room
@@ -186,46 +411,52 @@ export const getRoomMembers = async (roomId) => {
 
 
 /**
- * Upload a media file to a specific room
+ * Uploads a media file to a specific room
  * @param {string|number} roomId - The ID of the room
  * @param {File} file - The File object to upload
  * @param {Function} [onUploadProgressCallback] - Optional callback for upload progress updates
+ * @param {boolean} isTemporary - Whether to upload as temporary (default: false)
  * @returns {Promise} Axios promise resolving to the response data (details of the created media item)
  */
-export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback) => { // <-- Accept optional callback
+
+// Delete a single temporary media item
+export const deleteSingleTemporaryMediaItem = async (roomId, itemId) => {
   try {
-    // --- ADD DEBUGGING ---
-    console.log("uploadMediaToRoom: Function called with:", { roomId, file });
-    console.log("uploadMediaToRoom: File type:", typeof file);
-    console.log("uploadMediaToRoom: File details (if File object):", file instanceof File ? file.name + " (" + file.size + " bytes)" : "Not a File object");
+    console.log(`🗑️ Deleting temporary media item ${itemId} in room ${roomId}`);
+    const response = await apiClient.delete(`/api/rooms/${roomId}/temporary-media/${itemId}`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (deleteSingleTemporaryMediaItem):', error);
+    throw error;
+  }
+};
+
+
+export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false) => {
+  try {
+    console.log(`📤 API: Uploading media file to room ${roomId} (Temporary: ${isTemporary})`, file.name);
 
     // --- CRUCIAL: Use FormData for file uploads ---
     const formData = new FormData();
     formData.append('mediaFile', file); // Key must match c.FormFile("mediaFile") in Go
-    console.log("uploadMediaToRoom: FormData object created:", formData);
 
-    // --- ADD DEBUGGING: Inspect FormData contents (limited in browsers) ---
-    console.log("uploadMediaToRoom: Inspecting FormData contents:");
-    for (let [key, value] of formData.entries()) {
-        console.log("uploadMediaToRoom: FormData entry -", key, value);
-    }
-    // --- --- ---
-
-    // --- OPTION 2: Explicitly configure the request to force correct Content-Type ---
-    const config = { // <-- KEEP THIS EXISTING DECLARATION
+    // --- OPTION: Configure the request ---
+    const config = {
       headers: {
-        'Content-Type': undefined, // Force Axios to auto-set multipart/form-data
-        // Other headers like 'Authorization' will still be added by the request interceptor.
-      }
+        'Content-Type': 'multipart/form-data', // Force Axios to auto-set correct Content-Type
+      },
+      // --- ✅ INCREASE TIMEOUT FOR LARGE FILES ---
+      timeout: 60000, // 60 seconds (or more if needed)
+
       // Add onUploadProgress to THIS EXISTING config object
-      // onUploadProgress: (progressEvent) => { ... } // <-- WILL BE ADDED BELOW
+      // onUploadProgress: (progressEvent) => { ... } // ← WILL BE ADDED BELOW
     };
 
     // --- ADD onUploadProgress to the EXISTING config object ---
     // Check if a callback function was provided
     if (typeof onUploadProgressCallback === 'function') {
       // Add the onUploadProgress property to the config object
-      config.onUploadProgress = (progressEvent) => { // <-- ADD PROPERTY TO EXISTING 'config'
+      config.onUploadProgress = (progressEvent) => { // ← ADD PROPERTY TO EXISTING 'config'
         // Check if the progress event is computable
         if (progressEvent && progressEvent.lengthComputable) {
           // Calculate the percentage completed
@@ -233,14 +464,25 @@ export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback) 
           // Log the progress (for debugging)
           console.log(`uploadMediaToRoom: Upload progress: ${percentCompleted}%`);
           // Call the provided callback function with the progress percentage
-          onUploadProgressCallback(percentCompleted); // <-- TRIGGER THE CALLBACK
+          onUploadProgressCallback(percentCompleted); // ← TRIGGER THE CALLBACK
         }
       };
     }
     // --- --- ---
 
-    console.log(`uploadMediaToRoom: About to send POST request to /api/rooms/${roomId}/upload`);
-    const response = await apiClient.post(`/api/rooms/${roomId}/upload`, formData, config); // <-- PASS THE (UPDATED) CONFIG
+    // --- ADD LOGIC FOR isTemporary FLAG ---
+    // Construct the URL based on the isTemporary flag
+    let uploadUrl = `/api/rooms/${roomId}/upload`;
+    if (isTemporary) {
+      uploadUrl += '?temporary=true';
+      console.log(`uploadMediaToRoom: Uploading as TEMPORARY media to ${uploadUrl}`);
+    } else {
+      console.log(`uploadMediaToRoom: Uploading as PERMANENT media to ${uploadUrl}`);
+    }
+    // --- --- ---
+
+    console.log(`uploadMediaToRoom: About to send POST request to ${uploadUrl}`);
+    const response = await apiClient.post(uploadUrl, formData, config); // ✅ PASS UPDATED CONFIG
     console.log("uploadMediaToRoom: Request sent. Response received:", response.status, response.statusText);
 
     return response.data;

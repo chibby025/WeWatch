@@ -22,6 +22,8 @@ import {
 import { FilmIcon } from '@heroicons/react/24/solid'; // Solid icon for media placeholder
 import jwtDecodeUtil from '../utils/jwt';
 import ChatPanel from './ChatPanel';
+import useAuth from '../hooks/useAuth';
+import apiClient from '../services/api';
 
 
 const RoomPage = () => {
@@ -49,21 +51,24 @@ const RoomPage = () => {
   const [selectedMediaItem, setSelectedMediaItem] = useState(null); // State for the currently selected/playing media item
 
   // --- NEW: Host/Controller State ---
-  const [authenticatedUserID, setAuthenticatedUserID] = useState(null); // State for the authenticated user's ID
   const [isHost, setIsHost] = useState(false); // State to track if current user is the room host
   // --- --- ---
-
+  const [chatMessages, setChatMessages] = useState([]);
   // --- WebSocket State ---
   const [ws, setWs] = useState(null); // State for the WebSocket connection object
   const [wsConnected, setWsConnected] = useState(false);
   const [wsError, setWsError] = useState(null);
-
+  const { currentUser, wsToken, loading: authLoading } = useAuth();
   // --- Refs ---
   const wsRef = useRef(null); // Ref to hold the WebSocket connection object (alternative to state)
 
   const [isMembersPanelOpen, setIsMembersPanelOpen] = useState(false);
   const [roomMembers, setRoomMembers] = useState([])
-
+  const [shouldAutoJoinWatch, setShouldAutoJoinWatch] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState({
+    isActive: false,
+    hostId: null
+  });
   // --- EFFECTS ---
 
   // Fetch Room Data
@@ -122,116 +127,113 @@ const RoomPage = () => {
   }, [roomId]); // Dependency array includes 'roomId' so it re-fetches if the ID changes
 
   // --- WebSocket Connection Effect ---
-useEffect(() => {
-  // 1. Check if we have a valid room ID and a user is authenticated
-  if (!roomId) {
-    console.log("WebSocket Effect: No room ID, skipping WebSocket connection.");
-    return;
-  }
+  useEffect(() => {
+    // Only proceed if BOTH roomId (string) and wsToken are available
+    if (!roomId || !wsToken) {
+      // Optional: only log if it's not the initial mount
+      if (roomId || wsToken) {
+        console.log("WebSocket Effect: Waiting for room ID or auth token...");
+      }
+      return;
+    }
 
-  // 2. Get the JWT token from localStorage (assuming it's stored there after login)
-  const token = localStorage.getItem('wewatch_token');
-  if (!token) {
-    console.log("WebSocket Effect: No JWT token found, skipping WebSocket connection.");
-    setWsError("Authentication required for WebSocket connection.");
-    return;
-  }
+    const wsUrl = `ws://localhost:8080/api/rooms/${roomId}/ws?token=${encodeURIComponent(wsToken)}`;
+    console.log("WebSocket Effect: Connecting to:", wsUrl);
 
-  // 3. Construct the WebSocket URL with the room ID and JWT token
-  const wsUrl = `ws://localhost:8080/api/rooms/${roomId}/ws?token=${encodeURIComponent(token)}`;
-  console.log("WebSocket Effect: Attempting to connect to:", wsUrl);
+    const websocket = new WebSocket(wsUrl);
+    setWs(websocket);
+    wsRef.current = websocket;
 
-  // 4. Create the WebSocket connection
-  const websocket = new WebSocket(wsUrl);
+    const handleOpen = () => {
+      console.log("WebSocket connected");
+      setWsConnected(true);
+      setWsError(null);
+    };
 
-  // 5. Set the WebSocket connection object in state and ref
-  setWs(websocket);
-  wsRef.current = websocket;
+    const handleMessage = (event) => {
+      if (typeof event.data !== 'string') return;
+      
+      try {
+        const msg = JSON.parse(event.data);
+        
+        // ✅ Handle initial session status
+        if (msg.type === 'session_status') {
+          setSessionStatus({
+            isActive: !!msg.data.session_id,
+            hostId: msg.data.host_id
+          });
+        }
+        
+        // ✅ Handle real-time session start via screen share
+        if (msg.type === 'screen_share_started') {
+          setSessionStatus(prev => ({
+            ...prev,
+            isActive: true,
+            hostId: msg.data.user_id // snake_case from backend
+          }));
+        }
+        
+        // ✅ Handle room status updates (e.g., host starts playback)
+        if (msg.type === 'update_room_status') {
+          if (msg.data.is_screen_sharing) {
+            setSessionStatus(prev => ({
+              ...prev,
+              isActive: true,
+              hostId: msg.data.screen_sharing_user_id
+            }));
+          }
+        }
+        
+        // Handle chat
+        if (msg.type === 'chat_message') {
+          setChatMessages(prev => [...prev, msg.data]);
+        }
+        
+      } catch (e) {
+        console.error("WebSocket message parse error:", e);
+      }
+    };
 
-  // 6. Define WebSocket event handlers (only connection events, NOT message parsing)
-  const handleOpen = () => {
-    console.log("WebSocket Effect: Connection opened successfully.")
-    setWsConnected(true);
-    setWsError(null);
-  };
+    const handleError = (event) => {
+      console.error("WebSocket error:", event);
+      setWsError("Connection error");
+      setWsConnected(false);
+    };
 
-  const handleError = (event) => {
-    console.error("WebSocket Effect: Connection error:", event);
-    setWsError("WebSocket connection error.");
-    setWsConnected(false);
-  };
+    const handleClose = () => {
+      console.log("WebSocket closed");
+      setWsConnected(false);
+      setWsError(null);
+    };
 
-  const handleClose = (event) => {
-    console.log("WebSocket Effect: Connection closed:", event.code, event.reason);
-    setWsConnected(false);
-    setWsError(null);
-  };
+    websocket.addEventListener('open', handleOpen);
+    websocket.addEventListener('message', handleMessage); // ✅ ADD THIS
+    websocket.addEventListener('error', handleError);
+    websocket.addEventListener('close', handleClose);
 
-  // 7. Attach event listeners to the WebSocket connection
-  websocket.addEventListener('open', handleOpen);
-  websocket.addEventListener('error', handleError);
-  websocket.addEventListener('close', handleClose);
-
-  // 8. Cleanup function (runs when effect re-runs or component unmounts)
-  return () => {
-  console.log("WebSocket Effect: Cleanup function running.")
-  // Remove event listeners to prevent memory leaks
-  websocket.removeEventListener('open', handleOpen);
-  websocket.removeEventListener('error', handleError);
-  websocket.removeEventListener('close', handleClose);
-
-  // Close the WebSocket connection if it's open
-  if (websocket && websocket.readyState === WebSocket.OPEN) {
-    console.log("WebSocket Effect: Closing WebSocket connection.");
-    websocket.close();
-  }
-
-  // Clear state/ref
-  setWs(null);
-  wsRef.current = null;
-  setWsConnected(false);
-  setWsError(null);
-};
-
-}, [roomId]); // Dependency array includes 'roomId' so it re-connects if the ID changes
+    return () => {
+      websocket.removeEventListener('open', handleOpen);
+      websocket.removeEventListener('message', handleMessage); // ✅ CLEANUP
+      websocket.removeEventListener('error', handleError);
+      websocket.removeEventListener('close', handleClose);
+      if (websocket.readyState === WebSocket.OPEN) {
+        websocket.close();
+      }
+      setWs(null);
+      wsRef.current = null;
+      setWsConnected(false);
+    };
+  }, [roomId, wsToken]);
 
   
   // Fetch Authenticated User ID
   useEffect(() => {
-  const fetchAuthenticatedUser = async () => {
-    try {
-      // Get the JWT token from localStorage
-      const token = localStorage.getItem('wewatch_token');
-      if (!token) {
-        console.log("No JWT token found for authenticated user");
-        return;
-      }
-
-      // Decode the JWT token to get the user ID
-      const decodedToken = jwtDecodeUtil(token);
-      const userId = decodedToken.user_id;
-      console.log("Authenticated user ID:", userId);
-      
-      setAuthenticatedUserID(userId);
-      
-      // If room is already loaded, check if this user is the host
-      if (room) {
-        setIsHost(room.host_id === userId);
-      }
-    } catch (err) {
-      console.error("Error decoding JWT token:", err);
+    if (room && currentUser) {
+      setIsHost(room.host_id === currentUser.id);
     }
-  };
+  }, [room, currentUser]);
 
-  fetchAuthenticatedUser();
-}, []); // Run once on mount
 
-// --- NEW: Update host status when room or authenticated user changes ---
-useEffect(() => {
-  if (room && authenticatedUserID !== null) {
-    setIsHost(room.host_id === authenticatedUserID);
-  }
-}, [room, authenticatedUserID]);
 
 // Add this effect after your existing useEffects
 useEffect(() => {
@@ -252,24 +254,59 @@ useEffect(() => {
   }
 }, [isMembersPanelOpen, roomId]);
 
-
-// Add this useEffect to automatically join the room when component mounts
+// Begin watch/join watch button logic
 useEffect(() => {
-  if (roomId && authenticatedUserID && !isMembersPanelOpen) {
-    // Auto-join the room if not already joined
-    const autoJoinRoom = async () => {
-      try {
-        // await joinRoom(roomId);
-        console.log("Auto-joining room:", roomId);
-        // The join logic should be handled by your backend
-      } catch (err) {
-        console.error("Auto-join failed:", err);
+  if (!roomId || sessionStatus.isActive) return;
+
+  const pollSession = async () => {
+    try {
+      const response = await apiClient.get(`/api/rooms/${roomId}/active-session`);
+      if (response.data.session) {
+        setSessionStatus({
+          isActive: true,
+          hostId: response.data.session.host_id
+        });
+        console.log("Polling session")
       }
-    };
-    
-    autoJoinRoom();
-  }
-}, [roomId, authenticatedUserID]);
+    } catch (err) {
+      // Session not active
+    }
+  };
+
+  const interval = setInterval(pollSession, 2000); // Poll every 2s
+  return () => clearInterval(interval);
+}, [roomId, sessionStatus.isActive]);
+
+// Auto-join room when component mounts (if not already a member)
+useEffect(() => {
+  if (!roomId || !currentUser) return;
+
+  const autoJoinRoom = async () => {
+    try {
+      // Optional: Check if already a member (to avoid redundant calls)
+      const membersData = await getRoomMembers(roomId);
+      const memberList = Array.isArray(membersData) ? membersData : membersData?.members || [];
+      const isAlreadyMember = memberList.some(member => 
+        member.user_id === currentUser.id || member.id === currentUser.id
+      );
+
+      if (!isAlreadyMember) {
+        console.log("Auto-joining room:", roomId);
+        await apiClient.post(`/api/rooms/${roomId}/join`);
+        // Optionally refetch members to update UI
+        // setRoomMembers(await getRoomMembers(roomId));
+      }
+    } catch (err) {
+      console.error("Auto-join failed:", err);
+      // Optional: handle 404 (room deleted) or auth errors
+      if (err.response?.status === 404) {
+        setError('Room not found.');
+      }
+    }
+  };
+
+  autoJoinRoom();
+}, [roomId, currentUser]);
   
   // --- EVENT HANDLERS ---
 
@@ -513,6 +550,25 @@ const handlePlayMedia = (mediaItemId) => {
         </div>
       </div>
 
+      {/* --- Begin/Join Watch Button --- */}
+      {/* --- Unified Watch Button --- */}
+      <div className="mt-4">
+        <button
+          onClick={() => {
+            navigate(`/watch/${roomId}`, {
+              state: { roomHostId: room.host_id }
+            });
+          }}
+          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg flex items-center"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {isHost ? 'Begin Watch Party' : 'Join Watch Party'}
+        </button>
+      </div>
+
       {isMembersPanelOpen && (
         <div className="mb-4">
           <MemberList 
@@ -525,18 +581,27 @@ const handlePlayMedia = (mediaItemId) => {
 
       {/* --- Main Video Player Area --- */}
       <div className="relative mb-6">
-        {/* Pass the selectedMediaItem and WebSocket connection/status to VideoPlayer */}
-        <VideoPlayer 
-          mediaItem={selectedMediaItem}
-          roomId={roomId}
-          isHost = {isHost}  // Pass host status
-          authenticatedUserID = {authenticatedUserID} // Pass authenticated User ID
-          // --- NEW: Pass WebSocket connection and status to VideoPlayer ---
-          ws={ws} // Pass the WebSocket connection object
-          wsConnected={wsConnected} // Pass the connection status
-          wsError={wsError} // Pass any WebSocket errors
-          // --- --- ---
-        />
+        {wsConnected ? (
+          <VideoPlayer 
+            mediaItem={selectedMediaItem}
+            roomId={roomId}
+            isHost={isHost}
+            authenticatedUserID={currentUser?.id}
+            ws={ws}
+            wsConnected={wsConnected}
+            wsError={wsError}
+          />
+        ) : (
+          <div className="bg-black h-64 flex items-center justify-center">
+            <div className="text-white flex items-center">
+              <svg className="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Connecting to room...
+            </div>
+          </div>
+        )}
       </div>
 
       
@@ -740,8 +805,10 @@ const handlePlayMedia = (mediaItemId) => {
             roomId={roomId}
             ws={ws}
             wsConnected={wsConnected}
-            authenticatedUserID={authenticatedUserID}
+            authenticatedUserID={currentUser?.id} // ✅ Fixed!
             isHost={isHost}
+            chatMessages={chatMessages}
+            setChatMessages={setChatMessages}
           />
         </div>
       </div>
