@@ -1,19 +1,29 @@
 // WeWatch/frontend/src/components/ChatPanel.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import EmojiPicker from 'emoji-picker-react';
 
-const ChatPanel = ({ roomId, ws, wsConnected, authenticatedUserID, isHost }) => {
-  const [messages, setMessages] = useState([]);
+const ChatPanel = ({ 
+  roomId, 
+  ws, 
+  wsConnected, 
+  authenticatedUserID, 
+  isHost, 
+  chatMessages, 
+  setChatMessages,
+  onDelete // Receive onDelete from RoomPage
+}) => {
   const [newMessage, setNewMessage] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const messagesEndRef = useRef(null);
 
+  // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [chatMessages]);
 
+  /*
   // Handle incoming WebSocket messages
   useEffect(() => {
     if (!ws || !wsConnected) return;
@@ -24,39 +34,39 @@ const ChatPanel = ({ roomId, ws, wsConnected, authenticatedUserID, isHost }) => 
         console.log("ChatPanel: Received WebSocket message:", message);
         
         if (message.type === "chat_message") {
-          setMessages(prev => [...prev, message.data]);
-        } else if (message.type === "playback_control") {
-          console.log("Received playback command:", message.command);
+          // Append to parent state
+          setChatMessages(prev => [...prev, message.data]);
+        } else if (message.type === "reaction") {
+          console.log("Received reaction:", message.data);
         } else {
           console.warn("ChatPanel: Unknown message type received:", message.type);
         }
       } catch (err) {
         console.error("Error parsing chat message:", err);
-        console.error("Raw message data:", event.data);
       }
     };
 
     ws.addEventListener('message', handleMessage);
     return () => ws.removeEventListener('message', handleMessage);
-  }, [ws, wsConnected]);
+  }, [ws, wsConnected, setChatMessages]);
+  */
+
 
   const sendMessage = async () => {
     if (!newMessage.trim() || !wsConnected || !ws) return;
 
-    // Properly structured chat message - THIS PART IS CORRECT
     const chatMessage = {
       type: "chat_message",
       data: {
         message: newMessage.trim(),
         user_id: authenticatedUserID,
-        username: "User" + authenticatedUserID,
+        username: `User${authenticatedUserID}`,
         timestamp: Date.now(),
         message_type: "text"
       }
     };
 
     try {
-      console.log("Sending chat message:", JSON.stringify(chatMessage));
       ws.send(JSON.stringify(chatMessage));
       setNewMessage('');
       setShowEmojiPicker(false);
@@ -70,20 +80,36 @@ const ChatPanel = ({ roomId, ws, wsConnected, authenticatedUserID, isHost }) => 
     setShowEmojiPicker(false);
   };
 
-  // Handle emoji reactions (for the future)
   const handleReact = (messageTimestamp, emoji) => {
-    console.log("Reacting to message at", messageTimestamp, "with emoji", emoji);
-    // In a real app, you'd send this to the backend
-    // For now, just log it
+    if (!roomId || !authenticatedUserID || !wsConnected) return;
+    
+    try {
+      const reactionMessage = {
+        type: "reaction",
+        data: {
+          emoji: emoji,
+          user_id: authenticatedUserID,
+          message_timestamp: messageTimestamp,
+          timestamp: Date.now(),
+        }
+      };
+      
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(reactionMessage));
+      }
+    } catch (err) {
+      console.error("Error sending reaction:", err);
+    }
   };
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
         <MessageList 
-          messages={messages} 
+          messages={chatMessages} 
           currentUserID={authenticatedUserID}
-          onReact={handleReact} // This will be used for reactions
+          onReact={handleReact}
+          onDelete={onDelete} // Pass to MessageList
         />
         <div ref={messagesEndRef} />
       </div>

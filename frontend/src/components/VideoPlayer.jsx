@@ -1,57 +1,144 @@
 // WeWatch/frontend/src/components/VideoPlayer.jsx
 import React, { useEffect, useRef } from 'react';
 
-// --- UPDATE COMPONENT PROPS ---
-// Accept mediaItem, roomId, and WebSocket connection/status as props
-const VideoPlayer = ({ mediaItem, roomId, ws, wsConnected, wsError }) => {
-// --- --- ---
+const VideoPlayer = ({ 
+  mediaItem,
+  isPlaying, 
+  roomId, 
+  ws, 
+  wsConnected, 
+  wsError, 
+  annotations, 
+  onAddAnnotation 
+}) => {
+  // ✅ MOVE ALL HOOKS INSIDE COMPONENT BODY
+  const [currentTime, setCurrentTime] = React.useState(0);
+  const [isAnnotationMode, setIsAnnotationMode] = React.useState(false);
   const videoRef = useRef(null); // Ref to access the actual DOM video element
 
-  // --- EXISTING EFFECT: Handle loading a new media item ---
-  useEffect(() => {
-    // Check if a video element ref exists and a mediaItem is provided
-    if (videoRef.current && mediaItem) {
-      // --- Construct the correct URL to the uploaded file ---
-      // Assuming your Go backend serves files from /uploads/ relative to its root
-      // and the file_path returned by the API is relative (e.g., "uploads/uuid-filename.mp4")
-      const videoUrl = `http://localhost:8080/${mediaItem.file_path}`; 
-      // Example: If mediaItem.file_path is "uploads/2ecab53a-1053-4ede-8dc7-7c3770ee2f73.mp4"
-      // videoUrl becomes "http://localhost:8080/uploads/2ecab53a-1053-4ede-8dc7-7c3770ee2f73.mp4"
-      
-      console.log("VideoPlayer: Loading video:", videoUrl);
-      
-      // Set the video element's src attribute to the constructed URL
-      videoRef.current.src = videoUrl;
-      
-      // Optional: Explicitly load the new source (might not be strictly necessary, but good practice)
-      videoRef.current.load(); 
-      
-      // --- Reset playback state for the new video ---
-      videoRef.current.pause();
-      videoRef.current.currentTime = 0;
-      
-      // --- OPTIONAL: Auto-play the newly selected video ---
-      // Uncomment the lines below if you want the video to start playing automatically
-      // when a new item is selected. Be cautious with autoplay policies.
-      /*
-      videoRef.current.play().catch(error => {
-        console.log("VideoPlayer: Auto-play prevented or failed:", error);
-        // Silently handle autoplay errors (common due to browser policies)
-        // User can manually click play.
-      });
-      */
-      // --- --- ---
-      
-    } else if (videoRef.current && !mediaItem) {
-      // If no mediaItem is selected, clear the video source
-      console.log("VideoPlayer: No media item selected, clearing video source.");
-      videoRef.current.src = "";
-      videoRef.current.load(); // Reload to clear the player
+  // Handle video time updates
+  const handleTimeUpdate = () => {
+    if (videoRef.current) {
+      setCurrentTime(videoRef.current.currentTime);
     }
-  }, [mediaItem]); // Dependency array includes 'mediaItem'
-                   // This effect re-runs whenever 'mediaItem' prop changes
-  // --- --- ---
+  };
 
+  // Handle annotation mode toggle
+  const toggleAnnotationMode = () => {
+    setIsAnnotationMode(!isAnnotationMode);
+  };
+
+  // Add annotation at current time
+  const addAnnotationAtCurrentTime = () => {
+    if (isAnnotationMode && videoRef.current) {
+      const currentTime = videoRef.current.currentTime;
+      // Show annotation creation UI or prompt user
+      const text = prompt("Enter your annotation:");
+      if (text && text.trim()) {
+        onAddAnnotation({
+          text: text.trim(),
+          timestamp: currentTime
+        });
+      }
+    }
+  };
+
+  // ✅ NEW: Unified load + play effect
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !mediaItem) {
+      console.log("📹 VideoPlayer: No video element or mediaItem. Clearing src.");
+      if (video) video.src = "";
+      return;
+    }
+
+    // ✅ Log full mediaItem object
+    console.log("📹 VideoPlayer: Received mediaItem object:", mediaItem);
+
+    // ✅ Log file_path specifically
+    console.log("📹 VideoPlayer: mediaItem.file_path:", mediaItem.file_path);
+
+    // ✅ Construct and log full URL
+    const videoUrl = `http://localhost:8080/${mediaItem.file_path}`;
+    console.log("📹 VideoPlayer: Constructed video URL:", videoUrl);
+
+    // ✅ Set video source
+    video.src = videoUrl;
+    video.load();
+    video.currentTime = 0;
+
+    // ✅ Play only if isPlaying is true
+    if (isPlaying) {
+      console.log("📹 VideoPlayer: isPlaying is true. Attempting to play...");
+      const play = () => {
+        video.play().catch(err => {
+          console.error("📹 VideoPlayer: Play failed:", err);
+        });
+      };
+      const timer = setTimeout(play, 100);
+      return () => clearTimeout(timer);
+    } else {
+      console.log("📹 VideoPlayer: isPlaying is false. Pausing video.");
+      video.pause();
+    }
+  }, [mediaItem, isPlaying]); // Re-run when mediaItem or isPlaying changes
+
+  useEffect(() => {
+    // Listen for playback events from WebSocket
+    const handlePlaybackEvent = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === "playback_control") {
+        // Handle playback commands
+        if (message.command === "play") {
+          // Update current playing item in parent component
+          if (mediaItem) {
+            // This would need to communicate back to RoomPage
+          }
+        }
+      }
+    };
+
+    // Add to existing WebSocket listener
+    if (ws) {
+      ws.addEventListener('message', handlePlaybackEvent);
+    }
+
+    return () => {
+      if (ws) {
+        ws.removeEventListener('message', handlePlaybackEvent);
+      }
+    };
+  }, [ws, mediaItem]);
+
+  // Handles when a media played has ended
+  useEffect(() => {
+    const handleVideoEnd = () => {
+      console.log("VideoPlayer: Video finished playing");
+      // Send a message back to the server indicating completion
+      if (wsConnected && ws && mediaItem) {
+        const completionMessage = {
+          type: "playback_complete",
+          media_item_id: mediaItem.ID,
+          timestamp: Date.now()
+        };
+        ws.send(JSON.stringify(completionMessage));
+        console.log("VideoPlayer: Sent playback completion message:", completionMessage);
+      }
+    };
+
+    const video = videoRef.current;
+    if (video) {
+      video.addEventListener('ended', handleVideoEnd);
+    }
+
+    return () => {
+      if (video) {
+        video.removeEventListener('ended', handleVideoEnd);
+      }
+    };
+  }, [wsConnected, ws, mediaItem]);
+
+  
   // --- NEW EFFECT: Handle WebSocket messages for playback sync ---
   useEffect(() => {
     // 1. Check if WebSocket is connected and the connection object exists
@@ -81,34 +168,28 @@ const VideoPlayer = ({ mediaItem, roomId, ws, wsConnected, wsError }) => {
           // 6. Execute the corresponding playback action on the local player
           switch (message.command) {
             case "play":
-              console.log("VideoPlayer: Executing play command.");
-              videoRef.current.play().catch(error => {
-                console.log("VideoPlayer: Auto-play prevented or failed:", error);
-                // Silently handle autoplay errors (common due to browser policies)
-                // User can manually click play.
-              });
+              console.log("VideoPlayer: Received 'play' command via WebSocket. Waiting for isPlaying prop to change.");
+              // The actual play is now controlled by the isPlaying prop effect.
+              // Do any prep work here if needed, but don't call videoRef.current.play() directly.
               break;
+            // ... other cases (pause, seek remain the same if needed locally)
             case "pause":
-              console.log("VideoPlayer: Executing pause command.");
-              videoRef.current.pause();
+              // If you want immediate local pause on command, keep this.
+              // Otherwise, let isPlaying=false control it via the effect.
+              if (videoRef.current) videoRef.current.pause();
               break;
             case "seek":
-              console.log("VideoPlayer: Executing seek command to time:", message.seek_time);
-              if (typeof message.seek_time === 'number' && message.seek_time >= 0) {
-                videoRef.current.currentTime = message.seek_time;
-              } else {
-                console.warn("VideoPlayer: Invalid seek time received:", message.seek_time);
+              // Keep seek if you want immediate local seek on command.
+              if (videoRef.current && typeof message.seek_time === 'number' && message.seek_time >= 0) {
+                 videoRef.current.currentTime = message.seek_time;
               }
-              break;
-            case "load":
-              console.log("VideoPlayer: Executing load command for media item ID:", message.media_item_id);
-              // Future: Load a specific media item by ID
-              // This would involve fetching the media item details from the backend
-              // and updating the video player's source.
               break;
             default:
               console.warn("VideoPlayer: Unknown playback command received:", message.command);
           }
+        } else if (message.type === "playback_completed") {
+          // ✅ IGNORE THIS MESSAGE — let RoomPage handle it
+          console.log("VideoPlayer: Ignoring playback_completed message (handled by RoomPage)");
         } else {
           // Unknown message type
           console.warn("VideoPlayer: Unknown message type received:", message.type);
@@ -131,46 +212,41 @@ const VideoPlayer = ({ mediaItem, roomId, ws, wsConnected, wsError }) => {
       }
     };
   }, [ws, wsConnected, roomId]); // Dependency array includes 'ws', 'wsConnected', and 'roomId'
-                                 // This effect re-runs when any of these change
-  // --- --- ---
-
-  // --- TODO: Add event handlers for play/pause/seek/timeupdate etc. ---
-  // These will be used later for synchronization logic (WebSockets)
-  // Example:
-  // const handlePlay = () => {
-  //   if (videoRef.current) {
-  //     videoRef.current.play();
-  //     // TODO: Send "play" command via WebSocket
-  //   }
-  // };
 
   return (
-    <div className="video-player-container w-full">
-      {mediaItem ? (
-        <>
-          {/* Render the HTML5 video element */}
-          <video 
-            ref={videoRef} // Attach the ref
-            controls // Show default browser controls (play, pause, volume, seek bar)
-            className="video-player w-full h-96 bg-black" // Adjust height/width as needed
-            // Add event listeners for player actions (for future sync)
-            // onPlay={handlePlay}
-            // onPause={handlePause}
-            // onSeeked={handleSeeked}
-            // onTimeUpdate={handleTimeUpdate}
+    <div className="relative w-full">
+      <video
+        ref={videoRef}
+        controls
+        className="w-full h-auto bg-black rounded-lg"
+        onTimeUpdate={handleTimeUpdate}
+        onClick={isAnnotationMode ? addAnnotationAtCurrentTime : undefined}
+      >
+        {mediaItem && (
+          <source 
+            src={`http://localhost:8080/${mediaItem.file_path}`} 
+            type="video/mp4" 
+          />
+        )}
+        Your browser does not support the video tag.
+      </video>
+
+      {/* Annotation Mode Toggle */}
+      {isAnnotationMode && (
+        <div className="absolute top-2 right-2">
+          <button
+            onClick={toggleAnnotationMode}
+            className="px-3 py-1 bg-red-500 text-white rounded text-sm"
           >
-            {/* Fallback message if browser doesn't support the video tag */}
-            Your browser does not support the video tag.
-          </video>
-          {/* Display the name of the currently playing file */}
-          <p className="mt-2 text-sm text-gray-600">
-            Now Playing: <span className="font-medium">{mediaItem.original_name}</span>
-          </p>
-        </>
-      ) : (
-        // Render a placeholder if no mediaItem is selected
-        <div className="video-placeholder flex items-center justify-center w-full h-96 bg-gray-800 border-2 border-dashed border-gray-400 rounded-lg">
-          <p className="text-gray-400 text-xl">Select a media item to play</p>
+            Exit Annotation Mode
+          </button>
+        </div>
+      )}
+
+      {/* Annotation Mode Indicator */}
+      {isAnnotationMode && (
+        <div className="absolute top-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-sm">
+          Annotation Mode Active
         </div>
       )}
     </div>

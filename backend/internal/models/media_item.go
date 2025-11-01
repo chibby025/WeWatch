@@ -29,6 +29,9 @@ type MediaItem struct {
 	// UploaderID references the User who uploaded this media item
 	UploaderID uint `gorm:"not null;index" json:"uploader_id"` // Index for faster lookups
 	Uploader User `gorm:"foreignKey:UploaderID" json:"-"` // Optional: Embed User data
+	OrderIndex 	int 	`gorm:"type:int;default:0" json:"order_index"`
+	PosterURL string `gorm:"type:text;not null;default:''" json:"poster_url"` // ← NEW
+	Duration  string `gorm:"type:varchar(20);not null;default:''" json:"duration"` // ← NEW
 
 	// Add fields later like Title, Description, Duration (if extractable), ThumbnailPath, etc
 }
