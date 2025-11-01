@@ -4,6 +4,8 @@ package handlers
 import (
     "net/http"
     "strconv"
+    //"encoding/json"
+    "log"
     
     "github.com/gin-gonic/gin"
     "gorm.io/gorm"
@@ -115,6 +117,8 @@ func GetUserRoleHandler(c *gin.Context) {
     })
 }
 
+// internal/handlers/room_membership.go (or wherever JoinRoomHandler is defined)
+
 // JoinRoomHandler handles POST /api/rooms/:id/join
 // Allows users to join a room
 func JoinRoomHandler(c *gin.Context) {
@@ -167,10 +171,16 @@ func JoinRoomHandler(c *gin.Context) {
     
     result = DB.Create(&userRoom)
     if result.Error != nil {
+        log.Printf("Database error joining room %d for user %d: %v", roomID, userID, result.Error)
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to join room"})
         return
     }
-    
+
+    // ✅ No broadcast here - broadcasting happens in websocket.go when a WebSocket connection is made or a join event is processed via WebSocket
+    // The logic for informing other users about this join needs to be in the WebSocket message handling flow.
+    // e.g., When a WebSocket connection is established for this user, the server might broadcast a 'user_joined' event.
+    // Or, if joining is done via WebSocket message like { "type": "join_room", ... }, then the readPump handles it.
+
     c.JSON(http.StatusOK, gin.H{
         "message": "Successfully joined room",
         "user_room": userRoom,

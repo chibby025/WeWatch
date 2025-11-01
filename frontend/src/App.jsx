@@ -12,7 +12,8 @@ import CreateRoomPage  from './components/CreateRoomPage';
 import RoomsListPage from './components/RoomsListPage';
 import RoomPage from './components/RoomPage';
 import LobbyPage from './components/LobbyPage';
-
+import VideoWatch from './components/cinema/VideoWatch';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
   return (
@@ -45,18 +46,30 @@ function App() {
               <RoomsListPage />
             </ProtectedRoute>
           } />
+
+          {/* Create Room Page - Form to create a new room */}
           <Route path="/rooms/create" element={
             <ProtectedRoute>
               <CreateRoomPage />
             </ProtectedRoute>
           } />
-          {/* Example route for a specific room page (placeholder) */}
+          {/* Room Page - Detail view for a specific room */}
           <Route path="/rooms/:id" element={
-            <ProtectedRoute>
-              <RoomPage />
-            </ProtectedRoute>
+            <ErrorBoundary>
+              <ProtectedRoute>
+                <RoomPage />
+              </ProtectedRoute>
+            </ErrorBoundary>
           } />
-          {/* --- --- --- */}
+          {/* VideoWatch - Plays non 3d cinema */}
+          <Route 
+            path="/watch/:roomId" 
+            element={
+              <ProtectedRoute>
+                <VideoWatch />
+              </ProtectedRoute>
+            } 
+          />
 
           {/* Add more routes later, wrapping protected ones with ProtectedRoute */}
 

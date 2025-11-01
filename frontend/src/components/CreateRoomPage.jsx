@@ -27,6 +27,7 @@ const CreateRoomPage = () => {
       // Call the createRoom function from the API service
       const data = await createRoom(roomData);
       console.log('Room created successfully:', data);
+      console.log("👑 [CreateRoomPage] New Room Host ID:", data.room?.HostID);
 
       // Handle successful creation
       alert(`Room "${data.room.name}" created successfully!`);

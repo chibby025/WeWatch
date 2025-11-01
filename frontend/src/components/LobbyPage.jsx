@@ -1,136 +1,199 @@
-
-// 1. Import necessary hooks (useState, useEffect should already be there)
+// WeWatch/frontend/src/components/LobbyPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-// 2. Import the API function to fetch rooms (make sure the path is correct)
-import { getRooms } from '../services/api'; // Adjust the path if your api.js is elsewhere
+import { getRooms, deleteRoom } from '../services/api';
+import { TrashIcon } from '@heroicons/react/24/solid';
+import jwtDecodeUtil from '../utils/jwt';
+import apiClient from '../services/api';
 
-// Define the LobbyPage functional component
 const LobbyPage = () => {
-  // --- STATE MANAGEMENT ---
-  const [searchTerm, setSearchTerm] = useState(''); // State for the search input
-  const [rooms, setRooms] = useState([]);           // State for the full list of fetched rooms
-  const [loading, setLoading] = useState(true);     // State for loading indicator
-  const [error, setError] = useState(null);         // State for error messages
-  // 3. NEW: State for the filtered list of rooms based on search
-  const [filteredRooms, setFilteredRooms] = useState([]); 
-
-  // --- HOOKS ---
+  const [searchTerm, setSearchTerm] = useState('');
+  const [rooms, setRooms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [authenticatedUserID, setAuthenticatedUserID] = useState(null); // Add this state
+  const [filteredRooms, setFilteredRooms] = useState([]);
   const navigate = useNavigate();
+  const [currentDisplay, setCurrentDisplay] = useState('current'); // 'current' or 'next'
 
-  // --- EFFECTS ---
-
-  // 4. NEW: useEffect for Filtering Logic
-  // This effect runs whenever 'rooms' or 'searchTerm' changes.
+  // Fetch authenticated user ID (you need to implement this)
   useEffect(() => {
-    // console.log(`useEffect[rooms, searchTerm]: Filtering ${rooms.length} rooms for term '${searchTerm}'`);
+    const fetchAuthenticatedUser = async () => {
+      try {
+        const token = localStorage.getItem('wewatch_token');
+        if (token) {
+          // This should now work properly
+          const decodedToken = jwtDecodeUtil(token);
+          const userId = decodedToken.user_id;
+          console.log("Authenticated user ID:", userId);
+          setAuthenticatedUserID(userId);
+        }
+      } catch (err) {
+        console.error("Error decoding JWT token:", err);
+      }
+    };
+
+    fetchAuthenticatedUser();
+  }, []);
+
+  // handle instant watch room creation
+  // Add this inside LobbyPage component, alongside other handlers
+  const handleInstantWatch = async () => {
+    try {
+      setLoading(true);
+      const response = await apiClient.post('/api/rooms/instant-watch');
+      
+      // ✅ CORRECT WAY:
+      const { room_id, session } = response.data;
+      const session_id = session.session_id; // ← extract from session object
+
+      navigate(`/watch/${room_id}?session_id=${session_id}&instant=true`);
+    } catch (err) {
+      console.error('Failed to start instant watch:', err);
+      setError('Could not start instant watch. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Add effect for auto-rotation
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentDisplay(prev => prev === 'current' ? 'next' : 'current');
+    }, 3000);
+  
+    return () => clearInterval(interval);
+  }, []);
+
+  // Filter rooms effect
+  useEffect(() => {
     if (searchTerm === '') {
-      // If search term is empty, show all rooms
       setFilteredRooms(rooms);
     } else {
-      // Filter the rooms array
       const termLower = searchTerm.toLowerCase().trim();
       const filtered = rooms.filter(room =>
-        // Check if room name or description includes the search term (case-insensitive)
         (room.name && room.name.toLowerCase().includes(termLower)) ||
         (room.description && room.description.toLowerCase().includes(termLower))
-        // to add more fields to search here if needed (e.g., host username if available)
       );
       setFilteredRooms(filtered);
     }
-    // console.log(`useEffect[rooms, searchTerm]: Filtered list has ${filteredRooms.length} items`);
-  }, [rooms, searchTerm]); // Dependencies: re-run when rooms or searchTerm changes
+  }, [rooms, searchTerm]);
 
+  useEffect(() => {
+  // Refresh rooms every 30 seconds
+  const interval = setInterval(() => {
+    fetchRoomsData();
+  }, 5000);
+  
+  return () => clearInterval(interval);
+  }, []);
 
-  // 5. Existing useEffect for Fetching Rooms (No changes here)
+  // Fetch rooms effect
   useEffect(() => {
     const fetchRoomsData = async () => {
-      // console.log("LobbyPage: useEffect (fetch) triggered - fetching rooms...");
       setLoading(true);
       setError(null);
 
       try {
         const data = await getRooms();
-        // console.log("LobbyPage: Fetched rooms ", data);
+        console.log("DEBUG: Raw rooms data from API:", data); // Add this line
+        console.log("DEBUG: Rooms array:", data.rooms || []);
         setRooms(data.rooms || []);
-        // Note: filteredRooms will be updated by the filtering useEffect above
-        // because it depends on 'rooms'.
-
       } catch (err) {
         console.error("LobbyPage: Error fetching rooms:", err);
         setError('Failed to load rooms. Please try again later.');
-        setRooms([]); // Clear rooms on error
-        setFilteredRooms([]); // Clear filtered rooms on error
+        setRooms([]);
+        setFilteredRooms([]);
       } finally {
         setLoading(false);
       }
     };
 
     fetchRoomsData();
-  }, []); // Empty dependency array: run only once on mount
+  }, []);
 
-  // --- EVENT HANDLERS ---
+  // Handle search change
   const handleSearchChange = (event) => {
     setSearchTerm(event.target.value);
-    // The filtering useEffect will automatically trigger because searchTerm changed
   };
 
+  // Handle search submit
   const handleSearchSubmit = (event) => {
     event.preventDefault();
-    // For client-side filtering, submitting the form isn't strictly necessary
-    // because filtering happens on every keystroke/change in the input.
-    // However, keeping the onSubmit handler allows triggering search via Enter key.
-    // We can use it to blur the input or perform other minor UI tweaks if needed.
-    // console.log("Searching for:", searchTerm);
-    // alert(`You searched for: ${searchTerm}`); // Remove this alert for better UX
-    // Example: Blur the input field after search (optional)
-    // event.target.querySelector('input[type="text"]').blur();
   };
 
+  // Handle create room
   const handleCreateRoom = () => {
     console.log("Create Room button clicked");
     navigate('/rooms/create');
   };
 
-  // --- RENDERING ---
+  // Handle room deletion
+  const handleRoomDelete = async (roomId) => {
+    if (!window.confirm('Are you sure you want to delete this room? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await deleteRoom(roomId);
+      setRooms(prevRooms => prevRooms.filter(room => room.id !== roomId));
+      console.log(`Room ${roomId} deleted successfully`);
+    } catch (err) {
+      console.error('Error deleting room:', err);
+      setError('Failed to delete room. Please try again.');
+      const data = await getRooms();
+      setRooms(data.rooms || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <form onSubmit={handleSearchSubmit} className="container mx-auto p-4">
+    <div className="container mx-auto p-4">
       <h1 className="text-3xl font-bold mb-6 text-center">WeWatch Lobby</h1>
       <p className="text-center mb-8">Welcome! Find or create a room to start watching together.</p>
 
       {/* Search Bar Section */}
       <div className="mb-8 flex justify-center">
-        <input
-          type="text"
-          placeholder="Search room name or description..."
-          value={searchTerm}
-          onChange={handleSearchChange}
-          // Removed onSubmit handler from input as form handles it
-          className="px-4 py-2 border border-gray-300 rounded-l-lg w-full max-w-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          type="submit" // Part of the form submission
-          className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          Search
-        </button>
+        <form onSubmit={handleSearchSubmit} className="flex w-full max-w-md">
+          <input
+            type="text"
+            placeholder="Search room name or description..."
+            value={searchTerm}
+            onChange={handleSearchChange}
+            className="px-4 py-2 border border-gray-300 rounded-l-lg w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            type="submit"
+            className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Search
+          </button>
+        </form>
       </div>
 
-      {/* Create Room Button */}
-      <div className="flex justify-center mb-6">
+      {/* Create Room & Instant Watch Buttons */}
+      <div className="flex justify-center gap-4 mb-6">
         <button
-          type="button" // Prevents it from submitting the search form
+          type="button"
           onClick={handleCreateRoom}
-          className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
+          className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow transition-colors duration-200"
         >
           + Create New Room
+        </button>
+        <button
+          type="button"
+          onClick={handleInstantWatch}
+          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow transition-colors duration-200 flex items-center gap-2"
+        >
+          🎬 Instant Watch
         </button>
       </div>
 
       {/* Room List Section */}
       <div>
         <h2 className="text-2xl font-semibold mb-4">
-          {/* 6. Display total count or filtered count */}
           Available Rooms {searchTerm && ` (Filtered: ${filteredRooms.length}/${rooms.length})`}
         </h2>
 
@@ -149,43 +212,72 @@ const LobbyPage = () => {
           </div>
         )}
 
-        {/* Data Display (Only if not loading and no error) */}
+        {/* Data Display */}
         {!loading && !error && (
           <>
-            {/* Check if there are filtered rooms to display */}
             {filteredRooms && filteredRooms.length > 0 ? (
-              // 7. Render the grid of FILTERED room cards
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {/* 8. Map over the 'filteredRooms' array */}
                 {filteredRooms.map((room) => (
-                  <div
-                    key={room.id}
-                    className="bg-white shadow-md rounded-lg p-4 hover:shadow-lg transition-shadow duration-300 cursor-pointer"
+                  <div 
+                    key={room.id} 
+                    className="bg-white shadow-md rounded-lg overflow-hidden hover:shadow-lg transition-shadow duration-300 relative"
                     onClick={() => navigate(`/rooms/${room.id}`)}
-                  >
-                    <h3 className="text-xl font-bold mb-2">{room.name}</h3>
-                    <p className="text-gray-600 mb-2">
-                      {room.description || 'No description provided.'}
-                    </p>
-                    <p className="text-sm text-gray-500">Hosted by: User {room.host_id}</p>
-                    {/* Display creation date or other relevant info if available */}
-                    {room.created_at && (
-                      <p className="text-xs text-gray-400 mt-1">
-                        Created: {new Date(room.created_at).toLocaleDateString()}
-                      </p>
-                    )}
+                   >
+                    {/* Room Card Content */}
+                    <div className="p-6">
+                      {/* Top Section - Room Name and Host */}
+                      <div className="flex justify-between items-start mb-3">
+                        <h2 className="text-xl font-semibold mb-0 text-blue-600 hover:underline">{room.name}</h2>
+                        <span className="text-sm text-gray-600">Host: User {room.host_id}</span>
+                      </div>
+      
+                      {/* Description */}
+                      {room.description && room.description.trim() !== '' && (
+                      <p className="text-gray-600 mb-4">{room.description || 'No description provided for this room.'}</p>
+                      )}
+
+
+                      {/* Playing Now and Coming Next */}
+                      <div className="mb-4">
+                        <div className="text-sm text-gray-800 mb-1">
+                          <span className="font-medium">Playing Now:</span> {room.currently_playing || 'No media playing'}
+                        </div>
+  
+                        {room.coming_next && room.coming_next.trim() !== '' && (
+                          <div className="text-sm text-gray-600">
+                            <span className="font-medium">Coming Next:</span> {room.coming_next}
+                          </div>
+                        )}
+                      </div>
+                    
+                    
+                    
+                      {/* Delete Button - Bottom Right */}
+                      {authenticatedUserID && authenticatedUserID === room.host_id && (
+                      <div className="absolute bottom-4 right-4">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent triggering card click
+                            handleRoomDelete(room.id);
+                          }}
+                          className="bg-red-500 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-sm flex items-center"
+                          title="Delete Room"
+                        >
+                            <TrashIcon className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
             ) : (
-              // 9. Display a message if the filtered list is empty
               <div className="text-center py-10">
-                {/* Check if it's because of search or genuinely no rooms */}
                 {searchTerm ? (
                   <>
                     <p className="text-xl mb-4">No rooms match your search for "{searchTerm}".</p>
                     <button
-                      onClick={() => setSearchTerm('')} // Clear search term
+                      onClick={() => setSearchTerm('')}
                       className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
                     >
                       Clear Search
@@ -207,7 +299,7 @@ const LobbyPage = () => {
           </>
         )}
       </div>
-    </form>
+    </div>
   );
 };
 
