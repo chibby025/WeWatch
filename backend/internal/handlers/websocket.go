@@ -272,6 +272,7 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
 
     // Add client to session members
     h.sessionMembers[sessionID][client] = true
+    
 
     // Create or update session member record
     member := models.WatchSessionMember{
@@ -292,11 +293,14 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
 
 // cleanupClientSync removes a client from all hub state immediately
 func (h *Hub) cleanupClientSync(client *Client) {
+    log.Printf("[cleanupClientSync] 🧹 Starting cleanup for client %p (user %d, room %d)", client, client.userID, client.roomID)
+    
     // 1. Remove from rooms
     h.mutex.Lock()
     if roomClients, ok := h.rooms[client.roomID]; ok {
         if _, exists := roomClients[client]; exists {
             delete(roomClients, client)
+            log.Printf("[cleanupClientSync] 🔹 Closing send channel for client %p", client)
             close(client.send)
             if len(roomClients) == 0 {
                 delete(h.rooms, client.roomID)
@@ -306,14 +310,14 @@ func (h *Hub) cleanupClientSync(client *Client) {
     h.mutex.Unlock()
 
     // 2. Clean up clientRegistry
-    h.registryMutex.Lock()
+    // ⚠️ NO LOCK HERE - caller (WebSocketHandler) already holds registryMutex during deduplication
+    // This prevents deadlock when called from within the registryMutex.Lock() block
     if userMap, exists := h.clientRegistry[client.userID]; exists {
         delete(userMap, client.roomID)
         if len(userMap) == 0 {
             delete(h.clientRegistry, client.userID)
         }
     }
-    h.registryMutex.Unlock()
 
     // 3. Clean up stream host state
     h.streamStateMutex.Lock()
@@ -333,7 +337,9 @@ func (h *Hub) cleanupClientSync(client *Client) {
     }
 
     // 5. Force-close connection
+    log.Printf("[cleanupClientSync] 🔌 Force-closing WebSocket connection for client %p", client)
     client.conn.Close()
+    log.Printf("[cleanupClientSync] ✅ Cleanup complete for client %p", client)
 }
 
 // Run manages the registration, unregistration, and broadcasting of messages.
@@ -552,7 +558,10 @@ func (h *Hub) CleanupOrphanedSessions() {
 
 // Enhanced client read pump with better error handling
 func (c *Client) readPump() {
+    log.Printf("[readPump] 🔄 Entering read loop for user %d in room %d (client=%p)", c.userID, c.roomID, c)
+    
     defer func() {
+        log.Printf("[readPump] 🛑 Exiting read loop for user %d (client=%p)", c.userID, c)
         c.hub.unregister <- c
         c.conn.Close()
     }()
@@ -565,6 +574,8 @@ func (c *Client) readPump() {
     })
 
     // metrics removed (unused) — keep BinaryStreamMetrics struct for future use
+    
+    log.Printf("[readPump] ⏳ Waiting for messages from user %d...", c.userID)
 
     for {
         messageType, message, err := c.conn.ReadMessage()
@@ -599,11 +610,16 @@ func (c *Client) readPump() {
 
 // writePump plucks OutgoingMessage values and sends one websocket frame per message (no coalescing)
 func (c *Client) writePump() {
+    log.Printf("[writePump] 🔄 Entering write loop for user %d in room %d (client=%p)", c.userID, c.roomID, c)
+    
     ticker := time.NewTicker(pingPeriod)
     defer func() {
+        log.Printf("[writePump] 🛑 Exiting write loop for user %d (client=%p)", c.userID, c)
         ticker.Stop()
         c.conn.Close()
     }()
+
+    log.Printf("[writePump] ⏳ Ready to send messages for user %d...", c.userID)
 
     for {
         select {
@@ -649,240 +665,262 @@ var upgrader = websocket.Upgrader{
 
 
 // WebSocketHandler handles the WebSocket upgrade request.
+// WebSocketHandler handles the WebSocket upgrade request.
 func WebSocketHandler(c *gin.Context) {
-    log.Println("WebSocketHandler: called")
-    // --- Authentication and Room ID Extraction ---
-    // Extract authenticated user ID (assuming set by auth middleware)
-    userIDVal, exists := c.Get("user_id")
-    if (!exists) {
-        log.Println("WebSocketHandler: user_id not found in context")
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-        return
-    }
-    authenticatedUserID, ok := userIDVal.(uint)
-    if (!ok) {
-        log.Println("WebSocketHandler: user_id in context is not uint")
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
-        return
-    }
+	log.Println("WebSocketHandler: called")
+	// --- Authentication and Room ID Extraction ---
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		log.Println("WebSocketHandler: user_id not found in context")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	authenticatedUserID, ok := userIDVal.(uint)
+	if !ok {
+		log.Println("WebSocketHandler: user_id in context is not uint")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
+		return
+	}
 
-    // Extract room ID from query or URL param
-    roomIDStr := c.Query("room_id")
-    if roomIDStr == "" {
-        roomIDStr = c.Param("room_id")
-    }
-    if roomIDStr == "" {
-        roomIDStr = c.Param("id") // Support both :room_id and :id
-    }
-    if roomIDStr == "" {
-        log.Println("WebSocketHandler: Missing room_id")
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Missing room_id"})
-        return
-    }
-    roomID64, err := strconv.ParseUint(roomIDStr, 10, 64)
-    if err != nil {
-        log.Printf("WebSocketHandler: Invalid room_id: %v", err)
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room_id"})
-        return
-    }
-    roomID := uint(roomID64)
+	roomIDStr := c.Query("room_id")
+	if roomIDStr == "" {
+		roomIDStr = c.Param("room_id")
+	}
+	if roomIDStr == "" {
+		roomIDStr = c.Param("id")
+	}
+	if roomIDStr == "" {
+		log.Println("WebSocketHandler: Missing room_id")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing room_id"})
+		return
+	}
+	roomID64, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil {
+		log.Printf("WebSocketHandler: Invalid room_id: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room_id"})
+		return
+	}
+	roomID := uint(roomID64)
 
-    // Upgrade HTTP connection to WebSocket
-    conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-    if err != nil {
-        log.Printf("WebSocketHandler: WebSocket upgrade failed: %v", err)
-        return
-    }
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("WebSocketHandler: WebSocket upgrade failed: %v", err)
+		return
+	}
 
-    // --- Existing session logic below ---
-    var watchSession models.WatchSession
-    sessionID := c.Query("session_id")
+	// --- Session logic ---
+	var watchSession models.WatchSession
+	sessionID := c.Query("session_id")
 
-    if sessionID != "" {
-        // Try to find existing session
-        if err := DB.Where("session_id = ? AND ended_at IS NULL", sessionID).First(&watchSession).Error; err != nil {
-            if errors.Is(err, gorm.ErrRecordNotFound) {
-                // Session not found - create new one
-                watchSession = models.WatchSession{
-                    SessionID: sessionID,
-                    RoomID:   roomID,
-                    HostID:   authenticatedUserID,
-                    StartedAt: time.Now(),
-                }
-                if err := DB.Create(&watchSession).Error; err != nil {
-                    log.Printf("Failed to create watch session: %v", err)
-                    c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
-                    return
-                }
-            } else {
-                log.Printf("Error querying watch session: %v", err)
-                c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-                return
-            }
-        }
-    } else {
-        // No session ID provided - try to find or create an active session for the room
-        if err := DB.Where("room_id = ? AND ended_at IS NULL", roomID).First(&watchSession).Error; err != nil {
-            if errors.Is(err, gorm.ErrRecordNotFound) {
-                // No active session - create one
-                sessionID = uuid.New().String()
-                watchSession = models.WatchSession{
-                    SessionID: sessionID,
-                    RoomID:   roomID,
-                    HostID:   authenticatedUserID,
-                    StartedAt: time.Now(),
-                }
-                if err := DB.Create(&watchSession).Error; err != nil {
-                    log.Printf("Failed to create watch session: %v", err)
-                    c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
-                    return
-                }
-            } else {
-                log.Printf("Error querying watch session: %v", err)
-                c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-                return
-            }
-        }
-        sessionID = watchSession.SessionID
-    }
+	if sessionID != "" {
+		if err := DB.Where("session_id = ? AND ended_at IS NULL", sessionID).First(&watchSession).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				watchSession = models.WatchSession{
+					SessionID: sessionID,
+					RoomID:    roomID,
+					HostID:    authenticatedUserID,
+					StartedAt: time.Now(),
+				}
+				if err := DB.Create(&watchSession).Error; err != nil {
+					log.Printf("Failed to create watch session: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+					return
+				}
+			} else {
+				log.Printf("Error querying watch session: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+				return
+			}
+		}
+	} else {
+		if err := DB.Where("room_id = ? AND ended_at IS NULL", roomID).First(&watchSession).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				sessionID = uuid.New().String()
+				watchSession = models.WatchSession{
+					SessionID: sessionID,
+					RoomID:    roomID,
+					HostID:    authenticatedUserID,
+					StartedAt: time.Now(),
+				}
+				if err := DB.Create(&watchSession).Error; err != nil {
+					log.Printf("Failed to create watch session: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+					return
+				}
+			} else {
+				log.Printf("Error querying watch session: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+				return
+			}
+		}
+		sessionID = watchSession.SessionID
+	}
 
-    // After creating or fetching the session, add it to the hub's activeSessions
-    hub.sessionMutex.Lock()
-    hub.activeSessions[watchSession.SessionID] = &watchSession
-    hub.sessionMutex.Unlock()
+	hub.sessionMutex.Lock()
+	hub.activeSessions[watchSession.SessionID] = &watchSession
+	hub.sessionMutex.Unlock()
 
-    // Create client instance
-    client := &Client{
-        hub:      hub,
-        conn:     conn,
-        send:     make(chan OutgoingMessage, 1024),
-        roomID:   roomID,
-        userID:   authenticatedUserID,
-        streamID: sessionID,
-    }
+	client := &Client{
+		hub:      hub,
+		conn:     conn,
+		send:     make(chan OutgoingMessage, 1024),
+		roomID:   roomID,
+		userID:   authenticatedUserID,
+		streamID: sessionID,
+	}
 
-    // 🔥 SYNCHRONOUS DEDUPLICATION
-    var oldClient *Client
-    hub.registryMutex.Lock()
-    if userMap, exists := hub.clientRegistry[authenticatedUserID]; exists {
-        if existing, ok := userMap[roomID]; ok {
-            oldClient = existing
-            log.Printf("WebSocketHandler: Found existing client %p for user %d in room %d", oldClient, authenticatedUserID, roomID)
-            // ✅ SYNCHRONOUS CLEANUP
-            hub.cleanupClientSync(oldClient)
-            delete(userMap, roomID)
-            if len(userMap) == 0 {
-                delete(hub.clientRegistry, authenticatedUserID)
-            }
-        }
-    }
-    // Register new client
-    if _, exists := hub.clientRegistry[authenticatedUserID]; !exists {
-        hub.clientRegistry[authenticatedUserID] = make(map[uint]*Client)
-    }
-    hub.clientRegistry[authenticatedUserID][roomID] = client
-    hub.registryMutex.Unlock()
+	// 🔥 SYNCHRONOUS DEDUPLICATION & REGISTRATION
+	var oldClient *Client
+	log.Printf("[WebSocketHandler] 🔍 Checking for duplicate connections: user %d, room %d", authenticatedUserID, roomID)
 
-    // ✅ NOW register with hub (AFTER deduplication and cleanup)
-    hub.register <- client  // ← THIS LINE MOVED HERE
+	hub.registryMutex.Lock()
+	// Check for existing client first
+	if userMap, exists := hub.clientRegistry[authenticatedUserID]; exists {
+		if existing, ok := userMap[roomID]; ok {
+			oldClient = existing
+			log.Printf("[WebSocketHandler] ⚠️ Found DUPLICATE client %p for user %d in room %d", oldClient, authenticatedUserID, roomID)
+			hub.cleanupClientSync(oldClient)
+		}
+	}
+	
+	// ✅ Always ensure the user's map exists before assigning (cleanup may have deleted it)
+	if _, exists := hub.clientRegistry[authenticatedUserID]; !exists {
+		hub.clientRegistry[authenticatedUserID] = make(map[uint]*Client)
+	}
+	hub.clientRegistry[authenticatedUserID][roomID] = client
+	log.Printf("[WebSocketHandler] ✅ Registered client %p in clientRegistry for user %d, room %d", client, authenticatedUserID, roomID)
+	hub.registryMutex.Unlock()
 
-    // Join the watch session
-    if err := hub.JoinWatchSession(sessionID, client); err != nil {
-        log.Printf("Failed to join watch session: %v", err)
-    }
+	// Join the watch session
+	if err := hub.JoinWatchSession(sessionID, client); err != nil {
+		log.Printf("Failed to join watch session: %v", err)
+	}
 
-    // --- Send session_status message to client ---
-    // Fetch session members
-    members, err := GetSessionMembers(DB, watchSession.ID)
-    if err != nil {
-        log.Printf("Failed to fetch session members: %v", err)
-        // Send error status to client
-        statusMsg := WebSocketMessage{
-            Type: "session_status",
-            Data: map[string]interface{}{
-                "error": "Failed to fetch session members",
-            },
-        }
-        if msgBytes, err := json.Marshal(statusMsg); err == nil {
-            // ✅ Use hub broadcast to avoid "send on closed channel"
-            go func() {
-                hub.BroadcastToUsers([]uint{authenticatedUserID}, OutgoingMessage{Data: msgBytes, IsBinary: false})
-            }()
-        }
-    } else {
-        // Compose session_status message
-        var isScreenSharing bool = false
-        var screenShareHostID uint = 0
+	// --- COLLECT STARTUP MESSAGES (but DO NOT send yet) ---
+	var startupMessages []OutgoingMessage
 
-        // First, check in-memory
-        hub.screenShareMutex.RLock()
-        if state, exists := hub.screenShares[watchSession.RoomID]; exists && state.Active && state.Host != nil {
-            // Verify host client is still registered in the room
-            hub.mutex.RLock()
-            _, hostStillConnected := hub.rooms[watchSession.RoomID][state.Host]
-            hub.mutex.RUnlock()
+	// Build session_status
+	members, err := GetSessionMembers(DB, watchSession.ID)
+	if err != nil {
+		log.Printf("Failed to fetch session members: %v", err)
+		statusMsg := WebSocketMessage{
+			Type: "session_status",
+			Data: map[string]interface{}{
+				"error": "Failed to fetch session members",
+			},
+		}
+		if msgBytes, err := json.Marshal(statusMsg); err == nil {
+			startupMessages = append(startupMessages, OutgoingMessage{Data: msgBytes, IsBinary: false})
+		}
+	} else {
+		trimmedMembers := make([]map[string]interface{}, len(members))
+		for i, m := range members {
+			trimmedMembers[i] = map[string]interface{}{
+				"id":        m.ID,
+				"user_id":   m.UserID,
+				"user_role": m.UserRole,
+			}
+		}
 
-            if hostStillConnected {
-                isScreenSharing = true
-                screenShareHostID = state.Host.userID
-            } else {
-                // Host disconnected — clean up stale in-memory state
-                delete(hub.screenShares, watchSession.RoomID)
-                log.Printf("Cleaned up stale screen share state for room %d (host gone)", watchSession.RoomID)
-            }
-        }
-        hub.screenShareMutex.RUnlock()
+		var isScreenSharing bool = false
+		var screenShareHostID uint = 0
+		hub.screenShareMutex.RLock()
+		if state, exists := hub.screenShares[watchSession.RoomID]; exists && state.Active && state.Host != nil {
+			hub.mutex.RLock()
+			_, hostStillConnected := hub.rooms[watchSession.RoomID][state.Host]
+			hub.mutex.RUnlock()
+			if hostStillConnected {
+				isScreenSharing = true
+				screenShareHostID = state.Host.userID
+			} else {
+				delete(hub.screenShares, watchSession.RoomID)
+				log.Printf("Cleaned up stale screen share state for room %d (host gone)", watchSession.RoomID)
+			}
+		}
+		hub.screenShareMutex.RUnlock()
 
-        statusMsg := WebSocketMessage{
-            Type: "session_status",
-            Data: map[string]interface{}{
-                "session_id": watchSession.SessionID,
-                "host_id": watchSession.HostID,
-                "members": members,
-                "started_at": watchSession.StartedAt,
-                "is_screen_sharing": isScreenSharing,
-                "screen_share_host_id": screenShareHostID,
-            },
-        }
-        if msgBytes, err := json.Marshal(statusMsg); err == nil {
-            go func() {
-                hub.BroadcastToUsers([]uint{authenticatedUserID}, OutgoingMessage{Data: msgBytes, IsBinary: false})
-            }()
-        }
-    }
+		statusMsg := WebSocketMessage{
+			Type: "session_status",
+			Data: map[string]interface{}{
+				"session_id":           watchSession.SessionID,
+				"host_id":              watchSession.HostID,
+				"members":              trimmedMembers,
+				"started_at":           watchSession.StartedAt,
+				"is_screen_sharing":    isScreenSharing,
+				"screen_share_host_id": screenShareHostID,
+			},
+		}
+		if msgBytes, err := json.Marshal(statusMsg); err == nil {
+			startupMessages = append(startupMessages, OutgoingMessage{Data: msgBytes, IsBinary: false})
+		}
+	}
 
-    // 🔥 NEW: Send screen_share_started to late-joining members if screen share is active
-    hub.screenShareMutex.RLock()
-    if state, exists := hub.screenShares[roomID]; exists && state.Active && state.Host != nil {
-        hub.mutex.RLock()
-        _, hostStillConnected := hub.rooms[roomID][state.Host]
-        hub.mutex.RUnlock()
-        if hostStillConnected {
-            startMsg := ScreenShareSignal{
-                Type: "screen_share_started",
-                Data: map[string]interface{}{
-                    "user_id":    state.Host.userID,
-                    "timestamp":  state.StartTime.Unix(),
-                    "mime_type":  state.MimeType,
-                },
-                Timestamp: time.Now().Unix(),
-            }
-            if startBytes, err := json.Marshal(startMsg); err == nil {
-                go func() {
-                    hub.BroadcastToUsers([]uint{authenticatedUserID}, OutgoingMessage{Data: startBytes, IsBinary: false})
-                }()
-                log.Printf("[ScreenShare] Sent screen_share_started to late-joining user %d in room %d", authenticatedUserID, roomID)
-            }
-        }
-    }
-    hub.screenShareMutex.RUnlock()
+	// Build screen_share_started if active (for late joiners)
+	hub.screenShareMutex.RLock()
+	if state, exists := hub.screenShares[roomID]; exists && state.Active && state.Host != nil {
+		hub.mutex.RLock()
+		_, hostStillConnected := hub.rooms[roomID][state.Host]
+		hub.mutex.RUnlock()
+		if hostStillConnected {
+			startMsg := ScreenShareSignal{
+				Type:      "screen_share_started",
+				Data:      map[string]interface{}{"user_id": state.Host.userID, "timestamp": state.StartTime.Unix(), "mime_type": state.MimeType},
+				Timestamp: time.Now().Unix(),
+			}
+			if startBytes, err := json.Marshal(startMsg); err == nil {
+				startupMessages = append(startupMessages, OutgoingMessage{Data: startBytes, IsBinary: false})
+			}
+		}
+	}
+	hub.screenShareMutex.RUnlock()
 
-    // Start the client pumps
-    go client.writePump()
-    go client.readPump()
+	// ✅ Now register in hub.rooms
+	hub.mutex.Lock()
+	if _, ok := hub.rooms[roomID]; !ok {
+		hub.rooms[roomID] = make(map[*Client]bool)
+	}
+	hub.rooms[roomID][client] = true
+	hub.mutex.Unlock()
+	log.Printf("Hub: Client %p (User %d) synchronously registered for room %d", client, authenticatedUserID, roomID)
 
-    // Block forever
-    select {}
+	// --- START PUMPS FIRST ---
+	log.Printf("[WebSocketHandler] 🚀 Starting pumps for user %d in room %d, client=%p", authenticatedUserID, roomID, client)
+	go func() {
+		log.Printf("[writePump] ▶️ STARTED for user %d (client=%p)", client.userID, client)
+		client.writePump()
+		log.Printf("[writePump] ⏹️ EXITED for user %d (client=%p)", client.userID, client)
+	}()
+	go func() {
+		log.Printf("[readPump] ▶️ STARTED for user %d (client=%p)", client.userID, client)
+		client.readPump()
+		log.Printf("[readPump] ⏹️ EXITED for user %d (client=%p)", client.userID, client)
+	}()
+
+	// --- SEND STARTUP MESSAGES AFTER PUMPS ARE RUNNING ---
+	go func() {
+		// Small delay to ensure writePump is listening
+		time.Sleep(10 * time.Millisecond)
+		
+		// ✅ Recover from panic if channel is closed during send
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("⚠️ Recovered from panic sending startup messages to user %d (client was cleaned up): %v", client.userID, r)
+			}
+		}()
+		
+		for _, msg := range startupMessages {
+			select {
+			case client.send <- msg:
+				log.Printf("✅ Sent startup message to user %d", client.userID)
+			case <-time.After(100 * time.Millisecond):
+				log.Printf("⚠️ Timeout sending startup message to user %d (client likely cleaned up)", client.userID)
+				return // Stop trying if we timeout
+			}
+		}
+	}()
+
+	log.Printf("[WebSocketHandler] ✅ Pumps launched for user %d, blocking forever", authenticatedUserID)
+	select {}
 }
 
 // InitializeHub creates and starts the global hub.
@@ -944,99 +982,128 @@ func NewScreenShareState() *ScreenShareState {
 
 // StartScreenShare initializes screen sharing for a room
 func (h *Hub) StartScreenShare(roomID uint, host *Client, mimeType string) error {
-    h.screenShareMutex.Lock()
-    defer h.screenShareMutex.Unlock()
+	h.screenShareMutex.Lock()
+	defer h.screenShareMutex.Unlock()
 
-    if state, exists := h.screenShares[roomID]; exists && state.Active {
-        log.Printf("[ScreenShare] StartScreenShare: Screen sharing already active in room %d", roomID)
-        return fmt.Errorf("screen sharing already active in room %d", roomID)
-    }
+	if state, exists := h.screenShares[roomID]; exists && state.Active {
+		log.Printf("[ScreenShare] StartScreenShare: Screen sharing already active in room %d", roomID)
+		return fmt.Errorf("screen sharing already active in room %d", roomID)
+	}
 
-    state := NewScreenShareState()
-    state.Host = host
-    state.MimeType = mimeType
-    state.Active = true
-    state.StartTime = time.Now()
-    h.screenShares[roomID] = state
+	state := NewScreenShareState()
+	state.Host = host
+	state.MimeType = mimeType
+	state.Active = true
+	state.StartTime = time.Now()
+	h.screenShares[roomID] = state
 
-    // ✅ Auto-subscribe all current room members (except host)
-    h.mutex.RLock()
-    roomClients, ok := h.rooms[roomID]
-    h.mutex.RUnlock()
+	// ✅ Collect ALL clients in the room from BOTH h.rooms and clientRegistry
+	var allClientsInRoom []*Client
 
-    if ok {
-        state.mutex.Lock()
-        for client := range roomClients {
-            if client == host {
-                continue
-            }
-            state.Viewers[client] = true
-            client.isReceivingStream = true
-            client.lastStreamChunk = time.Now()
+	// 1. From h.rooms (fully registered clients)
+	h.mutex.RLock()
+	if roomClients, ok := h.rooms[roomID]; ok {
+		for client := range roomClients {
+			allClientsInRoom = append(allClientsInRoom, client)
+		}
+	}
+	h.mutex.RUnlock()
 
-            // ✅ Send "joined" ack so frontend knows to prepare MediaSource
-            ack := WebSocketMessage{
-                Type:    "screen_share",
-                Command: "joined",
-                Data: map[string]interface{}{
-                    "host_id":     host.userID,
-                    "start_time":  state.StartTime.Unix(),
-                },
-            }
-            if ackBytes, err := json.Marshal(ack); err == nil {
-                select {
-                case client.send <- OutgoingMessage{Data: ackBytes, IsBinary: false}:
+	// 2. From clientRegistry (may include just-connected clients not yet in h.rooms)
+	h.registryMutex.RLock()
+	for _, userMap := range h.clientRegistry {
+		if client, exists := userMap[roomID]; exists {
+			// Avoid duplicates
+			found := false
+			for _, c := range allClientsInRoom {
+				if c == client {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allClientsInRoom = append(allClientsInRoom, client)
+			}
+		}
+	}
+	h.registryMutex.RUnlock()
+
+	// ✅ Auto-subscribe all non-host clients as viewers
+	if len(allClientsInRoom) > 0 {
+		state.mutex.Lock()
+		log.Printf("[DEBUG] Auto-subscribed %d viewers for room %d (host: %d)", len(allClientsInRoom)-1, roomID, host.userID)
+		for _, client := range allClientsInRoom {
+			if client == host {
+				continue
+			}
+			state.Viewers[client] = true
+			client.isReceivingStream = true
+			client.lastStreamChunk = time.Now()
+
+			// ✅ Send "joined" ack so frontend knows to prepare MediaSource
+			ack := WebSocketMessage{
+				Type:    "screen_share",
+				Command: "joined",
+				Data: map[string]interface{}{
+					"host_id":     host.userID,
+					"start_time":  state.StartTime.Unix(),
+				},
+			}
+			if ackBytes, err := json.Marshal(ack); err == nil {
+				select {
+				case client.send <- OutgoingMessage{Data: ackBytes, IsBinary: false}:
+				log.Println("✅ Using patched WebSocketHandler with select sends")
                 default:
-                    log.Printf("[ScreenShare] Failed to send auto-join ack to user %d", client.userID)
-                }
-            }
-        }
-        state.mutex.Unlock()
-    }
+					log.Printf("[ScreenShare] Failed to send auto-join ack to user %d", client.userID)
+				}
+			}
+		}
+		state.mutex.Unlock()
+	}
 
-    // --- DB update ---
-    var dbShare models.ScreenShare
-    if err := DB.Where("room_id = ?", roomID).First(&dbShare).Error; err == nil {
-        dbShare.HostID = host.userID
-        dbShare.Active = true
-        dbShare.StartedAt = state.StartTime
-        dbShare.EndedAt = nil
-        DB.Save(&dbShare)
-    } else {
-        dbShare = models.ScreenShare{
-            RoomID:    roomID,
-            HostID:    host.userID,
-            Active:    true,
-            StartedAt: state.StartTime,
-        }
-        DB.Create(&dbShare)
-    }
+	// --- DB update ---
+	var dbShare models.ScreenShare
+	if err := DB.Where("room_id = ?", roomID).First(&dbShare).Error; err == nil {
+		dbShare.HostID = host.userID
+		dbShare.Active = true
+		dbShare.StartedAt = state.StartTime
+		dbShare.EndedAt = nil
+		DB.Save(&dbShare)
+	} else {
+		dbShare = models.ScreenShare{
+			RoomID:    roomID,
+			HostID:    host.userID,
+			Active:    true,
+			StartedAt: state.StartTime,
+		}
+		DB.Create(&dbShare)
+	}
 
-    host.isStreamHost = true
-    host.lastStreamChunk = time.Now()
+	host.isStreamHost = true
+	host.lastStreamChunk = time.Now()
 
-    log.Printf("[ScreenShare] User %d started screen sharing in room %d", host.userID, roomID)
+	log.Printf("[ScreenShare] User %d started screen sharing in room %d", host.userID, roomID)
 
-    // --- Broadcast start signal ---
-    startMsg := ScreenShareSignal{
-        Type:      "screen_share_started",
-        Data: map[string]interface{}{
-            "user_id":    host.userID,
-            "timestamp":  state.StartTime.Unix(),
-            "mime_type":  state.MimeType,
-        },
-        Timestamp: time.Now().Unix(),
-    }
+	// --- Broadcast start signal to entire room ---
+	startMsg := ScreenShareSignal{
+		Type:      "screen_share_started",
+		Data: map[string]interface{}{
+			"user_id":    host.userID,
+			"timestamp":  state.StartTime.Unix(),
+			"mime_type":  state.MimeType,
+		},
+		Timestamp: time.Now().Unix(),
+	}
 
-    if broadcastBytes, err := json.Marshal(startMsg); err == nil {
-        h.BroadcastToRoom(roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, nil)
-        log.Printf("[ScreenShare] Broadcasted screen_share_started to room %d", roomID)
-    } else {
-        log.Printf("[ScreenShare] Failed to marshal start message: %v", err)
-    }
+	if broadcastBytes, err := json.Marshal(startMsg); err == nil {
+		h.BroadcastToRoom(roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, nil)
+		log.Printf("[ScreenShare] Broadcasted screen_share_started to room %d", roomID)
+	} else {
+		log.Printf("[ScreenShare] Failed to marshal start message: %v", err)
+	}
 
-    go h.handleScreenShareBroadcast(roomID)
-    return nil
+	go h.handleScreenShareBroadcast(roomID)
+	return nil
 }
 
 // StopScreenShare gracefully stops screen sharing for a room
@@ -1103,8 +1170,9 @@ func (h *Hub) JoinScreenShare(roomID uint, viewer *Client) error {
 
     state.mutex.Lock()
     state.Viewers[viewer] = true
-    // After adding viewer to state.Viewers
+    // After adding viewer to state.Viewers, send init segment if available
     if state.InitSegment != nil {
+        log.Printf("[DEBUG] Sending init segment (%d bytes) to viewer %d", len(state.InitSegment), viewer.userID)
         payload := make([]byte, len(state.InitSegment))
         copy(payload, state.InitSegment)
         select {
@@ -1241,10 +1309,13 @@ func (client *Client) handleBinaryMessage(message []byte) {
     // ✅ Deliver ONLY to state.Viewers (now the single source of truth)
     delivered := int64(0)
     state.mutex.RLock()
+    log.Printf("[DEBUG] Room %d Screen Share Viewers:", roomID)
     for viewer := range state.Viewers {
+        log.Printf("  → Viewer User %d (Client %p)", viewer.userID, viewer)
         if viewer == client { // skip host
             continue
         }
+        log.Printf("[DEBUG] Total viewers: %d", len(state.Viewers))
         payload := make([]byte, len(message))
         copy(payload, message)
         select {
@@ -1265,11 +1336,15 @@ func (client *Client) handleBinaryMessage(message []byte) {
 }
 
 func (client *Client) handleMessage(message []byte) {
+    log.Printf("[handleMessage] 📥 Processing message from user %d (client=%p), length=%d", client.userID, client, len(message))
+    
     var msg WebSocketMessage
     if err := json.Unmarshal(message, &msg); err != nil {
-        log.Printf("Error unmarshaling message: %v", err)
+        log.Printf("[handleMessage] ❌ Error unmarshaling message from user %d: %v", client.userID, err)
         return
     }
+
+    log.Printf("[handleMessage] 📋 Message type: '%s' from user %d", msg.Type, client.userID)
 
     // ✅ Handle client_ready: send session_status
     if msg.Type == "client_ready" {
@@ -1328,6 +1403,7 @@ func (client *Client) handleMessage(message []byte) {
             case client.send <- OutgoingMessage{Data: ackBytes, IsBinary: false}:
             default:
                 // silently drop if buffer full
+                log.Printf("buffer full dropping")
             }
         }
         return // ✅ Important: stop here
@@ -1395,6 +1471,7 @@ func (client *Client) handleMessage(message []byte) {
             }
 
         case "join":
+            log.Printf("[DEBUG] User %d sent 'join' for screen share in room %d", client.userID, msg.RoomID);
             client.hub.screenShareMutex.RLock()
             state, exists := client.hub.screenShares[client.roomID] // ✅ Use client.roomID
             client.hub.screenShareMutex.RUnlock()
@@ -1444,6 +1521,7 @@ func (client *Client) handleMessage(message []byte) {
 
         case "viewer_ready":
             log.Printf("[ScreenShare] Viewer %d is ready in room %d", client.userID, client.roomID)
+            log.Printf("[DEBUG] User %d sent 'viewer_ready' in room %d", client.userID, client.roomID);
             client.hub.screenShareMutex.RLock()
             state, exists := client.hub.screenShares[client.roomID] // ✅ Use client.roomID
             client.hub.screenShareMutex.RUnlock()
