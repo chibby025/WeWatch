@@ -10,6 +10,7 @@ export default function useWebSocket(roomId, wsToken = null) {
   const messageQueueRef = useRef([]);
   const onBinaryMessageRef = useRef(null);
   const reconnectAttemptRef = useRef(0);
+  const isConnectingRef = useRef(false); // ✅ Guard against duplicate connections
   const MAX_RECONNECT_ATTEMPTS = 5;
   const RECONNECT_INTERVAL = 2000; // 2 seconds
 
@@ -53,6 +54,13 @@ export default function useWebSocket(roomId, wsToken = null) {
       return;
     }
 
+    // ✅ Prevent duplicate connections
+    if (isConnectingRef.current) {
+      console.warn("useWebSocket: Already connecting, skipping duplicate connection attempt");
+      return;
+    }
+
+    isConnectingRef.current = true;
     setIsReconnecting(true);
     const queryParams = [];
     if (wsToken) {
@@ -83,6 +91,7 @@ export default function useWebSocket(roomId, wsToken = null) {
       setIsConnected(true);
       setIsReconnecting(false);
       reconnectAttemptRef.current = 0;
+      isConnectingRef.current = false; // ✅ Connection complete
       
       // Process queued messages with rate limiting
       const processQueue = () => {
@@ -230,6 +239,7 @@ export default function useWebSocket(roomId, wsToken = null) {
     ws.onclose = (event) => {
       console.log(`useWebSocket: 🔌 WebSocket closed for room ${roomId}. Code: ${event.code}, Attempts: ${reconnectAttemptRef.current}`);
       setIsConnected(false);
+      isConnectingRef.current = false; // ✅ Allow reconnection
       
       // Clear message stats on disconnect
       messageStatsRef.current = {
@@ -253,6 +263,7 @@ export default function useWebSocket(roomId, wsToken = null) {
 
     ws.onerror = (error) => {
       console.error("useWebSocket: 🐞 WebSocket error:", error);
+      isConnectingRef.current = false; // ✅ Allow reconnection after error
       // Don't set isConnected to false here, let onclose handle the reconnection
     };
 
@@ -260,6 +271,7 @@ export default function useWebSocket(roomId, wsToken = null) {
       console.log("useWebSocket: Cleaning up WebSocket connection for room:", roomId);
       setIsReconnecting(false); // Stop reconnection attempts on cleanup
       reconnectAttemptRef.current = MAX_RECONNECT_ATTEMPTS; // Prevent new reconnection attempts
+      isConnectingRef.current = false; // ✅ Reset guard on cleanup
       if (ws.readyState === WebSocket.OPEN) {
         ws.close();
       }
@@ -269,87 +281,60 @@ export default function useWebSocket(roomId, wsToken = null) {
   // Main effect to initiate connection
   useEffect(() => {
     reconnectAttemptRef.current = 0; // Reset reconnection attempts
-    connectWebSocket();
-    // Cleanup handled by connectWebSocket's effect
-  }, [roomId, wsToken, connectWebSocket]);
+    const cleanup = connectWebSocket();
+    return cleanup; // Proper cleanup on unmount or dependency change
+  }, [roomId, wsToken]); // ✅ REMOVED connectWebSocket from deps
 
   // Debug: Log sessionStatus changes
   useEffect(() => {
     console.log('[useWebSocket] sessionStatus state changed:', sessionStatus);
   }, [sessionStatus]);
 
+  // ✅ SIMPLIFIED sendMessage — AUTO-DETECTS TEXT vs BINARY
   const sendMessage = useCallback((message) => {
-    // Add size validation for binary messages
-    if (message instanceof Blob || message instanceof ArrayBuffer) {
-      const size = message.size || message.byteLength;
-      if (size > MAX_BINARY_SIZE) {
-        console.error("useWebSocket: ❌ Binary message too large:", size, "bytes");
+    console.log("[useWebSocket] sendMessage called with:", message, "Socket state:", socket ? socket.readyState : "N/A")
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      console.warn("useWebSocket: Socket not open, queueing message:", message);
+      if (messageQueueRef.current.length >= MAX_QUEUE_SIZE) {
+        console.error("useWebSocket: ❌ Message queue full, dropping message");
         return false;
       }
-    }
-
-    // Check queue size
-    if (messageQueueRef.current.length >= MAX_QUEUE_SIZE) {
-      console.error("useWebSocket: ❌ Message queue full, dropping message");
+      messageQueueRef.current.push(message);
+      console.log("[useWebSocket] Message queued. Current queue size:", messageQueueRef.current.length);
+      setBufferFullness((messageQueueRef.current.length / MAX_QUEUE_SIZE) * 100);
       return false;
     }
 
-    if (socket?.readyState === WebSocket.OPEN) {
-      try {
-        if (message instanceof Blob || message instanceof ArrayBuffer) {
-          // Log binary message details before sending
-          console.log("useWebSocket: 📤 Sending binary message:", {
-            type: message.constructor.name,
-            size: message.byteLength || message.size,
-            readyState: socket.readyState,
-            isConnected: isConnected,
-            isReconnecting: isReconnecting,
-            queueLength: messageQueueRef.current.length,
-            bufferFullness: bufferFullness
-          });
-
-          socket.send(message);
-          messageStatsRef.current.totalMessagesSent++;
-          messageStatsRef.current.messagesSentInLastSecond++;
-          return true;
-        } else {
-          socket.send(JSON.stringify(message));
-          messageStatsRef.current.totalMessagesSent++;
-          messageStatsRef.current.messagesSentInLastSecond++;
-          return true;
+    try {
+      if (message instanceof Blob || message instanceof ArrayBuffer) {
+        // → BINARY
+        const size = message.size || message.byteLength;
+        if (size > MAX_BINARY_SIZE) {
+          console.error("useWebSocket: ❌ Binary message too large:", size, "bytes");
+          return false;
         }
-      } catch (error) {
-        console.error("useWebSocket: 🐞 Error sending message:", error);
-        messageQueueRef.current.push(message);
-        setBufferFullness((messageQueueRef.current.length / MAX_QUEUE_SIZE) * 100);
-        return false;
+        socket.send(message);
+        console.log("useWebSocket: 📤 Sent as BINARY", { size });
+        return true;
+      } else {
+        // → TEXT (JSON)
+        const json = typeof message === 'string' ? message : JSON.stringify(message);
+        socket.send(json);
+        console.log("useWebSocket: 📤 Sent as TEXT", { preview: json.substring(0, 100) + (json.length > 100 ? '...' : '') });
+        return true;
       }
-    } else {
-      console.warn("useWebSocket: ⚠️ Socket not ready, queueing message:", {
-        type: message instanceof ArrayBuffer ? 'binary' : 'text',
-        size: message instanceof ArrayBuffer ? message.byteLength : JSON.stringify(message).length,
-        socketState: socket?.readyState,
-        queueLength: messageQueueRef.current.length,
-        bufferFullness: bufferFullness
-      });
+    } catch (error) {
+      console.error("useWebSocket: 🐞 Error sending message:", error, message);
       messageQueueRef.current.push(message);
       setBufferFullness((messageQueueRef.current.length / MAX_QUEUE_SIZE) * 100);
       return false;
     }
-  }, [socket, isConnected, isReconnecting, bufferFullness]);
+  }, [socket]);
 
-  // Convenience wrapper for sending binary frames explicitly
-  const sendBinary = useCallback((binary) => {
-    if (!(binary instanceof Blob || binary instanceof ArrayBuffer)) {
-      console.error('useWebSocket.sendBinary: payload must be Blob or ArrayBuffer');
-      return false;
-    }
-    return sendMessage(binary);
-  }, [sendMessage]);
+
 
   return { 
     sendMessage, 
-    sendBinary,
     messages, 
     isConnected, 
     isReconnecting,

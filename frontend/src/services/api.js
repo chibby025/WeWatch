@@ -432,6 +432,25 @@ export const deleteSingleTemporaryMediaItem = async (roomId, itemId) => {
 };
 
 
+/**
+ * Creates a new watch session for a room (host-only)
+ * @param {string|number} roomId 
+ * @returns {Promise<AxiosResponse>}
+ */
+export const createWatchSessionForRoom = (roomId) => {
+  return apiClient.post(`/api/rooms/${roomId}/watch-session`);
+};
+
+
+/**
+ * Fetches the active watch session for a room (if any)
+ * @param {string|number} roomId 
+ * @returns {Promise<AxiosResponse>}
+ */
+export const getActiveSession = (roomId) => {
+  return apiClient.get(`/api/rooms/${roomId}/active-session`);
+};
+
 export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false) => {
   try {
     console.log(`📤 API: Uploading media file to room ${roomId} (Temporary: ${isTemporary})`, file.name);
