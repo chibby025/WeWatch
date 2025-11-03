@@ -90,6 +90,9 @@ export default function VideoWatch() {
   
   // ref for player binary handler
   const handleBinaryMessageFromPlayerRef = useRef(null);
+  
+  // Track processed messages to avoid re-processing on every render
+  const processedMessageCountRef = useRef(0);
 
   // Called by CinemaVideoPlayer to register/unregister its handler
   const setPlayerBinaryHandler = useCallback((handler) => {
@@ -1007,9 +1010,15 @@ export default function VideoWatch() {
 
   // 🎧 Handle ALL incoming WebSocket messages
   useEffect(() => {
-    console.log("📡 [GUEST] Processing", messages.length, "WebSocket messages");
-    messages.forEach((message, i) => {
-      console.log(`[DEBUG] Processing message ${i+1}/${messages.length}:`, message.type);
+    // Only process NEW messages (messages added since last effect run)
+    const newMessages = messages.slice(processedMessageCountRef.current);
+    if (newMessages.length === 0) return;
+    
+    console.log("📡 [GUEST] Processing", newMessages.length, "NEW WebSocket messages (total:", messages.length, ")");
+    
+    newMessages.forEach((message, i) => {
+      const messageIndex = processedMessageCountRef.current + i + 1;
+      console.log(`[DEBUG] Processing NEW message ${messageIndex}:`, message.type);
       console.log("📡 [VideoWatch] Incoming WebSocket message:", message.type, message);
       // Handle client_ready acknowledgment
       if (message.type === "client_ready_ack") {
@@ -1320,8 +1329,11 @@ export default function VideoWatch() {
           console.warn("[VideoWatch] Unknown WebSocket message type:", message.type, message);
       }
     });
-  }, [messages, sessionStatus.id, currentUser?.id, currentMedia?.userId]);
-
+    
+    // Update processed message count after processing
+    processedMessageCountRef.current = messages.length;
+  }, [messages, sessionStatus.id, currentUser?.id]);
+  // }, [messages, sessionStatus.id, currentUser?.id, currentMedia?.userId]);
 
 
   // Fetch session chat messages
