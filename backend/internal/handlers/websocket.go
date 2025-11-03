@@ -1096,7 +1096,7 @@ func (h *Hub) StartScreenShare(roomID uint, host *Client, mimeType string) error
 	}
 
 	if broadcastBytes, err := json.Marshal(startMsg); err == nil {
-		h.BroadcastToRoom(roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, nil)
+		h.BroadcastToRoom(roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, host)
 		log.Printf("[ScreenShare] Broadcasted screen_share_started to room %d", roomID)
 	} else {
 		log.Printf("[ScreenShare] Failed to marshal start message: %v", err)

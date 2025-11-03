@@ -70,7 +70,7 @@ const CinemaVideoPlayer = ({
         mediaSourceRef.current = null;
         sourceBufferRef.current = null;
         binaryMessageBufferRef.current = [];
-        earlyChunkBufferRef.current = []; // ✅ Clear early buffer too
+        earlyChunkBufferRef.current = [];
         console.log("[CinemaVideoPlayer] 📺 MediaSource and buffers cleared.");
       }
 
@@ -99,12 +99,16 @@ const CinemaVideoPlayer = ({
         console.log("[CinemaVideoPlayer] 🖥️ Host rendering local screen stream");
         if (localScreenStream) {
           video.srcObject = localScreenStream;
-          setIsBuffering(false);
+          video.muted = true; // Prevent echo
+          try {
+            video.play().catch(e => console.warn("Host preview play failed:", e));
+          } catch (e) {
+            console.warn("Host preview play exception:", e);
+          }
         } else {
-          console.warn("[CinemaVideoPlayer] ⚠️ Host has no localScreenStream");
-          video.src = '';
-          setIsBuffering(false);
+          video.srcObject = null;
         }
+        setIsBuffering(false);
       } else {
         console.log("[CinemaVideoPlayer] 📺 Member setting up MediaSource for screen share.");
         setIsBuffering(true);
@@ -123,13 +127,11 @@ const CinemaVideoPlayer = ({
         // ✅ Define handler that buffers until sourceopen
         const handleBinaryChunk = (data) => {
           if (!data || data.byteLength === 0) return;
-          // If sourceBuffer is not ready, buffer in earlyChunkBufferRef
           if (!sourceBufferRef.current) {
             earlyChunkBufferRef.current.push(data);
             console.log("[CinemaVideoPlayer] 📥 Buffered chunk before sourceopen");
             return;
           }
-          // Otherwise, use normal playback buffer
           if (sourceBufferRef.current.updating) {
             binaryMessageBufferRef.current.push(data);
             return;
@@ -154,7 +156,7 @@ const CinemaVideoPlayer = ({
           }
         };
 
-        // Register handler IMMEDIATELY (before sourceopen)
+        // Register handler IMMEDIATELY
         if (onBinaryHandlerReady && typeof onBinaryHandlerReady === 'function') {
           onBinaryHandlerReady(handleBinaryChunk);
         }
@@ -167,7 +169,6 @@ const CinemaVideoPlayer = ({
             setIsVideoPlaying(true);
             console.log("[CinemaVideoPlayer] ✅ SourceBuffer added for MIME type:", mimeType);
 
-            // Set up event listeners
             sourceBuffer.addEventListener('updateend', () => {
               if (binaryMessageBufferRef.current.length > 0 && !sourceBuffer.updating) {
                 const nextChunk = binaryMessageBufferRef.current.shift();
@@ -188,7 +189,7 @@ const CinemaVideoPlayer = ({
               onError(new Error('SourceBuffer error'), 'Error receiving screen share data.');
             });
 
-            // ✅ FLUSH EARLY CHUNKS (now that SourceBuffer is ready)
+            // ✅ FLUSH EARLY CHUNKS
             if (earlyChunkBufferRef.current.length > 0) {
               console.log("[CinemaVideoPlayer] 🚀 Flushing", earlyChunkBufferRef.current.length, "early buffered chunks");
               earlyChunkBufferRef.current.forEach(chunk => {
@@ -209,9 +210,10 @@ const CinemaVideoPlayer = ({
               earlyChunkBufferRef.current = [];
             }
 
-            // ✅ Signal readiness
-            if (!isHost && onScreenShareReady && typeof onScreenShareReady === 'function') {
+            // ✅ Signal readiness — NO userId (not in scope)
+            if (!isHost && onScreenShareReady) {
               onScreenShareReady();
+              console.log("[CinemaVideoPlayer] 🎉 onScreenShareReady called for member");
             }
 
           } catch (addError) {
@@ -231,7 +233,6 @@ const CinemaVideoPlayer = ({
         return () => {
           mediaSource.removeEventListener('sourceopen', sourceOpenHandler);
           mediaSource.removeEventListener('error', handleError);
-          // Cleanup handler
           if (onBinaryHandlerReady) {
             onBinaryHandlerReady(null);
           }
@@ -256,10 +257,32 @@ const CinemaVideoPlayer = ({
       video.src = '';
       setIsBuffering(false);
     }
-  }, [mediaItem?.ID, mediaItem?.file_path, mediaItem?.stream, mediaItem?.type, isHost]);
+  }, [mediaItem?.ID, mediaItem?.file_path, mediaItem?.stream, mediaItem?.type, isHost, localScreenStream]);
 
-  // ... rest of your effects (playbackPositionRef, play/pause, etc.) remain unchanged ...
 
+  // ✅ Dedicated effect: attach host stream ONLY when videoRef is ready
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !isHost || !localScreenStream || mediaItem?.type !== 'screen_share') {
+      return;
+    }
+
+    // Only set if not already set (avoid re-assignment)
+    if (video.srcObject !== localScreenStream) {
+      console.log("[CinemaVideoPlayer] 🎯 Attaching host screen stream to video element");
+      video.srcObject = localScreenStream;
+      video.muted = true;
+      video.play().catch(e => console.warn("Host preview play failed:", e));
+    }
+
+    // Cleanup on unmount or stream change
+    return () => {
+      if (video.srcObject === localScreenStream) {
+        video.srcObject = null;
+      }
+    };
+  }, [videoRef.current, isHost, localScreenStream, mediaItem?.type]);
+  
   // KEEP playbackPositionRef IN SYNC DURING PLAYBACK
   useEffect(() => {
     const video = videoRef.current;
@@ -357,7 +380,6 @@ const CinemaVideoPlayer = ({
       {hasContent ? (
         <video
           ref={videoRef}
-          srcObject={isHost && mediaItem?.type === 'screen_share' ? localScreenStream : mediaItem?.stream || null}
           controls={false}
           className="w-full h-full object-contain"
           onPlay={onPlay}
