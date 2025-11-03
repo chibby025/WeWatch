@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 // Import API service functions
-import { getRoom, getMediaItemsForRoom, uploadMediaToRoom, getRoomMembers } from '../services/api';
+import { getRoom, getMediaItemsForRoom, uploadMediaToRoom, getRoomMembers, getActiveSession, createWatchSessionForRoom } from '../services/api';
 // Import the VideoPlayer component
 import VideoPlayer from './VideoPlayer'; // Adjust path if needed
 import MemberList from './MemberList';
@@ -61,6 +61,10 @@ const RoomPage = () => {
   const { currentUser, wsToken, loading: authLoading } = useAuth();
   // --- Refs ---
   const wsRef = useRef(null); // Ref to hold the WebSocket connection object (alternative to state)
+
+  // Session tracking state
+  // Add to your state declarations
+const [activeSessionId, setActiveSessionId] = useState(null);
 
   const [isMembersPanelOpen, setIsMembersPanelOpen] = useState(false);
   const [roomMembers, setRoomMembers] = useState([])
@@ -254,28 +258,39 @@ useEffect(() => {
   }
 }, [isMembersPanelOpen, roomId]);
 
-// Begin watch/join watch button logic
+// ✅ NEW: Create or join session
 useEffect(() => {
-  if (!roomId || sessionStatus.isActive) return;
+  if (!roomId || !currentUser || sessionStatus.isActive) return;
 
-  const pollSession = async () => {
+  const manageSession = async () => {
     try {
-      const response = await apiClient.get(`/api/rooms/${roomId}/active-session`);
-      if (response.data.session) {
-        setSessionStatus({
-          isActive: true,
-          hostId: response.data.session.host_id
-        });
-        console.log("Polling session")
+      // 1. Try to get active session
+      const sessionRes = await getActiveSession(roomId);
+      let sessionId = sessionRes.data?.session_id;
+
+      // 2. If none exists and user is host, create one
+      if (!sessionId && isHost) {
+        const createRes = await createWatchSessionForRoom(roomId);
+        sessionId = createRes.data.session_id;
+        console.log("Created new session:", sessionId);
+      }
+
+      // 3. Store session ID
+      if (sessionId) {
+        setActiveSessionId(sessionId);
+        setSessionStatus({ isActive: true, hostId: room?.host_id });
       }
     } catch (err) {
-      // Session not active
+      console.error("Failed to manage session:", err);
+      // If host fails to create session, show error
+      if (isHost) {
+        setError("Failed to start watch session. Please try again.");
+      }
     }
   };
 
-  const interval = setInterval(pollSession, 2000); // Poll every 2s
-  return () => clearInterval(interval);
-}, [roomId, sessionStatus.isActive]);
+  manageSession();
+}, [roomId, currentUser, isHost, room?.host_id, sessionStatus.isActive]);
 
 // Auto-join room when component mounts (if not already a member)
 useEffect(() => {
@@ -555,11 +570,14 @@ const handlePlayMedia = (mediaItemId) => {
       <div className="mt-4">
         <button
           onClick={() => {
-            navigate(`/watch/${roomId}`, {
-              state: { roomHostId: room.host_id }
-            });
+            if (!activeSessionId) {
+              alert("Session not ready yet. Please wait...");
+              return;
+            }
+            navigate(`/watch/${roomId}?session_id=${activeSessionId}`);
           }}
-          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg flex items-center"
+          disabled={!activeSessionId}
+          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg flex items-center disabled:opacity-50"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />

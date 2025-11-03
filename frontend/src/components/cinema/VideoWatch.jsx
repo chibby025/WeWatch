@@ -51,58 +51,21 @@ export default function VideoWatch() {
   
 
   // 💬 WebSocket setup
-  const {
-    sendMessage,
-    messages,
-    isConnected,
-    setBinaryMessageHandler,
-    sessionStatus
-  } = useWebSocket(roomId, wsToken);
+  const { sendMessage, messages, isConnected, setBinaryMessageHandler, sessionStatus } = useWebSocket(roomId, authLoading ? null : wsToken);
 
-  // ✅ NEW: Signal that client is ready to receive session_status
-  useEffect(() => {
-    let isMounted = true;
+  // Track commands
+  const sendMessageRef = useRef();
+  sendMessageRef.current = sendMessage;
 
-    const sendClientReady = () => {
-      if (
-        isMounted &&
-        isConnected &&
-        currentUser?.id &&
-        sendMessage
-      ) {
-        console.log('[VideoWatch] sending client_ready', { roomId, userId: currentUser.id });
-        sendMessage({ type: 'client_ready' });
-      }
-    };
-
-    // Send immediately if ready
-    sendClientReady();
-
-    // Also send if any dependency becomes ready later
-    const timer = setTimeout(sendClientReady, 100);
-
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, [isConnected, currentUser?.id, sendMessage, roomId]);
-
-  // Prevent duplicate sends
-  const clientReadySentRef = useRef(false);
+  // Replace your current client_ready effects with this single one:
 
   useEffect(() => {
-    if (isConnected && currentUser?.id && sendMessage && !clientReadySentRef.current) {
+    if (isConnected && currentUser?.id) {
+      console.log("🔍 [VideoWatch] WebSocket connected for user", currentUser.id);
       sendMessage({ type: 'client_ready' });
-      clientReadySentRef.current = true;
+      console.log("🔍 [VideoWatch] Sent client_ready for user id", currentUser.id);
     }
-  }, [isConnected, currentUser?.id, sendMessage]);
-
-  // Reset on disconnect
-  useEffect(() => {
-    if (!isConnected) {
-      clientReadySentRef.current = false;
-    }
-  }, [isConnected]);
+  }, [isConnected]); // Only depend on isConnected
   
   useEffect(() => {
     console.log("🔍 [VideoWatch] sessionStatus updated:", sessionStatus);
@@ -114,6 +77,8 @@ export default function VideoWatch() {
 
   // ✅ WebSocket hook
   //const { sessionStatus, ...ws } = useWebSocket(roomId, wsToken);
+
+  
 
   // Tracks whether *this tab* started the local screen share (getDisplayMedia)
   const [isLocalScreenShareHost, setIsLocalScreenShareHost] = useState(false);
@@ -490,6 +455,48 @@ export default function VideoWatch() {
     joinRoomIfNeeded();
   }, [roomId, currentUser]);
 
+  // 🔍 DEBUG: Periodic health check for screen share readiness
+  useEffect(() => {
+    if (!roomId || !currentUser?.id) return;
+
+    const debugInterval = setInterval(() => {
+      console.group(`🔍 [DEBUG] Screen Share Health Check - User ${currentUser.id} in Room ${roomId}`);
+      
+      // 1. WebSocket status
+      console.log("🔌 WebSocket connected:", isConnected);
+      
+      // 2. Current media state
+      console.log("📺 currentMedia.type:", currentMedia?.type);
+      console.log("🎬 isHost:", isHost);
+      
+      // 3. Screen share state
+      console.log("📡 isScreenSharingActive:", isScreenSharingActive);
+      console.log("👤 screenSharerUserId:", screenSharerUserId);
+      
+      // 4. Viewer readiness
+      const isViewer = !isHost && currentMedia?.type === 'screen_share';
+      console.log("👁️ Is viewer (should receive stream):", isViewer);
+      
+      if (isViewer) {
+        // Check if binary handler is registered
+        const handlerRegistered = handleBinaryMessageFromPlayerRef.current !== null;
+        console.log("✅ Binary handler registered:", handlerRegistered);
+        
+        // You can also check if viewer_ready was sent (add a ref if needed)
+        // e.g., console.log("📤 viewer_ready sent:", viewerReadySentRef.current);
+      }
+      
+      // 5. Room members (from last fetch)
+      console.log("👥 Room members count:", roomMembers.length);
+      const hostMember = roomMembers.find(m => m.user_role === 'host');
+      console.log("👑 Room host ID:", hostMember?.id);
+      
+      console.groupEnd();
+    }, 5000); // Log every 5 seconds
+
+    return () => clearInterval(debugInterval);
+  }, [roomId, currentUser?.id, isConnected, currentMedia?.type, isHost, isScreenSharingActive, screenSharerUserId, roomMembers]);
+
   // 🎬 Initialize Seats on Mount
   useEffect(() => {
     if (!currentUser) return;
@@ -655,7 +662,15 @@ export default function VideoWatch() {
     setNewSessionMessage('');
   };
 
-
+  // Autodirect members to the right session
+  useEffect(() => {
+    if (sessionStatus?.session_id && !window.location.search.includes('session_id')) {
+      const url = new URL(window.location);
+      url.searchParams.set('session_id', sessionStatus.session_id);
+      window.history.replaceState({}, '', url);
+    }
+  }, [sessionStatus?.session_id]);
+  
   // ✅ TOP-LEVEL: Handle Media Selection (for LeftSidebar)
   const handleMediaSelect = (media) => {
     console.log("🎬 [VideoWatch] handleMediaSelect called with:", media);
@@ -705,12 +720,15 @@ export default function VideoWatch() {
           console.warn('[VideoWatch] handleMediaSelect: Stopping existing MediaRecorder:', mediaRecorderRef.current.state);
           mediaRecorderRef.current.stop();
           mediaRecorderRef.current = null;
+          console.log('[VideoWatch] handleMediaSelect: MediaRecorder stopped.');
+          console.log('[VideoWatch] handleMediaSelect: Existing MediaRecorder cleaned up.');
         }
 
         // ✅ Set local stream for host preview
         setLocalScreenStream(media.stream);
         screenStreamRef.current = media.stream;
         setIsScreenSharingActive(true);
+        console.log('[VideoWatch] Local screen stream set for host preview.');
 
         // ✅ Set currentMedia for UI
         setCurrentMedia({
@@ -721,6 +739,7 @@ export default function VideoWatch() {
           original_name: media.original_name || 'Live Screen Share'
         });
         setIsPlaying(true);
+        console.log('[VideoWatch] currentMedia set for screen share UI.');
 
         // ✅ ENFORCE WebM + VP8 — and validate support
         const mimeType = 'video/webm;codecs=vp8';
@@ -731,7 +750,25 @@ export default function VideoWatch() {
         }
         console.log('[ScreenShare] Using mimeType:', mimeType);
 
-        // ✅ Start recording — delay signaling until init segment is ready
+        // ✅ 🚀 SEND START COMMAND IMMEDIATELY — BEFORE RECORDING
+        console.log("[ScreenShare] 🚀 Sending screen_share 'start' command (early)");
+        sendMessageRef.current({
+          type: "screen_share",
+          command: "start",
+          room_id: Number(roomId),
+          data: { mime_type: mimeType }
+        });
+        sendMessageRef.current({
+          type: "update_room_status",
+          data: {
+            is_screen_sharing: true,
+            screen_sharing_user_id: currentUser.id,
+            currently_playing: media.title || 'Live Screen Share',
+            coming_next: ''
+          }
+        });
+
+        // ✅ Start recording — send binary chunks (including init segment) AFTER session is live
         const startRecording = () => {
           if (mediaRecorderRef.current) {
             mediaRecorderRef.current.stop();
@@ -742,17 +779,16 @@ export default function VideoWatch() {
 
           let initSegmentSent = false;
           let bufferedChunks = [];
-          let hasSentStartCommand = false;
 
           mediaRecorder.ondataavailable = (event) => {
             if (event.data.size === 0) return;
 
-            // Buffer until we can confirm WebM header
+            // Buffer until we confirm WebM header (for reliable init segment)
             if (!initSegmentSent) {
               bufferedChunks.push(event.data);
               const totalSize = bufferedChunks.reduce((sum, chunk) => sum + chunk.size, 0);
+              console.log(`[ScreenShare] Buffered chunk (size: ${event.data.size}), total buffered size: ${totalSize}`);
 
-              // Read accumulated buffer to check for WebM header
               const totalBuffer = new Blob(bufferedChunks);
               const reader = new FileReader();
               reader.onload = () => {
@@ -764,58 +800,16 @@ export default function VideoWatch() {
                 if (hex.startsWith('1a45dfa3')) {
                   console.log("[ScreenShare] ✅ Full WebM header detected across chunks");
                   const initBlob = new Blob(bufferedChunks, { type: 'video/webm' });
-                  sendMessage(initBlob);
+                  sendMessageRef.current(initBlob);
                   initSegmentSent = true;
                   bufferedChunks = [];
-
-                  // ✅ SEND START COMMAND IMMEDIATELY AFTER INIT SEGMENT
-                  if (!hasSentStartCommand) {
-                    hasSentStartCommand = true;
-                    console.log("[ScreenShare] 🚀 Sending screen_share 'start' command");
-
-                    sendMessage({
-                      type: "screen_share",
-                      command: "start",
-                      room_id: Number(roomId), // ✅ snake_case to match Go's json:"room_id"
-                      data: { mime_type: mimeType } // ✅ lowercase "data" to match Go's json:"data"
-                    });
-
-                    sendMessage({
-                      type: "update_room_status",
-                      data: {
-                        is_screen_sharing: true,
-                        screen_sharing_user_id: currentUser.id,
-                        currently_playing: media.title || 'Live Screen Share',
-                        coming_next: ''
-                      }
-                    });
-                  }
                 } else if (totalSize > 50000 || bufferedChunks.length >= 5) {
-                  // Fallback: send init segment if we have enough data
+                  // Fallback: send what we have
                   console.log("[ScreenShare] ⚠️ Sending init segment (fallback after 50KB or 5 chunks)");
                   const initBlob = new Blob(bufferedChunks, { type: 'video/webm' });
-                  sendMessage(initBlob);
+                  sendMessageRef.current(initBlob);
                   initSegmentSent = true;
                   bufferedChunks = [];
-
-                  if (!hasSentStartCommand) {
-                    hasSentStartCommand = true;
-                    console.log("[ScreenShare] 🚀 Sending screen_share 'start' command (fallback)");
-                    sendMessage({
-                      type: "screen_share",
-                      command: "start",
-                      room_id: Number(roomId),
-                      data: { mime_type: mimeType }
-                    });
-                    sendMessage({
-                      type: "update_room_status",
-                      data: {
-                        is_screen_sharing: true,
-                        screen_sharing_user_id: currentUser.id,
-                        currently_playing: media.title || 'Live Screen Share',
-                      }
-                    });
-                  }
                 }
               };
               reader.readAsArrayBuffer(totalBuffer);
@@ -824,7 +818,7 @@ export default function VideoWatch() {
 
             // Send regular chunks
             console.log(`[ScreenShare] Sending binary chunk (size: ${event.data.size})`);
-            sendMessage(event.data);
+            sendMessageRef.current(event.data);
           };
 
           mediaRecorder.onerror = (err) => {
@@ -833,7 +827,7 @@ export default function VideoWatch() {
             handleMediaSelect({ type: 'end_screen_share' });
           };
 
-          mediaRecorder.start(100); // Low-latency chunks
+          mediaRecorder.start(100);
           mediaRecorderRef.current = mediaRecorder;
           console.log("[ScreenShare] MediaRecorder started.");
         };
@@ -872,8 +866,8 @@ export default function VideoWatch() {
 
       // ✅ Notify backend
       console.log("[ScreenShare] Sending 'stop' command to backend.");
-      sendMessage({ type: "screen_share", command: "stop", room_id: Number(roomId) });
-      sendMessage({
+      sendMessageRef.current({ type: "screen_share", command: "stop", room_id: Number(roomId) });
+      sendMessageRef.current({
         type: "update_room_status",
         data: {
           is_screen_sharing: false,
@@ -1014,7 +1008,8 @@ export default function VideoWatch() {
   // 🎧 Handle ALL incoming WebSocket messages
   useEffect(() => {
     console.log("📡 [GUEST] Processing", messages.length, "WebSocket messages");
-    messages.forEach(message => {
+    messages.forEach((message, i) => {
+      console.log(`[DEBUG] Processing message ${i+1}/${messages.length}:`, message.type);
       console.log("📡 [VideoWatch] Incoming WebSocket message:", message.type, message);
       // Handle client_ready acknowledgment
       if (message.type === "client_ready_ack") {
@@ -1117,9 +1112,11 @@ export default function VideoWatch() {
         
         case "screen_share_started":
           console.log("VideoWatch: 📡 [GUEST] Processing screen_share_started:", message, "Current User:", currentUser?.id);
-          const sharerId = message.data?.user_id; // snake_case
+          const sharerId = message.data?.user_id; // snake_case from backend
           if (currentUser && sharerId && sharerId !== currentUser.id) {
             console.log("VideoWatch: 📺 [Viewer] Screen share started by user", sharerId);
+            
+            // ✅ Set currentMedia to trigger CinemaVideoPlayer mount
             setCurrentMedia({
               type: 'screen_share',
               userId: sharerId,
@@ -1127,16 +1124,19 @@ export default function VideoWatch() {
               original_name: 'Live Screen Share',
               mime_type: message.data.mime_type,
             });
+            
             setIsPlaying(true);
             setIsScreenSharingActive(true);
             setScreenSharerUserId(sharerId);
-            // ✅ FIX: Use room_id (snake_case), not RoomID
+            
+            // ✅ Join the screen share (so backend adds you to viewers)
             sendMessage({
               type: "screen_share",
               command: "join",
-              room_id: Number(roomId) // ← snake_case to match Go's json:"room_id"
+              room_id: Number(roomId) // snake_case to match Go's json:"room_id"
             });
-            console.log("VideoWatch: 📡 [GUEST] Joined screen share stream:", roomId);
+            
+            console.log("VideoWatch: 📡 [GUEST] Sent 'join' for screen share in room:", roomId);
           }
           break;
         case "screen_share":
@@ -1601,6 +1601,7 @@ export default function VideoWatch() {
         onPauseBroadcast={handlePauseBroadcast}
         onBinaryHandlerReady={setPlayerBinaryHandler}
         onScreenShareReady={() => {
+          console.log("[DEBUG] 🟢 Viewer READY — sending viewer_ready");
           if (!isHost && isConnected && sendMessage && currentMedia?.type === 'screen_share') {
             console.log("[VideoWatch] 📡 Sending viewer_ready signal");
             sendMessage({
@@ -1608,6 +1609,7 @@ export default function VideoWatch() {
               command: "viewer_ready",
               room_id: Number(roomId)
             });
+            console.log("[VideoWatch] 📡 viewer_ready sent")
           }
         }}
       />
