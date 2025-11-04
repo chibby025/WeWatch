@@ -1270,23 +1270,29 @@ func (client *Client) handleBinaryMessage(message []byte) {
         return
     }
 
-    // 👇 Capture init segment on first large chunk
+    // 👇 Capture init segment by detecting WebM header (0x1A45DFA3)
     state.mutex.Lock()
-    if state.InitSegment == nil && len(message) > 1024 {
-        state.InitSegment = make([]byte, len(message))
-        copy(state.InitSegment, message)
-        log.Printf("[ScreenShare] Captured init segment (%d bytes) for room %d", len(message), roomID)
+    if state.InitSegment == nil && len(message) >= 4 {
+        // Check for WebM EBML header magic bytes
+        if message[0] == 0x1A && message[1] == 0x45 && message[2] == 0xDF && message[3] == 0xA3 {
+            state.InitSegment = make([]byte, len(message))
+            copy(state.InitSegment, message)
+            log.Printf("[ScreenShare] ✅ Captured WebM init segment (%d bytes) for room %d", len(message), roomID)
 
-        // ✅ Immediately send init segment to all current viewers (including auto-subscribed members)
-        for viewer := range state.Viewers {
-            payload := make([]byte, len(state.InitSegment))
-            copy(payload, state.InitSegment)
-            select {
-            case viewer.send <- OutgoingMessage{Data: payload, IsBinary: true}:
-                log.Printf("[ScreenShare] Sent init segment to viewer %d", viewer.userID)
-            default:
-                log.Printf("[ScreenShare] Failed to send init segment to viewer %d (buffer full)", viewer.userID)
+            // ✅ Immediately send init segment to all current viewers (including auto-subscribed members)
+            for viewer := range state.Viewers {
+                payload := make([]byte, len(state.InitSegment))
+                copy(payload, state.InitSegment)
+                select {
+                case viewer.send <- OutgoingMessage{Data: payload, IsBinary: true}:
+                    log.Printf("[ScreenShare] Sent init segment to viewer %d", viewer.userID)
+                default:
+                    log.Printf("[ScreenShare] Failed to send init segment to viewer %d (buffer full)", viewer.userID)
+                }
             }
+        } else {
+            log.Printf("[ScreenShare] ⚠️ Waiting for WebM init segment, got %d bytes starting with: %02x %02x %02x %02x", 
+                len(message), message[0], message[1], message[2], message[3])
         }
     }
     state.mutex.Unlock()
