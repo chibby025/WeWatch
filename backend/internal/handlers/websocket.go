@@ -4,6 +4,7 @@ package handlers
 
 import (
 	"encoding/json"
+    "context" 
 	"errors"
 	"fmt"
 	"log"
@@ -56,6 +57,7 @@ type Client struct {
 	isStreamHost     bool                 // Flag to indicate if this client is currently the stream host
 	isReceivingStream bool                // Flag to indicate if this client is receiving a screen share
 	lastStreamChunk  time.Time            // Last time a stream chunk was received or sent
+    hasReceivedInitSegment bool           //
 }
 
 // - WebSocket Hub -
@@ -667,17 +669,21 @@ var upgrader = websocket.Upgrader{
 // WebSocketHandler handles the WebSocket upgrade request.
 // WebSocketHandler handles the WebSocket upgrade request.
 func WebSocketHandler(c *gin.Context) {
-	log.Println("WebSocketHandler: called")
+	timestamp := time.Now().Format("15:04:05.000")
+	log.Printf("🔌🔌🔌 [%s] WebSocketHandler CALLED", timestamp)
+	log.Printf("🔍 [%s] Request headers: Origin=%s, User-Agent=%s", 
+		timestamp, c.Request.Header.Get("Origin"), c.Request.Header.Get("User-Agent"))
+	
 	// --- Authentication and Room ID Extraction ---
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
-		log.Println("WebSocketHandler: user_id not found in context")
+		log.Printf("❌ [%s] WebSocketHandler: user_id not found in context", timestamp)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 	authenticatedUserID, ok := userIDVal.(uint)
 	if !ok {
-		log.Println("WebSocketHandler: user_id in context is not uint")
+		log.Printf("❌ [%s] WebSocketHandler: user_id in context is not uint", timestamp)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
 		return
 	}
@@ -690,17 +696,19 @@ func WebSocketHandler(c *gin.Context) {
 		roomIDStr = c.Param("id")
 	}
 	if roomIDStr == "" {
-		log.Println("WebSocketHandler: Missing room_id")
+		log.Printf("❌ [%s] WebSocketHandler: Missing room_id", timestamp)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing room_id"})
 		return
 	}
 	roomID64, err := strconv.ParseUint(roomIDStr, 10, 64)
 	if err != nil {
-		log.Printf("WebSocketHandler: Invalid room_id: %v", err)
+		log.Printf("❌ [%s] WebSocketHandler: Invalid room_id: %v", timestamp, err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room_id"})
 		return
 	}
 	roomID := uint(roomID64)
+	
+	log.Printf("📡 [%s] WebSocket connection request: User %d → Room %d", timestamp, authenticatedUserID, roomID)
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -970,13 +978,20 @@ type ScreenShareState struct {
     StartTime      time.Time         // When screen sharing started
     InitSegment    []byte            // Store init segment for MP4
     mutex          sync.RWMutex      // Mutex for thread-safe state access
+
+    // ✅ Add context for clean shutdown
+    ctx    context.Context
+    cancel context.CancelFunc
 }
 
 func NewScreenShareState() *ScreenShareState {
+    ctx, cancel := context.WithCancel(context.Background())
     return &ScreenShareState{
         BroadcastChannel: make(chan []byte, 1024),
-        Viewers:         make(map[*Client]bool),
-        Active:         false,
+        Viewers:          make(map[*Client]bool),
+        Active:           false,
+        ctx:              ctx,
+        cancel:           cancel,
     }
 }
 
@@ -1031,14 +1046,27 @@ func (h *Hub) StartScreenShare(roomID uint, host *Client, mimeType string) error
 	// ✅ Auto-subscribe all non-host clients as viewers
 	if len(allClientsInRoom) > 0 {
 		state.mutex.Lock()
-		log.Printf("[DEBUG] Auto-subscribed %d viewers for room %d (host: %d)", len(allClientsInRoom)-1, roomID, host.userID)
+		log.Printf("[DEBUG] Auto-subscribing viewers for room %d (host: %d, total clients: %d)", roomID, host.userID, len(allClientsInRoom))
+		
+		viewerCount := 0
 		for _, client := range allClientsInRoom {
-			if client == host {
+			// ✅ CRITICAL: Check userID, not pointer (host may have multiple connections during setup)
+			if client.userID == host.userID {
+				log.Printf("[ScreenShare] Skipping host client %p (user %d) from viewer list", client, client.userID)
 				continue
 			}
+			
+			// 🔍 DEBUG: Check for duplicate viewer registration
+			if _, alreadyRegistered := state.Viewers[client]; alreadyRegistered {
+				log.Printf("[ScreenShare] ⚠️ DUPLICATE: Client %p (user %d) already in viewer list!", client, client.userID)
+			}
+			
 			state.Viewers[client] = true
+			viewerCount++
 			client.isReceivingStream = true
 			client.lastStreamChunk = time.Now()
+			
+			log.Printf("[ScreenShare] ➕ Added viewer %d (client %p) to viewer list. Total viewers: %d", client.userID, client, viewerCount)
 
 			// ✅ Send "joined" ack so frontend knows to prepare MediaSource
 			ack := WebSocketMessage{
@@ -1057,7 +1085,23 @@ func (h *Hub) StartScreenShare(roomID uint, host *Client, mimeType string) error
 					log.Printf("[ScreenShare] Failed to send auto-join ack to user %d", client.userID)
 				}
 			}
+			
+			// ✅ Send init segment if available (for late joiners)
+			if state.InitSegment != nil {
+				log.Printf("[ScreenShare] Sending init segment (%d bytes) to auto-subscribed viewer %d", len(state.InitSegment), client.userID)
+				payload := make([]byte, len(state.InitSegment))
+				copy(payload, state.InitSegment)
+				select {
+				case client.send <- OutgoingMessage{Data: payload, IsBinary: true}:
+					log.Printf("[ScreenShare] ✅ Sent init segment to viewer %d", client.userID)
+				default:
+					log.Printf("[ScreenShare] ❌ Failed to send init segment to viewer %d (buffer full)", client.userID)
+				}
+			} else {
+				log.Printf("[ScreenShare] ⚠️ No init segment yet for viewer %d (will receive when host sends it)", client.userID)
+			}
 		}
+		log.Printf("[ScreenShare] 📊 Auto-subscription complete: %d viewers registered for room %d", viewerCount, roomID)
 		state.mutex.Unlock()
 	}
 
@@ -1117,94 +1161,132 @@ func (h *Hub) StopScreenShare(roomID uint, client *Client) error {
         return fmt.Errorf("no active screen share in room %d", roomID)
     }
 
-    // Verify the request is from the host
     if state.Host != client {
-        log.Printf("[ScreenShare] StopScreenShare: Unauthorized stop attempt by user %d in room %d", client.userID, roomID)
+        log.Printf("[ScreenShare] StopScreenShare: Unauthorized stop attempt by user %d", client.userID)
         return fmt.Errorf("only the host can stop screen sharing")
     }
 
+    // ✅ 1. Mark as inactive
     state.Active = false
     state.Host = nil
-    log.Printf("[ScreenShare] StopScreenShare: User %d stopped screen sharing in room %d", client.userID, roomID)
 
-    // DB: Mark screen sharing as inactive for this room
+    // ✅ 2. Cancel context → signals all goroutines to stop
+    if state.cancel != nil {
+        state.cancel()
+        log.Printf("[ScreenShare] Canceled screen share context for room %d", roomID)
+    }
+
+    // ✅ 3. Close broadcast channel (idempotent safe)
+    if state.BroadcastChannel != nil {
+        close(state.BroadcastChannel)
+        state.BroadcastChannel = nil
+        log.Printf("[ScreenShare] Closed broadcast channel for room %d", roomID)
+    }
+
+    // ✅ 4. Clear viewers
+    state.mutex.Lock()
+    for viewer := range state.Viewers {
+        viewer.isReceivingStream = false
+        // Optional: send stop signal to each viewer
+    }
+    state.Viewers = make(map[*Client]bool)
+    state.InitSegment = nil
+    state.mutex.Unlock()
+
+    // ✅ 5. Clean up DB
     var dbShare models.ScreenShare
-    if err := DB.Where("room_id = ?", roomID).First(&dbShare).Error; err == nil {
+    if err := DB.Where("room_id = ? AND active = ?", roomID, true).First(&dbShare).Error; err == nil {
         dbShare.Active = false
         now := time.Now()
         dbShare.EndedAt = &now
         DB.Save(&dbShare)
     }
 
-    // Notify all clients in room about screen share stop
+    // ✅ 6. Broadcast stop to room
     stopMsg := ScreenShareSignal{
         Type:      "screen_share_stopped",
-        Data:      map[string]interface{}{ "user_id": client.userID },
+        Data:      map[string]interface{}{"user_id": client.userID},
         Timestamp: time.Now().Unix(),
     }
-
     if broadcastBytes, err := json.Marshal(stopMsg); err == nil {
-        h.BroadcastToRoom(roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, client) // Exclude host from broadcast
-        log.Printf("[ScreenShare] StopScreenShare: Broadcasted screen_share_stopped to room %d", roomID)
-    } else {
-        log.Printf("[ScreenShare] StopScreenShare: Error marshalling screen share stop message for room %d: %v", roomID, err)
+        h.BroadcastToRoom(roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, client)
+        log.Printf("[ScreenShare] Broadcasted screen_share_stopped to room %d", roomID)
     }
+
+    // ✅ 7. Remove from hub (CRITICAL)
+    delete(h.screenShares, roomID)
+    log.Printf("[ScreenShare] Removed screen share state for room %d", roomID)
 
     return nil
 }
 
 // JoinScreenShare adds a viewer to an active screen share
-func (h *Hub) JoinScreenShare(roomID uint, viewer *Client) error {
-    h.screenShareMutex.RLock()
-    state, exists := h.screenShares[roomID]
-    h.screenShareMutex.RUnlock()
+// In websocket.go, JoinScreenShare function
 
+func (h *Hub) JoinScreenShare(roomID uint, viewer *Client) error {
+    h.screenShareMutex.Lock()
+    defer h.screenShareMutex.Unlock()
+
+    state, exists := h.screenShares[roomID]
     if !exists || !state.Active {
-        return fmt.Errorf("no active screen share in room %d", roomID)
+        return errors.New("no active screen share")
     }
 
     // Don't let the host join as viewer
-    if viewer == state.Host {
-        return fmt.Errorf("host cannot join as viewer")
+    if state.Host != nil && viewer.userID == state.Host.userID {
+        log.Printf("[JoinScreenShare] ⚠️ User %d is the host, cannot join as viewer", viewer.userID)
+        return errors.New("host cannot join as viewer")
+    }
+    
+    // ✅ CRITICAL: Check if THIS EXACT CLIENT is already registered
+    if _, alreadyRegistered := state.Viewers[viewer]; alreadyRegistered {
+        log.Printf("[JoinScreenShare] ⚠️ Client %p (user %d) already registered, skipping", viewer, viewer.userID)
+        return nil // Idempotent
     }
 
-    state.mutex.Lock()
+    // Add to viewers
     state.Viewers[viewer] = true
-    // After adding viewer to state.Viewers, send init segment if available
-    if state.InitSegment != nil {
-        log.Printf("[DEBUG] Sending init segment (%d bytes) to viewer %d", len(state.InitSegment), viewer.userID)
-        payload := make([]byte, len(state.InitSegment))
-        copy(payload, state.InitSegment)
+    log.Printf("[JoinScreenShare] ✅ Added client %p (user %d) as viewer, total viewers: %d", 
+        viewer, viewer.userID, len(state.Viewers))
+
+    // Mark that this viewer hasn't received init yet
+    viewer.hasReceivedInitSegment = false
+
+    // ✅ Send init segment IMMEDIATELY if available
+    if len(state.InitSegment) > 0 {
+        log.Printf("[JoinScreenShare] 📤 Sending init segment (%d bytes) to NEW viewer %d", 
+            len(state.InitSegment), viewer.userID)
+        
         select {
-        case viewer.send <- OutgoingMessage{Data: payload, IsBinary: true}:
-            log.Printf("[ScreenShare] Sent init segment to new viewer %d", viewer.userID)
-        default:
-            log.Printf("[ScreenShare] Failed to send init segment to viewer %d (buffer full)", viewer.userID)
+        case viewer.send <- OutgoingMessage{Data: state.InitSegment, IsBinary: true}:
+            viewer.hasReceivedInitSegment = true
+            log.Printf("[JoinScreenShare] ✅ Init segment SENT to viewer %d", viewer.userID)
+        case <-time.After(2 * time.Second):
+            log.Printf("[JoinScreenShare] ⚠️ TIMEOUT sending init to viewer %d", viewer.userID)
+            return errors.New("timeout sending init segment")
         }
     } else {
-        log.Printf("[ScreenShare] No init segment available for viewer %d", viewer.userID)
+        log.Printf("[JoinScreenShare] ⚠️ No init segment available for viewer %d (will receive with first chunk)", 
+            viewer.userID)
     }
-    state.mutex.Unlock()
 
-    // Set viewer client flags
+    // Set viewer flags
     viewer.isReceivingStream = true
     viewer.lastStreamChunk = time.Now()
 
-    // Send join acknowledgment to viewer
-    ack := WebSocketMessage{
-        Type: "screen_share",
-        Command: "joined",
-        Data: map[string]interface{}{
-            "host_id": state.Host.userID,
-            "start_time": state.StartTime.Unix(),
-        },
+    // Send join acknowledgment
+    joinMsg := map[string]interface{}{
+        "type":      "screen_share_viewer_joined",
+        "user_id":   viewer.userID,
+        "mime_type": state.MimeType,
+        "timestamp": time.Now().Unix(),
     }
-
-    if ackBytes, err := json.Marshal(ack); err == nil {
+    if jsonData, err := json.Marshal(joinMsg); err == nil {
         select {
-        case viewer.send <- OutgoingMessage{Data: ackBytes, IsBinary: false}:
+        case viewer.send <- OutgoingMessage{Data: jsonData, IsBinary: false}:
+            log.Printf("[JoinScreenShare] ✅ Join ack sent to viewer %d", viewer.userID)
         default:
-            log.Printf("Failed to send join acknowledgment to viewer %d", viewer.userID)
+            log.Printf("[JoinScreenShare] ⚠️ Join ack dropped for viewer %d", viewer.userID)
         }
     }
 
@@ -1217,7 +1299,7 @@ func (h *Hub) handleScreenShareBroadcast(roomID uint) {
     state, exists := h.screenShares[roomID]
     h.screenShareMutex.RUnlock()
 
-    if (!exists) {
+    if !exists || state.BroadcastChannel == nil {
         return
     }
 
@@ -1254,91 +1336,128 @@ func (h *Hub) handleScreenShareBroadcast(roomID uint) {
 
 // handleBinaryMessage processes incoming binary messages for screen sharing
 func (client *Client) handleBinaryMessage(message []byte) {
-    if len(message) == 0 {
-        return
-    }
-
     roomID := client.roomID
-
-    // Verify this client is the active screen share host for the room
-    client.hub.screenShareMutex.RLock()
+    
+    client.hub.screenShareMutex.Lock()
     state, exists := client.hub.screenShares[roomID]
-    client.hub.screenShareMutex.RUnlock()
+    client.hub.screenShareMutex.Unlock()
 
-    if !exists || !state.Active || state.Host != client {
-        log.Printf("handleBinaryMessage: ignored binary from non-host user %d in room %d", client.userID, roomID)
+    if !exists || !state.Active {
+        log.Printf("[handleBinaryMessage] ⚠️ No active screen share for room %d", roomID)
         return
     }
 
-    // 👇 Capture init segment by detecting WebM header (0x1A45DFA3)
-    state.mutex.Lock()
-    if state.InitSegment == nil && len(message) >= 4 {
-        // Check for WebM EBML header magic bytes
-        if message[0] == 0x1A && message[1] == 0x45 && message[2] == 0xDF && message[3] == 0xA3 {
-            state.InitSegment = make([]byte, len(message))
-            copy(state.InitSegment, message)
-            log.Printf("[ScreenShare] ✅ Captured WebM init segment (%d bytes) for room %d", len(message), roomID)
-
-            // ✅ Immediately send init segment to all current viewers (including auto-subscribed members)
-            for viewer := range state.Viewers {
-                payload := make([]byte, len(state.InitSegment))
-                copy(payload, state.InitSegment)
-                select {
-                case viewer.send <- OutgoingMessage{Data: payload, IsBinary: true}:
-                    log.Printf("[ScreenShare] Sent init segment to viewer %d", viewer.userID)
-                default:
-                    log.Printf("[ScreenShare] Failed to send init segment to viewer %d (buffer full)", viewer.userID)
-                }
-            }
-        } else {
-            log.Printf("[ScreenShare] ⚠️ Waiting for WebM init segment, got %d bytes starting with: %02x %02x %02x %02x", 
-                len(message), message[0], message[1], message[2], message[3])
-        }
-    }
-    state.mutex.Unlock()
-
-    // Track stats
-    client.hub.streamStatsMutex.Lock()
-    stats, ok := client.hub.roomStreamStats[roomID]
-    if !ok {
-        stats = &RoomStreamStats{
-            hostID:         client.userID,
-            startTime:      time.Now(),
-            receiverStats:  make(map[uint]*ReceiverStats),
-        }
-        client.hub.roomStreamStats[roomID] = stats
-    }
-    stats.chunkCount++
-    stats.lastChunkTime = time.Now()
-    client.hub.streamStatsMutex.Unlock()
-
-    // ✅ Deliver ONLY to state.Viewers (now the single source of truth)
-    delivered := int64(0)
+    // Verify this client is the host
     state.mutex.RLock()
-    log.Printf("[DEBUG] Room %d Screen Share Viewers:", roomID)
-    for viewer := range state.Viewers {
-        log.Printf("  → Viewer User %d (Client %p)", viewer.userID, viewer)
-        if viewer == client { // skip host
-            continue
-        }
-        log.Printf("[DEBUG] Total viewers: %d", len(state.Viewers))
-        payload := make([]byte, len(message))
-        copy(payload, message)
-        select {
-        case viewer.send <- OutgoingMessage{Data: payload, IsBinary: true}:
-            delivered++
-        default:
-            log.Printf("handleBinaryMessage: dropped chunk to viewer %d (buffer full)", viewer.userID)
-            // Optional: send backpressure to host
-        }
-    }
+    isHost := state.Host == client
     state.mutex.RUnlock()
 
-    if delivered == 0 {
-        log.Printf("handleBinaryMessage: no viewers received chunk in room %d", roomID)
-    } else {
-        log.Printf("handleBinaryMessage: delivered to %d viewers in room %d", delivered, roomID)
+    if !isHost {
+        log.Printf("[handleBinaryMessage] ⚠️ User %d not the host, ignoring binary", client.userID)
+        return
     }
+
+    // ✅ Detect init segment by WebM EBML header
+    arr := message
+    isWebMHeader := len(arr) >= 4 && arr[0] == 0x1A && arr[1] == 0x45 && arr[2] == 0xDF && arr[3] == 0xA3
+    
+    state.mutex.Lock()
+    
+    // ✅ Store init segment if we don't have it yet
+    if len(state.InitSegment) == 0 {
+        if isWebMHeader {
+            state.InitSegment = make([]byte, len(message))
+            copy(state.InitSegment, message)
+            log.Printf("[handleBinaryMessage] 📦 Captured init segment (WebM header): %d bytes", len(state.InitSegment))
+        } else if len(message) > 1024 {
+            // Assume first large chunk contains init
+            state.InitSegment = make([]byte, len(message))
+            copy(state.InitSegment, message)
+            log.Printf("[handleBinaryMessage] 📦 Captured init segment (first chunk): %d bytes", len(state.InitSegment))
+        }
+    }
+    
+    state.mutex.Unlock()
+
+    // ✅ CRITICAL FIX: Determine if this is the init segment
+    // Don't skip it early - we need to deliver it to viewers who haven't received it
+    state.mutex.RLock()
+    viewerCount := len(state.Viewers)
+    hasInit := len(state.InitSegment) > 0
+    isThisInit := isWebMHeader
+    state.mutex.RUnlock()
+
+    log.Printf("[ScreenShare] 📤 Starting chunk delivery for room %d", roomID)
+    log.Printf("[ScreenShare] 🔍 Delivery check: hasInitSegment=%v, isThisTheInitSegment=%v, viewerCount=%d, chunkSize=%d", 
+        hasInit, isThisInit, viewerCount, len(message))
+
+    deliveryCount := 0
+    skippedCount := 0
+    
+    // ✅ Use write lock when delivering init (need to modify hasReceivedInitSegment flag)
+    if isThisInit {
+        state.mutex.Lock()
+    } else {
+        state.mutex.RLock()
+    }
+    
+    for viewer := range state.Viewers {
+        // 🔍 DEBUG: Log viewer details
+        log.Printf("[ScreenShare] 🔍 Checking viewer %d (client %p): hasReceivedInit=%v", 
+            viewer.userID, viewer, viewer.hasReceivedInitSegment)
+        
+        // ✅ Deliver logic:
+        // - If this is init segment: send to viewers who haven't received it
+        // - If this is regular chunk: send to viewers who have received init
+        shouldDeliver := false
+        if isThisInit {
+            // Init segment: only send if viewer hasn't received it yet
+            shouldDeliver = !viewer.hasReceivedInitSegment
+        } else {
+            // Regular chunk: only send if viewer has received init
+            shouldDeliver = viewer.hasReceivedInitSegment
+        }
+
+        if shouldDeliver {
+            // ✅ Wrap send in anonymous function with recover to catch panics
+            func() {
+                defer func() {
+                    if r := recover(); r != nil {
+                        log.Printf("[ScreenShare] ⚠️ Recovered from panic sending to viewer %d: %v", viewer.userID, r)
+                    }
+                }()
+                
+                select {
+                case viewer.send <- OutgoingMessage{Data: message, IsBinary: true}:
+                    if isThisInit {
+                        viewer.hasReceivedInitSegment = true
+                        log.Printf("[ScreenShare] ✅ Delivered INIT segment (%d bytes) to viewer %d (client %p)", len(message), viewer.userID, viewer)
+                    } else {
+                        log.Printf("[ScreenShare] ✅ Delivered chunk (%d bytes) to viewer %d (client %p)", len(message), viewer.userID, viewer)
+                    }
+                    deliveryCount++
+                default:
+                    log.Printf("[ScreenShare] ⚠️ Viewer %d send channel full, dropping chunk", viewer.userID)
+                }
+            }()
+        } else {
+            skippedCount++
+            if isThisInit {
+                log.Printf("[ScreenShare] ⏭️ Skipping viewer %d (already has init)", viewer.userID)
+            } else {
+                log.Printf("[ScreenShare] ⏭️ Skipping viewer %d (hasn't received init yet)", viewer.userID)
+            }
+        }
+    }
+    
+    if isThisInit {
+        state.mutex.Unlock()
+    } else {
+        state.mutex.RUnlock()
+    }
+
+    log.Printf("[ScreenShare] 📊 Delivery summary: delivered=%d, skipped=%d, total_viewers=%d, room=%d", 
+        deliveryCount, skippedCount, viewerCount, roomID)
 }
 
 func (client *Client) handleMessage(message []byte) {
