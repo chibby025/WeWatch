@@ -20,11 +20,11 @@ const CinemaVideoPlayer = ({
   const videoRef = useRef(null);
   const mediaSourceRef = useRef(null);
   const sourceBufferRef = useRef(null);
+  const hasReceivedInitSegmentRef = useRef(false); // ✅ Track init segment state at top level
   const [isBuffering, setIsBuffering] = useState(true);
   const [isCenterHovered, setIsCenterHovered] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
-  const binaryMessageBufferRef = useRef([]); // For chunks during playback
-  const earlyChunkBufferRef = useRef([]); // For chunks before sourceopen
+  const binaryMessageBufferRef = useRef([]); // Single buffer for all chunks
 
   const videoSrc = src || (mediaItem?.file_path ? `/${mediaItem.file_path}` : '');
 
@@ -39,6 +39,10 @@ const CinemaVideoPlayer = ({
     // --- CLEANUP LOGIC ---
     const cleanupPreviousMedia = () => {
       console.log("[CinemaVideoPlayer] 🔁 Starting cleanup for previous media.");
+      
+      // Reset init segment flag
+      hasReceivedInitSegmentRef.current = false;
+      
       // Clean up MediaSource
       if (mediaSourceRef.current) {
         const mediaSource = mediaSourceRef.current;
@@ -70,7 +74,6 @@ const CinemaVideoPlayer = ({
         mediaSourceRef.current = null;
         sourceBufferRef.current = null;
         binaryMessageBufferRef.current = [];
-        earlyChunkBufferRef.current = [];
         console.log("[CinemaVideoPlayer] 📺 MediaSource and buffers cleared.");
       }
 
@@ -124,44 +127,162 @@ const CinemaVideoPlayer = ({
         mediaSourceRef.current = mediaSource;
         video.src = URL.createObjectURL(mediaSource);
 
-        // ✅ Define handler that buffers until sourceopen
+        // ✅ Safety timeout: if sourceopen doesn't fire in 1s, force SourceBuffer creation
+        const sourceOpenTimeout = setTimeout(() => {
+          if (!sourceBufferRef.current && mediaSource.readyState === 'open') {
+            console.warn("[CinemaVideoPlayer] ⏱️ sourceopen delayed — forcing SourceBuffer creation");
+            try {
+              const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+              sourceBufferRef.current = sourceBuffer;
+              setIsBuffering(false);
+              setIsVideoPlaying(true);
+              console.log("[CinemaVideoPlayer] ✅ SourceBuffer created via timeout for MIME type:", mimeType);
+              // Do NOT process chunks here — wait for init
+            } catch (e) {
+              console.error("[CinemaVideoPlayer] ❌ Failed to create SourceBuffer on timeout", e);
+              onError(e, 'Failed to initialize screen share player.');
+            }
+          }
+        }, 1000);
+
+        // ✅ Single function to process next media chunk (non-init)
+        const processNextChunk = () => {
+          const sourceBuffer = sourceBufferRef.current;
+          const mediaSource = mediaSourceRef.current;
+          const video = videoRef.current;
+
+          if (!sourceBuffer || sourceBuffer.updating || mediaSource?.readyState !== 'open') {
+            console.log(`[CinemaVideoPlayer] ⏸️ processNextChunk blocked: updating=${sourceBuffer?.updating}, state=${mediaSource?.readyState}`);
+            return;
+          }
+
+          // ✅ BUFFER MANAGEMENT: Remove old buffered data if buffer is too large
+          const buffered = sourceBuffer.buffered;
+          if (buffered.length > 0) {
+            const bufferedEnd = buffered.end(buffered.length - 1);
+            const bufferedStart = buffered.start(0);
+            const bufferSize = bufferedEnd - bufferedStart;
+            const currentTime = video?.currentTime || 0;
+
+            console.log(`[CinemaVideoPlayer] 📊 Buffer stats: size=${bufferSize.toFixed(2)}s, ranges=${buffered.length}, currentTime=${currentTime.toFixed(2)}s`);
+
+            if (bufferSize > 20) {
+              const removeEnd = Math.max(bufferedStart, currentTime - 10);
+              if (bufferedStart < removeEnd) {
+                try {
+                  console.log(`[CinemaVideoPlayer] 🧹 Removing buffer: ${bufferedStart.toFixed(2)}s to ${removeEnd.toFixed(2)}s`);
+                  sourceBuffer.remove(bufferedStart, removeEnd);
+                  return; // `updateend` will re-trigger `processNextChunk`
+                } catch (err) {
+                  console.warn("[CinemaVideoPlayer] ⚠️ Failed to remove buffer:", err);
+                }
+              }
+            }
+          }
+
+          // ✅ Append next media chunk (only after init)
+          if (binaryMessageBufferRef.current.length === 0) {
+            console.log("[CinemaVideoPlayer] 📭 Queue empty, nothing to append");
+            return;
+          }
+          const chunk = binaryMessageBufferRef.current.shift();
+          const remainingInQueue = binaryMessageBufferRef.current.length;
+          
+          console.log(`[CinemaVideoPlayer] 🔄 Attempting to append chunk: ${chunk.byteLength} bytes, ${remainingInQueue} remaining in queue`);
+          
+          try {
+            sourceBuffer.appendBuffer(chunk);
+            console.log(`[CinemaVideoPlayer] ✅ Appended MEDIA chunk (${chunk.byteLength} bytes), ${remainingInQueue} remaining`);
+          } catch (err) {
+            console.error("[CinemaVideoPlayer] ❌ appendBuffer failed:", err);
+            binaryMessageBufferRef.current.unshift(chunk); // Re-queue
+            if (err.name === 'QuotaExceededError') {
+              console.error("[CinemaVideoPlayer] 🚨 QuotaExceededError - buffer full! Retrying in 100ms");
+              setTimeout(processNextChunk, 100);
+            }
+          }
+        };
+
+        // ✅ Define handler that buffers all chunks and checks for init
         const handleBinaryChunk = (data) => {
           if (!data || data.byteLength === 0) return;
-          if (!sourceBufferRef.current) {
-            earlyChunkBufferRef.current.push(data);
-            console.log("[CinemaVideoPlayer] 📥 Buffered chunk before sourceopen");
-            return;
-          }
-          if (sourceBufferRef.current.updating) {
-            binaryMessageBufferRef.current.push(data);
-            return;
-          }
-          try {
-            if (data instanceof Blob) {
-              const reader = new FileReader();
-              reader.onload = () => {
-                if (!sourceBufferRef.current?.updating) {
-                  sourceBufferRef.current?.appendBuffer(reader.result);
-                } else {
-                  binaryMessageBufferRef.current.push(reader.result);
+
+          // Always normalize to ArrayBuffer
+          const normalizeAndHandle = (arrayBuffer) => {
+            const uint8 = new Uint8Array(arrayBuffer);
+            const isInitSegment = uint8.length >= 4 &&
+              uint8[0] === 0x1A &&
+              uint8[1] === 0x45 &&
+              uint8[2] === 0xDF &&
+              uint8[3] === 0xA3;
+
+            // 🔍 DEBUG: Detailed chunk fingerprint
+            const fingerprint = Array.from(uint8.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            const timestamp = Date.now();
+            const queueLengthBefore = binaryMessageBufferRef.current.length;
+            
+            console.log(`[CinemaVideoPlayer] 📥 Binary chunk received:
+              - Timestamp: ${timestamp}
+              - Size: ${arrayBuffer.byteLength} bytes
+              - IsInit: ${isInitSegment}
+              - First 8 bytes: ${fingerprint}
+              - Queue before: ${queueLengthBefore}
+              - SourceBuffer updating: ${sourceBufferRef.current?.updating}
+              - MediaSource state: ${mediaSourceRef.current?.readyState}`);
+
+            if (isInitSegment) {
+              console.log("[CinemaVideoPlayer] 🎁 Init segment detected!");
+              hasReceivedInitSegmentRef.current = true;
+              const sourceBuffer = sourceBufferRef.current;
+              if (sourceBuffer && !sourceBuffer.updating && mediaSourceRef.current?.readyState === 'open') {
+                try {
+                  sourceBuffer.appendBuffer(arrayBuffer);
+                  console.log("[CinemaVideoPlayer] ✅ Init segment appended");
+                  // Now flush buffered media chunks
+                  processNextChunk();
+                } catch (e) {
+                  console.error("[CinemaVideoPlayer] ❌ Failed to append init segment", e);
                 }
-              };
-              reader.readAsArrayBuffer(data);
+              } else {
+                // Buffer init if SourceBuffer not ready yet
+                console.log("[CinemaVideoPlayer] ⏸️ Init segment buffered (SourceBuffer not ready)");
+                binaryMessageBufferRef.current.unshift(arrayBuffer);
+              }
             } else {
-              sourceBufferRef.current?.appendBuffer(data);
+              // Regular media chunk — buffer until init arrives
+              if (hasReceivedInitSegmentRef.current) {
+                binaryMessageBufferRef.current.push(arrayBuffer);
+                console.log(`[CinemaVideoPlayer] Queue length after push: ${binaryMessageBufferRef.current.length}`);
+                const queueLengthAfter = binaryMessageBufferRef.current.length;
+                console.log(`[CinemaVideoPlayer] 📦 Media chunk queued. Queue: ${queueLengthAfter}`);
+                processNextChunk();
+              } else {
+                console.log("[CinemaVideoPlayer] ⏳ Buffering media chunk (waiting for init segment)");
+                binaryMessageBufferRef.current.push(arrayBuffer);
+              }
             }
-          } catch (err) {
-            console.error("[CinemaVideoPlayer] ❌ Error in handleBinaryChunk:", err);
-            onError(err, "Failed to process screen share data.");
+          };
+
+          if (data instanceof Blob) {
+            const reader = new FileReader();
+            reader.onload = () => normalizeAndHandle(reader.result);
+            reader.readAsArrayBuffer(data);
+          } else {
+            normalizeAndHandle(data);
           }
         };
 
         // Register handler IMMEDIATELY
+        console.log("[CinemaVideoPlayer] 🔗 Registering binary handler for screen share");
         if (onBinaryHandlerReady && typeof onBinaryHandlerReady === 'function') {
           onBinaryHandlerReady(handleBinaryChunk);
+          console.log("[CinemaVideoPlayer] ✅ Binary handler registered successfully");
+        } else {
+          console.warn("[CinemaVideoPlayer] ⚠️ onBinaryHandlerReady not available");
         }
 
         const sourceOpenHandler = () => {
+          clearTimeout(sourceOpenTimeout);
           try {
             const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
             sourceBufferRef.current = sourceBuffer;
@@ -170,52 +291,52 @@ const CinemaVideoPlayer = ({
             console.log("[CinemaVideoPlayer] ✅ SourceBuffer added for MIME type:", mimeType);
 
             sourceBuffer.addEventListener('updateend', () => {
-              if (binaryMessageBufferRef.current.length > 0 && !sourceBuffer.updating) {
-                const nextChunk = binaryMessageBufferRef.current.shift();
-                if (nextChunk && nextChunk.byteLength > 0) {
-                  try {
-                    sourceBuffer.appendBuffer(nextChunk);
-                  } catch (error) {
-                    console.error("[CinemaVideoPlayer] ❌ Error appending buffered chunk:", error);
-                    binaryMessageBufferRef.current.unshift(nextChunk);
-                    onError(error, "Error processing buffered screen share data.");
-                  }
-                }
+              console.log("[CinemaVideoPlayer] 🔔 updateend fired, hasInit:", hasReceivedInitSegmentRef.current);
+              if (hasReceivedInitSegmentRef.current) {
+                processNextChunk();
               }
             });
-
             sourceBuffer.addEventListener('error', (e) => {
               console.error("[CinemaVideoPlayer] ❌ SourceBuffer error:", e);
               onError(new Error('SourceBuffer error'), 'Error receiving screen share data.');
             });
 
-            // ✅ FLUSH EARLY CHUNKS
-            if (earlyChunkBufferRef.current.length > 0) {
-              console.log("[CinemaVideoPlayer] 🚀 Flushing", earlyChunkBufferRef.current.length, "early buffered chunks");
-              earlyChunkBufferRef.current.forEach(chunk => {
-                if (chunk && chunk.byteLength > 0 && !sourceBuffer.updating) {
-                  try {
-                    sourceBuffer.appendBuffer(chunk);
-                  } catch (e) {
-                    if (e.name === 'QuotaExceededError') {
-                      binaryMessageBufferRef.current.push(chunk);
-                    } else {
-                      console.error("[CinemaVideoPlayer] ❌ Error appending early chunk:", e);
-                    }
-                  }
-                } else {
-                  binaryMessageBufferRef.current.push(chunk);
+            // ✅ NEW: Check if init segment is buffered and process it
+            const bufferedChunks = binaryMessageBufferRef.current;
+            if (bufferedChunks.length > 0) {
+              console.log(`[CinemaVideoPlayer] 🔁 Re-processing ${bufferedChunks.length} buffered chunks after sourceopen`);
+              
+              // Look for init segment in buffered chunks
+              let initIndex = -1;
+              for (let i = 0; i < bufferedChunks.length; i++) {
+                const chunk = bufferedChunks[i];
+                const uint8 = new Uint8Array(chunk.slice(0, 4));
+                if (uint8[0] === 0x1A && uint8[1] === 0x45 && uint8[2] === 0xDF && uint8[3] === 0xA3) {
+                  initIndex = i;
+                  break;
                 }
-              });
-              earlyChunkBufferRef.current = [];
+              }
+
+              if (initIndex !== -1) {
+                // Move init to front
+                const initChunk = bufferedChunks.splice(initIndex, 1)[0];
+                bufferedChunks.unshift(initChunk);
+                console.log("[CinemaVideoPlayer] 📌 Reordered buffered chunks: init moved to front");
+              }
+
+              // Now re-process all buffered chunks
+              for (const chunk of bufferedChunks) {
+                handleBinaryChunk(chunk);
+              }
+              // Clear the buffer since handleBinaryChunk manages its own queue
+              binaryMessageBufferRef.current = [];
             }
 
-            // ✅ Signal readiness — NO userId (not in scope)
+            // Signal readiness AFTER SourceBuffer is created AND buffer is flushed
             if (!isHost && onScreenShareReady) {
               onScreenShareReady();
-              console.log("[CinemaVideoPlayer] 🎉 onScreenShareReady called for member");
+              console.log("[CinemaVideoPlayer] 🎉 onScreenShareReady called AFTER sourceopen + buffer flush");
             }
-
           } catch (addError) {
             console.error("[CinemaVideoPlayer] ❌ Error adding SourceBuffer:", addError);
             onError(addError, 'Failed to initialize screen share player.');
@@ -223,6 +344,7 @@ const CinemaVideoPlayer = ({
         };
 
         const handleError = (e) => {
+          clearTimeout(sourceOpenTimeout);
           console.error("[CinemaVideoPlayer] ❌ MediaSource error:", e);
           onError(new Error('MediaSource error'), 'Error initializing screen share player.');
         };
@@ -231,6 +353,7 @@ const CinemaVideoPlayer = ({
         mediaSource.addEventListener('error', handleError);
 
         return () => {
+          clearTimeout(sourceOpenTimeout);
           mediaSource.removeEventListener('sourceopen', sourceOpenHandler);
           mediaSource.removeEventListener('error', handleError);
           if (onBinaryHandlerReady) {
@@ -267,7 +390,6 @@ const CinemaVideoPlayer = ({
       return;
     }
 
-    // Only set if not already set (avoid re-assignment)
     if (video.srcObject !== localScreenStream) {
       console.log("[CinemaVideoPlayer] 🎯 Attaching host screen stream to video element");
       video.srcObject = localScreenStream;
@@ -275,7 +397,6 @@ const CinemaVideoPlayer = ({
       video.play().catch(e => console.warn("Host preview play failed:", e));
     }
 
-    // Cleanup on unmount or stream change
     return () => {
       if (video.srcObject === localScreenStream) {
         video.srcObject = null;
@@ -398,7 +519,7 @@ const CinemaVideoPlayer = ({
                 default: userMessage = "Unknown playback error.";
               }
             }
-            console.error("🎬 CinemaVideoPlayer: Video error:", err, mediaError);
+            console.error("🎬 CinemaVideoPlayer Error:", err, "MediaError:", mediaError);
             onError(err, userMessage);
           }}
           onTimeUpdate={(e) => onTimeUpdate(e.target.currentTime)}

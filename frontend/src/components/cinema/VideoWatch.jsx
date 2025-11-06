@@ -30,14 +30,39 @@ import { playSeatSound, playMicOnSound, playMicOffSound } from '../../utils/audi
 
 // at the top of VideoWatch.jsx
 export default function VideoWatch() {
+  // 🔍 DEBUG: Track component mounts/unmounts
+  const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
+  useEffect(() => {
+    console.log(`🏁🏁🏁 [${componentIdRef.current}] COMPONENT MOUNTED`);
+    return () => {
+      console.log(`💀💀💀 [${componentIdRef.current}] COMPONENT UNMOUNTED`);
+    };
+  }, []);
+  
   const location = useLocation();
   const [roomHostId, setRoomHostId] = useState(null);
   const [isLoadingRoom, setIsLoadingRoom] = useState(true);
   // ✅ CORRECT: Match :roomId from your route
   const { roomId } = useParams();
-
+  const isScreenSharingActiveRef = useRef(false);
   // ✅ Auth comes AFTER top-level logic
   const { currentUser, wsToken, loading: authLoading } = useAuth();
+  
+  // 🔍 DEBUG: Track wsToken changes
+  const wsTokenChangeCountRef = useRef(0);
+  const prevWsTokenRef = useRef(wsToken);
+  useEffect(() => {
+    if (prevWsTokenRef.current !== wsToken) {
+      wsTokenChangeCountRef.current++;
+      console.log(`🔍🔍🔍 [VideoWatch] wsToken CHANGED #${wsTokenChangeCountRef.current}:`, {
+        old: prevWsTokenRef.current ? `${prevWsTokenRef.current.substring(0, 20)}...` : null,
+        new: wsToken ? `${wsToken.substring(0, 20)}...` : null,
+        timestamp: new Date().toISOString()
+      });
+      prevWsTokenRef.current = wsToken;
+    }
+  }, [wsToken]);
+  
   // ✅ Compute isHost AFTER currentUser is available
   const isHost = React.useMemo(() => {
     return currentUser?.id === roomHostId;
@@ -50,8 +75,17 @@ export default function VideoWatch() {
   }
   
 
-  // 💬 WebSocket setup
-  const { sendMessage, messages, isConnected, setBinaryMessageHandler, sessionStatus } = useWebSocket(roomId, authLoading ? null : wsToken);
+  // 💬 WebSocket setup - ✅ Only connect when auth is ready to prevent duplicate connections
+  // Use a stable token reference to prevent reconnections when auth state updates
+  const stableTokenRef = useRef(null);
+  if (!authLoading && wsToken && !stableTokenRef.current) {
+    stableTokenRef.current = wsToken;
+  }
+  
+  const { sendMessage, messages, isConnected, setBinaryMessageHandler, sessionStatus } = useWebSocket(
+    roomId, 
+    stableTokenRef.current  // Use stable reference
+  );
 
   // Track commands
   const sendMessageRef = useRef();
@@ -66,6 +100,7 @@ export default function VideoWatch() {
       console.log("🔍 [VideoWatch] Sent client_ready for user id", currentUser.id);
     }
   }, [isConnected]); // Only depend on isConnected
+  
   
   useEffect(() => {
     console.log("🔍 [VideoWatch] sessionStatus updated:", sessionStatus);
@@ -91,22 +126,28 @@ export default function VideoWatch() {
   // ref for player binary handler
   const handleBinaryMessageFromPlayerRef = useRef(null);
   
-  // Track processed messages to avoid re-processing on every render
+  // ✅ Track processed messages to prevent duplicate handling
   const processedMessageCountRef = useRef(0);
 
   // Called by CinemaVideoPlayer to register/unregister its handler
   const setPlayerBinaryHandler = useCallback((handler) => {
-    console.log("VideoWatch: setPlayerBinaryHandler called; isHost:", isHost, "handler:", !!handler);
+    console.log("[VideoWatch] 🔗 setPlayerBinaryHandler called:", {
+      hasHandler: !!handler,
+      isHost,
+      handlerType: typeof handler,
+      timestamp: Date.now()
+    });
+    
     handleBinaryMessageFromPlayerRef.current = handler;
-
-    // Only register the handler with WebSocket for viewers
+    // Directly update WebSocket handler — no state change needed
     if (!isHost && typeof handler === 'function') {
-      setBinaryMessageHandler(handler); // from useWebSocket hook
+      console.log("[VideoWatch] ✅ Registering binary handler with WebSocket (viewer mode)");
+      setBinaryMessageHandler(handler);
     } else {
-      // Host or unregister: ensure the ws-level handler is cleared
+      console.log("[VideoWatch] 🚫 Clearing binary handler (host mode or null handler)");
       setBinaryMessageHandler(null);
     }
-  }, [isHost, setBinaryMessageHandler]);
+  }, [isHost, setBinaryMessageHandler]); // dependencies are still needed for setBinaryMessageHandler
 
   // 🎥 Media State
   const [currentMedia, setCurrentMedia] = useState(null);
@@ -673,7 +714,12 @@ export default function VideoWatch() {
       window.history.replaceState({}, '', url);
     }
   }, [sessionStatus?.session_id]);
-  
+
+  // Sync ref with state
+  useEffect(() => {
+    isScreenSharingActiveRef.current = isScreenSharingActive;
+  }, [isScreenSharingActive]);
+
   // ✅ TOP-LEVEL: Handle Media Selection (for LeftSidebar)
   const handleMediaSelect = (media) => {
     console.log("🎬 [VideoWatch] handleMediaSelect called with:", media);
@@ -784,6 +830,11 @@ export default function VideoWatch() {
           let bufferedChunks = [];
 
           mediaRecorder.ondataavailable = (event) => {
+            // 🔒 IMMEDIATE EXIT if screen share is no longer active
+            if (!isScreenSharingActiveRef.current) {
+              console.log("[ScreenShare] Dropping chunk — screen share already stopped");
+              return;
+            }
             if (event.data.size === 0) return;
 
             // Buffer until we confirm WebM header (for reliable init segment)
@@ -795,12 +846,22 @@ export default function VideoWatch() {
               const totalBuffer = new Blob(bufferedChunks);
               const reader = new FileReader();
               reader.onload = () => {
+                if (!isScreenSharingActiveRef.current) {
+                  console.log("[ScreenShare] Dropping init segment — screen share already stopped");
+                  return;
+                }
                 const bytes = new Uint8Array(reader.result.slice(0, 32));
-                const hex = Array.from(bytes)
+                const hexWithSpaces = Array.from(bytes)
                   .map(b => b.toString(16).padStart(2, '0'))
-                  .join('');
+                  .join(' ');
 
-                if (hex.startsWith('1a45dfa3')) {
+                // ✅ Remove spaces for actual validation
+                const hexNoSpaces = hexWithSpaces.replace(/\s/g, '');
+
+                console.log("[ScreenShare] 🔍 First 32 bytes (hex):", hexWithSpaces);
+                console.log("[ScreenShare] 🔍 Looks like WebM?", hexNoSpaces.startsWith('1a45dfa3'));
+
+                if (hexNoSpaces.startsWith('1a45dfa3')) {
                   console.log("[ScreenShare] ✅ Full WebM header detected across chunks");
                   const initBlob = new Blob(bufferedChunks, { type: 'video/webm' });
                   sendMessageRef.current(initBlob);
@@ -830,9 +891,11 @@ export default function VideoWatch() {
             handleMediaSelect({ type: 'end_screen_share' });
           };
 
-          mediaRecorder.start(100);
+          // ✅ Start recording with frequent keyframes (every 2 seconds)
+          const timesliceMs = 2000;
+          mediaRecorder.start(timesliceMs);
           mediaRecorderRef.current = mediaRecorder;
-          console.log("[ScreenShare] MediaRecorder started.");
+          console.log(`[ScreenShare] MediaRecorder started with keyframe interval: ${timesliceMs}ms`);
         };
 
         startRecording();
@@ -850,6 +913,8 @@ export default function VideoWatch() {
       // ✅ Stop MediaRecorder
       if (mediaRecorderRef.current) {
         console.log("[ScreenShare] Stopping MediaRecorder.");
+        mediaRecorderRef.current.ondataavailable = null;
+        mediaRecorderRef.current.onerror = null;
         mediaRecorderRef.current.stop();
         mediaRecorderRef.current = null;
       }
@@ -861,10 +926,11 @@ export default function VideoWatch() {
         screenStreamRef.current = null;
       }
 
-      // ✅ Clear UI state
+      // ✅ Clear UI state + ref
       setLocalScreenStream(null);
       setCurrentMedia(null);
       setIsPlaying(false);
+      isScreenSharingActiveRef.current = false; // 👈 IMMEDIATE ref update
       setIsScreenSharingActive(false);
 
       // ✅ Notify backend
@@ -879,13 +945,24 @@ export default function VideoWatch() {
         }
       });
 
+      setPlayerBinaryHandler(null);
       console.log("⏹️ Screen share ended");
     } else {
       console.warn("⚠️ Unknown media type:", media);
     }
   };
 
-  
+  // ✅ ADD THIS EFFECT
+  //useEffect(() => {
+   // if (!isHost && isConnected && sendMessage && currentMedia?.type === 'screen_share') {
+    //  console.log("[VideoWatch] 📡 Auto-sending viewer_ready to unblock init segment");
+    //  sendMessage({
+    //    type: "screen_share",
+    //    command: "viewer_ready",
+    //    room_id: Number(roomId)
+    //  });
+  //  }
+ // }, [isHost, isConnected, currentMedia?.type, roomId, sendMessage]);
 
   // Clean up PeerConnections on unmount
   useEffect(() => {
@@ -919,6 +996,37 @@ export default function VideoWatch() {
     };
   }, []); // Empty dependency array is fine here for unmount cleanup
 
+  const viewerReadySentRef = useRef(false);
+
+  const handleScreenShareReady = useCallback(() => {
+    // 🚫 Prevent duplicate calls
+    if (viewerReadySentRef.current) {
+      console.log("⏭️ [VideoWatch] viewer_ready already sent — skipping");
+      return;
+    }
+    if (!isHost && isConnected && sendMessage && currentMedia?.type === 'screen_share') {
+      console.log("[VideoWatch] 📡 Sending viewer_ready signal");
+      sendMessage({
+        type: "screen_share",
+        command: "viewer_ready",
+        room_id: Number(roomId)
+      });
+      viewerReadySentRef.current = true;
+      // ❌ DO NOT register handler here → breaks recursion
+      
+    }
+  }, [isHost, isConnected, sendMessage, currentMedia?.type, roomId]);
+
+  
+  useEffect(() => {
+    if (currentMedia?.type !== 'screen_share') {
+      viewerReadySentRef.current = false;
+      // ✅ Explicitly clear handler to prevent stale delivery
+      setPlayerBinaryHandler(null);
+      // Also clear early buffers in player (optional but safe)
+      handleBinaryMessageFromPlayerRef.current = null;
+    }
+  }, [currentMedia?.type]);
 
   // ✅ TOP-LEVEL: Handle Seat Assignment
   const handleSeatAssignment = (seatId) => {
@@ -1010,15 +1118,14 @@ export default function VideoWatch() {
 
   // 🎧 Handle ALL incoming WebSocket messages
   useEffect(() => {
-    // Only process NEW messages (messages added since last effect run)
+    // ✅ Only process NEW messages (not already processed)
     const newMessages = messages.slice(processedMessageCountRef.current);
     if (newMessages.length === 0) return;
     
-    console.log("📡 [GUEST] Processing", newMessages.length, "NEW WebSocket messages (total:", messages.length, ")");
-    
+    console.log("📡 [GUEST] Processing", newMessages.length, "NEW WebSocket messages");
     newMessages.forEach((message, i) => {
       const messageIndex = processedMessageCountRef.current + i + 1;
-      console.log(`[DEBUG] Processing NEW message ${messageIndex}:`, message.type);
+      console.log(`[DEBUG] Processing message ${messageIndex}/${messages.length}:`, message.type);
       console.log("📡 [VideoWatch] Incoming WebSocket message:", message.type, message);
       // Handle client_ready acknowledgment
       if (message.type === "client_ready_ack") {
@@ -1122,8 +1229,11 @@ export default function VideoWatch() {
         case "screen_share_started":
           console.log("VideoWatch: 📡 [GUEST] Processing screen_share_started:", message, "Current User:", currentUser?.id);
           const sharerId = message.data?.user_id; // snake_case from backend
+          console.log(`VideoWatch: 🔍 sharerId=${sharerId}, currentUser.id=${currentUser?.id}, isHost=${isHost}`);
+          
           if (currentUser && sharerId && sharerId !== currentUser.id) {
             console.log("VideoWatch: 📺 [Viewer] Screen share started by user", sharerId);
+            console.log("VideoWatch: 🎬 Setting currentMedia for screen share...");
             
             // ✅ Set currentMedia to trigger CinemaVideoPlayer mount
             setCurrentMedia({
@@ -1136,16 +1246,25 @@ export default function VideoWatch() {
             
             setIsPlaying(true);
             setIsScreenSharingActive(true);
+            isScreenSharingActiveRef.current = true;
             setScreenSharerUserId(sharerId);
+            console.log("VideoWatch: ✅ State updated - currentMedia set, isPlaying=true, isScreenSharingActive=true");
             
             // ✅ Join the screen share (so backend adds you to viewers)
-            sendMessage({
-              type: "screen_share",
-              command: "join",
-              room_id: Number(roomId) // snake_case to match Go's json:"room_id"
-            });
+            // ✅ SEND viewer_ready IMMEDIATELY — DO NOT WAIT FOR PLAYER
+            //if (isConnected && sendMessage) {
+            //  console.log("[VideoWatch] 📡 Sending viewer_ready immediately after screen_share_started");
+           //   sendMessage({
+           //     type: "screen_share",
+            //    command: "viewer_ready",
+            //    room_id: Number(roomId)
+          //    });
+          //    viewerReadySentRef.current = true;
+          //  }
             
             console.log("VideoWatch: 📡 [GUEST] Sent 'join' for screen share in room:", roomId);
+          } else {
+            console.log(`VideoWatch: ⏭️ Skipping screen_share_started - isHost=${isHost} or sharerId matches currentUser`);
           }
           break;
         case "screen_share":
@@ -1296,17 +1415,31 @@ export default function VideoWatch() {
             : new Set([...prev].filter(id => id !== message.userId))
           );
           break;
-
         case "screen_share_stopped":
-          const stoppedUserId = message.data?.user_id; // ← snake_case
-          if (stoppedUserId && stoppedUserId !== currentUser?.id) {
-            // Only clear if it's someone else's share (or always clear if you only allow one share)
+          console.log('📺 Received screen_share_stopped from user:', message.data?.user_id || message.userId);
+          
+          // ✅ Clear for EVERYONE (host and members)
+          if (currentMedia?.type === 'screen_share') {
+            console.log('[VideoWatch] 🧹 Clearing currentMedia after screen share stopped');
             setCurrentMedia(null);
-            setIsPlaying(false);
-            setIsScreenSharingActive(false);
-            setScreenSharerUserId(null);
           }
+          
+          setIsPlaying(false);
+          setIsScreenSharingActive(false);
+          setScreenSharerUserId(null);
+          
+          showNotification('Screen sharing ended', 'info');
           break;
+        //case "screen_share_stopped":
+         // const stoppedUserId = message.data?.user_id; // ← snake_case
+        //  if (stoppedUserId && stoppedUserId !== currentUser?.id) {
+            // Only clear if it's someone else's share (or always clear if you only allow one share)
+        //    setCurrentMedia(null);
+         //   setIsPlaying(false);
+         //   setIsScreenSharingActive(false);
+         //   setScreenSharerUserId(null);
+        //  }
+        //  break;
         case "platform_selected":
           // Only show UI to the user who sent it
           if (message.data?.user_id === currentUser?.id) {
@@ -1330,7 +1463,7 @@ export default function VideoWatch() {
       }
     });
     
-    // Update processed message count after processing
+    // ✅ Update processed count
     processedMessageCountRef.current = messages.length;
   }, [messages, sessionStatus.id, currentUser?.id]);
   // }, [messages, sessionStatus.id, currentUser?.id, currentMedia?.userId]);
@@ -1438,61 +1571,72 @@ export default function VideoWatch() {
 
   // 🕒 Adaptive sync using recursive setTimeout (host-only)
   useEffect(() => {
-    if (!isHost || !isPlaying || !currentMedia || !isConnected) return;
-    // ✅ Skip sync for screen share
-    if (currentMedia.type === 'screen') return;
-    let syncIntervalMs = 500;
-    let stableCount = 0;
-    const maxStableCount = 5;
-    const minInterval = 500;
-    const maxInterval = 2000;
+    // ✅ ADD: Don't sync if screen share has ended
+    if (!isHost || !isPlaying || !currentMedia || !isConnected) {
+      return;
+    }
 
-    const scheduleNextSync = () => {
-      if (!isHost || !isPlaying || !currentMedia || !isConnected) return;
+    // ✅ ADD: Additional check - skip if screen sharing was active but is now stopped
+    if (currentMedia.type === 'screen_share' && !isScreenSharingActive) {
+      console.log('[VideoWatch] ⏸️ Skipping sync - screen share ended but currentMedia still set');
+      return;
+    }
 
-      // Send sync
-      sendMessage({
-        type: "playback_sync",
-        media_item_id: currentMedia.ID,
-        seek_time: playbackPositionRef.current,
-        timestamp: Date.now(),
-        sender_id: currentUser.id,
-      });
+    // ✅ ADD: Skip if no valid video element or no duration
+    const video = document.querySelector('video');
+    if (!video || !video.duration || video.duration === Infinity) {
+      return;
+    }
 
-      // Calculate drift since last sync
-      const now = Date.now();
-      const elapsedPlayback = playbackPositionRef.current - playbackTimeAtLastSyncRef.current;
-      const elapsedReal = (now - lastSyncTimeRef.current) / 1000;
-      const isStable = Math.abs(elapsedPlayback - elapsedReal) < 0.2;
+    let timeoutId = null;
+    let lastSyncTime = Date.now();
 
-      if (isStable) {
-        stableCount++;
-        if (stableCount >= maxStableCount && syncIntervalMs < maxInterval) {
-          syncIntervalMs = Math.min(syncIntervalMs + 250, maxInterval);
-          stableCount = 0;
-        }
-      } else {
-        stableCount = 0;
-        if (syncIntervalMs > minInterval) {
-          syncIntervalMs = minInterval;
-        }
+    const sendSync = () => {
+      if (!isConnected || !currentMedia) {
+        return;
       }
 
-      // Update refs
-      lastSyncTimeRef.current = now;
-      playbackTimeAtLastSyncRef.current = playbackPositionRef.current;
+      // ✅ ADD: Re-check screen share status before each sync
+      if (currentMedia.type === 'screen_share' && !isScreenSharingActive) {
+        console.log('[VideoWatch] ⏸️ Stopping sync loop - screen share ended');
+        return;
+      }
 
-      setTimeout(scheduleNextSync, syncIntervalMs);
+      const video = document.querySelector('video');
+      if (!video || !video.currentTime) {
+        return;
+      }
+
+      const now = Date.now();
+      const timeSinceLastSync = now - lastSyncTime;
+      
+      // Adaptive interval
+      let nextInterval = 500;
+      if (timeSinceLastSync < 200) {
+        nextInterval = 1000;
+      }
+
+      // Send sync message
+      sendMessage({
+        type: 'playback_sync',
+        media_item_id: currentMedia.ID,
+        seek_time: video.currentTime,
+        timestamp: now,
+        sender_id: currentUser?.id,
+      });
+
+      lastSyncTime = now;
+      timeoutId = setTimeout(sendSync, nextInterval);
     };
 
-    // Initialize refs
-    lastSyncTimeRef.current = Date.now();
-    playbackTimeAtLastSyncRef.current = playbackPositionRef.current;
+    sendSync();
 
-    setTimeout(scheduleNextSync, syncIntervalMs);
-
-    // Cleanup not needed (setTimeout can't be canceled easily)
-  }, [isHost, isPlaying, currentMedia, isConnected, currentUser?.id]);
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [isHost, isPlaying, currentMedia, isConnected, currentUser?.id, isScreenSharingActive]); // ✅ ADD isScreenSharingActive
 
   // Sidebar click outside
   useEffect(() => {
@@ -1542,6 +1686,16 @@ export default function VideoWatch() {
     isHost,
     isSeatedMode, // ← only once!
   });
+
+  // Set binary handler for viewer
+  const onSetBinaryHandlerForViewer = useCallback(() => {
+    setPlayerBinaryHandler((chunk) => {
+      console.log("[VideoWatch] 📥 Forwarding binary chunk to player");
+      if (handleBinaryMessageFromPlayerRef.current) {
+        handleBinaryMessageFromPlayerRef.current(chunk);
+      }
+    });
+  }, [setPlayerBinaryHandler]);
 
   // Create wrapped toggle with sound
   const toggleAudio = () => {
@@ -1602,28 +1756,16 @@ export default function VideoWatch() {
       <CinemaVideoPlayer
         mediaItem={currentMedia}
         isPlaying={isPlaying}
-        src={screenShareUrl}
         isHost={isHost}
         localScreenStream={localScreenStream}
         playbackPositionRef={playbackPositionRef}
-        onPlay={handlePlay} // Use the stable callback
-        onPause={handlePause} // Use the stable callback
+        onPlay={handlePlay}
+        onPause={handlePause}
         onEnded={handleVideoEnd}
         onError={handleError}
         onPauseBroadcast={handlePauseBroadcast}
         onBinaryHandlerReady={setPlayerBinaryHandler}
-        onScreenShareReady={() => {
-          console.log("[DEBUG] 🟢 Viewer READY — sending viewer_ready");
-          if (!isHost && isConnected && sendMessage && currentMedia?.type === 'screen_share') {
-            console.log("[VideoWatch] 📡 Sending viewer_ready signal");
-            sendMessage({
-              type: "screen_share",
-              command: "viewer_ready",
-              room_id: Number(roomId)
-            });
-            console.log("[VideoWatch] 📡 viewer_ready sent")
-          }
-        }}
+        onScreenShareReady={handleScreenShareReady}
       />
 
       {/* 🎚️ Hover Taskbar */}

@@ -18,7 +18,7 @@ export default function useWebSocket(roomId, wsToken = null) {
   const [bufferFullness, setBufferFullness] = useState(0);
   const MAX_QUEUE_SIZE = 200; // Maximum number of messages to queue (increased for large screen-share flows)
   const MAX_BINARY_SIZE = 1024 * 1024 * 5; // 5MB maximum binary message size
-  const earlyBinaryBufferRef = useRef([]); // Buffer for binary messages received before handler is set
+  //const earlyBinaryBufferRef = useRef([]); // Buffer for binary messages received before handler is set
   // Add message tracking
   const messageStatsRef = useRef({
     lastSentTime: Date.now(),
@@ -39,29 +39,36 @@ export default function useWebSocket(roomId, wsToken = null) {
 
   const setBinaryMessageHandler = useCallback((handler) => {
     console.log("useWebSocket: Setting binary message handler:", !!handler);
-    if (!handler) {
-      // Clear buffer when unsetting (e.g., screen share ends)
-      earlyBinaryBufferRef.current = [];
-      console.log("useWebSocket: Cleared early binary buffer");
-    }
     onBinaryMessageRef.current = handler;
     console.log("useWebSocket: Binary message handler set");
   }, []);
 
   const connectWebSocket = useCallback(() => {
+    const attemptId = Date.now();
+    console.log(`🔌🔌🔌 [useWebSocket] connectWebSocket CALLED #${attemptId}:`, {
+      roomId,
+      wsToken: wsToken ? `${wsToken.substring(0, 20)}...` : null,
+      isConnectingRef: isConnectingRef.current,
+      currentSocket: socket?.readyState,
+      timestamp: new Date().toISOString(),
+      stack: new Error().stack.split('\n').slice(1, 4).join('\n') // Show call stack
+    });
+    
     if (!roomId) {
-      console.warn("useWebSocket: Missing roomId — aborting connection");
+      console.warn(`❌ [useWebSocket #${attemptId}] Missing roomId — aborting connection`);
       return;
     }
 
     // ✅ Prevent duplicate connections
     if (isConnectingRef.current) {
-      console.warn("useWebSocket: Already connecting, skipping duplicate connection attempt");
+      console.warn(`⚠️ [useWebSocket #${attemptId}] Already connecting, skipping duplicate connection attempt`);
       return;
     }
 
+    console.log(`📡 [useWebSocket #${attemptId}] Starting connection...`);
     isConnectingRef.current = true;
     setIsReconnecting(true);
+    
     const queryParams = [];
     if (wsToken) {
       queryParams.push(`token=${encodeURIComponent(wsToken)}`);
@@ -74,7 +81,7 @@ export default function useWebSocket(roomId, wsToken = null) {
     const backendPort = import.meta.env.VITE_API_PORT || '8080';
     const wsUrl = `${protocol}://${host}:${backendPort}/api/rooms/${roomId}/ws${queryString}`;
 
-    console.log("useWebSocket: Connecting to", wsUrl);
+    console.log(`🌐 [useWebSocket #${attemptId}] Connecting to:`, wsUrl);
 
     const ws = new WebSocket(wsUrl);
     // Ensure binary messages are delivered as ArrayBuffer so players can append directly to SourceBuffer
@@ -197,7 +204,6 @@ export default function useWebSocket(roomId, wsToken = null) {
           console.log(`[${now}] useWebSocket: 🔍 First 32 bytes (hex): ${firstBytes}`);
           console.log(`[${now}] useWebSocket: 🔍 Looks like WebM?`, firstBytes.startsWith('1a45dfa3'));
         } else if (event.data instanceof Blob) {
-          // Read first 32 bytes asynchronously for logging
           event.data.slice(0, 32).arrayBuffer().then(buf => {
             const firstBytes = Array.from(new Uint8Array(buf))
               .map(b => b.toString(16).padStart(2, '0'))
@@ -208,28 +214,13 @@ export default function useWebSocket(roomId, wsToken = null) {
           });
         }
 
-        // 🔑 KEY FIX: Buffer if no handler is ready yet
+        // 🔥 KEY FIX: DO NOT buffer — drop if no handler is ready
         if (onBinaryMessageRef.current) {
-          console.log(`[${now}] useWebSocket: ✅ Binary handler is READY — checking for early buffer...`);
-
-          // Flush any previously buffered messages FIRST (once)
-          if (earlyBinaryBufferRef.current.length > 0) {
-            console.log(`[${now}] useWebSocket: 🚀 Flushing ${earlyBinaryBufferRef.current.length} buffered binary messages`);
-            earlyBinaryBufferRef.current.forEach((chunk, idx) => {
-              console.log(`[${now}] useWebSocket:   → Sending buffered chunk #${idx + 1}, size: ${chunk.byteLength || chunk.size} bytes`);
-              onBinaryMessageRef.current(chunk);
-            });
-            earlyBinaryBufferRef.current = [];
-            console.log(`[${now}] useWebSocket: ✅ Early binary buffer cleared`);
-          }
-
-          // Then deliver the current message
-          console.log(`[${now}] useWebSocket: 📥 Forwarding current binary message to handler`);
+          console.log(`[${now}] useWebSocket: ✅ Binary handler is READY — forwarding message`);
           onBinaryMessageRef.current(event.data);
         } else {
-          console.warn(`[${now}] useWebSocket: ⚠️ NO binary handler set — buffering message`);
-          earlyBinaryBufferRef.current.push(event.data);
-          console.log(`[${now}] useWebSocket: 📦 Buffered message #${earlyBinaryBufferRef.current.length}, total buffered: ${earlyBinaryBufferRef.current.length}`);
+          console.warn(`[${now}] useWebSocket: ❌ NO binary handler — DROPPING message (not buffering)`);
+          // EARLY BINARY BUFFERING REMOVED
         }
       } else {
         console.warn(`[${now}] useWebSocket: ❓ Unknown message type:`, typeof event.data, event.data);
@@ -276,14 +267,27 @@ export default function useWebSocket(roomId, wsToken = null) {
         ws.close();
       }
     };
-  }, [roomId, wsToken]);
+  }, [roomId]);
 
   // Main effect to initiate connection
   useEffect(() => {
+    const effectId = Date.now();
+    console.log(`🔍 [useWebSocket] Effect TRIGGERED #${effectId}:`, {
+      roomId,
+      wsToken: wsToken ? `${wsToken.substring(0, 20)}...` : null,
+      isConnectingRef: isConnectingRef.current,
+      socketState: socket?.readyState,
+      timestamp: new Date().toISOString()
+    });
+    
     reconnectAttemptRef.current = 0; // Reset reconnection attempts
     const cleanup = connectWebSocket();
-    return cleanup; // Proper cleanup on unmount or dependency change
-  }, [roomId, wsToken]); // ✅ REMOVED connectWebSocket from deps
+    
+    return () => {
+      console.log(`🧹 [useWebSocket] Effect CLEANUP #${effectId} called`);
+      if (cleanup) cleanup();
+    };
+  }, [roomId]); // ✅ FIX: Only reconnect when room changes (wsToken removed)
 
   // Debug: Log sessionStatus changes
   useEffect(() => {

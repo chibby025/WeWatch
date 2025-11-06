@@ -9,32 +9,44 @@ export default function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const effectId = Date.now();
+    console.log(`🔍🔍🔍 [useAuth] Effect TRIGGERED #${effectId} at ${new Date().toISOString()}`);
+    
     const fetchUser = async () => {
       try {
+        console.log(`🔍 [useAuth #${effectId}] Calling getCurrentUser API...`);
         const response = await getCurrentUser();
-        console.log("🔑 [useAuth] User authenticated. Response:", response);
-        // ✅ Add this log to see the user ID
-        console.log("👤 [useAuth] Authenticated User ID:", response.user?.id, "Username:", response.user?.username, "Email:", response.user?.email);
+        console.log(`🔑 [useAuth #${effectId}] User authenticated. Response:`, response);
+        console.log(`👤 [useAuth #${effectId}] User ID: ${response.user?.id}, Username: ${response.user?.username}`);
+        
         setCurrentUser(response.user);
         const token = response.ws_token;
         if (token) {
+          console.log(`🎫 [useAuth #${effectId}] Setting wsToken:`, token.substring(0, 20) + '...');
           sessionStorage.setItem('wewatch_ws_token', token);
           setWsToken(token);
+        } else {
+          console.warn(`⚠️ [useAuth #${effectId}] No ws_token in response`);
         }
         localStorage.setItem('user', JSON.stringify(response.user));
       } catch (err) {
-        console.warn("User not authenticated:", err);
+        console.warn(`❌ [useAuth #${effectId}] User not authenticated:`, err);
         localStorage.removeItem('user');
         sessionStorage.removeItem('wewatch_ws_token');
         setCurrentUser(null);
         setWsToken(null);
       } finally {
+        console.log(`✅ [useAuth #${effectId}] setLoading(false)`);
         setLoading(false);
       }
     };
 
     fetchUser();
-  }, []);
+    
+    return () => {
+      console.log(`🧹 [useAuth] Effect CLEANUP #${effectId} called`);
+    };
+  }, []); // ⚠️ Should only run ONCE on mount
 
   // ✅ DEFINE logout function
   const logout = async () => {
