@@ -30,6 +30,8 @@ var DB *gorm.DB
 func main() {
 	// --- Load .env file ---
 	err := godotenv.Load()
+	log.Println("LIVEKIT_API_KEY =", os.Getenv("LIVEKIT_API_KEY"))
+	log.Println("LIVEKIT_API_SECRET =", os.Getenv("LIVEKIT_API_SECRET"))
 	if err != nil {
 		log.Println("Warning: Error loading .env file, using environment variables or defaults")
 	}
@@ -58,13 +60,7 @@ func main() {
 	}
 	log.Println("Database schema (User, Room, MediaItem) migrated successfully")
 
-	// Migrate the ScreenShare table
-	err = models.MigrateScreenShare(DB)
-	if err != nil {
-		log.Fatal("Failed to migrate ScreenShare table:", err)
-	}
-	log.Println("ScreenShare table migrated successfully")
-
+	
 	// --- Initialize WebSocket Hub ---
 	//hub = handlers.NewHub() // Create the global hub instance
 	// Make the hub available to handlers
@@ -123,8 +119,11 @@ func main() {
 	// Range-aware static file server
 	r.GET("/uploads/*filepath", func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Headers", "Range, Content-Type, Origin, Accept")
+		c.Header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Range, Content-Type, Origin, Accept, Authorization")
+		c.Header("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
 		c.Header("Accept-Ranges", "bytes")
+		c.Header("Cache-Control", "public, max-age=3600")
 
 		urlPath := c.Param("filepath")
 		if strings.Contains(urlPath, "..") {
@@ -180,6 +179,7 @@ func main() {
 		roomGroup.POST("", handlers.CreateRoomHandler)                    // POST /api/rooms (Create a new room)
 		roomGroup.GET("", handlers.GetRoomsHandler)                       // GET /api/rooms (Get list of rooms)
 		roomGroup.GET("/:id", handlers.GetRoomHandler)                    // GET /api/rooms/:id (Get a specific room)
+		roomGroup.GET("/:id/livekit-token", handlers.GenerateLiveKitTokenHandler) // ✅ ADD THIS LINE (Generate LiveKit token for a room)
 		// --- Media Item Routes (Permanent) ---
 		roomGroup.GET("/:id/media", handlers.GetMediaItemsForRoomHandler) // GET /api/rooms/:id/media (Get media items for a room)
 		roomGroup.POST("/:id/upload", handlers.UploadMediaHandler)        // POST /api/rooms/:id/upload (Upload media to a room)
@@ -205,6 +205,7 @@ func main() {
 		roomGroup.GET("/:id/active-session", handlers.GetActiveSessionHandler)
 		roomGroup.PUT("/:id/status", handlers.UpdateRoomStatusHandler)
 		roomGroup.DELETE("/:id/temporary-media/:item_id", handlers.DeleteSingleTemporaryMediaItemHandler)
+		
 		// --- WebSocket Route (Protected) ---
 		// This endpoint upgrades HTTP to WebSocket for real-time communication.
 		// It requires authentication.
