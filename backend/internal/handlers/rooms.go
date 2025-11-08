@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 )
 
 // CreateRoomInput defines the expected structure for creating a room.
@@ -292,6 +293,70 @@ func CleanupExpiredSessions() {
 			log.Printf("CleanupExpiredSessions: Failed to commit cleanup for session %s: %v", s.SessionID, err)
 		}
 	}
+}
+
+// GenerateLiveKitTokenHandler returns a LiveKit access token for the room
+func GenerateLiveKitTokenHandler(c *gin.Context) {
+	log.Printf("🎫 [LiveKit] GenerateLiveKitTokenHandler called for room %s", c.Param("id"))
+	
+	userIDVal, exists := c.Get("user_id")
+	log.Printf("🔍 [LiveKit] user_id exists=%v, value=%v", exists, userIDVal)
+	if !exists {
+		log.Printf("❌ [LiveKit] Unauthorized: no user_id in context")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userID, ok := userIDVal.(uint)
+	if !ok {
+		log.Printf("❌ [LiveKit] Invalid user ID type")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	roomIDStr := c.Param("id")
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil {
+		log.Printf("❌ [LiveKit] Invalid room ID: %s", roomIDStr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	log.Printf("🔑 [LiveKit] User %d requesting token for room %d", userID, roomID)
+
+	// Verify user is a member of the room
+	var userRoom models.UserRoom
+	if err := DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&userRoom).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not a member of this room"})
+		return
+	}
+
+	// Get room to check if user is host
+	var room models.Room
+	if err := DB.First(&room, roomID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	isHost := room.HostID == userID
+	identity := "user-" + strconv.FormatUint(uint64(userID), 10)
+	roomName := "room-" + roomIDStr
+
+	log.Printf("🎬 [LiveKit] Generating token: room=%s, identity=%s, isHost=%v", roomName, identity, isHost)
+
+	token, err := utils.GenerateLiveKitToken(roomName, identity, isHost)
+	if err != nil {
+		log.Printf("❌ [LiveKit] Failed to generate token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	livekitURL := os.Getenv("LIVEKIT_URL")
+	log.Printf("✅ [LiveKit] Token generated successfully. URL=%s", livekitURL)
+
+	c.JSON(http.StatusOK, gin.H{
+		"token": token,
+		"url":   livekitURL,
+	})
 }
 
 // For Instant Watch Parties

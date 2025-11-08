@@ -164,6 +164,61 @@ func GetTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 	})
 }
 
+// GetTemporaryMediaFileHandler serves the actual media file for a temporary media item.
+// Route: GET /api/rooms/:id/temporary-media/:item_id/file
+func GetTemporaryMediaFileHandler(c *gin.Context) {
+	log.Println("GetTemporaryMediaFileHandler: Request received")
+
+	// ✅ We require auth, but don't yet enforce room membership
+	// Just ensure user is authenticated
+	if _, exists := c.Get("user_id"); !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	roomIDStr := c.Param("id")
+	itemIDStr := c.Param("item_id")
+
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil || roomID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+	itemID, err := strconv.ParseUint(itemIDStr, 10, 64)
+	if err != nil || itemID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid media item ID"})
+		return
+	}
+
+	// Ensure room exists
+	var room models.Room
+	if err := DB.First(&room, roomID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		}
+		return
+	}
+
+	// Fetch the media item
+	var item models.TemporaryMediaItem
+	if err := DB.Where("id = ? AND room_id = ?", itemID, roomID).First(&item).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Media item not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		}
+		return
+	}
+
+	// ✅ Serve the file
+	c.Header("Content-Type", item.MimeType)
+	c.Header("Accept-Ranges", "bytes")
+	c.File(item.FilePath)
+}
+
+
 // DeleteTemporaryMediaItemsForRoomHandler handles the DELETE /api/rooms/:id/temporary-media endpoint.
 func DeleteTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 	log.Println("DeleteTemporaryMediaItemsForRoomHandler: Request received")

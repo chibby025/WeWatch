@@ -1,36 +1,26 @@
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect } from 'react';
-import { uploadMediaToRoom, deleteSingleTemporaryMediaItem } from '../../../services/api';
-import { generatePosterFromVideoFile } from '../../../utils/generatePoster';
-import apiClient from '../../../services/api';
+import { uploadMediaToRoom } from '../../../services/api';
 
 export default function LeftSidebar({
   roomId,
   currentMedia,
   mousePosition,
   isLeftSidebarOpen,
-  isScreenSharingActive,
-  onEndScreenShare,
+  isScreenSharingActive, // ✅ from parent (LiveKit state)
+  onEndScreenShare,      // ✅ from parent (calls localParticipant.setScreenShareEnabled(false))
   isConnected,
   playlist,
   currentUser,
   sendMessage,
   onDeleteMedia,
-  onStartScreenShare,
+  onStartScreenShare,    // ✅ from parent (calls localParticipant.setScreenShareEnabled(true))
   onMediaSelect,
   onCameraPreview,
   isHost,
-  onClose
+  onClose,
+  onUploadComplete       // ✅ NEW: callback to refresh playlist after upload
 }) {
-  console.log('[LeftSidebar] Rendered with props:', {
-    isLeftSidebarOpen,
-    isScreenSharingActive,
-    isHost,
-    currentUser,
-    playlistCount: playlist?.length,
-    currentMediaType: currentMedia?.type
-  });
-
   const [activeTab, setActiveTab] = useState('upload');
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
@@ -41,29 +31,21 @@ export default function LeftSidebar({
   const [cameraDevices, setCameraDevices] = useState([]);
   const [selectedCameraDeviceId, setSelectedCameraDeviceId] = useState('');
   const currentPreviewStreamRef = useRef(null);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [activePlatformShare, setActivePlatformShare] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const screenStreamRef = useRef(null);
-  const micStreamRef = useRef(null);
-  const [isPlatformShareInitiating, setIsPlatformShareInitiating] = useState(false); // NEW
   const [showWatchFromInstructions, setShowWatchFromInstructions] = useState(false);
-  const [selectedWatchFromPlatform, setSelectedWatchFromPlatform] = useState(null);
 
-  // Close leftsidebar when mouse is outside the sidebar
+  // Auto-close sidebar when mouse leaves (unless screen sharing)
   useEffect(() => {
     if (!isLeftSidebarOpen || !sidebarRef.current) return;
-
     const sidebarWidth = sidebarRef.current.offsetWidth;
     const isMouseInSidebar = mousePosition.x < sidebarWidth;
-    const isScreenSharing = currentMedia?.type === 'screen';
-
-    if (!isMouseInSidebar && !isScreenSharing) {
+    if (!isMouseInSidebar && !isScreenSharingActive) {
       onClose?.();
     }
-  }, [mousePosition, isLeftSidebarOpen, currentMedia]);
+  }, [mousePosition, isLeftSidebarOpen, isScreenSharingActive, onClose]);
 
+  // Enumerate cameras when Liveshare tab is opened
   useEffect(() => {
     if (activeTab === 'liveshare') {
       enumerateDevices();
@@ -78,16 +60,92 @@ export default function LeftSidebar({
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(device => device.kind === 'videoinput');
       setCameraDevices(videoDevices);
-
       if (videoDevices.length > 0 && !selectedCameraDeviceId) {
         setSelectedCameraDeviceId(videoDevices[0].deviceId);
       }
     } catch (err) {
-      console.error("❌ Camera permission denied:", err);
+      console.error("Camera permission denied:", err);
       setCameraDevices([]);
     }
   };
 
+  const handleCameraChange = async (deviceId) => {
+    try {
+      if (currentPreviewStreamRef.current) {
+        currentPreviewStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: deviceId || true },
+        audio: false
+      });
+      currentPreviewStreamRef.current = stream;
+      if (onCameraPreview) onCameraPreview(stream);
+    } catch (err) {
+      console.error("Camera error:", err);
+      alert("Camera unavailable.");
+      if (onCameraPreview) onCameraPreview(null);
+    }
+  };
+
+  const handleFileUpload = async (files) => {
+    if (!files?.length || !roomId) return;
+    const file = files[0];
+    if (file.size > 1 * 1024 * 1024 * 1024) {
+      alert("File must be less than 1GB");
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress(0);
+
+    try {
+      await uploadMediaToRoom(
+        roomId,
+        file,
+        (percent) => setUploadProgress(percent),
+        true // temporary
+      );
+      
+      // ✅ Refresh playlist after successful upload
+      // (Poster will be generated in fetchAndGeneratePosters)
+      if (onUploadComplete) {
+        console.log('📤 [LeftSidebar] Upload complete, refreshing playlist...');
+        onUploadComplete();
+      }
+    } catch (err) {
+      console.error("Upload failed:", err);
+      alert("Upload failed. Please try again.");
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
+  const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); handleFileUpload(e.dataTransfer.files); };
+
+  // ✅ PLATFORM LIST (unchanged)
+  const platforms = [
+    { id: 'youtube', name: 'YouTube', url: 'https://www.youtube.com' },
+    { id: 'twitch', name: 'Twitch', url: 'https://www.twitch.tv' },
+    { id: 'crunchyroll', name: 'Crunchyroll', url: 'https://www.crunchyroll.com' },
+    { id: 'hdtoday', name: 'HDToday', url: 'https://hdtoday.cc/' },
+    { id: 'moviebox', name: 'MovieBox', url: 'https://moviebox.ph/' },
+    { id: 'viki', name: 'Viki', url: 'https://www.viki.com' },
+    { id: 'tubi', name: 'Tubi', url: 'https://tubitv.com' },
+    { id: 'vimeo', name: 'Vimeo', url: 'https://vimeo.com' },
+    { id: 'plutotv', name: 'Pluto TV', url: 'https://pluto.tv' },
+    { id: 'irokotv', name: 'IrokoTV', url: 'https://irokotv.com' },
+    { id: 'showmax', name: 'Showmax', url: 'https://www.showmax.com' },
+    { id: 'africamagic', name: 'Africa Magic', url: 'https://www.youtube.com/@AfricaMagic' },
+  ];
+
+  const filteredPlatforms = platforms.filter(p =>
+    p.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // ✅ HANDLE PLATFORM SELECTION (metadata only)
   const handlePlatformSelect = (platform) => {
     setSelectedPlatform(platform.id);
     if (sendMessage && currentUser) {
@@ -101,194 +159,37 @@ export default function LeftSidebar({
         }
       });
     }
-    // Optionally, you can trigger screen sharing logic here if needed
   };
 
-  const handleStartScreenShare = async () => {
-    console.log('[LeftSidebar] handleStartScreenShare called', { currentUser, currentUserType: typeof currentUser });
-    
-    if (!currentUser?.id) {
-      console.error('[LeftSidebar] Cannot start screen share: No authenticated user');
-      alert('You must be logged in to share your screen.');
-      return;
+  // ✅ HANDLE "SHARE SCREEN" FROM WATCH-FROM MODAL
+  const handleStartPlatformScreenShare = (platformId) => {
+    const platform = platforms.find(p => p.id === platformId);
+    const platformName = platform?.name || 'External Screen';
+
+    // 1. Start LiveKit screen share
+    if (onStartScreenShare) {
+      onStartScreenShare();
     }
 
-    let screenStream, micStream;
-
-    try {
-      console.log('[LeftSidebar] Requesting screen share permission with enhanced constraints...');
-      // ✅ Enhanced constraints for better MSE compatibility
-      screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          frameRate: { ideal: 15, max: 30 },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
-        audio: true
-      });
-    } catch (err) {
-      console.warn("[LeftSidebar] Tab audio not supported:", err);
-      // Fallback without audio
-      screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          frameRate: { ideal: 15, max: 30 },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
-        audio: false
+    // 2. Notify room of metadata
+    if (sendMessage && currentUser) {
+      sendMessage({
+        type: "update_room_status",
+        data: {
+          is_screen_sharing: true,
+          screen_sharing_user_id: currentUser.id,
+          currently_playing: `Watching ${platformName}`,
+          coming_next: ""
+        }
       });
     }
 
-    try {
-      console.log('[LeftSidebar] Requesting microphone permission...');
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      console.warn("[LeftSidebar] Mic not available:", err);
-      micStream = null;
-    }
-
-    const combinedStream = new MediaStream();
-    screenStream.getTracks().forEach(track => combinedStream.addTrack(track));
-    micStream?.getTracks().forEach(track => combinedStream.addTrack(track));
-
-    // Store for cleanup
-    screenStreamRef.current = screenStream;
-    micStreamRef.current = micStream;
-
-    console.log('[LeftSidebar] Streams combined and stored', { 
-      screenTracks: screenStream.getTracks().length,
-      micTracks: micStream?.getTracks().length || 0,
-      combinedTracks: combinedStream.getTracks().length
-    });
-
-    // ✅ Just tell parent: "Here's my stream — you handle the rest"
-    if (onMediaSelect) {
-      const mediaInfo = {
-        type: 'screen_share',
-        userId: currentUser?.id,
-        stream: combinedStream,
-        title: 'Live Screen Share',
-        original_name: 'Live Screen Share'
-      };
-      console.log('[LeftSidebar] Calling onMediaSelect with:', { ...mediaInfo, stream: '[MediaStream]' });
-      onMediaSelect(mediaInfo);
-      setIsScreenSharing(true);
-    } else {
-      console.error('[LeftSidebar] No onMediaSelect handler provided');
-      alert("Screen share setup incomplete.");
-    }
+    // 3. Close modal
+    setShowWatchFromInstructions(false);
   };
-
-  const handleEndScreenShare = () => {
-    // Stop all tracks
-    screenStreamRef.current?.getTracks().forEach(track => track.stop());
-    micStreamRef.current?.getTracks().forEach(track => track.stop());
-    screenStreamRef.current = null;
-    micStreamRef.current = null;
-
-    // Notify parent to clean up
-    if (onMediaSelect) {
-      onMediaSelect({ type: 'end_screen_share' });
-    }
-
-    setIsScreenSharing(false);
-  };
-
-  const handleCameraChange = async (deviceId) => {
-    try {
-      if (currentPreviewStreamRef.current) {
-        currentPreviewStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: deviceId || true },
-        audio: false
-      });
-
-      currentPreviewStreamRef.current = stream;
-      if (onCameraPreview) {
-        onCameraPreview(stream);
-      }
-    } catch (err) {
-      console.error("Camera error:", err);
-      alert("Camera unavailable. Is it in use by another app?");
-      if (onCameraPreview) {
-        onCameraPreview(null);
-      }
-    }
-  };
-
-  const handleFileUpload = async (files) => {
-    if (!files?.length || !roomId) return;
-    const file = files[0];
-
-    if (file.size > 1 * 1024 * 1024 * 1024) {
-      alert("File must be less than 1GB");
-      return;
-    }
-
-    setUploading(true);
-    setUploadProgress(0);
-
-    try {
-      // Upload to backend (which will broadcast via WebSocket)
-      const uploadResponse = await uploadMediaToRoom(
-        roomId,
-        file,
-        (percent) => setUploadProgress(percent),
-        true // ← isTemporary = true
-      );
-
-      // Optional: generate poster for immediate local preview (not used for sync)
-      const posterUrl = await generatePosterFromVideoFile(file);
-      console.log("✅ Upload complete. Waiting for WebSocket sync...");
-    } catch (err) {
-      console.error("Upload failed:", err);
-      alert("❌ Upload failed. Please try again.");
-    } finally {
-      setUploading(false);
-      setUploadProgress(0);
-    }
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFileUpload(e.dataTransfer.files);
-  };
-
-  // ✅ Platform list kept exactly as-is (per your request)
-  const platforms = [
-    { id: 'youtube', name: 'YouTube', url: 'https://www.youtube.com  ' },
-    { id: 'twitch', name: 'Twitch', url: 'https://www.twitch.tv  ' },
-    { id: 'crunchyroll', name: 'Crunchyroll', url: 'https://www.crunchyroll.com  ' },
-    { id: 'hdtoday', name: 'HDToday', url: 'https://hdtoday.cc/  ' },
-    { id: 'moviebox', name: 'MovieBox', url: 'https://moviebox.ph/  ' },
-    { id: 'viki', name: 'Viki', url: 'https://www.viki.com  ' },
-    { id: 'tubi', name: 'Tubi', url: 'https://tubitv.com  ' },
-    { id: 'vimeo', name: 'Vimeo', url: 'https://vimeo.com  ' },
-    { id: 'plutotv', name: 'Pluto TV', url: 'https://pluto.tv  ' },
-    { id: 'irokotv', name: 'IrokoTV', url: 'https://irokotv.com  ' },
-    { id: 'showmax', name: 'Showmax', url: 'https://www.showmax.com  ' },
-    { id: 'africamagic', name: 'Africa Magic', url: 'https://www.youtube.com/@AfricaMagic  ' },
-  ];
-
-  const filteredPlatforms = platforms.filter(platform =>
-    platform.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   return (
-    <div 
+    <div
       ref={sidebarRef}
       className="fixed left-0 top-0 h-full w-80 z-40 overflow-y-auto hide-scrollbar left-sidebar"
       onClick={(e) => e.stopPropagation()}
@@ -300,14 +201,11 @@ export default function LeftSidebar({
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`
-                w-[107px] h-[43px] flex items-center justify-center
-                text-[15px] font-normal text-gray-400 transition-colors
-                ${activeTab === tab
+              className={`w-[107px] h-[43px] flex items-center justify-center text-[15px] font-normal text-gray-400 transition-colors ${
+                activeTab === tab
                   ? 'text-black font-black bg-[#D9D9D9]/25 rounded-full'
                   : 'hover:text-white'
-                }
-              `}
+              }`}
             >
               {tab === 'upload' && 'Upload'}
               {tab === 'liveshare' && 'LiveShare'}
@@ -333,20 +231,17 @@ export default function LeftSidebar({
             >
               <div className="flex items-center mb-3">
                 <img src="/icons/FilesIcon.svg" alt="Files" className="h-4 w-4 mr-2" />
-                <span className="text-xs text-gray-500">Choose a file or drag & drop it here</span>
+                <span className="text-xs text-gray-500">Choose a file or drag & drop</span>
               </div>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="w-full max-w-[163px] mx-auto px-4 py-2 bg-[#444AF7]/20 text-white rounded-full font-medium text-[15px] transition-colors hover:bg-[#444AF7]/30 flex items-center justify-center disabled:opacity-50"
+                className="w-full max-w-[163px] mx-auto px-4 py-2 bg-[#444AF7]/20 text-white rounded-full font-medium text-[15px] hover:bg-[#444AF7]/30 disabled:opacity-50"
               >
                 {uploading ? 'Uploading...' : 'Browse Files'}
                 {uploading && (
                   <div className="w-full mt-3 bg-gray-700 rounded-full h-2">
-                    <div 
-                      className="bg-blue-500 h-2 rounded-full transition-all duration-100"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
+                    <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${uploadProgress}%` }} />
                   </div>
                 )}
               </button>
@@ -362,6 +257,7 @@ export default function LeftSidebar({
               />
             </div>
           </div>
+
           <div className="flex-1 overflow-y-auto min-h-0">
             <div className="h-full flex flex-col p-4 bg-[#D9D9D9]/10 rounded-xl">
               <h4 className="text-base font-semibold text-gray-400 mb-2">PLAYING NOW</h4>
@@ -369,7 +265,7 @@ export default function LeftSidebar({
                 <div className="bg-gray-800 rounded-lg p-3 mb-4">
                   <div className="flex items-center gap-3">
                     <img
-                      src={currentMedia.poster_url || '/placeholder-poster.jpg'}
+                      src={currentMedia.poster_url || '/icons/placeholder-poster.jpg'}
                       alt={currentMedia.original_name}
                       className="w-12 h-12 rounded object-cover"
                     />
@@ -382,6 +278,7 @@ export default function LeftSidebar({
               ) : (
                 <p className="text-gray-500 text-sm">No media playing</p>
               )}
+
               <h4 className="text-base font-semibold text-gray-400 mb-2">NEXT UP</h4>
               {playlist.length > 0 ? (
                 <div className="space-y-2 max-h-64 overflow-y-auto hide-scrollbar">
@@ -389,20 +286,11 @@ export default function LeftSidebar({
                     <div
                       key={item.ID}
                       className="bg-gray-800 rounded-lg p-3 cursor-pointer hover:bg-gray-700 transition-colors flex items-center gap-3"
-                      onClick={() => {
-                        const normalizedItem = {
-                          ...item,
-                          ID: item.ID,
-                          type: 'upload'
-                        };
-                        onMediaSelect(normalizedItem);
-                      }}
+                      onClick={() => onMediaSelect({ ...item, type: 'upload' })}
                     >
                       <img
                         src={item.poster_url || '/icons/placeholder-poster.jpg'}
-                        onError={(e) => {
-                          e.target.src = '/icons/placeholder-poster.jpg';
-                        }}
+                        onError={(e) => e.target.src = '/icons/placeholder-poster.jpg'}
                         alt={item.original_name}
                         className="w-12 h-12 rounded object-cover"
                       />
@@ -410,15 +298,14 @@ export default function LeftSidebar({
                         <p className="text-white text-sm font-medium truncate">{item.original_name}</p>
                         <p className="text-gray-400 text-xs">{item.duration}</p>
                       </div>
-                      {/* Delete icon for host/admin */}
-                     
+                      {isHost && (
                         <button
                           className="ml-2 text-red-400 hover:text-red-600"
                           title="Delete media"
                           onClick={(e) => {
                             e.stopPropagation();
                             if (window.confirm("Delete this media file?")) {
-                              onDeleteMedia(item); // ✅ delegated to parent
+                              onDeleteMedia(item);
                             }
                           }}
                         >
@@ -426,7 +313,7 @@ export default function LeftSidebar({
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                           </svg>
                         </button>
-                     
+                      )}
                     </div>
                   ))}
                 </div>
@@ -447,22 +334,23 @@ export default function LeftSidebar({
               <h3 className="text-white font-medium text-base">Go Live and Share Screen</h3>
             </div>
             <div className="bg-black rounded-lg p-4 mb-4 flex flex-col items-center">
-              <p className="text-[#D9D9D9] opacity-25 text-[13px] font-normal text-center mb-4">
-                Allow others to see the contents of your device's screen
+              <p className="text-[#D9D9D9] opacity-25 text-[13px] text-center mb-4">
+                Share your screen with others using LiveKit
               </p>
               <button
-                onClick={isScreenSharing ? handleEndScreenShare : handleStartScreenShare}
+                onClick={isScreenSharingActive ? onEndScreenShare : onStartScreenShare}
                 className={`w-32 py-2 px-4 rounded-full font-medium text-sm transition-colors ${
-                  isScreenSharing
+                  isScreenSharingActive
                     ? 'bg-red-500/25 hover:bg-red-500/30 text-white'
                     : 'bg-[#444AF7]/25 hover:bg-[#444AF7]/30 text-white'
                 }`}
               >
-                {isScreenSharing ? 'End LiveShare' : 'LiveShare'}
+                {isScreenSharingActive ? 'End LiveShare' : 'LiveShare'}
               </button>
             </div>
           </div>
 
+          {/* Camera selection (optional, independent of screen share) */}
           <div className="bg-[#D9D9D9]/20 rounded-xl p-4">
             <h3 className="text-white font-bold text-lg text-center mb-3">Choose Camera</h3>
             <div className="bg-black rounded-lg p-3">
@@ -477,13 +365,9 @@ export default function LeftSidebar({
                       className="sr-only"
                     />
                     <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                      selectedCamera === 'available' 
-                        ? 'border-blue-500 bg-blue-500' 
-                        : 'border-gray-400'
+                      selectedCamera === 'available' ? 'border-blue-500 bg-blue-500' : 'border-gray-400'
                     }`}>
-                      {selectedCamera === 'available' && (
-                        <div className="w-2 h-2 rounded-full bg-white"></div>
-                      )}
+                      {selectedCamera === 'available' && <div className="w-2 h-2 rounded-full bg-white"></div>}
                     </div>
                   </div>
                   <span className="text-gray-400 text-sm ml-3">Available Camera</span>
@@ -493,22 +377,17 @@ export default function LeftSidebar({
                   <select
                     value={selectedCameraDeviceId}
                     onChange={(e) => {
-                      const newDeviceId = e.target.value;
-                      setSelectedCameraDeviceId(newDeviceId);
-                      handleCameraChange(newDeviceId);
+                      setSelectedCameraDeviceId(e.target.value);
+                      handleCameraChange(e.target.value);
                     }}
                     className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm mt-1"
                   >
-                    {cameraDevices.map(device => (
+                    {cameraDevices.map((device, i) => (
                       <option key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Camera ${cameraDevices.indexOf(device) + 1}`}
+                        {device.label || `Camera ${i + 1}`}
                       </option>
                     ))}
                   </select>
-                )}
-
-                {selectedCamera === 'available' && cameraDevices.length === 0 && (
-                  <p className="text-gray-500 text-sm mt-1">No cameras detected</p>
                 )}
 
                 <label className="flex items-center cursor-pointer">
@@ -520,23 +399,17 @@ export default function LeftSidebar({
                       onChange={() => {
                         setSelectedCamera('none');
                         if (currentPreviewStreamRef.current) {
-                          currentPreviewStreamRef.current.getTracks().forEach(track => track.stop());
+                          currentPreviewStreamRef.current.getTracks().forEach(t => t.stop());
                           currentPreviewStreamRef.current = null;
                         }
-                        if (onCameraPreview) {
-                          onCameraPreview(null);
-                        }
+                        if (onCameraPreview) onCameraPreview(null);
                       }}
                       className="sr-only"
                     />
                     <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                      selectedCamera === 'none' 
-                        ? 'border-blue-500 bg-blue-500' 
-                        : 'border-gray-400'
+                      selectedCamera === 'none' ? 'border-blue-500 bg-blue-500' : 'border-gray-400'
                     }`}>
-                      {selectedCamera === 'none' && (
-                        <div className="w-2 h-2 rounded-full bg-white"></div>
-                      )}
+                      {selectedCamera === 'none' && <div className="w-2 h-2 rounded-full bg-white"></div>}
                     </div>
                   </div>
                   <span className="text-gray-400 text-sm ml-3">No Camera</span>
@@ -550,197 +423,77 @@ export default function LeftSidebar({
       {/* WATCH FROM TAB */}
       {activeTab === 'watchfrom' && (
         <div className="p-4 h-full flex flex-col">
-          <h3 className="text-lg font-semibold text-white mb-4">
-            {activePlatformShare 
-              ? `Watching ${activePlatformShare.name}` 
-              : 'Watch From Platform'}
-          </h3>
+          <h3 className="text-lg font-semibold text-white mb-4">Watch From Platform</h3>
 
-          {/* 🔴 END BUTTON (if sharing) */}
-          {activePlatformShare && (
-            <button
-              onClick={() => {
-                activePlatformShare.stream.getTracks().forEach(track => track.stop());
-                
-                // Broadcast stop only if host or approved sharer
-                if (sendMessage) {
-                  sendMessage({
-                    type: "screen_share_stopped",
-                    data: { userId: currentUser?.id }
-                  });
-                }
-
-                onMediaSelect({ type: 'end_screen_share' });
-                setActivePlatformShare(null);
-              }}
-              className="w-full mb-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors"
-            >
-              🛑 {isHost ? 'End Screen Share' : 'Stop Sharing'}
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            if (!searchQuery.trim()) return;
+            const matched = platforms.find(p => p.name.toLowerCase().includes(searchQuery.trim().toLowerCase()));
+            const url = matched ? matched.url : `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
+            window.open(url, '_blank');
+            setSearchQuery('');
+          }} className="mb-4">
+            <input
+              type="text"
+              placeholder="Search platforms or browse the web..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+            <button type="submit" className="mt-2 w-full bg-purple-600 hover:bg-purple-500 text-white py-2 rounded-lg text-sm font-medium">
+              Go →
             </button>
-          )}
+          </form>
 
-          {/* 🔍 Search Form */}
-          {!activePlatformShare && (
-            <form 
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!searchQuery.trim()) return;
-                const query = searchQuery.trim().toLowerCase();
-                const matchedPlatform = platforms.find(p => 
-                  p.name.toLowerCase().includes(query) || p.id.toLowerCase().includes(query)
-                );
-                if (matchedPlatform) {
-                  window.open(matchedPlatform.url.trim(), '_blank');
-                } else {
-                  const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
-                  window.open(googleUrl, '_blank');
-                }
-                setSearchQuery('');
-              }}
-              className="mb-4"
-            >
-              <input
-                type="text"
-                placeholder="Search platforms or browse the web..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
-              <button
-                type="submit"
-                className="mt-2 w-full bg-purple-600 hover:bg-purple-500 text-white py-2 rounded-lg text-sm font-medium"
-              >
-                Go →
-              </button>
-            </form>
-          )}
-
-          {/* 🎯 PLATFORM GRID */}
-          {!activePlatformShare && (
-            <div className="flex-1 overflow-y-auto min-h-0">
-              <div className="grid grid-cols-2 gap-4">
-                {filteredPlatforms.map(platform => (
-                  <button
-                    key={platform.id}
-                    // Inside the button's onClick for the platform tile
-                    onClick={() => {
-                      // Find the full platform object
-                      const platformObj = platforms.find(p => p.id === platform.id);
-                      if (platformObj) {
-                        // 1. Open the platform tab ONCE
-                        window.open(platformObj.url.trim(), '_blank');
-                        // 2. Show the simplified instruction modal
-                        setShowWatchFromInstructions(true);
-                        // 3. Store the *object* or just the ID needed for the next step
-                        //    Option A: Store the whole object (simpler access later)
-                        //    setSelectedPlatform(platformObj); // Requires changing setSelectedPlatform type
-                        //    Option B: Store the ID (matches current pattern, but needs lookup later)
-                        setSelectedPlatform(platformObj.id); // Keep current pattern
-                        // IMPORTANT: Remove the call to handlePlatformSelect(platform) from here.
-                        // handlePlatformSelect(platform); // <-- DELETE THIS LINE
-                      }
-                    }}
-                    className={`
-                      flex flex-col items-center justify-center
-                      p-3 rounded-xl transition-all
-                      bg-gray-800/40 hover:bg-gray-700/60 
-                      border ${selectedPlatform === platform.id ? 'border-purple-500' : 'border-gray-700'}
-                    `}
-                  >
-                    <img
-                      src={`https://www.google.com/s2/favicons?domain=${platform.url.trim()}&sz=64`}
-                      alt={`${platform.name} favicon`}
-                      className="w-12 h-12 object-contain mb-2"
-                      onError={(e) => {
-                        e.target.src = `/icons/${platform.id}Icon.svg`;
-                        e.target.className = "w-12 h-12 object-contain mb-2";
-                        e.target.onerror = null;
-                      }}
-                    />
-                    <span className="text-xs text-white text-center">{platform.name}</span>
-                  </button>
-                ))}
-              </div>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <div className="grid grid-cols-2 gap-4">
+              {filteredPlatforms.map(platform => (
+                <button
+                  key={platform.id}
+                  onClick={() => {
+                    window.open(platform.url, '_blank');
+                    setSelectedPlatform(platform.id);
+                    setShowWatchFromInstructions(true);
+                  }}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all bg-gray-800/40 hover:bg-gray-700/60 border ${
+                    selectedPlatform === platform.id ? 'border-purple-500' : 'border-gray-700'
+                  }`}
+                >
+                  <img
+                    src={`https://www.google.com/s2/favicons?domain=${platform.url}&sz=64`}
+                    alt={`${platform.name} favicon`}
+                    className="w-12 h-12 object-contain mb-2"
+                    onError={(e) => e.target.src = `/icons/${platform.id}Icon.svg`}
+                  />
+                  <span className="text-xs text-white text-center">{platform.name}</span>
+                </button>
+              ))}
             </div>
-          )}
+          </div>
         </div>
       )}
 
-      {/* ✅ MODAL: Platform Share Instructions */}
-      {showWatchFromInstructions && !activePlatformShare && (
+      {/* MODAL: Watch From Instructions */}
+      {showWatchFromInstructions && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg w-full max-w-md">
-            {/* Use selectedWatchFromPlatform for title/content */}
             <h3 className="text-lg font-bold mb-3">
-              Watch {selectedWatchFromPlatform?.name} Together {/* Access name */}
+              Watch Together
             </h3>
             <p className="text-gray-700 mb-4 text-sm">
-              1. Make sure <strong>{selectedWatchFromPlatform?.name}</strong> is open in a browser tab<br/> {/* Access name */}
+              1. Make sure the platform is open in a browser tab<br/>
               2. Click <strong>“Share Screen”</strong> below<br/>
-              3. In the popup, select the <strong>{selectedWatchFromPlatform?.name} tab</strong> {/* Access name */}
+              3. In the popup, select the correct tab or window
             </p>
             <div className="flex gap-2">
               <button
-                onClick={() => {
-                  setShowWatchFromInstructions(false);
-                  setSelectedWatchFromPlatform(null);
-                }}
+                onClick={() => setShowWatchFromInstructions(false)}
                 className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 rounded"
               >
                 Cancel
               </button>
               <button
-                // Inside the onClick handler in LeftSidebar.jsx
-                onClick={async () => {
-                  console.log('[LeftSidebar] Share Screen modal button clicked');
-                  try {
-                    console.log('[LeftSidebar] 🎥 Share Screen button clicked');
-                    if (sendMessage && currentUser) {
-                      sendMessage({
-                        type: "update_room_status",
-                        data: {
-                          is_screen_sharing: true,
-                          screen_sharing_user_id: currentUser.id,
-                          currently_playing: `Watching ${selectedWatchFromPlatform?.name}`,
-                          coming_next: ""
-                        }
-                      });
-                      console.log('[LeftSidebar] Sent update_room_status message for screen sharing', {
-                        userId: currentUser.id,
-                        platform: selectedWatchFromPlatform?.name
-                      });
-                    }
-
-                    // Prompt for screen share
-                    console.log('[LeftSidebar] Prompting for getDisplayMedia...');
-                    // ✅ DO THIS
-                    onStartScreenShare(); // ← this should call VideoWatch's startScreenShare()
-                    console.log('[LeftSidebar] getDisplayMedia resolved, stream:', stream);
-
-                    console.log('[LeftSidebar] Calling onMediaSelect with screen stream');
-                    onMediaSelect({
-                      type: 'screen_share', // ← CHANGED
-                      userId: currentUser.id, // ← ADD THIS
-                      stream,
-                      title: `Watching ${selectedWatchFromPlatform?.name}`,
-                      original_name: selectedWatchFromPlatform?.name
-                    });
-                    console.log('[LeftSidebar] Called onMediaSelect with screen stream');
-
-                    setActivePlatformShare({
-                      id: selectedWatchFromPlatform?.id,
-                      name: selectedWatchFromPlatform?.name,
-                      stream
-                    });
-                    console.log('[LeftSidebar] Updated activePlatformShare state');
-
-                    setShowWatchFromInstructions(false);
-                    setSelectedWatchFromPlatform(null);
-                    console.log('[LeftSidebar] Closed WatchFrom instructions modal');
-                  } catch (err) {
-                    console.error('[LeftSidebar] ❌ Error during screen share start:', err);
-                  }
-                }}
+                onClick={() => handleStartPlatformScreenShare(selectedPlatform)}
                 className="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded"
               >
                 🎥 Share Screen
