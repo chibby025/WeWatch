@@ -1,0 +1,7 @@
+keys:
+  dev-key: a77cf9f63f8e47f9fdd9d1550e129731
+
+http:
+  cors:
+    allow_origins:
+      - "http://localhost:5173"

@@ -23,34 +23,7 @@ const ChatPanel = ({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
-  /*
-  // Handle incoming WebSocket messages
-  useEffect(() => {
-    if (!ws || !wsConnected) return;
-
-    const handleMessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        console.log("ChatPanel: Received WebSocket message:", message);
-        
-        if (message.type === "chat_message") {
-          // Append to parent state
-          setChatMessages(prev => [...prev, message.data]);
-        } else if (message.type === "reaction") {
-          console.log("Received reaction:", message.data);
-        } else {
-          console.warn("ChatPanel: Unknown message type received:", message.type);
-        }
-      } catch (err) {
-        console.error("Error parsing chat message:", err);
-      }
-    };
-
-    ws.addEventListener('message', handleMessage);
-    return () => ws.removeEventListener('message', handleMessage);
-  }, [ws, wsConnected, setChatMessages]);
-  */
-
+  
 
   const sendMessage = async () => {
     if (!newMessage.trim() || !wsConnected || !ws) return;

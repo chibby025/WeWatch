@@ -198,6 +198,9 @@ func UploadMediaHandler(c *gin.Context) {
 		//	hub.BroadcastToRoom(roomIDUint, messageBytes)
 		//}
 
+		// ✅ Construct public URL for browser access
+		publicURL := fmt.Sprintf("/uploads/temp/%s", uniqueFilename)
+
 		log.Printf("🎉 UploadMediaHandler: Temporary media item '%s' (ID: %d) uploaded successfully to room %d by user %d", newTempMediaItem.FileName, newTempMediaItem.ID, room.ID, authenticatedUserID)
 		c.JSON(http.StatusCreated, gin.H{
 			"message":       "Temporary media item uploaded successfully",
@@ -206,7 +209,8 @@ func UploadMediaHandler(c *gin.Context) {
 			"original_name": newTempMediaItem.OriginalName,
 			"mime_type":     newTempMediaItem.MimeType,
 			"file_size":     newTempMediaItem.FileSize,
-			"file_path":     newTempMediaItem.FilePath,
+			"file_path":     newTempMediaItem.FilePath,          // internal path (for cleanup)
+			"file_url":      publicURL,                        // ✅ public URL for playback
 			"room_id":       newTempMediaItem.RoomID,
 			"uploader_id":   newTempMediaItem.UploaderID,
 			"duration":      newTempMediaItem.Duration,
