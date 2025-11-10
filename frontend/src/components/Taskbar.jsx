@@ -16,6 +16,7 @@ const VideoIcon = '/icons/VideoIcon.svg';
 const MembersIcon = '/icons/MembersIcon.svg';
 const ShareIcon = '/icons/ShareIcon.svg';
 const SeatToggleIcon = '/icons/SeatToggleIcon.svg';
+const SettingsIcon = '/icons/settingsIcon.svg';
 
 const Taskbar = ({
   authenticatedUserID,
@@ -35,10 +36,15 @@ const Taskbar = ({
   toggleCamera,
   isHostBroadcasting,
   onHostBroadcastToggle,
-  onLeaveCall
+  onLeaveCall,
+  audioDevices = [],
+  selectedAudioDeviceId,
+  onAudioDeviceChange
 }) => {
   const [isVisible, setIsVisible] = useState(true);
   const [isHovering, setIsHovering] = useState(false);
+  const [showMicDropdown, setShowMicDropdown] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
 
   // Auto-show for 3 seconds on mount
   useEffect(() => {
@@ -63,6 +69,41 @@ const Taskbar = ({
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
+
+  // Close mic dropdown when clicking outside
+  useEffect(() => {
+    if (!showMicDropdown) return;
+    
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('.mic-dropdown-container')) {
+        setShowMicDropdown(false);
+      }
+    };
+    
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [showMicDropdown]);
+
+  // Close settings menu when clicking outside
+  useEffect(() => {
+    if (!showSettingsMenu) return;
+    
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('.settings-menu-container')) {
+        setShowSettingsMenu(false);
+      }
+    };
+    
+    // Add a small delay to prevent immediate closing when opening
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('click', handleClickOutside);
+    }, 10);
+    
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [showSettingsMenu]);
 
   // Touch handling (mobile)
   const [touchStart, setTouchStart] = useState(null);
@@ -132,6 +173,7 @@ const Taskbar = ({
   
 
   return (
+    <>
     <div
       style={taskbarStyle}
       onTouchStart={handleTouchStart}
@@ -167,7 +209,7 @@ const Taskbar = ({
 
 
         {/* Mic Button — wrapped in a container for alignment */}
-        <div className="flex flex-col items-center">
+        <div className="flex flex-col items-center relative">
           <div className={isHost && isHostBroadcasting && isSeatedMode ? "mic-pulse" : ""}>
             <TaskbarButton
               icon={AudioIcon}
@@ -204,14 +246,81 @@ const Taskbar = ({
         />
       </div>
 
-      <div className="flex items-center space-x-2">
+      <div className="flex items-center space-x-2 settings-menu-container">
         <TaskbarButton
-          icon={ShareIcon}
-          label="Share"
-          onClick={onShareRoom}
+          icon={SettingsIcon}
+          label="Settings"
+          onClick={() => setShowSettingsMenu(!showSettingsMenu)}
         />
       </div>
     </div>
+
+    {/* Settings Modal */}
+    {showSettingsMenu && (
+      <div className="fixed inset-0 z-[9999] flex items-end justify-center pb-24">
+        {/* Backdrop */}
+        <div 
+          className="absolute inset-0 bg-black/50"
+          onClick={() => setShowSettingsMenu(false)}
+        />
+        
+        {/* Modal Content */}
+        <div className="relative bg-gray-900 border border-gray-700 rounded-lg shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 bg-gray-800">
+            <h2 className="text-lg font-semibold text-white">Settings</h2>
+            <button
+              onClick={() => setShowSettingsMenu(false)}
+              className="text-gray-400 hover:text-white text-2xl leading-none"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="max-h-[60vh] overflow-y-auto">
+            {/* Share Room Section */}
+            <div className="px-6 py-4 border-b border-gray-700">
+              <button
+                onClick={() => {
+                  onShareRoom();
+                  setShowSettingsMenu(false);
+                }}
+                className="w-full flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-gray-800 text-gray-200 transition-colors"
+              >
+                <img src={ShareIcon} alt="Share" className="w-6 h-6" />
+                <span className="text-base font-medium">Share Room</span>
+              </button>
+            </div>
+
+            {/* Audio Device Selection Section */}
+            {audioDevices.length > 0 && (
+              <div className="px-6 py-4">
+                <h3 className="text-sm font-semibold text-gray-400 mb-3">Microphone</h3>
+                <div className="space-y-1">
+                  {audioDevices.map((device) => (
+                    <button
+                      key={device.deviceId}
+                      onClick={() => {
+                        onAudioDeviceChange(device.deviceId);
+                      }}
+                      className={`w-full text-left px-4 py-3 rounded-lg hover:bg-gray-800 flex items-center justify-between transition-colors ${
+                        selectedAudioDeviceId === device.deviceId ? 'bg-gray-800 text-green-400' : 'text-gray-300'
+                      }`}
+                    >
+                      <span className="truncate pr-2 text-sm">{device.label || `Microphone ${device.deviceId.slice(0, 8)}...`}</span>
+                      {selectedAudioDeviceId === device.deviceId && <span className="text-green-400 text-lg">✓</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 };
 

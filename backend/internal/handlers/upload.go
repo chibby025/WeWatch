@@ -165,6 +165,29 @@ func UploadMediaHandler(c *gin.Context) {
 	}
 	log.Printf("✅ UploadMediaHandler: Duration extracted successfully: %s", duration)
 
+	// ✅ GENERATE POSTER/THUMBNAIL
+	log.Printf("🎨 UploadMediaHandler: Generating poster for '%s'", filePath)
+	posterFilename := fmt.Sprintf("%s_poster.jpg", strings.TrimSuffix(uniqueFilename, filepath.Ext(uniqueFilename)))
+	var posterPath string
+	var posterURL string
+	
+	if isTemporary {
+		posterPath = filepath.Join(UploadDir, "temp", posterFilename)
+		posterURL = fmt.Sprintf("/uploads/temp/%s", posterFilename)
+	} else {
+		posterPath = filepath.Join(UploadDir, posterFilename)
+		posterURL = fmt.Sprintf("/uploads/%s", posterFilename)
+	}
+	
+	err = utils.ExtractThumbnail(filePath, posterPath)
+	if err != nil {
+		log.Printf("⚠️ UploadMediaHandler: Failed to generate poster: %v", err)
+		// Use placeholder poster if thumbnail generation fails
+		posterURL = "/icons/placeholder-poster.jpg"
+	} else {
+		log.Printf("✅ UploadMediaHandler: Poster generated successfully: %s", posterPath)
+	}
+
 	if isTemporary {
 		newTempMediaItem := models.TemporaryMediaItem{
 			FileName:     uniqueFilename,
@@ -172,6 +195,7 @@ func UploadMediaHandler(c *gin.Context) {
 			MimeType:     getMimeType(ext),
 			FileSize:     formFile.Size,
 			FilePath:     filePath,
+			PosterURL:    posterURL,
 			RoomID:       room.ID,
 			UploaderID:   authenticatedUserID,
 			Duration:     duration,
@@ -211,6 +235,7 @@ func UploadMediaHandler(c *gin.Context) {
 			"file_size":     newTempMediaItem.FileSize,
 			"file_path":     newTempMediaItem.FilePath,          // internal path (for cleanup)
 			"file_url":      publicURL,                        // ✅ public URL for playback
+			"poster_url":    newTempMediaItem.PosterURL,       // ✅ poster URL
 			"room_id":       newTempMediaItem.RoomID,
 			"uploader_id":   newTempMediaItem.UploaderID,
 			"duration":      newTempMediaItem.Duration,
@@ -224,6 +249,7 @@ func UploadMediaHandler(c *gin.Context) {
 			MimeType:     getMimeType(ext),
 			FileSize:     formFile.Size,
 			FilePath:     filePath,
+			PosterURL:    posterURL,
 			RoomID:       room.ID,
 			UploaderID:   authenticatedUserID,
 			Duration:     duration,
@@ -259,6 +285,7 @@ func UploadMediaHandler(c *gin.Context) {
 			"mime_type":     newMediaItem.MimeType,
 			"file_size":     newMediaItem.FileSize,
 			"file_path":     newMediaItem.FilePath,
+			"poster_url":    newMediaItem.PosterURL,
 			"room_id":       newMediaItem.RoomID,
 			"uploader_id":   newMediaItem.UploaderID,
 			"duration":      newMediaItem.Duration,

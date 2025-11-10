@@ -2,7 +2,7 @@ package utils
 
 import (
 	"fmt"
-	//"os"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -10,6 +10,21 @@ import (
 )
 
 
+// ExtractThumbnail generates a thumbnail at 5 seconds into the video
+func ExtractThumbnail(inputPath, outputPath string) error {
+	cmd := exec.Command("ffmpeg", "-y",
+		"-i", inputPath,
+		"-ss", "00:00:05",
+		"-vframes", "1",
+		"-q:v", "2",
+		outputPath,
+	)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
 
 
 // GetVideoDuration returns video duration in HH:MM:SS format.
