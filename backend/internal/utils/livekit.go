@@ -25,7 +25,7 @@ func GenerateLiveKitToken(roomName string, identity string, isHost bool) (string
 	grant := &auth.VideoGrant{
 		Room:            roomName,
 		RoomJoin:        true,
-		CanPublish:      boolPtr(isHost),
+		CanPublish:      boolPtr(true), // ✅ Everyone can publish audio/video
 		CanSubscribe:    boolPtr(true),
 		CanPublishData:  boolPtr(true),
 	}

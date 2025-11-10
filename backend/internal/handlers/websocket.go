@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,6 +91,9 @@ type Hub struct {
 	roomStreamActive map[uint]bool // roomID -> true if a stream is active
 	// Mutex for stream state maps
 	streamStateMutex sync.RWMutex
+    // Add to Hub struct
+    seatingAssignments map[uint]map[string]uint // roomID → "row-col" → userID
+    seatingMutex       sync.RWMutex
 
 }
 
@@ -155,6 +159,8 @@ func NewHub() *Hub {
 		roomStreamHost:   make(map[uint]uint),
 		roomStreamActive: make(map[uint]bool),
 		clientRegistry:   make(map[uint]map[uint]*Client),
+		seatingAssignments: make(map[uint]map[string]uint),
+		seatingMutex:     sync.RWMutex{},
 	}
 }
 
@@ -218,6 +224,24 @@ func (h *Hub) startBroadcastWorkers() {
             }
         }
     }()
+}
+
+func (h *Hub) GetUserIDsInRow(roomID uint, row int) []uint {
+    h.seatingMutex.RLock()
+    defer h.seatingMutex.RUnlock()
+
+    assignments, exists := h.seatingAssignments[roomID]
+    if !exists {
+        return []uint{}
+    }
+
+    var users []uint
+    for seatID, userID := range assignments {
+        if strings.HasPrefix(seatID, fmt.Sprintf("%d-", row)) {
+            users = append(users, userID)
+        }
+    }
+    return users
 }
 
 // JoinWatchSession adds a client to an active watch session
@@ -302,6 +326,7 @@ func (h *Hub) cleanupClientSync(client *Client) {
 }
 
 // Run manages the registration, unregistration, and broadcasting of messages.
+// Run manages the registration, unregistration, and broadcasting of messages.
 func (h *Hub) Run() {
 	for {
 		select {
@@ -321,6 +346,21 @@ func (h *Hub) Run() {
 			roomClients, ok := h.rooms[client.roomID]
 			if ok {
 				if _, exists := roomClients[client]; exists {
+					// ✅ Broadcast 'participant_leave' to others in the room
+					leaveMsg := WebSocketMessage{
+						Type: "participant_leave",
+						Data: map[string]interface{}{
+							"userId": client.userID,
+						},
+					}
+					if leaveBytes, err := json.Marshal(leaveMsg); err == nil {
+						h.broadcastToRoom <- RoomBroadcastMessage{
+							roomID: client.roomID,
+							data:   OutgoingMessage{Data: leaveBytes, IsBinary: false},
+							sender: client, // exclude self (though client is leaving)
+						}
+					}
+
 					delete(roomClients, client)
 					close(client.send)
 					log.Printf("Hub: Client %p (User %d) unregistered from room %d", client, client.userID, client.roomID)
@@ -595,7 +635,6 @@ var upgrader = websocket.Upgrader{
 
 
 // WebSocketHandler handles the WebSocket upgrade request.
-// WebSocketHandler handles the WebSocket upgrade request.
 func WebSocketHandler(c *gin.Context) {
 	timestamp := time.Now().Format("15:04:05.000")
 	log.Printf("🔌🔌🔌 [%s] WebSocketHandler CALLED", timestamp)
@@ -784,6 +823,25 @@ func WebSocketHandler(c *gin.Context) {
 	hub.mutex.Unlock()
 	log.Printf("Hub: Client %p (User %d) synchronously registered for room %d", client, authenticatedUserID, roomID)
 
+	// ✅ FETCH USERNAME FOR JOIN MESSAGE
+	var username string
+	if err := DB.Model(&models.User{}).Select("username").Where("id = ?", authenticatedUserID).Scan(&username).Error; err != nil {
+		log.Printf("⚠️ Could not fetch username for user %d: %v", authenticatedUserID, err)
+		username = "Anonymous"
+	}
+
+	// ✅ Broadcast 'participant_join' to OTHER clients in the room
+	joinMsg := WebSocketMessage{
+		Type: "participant_join",
+		Data: map[string]interface{}{
+			"userId":   authenticatedUserID,
+			"username": username,
+		},
+	}
+	if joinBytes, err := json.Marshal(joinMsg); err == nil {
+		hub.BroadcastToRoom(roomID, OutgoingMessage{Data: joinBytes, IsBinary: false}, client) // exclude self
+	}
+
 	// --- START PUMPS FIRST ---
 	log.Printf("[WebSocketHandler] 🚀 Starting pumps for user %d in room %d, client=%p", authenticatedUserID, roomID, client)
 	go func() {
@@ -925,7 +983,351 @@ func (client *Client) handleMessage(message []byte) {
         }
         return // ✅ Important: stop here
     }
+    // Inside handleMessage in websocket.go
+    if msg.Type == "user_audio_state" {
+        var audioData struct {
+            UserID            uint   `json:"userId"`
+            IsAudioActive     bool   `json:"isAudioActive"`
+            IsSeatedMode      bool   `json:"isSeatedMode"`
+            IsGlobalBroadcast bool   `json:"isGlobalBroadcast"`
+            Row               *int   `json:"row"` // nullable
+        }
 
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            if err := json.Unmarshal(dataBytes, &audioData); err != nil {
+                log.Printf("[audio] Failed to parse audio state: %v", err)
+                return
+            }
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            // Fallback if Data is already a map (Gin sometimes does this)
+            audioData.UserID = uint(m["userId"].(float64))
+            audioData.IsAudioActive = m["isAudioActive"].(bool)
+            audioData.IsSeatedMode = m["isSeatedMode"].(bool)
+            audioData.IsGlobalBroadcast = m["isGlobalBroadcast"].(bool)
+            if rowVal, exists := m["row"]; exists && rowVal != nil {
+                row := int(rowVal.(float64))
+                audioData.Row = &row
+            }
+        } else {
+            log.Printf("[audio] Unexpected data type for user_audio_state")
+            return
+        }
+
+        // 🔊 Decide who receives the audio state
+        recipients := []uint{}
+
+        if !audioData.IsSeatedMode || audioData.IsGlobalBroadcast {
+            // Broadcast to ALL users in room
+            recipients = client.hub.GetAllUserIDsInRoom(client.roomID)
+        } else if audioData.Row != nil {
+            // Only send to users in the same row
+            // TODO: Fetch user IDs in same row from seats or userSeats table
+            recipients = client.hub.GetUserIDsInRow(client.roomID, *audioData.Row)
+        }
+
+        // Send only to relevant users
+        if len(recipients) > 0 {
+            // Reuse original message bytes to avoid re-encoding
+            client.hub.BroadcastToUsers(recipients, OutgoingMessage{
+                Data: message, // original raw JSON
+                IsBinary: false,
+            })
+        }
+        return // ✅ Do NOT broadcast to whole room
+    }
+    // Handle seating_mode_toggle - auto-assign seats when enabled
+    if msg.Type == "seating_mode_toggle" {
+        log.Printf("🪑 [seating_mode_toggle] Received from user %d in room %d", client.userID, client.roomID)
+        
+        // ✅ Parse the entire message again to get the "enabled" field at root level
+        var toggle struct {
+            Type    string `json:"type"`
+            Enabled bool   `json:"enabled"`
+        }
+        
+        if err := json.Unmarshal(message, &toggle); err != nil {
+            log.Printf("🪑 [seating_mode_toggle] ❌ Failed to unmarshal toggle message: %v", err)
+            return
+        }
+
+        log.Printf("🪑 [seating_mode_toggle] Enabled = %v", toggle.Enabled)
+
+        h := client.hub
+        
+        if toggle.Enabled {
+            log.Printf("🪑 [seating_mode_toggle] Seating mode enabled, attempting auto-assignment for room %d", client.roomID)
+            
+            // ✅ Get CURRENTLY CONNECTED users from hub.rooms instead of database
+            h.mutex.RLock()
+            roomClients, exists := h.rooms[client.roomID]
+            h.mutex.RUnlock()
+            
+            if !exists || len(roomClients) == 0 {
+                log.Printf("🪑 [seating_mode_toggle] ❌ No connected clients in room %d", client.roomID)
+                return
+            }
+
+            // Collect unique user IDs from connected clients
+            userIDs := make([]uint, 0, len(roomClients))
+            seen := make(map[uint]bool)
+            for c := range roomClients {
+                if !seen[c.userID] {
+                    userIDs = append(userIDs, c.userID)
+                    seen[c.userID] = true
+                }
+            }
+
+            log.Printf("🪑 [seating_mode_toggle] ✅ Found %d connected users in room %d", len(userIDs), client.roomID)
+
+            // Auto-assign seats in order (A1=0-0, A2=0-1, A3=0-2, A4=0-3, A5=0-4, B1=1-0, etc.)
+            h.seatingMutex.Lock()
+            if _, exists := h.seatingAssignments[client.roomID]; !exists {
+                h.seatingAssignments[client.roomID] = make(map[string]uint)
+            }
+            
+            // Clear existing assignments for this room
+            h.seatingAssignments[client.roomID] = make(map[string]uint)
+            
+            // Assign seats in order to connected users
+            for i, userID := range userIDs {
+                row := i / 5  // Row 0 = A, Row 1 = B, etc.
+                col := i % 5  // Column 0-4 = positions 1-5
+                seatID := fmt.Sprintf("%d-%d", row, col)
+                h.seatingAssignments[client.roomID][seatID] = userID
+                log.Printf("🪑 [seating_mode_toggle] Assigned seat %s to user %d", seatID, userID)
+            }
+            h.seatingMutex.Unlock()
+
+            log.Printf("🪑 [seating_mode_toggle] Total seats assigned: %d", len(h.seatingAssignments[client.roomID]))
+
+            // Build userSeats map for broadcast
+            userSeats := make(map[uint]string)
+            for seatID, userID := range h.seatingAssignments[client.roomID] {
+                userSeats[userID] = seatID
+            }
+
+            log.Printf("🪑 [seating_mode_toggle] Broadcasting userSeats: %+v", userSeats)
+
+            // Broadcast seat assignments to all users
+            assignmentMsg := map[string]interface{}{
+                "type":       "seats_auto_assigned",
+                "user_seats": userSeats,
+            }
+            if msgBytes, err := json.Marshal(assignmentMsg); err == nil {
+                log.Printf("🪑 [seating_mode_toggle] ✅ Broadcasting seats_auto_assigned to room %d", client.roomID)
+                client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+            } else {
+                log.Printf("🪑 [seating_mode_toggle] ❌ Failed to marshal assignment message: %v", err)
+            }
+        } else {
+            log.Printf("🪑 [seating_mode_toggle] Seating mode disabled, clearing seats for room %d", client.roomID)
+            
+            // Clear seat assignments when seating mode is disabled
+            h.seatingMutex.Lock()
+            delete(h.seatingAssignments, client.roomID)
+            h.seatingMutex.Unlock()
+
+            log.Printf("🪑 [seating_mode_toggle] ✅ Cleared seat assignments")
+
+            // Broadcast clear message
+            clearMsg := map[string]interface{}{
+                "type": "seats_cleared",
+            }
+            if msgBytes, err := json.Marshal(clearMsg); err == nil {
+                log.Printf("🪑 [seating_mode_toggle] ✅ Broadcasting seats_cleared to room %d", client.roomID)
+                client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+            }
+        }
+        
+        return
+    }
+
+    if msg.Type == "seat_assignment" {
+        var assign struct {
+            SeatId string `json:"seatId"` // e.g., "2-3"
+            UserID uint   `json:"userId"`
+        }
+
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            json.Unmarshal(dataBytes, &assign)
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            assign.SeatId = m["seatId"].(string)
+            assign.UserID = uint(m["userId"].(float64))
+        }
+
+        // Update seating map
+        h := client.hub
+        h.seatingMutex.Lock()
+        if _, exists := h.seatingAssignments[client.roomID]; !exists {
+            h.seatingAssignments[client.roomID] = make(map[string]uint)
+        }
+        h.seatingAssignments[client.roomID][assign.SeatId] = assign.UserID
+        h.seatingMutex.Unlock()
+
+        log.Printf("Seat assigned: room=%d, seat=%s, user=%d", client.roomID, assign.SeatId, assign.UserID)
+        return // Don't broadcast
+    }
+
+    // Handle take_seat - user claims an empty seat
+    if msg.Type == "take_seat" {
+        var takeSeat struct {
+            SeatID string `json:"seat_id"` // "row-col"
+            Row    int    `json:"row"`
+            Col    int    `json:"col"`
+            UserID uint   `json:"user_id"`
+        }
+
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            json.Unmarshal(dataBytes, &takeSeat)
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            takeSeat.SeatID = m["seat_id"].(string)
+            takeSeat.Row = int(m["row"].(float64))
+            takeSeat.Col = int(m["col"].(float64))
+            takeSeat.UserID = uint(m["user_id"].(float64))
+        }
+
+        // Update seating map
+        h := client.hub
+        h.seatingMutex.Lock()
+        if _, exists := h.seatingAssignments[client.roomID]; !exists {
+            h.seatingAssignments[client.roomID] = make(map[string]uint)
+        }
+        h.seatingAssignments[client.roomID][takeSeat.SeatID] = takeSeat.UserID
+        h.seatingMutex.Unlock()
+
+        log.Printf("Seat taken: room=%d, seat=%s, user=%d", client.roomID, takeSeat.SeatID, takeSeat.UserID)
+        
+        // Broadcast to all room members so they see the updated grid
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, nil)
+        return
+    }
+
+    // Handle seat_swap_request - user wants to swap with another user
+    if msg.Type == "seat_swap_request" {
+        var swapReq struct {
+            RequesterID  uint   `json:"requester_id"`
+            TargetUserID uint   `json:"target_user_id"`
+            TargetSeat   map[string]interface{} `json:"target_seat"` // {row, col}
+        }
+
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            json.Unmarshal(dataBytes, &swapReq)
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            swapReq.RequesterID = uint(m["requester_id"].(float64))
+            swapReq.TargetUserID = uint(m["target_user_id"].(float64))
+            if ts, ok := m["target_seat"].(map[string]interface{}); ok {
+                swapReq.TargetSeat = ts
+            }
+        }
+
+        // Get requester's current seat
+        h := client.hub
+        h.seatingMutex.RLock()
+        var requesterSeat map[string]interface{}
+        if roomSeats, exists := h.seatingAssignments[client.roomID]; exists {
+            for seatID, userID := range roomSeats {
+                if userID == swapReq.RequesterID {
+                    // Parse "row-col" format
+                    var row, col int
+                    fmt.Sscanf(seatID, "%d-%d", &row, &col)
+                    requesterSeat = map[string]interface{}{
+                        "row": row,
+                        "col": col,
+                    }
+                    break
+                }
+            }
+        }
+        h.seatingMutex.RUnlock()
+
+        // Get requester name
+        var requester models.User
+        if err := DB.First(&requester, swapReq.RequesterID).Error; err != nil {
+            log.Printf("Failed to fetch requester user %d: %v", swapReq.RequesterID, err)
+            return
+        }
+
+        // Send swap request only to target user
+        swapMsg := map[string]interface{}{
+            "type":           "seat_swap_request",
+            "requester_id":   swapReq.RequesterID,
+            "requester_name": requester.Username,
+            "requester_seat": requesterSeat,
+            "target_seat":    swapReq.TargetSeat,
+        }
+        
+        if msgBytes, err := json.Marshal(swapMsg); err == nil {
+            client.hub.BroadcastToUsers([]uint{swapReq.TargetUserID}, OutgoingMessage{Data: msgBytes, IsBinary: false})
+            log.Printf("Sent swap request from user %d to user %d", swapReq.RequesterID, swapReq.TargetUserID)
+        }
+        return
+    }
+
+    // Handle seat_swap_accepted - target user accepted swap
+    if msg.Type == "seat_swap_accepted" {
+        var accept struct {
+            RequesterID   uint                   `json:"requester_id"`
+            TargetID      uint                   `json:"target_id"`
+            RequesterSeat map[string]interface{} `json:"requester_seat"` // {row, col}
+            TargetSeat    map[string]interface{} `json:"target_seat"`    // {row, col}
+        }
+
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            json.Unmarshal(dataBytes, &accept)
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            accept.RequesterID = uint(m["requester_id"].(float64))
+            accept.TargetID = uint(m["target_id"].(float64))
+            if rs, ok := m["requester_seat"].(map[string]interface{}); ok {
+                accept.RequesterSeat = rs
+            }
+            if ts, ok := m["target_seat"].(map[string]interface{}); ok {
+                accept.TargetSeat = ts
+            }
+        }
+
+        // Swap seats in seating map
+        h := client.hub
+        h.seatingMutex.Lock()
+        if roomSeats, exists := h.seatingAssignments[client.roomID]; exists {
+            requesterSeatID := fmt.Sprintf("%d-%d", 
+                int(accept.RequesterSeat["row"].(float64)), 
+                int(accept.RequesterSeat["col"].(float64)))
+            targetSeatID := fmt.Sprintf("%d-%d", 
+                int(accept.TargetSeat["row"].(float64)), 
+                int(accept.TargetSeat["col"].(float64)))
+            
+            roomSeats[requesterSeatID] = accept.TargetID
+            roomSeats[targetSeatID] = accept.RequesterID
+            
+            log.Printf("Swapped seats: user %d ↔ user %d in room %d", accept.RequesterID, accept.TargetID, client.roomID)
+        }
+        h.seatingMutex.Unlock()
+
+        // Broadcast to entire room
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, nil)
+        return
+    }
+
+    // Handle seat_swap_declined - target user declined swap
+    if msg.Type == "seat_swap_declined" {
+        var decline struct {
+            RequesterID uint `json:"requester_id"`
+            TargetID    uint `json:"target_id"`
+        }
+
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            json.Unmarshal(dataBytes, &decline)
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            decline.RequesterID = uint(m["requester_id"].(float64))
+            decline.TargetID = uint(m["target_id"].(float64))
+        }
+
+        // Send declined notification only to requester
+        client.hub.BroadcastToUsers([]uint{decline.RequesterID}, OutgoingMessage{Data: message, IsBinary: false})
+        log.Printf("Swap declined: user %d declined swap with user %d", decline.TargetID, decline.RequesterID)
+        return
+    }
+    
     // ✅ Default: Broadcast all other message types to room
     // This handles: playback_control, update_room_status, platform_selected, etc.
     log.Printf("[handleMessage] 📢 Broadcasting message type '%s' to room %d", msg.Type, client.roomID)
