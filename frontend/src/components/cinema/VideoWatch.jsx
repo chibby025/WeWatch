@@ -3,9 +3,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
-import useAudioManager from '../useAudioManager';
 import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem } from '../../services/api';
-import { generatePosterFromVideoFile } from '../../utils/generatePoster';
 import apiClient from '../../services/api';
 import { getRoom, getRoomMembers } from '../../services/api';
 // ✅ Import LiveKit hook + events
@@ -64,78 +62,7 @@ export default function VideoWatch() {
     disconnect: disconnectLiveKit
   } = useLiveKitRoom(roomId, currentUser);
 
-  useEffect(() => {
-    if (roomId && currentUser) {
-      connectLiveKit();
-    }
-  }, [roomId, currentUser?.id]);
-
-  // ✅ Listen for remote participant track events
-  useEffect(() => {
-    if (!room) return;
-
-    const handleTrackSubscribed = (track, publication, participant) => {
-      console.log('📥 [VideoWatch] Remote track subscribed:', {
-        participant: participant.identity,
-        source: publication.source,
-        kind: track.kind,
-        enabled: track.enabled,
-        muted: track.muted
-      });
-      // Audio handling is done by RemoteAudioPlayer component
-    };
-
-    const handleTrackUnsubscribed = (track, publication, participant) => {
-      console.log('📤 [VideoWatch] Remote track unsubscribed:', {
-        participant: participant.identity,
-        source: publication.source
-      });
-    };
-
-    room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
-    room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
-
-    return () => {
-      room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
-      room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
-    };
-  }, [room]);
-
-  useEffect(() => {
-    return () => {
-      if (localParticipant) {
-        localParticipant.setScreenShareEnabled(false);
-      }
-      disconnectLiveKit();
-    };
-  }, []);
-
-  const isHost = React.useMemo(() => {
-    return currentUser?.id === roomHostId;
-  }, [currentUser?.id, roomHostId]);
-
-  // Camera toggle
-  const toggleCamera = async () => {
-    if (!isCameraOn) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        setCameraPreviewStream(stream);
-        setIsCameraOn(true);
-        // Optional: publish camera to LiveKit later if needed
-      } catch (err) {
-        console.error('Camera access denied:', err);
-        alert('Camera access denied.');
-      }
-    } else {
-      if (cameraPreviewStream) {
-        cameraPreviewStream.getTracks().forEach(track => track.stop());
-      }
-      setCameraPreviewStream(null);
-      setIsCameraOn(false);
-    }
-  };
-
-  // 🎥 Media State
+  // 🎥 ALL STATE DECLARATIONS (must be before useEffects that use them)
   const [currentMedia, setCurrentMedia] = useState(null);
   const [playlist, setPlaylist] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -173,7 +100,6 @@ export default function VideoWatch() {
   const urlParams = new URLSearchParams(window.location.search);
   const isInstantWatch = urlParams.get('instant') === 'true';
   const [showCinemaSeatView, setShowCinemaSeatView] = useState(false);
-  const [showSeatGrid, setShowSeatGrid] = useState(false);
   const [isHostBroadcasting, setIsHostBroadcasting] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
@@ -183,6 +109,138 @@ export default function VideoWatch() {
   const processedMessageCountRef = useRef(0);
   const chatEndRef = useRef(null);
   const [localScreenTrack, setLocalScreenTrack] = useState(null);
+  
+  // 🎤 Audio device management
+  const [audioDevices, setAudioDevices] = useState([]);
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState(null);
+  const [showMicSelector, setShowMicSelector] = useState(false);
+  const publishedAudioTrackRef = useRef(null);
+
+  // 🪑 Seat swap notifications
+  const [seatSwapRequest, setSeatSwapRequest] = useState(null);
+
+  useEffect(() => {
+    if (roomId && currentUser) {
+      connectLiveKit();
+    }
+  }, [roomId, currentUser?.id]);
+
+  // ✅ Listen for remote participant track events
+  useEffect(() => {
+    if (!room) return;
+
+    const handleTrackSubscribed = (track, publication, participant) => {
+      console.log('📥 [VideoWatch] Remote track subscribed:', {
+        participant: participant.identity,
+        source: publication.source,
+        kind: track.kind,
+        enabled: track.enabled,
+        muted: track.muted
+      });
+      // Audio handling is done by RemoteAudioPlayer component
+    };
+
+    const handleTrackUnsubscribed = (track, publication, participant) => {
+      console.log('📤 [VideoWatch] Remote track unsubscribed:', {
+        participant: participant.identity,
+        source: publication.source
+      });
+    };
+
+    room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
+    room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+
+    return () => {
+      room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
+      room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    };
+  }, [room]);
+
+  // 🎤 Enumerate audio devices on mount
+  useEffect(() => {
+    const enumerateDevices = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = devices.filter(d => d.kind === 'audioinput');
+        setAudioDevices(audioInputs);
+        
+        // Set default device if none selected
+        if (!selectedAudioDeviceId && audioInputs.length > 0) {
+          // Prefer non-default devices (avoid "Default" which browser auto-switches)
+          const preferredDevice = audioInputs.find(d => !d.label.toLowerCase().includes('default')) || audioInputs[0];
+          setSelectedAudioDeviceId(preferredDevice.deviceId);
+        }
+        
+        console.log('🎤 [VideoWatch] Available audio devices:', audioInputs.map(d => ({ label: d.label, id: d.deviceId })));
+      } catch (err) {
+        console.error('❌ [VideoWatch] Failed to enumerate devices:', err);
+      }
+    };
+
+    enumerateDevices();
+    
+    // Listen for device changes (e.g., headset plugged in)
+    navigator.mediaDevices.addEventListener('devicechange', enumerateDevices);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', enumerateDevices);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (localParticipant) {
+        localParticipant.setScreenShareEnabled(false);
+      }
+      disconnectLiveKit();
+    };
+  }, []);
+
+  // 🎤 Request microphone permission on mount (start muted)
+  useEffect(() => {
+    if (!localParticipant || hasMicPermission) return;
+
+    const requestMic = async () => {
+      try {
+        console.log('🎤 [VideoWatch] Requesting microphone permission...');
+        
+        // Request mic but keep it disabled initially
+        await localParticipant.setMicrophoneEnabled(false);
+        
+        setHasMicPermission(true);
+        setIsAudioActive(false); // Start muted
+        
+        console.log('✅ [VideoWatch] Microphone permission granted (muted by default)');
+      } catch (err) {
+        console.error('❌ [VideoWatch] Microphone permission denied:', err);
+        setHasMicPermission(false);
+      }
+    };
+
+    requestMic();
+  }, [localParticipant, hasMicPermission]);
+
+  const isHost = React.useMemo(() => {
+    return currentUser?.id === roomHostId;
+  }, [currentUser?.id, roomHostId]);
+
+  // Camera toggle
+  const toggleCamera = async () => {
+    if (!isCameraOn) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        setCameraPreviewStream(stream);
+        setIsCameraOn(true);
+        // Optional: publish camera to LiveKit later if needed
+      } catch (err) {
+        console.error('Camera access denied:', err);
+        alert('Camera access denied.');
+      }
+    } else {
+      if (cameraPreviewStream) {
+        cameraPreviewStream.getTracks().forEach(track => track.stop());
+      }
+      setCameraPreviewStream(null);
+      setIsCameraOn(false);
+    }
+  };
 
   // Define stable callbacks
   const handlePlay = useCallback(() => setIsPlaying(true), []);
@@ -239,25 +297,7 @@ export default function VideoWatch() {
     { id: 'africamagic', name: 'Africa Magic', url: 'https://www.youtube.com/@AfricaMagic    ' },
   ];
 
-  // Fetch room members
-  useEffect(() => {
-    if (!roomId || !currentUser) return;
-    const fetchRoomMembers = async () => {
-      try {
-        const response = await getRoomMembers(roomId);
-        const members = Array.isArray(response) ? response : response?.members || [];
-        setRoomMembers(members);
-        const hostMember = members.find(m => m.user_role === 'host');
-        if (hostMember) {
-          setRoomHostId(hostMember.id);
-        }
-      } catch (err) {
-        console.error("Failed to fetch room members:", err);
-        setRoomMembers([]);
-      }
-    };
-    fetchRoomMembers();
-  }, [roomId, currentUser]);
+  
 
   // Monitor LiveKit local participant for screen share track
   useEffect(() => {
@@ -365,7 +405,22 @@ export default function VideoWatch() {
 
   // Handle Seats Click
   const handleSeatsClick = () => {
-    setShowSeatGrid(true);
+    console.log('🪑 [handleSeatsClick] Seats icon clicked');
+    console.log('🪑 [handleSeatsClick] Current state:', { 
+      isSeatedMode, 
+      userSeatsCount: Object.keys(userSeats).length,
+      userSeats 
+    });
+    
+    // If seating mode is enabled but no seats assigned yet, trigger auto-assignment
+    if (isSeatedMode && Object.keys(userSeats).length === 0) {
+      console.log('🪑 [handleSeatsClick] Seating mode is ON but no seats assigned, triggering auto-assignment');
+      sendMessage({
+        type: 'seating_mode_toggle',
+        enabled: true
+      });
+    }
+    setIsSeatsModalOpen(true);
   };
 
   // Handle Share Room
@@ -589,15 +644,27 @@ export default function VideoWatch() {
   const handleSeatAssignment = (seatId) => {
     if (!currentUser || !sendMessage) return;
     const [row, col] = seatId.split('-').map(Number);
+    
+    // Send seat_update for UI sync across clients
     sendMessage({
       type: 'seat_update',
       userId: currentUser.id,
       seat: { row, col }
     });
+    
+    // 🪑 Send seat_assignment to backend for audio filtering
+    sendMessage({
+      type: 'seat_assignment',
+      seatId: seatId,  // "row-col" format (e.g., "2-3")
+      userId: currentUser.id
+    });
+    
     setUserSeats(prev => ({ ...prev, [currentUser.id]: seatId }));
+    
+    console.log(`🪑 [VideoWatch] Seat assigned: user ${currentUser.id} → seat ${seatId}`);
   };
 
-  // Fetch Media + Posters
+  // Fetch Media Items (posters now generated on backend)
   const fetchAndGeneratePosters = useCallback(async () => {
     if (!roomId || !currentUser) return;
     try {
@@ -609,37 +676,12 @@ export default function VideoWatch() {
       const normalizedItems = mediaItems.map(item => ({
         ...item,
         ID: item.ID || item.id || Date.now() + Math.random(),
-        _isTemporary: true
+        _isTemporary: true,
+        // Use backend-generated poster or fallback to placeholder
+        poster_url: item.poster_url || '/icons/placeholder-poster.jpg'
       }));
-      const updatedItems = await Promise.all(
-        normalizedItems.map(async (item) => {
-          if (item.poster_url && item.poster_url !== '/icons/placeholder-poster.jpg') {
-            return item;
-          }
-          try {
-            const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-            const fileUrl = item.file_url || item.file_path;
-            const mediaUrl = fileUrl?.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl?.startsWith('/') ? '' : '/'}${fileUrl}`;
-            
-            const response = await fetch(mediaUrl);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const videoBlob = await response.blob();
-            const posterUrl = await generatePosterFromVideoFile(videoBlob);
-            
-            // ✅ Ensure posterUrl is a string (data URL), not a Blob
-            if (typeof posterUrl !== 'string') {
-              console.warn('⚠️ Poster generation returned non-string:', typeof posterUrl);
-              return { ...item, poster_url: '/icons/placeholder-poster.jpg' };
-            }
-            
-            return { ...item, poster_url: posterUrl };
-          } catch (err) {
-            console.warn('⚠️ Failed to generate poster for', item.file_name, err);
-            return { ...item, poster_url: '/icons/placeholder-poster.jpg' };
-          }
-        })
-      );
-      setPlaylist(updatedItems);
+      
+      setPlaylist(normalizedItems);
     } catch (err) {
       console.error("Failed to fetch media items:", err);
       if (err.response?.status === 404) {
@@ -664,9 +706,28 @@ export default function VideoWatch() {
       switch (message.type) {
         case "session_status":
           const data = message.data;
+
+          // ✅ Normalize and deduplicate members
           if (Array.isArray(data.members)) {
-            setRoomMembers(data.members);
+            const memberMap = new Map();
+            data.members.forEach(member => {
+              const id = member.user_id || member.id;
+              if (!id) return; // skip invalid
+
+              // Prefer richer data if already present, otherwise use this entry
+              if (!memberMap.has(id)) {
+                memberMap.set(id, {
+                  id,
+                  Username: member.Username || member.username || 'Anonymous',
+                  user_role: member.user_role || 'viewer',
+                  // Add other fields you need (e.g., avatar, etc.)
+                });
+              }
+            });
+            setRoomMembers(Array.from(memberMap.values()));
           }
+
+          // 👇 Rest of your screen share logic (unchanged)
           if (data.is_screen_sharing && data.screen_share_host_id) {
             const sharerId = data.screen_share_host_id;
             setCurrentMedia({ type: 'screen_share', userId: sharerId, title: 'Live Screen Share', original_name: 'Live Screen Share' });
@@ -706,7 +767,7 @@ export default function VideoWatch() {
         case 'participant_join':
           setParticipants(prev => [...prev, {
             id: message.userId,
-            name: message.username || `User${message.userId.slice(0, 4)}`,
+            name: message.username || `User${String(message.userId).slice(0, 4)}`,
             isSpeaking: false,
             isCameraOn: false,
             isMuted: true,
@@ -792,12 +853,49 @@ export default function VideoWatch() {
           setUserSeats(prev => ({ ...prev, [userId]: `${seat.row}-${seat.col}` }));
           break;
         case 'seating_sync':
-          setUserSeats(message.seats || {});
+          const syncedSeats = message.seats || {};
+          setUserSeats(syncedSeats);
+          
+          // 🪑 Send all seat assignments to backend for audio filtering
+          Object.entries(syncedSeats).forEach(([userId, seatId]) => {
+            sendMessage({
+              type: 'seat_assignment',
+              seatId: seatId,
+              userId: parseInt(userId)
+            });
+          });
+          
+          console.log('🪑 [VideoWatch] Seating synced and sent to backend:', syncedSeats);
           break;
         case 'user_speaking':
           setSpeakingUsers(prev => message.speaking 
             ? new Set([...prev, message.userId]) 
             : new Set([...prev].filter(id => id !== message.userId))
+          );
+          break;
+        case 'user_audio_state':
+          // Handle remote user audio state changes
+          const { userId: audioUserId, isAudioActive: remoteAudioActive } = message;
+          
+          console.log(`🔊 [VideoWatch] Received user_audio_state from user ${audioUserId}: ${remoteAudioActive ? 'UNMUTED' : 'MUTED'}`);
+          
+          // Don't update state for our own messages (already handled locally)
+          if (audioUserId === currentUser?.id) break;
+          
+          // Update speaking users set
+          setSpeakingUsers(prev => {
+            const updated = new Set(prev);
+            if (remoteAudioActive) {
+              updated.add(audioUserId);
+            } else {
+              updated.delete(audioUserId);
+            }
+            return updated;
+          });
+          
+          // Update participants list to reflect muted/unmuted state
+          setParticipants(prev => 
+            prev.map(p => p.id === audioUserId ? { ...p, isMuted: !remoteAudioActive } : p)
           );
           break;
         case "platform_selected":
@@ -811,6 +909,70 @@ export default function VideoWatch() {
             `${message.data.userId === currentUser?.id ? 'You' : `User ${message.data.userId}`} is watching from ${message.data.platform}`,
             'info'
           );
+          break;
+        case "take_seat":
+          // Update userSeats when someone takes a seat
+          if (message.data?.user_id && message.data?.seat_id) {
+            setUserSeats(prev => ({
+              ...prev,
+              [message.data.user_id]: message.data.seat_id
+            }));
+          }
+          break;
+        case "seat_swap_request":
+          // Show notification to target user
+          if (message.data?.target_user_id === currentUser?.id) {
+            setSeatSwapRequest({
+              requesterId: message.data.requester_id,
+              requesterName: message.data.requester_name || `User${message.data.requester_id?.toString().slice(0, 4)}`,
+              targetSeat: message.data.target_seat
+            });
+          }
+          break;
+        case "seat_swap_accepted":
+          // Swap the seats for both users
+          if (message.data?.requester_id && message.data?.target_id) {
+            setUserSeats(prev => {
+              const requesterSeat = prev[message.data.requester_id];
+              const targetSeat = prev[message.data.target_id];
+              return {
+                ...prev,
+                [message.data.requester_id]: targetSeat,
+                [message.data.target_id]: requesterSeat
+              };
+            });
+            if (message.data.requester_id === currentUser?.id || message.data.target_id === currentUser?.id) {
+              showNotification('Seat swap completed!', 'success');
+            }
+          }
+          setSeatSwapRequest(null);
+          break;
+        case "seat_swap_declined":
+          if (message.data?.requester_id === currentUser?.id) {
+            showNotification('Seat swap request was declined', 'info');
+          }
+          setSeatSwapRequest(null);
+          break;
+        case "seats_auto_assigned":
+          console.log('🪑 [WebSocket] Received seats_auto_assigned:', message);
+          // ✅ Backend sends user_seats at root level, not in message.data
+          if (message.user_seats) {
+            console.log('🪑 [WebSocket] Setting userSeats:', message.user_seats);
+            setUserSeats(message.user_seats);
+            showNotification('Seats have been auto-assigned!', 'success');
+          } else {
+            console.warn('🪑 [WebSocket] seats_auto_assigned message missing user_seats field');
+            console.warn('🪑 [WebSocket] Full message:', JSON.stringify(message));
+          }
+          break;
+        case "seats_cleared":
+          console.log('🪑 [WebSocket] Received seats_cleared');
+          // Seating mode disabled, clear all seats
+          setUserSeats({});
+          showNotification('Seating mode disabled', 'info');
+          break;
+        case "seating_mode_toggle":
+          // Echo of our own toggle message, ignore
           break;
         default:
           console.warn("[VideoWatch] Unknown WebSocket message type:", message.type, message);
@@ -889,34 +1051,157 @@ export default function VideoWatch() {
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  // Audio Manager
-  const {
-    requestMicPermission,
-    toggleAudio: rawToggleAudio,
-  } = useAudioManager({
-    hasMicPermission,
-    setHasMicPermission,
-    isAudioActive,
-    setIsAudioActive,
-    localStream,
-    setLocalStream,
-    wsConnected: isConnected,
-    userSeats,
-    authenticatedUserID: currentUser?.id,
-    speakingUsers,
-    setSpeakingUsers,
-    isHost,
-    isSeatedMode,
-  });
+  // ✅ Reusable function to fetch and set room members
+  const fetchRoomMembers = useCallback(async () => {
+    if (!roomId) return;
+    setLoadingMembers(true);
+    try {
+      const response = await getRoomMembers(roomId);
+      console.log("🔍 Raw room members from API:", response);
+      let rawMembers = Array.isArray(response) ? response : response?.members || [];
+      console.log("🧹 Normalized members array:", rawMembers);
 
-  const toggleAudio = () => {
-    const wasActive = isAudioActive;
-    rawToggleAudio();
-    setTimeout(() => {
-      if (wasActive) playMicOffSound();
-      else playMicOnSound();
-    }, 0);
-  };
+      // 🔑 Deduplicate by user ID and normalize
+      const memberMap = new Map();
+      rawMembers.forEach(member => {
+        // Use user_id or id — be flexible
+        const id = member.user_id || member.id;
+        if (!id) return; // skip invalid entries
+
+        // Prefer existing entry or use this one
+        if (!memberMap.has(id)) {
+          memberMap.set(id, {
+            id,
+            Username: member.Username || member.username || 'Anonymous',
+            user_role: member.user_role || 'viewer',
+            // Add other fields you need
+          });
+        }
+      });
+
+      const deduplicatedMembers = Array.from(memberMap.values());
+      setRoomMembers(deduplicatedMembers);
+
+      // Set host
+      const hostMember = deduplicatedMembers.find(m => m.user_role === 'host');
+      if (hostMember) {
+        setRoomHostId(hostMember.id);
+      }
+    } catch (err) {
+      console.error("Failed to fetch room members:", err);
+      setRoomMembers([]);
+    } finally {
+      setLoadingMembers(false);
+    }
+  }, [roomId]);
+
+  useEffect(() => {
+    if (!roomId || !currentUser) return;
+    fetchRoomMembers();
+  }, [roomId, currentUser, fetchRoomMembers]);
+
+  // 🎤 Publish microphone with specific device
+  const publishMicDevice = useCallback(async (deviceId) => {
+    if (!localParticipant) {
+      console.warn('⚠️ [VideoWatch] No localParticipant for mic publish');
+      return false;
+    }
+    try {
+      console.log(`🎤 [VideoWatch] Publishing mic device: ${deviceId}`);
+      // Stop and unpublish old track if exists
+      if (publishedAudioTrackRef.current) {
+        try {
+          await localParticipant.unpublishTrack(publishedAudioTrackRef.current);
+          publishedAudioTrackRef.current.stop();
+        } catch (err) {
+          console.warn('⚠️ [VideoWatch] Failed to unpublish old track:', err);
+        }
+        publishedAudioTrackRef.current = null;
+      }
+
+      // ✅ FIX: Use minimal audio constraints for voice clarity
+      const constraints = {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        echoCancellation: true,      // Keep this (helps with feedback)
+        noiseSuppression: false,     // ← DISABLE
+        autoGainControl: false,      // ← DISABLE
+      };
+
+      console.log('🎤 [VideoWatch] Creating audio track with constraints:', constraints);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+      const audioTrack = stream.getAudioTracks()[0];
+      console.log(`🎤 [VideoWatch] Got audio track: ${audioTrack.label}`);
+
+      // Publish to LiveKit
+      await localParticipant.publishTrack(audioTrack);
+      publishedAudioTrackRef.current = audioTrack;
+      console.log('✅ [VideoWatch] Microphone published successfully');
+      playMicOnSound();
+      return true;
+    } catch (err) {
+      console.error('❌ [VideoWatch] Failed to publish microphone:', err);
+      publishedAudioTrackRef.current = null;
+      return false;
+    }
+  }, [localParticipant]);
+
+  // 🎤 Unpublish microphone
+  const unpublishMic = useCallback(async () => {
+    if (!localParticipant) return;
+
+    try {
+      console.log('🎤 [VideoWatch] Unpublishing microphone');
+      
+      if (publishedAudioTrackRef.current) {
+        await localParticipant.unpublishTrack(publishedAudioTrackRef.current);
+        publishedAudioTrackRef.current.stop();
+        publishedAudioTrackRef.current = null;
+      }
+      
+      console.log('✅ [VideoWatch] Microphone unpublished');
+      playMicOffSound();
+    } catch (err) {
+      console.error('❌ [VideoWatch] Failed to unpublish microphone:', err);
+    }
+  }, [localParticipant]);
+
+  // ✅ Audio toggle function with device-specific publishing
+  const toggleAudio = useCallback(async () => {
+    const newAudioState = !isAudioActive;
+
+    // 🎙️ Toggle LiveKit microphone with selected device
+    let success = false;
+    if (newAudioState) {
+      // Enable: publish the selected device
+      success = await publishMicDevice(selectedAudioDeviceId);
+      if (!success) {
+        // Failed to publish, revert state
+        return;
+      }
+    } else {
+      // Disable: unpublish mic
+      await unpublishMic();
+      success = true;
+    }
+
+    if (success) {
+      setIsAudioActive(newAudioState);
+      
+      // Extract current user's row from userSeats
+      const currentUserSeatId = userSeats[currentUser?.id];
+      const currentUserRow = currentUserSeatId ? parseInt(currentUserSeatId.split('-')[0]) : null;
+
+      // 📡 Send real-time update over WebSocket for UI state sync
+      sendMessage({
+        type: "user_audio_state",
+        isAudioActive: newAudioState,
+        userId: currentUser.id,
+        isSeatedMode: isSeatedMode,
+        isGlobalBroadcast: isHost && isSeatedMode && isHostBroadcasting,
+        row: isSeatedMode && currentUserRow !== null ? currentUserRow : null,
+      });
+    }
+  }, [isAudioActive, selectedAudioDeviceId, publishMicDevice, unpublishMic, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage]);
 
   // detect if user stops sharing via browser controls
   useEffect(() => {
@@ -942,19 +1227,6 @@ export default function VideoWatch() {
       localParticipant.off('trackUnpublished', handleTrackUnpublished);
     };
   }, [localParticipant, sendMessage]);
-
-  // Sync audio state
-  useEffect(() => {
-    if (localStream) {
-      const tracks = localStream.getAudioTracks();
-      if (tracks.length > 0) {
-        const actualEnabled = tracks[0].enabled;
-        if (actualEnabled !== isAudioActive) {
-          setIsAudioActive(actualEnabled);
-        }
-      }
-    }
-  }, [localStream, isAudioActive]);
 
   // ✅ FIND SCREEN SHARE TRACK FROM LIVEKIT (MUST BE BEFORE EARLY RETURN)
   const remoteScreenTrack = React.useMemo(() => {
@@ -1052,8 +1324,7 @@ export default function VideoWatch() {
       {room && <RemoteAudioPlayer room={room} />}
 
       {/* Rest of UI (Taskbar, Sidebar, Chat, etc.) — UNCHANGED */}
-      {!showSeatGrid && (   
-        <Taskbar 
+      <Taskbar 
           authenticatedUserID={currentUser?.id}
           isAudioActive={isAudioActive}
           toggleAudio={toggleAudio}
@@ -1071,33 +1342,101 @@ export default function VideoWatch() {
           toggleCamera={toggleCamera}
           openChat={() => setIsChatOpen(prev => !prev)}
           isSeatedMode={isSeatedMode}
-          toggleSeatedMode={() => setIsSeatedMode(prev => !prev)}
+          toggleSeatedMode={() => {
+            const newMode = !isSeatedMode;
+            console.log('🪑 [toggleSeatedMode] Toggling seating mode:', { from: isSeatedMode, to: newMode });
+            setIsSeatedMode(newMode);
+            console.log('🪑 [toggleSeatedMode] Sending seating_mode_toggle message:', { enabled: newMode });
+            sendMessage({
+              type: 'seating_mode_toggle',
+              enabled: newMode
+            });
+          }}
           onSeatsClick={handleSeatsClick}
           seats={seats}
           userSeats={userSeats}
           currentUser={currentUser}
           onMembersClick={() => { fetchRoomMembers(); setShowMembersModal(true);}}
+          audioDevices={audioDevices}
+          selectedAudioDeviceId={selectedAudioDeviceId}
+          onAudioDeviceChange={(deviceId) => {
+            setSelectedAudioDeviceId(deviceId);
+            if (isAudioActive) {
+              publishMicDevice(deviceId);
+            }
+          }}
         />
-      )}
-
-      {showSeatGrid && (
-        <ScrollableSeatGrid
-          seats={seats}
-          userSeats={userSeats}
-          currentUserID={currentUser?.id}
-          onClose={() => setShowSeatGrid(false)}
-          onSeatClick={handleSeatSwapRequest}
-        />
-      )}
 
       {isSeatsModalOpen && (
         <SeatsModal 
-          seats={seats}
           userSeats={userSeats}
           currentUser={currentUser}
+          roomMembers={roomMembers}
           onClose={() => setIsSeatsModalOpen(false)}
-          onSwapRequest={handleSeatSwapRequest}
+          onTakeSeat={(row, col) => {
+            const seatId = `${row}-${col}`;
+            sendMessage({
+              type: 'take_seat',
+              seat_id: seatId,
+              row,
+              col,
+              user_id: currentUser.id
+            });
+            setIsSeatsModalOpen(false);
+          }}
+          onSwapRequest={(targetUserId, targetSeat) => {
+            sendMessage({
+              type: 'seat_swap_request',
+              requester_id: currentUser.id,
+              target_user_id: targetUserId,
+              target_seat: targetSeat
+            });
+          }}
         />
+      )}
+
+      {/* Seat Swap Request Notification Modal */}
+      {seatSwapRequest && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl font-bold text-white mb-4">Seat Swap Request</h2>
+            <p className="text-gray-300 mb-6">
+              {seatSwapRequest.requester_name} wants to swap seats with you.
+              They are requesting your seat at Row {seatSwapRequest.target_seat?.row}, 
+              Column {seatSwapRequest.target_seat?.col}.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  sendMessage({
+                    type: 'seat_swap_declined',
+                    requester_id: seatSwapRequest.requester_id,
+                    target_id: currentUser.id
+                  });
+                  setSeatSwapRequest(null);
+                }}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors"
+              >
+                Decline
+              </button>
+              <button
+                onClick={() => {
+                  sendMessage({
+                    type: 'seat_swap_accepted',
+                    requester_id: seatSwapRequest.requester_id,
+                    target_id: currentUser.id,
+                    requester_seat: seatSwapRequest.requester_seat,
+                    target_seat: seatSwapRequest.target_seat
+                  });
+                  setSeatSwapRequest(null);
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+              >
+                Accept
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {isLeftSidebarOpen && (

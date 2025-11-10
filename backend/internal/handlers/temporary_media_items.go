@@ -2,15 +2,19 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	//"encoding/json"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 )
 
 // DeleteSingleTemporaryMediaItemHandler handles DELETE /api/rooms/:id/temporary-media/:item_id
@@ -154,7 +158,45 @@ func GetTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 		return
 	}
 
-	// ✅ NO MORE POSTER_URL MANIPULATION — frontend handles posters
+	// ✅ Generate missing posters for old uploads
+	for i := range temporaryMediaItems {
+		item := &temporaryMediaItems[i]
+		
+		// Skip if poster already exists and is not placeholder
+		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+			continue
+		}
+		
+		// Generate poster for items without one
+		if item.FilePath != "" {
+			log.Printf("🎨 Generating missing poster for %s", item.FileName)
+			
+			posterFilename := fmt.Sprintf("%s_poster.jpg", strings.TrimSuffix(item.FileName, filepath.Ext(item.FileName)))
+			posterPath := filepath.Join("./uploads/temp", posterFilename)
+			posterURL := fmt.Sprintf("/uploads/temp/%s", posterFilename)
+			
+			// Check if poster file already exists on disk
+			if _, err := os.Stat(posterPath); os.IsNotExist(err) {
+				// Generate new poster
+				err = utils.ExtractThumbnail(item.FilePath, posterPath)
+				if err != nil {
+					log.Printf("⚠️ Failed to generate poster for %s: %v", item.FileName, err)
+					item.PosterURL = "/icons/placeholder-poster.jpg"
+				} else {
+					log.Printf("✅ Poster generated: %s", posterPath)
+					item.PosterURL = posterURL
+				}
+			} else {
+				// Poster file exists, just update the URL
+				log.Printf("✅ Found existing poster on disk: %s", posterPath)
+				item.PosterURL = posterURL
+			}
+			
+			// Update database with new poster URL
+			DB.Model(item).Update("poster_url", item.PosterURL)
+		}
+	}
+
 	log.Printf("GetTemporaryMediaItemsForRoomHandler: Fetched %d temporary media items for room %d", len(temporaryMediaItems), roomIDUint)
 	c.JSON(http.StatusOK, gin.H{
 		"message":              "Temporary media items fetched successfully",
