@@ -68,7 +68,6 @@ const [activeSessionId, setActiveSessionId] = useState(null);
 
   const [isMembersPanelOpen, setIsMembersPanelOpen] = useState(false);
   const [roomMembers, setRoomMembers] = useState([])
-  const [shouldAutoJoinWatch, setShouldAutoJoinWatch] = useState(false);
   const [sessionStatus, setSessionStatus] = useState({
     isActive: false,
     hostId: null
