@@ -1412,6 +1412,132 @@ func (client *Client) handleMessage(message []byte) {
         log.Printf("Swap declined: user %d declined swap with user %d", decline.TargetID, decline.RequesterID)
         return
     }
+
+    // ✅ Handle chat_message - save to DB and broadcast
+    if msg.Type == "chat_message" {
+        var chatData struct {
+            Message   string `json:"message"`
+            SessionID string `json:"session_id"`
+            UserID    uint   `json:"user_id"`
+            Username  string `json:"username"`
+        }
+
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            if err := json.Unmarshal(dataBytes, &chatData); err != nil {
+                log.Printf("[chat_message] Failed to parse chat data: %v", err)
+                return
+            }
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            chatData.Message = m["message"].(string)
+            chatData.SessionID = m["session_id"].(string)
+            if uid, ok := m["user_id"].(float64); ok {
+                chatData.UserID = uint(uid)
+            }
+            if uname, ok := m["username"].(string); ok {
+                chatData.Username = uname
+            }
+        }
+
+        // Save to database
+        chatMessage := models.ChatMessage{
+            RoomID:    client.roomID,
+            SessionID: chatData.SessionID,
+            UserID:    chatData.UserID,
+            Username:  chatData.Username,
+            Message:   chatData.Message,
+        }
+
+        if err := DB.Create(&chatMessage).Error; err != nil {
+            log.Printf("[chat_message] ❌ Failed to save chat message: %v", err)
+        } else {
+            log.Printf("[chat_message] ✅ Saved message ID=%d from user %d in session %s", chatMessage.ID, chatData.UserID, chatData.SessionID)
+        }
+
+        // Broadcast enriched message with DB ID
+        enrichedMsg := map[string]interface{}{
+            "type": "chat_message",
+            "data": map[string]interface{}{
+                "ID":         chatMessage.ID,
+                "UserID":     chatMessage.UserID,
+                "Username":   chatMessage.Username,
+                "Message":    chatMessage.Message,
+                "session_id": chatMessage.SessionID,
+                "CreatedAt":  chatMessage.CreatedAt,
+                "reactions":  []interface{}{}, // Empty reactions initially
+            },
+        }
+
+        if broadcastBytes, err := json.Marshal(enrichedMsg); err == nil {
+            client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, nil)
+            log.Printf("[chat_message] 📢 Broadcasted message to room %d", client.roomID)
+        }
+        return
+    }
+
+    // ✅ Handle reaction - save to DB and broadcast
+    if msg.Type == "reaction" {
+        var reactionData struct {
+            MessageID uint   `json:"message_id"`
+            Emoji     string `json:"emoji"`
+            UserID    uint   `json:"user_id"`
+            SessionID string `json:"session_id"`
+            Timestamp int64  `json:"timestamp"`
+        }
+
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            if err := json.Unmarshal(dataBytes, &reactionData); err != nil {
+                log.Printf("[reaction] Failed to parse reaction data: %v", err)
+                return
+            }
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            if mid, ok := m["message_id"].(float64); ok {
+                reactionData.MessageID = uint(mid)
+            }
+            reactionData.Emoji = m["emoji"].(string)
+            if uid, ok := m["user_id"].(float64); ok {
+                reactionData.UserID = uint(uid)
+            }
+            if sid, ok := m["session_id"].(string); ok {
+                reactionData.SessionID = sid
+            }
+            if ts, ok := m["timestamp"].(float64); ok {
+                reactionData.Timestamp = int64(ts)
+            }
+        }
+
+        // Save to database
+        reaction := models.Reaction{
+            UserID:    reactionData.UserID,
+            RoomID:    client.roomID,
+            SessionID: reactionData.SessionID,
+            MessageID: reactionData.MessageID,
+            Emoji:     reactionData.Emoji,
+            Timestamp: time.Unix(reactionData.Timestamp/1000, 0),
+        }
+
+        if err := DB.Create(&reaction).Error; err != nil {
+            log.Printf("[reaction] ❌ Failed to save reaction: %v", err)
+        } else {
+            log.Printf("[reaction] ✅ Saved reaction ID=%d emoji=%s for message %d", reaction.ID, reaction.Emoji, reactionData.MessageID)
+        }
+
+        // Broadcast reaction
+        reactionMsg := map[string]interface{}{
+            "type": "reaction",
+            "data": map[string]interface{}{
+                "message_id": reactionData.MessageID,
+                "emoji":      reactionData.Emoji,
+                "user_id":    reactionData.UserID,
+                "session_id": reactionData.SessionID,
+            },
+        }
+
+        if broadcastBytes, err := json.Marshal(reactionMsg); err == nil {
+            client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, nil)
+            log.Printf("[reaction] 📢 Broadcasted reaction to room %d", client.roomID)
+        }
+        return
+    }
     
     // ✅ Default: Broadcast all other message types to room
     // This handles: playback_control, update_room_status, platform_selected, etc.
