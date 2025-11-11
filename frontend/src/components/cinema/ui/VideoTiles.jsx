@@ -38,7 +38,7 @@ const VideoTiles = ({ participants = [], userSeat, isSeatedMode, localStream, cu
   );
 };
 
-const VideoTile = ({ participant, containerRef, isLocal, localStream }) => {
+const VideoTile = ({ participant, containerRef, isLocal, localStream, isSpeaking }) => {
   const tileRef = useRef(null);
   const videoRef = useRef(null);
   const [position, setPosition] = useState({ x: null, y: null });

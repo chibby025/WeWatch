@@ -1,5 +1,5 @@
 // src/components/cinema/VideoWatch.jsx
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
@@ -17,6 +17,7 @@ import SeatSwapNotification from './ui/SeatSwapNotification';
 import Taskbar from '../Taskbar';
 import CinemaVideoPlayer from './ui/CinemaVideoPlayer';
 import CameraPreview from './ui/CameraPreview';
+import CameraSidebar from './ui/CameraSidebar';
 import VideoTiles from './ui/VideoTiles';
 import CinemaSeatView from './ui/CinemaSeatView';
 import ScrollableSeatGrid from './ui/ScrollableSeatGrid';
@@ -47,7 +48,7 @@ export default function VideoWatch() {
     stableTokenRef.current = wsToken;
   }
 
-  const { sendMessage, messages, isConnected, sessionStatus } = useWebSocket(
+  const { sendMessage, messages, isConnected, sessionStatus, setBinaryMessageHandler } = useWebSocket(
     roomId,
     stableTokenRef.current
   );
@@ -91,6 +92,8 @@ export default function VideoWatch() {
   const [isScreenSharingActive, setIsScreenSharingActive] = useState(false);
   const [screenSharerUserId, setScreenSharerUserId] = useState(null);
   const [isCameraOn, setIsCameraOn] = useState(false);
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -115,6 +118,9 @@ export default function VideoWatch() {
   const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState(null);
   const [showMicSelector, setShowMicSelector] = useState(false);
   const publishedAudioTrackRef = useRef(null);
+
+  // ✅ Track active session ID for ending sessions
+  const [activeSessionId, setActiveSessionId] = useState(null);
 
   // 🪑 Seat swap notifications
   const [seatSwapRequest, setSeatSwapRequest] = useState(null);
@@ -217,28 +223,137 @@ export default function VideoWatch() {
     requestMic();
   }, [localParticipant, hasMicPermission]);
 
+  // 📹 Binary WebSocket handler for receiving camera streams
+  useEffect(() => {
+    if (!setBinaryMessageHandler) return;
+
+    const handleBinaryMessage = (data) => {
+      console.log('📹 [VideoWatch] Binary data received:', data.byteLength, 'bytes');
+      console.log('📹 [VideoWatch] Active camera sources:', Object.keys(remoteCameraSourcesRef.current));
+      
+      // Find active camera users and append to their SourceBuffer
+      Object.entries(remoteCameraSourcesRef.current).forEach(([userId, source]) => {
+        console.log(`📹 [VideoWatch] Checking user ${userId}:`, {
+          hasSourceBuffer: !!source.sourceBuffer,
+          isUpdating: source.sourceBuffer?.updating,
+          readyState: source.mediaSource?.readyState
+        });
+        
+        if (source.sourceBuffer && !source.sourceBuffer.updating) {
+          try {
+            source.sourceBuffer.appendBuffer(data);
+            console.log(`✅ [VideoWatch] Appended ${data.byteLength} bytes to user ${userId}'s camera buffer`);
+          } catch (err) {
+            console.error(`❌ [VideoWatch] Failed to append buffer for user ${userId}:`, err);
+          }
+        } else {
+          console.warn(`⚠️ [VideoWatch] Skipping user ${userId} - buffer updating or not ready`);
+        }
+      });
+    };
+
+    setBinaryMessageHandler(handleBinaryMessage);
+    console.log('✅ [VideoWatch] Binary message handler registered');
+    
+    return () => {
+      setBinaryMessageHandler(null);
+    };
+  }, [setBinaryMessageHandler]);
+
   const isHost = React.useMemo(() => {
     return currentUser?.id === roomHostId;
   }, [currentUser?.id, roomHostId]);
 
-  // Camera toggle
+  // Camera toggle - Use LiveKit instead of WebSocket binary
   const toggleCamera = async () => {
+    console.log('📹 [toggleCamera] Called. isCameraOn:', isCameraOn, 'localParticipant:', !!localParticipant, 'room:', !!room);
+    
     if (!isCameraOn) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        setCameraPreviewStream(stream);
+        if (!localParticipant) {
+          console.error('❌ [toggleCamera] localParticipant is null!');
+          alert('Not connected to LiveKit. Please wait...');
+          return;
+        }
+
+        console.log('📹 [toggleCamera] Enumerating camera devices...');
+        // 1. Get available cameras
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        console.log('📹 [toggleCamera] Found', videoDevices.length, 'camera(s):', videoDevices.map(d => d.label || d.deviceId));
+        setAvailableCameras(videoDevices);
+        
+        // 2. Use first camera by default (or previously selected)
+        const cameraId = selectedCameraId || videoDevices[0]?.deviceId;
+        if (!cameraId) {
+          console.error('❌ [toggleCamera] No camera deviceId found!');
+          alert('No camera found!');
+          return;
+        }
+        
+        console.log('📹 [toggleCamera] Enabling camera via LiveKit with deviceId:', cameraId);
+        // 3. Enable camera via LiveKit
+        const track = await localParticipant.setCameraEnabled(true, { deviceId: cameraId });
+        console.log('✅ [toggleCamera] LiveKit camera enabled. Track:', track);
+        
+        // 4. Extract MediaStream from LiveKit track for preview
+        if (track && track.videoTrack) {
+          const mediaStream = new MediaStream([track.videoTrack.mediaStreamTrack]);
+          setCameraPreviewStream(mediaStream);
+          console.log('✅ [toggleCamera] Set cameraPreviewStream from LiveKit track');
+        }
+        
         setIsCameraOn(true);
-        // Optional: publish camera to LiveKit later if needed
-      } catch (err) {
-        console.error('Camera access denied:', err);
-        alert('Camera access denied.');
+        setSelectedCameraId(cameraId);
+        
+        console.log('✅ [VideoWatch] Camera enabled via LiveKit');
+        
+        // 4. Notify other users via WebSocket
+        sendMessage({
+          type: 'camera_started',
+          user_id: currentUser?.id
+        });
+      } catch (error) {
+        console.error('❌ [toggleCamera] Failed to start camera:', error);
+        alert('Failed to start camera: ' + error.message);
       }
     } else {
+      console.log('📹 [toggleCamera] Disabling camera...');
+      // Stop camera via LiveKit
+      if (localParticipant) {
+        await localParticipant.setCameraEnabled(false);
+        console.log('✅ [toggleCamera] LiveKit camera disabled');
+      }
+      
+      // Clear preview stream
       if (cameraPreviewStream) {
         cameraPreviewStream.getTracks().forEach(track => track.stop());
       }
       setCameraPreviewStream(null);
+      
       setIsCameraOn(false);
+      setAvailableCameras([]);
+      
+      console.log('🛑 [VideoWatch] Camera disabled via LiveKit');
+      
+      // Notify other users
+      sendMessage({
+        type: 'camera_stopped',
+        user_id: currentUser?.id
+      });
+    }
+  };
+
+  // Switch camera device - Use LiveKit
+  const switchCamera = async (deviceId) => {
+    if (!localParticipant) return;
+    
+    try {
+      await localParticipant.switchActiveDevice('videoinput', deviceId);
+      setSelectedCameraId(deviceId);
+      console.log('✅ [VideoWatch] Switched to camera:', deviceId);
+    } catch (err) {
+      console.error('❌ Failed to switch camera:', err);
     }
   };
 
@@ -451,6 +566,27 @@ export default function VideoWatch() {
         const isMember = memberList.some(m => m.id === currentUser.id);
         if (!isMember) {
           await apiClient.post(`/api/rooms/${roomId}/join`);
+        }
+        
+        // ✅ Populate participants state with all room members
+        const participantsList = memberList.map(member => ({
+          id: member.id,
+          name: member.username || `User${String(member.id).slice(0, 4)}`,
+          isSpeaking: false,
+          isCameraOn: false,
+          isMuted: true,
+          row: null,
+          col: null,
+          stream: null
+        }));
+        setParticipants(participantsList);
+        console.log('👥 [VideoWatch] Initialized participants from room members:', participantsList);
+
+        // ✅ Fetch active session ID
+        const sessionResponse = await apiClient.get(`/api/rooms/${roomId}/active-session`);
+        if (sessionResponse.data.session_id) {
+          setActiveSessionId(sessionResponse.data.session_id);
+          console.log('📋 Active session ID:', sessionResponse.data.session_id);
         }
       } catch (err) {
         if (err.response?.status === 404) {
@@ -765,9 +901,18 @@ export default function VideoWatch() {
           break;
         // ... keep all other message handlers (chat, seats, camera, etc.)
         case 'participant_join':
+          console.log('👤 [WebSocket] participant_join received:', message);
+          const joinUserId = message.data?.userId || message.userId;
+          const joinUsername = message.data?.username || message.username;
+          
+          if (!joinUserId) {
+            console.warn('⚠️ [WebSocket] participant_join missing userId:', message);
+            break;
+          }
+          
           setParticipants(prev => [...prev, {
-            id: message.userId,
-            name: message.username || `User${String(message.userId).slice(0, 4)}`,
+            id: joinUserId,
+            name: joinUsername || `User${String(joinUserId).slice(0, 4)}`,
             isSpeaking: false,
             isCameraOn: false,
             isMuted: true,
@@ -974,6 +1119,41 @@ export default function VideoWatch() {
         case "seating_mode_toggle":
           // Echo of our own toggle message, ignore
           break;
+        case "camera_started":
+          // Remote user started their camera - mark participant as having camera on
+          console.log('🎥 [WebSocket] User started camera:', message.user_id);
+          setParticipants(prev => 
+            prev.map(p => 
+              p.id === message.user_id 
+                ? { ...p, isCameraOn: true } 
+                : p
+            )
+          );
+          break;
+        case "camera_stopped":
+          // Remote user stopped their camera - mark participant as camera off for instant update
+          console.log('🎥 [WebSocket] User stopped camera:', message.user_id);
+          setParticipants(prev => 
+            prev.map(p => 
+              p.id === message.user_id 
+                ? { ...p, isCameraOn: false, stream: null } 
+                : p
+            )
+          );
+          break;
+        
+        case "session_ended":
+          // Session ended by host - cleanup and navigate to RoomPage
+          console.log('🛑 [WebSocket] Session ended by host');
+          console.log('📋 Session data:', message.data);
+          
+          // Show notification (optional - you can add toast library later)
+          alert('Watch session ended by host. Returning to lobby...');
+          
+          // Perform cleanup and navigate
+          performCleanupAndExit();
+          break;
+
         default:
           console.warn("[VideoWatch] Unknown WebSocket message type:", message.type, message);
       }
@@ -1022,8 +1202,63 @@ export default function VideoWatch() {
   };
 
   // Handle Leave Room
-  const handleLeaveRoom = () => {
-    navigate(`/room/${roomId}`);
+  const handleLeaveRoom = async () => {
+    // Check if current user is the host
+    const isHost = currentUser?.id === roomHostId;
+
+    if (isHost) {
+      // Host: Show confirmation dialog
+      const confirmed = window.confirm(
+        "End watch session for everyone? All participants will be returned to the lobby."
+      );
+
+      if (!confirmed) {
+        return; // User canceled, stay in session
+      }
+
+      // Host confirmed: End the session
+      try {
+        if (activeSessionId) {
+          console.log('🛑 Host ending session:', activeSessionId);
+          await apiClient.post(`/api/rooms/watch-sessions/${activeSessionId}/end`);
+          console.log('✅ Session ended successfully');
+        }
+      } catch (error) {
+        console.error('❌ Failed to end session:', error);
+        // Continue with cleanup even if API call fails
+      }
+    }
+
+    // Cleanup and exit (both host and members)
+    await performCleanupAndExit();
+  };
+
+  // Cleanup and navigate helper
+  const performCleanupAndExit = async () => {
+    console.log('🧹 Performing cleanup and exit...');
+
+    // 1. Disconnect LiveKit
+    if (disconnectLiveKit) {
+      try {
+        await disconnectLiveKit();
+        console.log('✅ LiveKit disconnected');
+      } catch (error) {
+        console.error('⚠️ Error disconnecting LiveKit:', error);
+      }
+    }
+
+    // 2. Stop camera stream
+    if (cameraPreviewStream) {
+      cameraPreviewStream.getTracks().forEach(track => track.stop());
+      setCameraPreviewStream(null);
+      console.log('✅ Camera stream stopped');
+    }
+
+    // 3. WebSocket cleanup happens automatically via useWebSocket cleanup
+
+    // 4. Navigate back to RoomPage
+    console.log('🏠 Navigating to RoomPage...');
+    navigate(`/rooms/${roomId}`); // ✅ FIXED: /rooms/ not /room/
   };
 
   // Cleanup camera
@@ -1278,6 +1513,68 @@ export default function VideoWatch() {
     return null;
   }, [room, remoteParticipants]); // Depend on both room and remoteParticipants
 
+  // 📹 Enrich participants with LiveKit camera tracks
+  const participantsWithCamera = useMemo(() => {
+    console.log('📹 [participantsWithCamera] useMemo recalculating...');
+    console.log('📹 [participantsWithCamera] participants:', participants);
+    console.log('📹 [participantsWithCamera] remoteParticipants:', remoteParticipants);
+    
+    return participants.map(participant => {
+      console.log(`📹 [participantsWithCamera] Processing participant:`, participant);
+      
+      // If participant manually turned off camera (via WebSocket), respect that immediately
+      if (participant.isCameraOn === false) {
+        console.log(`⚠️ [participantsWithCamera] Camera manually disabled for user-${participant.id}`);
+        return { ...participant, stream: null };
+      }
+      
+      // Find matching LiveKit participant by identity (user-{id})
+      const livekitParticipant = remoteParticipants.find(
+        lp => lp.identity === `user-${participant.id}`
+      );
+
+      console.log(`📹 [participantsWithCamera] Looking for user-${participant.id}, found:`, !!livekitParticipant);
+
+      if (!livekitParticipant) {
+        return participant; // No LiveKit participant yet
+      }
+
+      // Check for camera track
+      const videoTracks = Array.from(livekitParticipant.videoTrackPublications?.values() || []);
+      console.log(`📹 [participantsWithCamera] Video tracks for user-${participant.id}:`, videoTracks.length);
+      
+      const cameraTrack = videoTracks.find(pub => pub.source === 'camera');
+      console.log(`📹 [participantsWithCamera] Camera track for user-${participant.id}:`, cameraTrack);
+      console.log(`📹 [participantsWithCamera] Track subscribed:`, cameraTrack?.subscribed);
+      console.log(`📹 [participantsWithCamera] Track object:`, cameraTrack?.track);
+      console.log(`📹 [participantsWithCamera] VideoTrack object:`, cameraTrack?.videoTrack);
+      console.log(`📹 [participantsWithCamera] MediaStreamTrack:`, cameraTrack?.track?.mediaStreamTrack || cameraTrack?.videoTrack?.mediaStreamTrack);
+      
+      // Try both .track and .videoTrack (different LiveKit versions use different properties)
+      const actualTrack = cameraTrack?.track || cameraTrack?.videoTrack;
+      
+      if (cameraTrack && cameraTrack.subscribed && actualTrack && actualTrack.mediaStreamTrack) {
+        // Create MediaStream from the camera track
+        const stream = new MediaStream([actualTrack.mediaStreamTrack]);
+        console.log(`✅ [participantsWithCamera] Created camera stream for user-${participant.id}`, stream);
+        return {
+          ...participant,
+          isCameraOn: true,
+          stream: stream
+        };
+      } else {
+        console.log(`⚠️ [participantsWithCamera] Camera track not ready for user-${participant.id}`, {
+          hasPublication: !!cameraTrack,
+          subscribed: cameraTrack?.subscribed,
+          hasTrack: !!actualTrack,
+          hasMediaStreamTrack: !!actualTrack?.mediaStreamTrack
+        });
+      }
+
+      return participant;
+    });
+  }, [participants, remoteParticipants]);
+
   // Show loader while auth checks run
   if (authLoading) {
     return (
@@ -1332,7 +1629,7 @@ export default function VideoWatch() {
           isGlowing={isGlowing}
           onShareRoom={handleShareRoom}
           setIsGlowing={setIsGlowing}
-          onLeaveRoom={handleLeaveRoom}
+          onLeaveCall={handleLeaveRoom}
           openVideoSidebar={() => setIsVideoSidebarOpen(prev => !prev)}
           isVideoSidebarOpen={isVideoSidebarOpen}
           isHost={isHost}
@@ -1365,6 +1662,9 @@ export default function VideoWatch() {
               publishMicDevice(deviceId);
             }
           }}
+          availableCameras={availableCameras}
+          selectedCameraId={selectedCameraId}
+          onCameraSwitch={switchCamera}
         />
 
       {isSeatsModalOpen && (
@@ -1605,8 +1905,9 @@ export default function VideoWatch() {
 
       <CameraPreview stream={cameraPreviewStream} />
 
+      {/* LiveKit VideoTiles handles all remote participant video/camera display */}
       <VideoTiles 
-        participants={participants} 
+        participants={participantsWithCamera} 
         userSeat={userSeats[currentUser?.id]} 
         isSeatedMode={isSeatedMode}
         localStream={cameraPreviewStream}

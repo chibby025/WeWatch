@@ -473,6 +473,63 @@ func (h *Hub) BroadcastToRoom(roomID uint, message OutgoingMessage, sender *Clie
 	}
 }
 
+// BroadcastToRoomBinary broadcasts binary data to all clients in a room except the sender
+func (h *Hub) BroadcastToRoomBinary(roomID uint, data []byte, senderUserID uint) {
+	h.mutex.RLock()
+	clients, exists := h.rooms[roomID]
+	h.mutex.RUnlock()
+
+	if !exists {
+		log.Printf("[Hub] BroadcastToRoomBinary: room %d not found", roomID)
+		return
+	}
+
+	log.Printf("[Hub] Broadcasting binary data to room %d: %d bytes from user %d", roomID, len(data), senderUserID)
+
+	for client := range clients {
+		// Don't send back to the sender
+		if client.userID == senderUserID {
+			continue
+		}
+
+		select {
+		case client.send <- OutgoingMessage{Data: data, IsBinary: true}:
+			log.Printf("[Hub] Sent binary chunk to user %d (%d bytes)", client.userID, len(data))
+		default:
+			log.Printf("[Hub] Failed to send binary to user %d (channel full)", client.userID)
+		}
+	}
+}
+
+// DisconnectRoomClients forcefully disconnects all WebSocket clients in a room
+func (h *Hub) DisconnectRoomClients(roomID uint) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	clients, exists := h.rooms[roomID]
+	if !exists {
+		log.Printf("[Hub] DisconnectRoomClients: room %d not found", roomID)
+		return
+	}
+
+	log.Printf("🔌 [Hub] Disconnecting %d clients from room %d", len(clients), roomID)
+
+	for client := range clients {
+		// Close the send channel to trigger graceful shutdown
+		select {
+		case <-client.send:
+			// Already closed
+		default:
+			close(client.send)
+			log.Printf("🔌 [Hub] Closed send channel for user %d in room %d", client.userID, roomID)
+		}
+	}
+
+	// Clear the room from the hub
+	delete(h.rooms, roomID)
+	log.Printf("✅ [Hub] Room %d cleared from hub", roomID)
+}
+
 // BroadcastToUsers sends a message to specific users by their IDs.
 func (h *Hub) BroadcastToUsers(userIDs []uint, message OutgoingMessage) {
     // Debug: log targeted broadcast enqueue
@@ -574,6 +631,11 @@ func (c *Client) readPump() {
             log.Printf("[readPump][DEBUG] TextMessage received: user_id=%d room_id=%d bytes=%d content=%s", c.userID, c.roomID, len(message), string(message))
             log.Printf("📨 Text message received from user %d: %s", c.userID, string(message))
             c.handleMessage(message)
+        
+        case websocket.BinaryMessage:
+            log.Printf("[readPump][DEBUG] BinaryMessage received: user_id=%d room_id=%d bytes=%d", c.userID, c.roomID, len(message))
+            // Broadcast binary data (camera stream) to all other clients in the room
+            c.hub.BroadcastToRoomBinary(c.roomID, message, c.userID)
         }
     }
 }

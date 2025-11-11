@@ -189,6 +189,26 @@ func EndWatchSessionHandler(c *gin.Context) {
 		return
 	}
 
+	// ✅ DELETE LIVEKIT ROOM (after successful DB commit)
+	livekitRoomName := fmt.Sprintf("room-%d", session.RoomID)
+	if err := utils.DeleteLiveKitRoom(livekitRoomName); err != nil {
+		log.Printf("⚠️ EndWatchSessionHandler: Failed to delete LiveKit room %s: %v", livekitRoomName, err)
+		// Don't fail the entire operation - session is already ended in DB
+	}
+
+	// ✅ BROADCAST SESSION_ENDED TO ALL PARTICIPANTS
+	broadcastMsg := OutgoingMessage{
+		Data:     []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d}}`, sessionID, session.RoomID)),
+		IsBinary: false,
+	}
+	hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)
+	log.Printf("📡 Broadcast session_ended to room %d", session.RoomID)
+
+	// ✅ DISCONNECT ALL WEBSOCKET CLIENTS IN THIS ROOM
+	// Give clients a moment to receive the session_ended message before disconnecting
+	time.Sleep(500 * time.Millisecond)
+	hub.DisconnectRoomClients(session.RoomID)
+
 	log.Printf("✅ Session %s ended successfully by host %d", sessionID, userID)
 	c.JSON(http.StatusOK, gin.H{"message": "Session ended"})
 }
@@ -250,12 +270,11 @@ func cleanupSession(sessionID string, roomID uint) {
 	}
 }
 
-// CleanupExpiredSessions removes watch sessions and temp media older than 30 minutes.
-// It does NOT require hub.IsHostActive() unless you've implemented session tracking.
-// CleanupExpiredSessions removes watch sessions and temp media older than 30 minutes.
+// CleanupExpiredSessions removes watch sessions and temp media older than 5 minutes.
+// Reduced grace period for tighter memory management.
 func CleanupExpiredSessions() {
 	var sessions []models.WatchSession
-	cutoff := time.Now().Add(-30 * time.Minute)
+	cutoff := time.Now().Add(-5 * time.Minute) // ✅ Reduced from 30 to 5 minutes
 
 	DB.Joins("JOIN rooms ON watch_sessions.room_id = rooms.id").
         Where("watch_sessions.ended_at IS NULL AND watch_sessions.started_at < ? AND rooms.is_temporary = ?", cutoff, true).
