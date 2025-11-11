@@ -19,7 +19,8 @@ export default function LeftSidebar({
   onCameraPreview,
   isHost,
   onClose,
-  onUploadComplete       // ✅ NEW: callback to refresh playlist after upload
+  onUploadComplete,      // ✅ NEW: callback to refresh playlist after upload
+  sessionId              // ✅ NEW: session ID for linking uploads
 }) {
   const [activeTab, setActiveTab] = useState('upload');
   const [isDragging, setIsDragging] = useState(false);
@@ -103,7 +104,8 @@ export default function LeftSidebar({
         roomId,
         file,
         (percent) => setUploadProgress(percent),
-        true // temporary
+        true, // temporary
+        sessionId // ✅ Link upload to session
       );
       
       // ✅ Refresh playlist after successful upload

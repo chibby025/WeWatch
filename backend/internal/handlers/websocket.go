@@ -15,7 +15,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
 )
@@ -770,32 +769,37 @@ func WebSocketHandler(c *gin.Context) {
 			}
 		}
 	} else {
+		// ✅ DO NOT auto-create sessions for RoomPage WebSocket connections
+		// Only VideoWatch should create sessions (via session_id query param)
 		if err := DB.Where("room_id = ? AND ended_at IS NULL", roomID).First(&watchSession).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				sessionID = uuid.New().String()
+				// No active session - this is just a RoomPage connection, don't create a session
+				log.Printf("WebSocketHandler: No active session for room %d, not creating one (RoomPage connection)", roomID)
+				// Use a placeholder session to avoid nil issues
 				watchSession = models.WatchSession{
-					SessionID: sessionID,
+					SessionID: "", // Empty session ID indicates no active session
 					RoomID:    roomID,
 					HostID:    authenticatedUserID,
-					StartedAt: time.Now(),
 				}
-				if err := DB.Create(&watchSession).Error; err != nil {
-					log.Printf("Failed to create watch session: %v", err)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
-					return
-				}
+				sessionID = "" // No session for RoomPage connections
 			} else {
 				log.Printf("Error querying watch session: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 				return
 			}
+		} else {
+			// Found an existing active session
+			sessionID = watchSession.SessionID
+			log.Printf("WebSocketHandler: Found existing active session %s for room %d", sessionID, roomID)
 		}
-		sessionID = watchSession.SessionID
 	}
 
-	hub.sessionMutex.Lock()
-	hub.activeSessions[watchSession.SessionID] = &watchSession
-	hub.sessionMutex.Unlock()
+	// ✅ Only register in activeSessions if there's an actual session
+	if sessionID != "" {
+		hub.sessionMutex.Lock()
+		hub.activeSessions[watchSession.SessionID] = &watchSession
+		hub.sessionMutex.Unlock()
+	}
 
 	client := &Client{
 		hub:      hub,
@@ -828,45 +832,64 @@ func WebSocketHandler(c *gin.Context) {
 	log.Printf("[WebSocketHandler] ✅ Registered client %p in clientRegistry for user %d, room %d", client, authenticatedUserID, roomID)
 	hub.registryMutex.Unlock()
 
-	// Join the watch session
-	if err := hub.JoinWatchSession(sessionID, client); err != nil {
-		log.Printf("Failed to join watch session: %v", err)
+	// Join the watch session (only if there's an active session)
+	if sessionID != "" {
+		if err := hub.JoinWatchSession(sessionID, client); err != nil {
+			log.Printf("Failed to join watch session: %v", err)
+		}
 	}
 
 	// --- COLLECT STARTUP MESSAGES (but DO NOT send yet) ---
 	var startupMessages []OutgoingMessage
 
-	// Build session_status
-	members, err := GetSessionMembers(DB, watchSession.ID)
-	if err != nil {
-		log.Printf("Failed to fetch session members: %v", err)
-		statusMsg := WebSocketMessage{
-			Type: "session_status",
-			Data: map[string]interface{}{
-				"error": "Failed to fetch session members",
-			},
-		}
-		if msgBytes, err := json.Marshal(statusMsg); err == nil {
-			startupMessages = append(startupMessages, OutgoingMessage{Data: msgBytes, IsBinary: false})
-		}
-	} else {
-		trimmedMembers := make([]map[string]interface{}, len(members))
-		for i, m := range members {
-			trimmedMembers[i] = map[string]interface{}{
-				"id":        m.ID,
-				"user_id":   m.UserID,
-				"user_role": m.UserRole,
+	// Build session_status (only if there's an active session)
+	if sessionID != "" && watchSession.ID != 0 {
+		members, err := GetSessionMembers(DB, watchSession.ID)
+		if err != nil {
+			log.Printf("Failed to fetch session members: %v", err)
+			statusMsg := WebSocketMessage{
+				Type: "session_status",
+				Data: map[string]interface{}{
+					"error": "Failed to fetch session members",
+				},
+			}
+			if msgBytes, err := json.Marshal(statusMsg); err == nil {
+				startupMessages = append(startupMessages, OutgoingMessage{Data: msgBytes, IsBinary: false})
+			}
+		} else {
+			trimmedMembers := make([]map[string]interface{}, len(members))
+			for i, m := range members {
+				trimmedMembers[i] = map[string]interface{}{
+					"id":        m.ID,
+					"user_id":   m.UserID,
+					"user_role": m.UserRole,
+				}
+			}
+
+			// Screen sharing is now handled by LiveKit
+			statusMsg := WebSocketMessage{
+				Type: "session_status",
+				Data: map[string]interface{}{
+					"session_id": watchSession.SessionID,
+					"host_id":    watchSession.HostID,
+					"members":    trimmedMembers,
+					"started_at": watchSession.StartedAt,
+				},
+			}
+			if msgBytes, err := json.Marshal(statusMsg); err == nil {
+				startupMessages = append(startupMessages, OutgoingMessage{Data: msgBytes, IsBinary: false})
 			}
 		}
-
-		// Screen sharing is now handled by LiveKit
+	} else {
+		// No active session - send empty session_status
+		log.Printf("WebSocketHandler: No active session for room %d, sending empty session_status", roomID)
 		statusMsg := WebSocketMessage{
 			Type: "session_status",
 			Data: map[string]interface{}{
-				"session_id": watchSession.SessionID,
-				"host_id":    watchSession.HostID,
-				"members":    trimmedMembers,
-				"started_at": watchSession.StartedAt,
+				"session_id": nil,
+				"host_id":    nil,
+				"members":    []interface{}{},
+				"started_at": nil,
 			},
 		}
 		if msgBytes, err := json.Marshal(statusMsg); err == nil {

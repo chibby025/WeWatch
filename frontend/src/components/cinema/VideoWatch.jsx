@@ -1,6 +1,7 @@
 // src/components/cinema/VideoWatch.jsx
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import toast, { Toaster } from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
 import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem } from '../../services/api';
@@ -1147,8 +1148,11 @@ export default function VideoWatch() {
           console.log('🛑 [WebSocket] Session ended by host');
           console.log('📋 Session data:', message.data);
           
-          // Show notification (optional - you can add toast library later)
-          alert('Watch session ended by host. Returning to lobby...');
+          // ✅ Show toast notification
+          toast('Videowatch session ended', {
+            icon: 'ℹ️',
+            duration: 3000,
+          });
           
           // Perform cleanup and navigate
           performCleanupAndExit();
@@ -1586,6 +1590,9 @@ export default function VideoWatch() {
 
   return (
     <div className="relative w-full h-screen bg-[#0a0a0a] text-white overflow-hidden">
+      {/* ✅ Toast Notifications */}
+      <Toaster position="top-center" />
+      
       {/* Top-Left Menu Icon */}
       <div className="absolute top-0 left-0 p-4 z-50">
         <button
@@ -1758,6 +1765,7 @@ export default function VideoWatch() {
             isHost={isHost}
             onClose={() => setIsLeftSidebarOpen(false)}
             onUploadComplete={fetchAndGeneratePosters}
+            sessionId={activeSessionId} // ✅ Pass session ID for uploads
           />
         </div>
       )}
