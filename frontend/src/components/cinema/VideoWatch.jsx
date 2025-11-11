@@ -4,7 +4,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
-import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem } from '../../services/api';
+import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory } from '../../services/api';
 import apiClient from '../../services/api';
 import { getRoom, getRoomMembers } from '../../services/api';
 // ✅ Import LiveKit hook + events
@@ -598,6 +598,28 @@ export default function VideoWatch() {
     joinRoomIfNeeded();
   }, [roomId, currentUser]);
 
+  // ✅ Load chat history when session becomes active
+  useEffect(() => {
+    if (!roomId || !sessionStatus?.id) return;
+    
+    const loadChatHistory = async () => {
+      setIsChatLoading(true);
+      try {
+        console.log('💬 [VideoWatch] Loading chat history for session:', sessionStatus.id);
+        const response = await getChatHistory(roomId, sessionStatus.id);
+        const messages = response.messages || [];
+        console.log(`💬 [VideoWatch] Loaded ${messages.length} chat messages with reactions:`, messages);
+        setSessionChatMessages(messages);
+      } catch (error) {
+        console.error('❌ [VideoWatch] Failed to load chat history:', error);
+      } finally {
+        setIsChatLoading(false);
+      }
+    };
+
+    loadChatHistory();
+  }, [roomId, sessionStatus?.id]);
+
   // Initialize Seats
   useEffect(() => {
     if (!currentUser) return;
@@ -978,6 +1000,7 @@ export default function VideoWatch() {
           break;
         case "reaction":
           if (message.data.session_id === sessionStatus.id) {
+            console.log('👍 [VideoWatch] Received reaction:', message.data);
             setSessionChatMessages(prev =>
               prev.map(msg => {
                 if (message.data.message_id && msg.ID !== message.data.message_id) return msg;
@@ -985,7 +1008,9 @@ export default function VideoWatch() {
                   r => r.user_id === message.data.user_id && r.emoji === message.data.emoji
                 );
                 if (alreadyReacted) return msg;
-                return { ...msg, reactions: [...(msg.reactions || []), message.data] };
+                const updatedMsg = { ...msg, reactions: [...(msg.reactions || []), message.data] };
+                console.log('👍 [VideoWatch] Updated message with reaction:', updatedMsg);
+                return updatedMsg;
               })
             );
           }
@@ -1170,10 +1195,31 @@ export default function VideoWatch() {
     if (!newSessionMessage.trim() || !sessionStatus.id || !sendMessage) return;
     const chatMessage = {
       type: "chat_message",
-      data: { message: newSessionMessage.trim(), session_id: sessionStatus.id },
+      data: { 
+        message: newSessionMessage.trim(), 
+        session_id: sessionStatus.id,
+        user_id: currentUser?.id,
+        username: currentUser?.username || `User${currentUser?.id}`
+      },
     };
     sendMessage(chatMessage);
     setNewSessionMessage('');
+  };
+
+  // Handle Reaction to Message
+  const handleReactToMessage = (messageId, emoji) => {
+    if (!sessionStatus.id || !sendMessage) return;
+    const reactionMessage = {
+      type: "reaction",
+      data: {
+        message_id: messageId,
+        emoji: emoji,
+        user_id: currentUser?.id,
+        session_id: sessionStatus.id,
+        timestamp: Date.now()
+      }
+    };
+    sendMessage(reactionMessage);
   };
 
   // Autodirect to session
@@ -1258,9 +1304,15 @@ export default function VideoWatch() {
       console.log('✅ Camera stream stopped');
     }
 
-    // 3. WebSocket cleanup happens automatically via useWebSocket cleanup
+    // 3. Clear chat messages
+    setSessionChatMessages([]);
+    setNewSessionMessage('');
+    setIsChatOpen(false);
+    console.log('✅ Chat cleared');
 
-    // 4. Navigate back to RoomPage
+    // 4. WebSocket cleanup happens automatically via useWebSocket cleanup
+
+    // 5. Navigate back to RoomPage
     console.log('🏠 Navigating to RoomPage...');
     navigate(`/rooms/${roomId}`); // ✅ FIXED: /rooms/ not /room/
   };

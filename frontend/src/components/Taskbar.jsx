@@ -218,7 +218,7 @@ const Taskbar = ({
           <div className={isHost && isHostBroadcasting && isSeatedMode ? "mic-pulse" : ""}>
             <TaskbarButton
               icon={AudioIcon}
-              label={isAudioActive ? "Mute" : "Unmute"}
+              label={isAudioActive ? "Audio" : "Audio"}
               onClick={toggleAudio}
               showCancelIndicator={!isAudioActive}
             />

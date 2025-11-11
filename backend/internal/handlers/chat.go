@@ -165,7 +165,24 @@ func GetChatHistoryHandler(c *gin.Context) {
 		return
 	}
 
+	// ✅ Fetch reactions for each message
+	type MessageWithReactions struct {
+		models.ChatMessage
+		Reactions []models.Reaction `json:"reactions"`
+	}
+
+	messagesWithReactions := make([]MessageWithReactions, len(messages))
+	for i, msg := range messages {
+		var reactions []models.Reaction
+		DB.Where("message_id = ?", msg.ID).Find(&reactions)
+		
+		messagesWithReactions[i] = MessageWithReactions{
+			ChatMessage: msg,
+			Reactions:   reactions,
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"messages": messages,
+		"messages": messagesWithReactions,
 	})
 }

@@ -192,6 +192,42 @@ func EndWatchSessionHandler(c *gin.Context) {
 			log.Printf("✅ Deleted DB record: ID=%d", item.ID)
 		}
 	}
+
+	// ✅ Delete session chat messages and reactions
+	var chatMessages []models.ChatMessage
+	if err := tx.Where("session_id = ?", sessionID).Find(&chatMessages).Error; err != nil {
+		log.Printf("⚠️ EndWatchSessionHandler: Failed to fetch chat messages: %v", err)
+	} else {
+		log.Printf("🗑️ EndWatchSessionHandler: Found %d chat messages to delete for session %s", len(chatMessages), sessionID)
+		
+		// Delete reactions for each message
+		messageIDs := make([]uint, len(chatMessages))
+		for i, msg := range chatMessages {
+			messageIDs[i] = msg.ID
+		}
+		
+		if len(messageIDs) > 0 {
+			var reactions []models.Reaction
+			if err := tx.Where("message_id IN ?", messageIDs).Find(&reactions).Error; err != nil {
+				log.Printf("⚠️ EndWatchSessionHandler: Failed to fetch reactions: %v", err)
+			} else {
+				log.Printf("🗑️ EndWatchSessionHandler: Found %d reactions to delete", len(reactions))
+				if err := tx.Where("message_id IN ?", messageIDs).Delete(&models.Reaction{}).Error; err != nil {
+					log.Printf("⚠️ EndWatchSessionHandler: Failed to delete reactions: %v", err)
+				} else {
+					log.Printf("✅ Deleted %d reactions", len(reactions))
+				}
+			}
+		}
+		
+		// Delete chat messages
+		if err := tx.Where("session_id = ?", sessionID).Delete(&models.ChatMessage{}).Error; err != nil {
+			log.Printf("⚠️ EndWatchSessionHandler: Failed to delete chat messages: %v", err)
+		} else {
+			log.Printf("✅ Deleted %d chat messages", len(chatMessages))
+		}
+	}
+
 	// Delete room if it's temporary (reuse existing room variable from earlier)
 	// Refresh room data in case it was modified
 	if err := tx.First(&room, session.RoomID).Error; err != nil {
