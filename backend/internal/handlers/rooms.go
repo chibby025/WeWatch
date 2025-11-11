@@ -121,16 +121,34 @@ func EndWatchSessionHandler(c *gin.Context) {
 
 	userID := c.MustGet("user_id").(uint)
 
+	// Fetch session
 	var session models.WatchSession
-	if err := DB.Where("session_id = ? AND host_id = ?", sessionID, userID).First(&session).Error; err != nil {
+	if err := DB.Where("session_id = ?", sessionID).First(&session).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			log.Printf("EndWatchSessionHandler: Session %s not found or user %d is not host", sessionID, userID)
+			log.Printf("EndWatchSessionHandler: Session %s not found", sessionID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
 		} else {
 			log.Printf("EndWatchSessionHandler: DB error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		}
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only the host can end this session"})
 		return
 	}
+
+	// ✅ Check if user is the ROOM host (not just session host)
+	var room models.Room
+	if err := DB.First(&room, session.RoomID).Error; err != nil {
+		log.Printf("EndWatchSessionHandler: Room %d not found: %v", session.RoomID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	if room.HostID != userID {
+		log.Printf("EndWatchSessionHandler: User %d is not the room host (host is %d)", userID, room.HostID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can end this session"})
+		return
+	}
+
+	log.Printf("✅ EndWatchSessionHandler: User %d (room host) ending session %s", userID, sessionID)
 
 	// 🔁 Use transaction for data consistency
 	tx := DB.Begin()
@@ -159,17 +177,23 @@ func EndWatchSessionHandler(c *gin.Context) {
 		return
 	}
 
+	log.Printf("🗑️ EndWatchSessionHandler: Found %d temporary media items to delete for session %s", len(tempItems), sessionID)
 	for _, item := range tempItems {
+		log.Printf("🗑️ Deleting temporary media: ID=%d, File=%s, SessionID=%s", item.ID, item.FileName, item.SessionID)
 		if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
 			log.Printf("⚠️ EndWatchSessionHandler: Failed to delete file %s: %v", item.FilePath, err)
+		} else {
+			log.Printf("✅ Deleted file: %s", item.FilePath)
 		}
 		if err := tx.Delete(&item).Error; err != nil {
 			log.Printf("⚠️ EndWatchSessionHandler: Failed to delete DB record for %s: %v", item.FilePath, err)
 			// Continue cleanup even if one delete fails
+		} else {
+			log.Printf("✅ Deleted DB record: ID=%d", item.ID)
 		}
 	}
-	// Delete room if it's temporary
-	var room models.Room
+	// Delete room if it's temporary (reuse existing room variable from earlier)
+	// Refresh room data in case it was modified
 	if err := tx.First(&room, session.RoomID).Error; err != nil {
 		if err != gorm.ErrRecordNotFound {
 			log.Printf("EndWatchSessionHandler: DB error fetching room %d: %v", session.RoomID, err)
@@ -1014,14 +1038,30 @@ func GetActiveSessionHandler(c *gin.Context) {
 
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusOK, gin.H{"session_id": nil})
+			c.JSON(http.StatusOK, gin.H{
+				"session_id":   nil,
+				"is_existing":  false,
+				"started_at":   nil,
+				"member_count": 0,
+			})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
 		}
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"session_id": session.SessionID})
+	// ✅ Count active members
+	var memberCount int64
+	DB.Model(&models.WatchSessionMember{}).
+		Where("watch_session_id = ? AND is_active = ?", session.ID, true).
+		Count(&memberCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"session_id":   session.SessionID,
+		"is_existing":  true,
+		"started_at":   session.StartedAt,
+		"member_count": memberCount,
+	})
 }
 
 // CreateWatchSessionForRoomHandler creates a WatchSession for a persistent room
@@ -1040,7 +1080,28 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		return
 	}
 
-	// Create session
+	// ✅ Check for existing active session before creating new one
+	var existingSession models.WatchSession
+	result := DB.Where("room_id = ? AND ended_at IS NULL", roomID).First(&existingSession)
+	if result.Error == nil {
+		// Active session already exists - return it
+		log.Printf("✅ Found existing active session for room %d: %s", roomID, existingSession.SessionID)
+		
+		// Count active members
+		var memberCount int64
+		DB.Model(&models.WatchSessionMember{}).Where("watch_session_id = ? AND is_active = ?", existingSession.ID, true).Count(&memberCount)
+		
+		c.JSON(200, gin.H{
+			"session_id":   existingSession.SessionID,
+			"is_existing":  true,
+			"started_at":   existingSession.StartedAt,
+			"member_count": memberCount,
+			"message":      "Active session already exists",
+		})
+		return
+	}
+
+	// No active session found - create new session
 	sessionID := uuid.New().String()
 	session := models.WatchSession{
 		SessionID: sessionID,
@@ -1048,9 +1109,19 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		HostID:    userID,
 		StartedAt: time.Now(),
 	}
-	DB.Create(&session)
+	if err := DB.Create(&session).Error; err != nil {
+		log.Printf("❌ Failed to create watch session: %v", err)
+		c.JSON(500, gin.H{"error": "Failed to create session"})
+		return
+	}
 
-	c.JSON(201, gin.H{"session_id": sessionID})
+	log.Printf("✅ Created new watch session for room %d: %s", roomID, sessionID)
+	c.JSON(201, gin.H{
+		"session_id":   sessionID,
+		"is_existing":  false,
+		"started_at":   session.StartedAt,
+		"member_count": 0,
+	})
 }
 
 // GetRoomHandler handles the GET /api/rooms/:id endpoint

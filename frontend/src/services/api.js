@@ -451,9 +451,9 @@ export const getActiveSession = (roomId) => {
   return apiClient.get(`/api/rooms/${roomId}/active-session`);
 };
 
-export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false) => {
+export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false, sessionId = null) => {
   try {
-    console.log(`📤 API: Uploading media file to room ${roomId} (Temporary: ${isTemporary})`, file.name);
+    console.log(`📤 API: Uploading media file to room ${roomId} (Temporary: ${isTemporary}, SessionID: ${sessionId})`, file.name);
 
     // --- CRUCIAL: Use FormData for file uploads ---
     const formData = new FormData();
@@ -489,15 +489,28 @@ export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, 
     }
     // --- --- ---
 
-    // --- ADD LOGIC FOR isTemporary FLAG ---
+    // --- ADD LOGIC FOR isTemporary FLAG AND session_id ---
     // Construct the URL based on the isTemporary flag
     let uploadUrl = `/api/rooms/${roomId}/upload`;
+    const queryParams = [];
+    
     if (isTemporary) {
-      uploadUrl += '?temporary=true';
-      console.log(`uploadMediaToRoom: Uploading as TEMPORARY media to ${uploadUrl}`);
+      queryParams.push('temporary=true');
+      console.log(`uploadMediaToRoom: Uploading as TEMPORARY media`);
+      
+      // ✅ Add session_id for temporary uploads
+      if (sessionId) {
+        queryParams.push(`session_id=${encodeURIComponent(sessionId)}`);
+        console.log(`uploadMediaToRoom: Linking to session ${sessionId}`);
+      }
     } else {
-      console.log(`uploadMediaToRoom: Uploading as PERMANENT media to ${uploadUrl}`);
+      console.log(`uploadMediaToRoom: Uploading as PERMANENT media`);
     }
+    
+    if (queryParams.length > 0) {
+      uploadUrl += '?' + queryParams.join('&');
+    }
+    console.log(`uploadMediaToRoom: Upload URL: ${uploadUrl}`);
     // --- --- ---
 
     console.log(`uploadMediaToRoom: About to send POST request to ${uploadUrl}`);

@@ -313,8 +313,27 @@ func DeleteTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 		return
 	}
 
+	// ✅ ONLY return temporary media for the ACTIVE session
+	var activeSession models.WatchSession
+	if err := DB.Where("room_id = ? AND ended_at IS NULL", roomIDUint).First(&activeSession).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// No active session = no temporary media to show
+			log.Printf("GetTemporaryMediaItemsForRoomHandler: No active session for room %d", roomIDUint)
+			c.JSON(http.StatusOK, gin.H{
+				"message":              "No active session",
+				"count":                0,
+				"temporary_media_items": []models.TemporaryMediaItem{},
+				"room_id":              roomIDUint,
+			})
+			return
+		}
+		log.Printf("GetTemporaryMediaItemsForRoomHandler: Database error fetching active session: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch session"})
+		return
+	}
+
 	var temporaryMediaItems []models.TemporaryMediaItem
-	result = DB.Where("room_id = ?", roomIDUint).Find(&temporaryMediaItems)
+	result = DB.Where("session_id = ?", activeSession.SessionID).Order("created_at ASC").Find(&temporaryMediaItems)
 	if result.Error != nil {
 		log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Database error fetching temporary media items for room %d: %v", roomIDUint, result.Error)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch temporary media items for deletion"})

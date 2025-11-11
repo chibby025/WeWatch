@@ -76,6 +76,15 @@ func UploadMediaHandler(c *gin.Context) {
 	isTemporary := c.Query("temporary") == "true"
 	log.Printf("UploadMediaHandler: Upload type - Temporary: %v", isTemporary)
 
+	// ✅ Get session_id from query parameter (for temporary uploads)
+	sessionID := c.Query("session_id")
+	if isTemporary && sessionID == "" {
+		log.Printf("⚠️ UploadMediaHandler: Temporary upload without session_id")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required for temporary uploads"})
+		return
+	}
+	log.Printf("UploadMediaHandler: Session ID: %s", sessionID)
+
 	// ✅ INCREASED LIMITS FOR 1GB UPLOADS
 	const maxMemory int64 = 256 << 20 // 256 MB memory buffer
 	const maxSize int64 = 1 << 30     // 1 GB max file size
@@ -200,6 +209,7 @@ func UploadMediaHandler(c *gin.Context) {
 			UploaderID:   authenticatedUserID,
 			Duration:     duration,
 			OrderIndex:   0,
+			SessionID:    sessionID, // ✅ Link to watch session
 		}
 
 		result = DB.Create(&newTempMediaItem)

@@ -1,6 +1,7 @@
 // WeWatch/frontend/src/components/RoomPage.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import toast, { Toaster } from 'react-hot-toast';
 // Import API service functions
 import { getRoom, getMediaItemsForRoom, uploadMediaToRoom, getRoomMembers, getActiveSession, createWatchSessionForRoom } from '../services/api';
 // Import the VideoPlayer component
@@ -257,39 +258,69 @@ useEffect(() => {
   }
 }, [isMembersPanelOpen, roomId]);
 
-// ✅ NEW: Create or join session
+// ✅ Check for active session on mount and update state
 useEffect(() => {
-  if (!roomId || !currentUser || sessionStatus.isActive) return;
+  if (!roomId || !currentUser) return;
 
-  const manageSession = async () => {
+  const checkActiveSession = async () => {
     try {
-      // 1. Try to get active session
       const sessionRes = await getActiveSession(roomId);
-      let sessionId = sessionRes.data?.session_id;
-
-      // 2. If none exists and user is host, create one
-      if (!sessionId && isHost) {
-        const createRes = await createWatchSessionForRoom(roomId);
-        sessionId = createRes.data.session_id;
-        console.log("Created new session:", sessionId);
-      }
-
-      // 3. Store session ID
-      if (sessionId) {
-        setActiveSessionId(sessionId);
-        setSessionStatus({ isActive: true, hostId: room?.host_id });
+      const sessionData = sessionRes.data;
+      
+      if (sessionData?.session_id) {
+        setActiveSessionId(sessionData.session_id);
+        setSessionStatus({ 
+          isActive: true, 
+          hostId: room?.host_id 
+        });
+        console.log("✅ Found active session:", sessionData);
+      } else {
+        setActiveSessionId(null);
+        setSessionStatus({ 
+          isActive: false, 
+          hostId: room?.host_id 
+        });
+        console.log("ℹ️ No active session for this room");
       }
     } catch (err) {
-      console.error("Failed to manage session:", err);
-      // If host fails to create session, show error
-      if (isHost) {
-        setError("Failed to start watch session. Please try again.");
+      console.error("Failed to check active session:", err);
+    }
+  };
+
+  checkActiveSession();
+}, [roomId, currentUser, room?.host_id]);
+
+// ✅ Auto-refresh when returning from VideoWatch
+useEffect(() => {
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      console.log('🔄 RoomPage became visible - refreshing session status and media');
+      // Refetch session status
+      if (roomId && currentUser) {
+        getActiveSession(roomId)
+          .then(sessionRes => {
+            const sessionData = sessionRes.data;
+            if (sessionData?.session_id) {
+              setActiveSessionId(sessionData.session_id);
+              setSessionStatus({ isActive: true, hostId: room?.host_id });
+            } else {
+              setActiveSessionId(null);
+              setSessionStatus({ isActive: false, hostId: room?.host_id });
+            }
+          })
+          .catch(err => console.error("Failed to refresh session:", err));
+        
+        // Refetch media items
+        getMediaItemsForRoom(roomId)
+          .then(items => setMediaItems(items))
+          .catch(err => console.error("Failed to refresh media:", err));
       }
     }
   };
 
-  manageSession();
-}, [roomId, currentUser, isHost, room?.host_id, sessionStatus.isActive]);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+}, [roomId, currentUser, room?.host_id]);
 
 // Auto-join room when component mounts (if not already a member)
 useEffect(() => {
@@ -323,6 +354,39 @@ useEffect(() => {
 }, [roomId, currentUser]);
   
   // --- EVENT HANDLERS ---
+
+  // ✅ Handle Begin Watch / Rejoin Watch button click
+  const handleBeginWatch = async () => {
+    try {
+      // Check for existing active session
+      const activeSessionResponse = await getActiveSession(roomId);
+      const sessionData = activeSessionResponse.data;
+      
+      if (sessionData?.session_id) {
+        // Active session exists - rejoin it
+        console.log("✅ Rejoining existing session:", sessionData.session_id);
+        if (sessionData.is_existing) {
+          toast.success('Rejoining watch session...');
+        }
+        navigate(`/watch/${roomId}?session_id=${sessionData.session_id}`);
+      } else {
+        // No active session - only host can create
+        if (isHost) {
+          const newSessionResponse = await createWatchSessionForRoom(roomId);
+          const newSessionId = newSessionResponse.data.session_id;
+          console.log("✅ Created new session:", newSessionId);
+          setActiveSessionId(newSessionId);
+          toast.success('Starting watch session...');
+          navigate(`/watch/${roomId}?session_id=${newSessionId}`);
+        } else {
+          toast.error('No active session. Wait for host to start.');
+        }
+      }
+    } catch (error) {
+      console.error('Error starting/joining watch:', error);
+      toast.error('Failed to join watch session');
+    }
+  };
 
   // Handle file selection for upload (MOVED INSIDE RoomPage)
   const handleFileChange = (event) => {
@@ -509,6 +573,9 @@ const handlePlayMedia = (mediaItemId) => {
 
   return (
   <div className="container mx-auto p-4">
+    {/* ✅ Toast Notifications */}
+    <Toaster position="top-center" />
+    
     {/* --- WebSocket Connection Status Display (NEW) --- */}
     <div className="mb-4 p-2 bg-gray-100 rounded text-sm">
       <p><span className="font-semibold">WebSocket Status:</span> 
@@ -568,21 +635,18 @@ const handlePlayMedia = (mediaItemId) => {
       {/* --- Unified Watch Button --- */}
       <div className="mt-4">
         <button
-          onClick={() => {
-            if (!activeSessionId) {
-              alert("Session not ready yet. Please wait...");
-              return;
-            }
-            navigate(`/watch/${roomId}?session_id=${activeSessionId}`);
-          }}
-          disabled={!activeSessionId}
-          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg flex items-center disabled:opacity-50"
+          onClick={handleBeginWatch}
+          disabled={!isHost && !activeSessionId}
+          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          {isHost ? 'Begin Watch Party' : 'Join Watch Party'}
+          {activeSessionId 
+            ? 'Rejoin Videowatch' 
+            : (isHost ? 'Begin Watch' : 'Waiting for host...')
+          }
         </button>
       </div>
 
