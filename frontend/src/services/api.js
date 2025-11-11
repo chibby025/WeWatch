@@ -270,6 +270,21 @@ export const deleteChatMessage = async (roomId, messageId) => {
   }
 };
 
+// Get chat history for a room/session
+export const getChatHistory = async (roomId, sessionId = null) => {
+  try {
+    const url = sessionId 
+      ? `/api/rooms/${roomId}/chat/history?session_id=${sessionId}`
+      : `/api/rooms/${roomId}/chat/history`;
+    console.log(`➡️ GET ${url}`);
+    const response = await apiClient.get(url);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getChatHistory):', error);
+    throw error;
+  }
+};
+
 // Create a scheduled event
 export const createScheduledEvent = async (roomId, eventData) => {
   try {
