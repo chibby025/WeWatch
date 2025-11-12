@@ -4,6 +4,8 @@ import { PerspectiveCamera, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import CinemaTheater from './CinemaTheater';
 import CinemaTheaterGLB from './CinemaTheaterGLB';
+import SeatMarkers, { SeatMarkerInfo } from './SeatMarkers';
+import { generateAllSeats, assignUserToSeat } from './seatCalculator';
 
 /**
  * CinemaCamera - Handles camera movement and controls
@@ -20,17 +22,36 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate }) {
     userSeatPosition[2]
   );
 
-  // Set initial rotation when camera is ready
+  // Set initial camera orientation to look at screen
   useEffect(() => {
-    if (camera && initialRotation) {
-      camera.rotation.set(
+    if (camera && controlsRef.current && initialRotation) {
+      // Calculate look-at point based on rotation
+      // For cinema, screen is generally in front (negative Z direction from seats)
+      const lookAtDistance = 10; // Distance to look ahead
+      
+      // Convert rotation to look direction
+      const direction = new THREE.Vector3(0, 0, -1); // Forward
+      const euler = new THREE.Euler(
         initialRotation[0] * Math.PI / 180,
         initialRotation[1] * Math.PI / 180,
-        initialRotation[2] * Math.PI / 180
+        initialRotation[2] * Math.PI / 180,
+        'XYZ'
       );
-      console.log('📷 [CinemaCamera] Set initial rotation:', initialRotation);
+      direction.applyEuler(euler);
+      
+      // Set OrbitControls target to point camera looks at
+      const target = new THREE.Vector3(
+        userSeatPosition[0] + direction.x * lookAtDistance,
+        userSeatPosition[1] + direction.y * lookAtDistance,
+        userSeatPosition[2] + direction.z * lookAtDistance
+      );
+      
+      controlsRef.current.target.copy(target);
+      controlsRef.current.update();
+      
+      console.log('📷 [CinemaCamera] Set camera target:', target.toArray().map(n => n.toFixed(2)));
     }
-  }, [camera, initialRotation]);
+  }, [camera, initialRotation, userSeatPosition]);
 
   // Track camera position and direction in real-time
   useFrame(() => {
@@ -235,7 +256,8 @@ export default function CinemaScene3D({
   userSeats = [],
   authenticatedUserID,
   onZoomComplete: onExternalZoomComplete,
-  useGLBModel = true
+  useGLBModel = true,
+  showSeatMarkers = true  // Toggle to show/hide seat position markers
 }) {
   const screenRef = useRef();
   const theaterRef = useRef();
@@ -247,13 +269,23 @@ export default function CinemaScene3D({
 
   console.log('🎬 [CinemaScene3D] Rendering GLB cinema model');
 
+  // Generate all 42 seats using calculated positions
+  const allSeats = generateAllSeats();
+  console.log('🪑 [CinemaScene3D] Generated seats:', allSeats.length);
+
   // GLB model position - center of the cinema box
   const glbModelPosition = [66, 2, 25];
   
-  // Camera starts at a good seat position with view of the screen
-  // GLB Cinema: 7x6 grid (7 seats per row, 6 rows total)
-  const cameraStartPosition = [-3.22, 3.89, -5.14]; // Seated view position
-  const cameraStartRotation = [-150.5, -15.3, -171.5]; // Facing the screen
+  // Assign authenticated user to a seat
+  // For now, use a test seat ID (can be passed as prop later)
+  const userSeatId = authenticatedUserID || 1; // Default to seat 1 for testing
+  const assignedSeat = assignUserToSeat(userSeatId);
+  
+  console.log('👤 [CinemaScene3D] User assigned to seat:', assignedSeat);
+
+  // Use assigned seat position and rotation
+  const cameraStartPosition = assignedSeat.position;
+  const cameraStartRotation = assignedSeat.rotation;
 
   // Handle camera position updates
   const handlePositionUpdate = (posData) => {
@@ -292,20 +324,26 @@ export default function CinemaScene3D({
           {/* GLB Cinema Model */}
           <CinemaTheaterGLB position={glbModelPosition} />
 
+          {/* Seat position markers (visual verification) */}
+          {showSeatMarkers && <SeatMarkers showLabels={true} />}
+
           {/* Helpers to understand the space */}
           <gridHelper args={[50, 50, '#444444', '#222222']} position={[0, 0, 0]} />
           <axesHelper args={[10]} />
         </Canvas>
       </div>
 
+      {/* Seat marker info panel */}
+      {showSeatMarkers && <SeatMarkerInfo />}
+
       {/* Info overlay */}
       <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-white text-sm bg-black bg-opacity-50 px-4 py-2 rounded">
-        Exploring GLB Cinema - Drag to rotate, Scroll to zoom
+        Exploring GLB Cinema - Seat #{assignedSeat.id} ({assignedSeat.label})
       </div>
 
       {/* Position debug info */}
       <div className="absolute bottom-4 left-4 bg-black bg-opacity-75 text-white p-3 rounded text-xs font-mono max-w-md">
-        <div className="font-bold text-green-400 mb-2">📍 LIVE CAMERA POSITION</div>
+        <div className="font-bold text-green-400 mb-2">📍 CURRENT POSITION</div>
         <div className="bg-green-900 bg-opacity-30 p-2 rounded mb-2">
           <div className="text-green-300">Position: [{currentCameraPos.position.join(', ')}]</div>
           <div className="text-blue-300">Rotation: [{currentCameraPos.rotation.join(', ')}]°</div>
@@ -315,12 +353,13 @@ export default function CinemaScene3D({
           ▶ Move to a good seat position, then copy the Position & Rotation values
         </div>
         <div className="border-t border-gray-600 pt-2 mt-2">
-          <div className="text-gray-300">Start Pos: [{cameraStartPosition.join(', ')}]</div>
+          <div className="text-yellow-300">Assigned Seat: #{assignedSeat.id} {assignedSeat.isPremium ? '⭐' : ''}</div>
+          <div className="text-gray-300 text-[10px]">{assignedSeat.label}</div>
+          <div className="text-gray-300 mt-1">Start Pos: [{cameraStartPosition.join(', ')}]</div>
           <div className="text-gray-300">Start Rot: [{cameraStartRotation.join(', ')}]°</div>
-          <div className="text-gray-300">GLB Position: [{glbModelPosition.join(', ')}]</div>
         </div>
         <div className="mt-2 text-yellow-400 text-[10px]">
-          Drag to rotate • Scroll to zoom • Right-click to pan
+          🟢 Green markers = All seats • 🟡 Gold = Premium
         </div>
       </div>
     </div>
