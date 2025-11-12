@@ -114,10 +114,10 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
         enableRotate={true}               // Always allow rotation (looking around)
         minDistance={2}
         maxDistance={30}
-        minAzimuthAngle={undefined}      // No horizontal limits - free rotation
-        maxAzimuthAngle={undefined}      
-        minPolarAngle={isViewLocked ? Math.PI/2 - Math.PI/4 : undefined}  // 45° up from horizon when locked
-        maxPolarAngle={isViewLocked ? Math.PI/2 + Math.PI/4 : Math.PI / 2}   // 45° down from horizon when locked
+        minAzimuthAngle={-Infinity}      // Unlimited horizontal rotation left
+        maxAzimuthAngle={Infinity}       // Unlimited horizontal rotation right
+        minPolarAngle={isViewLocked ? Math.PI/2 - Math.PI/4 : 0}  // 45° up from horizon when locked
+        maxPolarAngle={isViewLocked ? Math.PI/2 + Math.PI/4 : Math.PI}   // 45° down from horizon when locked
       />
     </>
   );
