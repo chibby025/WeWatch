@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import CinemaScene3D from './CinemaScene3D';
 
 /**
@@ -7,10 +7,17 @@ import CinemaScene3D from './CinemaScene3D';
 export default function CinemaScene3DDemo() {
   const [testUserId, setTestUserId] = useState(1); // Test different seat assignments
   const [showMarkers, setShowMarkers] = useState(true);
+  const [viewLockKey, setViewLockKey] = useState(0); // Key to force re-render with lock
+
+  // Auto-lock view when seat changes
+  useEffect(() => {
+    setViewLockKey(prev => prev + 1); // Force CinemaScene3D to re-mount with lock
+  }, [testUserId]);
 
   return (
     <div className="w-full h-screen">
       <CinemaScene3D 
+        key={viewLockKey}  // Re-mount when seat changes to reset view lock
         useGLBModel={true} 
         authenticatedUserID={testUserId}
         showSeatMarkers={showMarkers}

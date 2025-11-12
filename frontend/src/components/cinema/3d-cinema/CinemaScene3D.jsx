@@ -10,7 +10,7 @@ import { generateAllSeats, assignUserToSeat } from './seatCalculator';
 /**
  * CinemaCamera - Handles camera movement and controls
  */
-function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate }) {
+function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isViewLocked }) {
   const cameraRef = useRef();
   const { camera } = useThree();
   const controlsRef = useRef();
@@ -53,10 +53,29 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate }) {
     }
   }, [camera, initialRotation, userSeatPosition]);
 
+  // Reset camera position when view is locked (but preserve orientation)
+  useEffect(() => {
+    if (isViewLocked && camera) {
+      // Only reset position, not the target/orientation
+      camera.position.copy(seatViewPosition);
+      if (controlsRef.current) {
+        controlsRef.current.update();
+      }
+      console.log('🔒 [CinemaCamera] View locked - position fixed, orientation preserved');
+    }
+  }, [isViewLocked, camera, seatViewPosition]);
+
   // Track camera position and direction in real-time
   useFrame(() => {
     if (camera && onPositionUpdate) {
       const pos = camera.position;
+      
+      // If view is locked, force camera to stay at seat position
+      if (isViewLocked) {
+        if (pos.distanceTo(seatViewPosition) > 0.01) {
+          camera.position.copy(seatViewPosition);
+        }
+      }
       const rot = camera.rotation;
       
       // Calculate what direction camera is looking
@@ -85,14 +104,20 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate }) {
         near={0.1}
         far={1000}
       />
-      {/* OrbitControls for free exploration */}
+      {/* OrbitControls - locked mode prevents movement but allows looking around */}
       <OrbitControls
         ref={controlsRef}
         enableDamping
         dampingFactor={0.05}
+        enablePan={!isViewLocked}        // Disable panning when locked
+        enableZoom={true}                 // Allow zoom in both modes
+        enableRotate={true}               // Always allow rotation (looking around)
         minDistance={2}
         maxDistance={30}
-        maxPolarAngle={Math.PI / 2}
+        minAzimuthAngle={undefined}      // No horizontal limits - free rotation
+        maxAzimuthAngle={undefined}      
+        minPolarAngle={isViewLocked ? Math.PI/2 - Math.PI/4 : undefined}  // 45° up from horizon when locked
+        maxPolarAngle={isViewLocked ? Math.PI/2 + Math.PI/4 : Math.PI / 2}   // 45° down from horizon when locked
       />
     </>
   );
@@ -266,6 +291,7 @@ export default function CinemaScene3D({
     rotation: [0, 0, 0],
     lookingAt: [0, 0, 0]
   });
+  const [isViewLocked, setIsViewLocked] = useState(false); // Seat view lock state
 
   console.log('🎬 [CinemaScene3D] Rendering GLB cinema model');
 
@@ -292,6 +318,14 @@ export default function CinemaScene3D({
     setCurrentCameraPos(posData);
   };
 
+  // Toggle view lock
+  const toggleViewLock = () => {
+    setIsViewLocked(prev => {
+      console.log(prev ? '🔓 [CinemaScene3D] View unlocked' : '🔒 [CinemaScene3D] View locked');
+      return !prev;
+    });
+  };
+
   return (
     <div className="relative w-full h-screen bg-black">
       {/* 3D Canvas */}
@@ -309,6 +343,7 @@ export default function CinemaScene3D({
             userSeatPosition={cameraStartPosition}
             initialRotation={cameraStartRotation}
             onPositionUpdate={handlePositionUpdate}
+            isViewLocked={isViewLocked}
           />
 
           {/* VERY BRIGHT lighting to see everything clearly */}
@@ -335,6 +370,36 @@ export default function CinemaScene3D({
 
       {/* Seat marker info panel */}
       {showSeatMarkers && <SeatMarkerInfo />}
+
+      {/* View Lock Toggle Button */}
+      <div className="absolute top-20 right-4 z-10">
+        <button
+          onClick={toggleViewLock}
+          className={`px-4 py-2 rounded-lg font-semibold text-sm shadow-lg transition-all ${
+            isViewLocked 
+              ? 'bg-red-600 hover:bg-red-700 text-white' 
+              : 'bg-green-600 hover:bg-green-700 text-white'
+          }`}
+        >
+          {isViewLocked ? '🔒 View Locked' : '🔓 View Unlocked'}
+        </button>
+        <div className="mt-2 bg-black bg-opacity-75 text-white p-2 rounded text-[10px] max-w-[200px]">
+          {isViewLocked ? (
+            <>
+              <div className="text-yellow-400 font-bold mb-1">Seated Mode:</div>
+              <div>• Can look around 180°</div>
+              <div>• Cannot move from seat</div>
+              <div>• Can zoom in/out</div>
+            </>
+          ) : (
+            <>
+              <div className="text-green-400 font-bold mb-1">Free Roam:</div>
+              <div>• Full movement</div>
+              <div>• Use for testing</div>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Info overlay */}
       <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-white text-sm bg-black bg-opacity-50 px-4 py-2 rounded">
