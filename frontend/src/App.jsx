@@ -13,6 +13,7 @@ import RoomsListPage from './components/RoomsListPage';
 import RoomPage from './components/RoomPage';
 import LobbyPage from './components/LobbyPage';
 import VideoWatch from './components/cinema/VideoWatch';
+import CinemaScene3DDemo from './components/cinema/3d-cinema/CinemaScene3DDemo';
 import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
@@ -67,6 +68,16 @@ function App() {
             element={
               <ProtectedRoute>
                 <VideoWatch />
+              </ProtectedRoute>
+            } 
+          />
+
+          {/* 3D Cinema Demo - Test the 3D cinema experience */}
+          <Route 
+            path="/cinema-3d-demo" 
+            element={
+              <ProtectedRoute>
+                <CinemaScene3DDemo />
               </ProtectedRoute>
             } 
           />

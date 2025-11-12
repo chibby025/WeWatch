@@ -12,6 +12,9 @@
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
     "@heroicons/react": "^2.2.0",
+    "@react-three/drei": "^10.7.6",
+    "@react-three/fiber": "^9.4.0",
+    "@react-three/postprocessing": "^3.0.4",
     "@types/three": "^0.180.0",
     "axios": "^1.11.0",
     "emoji-picker-react": "^4.13.2",
