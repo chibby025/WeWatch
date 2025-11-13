@@ -4,6 +4,7 @@ import MiniSeatGrid from './cinema/ui/MiniSeatGrid';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../services/api';
 import SettingsModal from './cinema/ui/SettingsModal';
+import EmotePicker from './cinema/ui/EmotePicker';
 
 
 
@@ -18,6 +19,7 @@ const MembersIcon = '/icons/MembersIcon.svg';
 const ShareIcon = '/icons/ShareIcon.svg';
 const SeatToggleIcon = '/icons/SeatToggleIcon.svg';
 const SettingsIcon = '/icons/settingsIcon.svg';
+const EmotesIcon = '😊'; // Emoji as icon for emotes
 
 const Taskbar = ({
   authenticatedUserID,
@@ -44,12 +46,15 @@ const Taskbar = ({
   // Camera props
   availableCameras = [],
   selectedCameraId,
-  onCameraSwitch
+  onCameraSwitch,
+  // Emote prop
+  onEmoteSend
 }) => {
   const [isVisible, setIsVisible] = useState(true);
   const [isHovering, setIsHovering] = useState(false);
   const [showMicDropdown, setShowMicDropdown] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [showEmotePicker, setShowEmotePicker] = useState(false);
 
   // Auto-show for 3 seconds on mount
   useEffect(() => {
@@ -142,7 +147,7 @@ const Taskbar = ({
     overflow: 'hidden',
   };
 
-  const TaskbarButton = ({ icon, label, onClick, showCancelIndicator = false }) => {
+  const TaskbarButton = ({ icon, label, onClick, showCancelIndicator = false, isEmoji = false }) => {
     const [isHovered, setIsHovered] = useState(false);
     return (
       <div className="relative">
@@ -153,8 +158,12 @@ const Taskbar = ({
           onClick={onClick}
           aria-label={label}
         >
-          <div className="relative h-6 w-6">
-            <img src={icon} alt={label} className="h-6 w-6" />
+          <div className="relative h-6 w-6 flex items-center justify-center">
+            {isEmoji ? (
+              <span className="text-2xl">{icon}</span>
+            ) : (
+              <img src={icon} alt={label} className="h-6 w-6" />
+            )}
             {showCancelIndicator && (
               <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center">
                 <span className="text-[8px] text-white font-bold">×</span>
@@ -245,6 +254,13 @@ const Taskbar = ({
         />
 
         <TaskbarButton
+          icon={EmotesIcon}
+          label="Emotes"
+          onClick={() => setShowEmotePicker(!showEmotePicker)}
+          isEmoji={true}
+        />
+
+        <TaskbarButton
           icon={MembersIcon}
           label="Members"
           onClick={onMembersClick}
@@ -271,6 +287,21 @@ const Taskbar = ({
       availableCameras={availableCameras}
       selectedCameraId={selectedCameraId}
       onCameraSwitch={onCameraSwitch}
+    />
+
+    {/* Emote Picker Modal */}
+    <EmotePicker
+      isOpen={showEmotePicker}
+      onClose={() => setShowEmotePicker(false)}
+      onEmoteSelect={(emoteId) => {
+        if (onEmoteSend) {
+          onEmoteSend({
+            user_id: authenticatedUserID,
+            emote: emoteId,
+            timestamp: Date.now(),
+          });
+        }
+      }}
     />
     </>
   );

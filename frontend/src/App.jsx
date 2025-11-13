@@ -14,6 +14,10 @@ import RoomPage from './components/RoomPage';
 import LobbyPage from './components/LobbyPage';
 import VideoWatch from './components/cinema/VideoWatch';
 import CinemaScene3DDemo from './components/cinema/3d-cinema/CinemaScene3DDemo';
+import AvatarImageDemo from './components/cinema/3d-cinema/AvatarImageDemo';
+import AvatarStyleComparison from './components/cinema/3d-cinema/AvatarStyleComparison';
+import ImprovedAvatarDemo from './components/cinema/3d-cinema/ImprovedAvatarDemo';
+import GLBAvatarTest from './components/cinema/3d-cinema/GLBAvatarTest';
 import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
@@ -81,6 +85,46 @@ function App() {
               </ProtectedRoute>
             } 
           />
+
+          {/* Avatar Image Demo - Test custom avatar images */}
+          {/* <Route 
+            path="/avatar-image-demo" 
+            element={
+              <ProtectedRoute>
+                <AvatarImageDemo />
+              </ProtectedRoute>
+            } 
+          /> */}
+
+          {/* Avatar Style Comparison - Compare different avatar designs */}
+          {/* <Route 
+            path="/avatar-style-comparison" 
+            element={
+              <ProtectedRoute>
+                <AvatarStyleComparison />
+              </ProtectedRoute>
+            } 
+          /> */}
+
+          {/* Improved Avatar Demo - Showcase the chosen avatar design */}
+          <Route 
+            path="/improved-avatar-demo" 
+            element={
+              <ProtectedRoute>
+                <ImprovedAvatarDemo />
+              </ProtectedRoute>
+            } 
+          />
+
+          {/* GLB Avatar Test - Analyze the user_3d_icon.glb model */}
+          {/* <Route 
+            path="/glb-avatar-test" 
+            element={
+              <ProtectedRoute>
+                <GLBAvatarTest />
+              </ProtectedRoute>
+            } 
+          /> */}
 
           {/* Add more routes later, wrapping protected ones with ProtectedRoute */}
 
