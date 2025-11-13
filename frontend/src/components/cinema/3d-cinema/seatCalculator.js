@@ -12,32 +12,39 @@
  */
 
 // Measured seat positions from GLB model - Row 1 (Front row, all 7 seats)
+// Anchors: Seat 1 (Alice), Seat 5 (Eve), Seat 6 (Frank) are correctly positioned
+// Seats 2, 3, 4 interpolated between 1 and 5
+// Seat 7 extrapolated from 5 and 6
+// Y-coordinates reduced by 20%, then further reduced by 5%
 const ROW_1_MEASURED = [
-  { seat: 1, position: [-3.11, 2.27, -0.85], rotation: [-180.0, -3.9, -180.0] },
-  { seat: 2, position: [-3.56, 2.49, -1.08], rotation: [-180.0, -3.1, -180.0] },
-  { seat: 3, position: [-3.94, 2.47, -0.93], rotation: [-180.0, -6.8, -180.0] },
-  { seat: 4, position: [-4.54, 2.47, -1.08], rotation: [-180.0, -6.8, -180.0] },
-  { seat: 5, position: [-4.95, 2.30, -0.81], rotation: [-180.0, -6.4, -180.0] },
-  { seat: 6, position: [-5.38, 2.32, -0.87], rotation: [-180.0, -6.4, -180.0] },
-  { seat: 7, position: [-5.94, 2.18, -0.71], rotation: [-180.0, -13.9, -180.0] }
+  { seat: 1, position: [-3.11, 1.82, -0.27], rotation: [-180.0, -3.9, -180.0] },  // ✓ Correct (Alice)
+  { seat: 2, position: [-3.57, 1.73, -0.89], rotation: [-180.0, -3.1, -180.0] },  // Interpolated
+  { seat: 3, position: [-4.03, 1.73, -0.86], rotation: [-180.0, -6.8, -180.0] },  // Interpolated
+  { seat: 4, position: [-4.49, 1.73, -0.84], rotation: [-180.0, -6.8, -180.0] },  // Interpolated
+  { seat: 5, position: [-4.95, 1.75, -0.81], rotation: [-180.0, -6.4, -180.0] },  // ✓ Correct (Eve)
+  { seat: 6, position: [-5.38, 1.77, -0.87], rotation: [-180.0, -6.4, -180.0] },  // ✓ Correct (Frank)
+  { seat: 7, position: [-5.81, 1.78, -0.93], rotation: [-180.0, -13.9, -180.0] }  // Extrapolated
 ];
 
 // Row 3 corner seats (for interpolation)
+// Shifted 2% forward (Z reduced by 2%) and height reduced by 5%
+// Further adjusted: 1.5% left (X reduced), 1% forward (Z reduced), 2% down (Y reduced)
+// Then shifted 1% right (X increased)
 const ROW_3_CORNERS = {
-  seat1: { position: [-3.15, 3.02, -2.77], rotation: [-171.5, -2.8, -179.6] },
-  seat7: { position: [-6.07, 2.75, -2.61], rotation: [-180.0, -41.0, -180.0] } // Keep existing right corner
+  seat1: { position: [-3.17, 2.67, -2.68], rotation: [-171.5, -2.8, -179.6] },
+  seat7: { position: [-6.10, 2.43, -2.53], rotation: [-180.0, -41.0, -180.0] }
 };
 
 // Row 4 corner seats (for interpolation)
 const ROW_4_CORNERS = {
-  seat1: { position: [-3.19, 3.07, -3.22], rotation: [-165.2, 17.1, 175.6] },
-  seat7: { position: [-5.89, 3.18, -3.26], rotation: [-171.0, -13.7, -177.9] }
+  seat1: { position: [-3.19, 2.92, -3.22], rotation: [-165.2, 17.1, 175.6] },
+  seat7: { position: [-5.89, 3.02, -3.26], rotation: [-171.0, -13.7, -177.9] }
 };
 
 // Row 6 (Back row) corner seats - confirmed correct
 const ROW_6_CORNERS = {
-  seat1: { position: [-3.20, 3.78, -5.07], rotation: [-167.4, 29.7, 173.7] },
-  seat7: { position: [-5.74, 3.43, -4.30], rotation: [-180.0, -12.0, -180.0] }
+  seat1: { position: [-3.20, 3.59, -5.07], rotation: [-167.4, 29.7, 173.7] },
+  seat7: { position: [-5.74, 3.26, -4.30], rotation: [-180.0, -12.0, -180.0] }
 };
 
 /**
@@ -120,7 +127,12 @@ export function generateAllSeats() {
       const seatNumber = (row - 1) * 7 + seatInRow;
       let seatData;
       
-      if (row === 1) {
+      if (row === 5) {
+        // Interpolate between Row 4 and Row 6
+        seatData = interpolateRowPosition(row, 4, row4Seats, 6, row6Seats, seatInRow);
+        // Reduce Y position for row 5 avatars
+        seatData.position[1] = seatData.position[1] - 0.25; // Lower by 0.25 units
+      } else if (row === 1) {
         // Use measured Row 1 data
         seatData = row1Seats[seatInRow - 1];
       } else if (row === 2) {
@@ -132,9 +144,6 @@ export function generateAllSeats() {
       } else if (row === 4) {
         // Use interpolated Row 4 data
         seatData = row4Seats[seatInRow - 1];
-      } else if (row === 5) {
-        // Interpolate between Row 4 and Row 6
-        seatData = interpolateRowPosition(row, 4, row4Seats, 6, row6Seats, seatInRow);
       } else { // row === 6
         // Use interpolated Row 6 data
         seatData = row6Seats[seatInRow - 1];
@@ -162,11 +171,45 @@ export function generateAllSeats() {
 }
 
 /**
+ * Calculate camera position offset from avatar position
+ * Camera is positioned higher and forward for better view
+ * @param {Array} avatarPosition - [x, y, z] position of the avatar
+ * @returns {Array} - [x, y, z] position for the camera
+ */
+export function getCameraPositionFromAvatar(avatarPosition, seatId = null) {
+  const [x, y, z] = avatarPosition;
+  // Custom camera coordinates for seats 1-6 in row 1
+  if (seatId === 1) return [-3.15, 2.64, -0.72];
+  if (seatId === 2) return [-3.66, 2.61, -0.78];
+  if (seatId === 3) return [-4.03, 2.50, -0.76];
+  if (seatId === 4) return [-4.63, 2.79, -0.70];
+  if (seatId === 5) return [-5.02, 2.09, -0.73];
+  if (seatId === 6) return [-5.38, 1.89, -0.79];
+  // Example: slightly lower for seat 7
+  if (seatId === 7) return [x, y * 1.03, z * 0.92];
+  // Default offset for all other seats
+  const cameraY = y * 1.07;  // 7% higher
+  const cameraZ = z * 0.91;  // 9% forward
+  return [x, cameraY, cameraZ];
+}
+
+/**
  * Get seat by ID (1-42)
+ * Returns both avatar position and camera position
  */
 export function getSeatById(seatId) {
   const seats = generateAllSeats();
-  return seats.find(seat => seat.id === seatId);
+  const seat = seats.find(seat => seat.id === seatId);
+  
+  if (seat) {
+    return {
+      ...seat,
+      avatarPosition: seat.position,  // Where avatar mesh appears
+      cameraPosition: getCameraPositionFromAvatar(seat.position)  // Where camera is positioned
+    };
+  }
+  
+  return seat;
 }
 
 /**
@@ -179,7 +222,7 @@ export function getSeatByPosition(row, seatInRow) {
 
 /**
  * Assign users to seats
- * Multiple users can share the same camera position
+ * Returns seat with both avatar and camera positions
  */
 export function assignUserToSeat(userId, userPreference = null) {
   const seats = generateAllSeats();
@@ -187,7 +230,12 @@ export function assignUserToSeat(userId, userPreference = null) {
   // If user has preference (e.g., premium middle seats), try to assign
   if (userPreference === 'premium') {
     const premiumSeats = seats.filter(s => s.isPremium);
-    return premiumSeats[Math.floor(Math.random() * premiumSeats.length)];
+    const seat = premiumSeats[Math.floor(Math.random() * premiumSeats.length)];
+    return {
+      ...seat,
+      avatarPosition: seat.position,
+      cameraPosition: getCameraPositionFromAvatar(seat.position)
+    };
   }
   
   // Round-robin assignment (seat ID = userId % 42 + 1)

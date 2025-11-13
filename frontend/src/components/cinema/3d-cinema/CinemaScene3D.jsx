@@ -6,11 +6,13 @@ import CinemaTheater from './CinemaTheater';
 import CinemaTheaterGLB from './CinemaTheaterGLB';
 import SeatMarkers, { SeatMarkerInfo } from './SeatMarkers';
 import { generateAllSeats, assignUserToSeat } from './seatCalculator';
+import AvatarManager from './avatars/AvatarManager';
+import FirstPersonAvatar from './avatars/FirstPersonAvatar';
 
 /**
  * CinemaCamera - Handles camera movement and controls
  */
-function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isViewLocked }) {
+function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isViewLocked, currentUserEmote, userColor }) {
   const cameraRef = useRef();
   const { camera } = useThree();
   const controlsRef = useRef();
@@ -22,36 +24,247 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
     userSeatPosition[2]
   );
 
-  // Set initial camera orientation to look at screen
+  // Keyboard controls - different behavior for locked vs unlocked modes
   useEffect(() => {
-    if (camera && controlsRef.current && initialRotation) {
-      // Calculate look-at point based on rotation
-      // For cinema, screen is generally in front (negative Z direction from seats)
-      const lookAtDistance = 10; // Distance to look ahead
+    if (!controlsRef.current) return;
+
+    const handleKeyDown = (event) => {
+      const key = event.key.toLowerCase();
+      const controls = controlsRef.current;
       
-      // Convert rotation to look direction
-      const direction = new THREE.Vector3(0, 0, -1); // Forward
-      const euler = new THREE.Euler(
-        initialRotation[0] * Math.PI / 180,
-        initialRotation[1] * Math.PI / 180,
-        initialRotation[2] * Math.PI / 180,
-        'XYZ'
-      );
-      direction.applyEuler(euler);
+      if (isViewLocked) {
+        // LOCKED MODE: Look around (shift lookAt target)
+        const offset = new THREE.Vector3().subVectors(controls.target, camera.position);
+        const currentDistance = offset.length();
+        const horizontalStep = 2;
+        const verticalStep = 1.5;
+
+        if (key === 'arrowleft' || key === 'a') {
+          offset.x -= horizontalStep;
+          controls.target.copy(camera.position).add(offset.normalize().multiplyScalar(currentDistance));
+          controls.update();
+          console.log('⬅️ Looking left');
+        } else if (key === 'arrowright' || key === 'd') {
+          offset.x += horizontalStep;
+          controls.target.copy(camera.position).add(offset.normalize().multiplyScalar(currentDistance));
+          controls.update();
+          console.log('➡️ Looking right');
+        } else if (key === 'arrowup' || key === 'w') {
+          offset.y += verticalStep;
+          controls.target.copy(camera.position).add(offset.normalize().multiplyScalar(currentDistance));
+          controls.update();
+          console.log('⬆️ Looking up');
+        } else if (key === 'arrowdown' || key === 's') {
+          offset.y -= verticalStep;
+          controls.target.copy(camera.position).add(offset.normalize().multiplyScalar(currentDistance));
+          controls.update();
+          console.log('⬇️ Looking down');
+        }
+      } else {
+        // UNLOCKED MODE: Free movement and view snapping
+        const moveSpeed = 1.5;
+        const newPosition = camera.position.clone();
+        
+        // WASD - Move camera position
+        if (key === 'w') {
+          // Move forward (negative Z)
+          newPosition.z -= moveSpeed;
+          camera.position.copy(newPosition);
+          controls.target.z -= moveSpeed;
+          controls.update();
+          console.log('⬆️ Moving forward');
+        } else if (key === 's') {
+          // Move backward (positive Z)
+          newPosition.z += moveSpeed;
+          camera.position.copy(newPosition);
+          controls.target.z += moveSpeed;
+          controls.update();
+          console.log('⬇️ Moving backward');
+        } else if (key === 'a') {
+          // Move left (negative X)
+          newPosition.x -= moveSpeed;
+          camera.position.copy(newPosition);
+          controls.target.x -= moveSpeed;
+          controls.update();
+          console.log('⬅️ Moving left');
+        } else if (key === 'd') {
+          // Move right (positive X)
+          newPosition.x += moveSpeed;
+          camera.position.copy(newPosition);
+          controls.target.x += moveSpeed;
+          controls.update();
+          console.log('➡️ Moving right');
+        } else if (key === 'q') {
+          // Move up (positive Y)
+          newPosition.y += moveSpeed;
+          camera.position.copy(newPosition);
+          controls.target.y += moveSpeed;
+          controls.update();
+          console.log('⬆️ Moving up');
+        } else if (key === 'e') {
+          // Move down (negative Y)
+          newPosition.y -= moveSpeed;
+          camera.position.copy(newPosition);
+          controls.target.y -= moveSpeed;
+          controls.update();
+          console.log('⬇️ Moving down');
+        }
+        
+        // Arrow keys - Pan view (look around)
+        else if (key === 'arrowleft') {
+          controls.target.x -= moveSpeed;
+          controls.update();
+          console.log('👀 Looking left');
+        } else if (key === 'arrowright') {
+          controls.target.x += moveSpeed;
+          controls.update();
+          console.log('👀 Looking right');
+        } else if (key === 'arrowup') {
+          controls.target.y += moveSpeed;
+          controls.update();
+          console.log('👀 Looking up');
+        } else if (key === 'arrowdown') {
+          controls.target.y -= moveSpeed;
+          controls.update();
+          console.log('👀 Looking down');
+        }
+        
+        // Number keys - Snap to orthogonal views
+        else if (key === '1') {
+          // Front view (looking at negative Z)
+          const pos = camera.position;
+          controls.target.set(pos.x, pos.y, pos.z - 10);
+          controls.update();
+          console.log('📐 Front view (Z-)');
+        } else if (key === '2') {
+          // Back view (looking at positive Z)
+          const pos = camera.position;
+          controls.target.set(pos.x, pos.y, pos.z + 10);
+          controls.update();
+          console.log('📐 Back view (Z+)');
+        } else if (key === '3') {
+          // Left view (looking at negative X)
+          const pos = camera.position;
+          controls.target.set(pos.x - 10, pos.y, pos.z);
+          controls.update();
+          console.log('📐 Left view (X-)');
+        } else if (key === '4') {
+          // Right view (looking at positive X)
+          const pos = camera.position;
+          controls.target.set(pos.x + 10, pos.y, pos.z);
+          controls.update();
+          console.log('📐 Right view (X+)');
+        } else if (key === '5') {
+          // Top view (looking down at negative Y)
+          const pos = camera.position;
+          controls.target.set(pos.x, pos.y - 10, pos.z);
+          controls.update();
+          console.log('📐 Top view (Y-)');
+        } else if (key === '6') {
+          // Bottom view (looking up at positive Y)
+          const pos = camera.position;
+          controls.target.set(pos.x, pos.y + 10, pos.z);
+          controls.update();
+          console.log('📐 Bottom view (Y+)');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isViewLocked, camera]);
+
+  // "L" key - Look left (default spawn), "C" key - Look at screen, "R" key - Look right (mirror of spawn left view)
+  useEffect(() => {
+    if (!controlsRef.current) return;
+
+    const handleLookDirection = (event) => {
+      const key = event.key.toLowerCase();
       
-      // Set OrbitControls target to point camera looks at
-      const target = new THREE.Vector3(
-        userSeatPosition[0] + direction.x * lookAtDistance,
-        userSeatPosition[1] + direction.y * lookAtDistance,
-        userSeatPosition[2] + direction.z * lookAtDistance
-      );
-      
-      controlsRef.current.target.copy(target);
-      controlsRef.current.update();
-      
-      console.log('📷 [CinemaCamera] Set camera target:', target.toArray().map(n => n.toFixed(2)));
-    }
-  }, [camera, initialRotation, userSeatPosition]);
+      if (key === 'l') {
+        // Look left - default spawn view
+        const leftLookAt = new THREE.Vector3(0.79, -0.58, 0.22);
+        
+        const lookAtDistance = 10;
+        const target = new THREE.Vector3(
+          userSeatPosition[0] + leftLookAt.x * lookAtDistance,
+          userSeatPosition[1] + leftLookAt.y * lookAtDistance,
+          userSeatPosition[2] + leftLookAt.z * lookAtDistance
+        );
+        
+        controlsRef.current.target.copy(target);
+        controlsRef.current.update();
+        console.log('👈 [CinemaCamera] Looking left (default view)');
+      }
+      else if (key === 'c' && initialRotation) {
+        // Look at screen (center view)
+        const direction = new THREE.Vector3(0, 0, -1); // Forward
+        const euler = new THREE.Euler(
+          initialRotation[0] * Math.PI / 180,
+          initialRotation[1] * Math.PI / 180,
+          initialRotation[2] * Math.PI / 180,
+          'XYZ'
+        );
+        direction.applyEuler(euler);
+        
+        // Calculate target point toward screen
+        const lookAtDistance = 10;
+        const target = new THREE.Vector3(
+          userSeatPosition[0] + direction.x * lookAtDistance,
+          userSeatPosition[1] + direction.y * lookAtDistance,
+          userSeatPosition[2] + direction.z * lookAtDistance
+        );
+        
+        // Snap to screen view
+        controlsRef.current.target.copy(target);
+        controlsRef.current.update();
+        console.log('🎯 [CinemaCamera] Looking at screen (center)');
+      } 
+      else if (key === 'r' && initialRotation) {
+        // Look right - mirror the spawn (left) view across the screen direction
+        
+        // Screen direction (center)
+        const screenDir = new THREE.Vector3(0, 0, -1);
+        const euler = new THREE.Euler(
+          initialRotation[0] * Math.PI / 180,
+          initialRotation[1] * Math.PI / 180,
+          initialRotation[2] * Math.PI / 180,
+          'XYZ'
+        );
+        screenDir.applyEuler(euler);
+        
+        // From your data:
+        // Spawn (left) looking at: [0.79, -0.58, 0.22]
+        // Screen looking at: [0.07, -0.00, 1.00]
+        // We need to calculate right by mirroring left across screen
+        
+        const leftLookAt = new THREE.Vector3(0.79, -0.58, 0.22);
+        const screenLookAt = new THREE.Vector3(0.07, -0.00, 1.00);
+        
+        // Calculate the offset from screen to left
+        const leftOffset = new THREE.Vector3().subVectors(leftLookAt, screenLookAt);
+        
+        // Mirror it: right = screen - leftOffset
+        const rightLookAt = new THREE.Vector3().subVectors(screenLookAt, leftOffset);
+        
+        // Calculate target point
+        const lookAtDistance = 10;
+        const target = new THREE.Vector3(
+          userSeatPosition[0] + rightLookAt.x * lookAtDistance,
+          userSeatPosition[1] + rightLookAt.y * lookAtDistance,
+          userSeatPosition[2] + rightLookAt.z * lookAtDistance
+        );
+        
+        // Snap to right view
+        controlsRef.current.target.copy(target);
+        controlsRef.current.update();
+        console.log('👉 [CinemaCamera] Looking right (mirrored from left)');
+      }
+    };
+
+    window.addEventListener('keydown', handleLookDirection);
+    return () => window.removeEventListener('keydown', handleLookDirection);
+  }, [initialRotation, userSeatPosition]);
 
   // Reset camera position when view is locked (but preserve orientation)
   useEffect(() => {
@@ -76,6 +289,7 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
           camera.position.copy(seatViewPosition);
         }
       }
+      
       const rot = camera.rotation;
       
       // Calculate what direction camera is looking
@@ -103,7 +317,13 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
         fov={75}
         near={0.1}
         far={1000}
-      />
+      >
+        {/* First-person avatar (visible to current user only) */}
+        <FirstPersonAvatar
+          userColor={userColor}
+          currentEmote={currentUserEmote}
+        />
+      </PerspectiveCamera>
       {/* OrbitControls - locked mode prevents movement but allows looking around */}
       <OrbitControls
         ref={controlsRef}
@@ -282,7 +502,15 @@ export default function CinemaScene3D({
   authenticatedUserID,
   onZoomComplete: onExternalZoomComplete,
   useGLBModel = true,
-  showSeatMarkers = true  // Toggle to show/hide seat position markers
+  showSeatMarkers = true,  // Toggle to show/hide seat position markers
+  isViewLocked = true,     // View lock state (controlled by parent)
+  setIsViewLocked,         // Function to update lock state
+  lightsOn = true,         // Lights state (controlled by parent)
+  setLightsOn,             // Function to update lights state
+  roomMembers = [],        // Array of users in the room
+  onEmoteReceived,         // WebSocket emote event handler
+  onChatMessageReceived,   // WebSocket chat message event handler
+  onEmoteSend              // Function to send emote via WebSocket
 }) {
   const screenRef = useRef();
   const theaterRef = useRef();
@@ -291,7 +519,7 @@ export default function CinemaScene3D({
     rotation: [0, 0, 0],
     lookingAt: [0, 0, 0]
   });
-  const [isViewLocked, setIsViewLocked] = useState(false); // Seat view lock state
+  const [currentUserEmote, setCurrentUserEmote] = useState(null); // Current user's active emote
 
   console.log('🎬 [CinemaScene3D] Rendering GLB cinema model');
 
@@ -309,22 +537,69 @@ export default function CinemaScene3D({
   
   console.log('👤 [CinemaScene3D] User assigned to seat:', assignedSeat);
 
-  // Use assigned seat position and rotation
-  const cameraStartPosition = assignedSeat.position;
+  // Use camera position (offset from avatar) for first-person view
+  const cameraStartPosition = assignedSeat.cameraPosition;
   const cameraStartRotation = assignedSeat.rotation;
+
+  // Keyboard emote listeners (1-5 keys)
+  useEffect(() => {
+    const handleEmoteKey = (e) => {
+      // Don't trigger if typing in an input/textarea
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      // Map keys to emotes
+      const emoteMap = {
+        '1': 'wave',
+        '2': 'clap',
+        '3': 'thumbs_up',
+        '4': 'laugh',
+        '5': 'heart',
+      };
+
+      const emote = emoteMap[e.key];
+      if (emote) {
+        console.log('👋 [CinemaScene3D] Sending emote:', emote);
+        
+        // Set local emote for first-person avatar
+        setCurrentUserEmote(emote);
+        setTimeout(() => setCurrentUserEmote(null), 2000); // Clear after 2 seconds
+        
+        // Broadcast to other users
+        if (onEmoteSend) {
+          onEmoteSend({
+            user_id: authenticatedUserID,
+            emote: emote,
+            seat_id: assignedSeat.id,
+            timestamp: Date.now(),
+          });
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleEmoteKey);
+    return () => window.removeEventListener('keydown', handleEmoteKey);
+  }, [authenticatedUserID, assignedSeat.id, onEmoteSend]);
 
   // Handle camera position updates
   const handlePositionUpdate = (posData) => {
     setCurrentCameraPos(posData);
   };
 
-  // Toggle view lock
-  const toggleViewLock = () => {
-    setIsViewLocked(prev => {
-      console.log(prev ? '🔓 [CinemaScene3D] View unlocked' : '🔒 [CinemaScene3D] View locked');
-      return !prev;
-    });
-  };
+  // Calculate current user's avatar color (same logic as UserAvatar)
+  const currentUserColor = React.useMemo(() => {
+    if (assignedSeat.isPremium) {
+      return '#DAA520'; // Darker gold for premium
+    }
+    
+    const hash = authenticatedUserID.toString().split('').reduce((acc, char) => {
+      return char.charCodeAt(0) + ((acc << 5) - acc);
+    }, 0);
+    
+    const hue = Math.abs(hash % 360);
+    return `hsl(${hue}, 65%, 50%)`; // Darker color
+  }, [authenticatedUserID, assignedSeat.isPremium]);
 
   return (
     <div className="relative w-full h-screen bg-black">
@@ -344,20 +619,119 @@ export default function CinemaScene3D({
             initialRotation={cameraStartRotation}
             onPositionUpdate={handlePositionUpdate}
             isViewLocked={isViewLocked}
+            currentUserEmote={currentUserEmote}
+            userColor={currentUserColor}
           />
 
-          {/* VERY BRIGHT lighting to see everything clearly */}
-          <ambientLight intensity={3} />
-          <directionalLight position={[0, 10, 0]} intensity={3} castShadow={false} />
-          <directionalLight position={[0, -10, 0]} intensity={2} castShadow={false} />
-          <pointLight position={[10, 5, 10]} intensity={3} distance={100} />
-          <pointLight position={[-10, 5, 10]} intensity={3} distance={100} />
-          <pointLight position={[10, 5, -10]} intensity={3} distance={100} />
-          <pointLight position={[-10, 5, -10]} intensity={3} distance={100} />
-          <pointLight position={[0, 5, 0]} intensity={4} distance={100} />
+          {/* Dynamic lighting - toggle between bright and dark */}
+          <ambientLight intensity={lightsOn ? 3 : 0.5} />
+          
+          {/* Ceiling lights - white when on, blue when off */}
+          <pointLight 
+            position={[0, 10, -5]} 
+            intensity={lightsOn ? 4 : 8} 
+            distance={30} 
+            color={lightsOn ? "#ffffff" : "#1e90ff"}
+            castShadow={false}
+          />
+          <pointLight 
+            position={[0, 10, 5]} 
+            intensity={lightsOn ? 4 : 8} 
+            distance={30} 
+            color={lightsOn ? "#ffffff" : "#1e90ff"}
+            castShadow={false}
+          />
+          <pointLight 
+            position={[0, 10, 12]} 
+            intensity={lightsOn ? 4 : 8} 
+            distance={30} 
+            color={lightsOn ? "#ffffff" : "#1e90ff"}
+            castShadow={false}
+          />
+          
+          {/* Additional directional lighting */}
+          <directionalLight position={[0, 10, 0]} intensity={lightsOn ? 3 : 0.5} castShadow={false} color={lightsOn ? "#ffffff" : "#4169e1"} />
+          <directionalLight position={[0, -10, 0]} intensity={lightsOn ? 2 : 0.3} castShadow={false} />
+          
+          {/* Corner fill lights */}
+          <pointLight position={[10, 5, 10]} intensity={lightsOn ? 3 : 1} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[-10, 5, 10]} intensity={lightsOn ? 3 : 1} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[10, 5, -10]} intensity={lightsOn ? 3 : 1} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[-10, 5, -10]} intensity={lightsOn ? 3 : 1} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[0, 5, 0]} intensity={lightsOn ? 4 : 1.5} distance={100} color={lightsOn ? "#ffffff" : "#5a9fd4"} />
+
+          {/* Blue ambient wall lights - always on, more visible when main lights off */}
+          {/* Left wall blue lights */}
+          <pointLight 
+            position={[-14, 4, -10]} 
+            intensity={lightsOn ? 0.5 : 1.5} 
+            distance={20} 
+            color="#4a90e2"
+          />
+          <pointLight 
+            position={[-14, 4, 0]} 
+            intensity={lightsOn ? 0.5 : 1.5} 
+            distance={20} 
+            color="#4a90e2"
+          />
+          <pointLight 
+            position={[-14, 4, 10]} 
+            intensity={lightsOn ? 0.5 : 1.5} 
+            distance={20} 
+            color="#4a90e2"
+          />
+          
+          {/* Right wall blue lights */}
+          <pointLight 
+            position={[14, 4, -10]} 
+            intensity={lightsOn ? 0.5 : 1.5} 
+            distance={20} 
+            color="#4a90e2"
+          />
+          <pointLight 
+            position={[14, 4, 0]} 
+            intensity={lightsOn ? 0.5 : 1.5} 
+            distance={20} 
+            color="#4a90e2"
+          />
+          <pointLight 
+            position={[14, 4, 10]} 
+            intensity={lightsOn ? 0.5 : 1.5} 
+            distance={20} 
+            color="#4a90e2"
+          />
+
+          {/* Back wall blue lights */}
+          <pointLight 
+            position={[-10, 4, 15]} 
+            intensity={lightsOn ? 0.5 : 1.2} 
+            distance={18} 
+            color="#5a9fd4"
+          />
+          <pointLight 
+            position={[0, 4, 15]} 
+            intensity={lightsOn ? 0.5 : 1.2} 
+            distance={18} 
+            color="#5a9fd4"
+          />
+          <pointLight 
+            position={[10, 4, 15]} 
+            intensity={lightsOn ? 0.5 : 1.2} 
+            distance={18} 
+            color="#5a9fd4"
+          />
 
           {/* GLB Cinema Model */}
           <CinemaTheaterGLB position={glbModelPosition} />
+
+          {/* User Avatars */}
+          <AvatarManager
+            roomMembers={roomMembers}
+            currentUserId={authenticatedUserID}
+            onEmoteReceived={onEmoteReceived}
+            onChatMessageReceived={onChatMessageReceived}
+            useGLB={useGLBModel}
+          />
 
           {/* Seat position markers (visual verification) */}
           {showSeatMarkers && <SeatMarkers showLabels={true} />}
@@ -370,36 +744,6 @@ export default function CinemaScene3D({
 
       {/* Seat marker info panel */}
       {showSeatMarkers && <SeatMarkerInfo />}
-
-      {/* View Lock Toggle Button */}
-      <div className="absolute top-20 right-4 z-10">
-        <button
-          onClick={toggleViewLock}
-          className={`px-4 py-2 rounded-lg font-semibold text-sm shadow-lg transition-all ${
-            isViewLocked 
-              ? 'bg-red-600 hover:bg-red-700 text-white' 
-              : 'bg-green-600 hover:bg-green-700 text-white'
-          }`}
-        >
-          {isViewLocked ? '🔒 View Locked' : '🔓 View Unlocked'}
-        </button>
-        <div className="mt-2 bg-black bg-opacity-75 text-white p-2 rounded text-[10px] max-w-[200px]">
-          {isViewLocked ? (
-            <>
-              <div className="text-yellow-400 font-bold mb-1">Seated Mode:</div>
-              <div>• Can look around 180°</div>
-              <div>• Cannot move from seat</div>
-              <div>• Can zoom in/out</div>
-            </>
-          ) : (
-            <>
-              <div className="text-green-400 font-bold mb-1">Free Roam:</div>
-              <div>• Full movement</div>
-              <div>• Use for testing</div>
-            </>
-          )}
-        </div>
-      </div>
 
       {/* Info overlay */}
       <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-white text-sm bg-black bg-opacity-50 px-4 py-2 rounded">
