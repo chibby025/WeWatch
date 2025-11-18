@@ -15,11 +15,17 @@ import useLiveKitRoom from "../../../hooks/useLiveKitRoom"; // 3 dots!
 import { Track, ParticipantEvent } from 'livekit-client';
 import { getTemporaryMediaItemsForRoom } from '../../../services/api';
 import { useSeatController } from './useSeatController';
-
+import { useLocation } from 'react-router-dom';
 
 export default function CinemaScene3DDemo() {
   const { roomId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation(); // 👈 get navigation state
+  // === Derive host status ===
+  const { isHost: isHostFromState = false, sessionId: sessionIdFromState } = location.state || {};
+  const urlParams = new URLSearchParams(window.location.search);
+  const sessionIdFromUrl = urlParams.get('session_id');
+  const finalSessionId = sessionIdFromState || sessionIdFromUrl;
   const { currentUser, wsToken, loading: authLoading } = useAuth();
   const stableTokenRef = useRef(null);
   // === State ===
@@ -60,8 +66,7 @@ export default function CinemaScene3DDemo() {
     }
   });
 
-  // === Derive host status ===
-  const isHost = currentUser?.id === roomMembers.find(m => m.user_role === 'host')?.id;
+  
   // State for video ref
   const videoRef = useRef(null);
   // === VIDEO/PLAYBACK STATE ===
@@ -72,9 +77,13 @@ export default function CinemaScene3DDemo() {
   const [remoteScreenTrack, setRemoteScreenTrack] = useState(null);
   const [localScreenTrack, setLocalScreenTrack] = useState(null);
   const playbackPositionRef = useRef(0);
-  const urlParams = new URLSearchParams(window.location.search);
-  const sessionIdFromUrl = urlParams.get('session_id');
+  //const isHostFromState = location.state?.isHost;
+  // Fallback host detection (for direct URL access)
+  const isHostFromMembers = currentUser?.id === roomMembers.find(m => m.user_role === 'host')?.id;
+  const isHost = isHostFromState ?? isHostFromMembers;
 
+  // ✅ Now you have reliable isHost!
+  console.log('🎭 isHost (from RoomPage):', isHost);
   const handleError = useCallback((err) => {
     if (!currentMedia) return;
     // Ignore benign errors
@@ -113,6 +122,8 @@ export default function CinemaScene3DDemo() {
     if (roomId && currentUser) connectLiveKit();
     return () => disconnectLiveKit();
   }, [roomId, currentUser?.id]);
+
+  
 
   // Fetch media items (same as VideoWatch)
   const fetchAndGeneratePosters = useCallback(async () => {
@@ -195,7 +206,7 @@ export default function CinemaScene3DDemo() {
     else if (currentMedia?.type === 'upload' && currentMedia.mediaUrl) {
       console.log('📁 [3D] Loading uploaded media:', currentMedia.mediaUrl);
       video.src = currentMedia.mediaUrl;
-      video.muted = true;
+      video.muted = false;
       video.load();
 
       // Force play (will work because muted)
@@ -245,6 +256,15 @@ export default function CinemaScene3DDemo() {
               const exists = prev.some(m => m.ID === msg.data.ID);
               return exists ? prev : [...prev, { ...msg.data, reactions: msg.data.reactions || [] }];
             });
+          }
+          break;
+        case 'take_seat':
+          // Update userSeats from server echo (for consistency)
+          if (msg.user_id && msg.seat_id) {
+            setUserSeats(prev => ({
+              ...prev,
+              [msg.user_id]: msg.seat_id
+            }));
           }
           break;
         // Inside the switch(msg.type) block:
@@ -300,11 +320,21 @@ export default function CinemaScene3DDemo() {
           break;
         case 'session_status':
           if (Array.isArray(msg.data.members)) {
-            setRoomMembers(msg.data.members.map(m => ({
-              id: m.user_id || m.id,
-              Username: m.username || m.Username || 'Anonymous',
-              user_role: m.user_role || 'viewer'
-            })));
+            // 🔥 DEDUPLICATE by user ID
+            const memberMap = new Map();
+            msg.data.members.forEach(m => {
+              const id = m.user_id || m.id;
+              if (id && !memberMap.has(id)) {
+                memberMap.set(id, {
+                  id,
+                  username: m.username || m.Username || m.name || `User${id}`,
+                  user_role: m.user_role || 'viewer'
+                });
+              }
+            });
+            const deduplicated = Array.from(memberMap.values());
+            console.log('✅ Deduplicated roomMembers:', deduplicated);
+            setRoomMembers(deduplicated);
           }
           break;
         case 'user_audio_state':
@@ -505,7 +535,7 @@ export default function CinemaScene3DDemo() {
           }
         }}
       />
-
+      {console.log('🎬 Final roomMembers passed to Taskbar:', roomMembers)}
       {/* Taskbar */}
       <Taskbar
         authenticatedUserID={currentUser?.id}
@@ -513,6 +543,7 @@ export default function CinemaScene3DDemo() {
         toggleAudio={toggleAudio}
         isHost={isHost}
         isSeatedMode={isSeatedMode}
+        roomMembers={roomMembers} // ✅ pass full list
         toggleSeatedMode={handleToggleSeatedMode}
         openChat={() => setIsChatOpen(prev => !prev)}
         onMembersClick={openMembers}
@@ -542,7 +573,7 @@ export default function CinemaScene3DDemo() {
         }}
         showEmotes={true}
         onToggleLeftSidebar={() => setIsLeftSidebarOpen(prev => !prev)}
-        showSeatModeToggle={true}
+        showSeatModeToggle={false}
         showVideoToggle={false}
       />
 
@@ -845,7 +876,8 @@ export default function CinemaScene3DDemo() {
       {/* Members Modal */}
       {isMembersModalOpen && (
         <MembersModal
-          isOpen={true}
+          //isOpen={true}
+          isOpen={isMembersModalOpen}
           onClose={() => setIsMembersModalOpen(false)}
           members={roomMembers}
         />
@@ -853,6 +885,7 @@ export default function CinemaScene3DDemo() {
 
       {/* ✅ Seat Grid Modal — NOW INSIDE THE ROOT DIV */}
       <CinemaSeatGridModal
+        key={currentUser?.id ? userSeats[currentUser.id] : 'default'}
         isOpen={isSeatGridModalOpen}
         onClose={() => setIsSeatGridModalOpen(false)}
         userSeats={userSeats}

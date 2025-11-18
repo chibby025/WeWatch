@@ -44,6 +44,7 @@ const Taskbar = ({
   availableCameras = [],
   selectedCameraId,
   onCameraSwitch,
+  roomMembers = [],
   onEmoteSend,
   showProgram = true, // control visibility of menu icon
   showEmotes = true, // 👈 NEW: controls visibility of Emotes button
@@ -56,6 +57,7 @@ const Taskbar = ({
   const [showMicDropdown, setShowMicDropdown] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showEmotePicker, setShowEmotePicker] = useState(false);
+  const memberCount = roomMembers.length;
 
   // Auto-show for 3 seconds on mount
   useEffect(() => {
@@ -258,7 +260,7 @@ const Taskbar = ({
 
           <TaskbarButton
             icon={MembersIcon}
-            label="Members"
+            label={`${memberCount}`}
             onClick={onMembersClick}
           />
         </div>

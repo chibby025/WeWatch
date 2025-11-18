@@ -1,3 +1,4 @@
+
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect } from 'react';
 import { uploadMediaToRoom } from '../../../services/api';
@@ -7,22 +8,25 @@ export default function LeftSidebar({
   currentMedia,
   mousePosition,
   isLeftSidebarOpen,
-  isScreenSharingActive, // ✅ from parent (LiveKit state)
-  onEndScreenShare,      // ✅ from parent (calls localParticipant.setScreenShareEnabled(false))
+  isScreenSharingActive,
+  onEndScreenShare,
   isConnected,
   playlist,
   currentUser,
   sendMessage,
   onDeleteMedia,
-  onStartScreenShare,    // ✅ from parent (calls localParticipant.setScreenShareEnabled(true))
+  onStartScreenShare,
   onMediaSelect,
   onCameraPreview,
   isHost,
   onClose,
-  onUploadComplete,      // ✅ NEW: callback to refresh playlist after upload
-  sessionId              // ✅ NEW: session ID for linking uploads
+  onUploadComplete,
+  sessionId
 }) {
-  const [activeTab, setActiveTab] = useState('upload');
+  // Dynamically determine available tabs
+  const availableTabs = isHost ? ['upload', 'liveshare', 'watchfrom'] : ['upload'];
+  const [activeTab, setActiveTab] = useState(availableTabs[0]); // Default to first available tab
+
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
   const [selectedCamera, setSelectedCamera] = useState('none');
@@ -104,12 +108,10 @@ export default function LeftSidebar({
         roomId,
         file,
         (percent) => setUploadProgress(percent),
-        true, // temporary
-        sessionId // ✅ Link upload to session
+        true,
+        sessionId
       );
-      
-      // ✅ Refresh playlist after successful upload
-      // (Poster will be generated in fetchAndGeneratePosters)
+
       if (onUploadComplete) {
         console.log('📤 [LeftSidebar] Upload complete, refreshing playlist...');
         onUploadComplete();
@@ -127,7 +129,6 @@ export default function LeftSidebar({
   const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
   const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); handleFileUpload(e.dataTransfer.files); };
 
-  // ✅ PLATFORM LIST (unchanged)
   const platforms = [
     { id: 'youtube', name: 'YouTube', url: 'https://www.youtube.com' },
     { id: 'twitch', name: 'Twitch', url: 'https://www.twitch.tv' },
@@ -147,7 +148,6 @@ export default function LeftSidebar({
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // ✅ HANDLE PLATFORM SELECTION (metadata only)
   const handlePlatformSelect = (platform) => {
     setSelectedPlatform(platform.id);
     if (sendMessage && currentUser) {
@@ -163,17 +163,14 @@ export default function LeftSidebar({
     }
   };
 
-  // ✅ HANDLE "SHARE SCREEN" FROM WATCH-FROM MODAL
   const handleStartPlatformScreenShare = (platformId) => {
     const platform = platforms.find(p => p.id === platformId);
     const platformName = platform?.name || 'External Screen';
 
-    // 1. Start LiveKit screen share
     if (onStartScreenShare) {
       onStartScreenShare();
     }
 
-    // 2. Notify room of metadata
     if (sendMessage && currentUser) {
       sendMessage({
         type: "update_room_status",
@@ -186,7 +183,6 @@ export default function LeftSidebar({
       });
     }
 
-    // 3. Close modal
     setShowWatchFromInstructions(false);
   };
 
@@ -199,7 +195,7 @@ export default function LeftSidebar({
       {/* Tab Navigation */}
       <div className="p-2 bg-[#D9D9D9]/10 rounded-xl">
         <div className="flex">
-          {['upload', 'liveshare', 'watchfrom'].map(tab => (
+          {availableTabs.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -217,7 +213,7 @@ export default function LeftSidebar({
         </div>
       </div>
 
-      {/* UPLOAD TAB */}
+      {/* UPLOAD TAB — visible to all */}
       {activeTab === 'upload' && (
         <div className="flex flex-col h-full">
           <div className="p-4 bg-[#D9D9D9]/10 rounded-b-2xl rounded-t-none mb-4 flex flex-col">
@@ -287,8 +283,15 @@ export default function LeftSidebar({
                   {playlist.map((item) => (
                     <div
                       key={item.ID}
-                      className="bg-gray-800 rounded-lg p-3 cursor-pointer hover:bg-gray-700 transition-colors flex items-center gap-3"
-                      onClick={() => onMediaSelect({ ...item, type: 'upload' })}
+                      className={`bg-gray-800 rounded-lg p-3 ${
+                        isHost ? 'cursor-pointer hover:bg-gray-700' : 'cursor-not-allowed opacity-60'
+                      } transition-colors flex items-center gap-3`}
+                      onClick={() => {
+                        if (isHost) {
+                          onMediaSelect({ ...item, type: 'upload' });
+                        }
+                      }}
+                      title={!isHost ? "Only the host can play media" : ""}
                     >
                       <img
                         src={item.poster_url || '/icons/placeholder-poster.jpg'}
@@ -327,8 +330,8 @@ export default function LeftSidebar({
         </div>
       )}
 
-      {/* LIVESHARE TAB */}
-      {activeTab === 'liveshare' && (
+      {/* LIVESHARE TAB — host only */}
+      {activeTab === 'liveshare' && isHost && (
         <div className="p-4 space-y-4">
           <div className="bg-[#D9D9D9]/20 rounded-xl p-4">
             <div className="flex items-center gap-3 mb-3">
@@ -352,7 +355,6 @@ export default function LeftSidebar({
             </div>
           </div>
 
-          {/* Camera selection (optional, independent of screen share) */}
           <div className="bg-[#D9D9D9]/20 rounded-xl p-4">
             <h3 className="text-white font-bold text-lg text-center mb-3">Choose Camera</h3>
             <div className="bg-black rounded-lg p-3">
@@ -422,8 +424,8 @@ export default function LeftSidebar({
         </div>
       )}
 
-      {/* WATCH FROM TAB */}
-      {activeTab === 'watchfrom' && (
+      {/* WATCH FROM TAB — host only */}
+      {activeTab === 'watchfrom' && isHost && (
         <div className="p-4 h-full flex flex-col">
           <h3 className="text-lg font-semibold text-white mb-4">Watch From Platform</h3>
 
@@ -475,8 +477,8 @@ export default function LeftSidebar({
         </div>
       )}
 
-      {/* MODAL: Watch From Instructions */}
-      {showWatchFromInstructions && (
+      {/* MODAL: Watch From Instructions — host only */}
+      {showWatchFromInstructions && isHost && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg w-full max-w-md">
             <h3 className="text-lg font-bold mb-3">

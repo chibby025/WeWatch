@@ -650,15 +650,17 @@ const handlePlayMedia = (mediaItemId) => {
         <button
           onClick={async () => {
             if (activeSessionId) {
-              // Rejoin existing session in 3D
-              navigate(`/cinema-3d-demo/${roomId}?session_id=${activeSessionId}`);
+              navigate(`/cinema-3d-demo/${roomId}`, {
+                state: { isHost, sessionId: activeSessionId }
+              });
             } else if (isHost) {
-              // Host: create session → go to 3D
               try {
                 const res = await createWatchSessionForRoom(roomId);
                 const sessionId = res.data.session_id;
                 setActiveSessionId(sessionId);
-                navigate(`/cinema-3d-demo/${roomId}?session_id=${sessionId}`);
+                navigate(`/cinema-3d-demo/${roomId}`, {
+                  state: { isHost: true, sessionId }
+                });
               } catch (err) {
                 console.error("Failed to start 3D session:", err);
                 toast.error("Failed to start 3D session");
