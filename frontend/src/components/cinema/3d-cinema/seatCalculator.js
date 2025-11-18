@@ -107,7 +107,7 @@ function interpolateRowPosition(row, startRow, startData, endRow, endData, seatI
 export function generateAllSeats() {
   const seats = [];
   
-  console.log('🎬 [SeatCalculator] Generating seats from measured positions');
+  //console.log('🎬 [SeatCalculator] Generating seats from measured positions');
   
   // Row 1: Use measured positions directly
   const row1Seats = ROW_1_MEASURED;
@@ -166,7 +166,7 @@ export function generateAllSeats() {
     }
   }
   
-  console.log(`🪑 [SeatCalculator] Generated ${seats.length} seats`);
+  //console.log(`🪑 [SeatCalculator] Generated ${seats.length} seats`);
   return seats;
 }
 

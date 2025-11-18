@@ -81,7 +81,7 @@ export default function AvatarManager({
     const handleChatMessage = (messageData) => {
       const { user_id, message, username, avatar_color } = messageData;
       
-      console.log('💬 [AvatarManager] Chat message received:', user_id, message);
+      //console.log('💬 [AvatarManager] Chat message received:', user_id, message);
       
       // Set message for user
       setUserMessages((prev) => ({
@@ -107,11 +107,11 @@ export default function AvatarManager({
     onChatMessageReceived(handleChatMessage);
   }, [onChatMessageReceived]);
 
-  console.log('🎭 [AvatarManager] Rendering avatars for', roomMembers.length, 'users');
-  console.log('🎨 [AvatarManager] Using', 
-    typeof useGLB === 'string' ? useGLB : useGLB === true ? 'GLB' : 'Custom', 
-    'avatars'
-  );
+ // console.log('🎭 [AvatarManager] Rendering avatars for', roomMembers.length, 'users');
+ // console.log('🎨 [AvatarManager] Using', 
+  //  typeof useGLB === 'string' ? useGLB : useGLB === true ? 'GLB' : 'Custom', 
+  //  'avatars'
+ // );
 
   // Choose avatar component based on useGLB prop
   const AvatarComponent = 
@@ -131,7 +131,7 @@ export default function AvatarManager({
           console.warn('⚠️ [AvatarManager] No seat for user:', member.id);
           return null;
         }
-
+        // testing
         const isCurrentUser = member.id === currentUserId;
         const currentEmote = userEmotes[member.id] || null;
         const recentMessage = userMessages[member.id] || null;
