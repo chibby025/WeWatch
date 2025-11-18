@@ -78,7 +78,7 @@ function App() {
 
           {/* 3D Cinema Demo - Test the 3D cinema experience */}
           <Route 
-            path="/cinema-3d-demo" 
+            path="/cinema-3d-demo/:roomId"  
             element={
               <ProtectedRoute>
                 <CinemaScene3DDemo />

@@ -631,22 +631,49 @@ const handlePlayMedia = (mediaItemId) => {
         </div>
       </div>
 
-      {/* --- Begin/Join Watch Button --- */}
-      {/* --- Unified Watch Button --- */}
-      <div className="mt-4">
+      {/* --- Unified Watch Buttons --- */}
+      <div className="mt-4 flex gap-3">
+        {/* Standard Watch */}
         <button
           onClick={handleBeginWatch}
           disabled={!isHost && !activeSessionId}
-          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+          className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          {activeSessionId 
-            ? 'Rejoin Videowatch' 
-            : (isHost ? 'Begin Watch' : 'Waiting for host...')
-          }
+          {activeSessionId ? 'Standard Watch' : (isHost ? 'Begin Standard Watch' : 'Waiting for host...')}
+        </button>
+
+        {/* ✅ 3D Watch */}
+        <button
+          onClick={async () => {
+            if (activeSessionId) {
+              // Rejoin existing session in 3D
+              navigate(`/cinema-3d-demo/${roomId}?session_id=${activeSessionId}`);
+            } else if (isHost) {
+              // Host: create session → go to 3D
+              try {
+                const res = await createWatchSessionForRoom(roomId);
+                const sessionId = res.data.session_id;
+                setActiveSessionId(sessionId);
+                navigate(`/cinema-3d-demo/${roomId}?session_id=${sessionId}`);
+              } catch (err) {
+                console.error("Failed to start 3D session:", err);
+                toast.error("Failed to start 3D session");
+              }
+            } else {
+              toast.error('No active session. Wait for host to start.');
+            }
+          }}
+          disabled={!isHost && !activeSessionId}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2" />
+          </svg>
+          {activeSessionId ? '3D Watch' : (isHost ? 'Begin 3D Watch' : 'Waiting for host...')}
         </button>
       </div>
 

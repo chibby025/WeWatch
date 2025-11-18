@@ -1,19 +1,24 @@
 // src/components/cinema/ui/CinemaVideoPlayer.jsx
-import { useRef, useEffect } from 'react';
+import { forwardRef, useRef, useImperativeHandle, useEffect } from 'react';
 
-export default function CinemaVideoPlayer({
+// Wrap your existing function with forwardRef
+const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   track,
   isHost,
   localScreenTrack,
-  mediaItem,        // ✅ New prop: for uploaded media
-  isPlaying,        // ✅ New prop
+  mediaItem,
+  isPlaying,
   onPlay,
   onPause,
   onEnded,
   onError,
-}) {
+}, ref) {
   const videoRef = useRef(null);
 
+  // 🔑 Expose the actual <video> DOM element to parent
+  useImperativeHandle(ref, () => videoRef.current, []);
+
+  // ... (rest of your existing logic UNCHANGED)
   useEffect(() => {
     const video = videoRef.current;
     if (!video) {
@@ -23,7 +28,6 @@ export default function CinemaVideoPlayer({
 
     let stream = null;
 
-    // 🔹 LIVEKIT: Screen Share (Host or Viewer)
     if ((isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && track?.mediaStreamTrack)) {
       const mediaStreamTrack = isHost ? localScreenTrack.mediaStreamTrack : track.mediaStreamTrack;
       console.log(`🎬 [CinemaVideoPlayer] ${isHost ? 'HOST' : 'VIEWER'}: Attaching screen share track`);
@@ -39,14 +43,12 @@ export default function CinemaVideoPlayer({
       };
     }
 
-    // 🔹 UPLOADED MEDIA: file-based playback
     else if (mediaItem?.mediaUrl) {
       console.log('📁 [CinemaVideoPlayer] Loading uploaded media:', mediaItem.mediaUrl);
-      video.srcObject = null; // Clear any stream
+      video.srcObject = null;
       video.src = mediaItem.mediaUrl;
       video.muted = false;
       
-      // Add error listener for better debugging
       const handleLoadError = (e) => {
         console.error('❌ [CinemaVideoPlayer] Video load error:', {
           error: e.target.error,
@@ -56,9 +58,7 @@ export default function CinemaVideoPlayer({
         });
       };
       video.addEventListener('error', handleLoadError, { once: true });
-      
-      video.load(); // Explicitly load the media
-      // Don't auto-play here, let the isPlaying effect handle it
+      video.load();
       return () => {
         video.removeEventListener('error', handleLoadError);
         video.pause();
@@ -66,7 +66,6 @@ export default function CinemaVideoPlayer({
       };
     }
 
-    // ❌ Nothing to show
     else {
       console.log('⚠️ [CinemaVideoPlayer] No media to display');
       video.srcObject = null;
@@ -74,16 +73,13 @@ export default function CinemaVideoPlayer({
     }
   }, [track, localScreenTrack, isHost, mediaItem]);
 
-  // Sync play/pause from parent state
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !video.src) return;
     
-    // Wait for video to be ready before trying to play
     const handleCanPlay = () => {
       if (isPlaying) {
         video.play().catch((err) => {
-          // Ignore "interrupted by pause" errors - they're harmless
           if (!err.message.includes('interrupted by a call to pause')) {
             console.warn('⚠️ [CinemaVideoPlayer] Play failed:', err.message);
             if (onError) onError(err);
@@ -93,8 +89,7 @@ export default function CinemaVideoPlayer({
     };
     
     if (isPlaying) {
-      // If video is already ready, play immediately
-      if (video.readyState >= 3) { // HAVE_FUTURE_DATA or higher
+      if (video.readyState >= 3) {
         video.play().catch((err) => {
           if (!err.message.includes('interrupted by a call to pause')) {
             console.warn('⚠️ [CinemaVideoPlayer] Play failed:', err.message);
@@ -102,7 +97,6 @@ export default function CinemaVideoPlayer({
           }
         });
       } else {
-        // Otherwise wait for canplay event
         video.addEventListener('canplay', handleCanPlay, { once: true });
       }
     } else {
@@ -128,4 +122,7 @@ export default function CinemaVideoPlayer({
       style={{ backgroundColor: '#000' }}
     />
   );
-}
+});
+
+// ✅ Now export the wrapped version
+export default CinemaVideoPlayer;
