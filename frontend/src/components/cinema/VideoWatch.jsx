@@ -1684,6 +1684,8 @@ export default function VideoWatch() {
           authenticatedUserID={currentUser?.id}
           isAudioActive={isAudioActive}
           toggleAudio={toggleAudio}
+          showEmotes={false}
+          showProgram = {false}
           isVisible={isVisible}
           isGlowing={isGlowing}
           onShareRoom={handleShareRoom}

@@ -5,9 +5,11 @@ import * as THREE from 'three';
 import CinemaTheater from './CinemaTheater';
 import CinemaTheaterGLB from './CinemaTheaterGLB';
 import SeatMarkers, { SeatMarkerInfo } from './SeatMarkers';
-import { generateAllSeats, assignUserToSeat } from './seatCalculator';
+import { generateAllSeats, assignUserToSeat, getSeatByPosition } from './seatCalculator';
 import AvatarManager from './avatars/AvatarManager';
 import FirstPersonAvatar from './avatars/FirstPersonAvatar';
+import { useGLTF } from '@react-three/drei';
+
 
 /**
  * CinemaCamera - Handles camera movement and controls
@@ -16,6 +18,8 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
   const cameraRef = useRef();
   const { camera } = useThree();
   const controlsRef = useRef();
+  // Load GLB scene here (so we can debug it)
+  //const { scene: glbScene } = useGLTF('/models/cinema.glb');
 
   // Seat view position (first-person view from user seat)
   const seatViewPosition = new THREE.Vector3(
@@ -23,6 +27,8 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
     userSeatPosition[1], // Use exact Y position, don't add eye level
     userSeatPosition[2]
   );
+
+  
 
   // Keyboard controls - different behavior for locked vs unlocked modes
   useEffect(() => {
@@ -43,22 +49,22 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
           offset.x -= horizontalStep;
           controls.target.copy(camera.position).add(offset.normalize().multiplyScalar(currentDistance));
           controls.update();
-          console.log('⬅️ Looking left');
+          //console.log('⬅️ Looking left');
         } else if (key === 'arrowright' || key === 'd') {
           offset.x += horizontalStep;
           controls.target.copy(camera.position).add(offset.normalize().multiplyScalar(currentDistance));
           controls.update();
-          console.log('➡️ Looking right');
+          //console.log('➡️ Looking right');
         } else if (key === 'arrowup' || key === 'w') {
           offset.y += verticalStep;
           controls.target.copy(camera.position).add(offset.normalize().multiplyScalar(currentDistance));
           controls.update();
-          console.log('⬆️ Looking up');
+          //console.log('⬆️ Looking up');
         } else if (key === 'arrowdown' || key === 's') {
           offset.y -= verticalStep;
           controls.target.copy(camera.position).add(offset.normalize().multiplyScalar(currentDistance));
           controls.update();
-          console.log('⬇️ Looking down');
+          //console.log('⬇️ Looking down');
         }
       } else {
         // UNLOCKED MODE: Free movement and view snapping
@@ -72,61 +78,61 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
           camera.position.copy(newPosition);
           controls.target.z -= moveSpeed;
           controls.update();
-          console.log('⬆️ Moving forward');
+          //console.log('⬆️ Moving forward');
         } else if (key === 's') {
           // Move backward (positive Z)
           newPosition.z += moveSpeed;
           camera.position.copy(newPosition);
           controls.target.z += moveSpeed;
           controls.update();
-          console.log('⬇️ Moving backward');
+          //console.log('⬇️ Moving backward');
         } else if (key === 'a') {
           // Move left (negative X)
           newPosition.x -= moveSpeed;
           camera.position.copy(newPosition);
           controls.target.x -= moveSpeed;
           controls.update();
-          console.log('⬅️ Moving left');
+          //console.log('⬅️ Moving left');
         } else if (key === 'd') {
           // Move right (positive X)
           newPosition.x += moveSpeed;
           camera.position.copy(newPosition);
           controls.target.x += moveSpeed;
           controls.update();
-          console.log('➡️ Moving right');
+          //console.log('➡️ Moving right');
         } else if (key === 'q') {
           // Move up (positive Y)
           newPosition.y += moveSpeed;
           camera.position.copy(newPosition);
           controls.target.y += moveSpeed;
           controls.update();
-          console.log('⬆️ Moving up');
+          //console.log('⬆️ Moving up');
         } else if (key === 'e') {
           // Move down (negative Y)
           newPosition.y -= moveSpeed;
           camera.position.copy(newPosition);
           controls.target.y -= moveSpeed;
           controls.update();
-          console.log('⬇️ Moving down');
+          //console.log('⬇️ Moving down');
         }
         
         // Arrow keys - Pan view (look around)
         else if (key === 'arrowleft') {
           controls.target.x -= moveSpeed;
           controls.update();
-          console.log('👀 Looking left');
+          //console.log('👀 Looking left');
         } else if (key === 'arrowright') {
           controls.target.x += moveSpeed;
           controls.update();
-          console.log('👀 Looking right');
+          //console.log('👀 Looking right');
         } else if (key === 'arrowup') {
           controls.target.y += moveSpeed;
           controls.update();
-          console.log('👀 Looking up');
+          //console.log('👀 Looking up');
         } else if (key === 'arrowdown') {
           controls.target.y -= moveSpeed;
           controls.update();
-          console.log('👀 Looking down');
+          //console.log('👀 Looking down');
         }
         
         // Number keys - Snap to orthogonal views
@@ -135,37 +141,37 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
           const pos = camera.position;
           controls.target.set(pos.x, pos.y, pos.z - 10);
           controls.update();
-          console.log('📐 Front view (Z-)');
+          //console.log('📐 Front view (Z-)');
         } else if (key === '2') {
           // Back view (looking at positive Z)
           const pos = camera.position;
           controls.target.set(pos.x, pos.y, pos.z + 10);
           controls.update();
-          console.log('📐 Back view (Z+)');
+          //console.log('📐 Back view (Z+)');
         } else if (key === '3') {
           // Left view (looking at negative X)
           const pos = camera.position;
           controls.target.set(pos.x - 10, pos.y, pos.z);
           controls.update();
-          console.log('📐 Left view (X-)');
+          //console.log('📐 Left view (X-)');
         } else if (key === '4') {
           // Right view (looking at positive X)
           const pos = camera.position;
           controls.target.set(pos.x + 10, pos.y, pos.z);
           controls.update();
-          console.log('📐 Right view (X+)');
+          //console.log('📐 Right view (X+)');
         } else if (key === '5') {
           // Top view (looking down at negative Y)
           const pos = camera.position;
           controls.target.set(pos.x, pos.y - 10, pos.z);
           controls.update();
-          console.log('📐 Top view (Y-)');
+          //console.log('📐 Top view (Y-)');
         } else if (key === '6') {
           // Bottom view (looking up at positive Y)
           const pos = camera.position;
           controls.target.set(pos.x, pos.y + 10, pos.z);
           controls.update();
-          console.log('📐 Bottom view (Y+)');
+          //console.log('📐 Bottom view (Y+)');
         }
       }
     };
@@ -194,7 +200,7 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
         
         controlsRef.current.target.copy(target);
         controlsRef.current.update();
-        console.log('👈 [CinemaCamera] Looking left (default view)');
+        //console.log('👈 [CinemaCamera] Looking left (default view)');
       }
       else if (key === 'c' && initialRotation) {
         // Look at screen (center view)
@@ -274,7 +280,7 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
       if (controlsRef.current) {
         controlsRef.current.update();
       }
-      console.log('🔒 [CinemaCamera] View locked - position fixed, orientation preserved');
+      //console.log('🔒 [CinemaCamera] View locked - position fixed, orientation preserved');
     }
   }, [isViewLocked, camera, seatViewPosition]);
 
@@ -373,7 +379,7 @@ function DynamicLighting({ screenRef, intensity = 1, lightsOn = false }) {
         
         // Log only when changing significantly
         if (Math.abs(light.intensity - oldIntensity) > 0.01 && index === 0) {
-          console.log('🔆 [DynamicLighting] Ceiling light intensity:', light.intensity.toFixed(2), 'Target:', targetIntensity);
+          //console.log('🔆 [DynamicLighting] Ceiling light intensity:', light.intensity.toFixed(2), 'Target:', targetIntensity);
         }
       }
     });
@@ -501,7 +507,10 @@ export default function CinemaScene3D({
   userSeats = [],
   authenticatedUserID,
   onZoomComplete: onExternalZoomComplete,
+  debugMode = false,
   useGLBModel = true,
+  //currentUserSeatId,
+  currentUserSeat,
   showSeatMarkers = true,  // Toggle to show/hide seat position markers
   isViewLocked = true,     // View lock state (controlled by parent)
   setIsViewLocked,         // Function to update lock state
@@ -521,21 +530,31 @@ export default function CinemaScene3D({
   });
   const [currentUserEmote, setCurrentUserEmote] = useState(null); // Current user's active emote
 
-  console.log('🎬 [CinemaScene3D] Rendering GLB cinema model');
+  //console.log('🎬 [CinemaScene3D] Rendering GLB cinema model');
 
   // Generate all 42 seats using calculated positions
-  const allSeats = generateAllSeats();
-  console.log('🪑 [CinemaScene3D] Generated seats:', allSeats.length);
+  //const allSeats = generateAllSeats();
+  //console.log('🪑 [CinemaScene3D] Generated seats:', allSeats.length);
 
   // GLB model position - center of the cinema box
   const glbModelPosition = [66, 2, 25];
+  //const glbModelPosition = [0, 0, -10]; // or [0, 0, -15]
   
   // Assign authenticated user to a seat
   // For now, use a test seat ID (can be passed as prop later)
-  const userSeatId = authenticatedUserID || 1; // Default to seat 1 for testing
-  const assignedSeat = assignUserToSeat(userSeatId);
+  //const userSeatId = authenticatedUserID || 1; // Default to seat 1 for testing
+  // 🔥 Replace static assignment with dynamic one
+  // 🔥 Dynamically assign seat based on currentUserSeatId or fallback to user ID
+  const assignedSeat = currentUserSeat || {
+    id: 1,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    cameraPosition: [0, 1.6, 0],
+    label: "Default",
+    isPremium: false
+  };
   
-  console.log('👤 [CinemaScene3D] User assigned to seat:', assignedSeat);
+  //console.log('👤 [CinemaScene3D] User assigned to seat:', assignedSeat);
 
   // Use camera position (offset from avatar) for first-person view
   const cameraStartPosition = assignedSeat.cameraPosition;
@@ -601,6 +620,17 @@ export default function CinemaScene3D({
     return `hsl(${hue}, 65%, 50%)`; // Darker color
   }, [authenticatedUserID, assignedSeat.isPremium]);
 
+  // Replace the static cameraStartPosition/cameraStartRotation lines with:
+  const [activeCameraPosition, setActiveCameraPosition] = useState(cameraStartPosition);
+  const [activeCameraRotation, setActiveCameraRotation] = useState(cameraStartRotation);
+
+  // Add effect to update camera when assigned seat changes
+  useEffect(() => {
+    setActiveCameraPosition(assignedSeat.cameraPosition);
+    setActiveCameraRotation(assignedSeat.rotation);
+    console.log('🔄 [CinemaScene3D] Camera updated to seat:', assignedSeat.id);
+  }, [assignedSeat]);
+
   return (
     <div className="relative w-full h-screen bg-black">
       {/* 3D Canvas */}
@@ -615,8 +645,12 @@ export default function CinemaScene3D({
         >
           {/* Camera positioned INSIDE the cinema box */}
           <CinemaCamera 
-            userSeatPosition={cameraStartPosition}
-            initialRotation={cameraStartRotation}
+            //userSeatPosition={cameraStartPosition}
+            //initialRotation={cameraStartRotation}
+            //userSeatPosition={activeCameraPosition}   // ✅ dynamic
+            //initialRotation={activeCameraRotation}    // ✅ dynamic
+            userSeatPosition={activeCameraPosition}   // ✅
+            initialRotation={activeCameraRotation}
             onPositionUpdate={handlePositionUpdate}
             isViewLocked={isViewLocked}
             currentUserEmote={currentUserEmote}
@@ -722,7 +756,9 @@ export default function CinemaScene3D({
           />
 
           {/* GLB Cinema Model */}
-          <CinemaTheaterGLB position={glbModelPosition} />
+          <CinemaTheaterGLB position={glbModelPosition} videoElement={videoElement} />
+
+          
 
           {/* User Avatars */}
           <AvatarManager

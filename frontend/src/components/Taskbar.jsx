@@ -6,9 +6,6 @@ import { apiClient } from '../services/api';
 import SettingsModal from './cinema/ui/SettingsModal';
 import EmotePicker from './cinema/ui/EmotePicker';
 
-
-
-
 // Import SVG icons
 const LeaveCallIcon = '/icons/LeaveCallIcon.svg';
 const ChatIcon = '/icons/ChatIcon.svg';
@@ -20,6 +17,7 @@ const ShareIcon = '/icons/ShareIcon.svg';
 const SeatToggleIcon = '/icons/SeatToggleIcon.svg';
 const SettingsIcon = '/icons/settingsIcon.svg';
 const EmotesIcon = '😊'; // Emoji as icon for emotes
+const ProgramMenuIcon = '/icons/mediaScheduleIcon.svg'; // 🗂️ NEW: Menu icon
 
 const Taskbar = ({
   authenticatedUserID,
@@ -29,9 +27,9 @@ const Taskbar = ({
   isSeatedMode,
   toggleSeatedMode,
   openChat,
-  onMembersClick, // ✅ New prop for members click
-  onShareRoom, // ✅ New prop for sharing
-  onSeatsClick, // ✅ Renamed from openSeats
+  onMembersClick,
+  onShareRoom,
+  onSeatsClick,
   seats,
   userSeats,
   currentUser,
@@ -43,12 +41,15 @@ const Taskbar = ({
   audioDevices = [],
   selectedAudioDeviceId,
   onAudioDeviceChange,
-  // Camera props
   availableCameras = [],
   selectedCameraId,
   onCameraSwitch,
-  // Emote prop
-  onEmoteSend
+  onEmoteSend,
+  showProgram = true, // control visibility of menu icon
+  showEmotes = true, // 👈 NEW: controls visibility of Emotes button
+  showSeatModeToggle = true,   // 👈 NEW
+  showVideoToggle = true,   // 👈 NEW
+  onToggleLeftSidebar,
 }) => {
   const [isVisible, setIsVisible] = useState(true);
   const [isHovering, setIsHovering] = useState(false);
@@ -83,13 +84,11 @@ const Taskbar = ({
   // Close mic dropdown when clicking outside
   useEffect(() => {
     if (!showMicDropdown) return;
-    
     const handleClickOutside = (e) => {
       if (!e.target.closest('.mic-dropdown-container')) {
         setShowMicDropdown(false);
       }
     };
-    
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, [showMicDropdown]);
@@ -97,18 +96,14 @@ const Taskbar = ({
   // Close settings menu when clicking outside
   useEffect(() => {
     if (!showSettingsMenu) return;
-    
     const handleClickOutside = (e) => {
       if (!e.target.closest('.settings-menu-container')) {
         setShowSettingsMenu(false);
       }
     };
-    
-    // Add a small delay to prevent immediate closing when opening
     const timeoutId = setTimeout(() => {
       document.addEventListener('click', handleClickOutside);
     }, 10);
-    
     return () => {
       clearTimeout(timeoutId);
       document.removeEventListener('click', handleClickOutside);
@@ -124,8 +119,8 @@ const Taskbar = ({
   const handleTouchEnd = () => {
     if (!touchStart || !touchEnd) return;
     const distance = touchStart - touchEnd;
-    if (distance > 50) setIsVisible(true);      // swipe up
-    else if (distance < -50) setIsVisible(false); // swipe down
+    if (distance > 50) setIsVisible(true);
+    else if (distance < -50) setIsVisible(false);
     setTouchStart(null);
     setTouchEnd(null);
   };
@@ -184,125 +179,137 @@ const Taskbar = ({
     );
   };
 
-  
-
   return (
     <>
-    <div
-      style={taskbarStyle}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-    >
-      <div className="flex items-center space-x-2">
-        <TaskbarButton
-          icon={LeaveCallIcon}
-          label="Leave Call"
-          onClick={onLeaveCall} // ← comes from VideoWatch
-        />
-      </div>
-
-      <div className="flex items-center space-x-4">
-        <TaskbarButton icon={ChatIcon} label="Chat" onClick={openChat} />
-
-        {isHost && (
+      <div
+        style={taskbarStyle}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        <div className="flex items-center space-x-2">
           <TaskbarButton
-            icon={SeatToggleIcon}
-            label="Seat Mode"
-            onClick={toggleSeatedMode}
-            showCancelIndicator={!isSeatedMode}
+            icon={LeaveCallIcon}
+            label="Leave Call"
+            onClick={onLeaveCall}
           />
-        )}
-
-        {/* ✅ FIXED: Single onClick handler */}
-        <TaskbarButton
-          icon={SeatsIcon}
-          label="Seats"
-          onClick={onSeatsClick} // ← comes from VideoWatch
-        />
-
-
-        {/* Mic Button — wrapped in a container for alignment */}
-        <div className="flex flex-col items-center relative">
-          <div className={isHost && isHostBroadcasting && isSeatedMode ? "mic-pulse" : ""}>
-            <TaskbarButton
-              icon={AudioIcon}
-              label={isAudioActive ? "Audio" : "Audio"}
-              onClick={toggleAudio}
-              showCancelIndicator={!isAudioActive}
-            />
-          </div>
-
-          {isHost && isSeatedMode && (
-            <button
-              onClick={onHostBroadcastToggle}
-              className={`mt-1 px-2 py-0.5 rounded text-[9px] font-medium whitespace-nowrap ${
-                isHostBroadcasting ? 'bg-green-500 text-white' : 'bg-gray-700 text-gray-300'
-              }`}
-              title="Speak to everyone"
-            >
-              🌍 Global
-            </button>
-          )}
         </div>
 
-        <TaskbarButton
-          icon={VideoIcon}
-          label="Video"
-          onClick={toggleCamera}
-          showCancelIndicator={!isCameraOn}
-        />
+        <div className="flex items-center space-x-4">
+          <TaskbarButton icon={ChatIcon} label="Chat" onClick={openChat} />
 
-        <TaskbarButton
-          icon={EmotesIcon}
-          label="Emotes"
-          onClick={() => setShowEmotePicker(!showEmotePicker)}
-          isEmoji={true}
-        />
+          {isHost && showSeatModeToggle && (
+            <TaskbarButton
+              icon={SeatToggleIcon}
+              label="Seat Mode"
+              onClick={toggleSeatedMode}
+              showCancelIndicator={!isSeatedMode}
+            />
+          )}
 
-        <TaskbarButton
-          icon={MembersIcon}
-          label="Members"
-          onClick={onMembersClick}
-        />
+          <TaskbarButton
+            icon={SeatsIcon}
+            label="Seats"
+            onClick={onSeatsClick}
+          />
+
+          {/* Mic Button */}
+          <div className="flex flex-col items-center relative">
+            <div className={isHost && isHostBroadcasting && isSeatedMode ? "mic-pulse" : ""}>
+              <TaskbarButton
+                icon={AudioIcon}
+                label="Audio"
+                onClick={toggleAudio}
+                showCancelIndicator={!isAudioActive}
+              />
+            </div>
+
+            {isHost && isSeatedMode && (
+              <button
+                onClick={onHostBroadcastToggle}
+                className={`mt-1 px-2 py-0.5 rounded text-[9px] font-medium whitespace-nowrap ${
+                  isHostBroadcasting ? 'bg-green-500 text-white' : 'bg-gray-700 text-gray-300'
+                }`}
+                title="Speak to everyone"
+              >
+                🌍 Global
+              </button>
+            )}
+          </div>
+
+          {showVideoToggle && (
+            <TaskbarButton
+              icon={VideoIcon}
+              label="Video"
+              onClick={toggleCamera}
+              showCancelIndicator={!isCameraOn}
+            />
+          )}
+
+          {/* ✅ Emotes button conditionally rendered */}
+          {showEmotes && (
+            <TaskbarButton
+              icon={EmotesIcon}
+              label="Emotes"
+              onClick={() => setShowEmotePicker(!showEmotePicker)}
+              isEmoji={true}
+            />
+          )}
+
+          <TaskbarButton
+            icon={MembersIcon}
+            label="Members"
+            onClick={onMembersClick}
+          />
+        </div>
+
+        <div className="flex items-center space-x-2 settings-menu-container">
+
+          {/* 🗂️ NEW: Menu / Program Button */}
+          {showProgram && (
+            <TaskbarButton
+              icon={ProgramMenuIcon} // Make sure this is imported
+              label="Menu"
+              onClick={onToggleLeftSidebar}
+            />
+          )}
+          <TaskbarButton
+            icon={SettingsIcon}
+            label="Settings"
+            onClick={() => setShowSettingsMenu(!showSettingsMenu)}
+          />
+        </div>
       </div>
 
-      <div className="flex items-center space-x-2 settings-menu-container">
-        <TaskbarButton
-          icon={SettingsIcon}
-          label="Settings"
-          onClick={() => setShowSettingsMenu(!showSettingsMenu)}
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={showSettingsMenu}
+        onClose={() => setShowSettingsMenu(false)}
+        onShareRoom={onShareRoom}
+        audioDevices={audioDevices}
+        selectedAudioDeviceId={selectedAudioDeviceId}
+        onAudioDeviceChange={onAudioDeviceChange}
+        availableCameras={availableCameras}
+        selectedCameraId={selectedCameraId}
+        onCameraSwitch={onCameraSwitch}
+      />
+
+      {/* Emote Picker Modal */}
+      {showEmotes && (
+        <EmotePicker
+          isOpen={showEmotePicker}
+          onClose={() => setShowEmotePicker(false)}
+          onEmoteSelect={(emoteId) => {
+            if (onEmoteSend) {
+              onEmoteSend({
+                user_id: authenticatedUserID,
+                emote: emoteId,
+                timestamp: Date.now(),
+              });
+            }
+          }}
         />
-      </div>
-    </div>
-
-    {/* Settings Modal */}
-    <SettingsModal
-      isOpen={showSettingsMenu}
-      onClose={() => setShowSettingsMenu(false)}
-      onShareRoom={onShareRoom}
-      audioDevices={audioDevices}
-      selectedAudioDeviceId={selectedAudioDeviceId}
-      onAudioDeviceChange={onAudioDeviceChange}
-      availableCameras={availableCameras}
-      selectedCameraId={selectedCameraId}
-      onCameraSwitch={onCameraSwitch}
-    />
-
-    {/* Emote Picker Modal */}
-    <EmotePicker
-      isOpen={showEmotePicker}
-      onClose={() => setShowEmotePicker(false)}
-      onEmoteSelect={(emoteId) => {
-        if (onEmoteSend) {
-          onEmoteSend({
-            user_id: authenticatedUserID,
-            emote: emoteId,
-            timestamp: Date.now(),
-          });
-        }
-      }}
-    />
+      )}
     </>
   );
 };
