@@ -14,12 +14,12 @@ const CinemaSeatGridModal = ({
 
   const rowLetter = (row) => String.fromCharCode(65 + row); // A-F
 
-  // Username lookup
+  // Build a map: seatId → username
   const usernameBySeat = {};
   roomMembers.forEach(member => {
     const seatId = userSeats[member.id];
     if (seatId) {
-      usernameBySeat[seatId] = member.Username || member.username || `User${member.id}`;
+      usernameBySeat[seatId] = member.username || `User${member.id}`;
     }
   });
 
@@ -29,6 +29,9 @@ const CinemaSeatGridModal = ({
       allSeats.push({ id: `${row}-${col}`, row, col });
     }
   }
+
+  // Get current user's seat
+  const currentUserSeatId = currentUser?.id ? userSeats[currentUser.id] : null;
 
   return (
     <div 
@@ -55,23 +58,28 @@ const CinemaSeatGridModal = ({
             {allSeats.map(seat => {
               const seatId = seat.id;
               const seatLabel = `${rowLetter(seat.row)}${seat.col + 1}`;
-              const isCurrentUser = userSeats[currentUser?.id] === seatId;
-              const isOccupied = Object.values(userSeats).includes(seatId) && !isCurrentUser;
+              
+              const isCurrentUser = seatId === currentUserSeatId;
+              const isOccupied = Object.keys(userSeats).some(userId => userSeats[userId] === seatId) && !isCurrentUser;
               const username = usernameBySeat[seatId] || '';
 
-              // Border classes (no background)
-              let borderClass = 'border-transparent';
+              // ✅ Determine color based on state
+              let bgColor = 'bg-gray-700'; // empty = gray
+              let borderColor = 'border-transparent';
+              let textColor = 'text-white';
+
               if (isCurrentUser) {
-                borderClass = 'border-green-500';
+                bgColor = 'bg-green-600';       // current user = green
+                borderColor = 'border-green-500';
+                textColor = 'text-white font-bold';
               } else if (isOccupied) {
-                borderClass = 'border-blue-500';
+                bgColor = 'bg-blue-700';        // others = blue
+                borderColor = 'border-blue-500';
+                textColor = 'text-gray-200';
               }
 
               return (
-                <div
-                  key={seatId}
-                  className="flex flex-col items-center"
-                >
+                <div key={seatId} className="flex flex-col items-center">
                   <button
                     onClick={() => {
                       if (!isOccupied || isCurrentUser) {
@@ -79,24 +87,24 @@ const CinemaSeatGridModal = ({
                       }
                     }}
                     disabled={isOccupied && !isCurrentUser}
-                    className={`flex flex-col items-center justify-start p-1 rounded ${borderClass} border-2 transition-transform hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed`}
+                    className={`flex flex-col items-center justify-start p-2 rounded-lg ${bgColor} ${borderColor} border-2 transition-transform hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed w-12`}
                     aria-label={`Seat ${seatLabel} ${isCurrentUser ? '(your seat)' : isOccupied ? `(occupied by ${username})` : '(available)'}`}
                   >
-                    {/* Seat Label (ABOVE icon) */}
-                    <span className="text-[10px] font-bold text-white mb-1">
+                    {/* Seat Label */}
+                    <span className={`text-[10px] font-bold mb-1 ${textColor}`}>
                       {seatLabel}
                     </span>
                     {/* Seat Icon */}
                     <img 
                       src={SeatsIcon} 
                       alt="Seat" 
-                      className="w-6 h-6"
+                      className="w-5 h-5"
                     />
                   </button>
 
                   {/* Username (below icon) */}
                   {username && (
-                    <span className="text-[10px] text-gray-300 mt-1 max-w-12 truncate text-center">
+                    <span className="text-[9px] text-gray-300 mt-1 max-w-12 truncate text-center">
                       {username}
                     </span>
                   )}

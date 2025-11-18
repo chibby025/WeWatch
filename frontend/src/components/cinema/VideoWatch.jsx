@@ -1991,6 +1991,7 @@ export default function VideoWatch() {
         isOpen={showMembersModal}
         onClose={() => setShowMembersModal(false)}
         members={roomMembers}
+        fetchMembers={fetchRoomMembers}
       />
     </div>
   );
