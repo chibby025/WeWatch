@@ -20,7 +20,7 @@ export function useSeatController({
       const col = parseInt(colStr, 10);
       if (!isNaN(row) && !isNaN(col)) {
         const seatInRow = col + 1;
-        seatData = getSeatByPosition(row, seatInRow);
+        seatData = getSeatByPosition(row + 1, seatInRow);
         if (seatData) {
           return {
             ...seatData,
