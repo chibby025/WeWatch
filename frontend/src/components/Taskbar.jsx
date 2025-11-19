@@ -181,6 +181,8 @@ const Taskbar = ({
     );
   };
 
+  console.log('🔍 Taskbar received roomMembers:', roomMembers);
+
   return (
     <>
       <div
