@@ -133,6 +133,20 @@
   100% { opacity: 1; }
 }
 
+/* Add to your global CSS or inline in video element */
+video:-webkit-full-screen {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain;
+  background: black;
+}
+video:fullscreen {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain;
+  background: black;
+}
+
 /* Optional: Hide chat panel in immersive mode */
 .room-container.cinema .chat-panel,
 .room-container.rave .chat-panel {

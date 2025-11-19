@@ -10,6 +10,7 @@ import LeftSidebar from '../ui/LeftSidebar';
 import MembersModal from '../../MembersModal';
 import CinemaSeatGridModal from './ui/CinemaSeatGridModal';
 import CinemaVideoPlayer from '../ui/CinemaVideoPlayer';
+import { useFrame } from '@react-three/fiber';
 // In CinemaScene3DDemo.jsx
 import useLiveKitRoom from "../../../hooks/useLiveKitRoom"; // 3 dots!
 import { Track, ParticipantEvent } from 'livekit-client';
@@ -69,6 +70,10 @@ export default function CinemaScene3DDemo() {
   
   // State for video ref
   const videoRef = useRef(null);
+  const screenMeshRef = useRef(null);
+  const [isImmersiveMode, setIsImmersiveMode] = useState(false);
+ 
+  const [currentTime, setCurrentTime] = useState(0);
   // === VIDEO/PLAYBACK STATE ===
   const [currentMedia, setCurrentMedia] = useState(null);
   // === MEDIA PLAYLIST STATE ===
@@ -81,6 +86,7 @@ export default function CinemaScene3DDemo() {
   // Fallback host detection (for direct URL access)
   const isHostFromMembers = currentUser?.id === roomMembers.find(m => m.user_role === 'host')?.id;
   const isHost = isHostFromState ?? isHostFromMembers;
+  const fullscreenVideoRef = useRef(null);
 
   // ✅ Now you have reliable isHost!
   console.log('🎭 isHost (from RoomPage):', isHost);
@@ -109,6 +115,23 @@ export default function CinemaScene3DDemo() {
     stableTokenRef.current
   );
 
+  // Error management
+  const playIgnoringBenign = (videoEl, context = '') => {
+    if (!videoEl) return;
+    const playPromise = videoEl.play();
+    if (playPromise?.catch) {
+      playPromise.catch(err => {
+        if (
+          err.name !== 'AbortError' &&
+          !err.message.includes('interrupted') &&
+          !err.message.includes('not allowed')
+        ) {
+          console.error(`🎬 [${context}] Play failed:`, err);
+        }
+      });
+    }
+  };
+
   // livekit setup
   const {
     room,
@@ -123,7 +146,32 @@ export default function CinemaScene3DDemo() {
     return () => disconnectLiveKit();
   }, [roomId, currentUser?.id]);
 
-  
+  // Full screen view of cinemascreen
+  const toggleImmersiveMode = () => {
+    setIsImmersiveMode(prev => !prev);
+  };
+
+  // Update keyboard handler
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key.toLowerCase() === 'f') {
+        toggleImmersiveMode();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isImmersiveMode]);
+
+  // Keyboard binding for full screen
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isImmersiveMode) {
+        setIsImmersiveMode(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isImmersiveMode]);
 
   // Fetch media items (same as VideoWatch)
   const fetchAndGeneratePosters = useCallback(async () => {
@@ -146,10 +194,6 @@ export default function CinemaScene3DDemo() {
   useEffect(() => {
     fetchAndGeneratePosters();
   }, [fetchAndGeneratePosters]);
-
-  // Track screen share
-  //const [localScreenTrack, setLocalScreenTrack] = useState(null);
-  //const [remoteScreenTrack, setRemoteScreenTrack] = useState(null);
 
   // ✅ Also fetch session status on mount (like VideoWatch)
   useEffect(() => {
@@ -178,54 +222,93 @@ export default function CinemaScene3DDemo() {
     setRemoteScreenTrack(screenPub?.track || null);
   }, [room]);
 
-  
-  // video sync effect
+  // ✅ Attach media to hidden <video> for 3D screen texture + track currentTime
   useEffect(() => {
     const video = videoRef.current;
-    // 🔍 ADD THIS LOG
-    console.log('🎬 [3D] Video sync effect triggered. currentMedia:', currentMedia); // 🔍
-    if (!video) {
-      console.warn('⚠️ [3D] No video element ref');
-      return;
-    }
+    if (!video) return;
 
+    // Clean up previous stream
     if (video.srcObject) {
       video.srcObject.getTracks().forEach(t => t.stop());
       video.srcObject = null;
     }
+    video.src = '';
 
-    // Screen share
+    // 👇 Set up time update handler BEFORE loading new media
+    const updateTime = () => setCurrentTime(video.currentTime);
+    video.addEventListener('timeupdate', updateTime);
+
     if ((isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && remoteScreenTrack?.mediaStreamTrack)) {
-      console.log('🎬 [3D] Attaching screen share track');
       const track = isHost ? localScreenTrack.mediaStreamTrack : remoteScreenTrack.mediaStreamTrack;
-      video.srcObject = new MediaStream([track]);
+      const stream = new MediaStream([track]);
+      video.srcObject = stream;
       video.muted = isHost;
-      video.play().catch(console.warn);
-    }
-    // Uploaded media
-    else if (currentMedia?.type === 'upload' && currentMedia.mediaUrl) {
-      console.log('📁 [3D] Loading uploaded media:', currentMedia.mediaUrl);
+      video.play().catch(e => console.warn("Play failed (screen share):", e));
+    } else if (currentMedia?.type === 'upload' && currentMedia.mediaUrl) {
       video.src = currentMedia.mediaUrl;
       video.muted = false;
       video.load();
+      video.play().catch(e => console.warn("Play failed (upload):", e));
+    }
 
-      // Force play (will work because muted)
-      video.play().catch(err => console.warn('Play failed (expected if unmuted):', err));
-      // 🔥 Add load/error listeners for debugging
-      const handleLoad = () => console.log('✅ [3D] Video loaded successfully');
-      const handleError = (e) => console.error('❌ [3D] Video load error:', e.target.error);
-      video.addEventListener('loadeddata', handleLoad);
-      video.addEventListener('error', handleError);
-      return () => {
-        video.removeEventListener('loadeddata', handleLoad);
-        video.removeEventListener('error', handleError);
-      };
-    }
-    else {
-      console.log('🎬 [3D] Clearing video');
-      video.src = '';
-    }
+    // 👇 Cleanup: remove listener and stop tracks
+    return () => {
+      video.removeEventListener('timeupdate', updateTime);
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(t => t.stop());
+        video.srcObject = null;
+      }
+    };
   }, [currentMedia, isHost, localScreenTrack, remoteScreenTrack]);
+
+  // Sync full screen with cinema screen
+  useEffect(() => {
+    if (!isImmersiveMode) return;
+
+    const fullscreenVideo = fullscreenVideoRef.current;
+    if (!fullscreenVideo) return;
+
+    // Wait for video to load metadata (so seeking works)
+    const handleLoaded = () => {
+      // Seek to 3D screen's current time
+      if (Math.abs(fullscreenVideo.currentTime - currentTime) > 0.1) {
+        fullscreenVideo.currentTime = currentTime;
+      }
+      // Play/pause to match state
+      if (isPlaying) {
+        fullscreenVideo.play().catch(console.warn);
+      }
+    };
+
+    if (fullscreenVideo.readyState >= 1) {
+      // Already loaded
+      handleLoaded();
+    } else {
+      // Wait for load
+      fullscreenVideo.addEventListener('loadedmetadata', handleLoaded, { once: true });
+      return () => fullscreenVideo.removeEventListener('loadedmetadata', handleLoaded);
+    }
+  }, [isImmersiveMode, currentTime, isPlaying]);
+
+  // Sync the fullscreen with the 3d video in fullscreen play
+  useEffect(() => {
+    if (!isImmersiveMode) return;
+
+    const fullscreenVideo = fullscreenVideoRef.current;
+    if (!fullscreenVideo) return;
+
+    // Sync play/pause state
+    if (isPlaying && fullscreenVideo.paused) {
+      fullscreenVideo.play().catch(console.warn);
+    } else if (!isPlaying && !fullscreenVideo.paused) {
+      fullscreenVideo.pause();
+    }
+
+    // Sync time (if difference is > 200ms)
+    if (Math.abs(fullscreenVideo.currentTime - currentTime) > 0.2) {
+      fullscreenVideo.currentTime = currentTime;
+    }
+  }, [isImmersiveMode, currentTime, isPlaying]);
 
   // === Load chat history ===
   useEffect(() => {
@@ -243,7 +326,19 @@ export default function CinemaScene3DDemo() {
     };
     loadChatHistory();
   }, [roomId, sessionStatus?.id]);
+
   
+  // Auto-assign current user to their seat on mount
+  useEffect(() => {
+    if (currentUser && currentSeatKey && Object.keys(userSeats).length === 0) {
+      // Only set if not already assigned (avoid overriding manual picks)
+      setUserSeats(prev => {
+        if (prev[currentUser.id]) return prev; // already set
+        return { ...prev, [currentUser.id]: currentSeatKey };
+      });
+    }
+  }, [currentUser, currentSeatKey, userSeats]);
+
 
   // === Process WebSocket messages ===
   useEffect(() => {
@@ -406,21 +501,6 @@ export default function CinemaScene3DDemo() {
     setIsMembersModalOpen(true);
   };
 
-  // ✅ Seat selection handler (auto-close)
-  //const handleSeatSelect = (seatId) => {
-   // if (!currentUser || !sendMessage) return;
-  //  const [rowStr, colStr] = seatId.split('-');
-   // const row = parseInt(rowStr);
-   // const col = parseInt(colStr);
-   // sendMessage({
-   //   type: 'take_seat',
-   //   seat_id: seatId,
-   //   row,
-   //   col,
-    //  user_id: currentUser.id
-   // });
-   // setIsSeatControlsOpen(false); // ✅ auto-close
- // };
 
   const handleSeatSelect = (seatId) => {
     if (!currentUser || !sendMessage) return;
@@ -490,7 +570,6 @@ export default function CinemaScene3DDemo() {
       }
     });
   };
-  
 
   return (
     <div className="relative w-full h-screen bg-[#0a0a0a] overflow-hidden">
@@ -518,7 +597,6 @@ export default function CinemaScene3DDemo() {
         debugMode={true}
         lightsOn={lightsOn}
         roomMembers={roomMembers}
-        //debugMode={false}
         onEmoteReceived={() => {}}
         onChatMessageReceived={() => {}}
         onEmoteSend={(emoteData) => {
@@ -581,7 +659,7 @@ export default function CinemaScene3DDemo() {
       {isLeftSidebarOpen && (
         <div 
           className="fixed left-0 top-0 h-full w-80 z-40 bg-gray-900/95 backdrop-blur-md"
-          
+         
         >
           <LeftSidebar
             roomId={roomId}
@@ -905,10 +983,24 @@ export default function CinemaScene3DDemo() {
             user_id: currentUser.id
           });
           setIsSeatGridModalOpen(false);
-          // Optionally close dev panel too:
-          // setIsSeatControlsOpen(false);
         }}
       />
+      {/* ✅ Immersive Fullscreen Video — using shared player */}
+      {isImmersiveMode && (
+        <div className="absolute inset-0 z-50 bg-black" onClick={e => e.stopPropagation()}>
+          <CinemaVideoPlayer
+            ref={fullscreenVideoRef}
+            mediaItem={currentMedia}
+            isHost={isHost}
+            track={remoteScreenTrack}
+            localScreenTrack={localScreenTrack}
+            isPlaying={isPlaying}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onError={handleError}
+          />
+        </div>
+      )}
     </div> // 👈 Only one root element
   );
 }
