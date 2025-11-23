@@ -5,6 +5,7 @@ import UsernameLabel from './UsernameLabel';
 import ChatBubble from './ChatBubble';
 import EmoteAnimation from './EmoteAnimation';
 import CartoonHand from './CartoonHand';
+import { Html } from '@react-three/drei';
 
 /**
  * UserAvatar - 3D avatar for a user in the cinema
@@ -25,8 +26,10 @@ export default function UserAvatar({
   isPremium = false,
   isCurrentUser = false,
   currentEmote = null,
+  userPhotoUrl = null,
   recentMessage = null,
   avatarColor = null, // Optional override
+  isDemo = false, // ✅ Demo flag passed from AvatarManager
 }) {
   const groupRef = useRef();
   const headRef = useRef();
@@ -49,17 +52,17 @@ export default function UserAvatar({
     }, 0);
     
     const hue = Math.abs(hash % 360);
-    const saturation = 65; // Slightly less saturated
-    const lightness = 50;  // Much darker (was 75, now 50)
+    const saturation = 65;
+    const lightness = 50;
     
     return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
   }, [userId, isPremium, avatarColor]);
 
   // Calculate scale based on row (perspective effect)
   const avatarScale = useMemo(() => {
-    const baseScale = 0.1; // Reduced to 0.1 for uniform scaling
-    const scaleDecrement = 0.03; // 3% smaller per row
-    const minScale = 0.08; // Don't get smaller than 8%
+    const baseScale = 0.1;
+    const scaleDecrement = 0.03;
+    const minScale = 0.08;
     
     const scale = Math.max(
       baseScale - (rowNumber - 1) * scaleDecrement,
@@ -81,28 +84,22 @@ export default function UserAvatar({
     // Don't animate if emote is active
     if (currentEmote) return;
 
-    // BREATHING ANIMATION (subtle Y-axis scale)
-    breathingPhaseRef.current += delta * 1.5; // Breathing speed
-    const breathScale = 1 + Math.sin(breathingPhaseRef.current) * 0.02; // ±2%
-    
+    // BREATHING ANIMATION
+    breathingPhaseRef.current += delta * 1.5;
+    const breathScale = 1 + Math.sin(breathingPhaseRef.current) * 0.02;
     if (bodyRef.current) {
       bodyRef.current.scale.y = breathScale;
     }
 
-    // LOOK AROUND ANIMATION (head rotation)
+    // LOOK AROUND ANIMATION
     const now = Date.now();
     if (now > nextLookTimeRef.current) {
-      // Start new look around cycle
       lookAroundPhaseRef.current += delta * 2;
-      
       if (lookAroundPhaseRef.current > Math.PI * 2) {
-        // Finished one look around cycle
         lookAroundPhaseRef.current = 0;
-        nextLookTimeRef.current = now + Math.random() * 10000 + 8000; // Next in 8-18 seconds
+        nextLookTimeRef.current = now + Math.random() * 10000 + 8000;
       }
-      
-      // Rotate head slightly left/right
-      const lookRotation = Math.sin(lookAroundPhaseRef.current) * 0.3; // ±30 degrees
+      const lookRotation = Math.sin(lookAroundPhaseRef.current) * 0.3;
       if (headRef.current) {
         headRef.current.rotation.y = lookRotation;
       }
@@ -116,80 +113,92 @@ export default function UserAvatar({
       rotation={[0, 0, 0]}
       scale={avatarScale}
     >
-      {/* HEAD (Sphere) */}
-      <mesh
-        ref={headRef}
-        position={[0, 0.2, 0]}
-        castShadow
-        receiveShadow
-      >
-        <sphereGeometry args={[0.3, 16, 16]} />
-        <meshStandardMaterial 
-          color={userColor}
-          roughness={0.6}
-          metalness={0.2}
-        />
-      </mesh>
+      {/* HEAD */}
+      {isDemo ? (
+        // 👤 SVG ICON FOR DEMO USERS (uses userPhotoUrl prop)
+        <Html position={[0, 0.2, 0]} center>
+          <img 
+            src={userPhotoUrl || '/icons/user1avatar.svg'} 
+            alt="User"
+            style={{
+              width: '40px',
+              height: '40px',
+              minWidth: '40px',   // 👈 Forces minimum width
+              minHeight: '40px', // 👈 Forces minimum height
+              borderRadius: '50%',
+              filter: 'brightness(0.8)',
+              pointerEvents: 'none',
+              display: 'block'
+            }}
+          />
+        </Html>
+      ) : (
+        // 🎭 3D HEAD FOR REAL USERS
+        <mesh ref={headRef} position={[0, 0.2, 0]} castShadow receiveShadow>
+          <sphereGeometry args={[0.3, 16, 16]} />
+          <meshStandardMaterial color={userColor} roughness={0.6} metalness={0.2} />
+        </mesh>
+      )}
 
-      {/* BODY (Cylinder) */}
-      <mesh
-        ref={bodyRef}
-        position={[0, -0.3, 0]}
-        castShadow
-        receiveShadow
-      >
-        <cylinderGeometry args={[0.2, 0.25, 0.6, 16]} />
-        <meshStandardMaterial 
-          color={userColor}
-          roughness={0.7}
-          metalness={0.1}
-        />
-      </mesh>
+      {/* BODY (only for real users) */}
+      {!isDemo && (
+        <mesh
+          ref={bodyRef}
+          position={[0, -0.3, 0]}
+          castShadow
+          receiveShadow
+        >
+          <cylinderGeometry args={[0.2, 0.25, 0.6, 16]} />
+          <meshStandardMaterial 
+            color={userColor}
+            roughness={0.7}
+            metalness={0.1}
+          />
+        </mesh>
+      )}
 
-      {/* LEFT HAND - Floating cartoon glove */}
-      <CartoonHand
-        ref={leftArmRef}
-        position={[-0.45, -0.1, 0]}
-        rotation={[0, 0, 0]}
-        userColor={userColor}
-        isLeft={true}
-        scale={avatarScale}
-      />
+      {/* HANDS (only for real users) */}
+      {!isDemo && (
+        <>
+          <CartoonHand
+            ref={leftArmRef}
+            position={[-0.45, -0.1, 0]}
+            rotation={[0, 0, 0]}
+            userColor={userColor}
+            isLeft={true}
+            scale={avatarScale}
+          />
+          <CartoonHand
+            ref={rightArmRef}
+            position={[0.45, -0.1, 0]}
+            rotation={[0, 0, 0]}
+            userColor={userColor}
+            isLeft={false}
+            scale={avatarScale}
+          />
+        </>
+      )}
 
-      {/* RIGHT HAND - Floating cartoon glove */}
-      <CartoonHand
-        ref={rightArmRef}
-        position={[0.45, -0.1, 0]}
-        rotation={[0, 0, 0]}
-        userColor={userColor}
-        isLeft={false}
-        scale={avatarScale}
-      />
-
-      {/* USERNAME LABEL (floating above head) */}
+      {/* USERNAME LABEL */}
       <UsernameLabel 
         username={username}
-        color={userColor}
-        position={[0, 0.7, 0]}
+        color={isDemo ? '#ffffff' : userColor}
+        position={[0, isDemo ? 0.6 : 0.7, 0]}
         isPremium={isPremium}
         isCurrentUser={isCurrentUser}
       />
 
-      {/* CHAT BUBBLE (if recent message) */}
-      {recentMessage && (
+      {/* CHAT & EMOTES (only for real users) */}
+      {!isDemo && recentMessage && (
         <ChatBubble
           message={recentMessage.text}
           color={userColor}
           position={[0, 1.1, 0]}
-          duration={5000} // 5 seconds
-          onComplete={() => {
-            // Message expired - handled by parent
-          }}
+          duration={5000}
+          onComplete={() => {}}
         />
       )}
-
-      {/* EMOTE ANIMATION (if active) */}
-      {currentEmote && (
+      {!isDemo && currentEmote && (
         <EmoteAnimation
           emote={currentEmote}
           headRef={headRef}

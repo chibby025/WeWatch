@@ -17,6 +17,7 @@ import { Track, ParticipantEvent } from 'livekit-client';
 import { getTemporaryMediaItemsForRoom } from '../../../services/api';
 import { useSeatController } from './useSeatController';
 import { useLocation } from 'react-router-dom';
+import { assignUserToSeat } from './seatCalculator';
 
 export default function CinemaScene3DDemo() {
   const { roomId } = useParams();
@@ -29,6 +30,7 @@ export default function CinemaScene3DDemo() {
   const finalSessionId = sessionIdFromState || sessionIdFromUrl;
   const { currentUser, wsToken, loading: authLoading } = useAuth();
   const stableTokenRef = useRef(null);
+  const [showSeatMarkers, setShowSeatMarkers] = useState(false);
   // === State ===
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [sessionChatMessages, setSessionChatMessages] = useState([]);
@@ -42,7 +44,6 @@ export default function CinemaScene3DDemo() {
   const [userSeats, setUserSeats] = useState({});
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isHostBroadcasting, setIsHostBroadcasting] = useState(false);
-  const [isSeatControlsOpen, setIsSeatControlsOpen] = useState(false); // ✅ Renamed
   const chatEndRef = useRef(null);
   const processedMessageCountRef = useRef(0);
   const [isViewLocked, setIsViewLocked] = useState(true);   // ✅ ADD THIS
@@ -51,7 +52,8 @@ export default function CinemaScene3DDemo() {
   //const currentUserSeatId = currentUser?.id ? userSeats[currentUser.id] : null;
   const { currentSeat, jumpToSeat, currentSeatKey } = useSeatController({
     currentUser,
-    initialSeatId: currentUser ? `${Math.floor((currentUser.id % 42) / 7)}-${(currentUser.id % 42) % 7}` : '0-0',
+    //initialSeatId: currentUser ? `${Math.floor((currentUser.id % 42) / 7)}-${(currentUser.id % 42) % 7}` : '0-0',
+    initialSeatId: null, // ← let it be null
     onSeatChange: (seatKey, seatData) => {
       // Optional: send to server
       if (sendMessage && currentUser) {
@@ -67,9 +69,10 @@ export default function CinemaScene3DDemo() {
     }
   });
 
-  
+  const [showDemoAvatars, setShowDemoAvatars] = useState(true);
   // State for video ref
   const videoRef = useRef(null);
+  const videoInitializedRef = useRef(false);
   const screenMeshRef = useRef(null);
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
  
@@ -87,9 +90,12 @@ export default function CinemaScene3DDemo() {
   const isHostFromMembers = currentUser?.id === roomMembers.find(m => m.user_role === 'host')?.id;
   const isHost = isHostFromState ?? isHostFromMembers;
   const fullscreenVideoRef = useRef(null);
+  const [showPositionDebug, setShowPositionDebug] = useState(false);
+  // Add this ref to store the update function
+  const videoTextureUpdateRef = useRef(null);
 
   // ✅ Now you have reliable isHost!
-  console.log('🎭 isHost (from RoomPage):', isHost);
+  //console.log('🎭 isHost (from RoomPage):', isHost);
   const handleError = useCallback((err) => {
     if (!currentMedia) return;
     // Ignore benign errors
@@ -146,10 +152,77 @@ export default function CinemaScene3DDemo() {
     return () => disconnectLiveKit();
   }, [roomId, currentUser?.id]);
 
+  // Preload current media
+  useEffect(() => {
+    if (currentMedia?.mediaUrl) {
+      const video = document.createElement('video');
+      video.src = currentMedia.mediaUrl;
+      video.preload = 'auto';
+      video.muted = true;
+      video.playsInline = true;
+      video.crossOrigin = 'anonymous';
+      video.load();
+    }
+  }, [currentMedia?.mediaUrl]);
+
   // Full screen view of cinemascreen
   const toggleImmersiveMode = () => {
     setIsImmersiveMode(prev => !prev);
   };
+
+  // Timed view guidance overlay
+  const [viewGuidanceMode, setViewGuidanceMode] = useState(null);
+  const [viewGuidanceExpiresAt, setViewGuidanceExpiresAt] = useState(0);
+
+  // Show initial guidance on seat assignment
+  useEffect(() => {
+    if (currentSeat) {
+      setViewGuidanceMode('initial');
+      setViewGuidanceExpiresAt(Date.now() + 300_000);
+    }
+  }, [currentSeat]);
+
+  // Handle C/R/L/F keys
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const key = e.key.toLowerCase();
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (Date.now() >= viewGuidanceExpiresAt) return;
+
+      if (key === 'c' || key === 'r') {
+        setViewGuidanceMode('post-key');
+        setViewGuidanceExpiresAt(Date.now() + 300_000);
+      } else if (key === 'l' || key === 'f') {
+        setViewGuidanceExpiresAt(Date.now() + 300_000);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [viewGuidanceExpiresAt]);
+
+  // Auto-hide expired guidance
+  useEffect(() => {
+    if (viewGuidanceExpiresAt === 0) return;
+    const checkTimer = () => {
+      if (Date.now() >= viewGuidanceExpiresAt) {
+        setViewGuidanceMode(null);
+        setViewGuidanceExpiresAt(0);
+      }
+    };
+    const interval = setInterval(checkTimer, 1000);
+    checkTimer();
+    return () => clearInterval(interval);
+  }, [viewGuidanceExpiresAt]);
+
+  // Auto assign user seat on mount
+  useEffect(() => {
+    if (currentUser && !currentSeatKey) {
+      const assignedSeat = assignUserToSeat(currentUser.id);
+      const seatKey = `${assignedSeat.row - 1}-${assignedSeat.seatInRow - 1}`; // 0-based
+      jumpToSeat(seatKey);
+    }
+  }, [currentUser, currentSeatKey, jumpToSeat]);
 
   // Update keyboard handler
   useEffect(() => {
@@ -202,6 +275,37 @@ export default function CinemaScene3DDemo() {
       // But WebSocket will sync state anyway
     }
   }, [roomId, sessionIdFromUrl]);
+  // logging
+  useEffect(() => {
+    console.log('🎭 roomMembers:', roomMembers);
+    //console.log('🤖 Demo users:', roomMembers.filter(u => u.is_demo));
+  }, [roomMembers]);
+
+  // 👇 Change to 0-based row numbers (row 2 = 3rd row, row 3 = 4th row)
+useEffect(() => {
+  if (!showDemoAvatars) return;
+
+  const demoUsers = [];
+  // Rows 3-4 in UI = rows 2-3 in 0-based indexing
+  for (let row = 2; row <= 3; row++) {
+    for (let col = 0; col < 7; col++) { // 7 seats per row (not 8)
+      demoUsers.push({
+        id: `demo-${row}-${col}`,
+        username: `Guest ${row + 1}-${col + 1}`, // Display as 3-1, 3-2, etc.
+        user_role: 'viewer',
+        is_demo: true,
+        avatar_url: '/icons/user1avatar.svg' // ✅ Your black icon
+      });
+    }
+  }
+
+  setRoomMembers(prev => {
+    const existingIds = new Set(prev.map(u => u.id));
+    const newUsers = demoUsers.filter(u => !existingIds.has(u.id));
+    return [...prev, ...newUsers];
+  });
+
+}, [showDemoAvatars]);
 
   // Local track
   useEffect(() => {
@@ -222,6 +326,8 @@ export default function CinemaScene3DDemo() {
     setRemoteScreenTrack(screenPub?.track || null);
   }, [room]);
 
+  
+
   // ✅ Attach media to hidden <video> for 3D screen texture + track currentTime
   useEffect(() => {
     const video = videoRef.current;
@@ -234,21 +340,41 @@ export default function CinemaScene3DDemo() {
     }
     video.src = '';
 
-    // 👇 Set up time update handler BEFORE loading new media
-    const updateTime = () => setCurrentTime(video.currentTime);
-    video.addEventListener('timeupdate', updateTime);
+    // Clean up ONLY if source type is changing (upload ↔ screen)
+    const isScreenMode = (isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && remoteScreenTrack?.mediaStreamTrack);
+    const isUploadMode = currentMedia?.type === 'upload' && currentMedia.mediaUrl;
 
-    if ((isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && remoteScreenTrack?.mediaStreamTrack)) {
+    // Pause current playback to avoid race
+    video.pause();
+
+    if (isScreenMode) {
       const track = isHost ? localScreenTrack.mediaStreamTrack : remoteScreenTrack.mediaStreamTrack;
       const stream = new MediaStream([track]);
-      video.srcObject = stream;
-      video.muted = isHost;
-      video.play().catch(e => console.warn("Play failed (screen share):", e));
-    } else if (currentMedia?.type === 'upload' && currentMedia.mediaUrl) {
-      video.src = currentMedia.mediaUrl;
-      video.muted = false;
-      video.load();
-      video.play().catch(e => console.warn("Play failed (upload):", e));
+      // Only reassign if stream actually changed
+      if (video.srcObject !== stream) {
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(t => t.stop());
+        }
+        video.srcObject = stream;
+        video.muted = isHost;
+        video.play().catch(e => console.warn("Play failed (screen share):", e));
+      }
+    } else if (isUploadMode) {
+      const newUrl = currentMedia.mediaUrl;
+      if (video.src !== newUrl) {
+        video.srcObject = null; // Clear stream if any
+        video.src = newUrl;
+        video.muted = false;
+        video.load();
+        video.play().catch(e => console.warn("Play failed (upload):", e));
+      }
+    } else {
+      // No media: clear safely
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(t => t.stop());
+        video.srcObject = null;
+      }
+      video.src = '';
     }
 
     // 👇 Cleanup: remove listener and stop tracks
@@ -289,6 +415,38 @@ export default function CinemaScene3DDemo() {
       return () => fullscreenVideo.removeEventListener('loadedmetadata', handleLoaded);
     }
   }, [isImmersiveMode, currentTime, isPlaying]);
+
+  useEffect(() => {
+    if (videoInitializedRef.current) return;
+
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.playsInline = true;
+    video.muted = false;
+    video.style.cssText = 'position: absolute; width: 1px; height: 1px; opacity: 0;';
+    document.body.appendChild(video);
+    videoRef.current = video;
+    videoInitializedRef.current = true;
+
+    // ✅ ADD: timeupdate for 3D sync
+    const updateTime = () => {
+      setCurrentTime(video.currentTime);
+      // Notify 3D screen to update texture
+      if (videoTextureUpdateRef.current) {
+        videoTextureUpdateRef.current();
+      }
+    };
+    video.addEventListener('timeupdate', updateTime);
+
+    return () => {
+      video.removeEventListener('timeupdate', updateTime);
+      if (videoRef.current) {
+        document.body.removeChild(videoRef.current);
+        videoRef.current = null;
+      }
+      videoInitializedRef.current = false;
+    };
+  }, []);
 
   // Sync the fullscreen with the 3d video in fullscreen play
   useEffect(() => {
@@ -415,7 +573,6 @@ export default function CinemaScene3DDemo() {
           break;
         case 'session_status':
           if (Array.isArray(msg.data.members)) {
-            // 🔥 DEDUPLICATE by user ID
             const memberMap = new Map();
             msg.data.members.forEach(m => {
               const id = m.user_id || m.id;
@@ -428,8 +585,12 @@ export default function CinemaScene3DDemo() {
               }
             });
             const deduplicated = Array.from(memberMap.values());
-            console.log('✅ Deduplicated roomMembers:', deduplicated);
-            setRoomMembers(deduplicated);
+            
+            // ✅ Preserve existing demo users
+            setRoomMembers(prev => {
+              const demoUsers = prev.filter(u => u.is_demo);
+              return [...deduplicated, ...demoUsers];
+            });
           }
           break;
         case 'user_audio_state':
@@ -520,8 +681,17 @@ export default function CinemaScene3DDemo() {
       user_id: currentUser.id
     });
     setIsSeatGridModalOpen(false);
-    setIsSeatControlsOpen(false);
+    //setIsSeatControlsOpen(false);
   };
+
+  // Convert remoteParticipants array to Map for O(1) lookup
+  const remoteParticipantsMap = React.useMemo(() => {
+    const map = new Map();
+    remoteParticipants.forEach(participant => {
+      map.set(participant.identity, participant);
+    });
+    return map;
+  }, [remoteParticipants]);
 
   // === Render ===
   if (authLoading) {
@@ -573,30 +743,23 @@ export default function CinemaScene3DDemo() {
 
   return (
     <div className="relative w-full h-screen bg-[#0a0a0a] overflow-hidden">
-      {/* Hidden video player (same as VideoWatch) */}
-      {/* 🔥 Hidden <video> for 3D screen texture */}
-      <video
-        ref={videoRef}
-        className="absolute -z-10 opacity-0"
-        style={{ width: 1, height: 1 }}
-        crossOrigin="anonymous"
-        autoPlay
-        playsInline
-        muted
-        onError={handleError}
-      />
-      {console.log('🎥 [3D] Passing videoElement to CinemaScene3D:', videoRef.current)}
-
       {/* 3D Scene */}
       <CinemaScene3D
         useGLBModel="improved"
         authenticatedUserID={currentUser?.id}
         videoElement={videoRef.current}
+        onVideoTextureUpdate={(fn) => {
+          videoTextureUpdateRef.current = fn;
+        }}
         isViewLocked={isViewLocked}
-        currentUserSeat={currentSeat} 
+        hideLabelsForLocalViewer={isImmersiveMode}
+        currentUserSeat={currentSeat}
+        showSeatMarkers={showSeatMarkers}
+        showPositionDebug={showPositionDebug} 
         debugMode={true}
         lightsOn={lightsOn}
         roomMembers={roomMembers}
+        remoteParticipants={remoteParticipantsMap}
         onEmoteReceived={() => {}}
         onChatMessageReceived={() => {}}
         onEmoteSend={(emoteData) => {
@@ -613,12 +776,27 @@ export default function CinemaScene3DDemo() {
           }
         }}
       />
-      {console.log('🎬 Final roomMembers passed to Taskbar:', roomMembers)}
+      {/* {console.log('🎬 Final roomMembers passed to Taskbar:', roomMembers)} */}
       {/* Taskbar */}
       <Taskbar
         authenticatedUserID={currentUser?.id}
         isAudioActive={isAudioActive}
+        isLeftSidebarOpen={isLeftSidebarOpen}
+        onToggleLeftSidebar={() => setIsLeftSidebarOpen(prev => !prev)}
         toggleAudio={toggleAudio}
+        isMediaPlaying={isPlaying || isImmersiveMode}
+        showSeatMarkers={showSeatMarkers}
+        onToggleSeatMarkers={setShowSeatMarkers}
+        // ✅ NEW: pass view & seat state + handlers
+        currentUser={currentUser}
+        userSeats={userSeats}
+        handleSeatSelect={handleSeatSelect}
+        isViewLocked={isViewLocked}
+        setIsViewLocked={setIsViewLocked}
+        lightsOn={lightsOn}
+        setLightsOn={setLightsOn}
+        showPositionDebug={showPositionDebug}
+        onTogglePositionDebug={setShowPositionDebug}
         isHost={isHost}
         isSeatedMode={isSeatedMode}
         roomMembers={roomMembers} // ✅ pass full list
@@ -627,12 +805,10 @@ export default function CinemaScene3DDemo() {
         onMembersClick={openMembers}
         onShareRoom={() => alert('Share room')}
         onSeatsClick={() => {
-          setIsSeatControlsOpen(prev => !prev);
+          //setIsSeatControlsOpen(prev => !prev);
           setIsSeatGridModalOpen(prev => !prev);
         }}
         seats={[]}
-        userSeats={userSeats}
-        currentUser={currentUser}
         isCameraOn={isCameraOn}
         toggleCamera={() => {}}
         onLeaveCall={handleLeaveCall}
@@ -650,9 +826,9 @@ export default function CinemaScene3DDemo() {
           }
         }}
         showEmotes={true}
-        onToggleLeftSidebar={() => setIsLeftSidebarOpen(prev => !prev)}
         showSeatModeToggle={false}
         showVideoToggle={false}
+        
       />
 
       {/* Left Sidebar */}
@@ -804,152 +980,6 @@ export default function CinemaScene3DDemo() {
         </div>
       )}
 
-      {/* Seat Controls Panel */}
-      {isSeatControlsOpen && (
-        <div className="absolute top-12 right-4 bg-black bg-opacity-90 text-white p-4 rounded-lg text-sm max-w-xs max-h-[80vh] overflow-y-auto z-10">
-          <div className="flex justify-between items-center mb-3">
-            <h3 className="font-bold text-yellow-400">🪑 Seat Controls</h3>
-            <button
-              onClick={() => setIsSeatControlsOpen(false)}
-              className="text-gray-400 hover:text-white text-lg"
-              aria-label="Close seat controls"
-            >
-              ×
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {/* Seat selector */}
-            <div>
-              <label className="text-xs text-gray-300 block mb-1">Go to Seat (1–42):</label>
-              <div className="flex gap-2">
-                <input 
-                  type="number" 
-                  min="1" 
-                  max="42" 
-                  value={currentUser?.id ? userSeats[currentUser.id]?.split('-')?.[1] || 1 : 1}
-                  onChange={(e) => {
-                    const seatId = parseInt(e.target.value) || 1;
-                    const row = Math.floor((seatId - 1) / 7);
-                    const col = (seatId - 1) % 7;
-                    handleSeatSelect(`${row}-${col}`);
-                  }}
-                  className="bg-gray-800 text-white px-2 py-1 rounded w-16 text-xs"
-                />
-                <button
-                  onClick={() => {
-                    const randomSeat = Math.floor(Math.random() * 42) + 1;
-                    const row = Math.floor((randomSeat - 1) / 7);
-                    const col = (randomSeat - 1) % 7;
-                    handleSeatSelect(`${row}-${col}`);
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-xs"
-                >
-                  Random
-                </button>
-              </div>
-            </div>
-
-            {/* Quick seat buttons */}
-            <div>
-              <div className="text-xs text-gray-300 mb-1">Quick Jump:</div>
-              <div className="grid grid-cols-3 gap-1">
-                {[
-                  { id: '0-0', label: 'Front-L', color: 'gray' },
-                  { id: '0-3', label: 'Front-M', color: 'gray' },
-                  { id: '0-6', label: 'Front-R', color: 'gray' },
-                  { id: '2-0', label: 'Mid-L ⭐', color: 'yellow' },
-                  { id: '2-3', label: 'Mid-M ⭐', color: 'yellow' },
-                  { id: '2-6', label: 'Mid-R ⭐', color: 'yellow' },
-                  { id: '5-0', label: 'Back-L', color: 'gray' },
-                  { id: '5-3', label: 'Back-M', color: 'gray' },
-                  { id: '5-6', label: 'Back-R', color: 'gray' },
-                ].map((seat) => (
-                  <button
-                    key={seat.id}
-                    onClick={() => handleSeatSelect(seat.id)}
-                    className={`px-2 py-1 rounded text-[10px] ${
-                      seat.color === 'yellow'
-                        ? 'bg-yellow-700 hover:bg-yellow-600 text-white'
-                        : 'bg-gray-700 hover:bg-gray-600 text-white'
-                    }`}
-                  >
-                    {seat.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="border-t border-gray-700 pt-2 mt-2 text-[10px] text-gray-400">
-              <p>⭐ = Premium middle seats</p>
-              <p className="mt-1">Markers show avatar positions</p>
-            </div>
-          </div>
-
-          {/* VIEW CONTROLS SECTION */}
-          <div className="mt-4 pt-3 border-t border-gray-700 space-y-3">
-            <h3 className="font-bold text-blue-400">🎮 View Controls</h3>
-            
-            <button
-              onClick={() => setIsViewLocked(!isViewLocked)}
-              className={`w-full px-4 py-2 rounded font-medium transition-colors ${
-                isViewLocked 
-                  ? 'bg-red-600 hover:bg-red-700' 
-                  : 'bg-green-600 hover:bg-green-700'
-              }`}
-            >
-              {isViewLocked ? '🔒 View Locked' : '🔓 View Unlocked'}
-            </button>
-
-            <button
-              onClick={() => setLightsOn(!lightsOn)}
-              className={`w-full px-4 py-2 rounded font-medium transition-colors ${
-                lightsOn 
-                  ? 'bg-yellow-600 hover:bg-yellow-700' 
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-            >
-              {lightsOn ? '💡 Lights On' : '🌑 Lights Off'}
-            </button>
-
-            <div className="border-t border-gray-700 pt-2 mt-2 text-[10px] text-gray-400">
-              <p className="font-bold text-white mb-1">🎭 Avatar System:</p>
-              <p>• {roomMembers.length} users in cinema</p>
-              <p>• Rayman-style floating hands</p>
-              <p>• White gloves with colored glow</p>
-              <p>• Breathing & look-around animations</p>
-              <p className="mt-1 text-yellow-400">Try switching seats to see avatars!</p>
-            </div>
-
-            <div className="border-t border-gray-700 pt-2 mt-2 text-[10px] text-gray-400">
-              <p className="font-bold text-white mb-1">😊 Emote Controls:</p>
-              <p>• Press 1: 👋 Wave</p>
-              <p>• Press 2: 👏 Clap</p>
-              <p>• Press 3: 👍 Thumbs Up</p>
-              <p>• Press 4: 😂 Laugh</p>
-              <p>• Press 5: ❤️ Heart</p>
-              <p className="mt-1 text-yellow-400">Test emotes with keyboard!</p>
-            </div>
-
-            <div className="border-t border-gray-700 pt-2 mt-2 text-[10px] text-gray-400">
-              <p className="font-bold text-white mb-1">🔒 Locked Mode (Seated):</p>
-              <p>• WASD / Arrow Keys: Look around</p>
-              <p>• Mouse drag: Also look around</p>
-              <p>• L: Look left (default view)</p>
-              <p>• C: Look at screen (center)</p>
-              <p>• R: Look right (mirrored view)</p>
-              <p>• Position locked to seat</p>
-              
-              <p className="font-bold text-white mt-2 mb-1">🔓 Unlocked Mode (Free Roam):</p>
-              <p>• WASD: Move forward/back/left/right</p>
-              <p>• Q/E: Move up/down</p>
-              <p>• Arrow Keys: Pan view direction</p>
-              <p>• 1-6: Snap to axis views</p>
-              <p className="text-[9px] text-gray-500 mt-1">(1=Front, 2=Back, 3=Left, 4=Right, 5=Top, 6=Bottom)</p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Members Modal */}
       {isMembersModalOpen && (
@@ -998,7 +1028,25 @@ export default function CinemaScene3DDemo() {
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
             onError={handleError}
+            muted={true}
           />
+        </div>
+      )}
+      {/* Timed View Guidance Overlay */}
+      {viewGuidanceMode && Date.now() < viewGuidanceExpiresAt && !isImmersiveMode && (
+        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-black/60 text-white px-4 py-2 rounded text-sm z-50">
+          {(() => {
+            const isMediaPlaying = currentMedia && isPlaying;
+            if (viewGuidanceMode === 'initial') {
+              return isMediaPlaying
+                ? 'C – Look at screen • R – Look right • F – Fullscreen'
+                : 'C – Look at screen • R – Look right';
+            } else {
+              return isMediaPlaying
+                ? 'L – Look left • R – Look right • F – Fullscreen'
+                : 'L – Look left • R – Look right';
+            }
+          })()}
         </div>
       )}
     </div> // 👈 Only one root element

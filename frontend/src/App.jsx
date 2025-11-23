@@ -7,126 +7,77 @@ import './index.css';
 import Home from './pages/Home';
 import Login from './components/Login';
 import Register from './components/Register';
-import ProtectedRoute from './components/ProtectedRoute'; // Import ProtectedRoute
+import ProtectedRoute from './components/ProtectedRoute';
 import CreateRoomPage  from './components/CreateRoomPage';
 import RoomsListPage from './components/RoomsListPage';
 import RoomPage from './components/RoomPage';
 import LobbyPage from './components/LobbyPage';
 import VideoWatch from './components/cinema/VideoWatch';
 import CinemaScene3DDemo from './components/cinema/3d-cinema/CinemaScene3DDemo';
+import ErrorBoundary from './components/ErrorBoundary';
+// ✅ ALL AVATAR DEMO IMPORTS COMMENTED/REMOVED
+/*
 import AvatarImageDemo from './components/cinema/3d-cinema/AvatarImageDemo';
 import AvatarStyleComparison from './components/cinema/3d-cinema/AvatarStyleComparison';
 import ImprovedAvatarDemo from './components/cinema/3d-cinema/ImprovedAvatarDemo';
 import GLBAvatarTest from './components/cinema/3d-cinema/GLBAvatarTest';
-import ErrorBoundary from './components/ErrorBoundary';
+*/
 
 function App() {
   return (
     <Router>
       <div className="min-h-screen bg-gray-50">
         <Routes>
-          {/* Wrap the home route with ProtectedRoute */}
-          <Route path="/" element={
-            <ProtectedRoute>
-              <Home />
-            </ProtectedRoute>
-          } />
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-          {/* Add more routes later, wrapping protected ones with ProtectedRoute */}
-          {/* Wrap room-related routes with ProtectedRoute if they require auth */}
-
-          {/* --- Protected Routes --- */}
+          
+          {/* Protected routes */}
+          <Route path="/" element={
+            <ProtectedRoute><Home /></ProtectedRoute>
+          } />
           
           <Route path="/lobby" element={
-            <ProtectedRoute>
-              <LobbyPage />
-            </ProtectedRoute>
+            <ProtectedRoute><LobbyPage /></ProtectedRoute>
           } />          
 
-
           <Route path="/rooms" element={
-            <ProtectedRoute>
-              <RoomsListPage />
-            </ProtectedRoute>
+            <ProtectedRoute><RoomsListPage /></ProtectedRoute>
           } />
 
-          {/* Create Room Page - Form to create a new room */}
           <Route path="/rooms/create" element={
-            <ProtectedRoute>
-              <CreateRoomPage />
-            </ProtectedRoute>
+            <ProtectedRoute><CreateRoomPage /></ProtectedRoute>
           } />
-          {/* Room Page - Detail view for a specific room */}
+
           <Route path="/rooms/:id" element={
             <ErrorBoundary>
-              <ProtectedRoute>
-                <RoomPage />
-              </ProtectedRoute>
+              <ProtectedRoute><RoomPage /></ProtectedRoute>
             </ErrorBoundary>
           } />
-          {/* VideoWatch - Plays non 3d cinema */}
-          <Route 
-            path="/watch/:roomId" 
-            element={
-              <ProtectedRoute>
-                <VideoWatch />
-              </ProtectedRoute>
-            } 
-          />
 
-          {/* 3D Cinema Demo - Test the 3D cinema experience */}
-          <Route 
-            path="/cinema-3d-demo/:roomId"  
-            element={
-              <ProtectedRoute>
-                <CinemaScene3DDemo />
-              </ProtectedRoute>
-            } 
-          />
+          <Route path="/watch/:roomId" element={
+            <ProtectedRoute><VideoWatch /></ProtectedRoute>
+          } />
 
-          {/* Avatar Image Demo - Test custom avatar images */}
-          {/* <Route 
-            path="/avatar-image-demo" 
-            element={
-              <ProtectedRoute>
-                <AvatarImageDemo />
-              </ProtectedRoute>
-            } 
-          /> */}
+          <Route path="/cinema-3d-demo/:roomId" element={
+            <ProtectedRoute><CinemaScene3DDemo /></ProtectedRoute>
+          } />
 
-          {/* Avatar Style Comparison - Compare different avatar designs */}
-          {/* <Route 
-            path="/avatar-style-comparison" 
-            element={
-              <ProtectedRoute>
-                <AvatarStyleComparison />
-              </ProtectedRoute>
-            } 
-          /> */}
-
-          {/* Improved Avatar Demo - Showcase the chosen avatar design */}
-          <Route 
-            path="/improved-avatar-demo" 
-            element={
-              <ProtectedRoute>
-                <ImprovedAvatarDemo />
-              </ProtectedRoute>
-            } 
-          />
-
-          {/* GLB Avatar Test - Analyze the user_3d_icon.glb model */}
-          {/* <Route 
-            path="/glb-avatar-test" 
-            element={
-              <ProtectedRoute>
-                <GLBAvatarTest />
-              </ProtectedRoute>
-            } 
-          /> */}
-
-          {/* Add more routes later, wrapping protected ones with ProtectedRoute */}
+          {/* ✅ ALL DEMO ROUTES COMMENTED OUT */}
+          {/*
+          <Route path="/avatar-image-demo" element={
+            <ProtectedRoute><AvatarImageDemo /></ProtectedRoute>
+          } />
+          <Route path="/avatar-style-comparison" element={
+            <ProtectedRoute><AvatarStyleComparison /></ProtectedRoute>
+          } />
+          <Route path="/improved-avatar-demo" element={
+            <ProtectedRoute><ImprovedAvatarDemo /></ProtectedRoute>
+          } />
+          <Route path="/glb-avatar-test" element={
+            <ProtectedRoute><GLBAvatarTest /></ProtectedRoute>
+          } />
+          */}
 
         </Routes>
       </div>

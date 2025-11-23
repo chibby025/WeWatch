@@ -1,8 +1,5 @@
 // frontend/src/components/Taskbar.jsx
-import React, { useState, useEffect } from 'react';
-import MiniSeatGrid from './cinema/ui/MiniSeatGrid';
-import { useNavigate } from 'react-router-dom';
-import { apiClient } from '../services/api';
+import React, { useState, useEffect, useRef } from 'react';
 import SettingsModal from './cinema/ui/SettingsModal';
 import EmotePicker from './cinema/ui/EmotePicker';
 
@@ -13,11 +10,48 @@ const SeatsIcon = '/icons/SeatsIcon.svg';
 const AudioIcon = '/icons/AudioIcon.svg';
 const VideoIcon = '/icons/VideoIcon.svg';
 const MembersIcon = '/icons/MembersIcon.svg';
-const ShareIcon = '/icons/ShareIcon.svg';
 const SeatToggleIcon = '/icons/SeatToggleIcon.svg';
 const SettingsIcon = '/icons/settingsIcon.svg';
-const EmotesIcon = '😊'; // Emoji as icon for emotes
-const ProgramMenuIcon = '/icons/mediaScheduleIcon.svg'; // 🗂️ NEW: Menu icon
+const EmotesIcon = '😊';
+const ProgramMenuIcon = '/icons/mediaScheduleIcon.svg';
+
+// ✅ Extracted and memoized — won't reset hover on parent re-renders
+const TaskbarButton = React.memo(({ icon, label, onClick, showCancelIndicator = false, isEmoji = false }) => {
+  const [isHovered, setIsHovered] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        className={`flex flex-col items-center justify-center text-white text-sm font-medium bg-transparent border-none p-2 rounded-md transition-colors duration-200 ${isHovered ? 'bg-white/10' : ''}`}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        onClick={onClick}
+        aria-label={label}
+      >
+        <div className="relative h-6 w-6 flex items-center justify-center">
+          {isEmoji ? (
+            <span className="text-2xl">{icon}</span>
+          ) : (
+            <img src={icon} alt={label} className="h-6 w-6" />
+          )}
+          {showCancelIndicator && (
+            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center">
+              <span className="text-[8px] text-white font-bold">×</span>
+            </div>
+          )}
+        </div>
+        <span className="text-xs mt-1 whitespace-normal text-center w-full px-1">
+          {label === "Toggle Seat Mode" ? (
+            <>
+              Toggle
+              <br />
+              Seat Mode
+            </>
+          ) : label}
+        </span>
+      </button>
+    </div>
+  );
+});
 
 const Taskbar = ({
   authenticatedUserID,
@@ -28,13 +62,22 @@ const Taskbar = ({
   toggleSeatedMode,
   openChat,
   onMembersClick,
+  showPositionDebug,
+  onTogglePositionDebug,
   onShareRoom,
   onSeatsClick,
-  seats,
   userSeats,
   currentUser,
-  isCameraOn,       
+  roomMembers,
+  handleSeatSelect,
+  isViewLocked,
+  setIsViewLocked,
+  lightsOn,
+  setLightsOn,
+  isCameraOn,
   toggleCamera,
+  showSeatMarkers,
+  onToggleSeatMarkers,
   isHostBroadcasting,
   onHostBroadcastToggle,
   onLeaveCall,
@@ -44,20 +87,21 @@ const Taskbar = ({
   availableCameras = [],
   selectedCameraId,
   onCameraSwitch,
-  roomMembers = [],
+  isLeftSidebarOpen,
   onEmoteSend,
-  showProgram = true, // control visibility of menu icon
-  showEmotes = true, // 👈 NEW: controls visibility of Emotes button
-  showSeatModeToggle = true,   // 👈 NEW
-  showVideoToggle = true,   // 👈 NEW
+  showProgram = true,
+  showEmotes = true,
+  showSeatModeToggle = true,
+  showVideoToggle = true,
   onToggleLeftSidebar,
 }) => {
   const [isVisible, setIsVisible] = useState(true);
-  const [isHovering, setIsHovering] = useState(false);
   const [showMicDropdown, setShowMicDropdown] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showEmotePicker, setShowEmotePicker] = useState(false);
   const memberCount = roomMembers.length;
+  const hideTimerRef = useRef(null);
+  const lastEventTimeRef = useRef(0);
 
   // Auto-show for 3 seconds on mount
   useEffect(() => {
@@ -66,24 +110,47 @@ const Taskbar = ({
     return () => clearTimeout(timer);
   }, []);
 
-  // Mouse move for auto-show
+  // Mouse visibility logic — stable during media playback
   useEffect(() => {
     const handleMouseMove = (e) => {
+      const now = Date.now();
+      if (now - lastEventTimeRef.current < 100) return; // debounce
+      lastEventTimeRef.current = now;
+
       const windowHeight = window.innerHeight;
       const mouseY = e.clientY;
-      if (mouseY > windowHeight * 0.9) {
+
+      if (mouseY > windowHeight * 0.92) {
         setIsVisible(true);
-        setIsHovering(true);
-      } else if (mouseY < windowHeight * 0.8) {
-        setIsHovering(false);
-        setIsVisible(false);
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current);
+          hideTimerRef.current = null;
+        }
+      } else if (mouseY < windowHeight * 0.85) {
+        if (!hideTimerRef.current) {
+          hideTimerRef.current = setTimeout(() => {
+            setIsVisible(false);
+            hideTimerRef.current = null;
+          }, 600);
+        }
       }
     };
+
     window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
   }, []);
 
-  // Close mic dropdown when clicking outside
+  // Auto-unpin when sidebar closes
+  useEffect(() => {
+    if (!isLeftSidebarOpen) {
+      setIsVisible(false);
+    }
+  }, [isLeftSidebarOpen]);
+
+  // Close mic dropdown
   useEffect(() => {
     if (!showMicDropdown) return;
     const handleClickOutside = (e) => {
@@ -95,11 +162,14 @@ const Taskbar = ({
     return () => document.removeEventListener('click', handleClickOutside);
   }, [showMicDropdown]);
 
-  // Close settings menu when clicking outside
+  // Close settings menu
   useEffect(() => {
     if (!showSettingsMenu) return;
     const handleClickOutside = (e) => {
-      if (!e.target.closest('.settings-menu-container')) {
+      if (
+        !e.target.closest('.settings-menu-container') &&
+        !e.target.closest('.settings-modal-content')
+      ) {
         setShowSettingsMenu(false);
       }
     };
@@ -112,7 +182,7 @@ const Taskbar = ({
     };
   }, [showSettingsMenu]);
 
-  // Touch handling (mobile)
+  // Touch handling (optional — keep if needed)
   const [touchStart, setTouchStart] = useState(null);
   const [touchEnd, setTouchEnd] = useState(null);
 
@@ -143,45 +213,6 @@ const Taskbar = ({
     zIndex: 1000,
     overflow: 'hidden',
   };
-
-  const TaskbarButton = ({ icon, label, onClick, showCancelIndicator = false, isEmoji = false }) => {
-    const [isHovered, setIsHovered] = useState(false);
-    return (
-      <div className="relative">
-        <button
-          className={`flex flex-col items-center justify-center text-white text-sm font-medium bg-transparent border-none p-2 rounded-md transition-colors duration-200 ${isHovered ? 'bg-white/10' : ''} hover:bg-white/10`}
-          onMouseEnter={() => setIsHovered(true)}
-          onMouseLeave={() => setIsHovered(false)}
-          onClick={onClick}
-          aria-label={label}
-        >
-          <div className="relative h-6 w-6 flex items-center justify-center">
-            {isEmoji ? (
-              <span className="text-2xl">{icon}</span>
-            ) : (
-              <img src={icon} alt={label} className="h-6 w-6" />
-            )}
-            {showCancelIndicator && (
-              <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center">
-                <span className="text-[8px] text-white font-bold">×</span>
-              </div>
-            )}
-          </div>
-          <span className="text-xs mt-1 whitespace-normal text-center w-full px-1">
-            {label === "Toggle Seat Mode" ? (
-              <>
-                Toggle
-                <br />
-                Seat Mode
-              </>
-            ) : label}
-          </span>
-        </button>
-      </div>
-    );
-  };
-
-  console.log('🔍 Taskbar received roomMembers:', roomMembers);
 
   return (
     <>
@@ -217,7 +248,6 @@ const Taskbar = ({
             onClick={onSeatsClick}
           />
 
-          {/* Mic Button */}
           <div className="flex flex-col items-center relative">
             <div className={isHost && isHostBroadcasting && isSeatedMode ? "mic-pulse" : ""}>
               <TaskbarButton
@@ -250,7 +280,6 @@ const Taskbar = ({
             />
           )}
 
-          {/* ✅ Emotes button conditionally rendered */}
           {showEmotes && (
             <TaskbarButton
               icon={EmotesIcon}
@@ -268,11 +297,9 @@ const Taskbar = ({
         </div>
 
         <div className="flex items-center space-x-2 settings-menu-container">
-
-          {/* 🗂️ NEW: Menu / Program Button */}
           {showProgram && (
             <TaskbarButton
-              icon={ProgramMenuIcon} // Make sure this is imported
+              icon={ProgramMenuIcon}
               label="Menu"
               onClick={onToggleLeftSidebar}
             />
@@ -285,8 +312,9 @@ const Taskbar = ({
         </div>
       </div>
 
-      {/* Settings Modal */}
       <SettingsModal
+        showPositionDebug={showPositionDebug}
+        onTogglePositionDebug={onTogglePositionDebug}
         isOpen={showSettingsMenu}
         onClose={() => setShowSettingsMenu(false)}
         onShareRoom={onShareRoom}
@@ -296,9 +324,18 @@ const Taskbar = ({
         availableCameras={availableCameras}
         selectedCameraId={selectedCameraId}
         onCameraSwitch={onCameraSwitch}
+        showSeatMarkers={showSeatMarkers}
+        onToggleSeatMarkers={onToggleSeatMarkers}
+        currentUser={currentUser}
+        userSeats={userSeats}
+        roomMembers={roomMembers}
+        handleSeatSelect={handleSeatSelect}
+        isViewLocked={isViewLocked}
+        setIsViewLocked={setIsViewLocked}
+        lightsOn={lightsOn}
+        setLightsOn={setLightsOn}
       />
 
-      {/* Emote Picker Modal */}
       {showEmotes && (
         <EmotePicker
           isOpen={showEmotePicker}

@@ -10,7 +10,6 @@ import AvatarManager from './avatars/AvatarManager';
 import FirstPersonAvatar from './avatars/FirstPersonAvatar';
 import { useGLTF } from '@react-three/drei';
 
-
 /**
  * CinemaCamera - Handles camera movement and controls
  */
@@ -18,8 +17,6 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
   const cameraRef = useRef();
   const { camera } = useThree();
   const controlsRef = useRef();
-  // Load GLB scene here (so we can debug it)
-  //const { scene: glbScene } = useGLTF('/models/cinema.glb');
 
   // Seat view position (first-person view from user seat)
   const seatViewPosition = new THREE.Vector3(
@@ -27,8 +24,6 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
     userSeatPosition[1], // Use exact Y position, don't add eye level
     userSeatPosition[2]
   );
-
-  
 
   // Keyboard controls - different behavior for locked vs unlocked modes
   useEffect(() => {
@@ -506,10 +501,13 @@ export default function CinemaScene3D({
   videoElement, 
   userSeats = [],
   authenticatedUserID,
+  onVideoTextureUpdate,
+  hideLabelsForLocalViewer = false,
   onZoomComplete: onExternalZoomComplete,
   debugMode = false,
   useGLBModel = true,
-  //currentUserSeatId,
+  showPositionDebug = false,
+  remoteParticipants = new Map(),
   currentUserSeat,
   showSeatMarkers = true,  // Toggle to show/hide seat position markers
   isViewLocked = true,     // View lock state (controlled by parent)
@@ -530,20 +528,9 @@ export default function CinemaScene3D({
   });
   const [currentUserEmote, setCurrentUserEmote] = useState(null); // Current user's active emote
 
-  //console.log('🎬 [CinemaScene3D] Rendering GLB cinema model');
-
-  // Generate all 42 seats using calculated positions
-  //const allSeats = generateAllSeats();
-  //console.log('🪑 [CinemaScene3D] Generated seats:', allSeats.length);
-
   // GLB model position - center of the cinema box
   const glbModelPosition = [66, 2, 25];
-  //const glbModelPosition = [0, 0, -10]; // or [0, 0, -15]
   
-  // Assign authenticated user to a seat
-  // For now, use a test seat ID (can be passed as prop later)
-  //const userSeatId = authenticatedUserID || 1; // Default to seat 1 for testing
-  // 🔥 Replace static assignment with dynamic one
   // 🔥 Dynamically assign seat based on currentUserSeatId or fallback to user ID
   const assignedSeat = currentUserSeat || {
     id: 1,
@@ -555,7 +542,6 @@ export default function CinemaScene3D({
   };
   
   //console.log('👤 [CinemaScene3D] User assigned to seat:', assignedSeat);
-
   // Use camera position (offset from avatar) for first-person view
   const cameraStartPosition = assignedSeat.cameraPosition;
   const cameraStartRotation = assignedSeat.rotation;
@@ -645,10 +631,6 @@ export default function CinemaScene3D({
         >
           {/* Camera positioned INSIDE the cinema box */}
           <CinemaCamera 
-            //userSeatPosition={cameraStartPosition}
-            //initialRotation={cameraStartRotation}
-            //userSeatPosition={activeCameraPosition}   // ✅ dynamic
-            //initialRotation={activeCameraRotation}    // ✅ dynamic
             userSeatPosition={activeCameraPosition}   // ✅
             initialRotation={activeCameraRotation}
             onPositionUpdate={handlePositionUpdate}
@@ -756,18 +738,19 @@ export default function CinemaScene3D({
           />
 
           {/* GLB Cinema Model */}
-          <CinemaTheaterGLB position={glbModelPosition} videoElement={videoElement} />
-
-          
+          <CinemaTheaterGLB position={glbModelPosition} videoElement={videoElement} onVideoTextureUpdate={onVideoTextureUpdate} />
 
           {/* User Avatars */}
-          <AvatarManager
-            roomMembers={roomMembers}
-            currentUserId={authenticatedUserID}
-            onEmoteReceived={onEmoteReceived}
-            onChatMessageReceived={onChatMessageReceived}
-            useGLB={useGLBModel}
-          />
+          {!hideLabelsForLocalViewer && (
+            <AvatarManager
+              roomMembers={roomMembers}
+              currentUserId={authenticatedUserID}
+              onEmoteReceived={onEmoteReceived}
+              onChatMessageReceived={onChatMessageReceived}
+              //useGLB={useGLBModel}
+              hideLabelsForLocalViewer={hideLabelsForLocalViewer}
+            />
+          )}
 
           {/* Seat position markers (visual verification) */}
           {showSeatMarkers && <SeatMarkers showLabels={true} />}
@@ -782,31 +765,35 @@ export default function CinemaScene3D({
       {showSeatMarkers && <SeatMarkerInfo />}
 
       {/* Info overlay */}
-      <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-white text-sm bg-black bg-opacity-50 px-4 py-2 rounded">
-        Exploring GLB Cinema - Seat #{assignedSeat.id} ({assignedSeat.label})
-      </div>
+      {showPositionDebug && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-white text-sm bg-black bg-opacity-50 px-4 py-2 rounded">
+          Exploring GLB Cinema - Seat #{assignedSeat.id} ({assignedSeat.label})
+        </div>
+      )}
 
       {/* Position debug info */}
-      <div className="absolute bottom-4 left-4 bg-black bg-opacity-75 text-white p-3 rounded text-xs font-mono max-w-md">
-        <div className="font-bold text-green-400 mb-2">📍 CURRENT POSITION</div>
-        <div className="bg-green-900 bg-opacity-30 p-2 rounded mb-2">
-          <div className="text-green-300">Position: [{currentCameraPos.position.join(', ')}]</div>
-          <div className="text-blue-300">Rotation: [{currentCameraPos.rotation.join(', ')}]°</div>
-          <div className="text-purple-300">Looking At: [{currentCameraPos.lookingAt?.join(', ') || '0, 0, 0'}]</div>
+      {showPositionDebug && (
+        <div className="absolute bottom-4 left-4 bg-black bg-opacity-75 text-white p-3 rounded text-xs font-mono max-w-md">
+          <div className="font-bold text-green-400 mb-2">📍 CURRENT POSITION</div>
+          <div className="bg-green-900 bg-opacity-30 p-2 rounded mb-2">
+            <div className="text-green-300">Position: [{currentCameraPos.position.join(', ')}]</div>
+            <div className="text-blue-300">Rotation: [{currentCameraPos.rotation.join(', ')}]°</div>
+            <div className="text-purple-300">Looking At: [{currentCameraPos.lookingAt?.join(', ') || '0, 0, 0'}]</div>
+          </div>
+          <div className="text-gray-400 text-[10px] mb-2">
+            ▶ Move to a good seat position, then copy the Position & Rotation values
+          </div>
+          <div className="border-t border-gray-600 pt-2 mt-2">
+            <div className="text-yellow-300">Assigned Seat: #{assignedSeat.id} {assignedSeat.isPremium ? '⭐' : ''}</div>
+            <div className="text-gray-300 text-[10px]">{assignedSeat.label}</div>
+            <div className="text-gray-300 mt-1">Start Pos: [{cameraStartPosition.join(', ')}]</div>
+            <div className="text-gray-300">Start Rot: [{cameraStartRotation.join(', ')}]°</div>
+          </div>
+          <div className="mt-2 text-yellow-400 text-[10px]">
+            🟢 Green markers = All seats • 🟡 Gold = Premium
+          </div>
         </div>
-        <div className="text-gray-400 text-[10px] mb-2">
-          ▶ Move to a good seat position, then copy the Position & Rotation values
-        </div>
-        <div className="border-t border-gray-600 pt-2 mt-2">
-          <div className="text-yellow-300">Assigned Seat: #{assignedSeat.id} {assignedSeat.isPremium ? '⭐' : ''}</div>
-          <div className="text-gray-300 text-[10px]">{assignedSeat.label}</div>
-          <div className="text-gray-300 mt-1">Start Pos: [{cameraStartPosition.join(', ')}]</div>
-          <div className="text-gray-300">Start Rot: [{cameraStartRotation.join(', ')}]°</div>
-        </div>
-        <div className="mt-2 text-yellow-400 text-[10px]">
-          🟢 Green markers = All seats • 🟡 Gold = Premium
-        </div>
-      </div>
+      )}
     </div>
   );
 }
