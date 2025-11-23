@@ -227,7 +227,6 @@ export function getSeatByPosition(row, seatInRow) {
 export function assignUserToSeat(userId, userPreference = null) {
   const seats = generateAllSeats();
   
-  // If user has preference (e.g., premium middle seats), try to assign
   if (userPreference === 'premium') {
     const premiumSeats = seats.filter(s => s.isPremium);
     const seat = premiumSeats[Math.floor(Math.random() * premiumSeats.length)];
@@ -237,10 +236,12 @@ export function assignUserToSeat(userId, userPreference = null) {
       cameraPosition: getCameraPositionFromAvatar(seat.position)
     };
   }
-  
-  // Round-robin assignment (seat ID = userId % 42 + 1)
-  // This ensures even distribution and multiple users can share seats
-  const seatId = ((userId - 1) % 42) + 1;
+
+  // 🔁 Assign from BACK (seat 42) to FRONT (seat 1)
+  const totalSeats = seats.length; // 42
+  const reverseSeatIndex = (userId - 1) % totalSeats;
+  const seatId = totalSeats - reverseSeatIndex; // 42, 41, 40, ..., 1
+
   return getSeatById(seatId);
 }
 
