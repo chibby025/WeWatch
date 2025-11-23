@@ -12,6 +12,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   onPause,
   onEnded,
   onError,
+  muted = false, // 👈 NEW: default to false (so 2D mode works unchanged)
 }, ref) {
   const videoRef = useRef(null);
 
@@ -33,7 +34,8 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       console.log(`🎬 [CinemaVideoPlayer] ${isHost ? 'HOST' : 'VIEWER'}: Attaching screen share track`);
       stream = new MediaStream([mediaStreamTrack]);
       video.srcObject = stream;
-      video.muted = isHost;
+      //video.muted = isHost;
+      video.muted = muted !== undefined ? muted : isHost;
       video.play().catch(onError);
       return () => {
         if (video.srcObject) {
@@ -47,7 +49,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       console.log('📁 [CinemaVideoPlayer] Loading uploaded media:', mediaItem.mediaUrl);
       video.srcObject = null;
       video.src = mediaItem.mediaUrl;
-      video.muted = false;
+      video.muted = muted !== undefined ? muted : false; // ✅ Respect the prop
       
       const handleLoadError = (e) => {
         console.error('❌ [CinemaVideoPlayer] Video load error:', {
@@ -114,6 +116,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       autoPlay
       playsInline
       crossOrigin="anonymous"
+      muted={muted} // 👈 Apply the prop
       className="w-full h-full object-contain bg-black"
       onPlay={onPlay}
       onPause={onPause}

@@ -1,148 +1,125 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import UserAvatar from './UserAvatar';
-import GLBAvatar from './GLBAvatar';
-import CustomAvatar from './CustomAvatar';
-import ModernAvatar from './ModernAvatar';
-import ImprovedAvatar from './ImprovedAvatar';
-import FlatAvatar from './FlatAvatar';
+import FlatUserIcon from './FlatUserIcon';
 import { assignUserToSeat, generateAllSeats } from '../seatCalculator';
 
 /**
  * AvatarManager - Manages and renders all user avatars in the cinema
- * Features:
- * - Renders multiple avatar types based on useGLB prop
- * - Assigns seats to users
- * - Handles emote state per user
- * - Handles chat message bubbles per user
- * - Syncs with WebSocket events
+ * Now uses FlatUserIcon for all users (real + demo)
  */
 export default function AvatarManager({
   roomMembers = [],
   currentUserId,
-  onEmoteReceived, // WebSocket emote handler
-  onChatMessageReceived, // WebSocket chat message handler
-  useGLB = false, // Options: false = CustomAvatar, true = GLBAvatar, 'procedural' = UserAvatar, 'modern' = ModernAvatar, 'improved' = ImprovedAvatar, 'flat' = FlatAvatar
+  onEmoteReceived,
+  onChatMessageReceived,
+  hideLabelsForLocalViewer = false, // For fullscreen mode
+  remoteParticipants = new Map(),
 }) {
-  // State for each user's current emote
-  const [userEmotes, setUserEmotes] = useState({}); // { userId: 'wave' }
-  
-  // State for each user's recent chat message
-  const [userMessages, setUserMessages] = useState({}); // { userId: { text, timestamp } }
+  const [userEmotes, setUserEmotes] = useState({});
+  const [userMessages, setUserMessages] = useState({});
+  const [activeUserIds, setActiveUserIds] = useState(new Set());
+  const [hoveredUserId, setHoveredUserId] = useState(null);
 
-  // Generate all 42 seats
   const allSeats = useMemo(() => generateAllSeats(), []);
 
   // Assign seats to all room members
   const userSeatAssignments = useMemo(() => {
     const assignments = {};
-    
-    roomMembers.forEach((member, index) => {
-      // Assign seat based on user ID (round-robin for now)
-      const assignedSeat = assignUserToSeat(member.id || index + 1);
-      assignments[member.id] = assignedSeat;
+    roomMembers.forEach((member) => {
+      if (member.is_demo) {
+        const [, rowStr, colStr] = member.id.split('-');
+        const row = parseInt(rowStr, 10);
+        const col = parseInt(colStr, 10);
+        const seatId = row * 7 + col + 1;
+        const seat = allSeats.find(s => s.id === seatId);
+        if (seat) {
+          assignments[member.id] = {
+            ...seat,
+            avatarPosition: seat.position,
+          };
+        }
+      } else {
+        const assignedSeat = assignUserToSeat(member.id);
+        assignments[member.id] = assignedSeat;
+      }
     });
-    
     return assignments;
-  }, [roomMembers]);
+  }, [roomMembers, allSeats]);
 
-  // Listen for emote events from WebSocket
+  // Activity timer (30s)
+  const resetActivityTimer = (userId) => {
+    setActiveUserIds(prev => new Set([...prev, userId]));
+    setTimeout(() => {
+      setActiveUserIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(userId);
+        return newSet;
+      });
+    }, 30000);
+  };
+
+  // Listen for emotes
   useEffect(() => {
     if (!onEmoteReceived) return;
-
     const handleEmote = (emoteData) => {
-      const { user_id, emote } = emoteData;
-      
-      console.log('👋 [AvatarManager] Emote received:', user_id, emote);
-      
-      // Set emote for user
-      setUserEmotes((prev) => ({
-        ...prev,
-        [user_id]: emote,
-      }));
-
-      // Clear emote after 2 seconds
+      const { user_id } = emoteData;
+      setUserEmotes(prev => ({ ...prev, [user_id]: emoteData.emote }));
+      resetActivityTimer(user_id);
       setTimeout(() => {
-        setUserEmotes((prev) => {
+        setUserEmotes(prev => {
           const updated = { ...prev };
           delete updated[user_id];
           return updated;
         });
       }, 2000);
     };
-
-    // Register handler (implementation depends on your WebSocket setup)
     onEmoteReceived(handleEmote);
   }, [onEmoteReceived]);
 
-  // Listen for chat messages from WebSocket
+  // Listen for chat messages
   useEffect(() => {
     if (!onChatMessageReceived) return;
-
     const handleChatMessage = (messageData) => {
       const { user_id, message, username, avatar_color } = messageData;
-      
-      //console.log('💬 [AvatarManager] Chat message received:', user_id, message);
-      
-      // Set message for user
-      setUserMessages((prev) => ({
+      setUserMessages(prev => ({
         ...prev,
-        [user_id]: {
-          text: message,
-          timestamp: Date.now(),
-          color: avatar_color,
-        },
+        [user_id]: { text: message, timestamp: Date.now(), color: avatar_color },
       }));
-
-      // Clear message after 5 seconds
+      resetActivityTimer(user_id);
       setTimeout(() => {
-        setUserMessages((prev) => {
+        setUserMessages(prev => {
           const updated = { ...prev };
           delete updated[user_id];
           return updated;
         });
       }, 5000);
     };
-
-    // Register handler
     onChatMessageReceived(handleChatMessage);
   }, [onChatMessageReceived]);
 
- // console.log('🎭 [AvatarManager] Rendering avatars for', roomMembers.length, 'users');
- // console.log('🎨 [AvatarManager] Using', 
-  //  typeof useGLB === 'string' ? useGLB : useGLB === true ? 'GLB' : 'Custom', 
-  //  'avatars'
- // );
-
-  // Choose avatar component based on useGLB prop
-  const AvatarComponent = 
-    useGLB === 'modern' ? ModernAvatar :
-    useGLB === 'improved' ? ImprovedAvatar :
-    useGLB === 'flat' ? FlatAvatar :
-    useGLB === true ? GLBAvatar : 
-    useGLB === 'procedural' ? UserAvatar : 
-    CustomAvatar;
+  const handleUserHover = (userId) => {
+    setHoveredUserId(userId);
+  };
 
   return (
     <group name="avatar-manager">
       {roomMembers.map((member) => {
         const seatAssignment = userSeatAssignments[member.id];
-        
-        if (!seatAssignment) {
-          console.warn('⚠️ [AvatarManager] No seat for user:', member.id);
-          return null;
-        }
-        // testing
+        if (!seatAssignment) return null;
         const isCurrentUser = member.id === currentUserId;
+        if (isCurrentUser) return null;
+
         const currentEmote = userEmotes[member.id] || null;
         const recentMessage = userMessages[member.id] || null;
+        const isActiveTimed = activeUserIds.has(member.id);
+        const isHovered = hoveredUserId === member.id;
 
-        // Hide current user's avatar (they see from their camera position)
-        if (isCurrentUser) {
-          return null;
-        }
+        // ✅ Compute isSpeaking from remoteParticipants Map
+        const participantId = String(member.id); // Ensure string
+        const remoteParticipant = remoteParticipants.get(participantId);
+        const isSpeaking = !!remoteParticipant?.isSpeaking;
 
         return (
-          <AvatarComponent
+          <FlatUserIcon
             key={member.id}
             userId={member.id}
             username={member.username || `User ${member.id}`}
@@ -153,7 +130,13 @@ export default function AvatarManager({
             isCurrentUser={isCurrentUser}
             currentEmote={currentEmote}
             recentMessage={recentMessage}
-            userPhotoUrl={member.avatar_url || '/avatars/default.png'}
+            avatarColor={member.avatar_color}
+            userPhotoUrl={member.avatar_url || '/icons/user1.jpg'}
+            hideLabelsForLocalViewer={hideLabelsForLocalViewer}
+            isActiveTimed={isActiveTimed}
+            isHovered={isHovered}
+            onHover={handleUserHover}
+            isSpeaking={isSpeaking} // ✅ Now defined!
           />
         );
       })}
