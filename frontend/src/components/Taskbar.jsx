@@ -94,6 +94,7 @@ const Taskbar = ({
   showSeatModeToggle = true,
   showVideoToggle = true,
   onToggleLeftSidebar,
+  seatSwapRequest,
 }) => {
   const [isVisible, setIsVisible] = useState(true);
   const [showMicDropdown, setShowMicDropdown] = useState(false);
@@ -242,11 +243,18 @@ const Taskbar = ({
             />
           )}
 
-          <TaskbarButton
-            icon={SeatsIcon}
-            label="Seats"
-            onClick={onSeatsClick}
-          />
+          <div className="relative">
+            {seatSwapRequest && (
+              <div className="absolute -top-7 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white text-xs px-2 py-1 rounded shadow z-10 whitespace-nowrap">
+                Swap request from {seatSwapRequest.requesterName}
+              </div>
+            )}
+            <TaskbarButton
+              icon={SeatsIcon}
+              label="Seats"
+              onClick={onSeatsClick}
+            />
+          </div>
 
           <div className="flex flex-col items-center relative">
             <div className={isHost && isHostBroadcasting && isSeatedMode ? "mic-pulse" : ""}>

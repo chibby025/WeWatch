@@ -54,7 +54,7 @@ func main() {
 	// --- Auto Migrate Schema ---
 	// GORM to auto creates/updates db tables based on the models
 	err = DB.AutoMigrate(&models.User{}, &models.Room{}, &models.MediaItem{}, &models.TemporaryMediaItem{}, &models.UserRoom{}, &models.ScheduledEvent{}, &models.ChatMessage{},&models.Reaction{}, 
-		&models.WatchSession{}, &models.WatchSessionMember{}) // Pass pointers to model structs
+		&models.WatchSession{}, &models.PrivateChatHistory{}, &models.PrivateChatMessage{}, &models.WatchSessionMember{}) // Pass pointers to model structs
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}

@@ -1,3 +1,4 @@
+// frontend/src/components/cinema/3d-cinema/avatars/AvatarManager.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import FlatUserIcon from './FlatUserIcon';
 import { assignUserToSeat, generateAllSeats } from '../seatCalculator';
@@ -11,8 +12,9 @@ export default function AvatarManager({
   currentUserId,
   onEmoteReceived,
   onChatMessageReceived,
-  hideLabelsForLocalViewer = false, // For fullscreen mode
+  hideLabelsForLocalViewer = false,
   remoteParticipants = new Map(),
+  onAvatarClick, // ✅ NEW prop
 }) {
   const [userEmotes, setUserEmotes] = useState({});
   const [userMessages, setUserMessages] = useState({});
@@ -21,7 +23,6 @@ export default function AvatarManager({
 
   const allSeats = useMemo(() => generateAllSeats(), []);
 
-  // Assign seats to all room members
   const userSeatAssignments = useMemo(() => {
     const assignments = {};
     roomMembers.forEach((member) => {
@@ -45,7 +46,6 @@ export default function AvatarManager({
     return assignments;
   }, [roomMembers, allSeats]);
 
-  // Activity timer (30s)
   const resetActivityTimer = (userId) => {
     setActiveUserIds(prev => new Set([...prev, userId]));
     setTimeout(() => {
@@ -57,7 +57,6 @@ export default function AvatarManager({
     }, 30000);
   };
 
-  // Listen for emotes
   useEffect(() => {
     if (!onEmoteReceived) return;
     const handleEmote = (emoteData) => {
@@ -75,7 +74,6 @@ export default function AvatarManager({
     onEmoteReceived(handleEmote);
   }, [onEmoteReceived]);
 
-  // Listen for chat messages
   useEffect(() => {
     if (!onChatMessageReceived) return;
     const handleChatMessage = (messageData) => {
@@ -113,31 +111,38 @@ export default function AvatarManager({
         const isActiveTimed = activeUserIds.has(member.id);
         const isHovered = hoveredUserId === member.id;
 
-        // ✅ Compute isSpeaking from remoteParticipants Map
-        const participantId = String(member.id); // Ensure string
+        const participantId = String(member.id);
         const remoteParticipant = remoteParticipants.get(participantId);
         const isSpeaking = !!remoteParticipant?.isSpeaking;
 
         return (
-          <FlatUserIcon
+          <group
             key={member.id}
-            userId={member.id}
-            username={member.username || `User ${member.id}`}
-            seatPosition={seatAssignment.avatarPosition}
-            seatRotation={seatAssignment.rotation}
-            rowNumber={seatAssignment.row}
-            isPremium={seatAssignment.isPremium}
-            isCurrentUser={isCurrentUser}
-            currentEmote={currentEmote}
-            recentMessage={recentMessage}
-            avatarColor={member.avatar_color}
-            userPhotoUrl={member.avatar_url || '/icons/user1.jpg'}
-            hideLabelsForLocalViewer={hideLabelsForLocalViewer}
-            isActiveTimed={isActiveTimed}
-            isHovered={isHovered}
-            onHover={handleUserHover}
-            isSpeaking={isSpeaking} // ✅ Now defined!
-          />
+            position={seatAssignment.avatarPosition}
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent orbit controls from interfering
+              onAvatarClick?.(member); // ✅ TRIGGER PROFILE MODAL
+            }}
+          >
+            <FlatUserIcon
+              userId={member.id}
+              username={member.username || `User ${member.id}`}
+              seatPosition={[0, 0, 0]} // relative to group
+              seatRotation={seatAssignment.rotation}
+              rowNumber={seatAssignment.row}
+              isPremium={seatAssignment.isPremium}
+              isCurrentUser={isCurrentUser}
+              currentEmote={currentEmote}
+              recentMessage={recentMessage}
+              avatarColor={member.avatar_color}
+              userPhotoUrl={member.avatar_url || '/icons/user1.jpg'}
+              hideLabelsForLocalViewer={hideLabelsForLocalViewer}
+              isActiveTimed={isActiveTimed}
+              isHovered={isHovered}
+              onHover={handleUserHover}
+              isSpeaking={isSpeaking}
+            />
+          </group>
         );
       })}
     </group>

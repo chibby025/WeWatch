@@ -18,6 +18,10 @@ import { getTemporaryMediaItemsForRoom } from '../../../services/api';
 import { useSeatController } from './useSeatController';
 import { useLocation } from 'react-router-dom';
 import { assignUserToSeat } from './seatCalculator';
+import { useSeatSwap } from '../../../hooks/useSeatSwap';
+// Add near the top with other imports
+import UserProfileModal from "../../../components/UserProfileModal";
+import PrivateChatModal from "../../../components/PrivateChatModal";
 
 export default function CinemaScene3DDemo() {
   const { roomId } = useParams();
@@ -49,6 +53,7 @@ export default function CinemaScene3DDemo() {
   const [isViewLocked, setIsViewLocked] = useState(true);   // ✅ ADD THIS
   const [lightsOn, setLightsOn] = useState(true);          // ✅ ADD THIS
   const [isSeatGridModalOpen, setIsSeatGridModalOpen] = useState(false);
+  const [outgoingSwapRequest, setOutgoingSwapRequest] = useState(null); // { targetUserId, targetSeatId }
   //const currentUserSeatId = currentUser?.id ? userSeats[currentUser.id] : null;
   const { currentSeat, jumpToSeat, currentSeatKey } = useSeatController({
     currentUser,
@@ -93,6 +98,11 @@ export default function CinemaScene3DDemo() {
   const [showPositionDebug, setShowPositionDebug] = useState(false);
   // Add this ref to store the update function
   const videoTextureUpdateRef = useRef(null);
+  // 1:1 Chat state
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  //const [isChatOpen, setIsChatOpen] = useState(false);
+  const [privateMessages, setPrivateMessages] = useState({}); // { userId: [messages] }
 
   // ✅ Now you have reliable isHost!
   //console.log('🎭 isHost (from RoomPage):', isHost);
@@ -169,6 +179,22 @@ export default function CinemaScene3DDemo() {
   const toggleImmersiveMode = () => {
     setIsImmersiveMode(prev => !prev);
   };
+
+  // Seat swap logic
+  const {
+    seatSwapRequest,
+    handleSeatSwapMessage,
+    sendSwapRequest,
+    acceptSwap,
+    declineSwap,
+  } = useSeatSwap({
+    sendMessage,
+    currentUser,
+    onSwapAccepted: (data) => {
+      // Optional: trigger seat update or camera move
+      console.log('Seat swap accepted:', data);
+    }
+  });
 
   // Timed view guidance overlay
   const [viewGuidanceMode, setViewGuidanceMode] = useState(null);
@@ -282,30 +308,36 @@ export default function CinemaScene3DDemo() {
   }, [roomMembers]);
 
   // 👇 Change to 0-based row numbers (row 2 = 3rd row, row 3 = 4th row)
-useEffect(() => {
-  if (!showDemoAvatars) return;
+  useEffect(() => {
+    if (!showDemoAvatars) return;
 
-  const demoUsers = [];
-  // Rows 3-4 in UI = rows 2-3 in 0-based indexing
-  for (let row = 2; row <= 3; row++) {
-    for (let col = 0; col < 7; col++) { // 7 seats per row (not 8)
-      demoUsers.push({
-        id: `demo-${row}-${col}`,
-        username: `Guest ${row + 1}-${col + 1}`, // Display as 3-1, 3-2, etc.
-        user_role: 'viewer',
-        is_demo: true,
-        avatar_url: '/icons/user1avatar.svg' // ✅ Your black icon
-      });
+    const demoUsers = [];
+    const newSeats = {}; // 👈 track seat assignments
+
+    // Rows 3-4 in UI = rows 2-3 in 0-based indexing
+    for (let row = 2; row <= 3; row++) {
+      for (let col = 0; col < 7; col++) {
+        const demoId = `demo-${row}-${col}`;
+        demoUsers.push({
+          id: demoId,
+          username: `Guest ${row + 1}-${col + 1}`,
+          user_role: 'viewer',
+          is_demo: true,
+          avatar_url: '/icons/user1avatar.svg'
+        });
+        // 👇 Assign seat in userSeats format
+        newSeats[demoId] = `${row}-${col}`;
+      }
     }
-  }
+    setRoomMembers(prev => {
+      const existingIds = new Set(prev.map(u => u.id));
+      const newUsers = demoUsers.filter(u => !existingIds.has(u.id));
+      return [...prev, ...newUsers];
+    });
 
-  setRoomMembers(prev => {
-    const existingIds = new Set(prev.map(u => u.id));
-    const newUsers = demoUsers.filter(u => !existingIds.has(u.id));
-    return [...prev, ...newUsers];
-  });
-
-}, [showDemoAvatars]);
+    // 👇 Update userSeats with demo assignments
+    setUserSeats(prev => ({ ...prev, ...newSeats }));
+  }, [showDemoAvatars]);
 
   // Local track
   useEffect(() => {
@@ -325,8 +357,6 @@ useEffect(() => {
       .find(pub => pub.source === Track.Source.ScreenShare);
     setRemoteScreenTrack(screenPub?.track || null);
   }, [room]);
-
-  
 
   // ✅ Attach media to hidden <video> for 3D screen texture + track currentTime
   useEffect(() => {
@@ -484,8 +514,7 @@ useEffect(() => {
     };
     loadChatHistory();
   }, [roomId, sessionStatus?.id]);
-
-  
+ 
   // Auto-assign current user to their seat on mount
   useEffect(() => {
     if (currentUser && currentSeatKey && Object.keys(userSeats).length === 0) {
@@ -497,11 +526,16 @@ useEffect(() => {
     }
   }, [currentUser, currentSeatKey, userSeats]);
 
-
   // === Process WebSocket messages ===
   useEffect(() => {
     const newMessages = messages.slice(processedMessageCountRef.current);
     newMessages.forEach((msg) => {
+      // ✅ Let the hook handle seat swap messages FIRST
+      if (handleSeatSwapMessage(msg)) {
+        return; // Hook handled it — skip rest
+      }
+
+      // ⚠️ All other messages
       switch (msg.type) {
         case 'chat_message':
           if (msg.data.session_id === sessionStatus.id) {
@@ -512,7 +546,6 @@ useEffect(() => {
           }
           break;
         case 'take_seat':
-          // Update userSeats from server echo (for consistency)
           if (msg.user_id && msg.seat_id) {
             setUserSeats(prev => ({
               ...prev,
@@ -520,9 +553,8 @@ useEffect(() => {
             }));
           }
           break;
-        // Inside the switch(msg.type) block:
         case "playback_control":
-          if (msg.sender_id && msg.sender_id === currentUser?.id) break; // ignore own messages
+          if (msg.sender_id && msg.sender_id === currentUser?.id) break;
           if (msg.file_path) {
             const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
             const fileUrl = msg.file_url || msg.file_path;
@@ -537,13 +569,10 @@ useEffect(() => {
             setIsPlaying(msg.command === "play");
           }
           break;
-
         case "screen_share_started":
           setCurrentMedia({ type: 'screen_share', title: 'Live Screen Share' });
           setIsPlaying(true);
-          // ✅ Do NOT set remoteScreenTrack here — LiveKit useEffect handles it
           break;
-
         case "screen_share_stopped":
           setRemoteScreenTrack(null);
           setCurrentMedia(null);
@@ -585,8 +614,6 @@ useEffect(() => {
               }
             });
             const deduplicated = Array.from(memberMap.values());
-            
-            // ✅ Preserve existing demo users
             setRoomMembers(prev => {
               const demoUsers = prev.filter(u => u.is_demo);
               return [...deduplicated, ...demoUsers];
@@ -598,13 +625,29 @@ useEffect(() => {
             setIsAudioActive(msg.isAudioActive);
           }
           break;
+        case 'private_chat_message':
+          if (msg.to_user_id === currentUser?.id || msg.from_user_id === currentUser?.id) {
+            const otherUserId = msg.from_user_id === currentUser?.id ? msg.to_user_id : msg.from_user_id;
+            setPrivateMessages(prev => ({
+              ...prev,
+              [otherUserId]: [...(prev[otherUserId] || []), msg]
+            }));
+          }
+          break;
+
+        case 'private_chat_history':
+          const { other_user_id, messages: history } = msg.data;
+          setPrivateMessages(prev => ({
+            ...prev,
+            [other_user_id]: history
+          }));
+          break;
         default:
           break;
       }
     });
     processedMessageCountRef.current = messages.length;
-  }, [messages, sessionStatus?.id, currentUser?.id]);
-
+  }, [messages, sessionStatus?.id, currentUser?.id, handleSeatSwapMessage]); // ✅ add hook to deps
   // === Handlers ===
   const handleSendSessionMessage = () => {
     if (!newSessionMessage.trim() || !sessionStatus?.id || !sendMessage) return;
@@ -665,23 +708,43 @@ useEffect(() => {
 
   const handleSeatSelect = (seatId) => {
     if (!currentUser || !sendMessage) return;
-    jumpToSeat(seatId);
 
-    // ✅ Optimistically update local state immediately
-    setUserSeats(prev => ({ ...prev, [currentUser.id]: seatId }));
+    const occupantId = Object.keys(userSeats).find(userId => userSeats[userId] === seatId);
+    const isOccupied = !!occupantId;
+    const isMe = occupantId === String(currentUser.id);
 
-    const [rowStr, colStr] = seatId.split('-');
-    const row = parseInt(rowStr);
-    const col = parseInt(colStr);
-    sendMessage({
-      type: 'take_seat',
-      seat_id: seatId,
-      row,
-      col,
-      user_id: currentUser.id
-    });
-    setIsSeatGridModalOpen(false);
-    //setIsSeatControlsOpen(false);
+    if (isMe) {
+      setIsSeatGridModalOpen(false);
+      setOutgoingSwapRequest(null);
+      return;
+    }
+
+    if (isOccupied) {
+      const [row, col] = seatId.split('-').map(Number);
+      setOutgoingSwapRequest({ targetUserId: occupantId, targetSeatId: seatId });
+      sendMessage({
+        type: 'seat_swap_request',
+        requester_id: currentUser.id,
+        target_user_id: parseInt(occupantId),
+        target_seat: { row, col },
+        requester_name: currentUser.username,
+      });
+      // ✅ Keep modal open — do NOT close
+      return;
+    } else {
+      // Empty seat → take it AND close
+      jumpToSeat(seatId);
+      setUserSeats(prev => ({ ...prev, [currentUser.id]: seatId }));
+      sendMessage({
+        type: 'take_seat',
+        seat_id: seatId,
+        row: parseInt(seatId.split('-')[0]),
+        col: parseInt(seatId.split('-')[1]),
+        user_id: currentUser.id
+      });
+      setIsSeatGridModalOpen(false); // ✅ Close only for empty seats
+      setOutgoingSwapRequest(null);
+    }
   };
 
   // Convert remoteParticipants array to Map for O(1) lookup
@@ -741,6 +804,47 @@ useEffect(() => {
     });
   };
 
+  // helper functions
+  const openProfile = (user) => {
+    setSelectedUser(user);
+    setIsProfileOpen(true);
+  };
+
+  const startChat = (userId) => {
+    setIsProfileOpen(false);
+    setIsChatOpen(true);
+    // Fetch history if not loaded
+    if (!privateMessages[userId]?.length) {
+      sendMessage({
+        type: 'fetch_private_chat',
+        data: { other_user_id: userId }
+      });
+    }
+  };
+
+  const sendPrivateMessage = (text) => {
+    if (!selectedUser || !text.trim()) return;
+    sendMessage({
+      type: 'private_chat_message',
+      data: {
+        to_user_id: selectedUser.id,
+        message: text.trim()
+      }
+    });
+    // Optimistic update
+    const newMsg = {
+      id: Date.now(),
+      from_user_id: currentUser.id,
+      to_user_id: selectedUser.id,
+      message: text.trim(),
+      timestamp: Date.now()
+    };
+    setPrivateMessages(prev => ({
+      ...prev,
+      [selectedUser.id]: [...(prev[selectedUser.id] || []), newMsg]
+    }));
+  };
+
   return (
     <div className="relative w-full h-screen bg-[#0a0a0a] overflow-hidden">
       {/* 3D Scene */}
@@ -748,6 +852,7 @@ useEffect(() => {
         useGLBModel="improved"
         authenticatedUserID={currentUser?.id}
         videoElement={videoRef.current}
+        onAvatarClick={openProfile} // ✅ ADD THIS
         onVideoTextureUpdate={(fn) => {
           videoTextureUpdateRef.current = fn;
         }}
@@ -790,6 +895,7 @@ useEffect(() => {
         // ✅ NEW: pass view & seat state + handlers
         currentUser={currentUser}
         userSeats={userSeats}
+        seatSwapRequest={seatSwapRequest}
         handleSeatSelect={handleSeatSelect}
         isViewLocked={isViewLocked}
         setIsViewLocked={setIsViewLocked}
@@ -805,8 +911,13 @@ useEffect(() => {
         onMembersClick={openMembers}
         onShareRoom={() => alert('Share room')}
         onSeatsClick={() => {
-          //setIsSeatControlsOpen(prev => !prev);
-          setIsSeatGridModalOpen(prev => !prev);
+          setIsSeatGridModalOpen(current => {
+            const newOpenState = !current;
+            if (!newOpenState) {
+              setOutgoingSwapRequest(null);
+            }
+            return newOpenState;
+          });
         }}
         seats={[]}
         isCameraOn={isCameraOn}
@@ -835,7 +946,6 @@ useEffect(() => {
       {isLeftSidebarOpen && (
         <div 
           className="fixed left-0 top-0 h-full w-80 z-40 bg-gray-900/95 backdrop-blur-md"
-         
         >
           <LeftSidebar
             roomId={roomId}
@@ -864,10 +974,8 @@ useEffect(() => {
                   mediaUrl, // ✅ critical!
                   original_name: media.original_name || media.file_name || 'Unknown Media',
                 };
-
                 setCurrentMedia(mediaItemWithUrl);
                 setIsPlaying(true);
-
                 if (isHost) {
                   sendMessage({
                     type: "playback_control",
@@ -980,7 +1088,6 @@ useEffect(() => {
         </div>
       )}
 
-
       {/* Members Modal */}
       {isMembersModalOpen && (
         <MembersModal
@@ -988,6 +1095,7 @@ useEffect(() => {
           isOpen={isMembersModalOpen}
           onClose={() => setIsMembersModalOpen(false)}
           members={roomMembers}
+          onMemberClick={openProfile}
         />
       )}
 
@@ -995,25 +1103,18 @@ useEffect(() => {
       <CinemaSeatGridModal
         key={currentUser?.id ? userSeats[currentUser.id] : 'default'}
         isOpen={isSeatGridModalOpen}
-        onClose={() => setIsSeatGridModalOpen(false)}
+        onClose={() => {
+          setIsSeatGridModalOpen(false);
+          setOutgoingSwapRequest(null);
+        }}
         userSeats={userSeats}
         currentUser={currentUser}
         roomMembers={roomMembers}
-        onTakeSeat={(seatId) => {
-          if (!currentUser || !sendMessage) return;
-          jumpToSeat(seatId);
-          const [rowStr, colStr] = seatId.split('-');
-          const row = parseInt(rowStr);
-          const col = parseInt(colStr);
-          sendMessage({
-            type: 'take_seat',
-            seat_id: seatId,
-            row,
-            col,
-            user_id: currentUser.id
-          });
-          setIsSeatGridModalOpen(false);
-        }}
+        seatSwapRequest={seatSwapRequest}
+        outgoingSwapRequest={outgoingSwapRequest}
+        onSwapAccept={acceptSwap}
+        onSwapDecline={declineSwap}
+        onTakeSeat={handleSeatSelect}
       />
       {/* ✅ Immersive Fullscreen Video — using shared player */}
       {isImmersiveMode && (
@@ -1048,6 +1149,34 @@ useEffect(() => {
             }
           })()}
         </div>
+      )}
+      {/* User Profile & Chat Modals */}
+      {isProfileOpen && (
+        <UserProfileModal
+          user={selectedUser}
+          isOpen={isProfileOpen}
+          onClose={() => {
+            setIsProfileOpen(false);
+            setSelectedUser(null);
+          }}
+          onMessage={() => startChat(selectedUser.id)}
+        />
+      )}
+
+      {isChatOpen && selectedUser && (
+        <PrivateChatModal
+          otherUser={selectedUser}
+          messages={privateMessages[selectedUser.id] || []}
+          onSendMessage={sendPrivateMessage}
+          onBack={() => {
+            setIsChatOpen(false);
+            setIsProfileOpen(true);
+          }}
+          onClose={() => {
+            setIsChatOpen(false);
+            setSelectedUser(null);
+          }}
+        />
       )}
     </div> // 👈 Only one root element
   );
