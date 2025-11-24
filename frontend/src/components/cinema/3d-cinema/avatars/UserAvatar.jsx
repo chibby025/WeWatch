@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import UsernameLabel from './UsernameLabel';
 import ChatBubble from './ChatBubble';
 import EmoteAnimation from './EmoteAnimation';
-import CartoonHand from './CartoonHand';
+import FloatingEmote from './FloatingEmote';
 import { Html } from '@react-three/drei';
 
 /**
@@ -157,28 +157,13 @@ export default function UserAvatar({
         </mesh>
       )}
 
-      {/* HANDS (only for real users) */}
-      {!isDemo && (
-        <>
-          <CartoonHand
-            ref={leftArmRef}
-            position={[-0.45, -0.1, 0]}
-            rotation={[0, 0, 0]}
-            userColor={userColor}
-            isLeft={true}
-            scale={avatarScale}
-          />
-          <CartoonHand
-            ref={rightArmRef}
-            position={[0.45, -0.1, 0]}
-            rotation={[0, 0, 0]}
-            userColor={userColor}
-            isLeft={false}
-            scale={avatarScale}
-          />
-        </>
+      {/* FLOATING EMOTE (only for real users) */}
+      {!isDemo && currentEmote && (
+        <FloatingEmote 
+          emote={currentEmote}
+          position={[0, 0, 0]} // relative to group
+        />
       )}
-
       {/* USERNAME LABEL */}
       <UsernameLabel 
         username={username}

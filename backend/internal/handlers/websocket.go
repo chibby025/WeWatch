@@ -1474,6 +1474,71 @@ func (client *Client) handleMessage(message []byte) {
         return
     }
 
+    // Handle private_chat_message
+    if msg.Type == "private_chat_message" {
+        var data struct {
+            ToUserID uint   `json:"to_user_id"`
+            Message  string `json:"message"`
+        }
+        if m, ok := msg.Data.(map[string]interface{}); ok {
+            data.ToUserID = uint(m["to_user_id"].(float64))
+            data.Message = m["message"].(string)
+        }
+
+        // Save to DB
+        privateMsg := models.PrivateMessage{
+            SenderID:   client.userID,
+            ReceiverID: data.ToUserID,
+            Message:    data.Message,
+        }
+        if err := DB.Create(&privateMsg).Error; err != nil {
+            log.Printf("❌ Failed to save private message: %v", err)
+            return
+        }
+
+        // Deliver to receiver
+        client.hub.BroadcastToUsers([]uint{data.ToUserID}, OutgoingMessage{
+            Data: message, // original JSON
+            IsBinary: false,
+        })
+        return
+    }
+
+    // Handle fetch_private_chat
+    if msg.Type == "fetch_private_chat" {
+        var data struct {
+            OtherUserID uint `json:"other_user_id"`
+        }
+        if m, ok := msg.Data.(map[string]interface{}); ok {
+            data.OtherUserID = uint(m["other_user_id"].(float64))
+        }
+
+        // Fetch messages between client.userID and data.OtherUserID
+        var messages []models.PrivateMessage
+        DB.Where("(sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)",
+            client.userID, data.OtherUserID,
+            data.OtherUserID, client.userID).
+            Order("created_at ASC").
+            Find(&messages)
+
+        // Send back as batch
+        response := map[string]interface{}{
+            "type": "private_chat_history",
+            "data": map[string]interface{}{
+                "other_user_id": data.OtherUserID,
+                "messages":      messages,
+            },
+        }
+        if bytes, err := json.Marshal(response); err == nil {
+            select {
+            case client.send <- OutgoingMessage{Data: bytes, IsBinary: false}:
+            default:
+                log.Printf("Dropped private chat history for user %d", client.userID)
+            }
+        }
+        return
+    }
+
     // ✅ Handle reaction - save to DB and broadcast
     if msg.Type == "reaction" {
         var reactionData struct {

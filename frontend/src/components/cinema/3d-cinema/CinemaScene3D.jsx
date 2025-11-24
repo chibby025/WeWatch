@@ -175,31 +175,33 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isViewLocked, camera]);
 
-  // "L" key - Look left (default spawn), "C" key - Look at screen, "R" key - Look right (mirror of spawn left view)
+  // "L" key - Look left, "C" key - Look at screen, "R" key - Look right
   useEffect(() => {
     if (!controlsRef.current) return;
 
     const handleLookDirection = (event) => {
       const key = event.key.toLowerCase();
+      const currentPos = new THREE.Vector3().copy(camera.position);
       
       if (key === 'l') {
-        // Look left - default spawn view
-        const leftLookAt = new THREE.Vector3(0.79, -0.58, 0.22);
+        // 👈 Look LEFT with over-the-shoulder offset
+        const offset = new THREE.Vector3(-0.8, 0, 0); // Shift left
+        const newCamPos = currentPos.clone().add(offset);
+        camera.position.copy(newCamPos);
         
+        const leftLookAt = new THREE.Vector3(0.79, -0.58, 0.22);
         const lookAtDistance = 10;
         const target = new THREE.Vector3(
-          userSeatPosition[0] + leftLookAt.x * lookAtDistance,
-          userSeatPosition[1] + leftLookAt.y * lookAtDistance,
-          userSeatPosition[2] + leftLookAt.z * lookAtDistance
+          newCamPos.x + leftLookAt.x * lookAtDistance,
+          newCamPos.y + leftLookAt.y * lookAtDistance,
+          newCamPos.z + leftLookAt.z * lookAtDistance
         );
-        
         controlsRef.current.target.copy(target);
         controlsRef.current.update();
-        //console.log('👈 [CinemaCamera] Looking left (default view)');
       }
       else if (key === 'c' && initialRotation) {
-        // Look at screen (center view)
-        const direction = new THREE.Vector3(0, 0, -1); // Forward
+        // 🎯 Look at screen (center) — no offset
+        const direction = new THREE.Vector3(0, 0, -1);
         const euler = new THREE.Euler(
           initialRotation[0] * Math.PI / 180,
           initialRotation[1] * Math.PI / 180,
@@ -207,24 +209,21 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
           'XYZ'
         );
         direction.applyEuler(euler);
-        
-        // Calculate target point toward screen
         const lookAtDistance = 10;
         const target = new THREE.Vector3(
           userSeatPosition[0] + direction.x * lookAtDistance,
           userSeatPosition[1] + direction.y * lookAtDistance,
           userSeatPosition[2] + direction.z * lookAtDistance
         );
-        
-        // Snap to screen view
         controlsRef.current.target.copy(target);
         controlsRef.current.update();
-        console.log('🎯 [CinemaCamera] Looking at screen (center)');
       } 
       else if (key === 'r' && initialRotation) {
-        // Look right - mirror the spawn (left) view across the screen direction
+        // 👉 Look RIGHT with over-the-shoulder offset
+        const offset = new THREE.Vector3(0.8, 0, 0); // Shift right
+        const newCamPos = currentPos.clone().add(offset);
+        camera.position.copy(newCamPos);
         
-        // Screen direction (center)
         const screenDir = new THREE.Vector3(0, 0, -1);
         const euler = new THREE.Euler(
           initialRotation[0] * Math.PI / 180,
@@ -234,38 +233,25 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
         );
         screenDir.applyEuler(euler);
         
-        // From your data:
-        // Spawn (left) looking at: [0.79, -0.58, 0.22]
-        // Screen looking at: [0.07, -0.00, 1.00]
-        // We need to calculate right by mirroring left across screen
-        
         const leftLookAt = new THREE.Vector3(0.79, -0.58, 0.22);
         const screenLookAt = new THREE.Vector3(0.07, -0.00, 1.00);
-        
-        // Calculate the offset from screen to left
         const leftOffset = new THREE.Vector3().subVectors(leftLookAt, screenLookAt);
-        
-        // Mirror it: right = screen - leftOffset
         const rightLookAt = new THREE.Vector3().subVectors(screenLookAt, leftOffset);
         
-        // Calculate target point
         const lookAtDistance = 10;
         const target = new THREE.Vector3(
-          userSeatPosition[0] + rightLookAt.x * lookAtDistance,
-          userSeatPosition[1] + rightLookAt.y * lookAtDistance,
-          userSeatPosition[2] + rightLookAt.z * lookAtDistance
+          newCamPos.x + rightLookAt.x * lookAtDistance,
+          newCamPos.y + rightLookAt.y * lookAtDistance,
+          newCamPos.z + rightLookAt.z * lookAtDistance
         );
-        
-        // Snap to right view
         controlsRef.current.target.copy(target);
         controlsRef.current.update();
-        console.log('👉 [CinemaCamera] Looking right (mirrored from left)');
       }
     };
 
     window.addEventListener('keydown', handleLookDirection);
     return () => window.removeEventListener('keydown', handleLookDirection);
-  }, [initialRotation, userSeatPosition]);
+  }, [initialRotation, userSeatPosition, camera]);
 
   // Reset camera position when view is locked (but preserve orientation)
   useEffect(() => {
@@ -505,6 +491,7 @@ export default function CinemaScene3D({
   hideLabelsForLocalViewer = false,
   onZoomComplete: onExternalZoomComplete,
   debugMode = false,
+  onAvatarClick,
   useGLBModel = true,
   showPositionDebug = false,
   remoteParticipants = new Map(),
@@ -746,6 +733,7 @@ export default function CinemaScene3D({
               roomMembers={roomMembers}
               currentUserId={authenticatedUserID}
               onEmoteReceived={onEmoteReceived}
+              onAvatarClick={onAvatarClick}
               onChatMessageReceived={onChatMessageReceived}
               //useGLB={useGLBModel}
               hideLabelsForLocalViewer={hideLabelsForLocalViewer}

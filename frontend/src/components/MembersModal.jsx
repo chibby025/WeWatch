@@ -1,15 +1,16 @@
-// src/components/MembersModal.jsx
+// frontend/src/components/MembersModal.jsx
 import React from 'react';
 
 export default function MembersModal({ 
   isOpen, 
   onClose, 
   members = [],
-  fetchMembers = null // ← NEW: optional fetch function
+  fetchMembers = null,
+  onMemberClick, // ✅ NEW prop
 }) {
   React.useEffect(() => {
     if (isOpen && fetchMembers) {
-      fetchMembers(); // Only fetch if provided
+      fetchMembers();
     }
   }, [isOpen, fetchMembers]);
 
@@ -26,8 +27,12 @@ export default function MembersModal({
         </div>
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {members.map(member => (
-            <div key={member.id} className="text-white py-1">
-              {member.username}
+            <div 
+              key={member.id} 
+              className="text-white py-2 px-3 rounded hover:bg-gray-700 cursor-pointer"
+              onClick={() => onMemberClick?.(member)} // ✅ CLICK HANDLER
+            >
+              {member.username || `User ${member.id}`}
             </div>
           ))}
         </div>
