@@ -65,12 +65,11 @@ export function useSeatController({
 // Helper: extract camera position (reuse from seatCalculator)
 function getCameraPositionFromAvatar(avatarPosition, seatId = null) {
   const [x, y, z] = avatarPosition;
-  if (seatId === 1) return [-3.15, 2.64, -0.72];
-  if (seatId === 2) return [-3.66, 2.61, -0.78];
-  if (seatId === 3) return [-4.03, 2.50, -0.76];
-  if (seatId === 4) return [-4.63, 2.79, -0.70];
-  if (seatId === 5) return [-5.02, 2.09, -0.73];
-  if (seatId === 6) return [-5.38, 1.89, -0.79];
-  if (seatId === 7) return [x, y * 1.03, z * 0.92];
+  // ✅ Row 1 seats (A1-A7, seats 1-7) - Raised slightly to look more downward
+  if (seatId >= 1 && seatId <= 7) return [x, 2.35, -0.86];
+  // ✅ Row 2 seats (B1-B7, seats 8-14) - All use same Y & Z from B1, keep individual X
+  if (seatId >= 8 && seatId <= 14) return [x, 2.65, -2.38];
+  // ✅ Apply same camera adjustment to all Row 5 seats (E1-E7, seats 29-35)
+  if (seatId >= 29 && seatId <= 35) return [x, y * 1.22, z - 0.3];
   return [x, y * 1.07, z * 0.91];
 }

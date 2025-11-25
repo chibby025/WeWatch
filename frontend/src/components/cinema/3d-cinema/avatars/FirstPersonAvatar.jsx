@@ -112,7 +112,7 @@ export default function FirstPersonAvatar({
       {/* BODY (lower torso visible) */}
       <mesh
         ref={bodyRef}
-        position={[0, -1.0, -0.5]} // Below camera view
+        position={[0, -1.0, -0.5]}
         castShadow
       >
         <cylinderGeometry args={[0.15, 0.2, 0.4, 16]} />
@@ -123,17 +123,17 @@ export default function FirstPersonAvatar({
         />
       </mesh>
 
-      {/* LEFT HAND - Visible at left edge with cartoon glove */}
+      {/* 👇 HIDE HANDS: Comment out or delete these */}
+
+      {/* 
       <CartoonHand
         ref={leftArmRef}
         position={[0.4, -0.3, -0.4]}
         rotation={[0, 0, 0]}
         userColor={userColor}
         isLeft={true}
-        scale={0.8} // Slightly smaller for first-person view
+        scale={0.8}
       />
-
-      {/* RIGHT HAND - Visible at right edge with cartoon glove */}
       <CartoonHand
         ref={rightArmRef}
         position={[-0.4, -0.3, -0.4]}
@@ -142,6 +142,7 @@ export default function FirstPersonAvatar({
         isLeft={false}
         scale={0.8}
       />
+      */}
     </group>
   );
 }
