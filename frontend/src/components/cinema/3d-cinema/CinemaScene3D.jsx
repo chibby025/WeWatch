@@ -13,7 +13,15 @@ import { useGLTF } from '@react-three/drei';
 /**
  * CinemaCamera - Handles camera movement and controls
  */
-function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isViewLocked, currentUserEmote, userColor }) {
+function CinemaCamera({
+  userSeatPosition,
+  initialRotation,
+  onPositionUpdate,
+  isViewLocked,
+  currentUserEmote,
+  userColor,
+  seatData // ✅ ADD THIS
+}) {
   const cameraRef = useRef();
   const { camera } = useThree();
   const controlsRef = useRef();
@@ -181,77 +189,49 @@ function CinemaCamera({ userSeatPosition, initialRotation, onPositionUpdate, isV
 
     const handleLookDirection = (event) => {
       const key = event.key.toLowerCase();
-      const currentPos = new THREE.Vector3().copy(camera.position);
-      
+      if (!['l', 'r', 'c'].includes(key)) return;
+
+      const controls = controlsRef.current;
+      const presets = seatData?.viewPresets;
+      if (!presets) {
+        console.warn('⚠️ No viewPresets found in seatData', seatData);
+        return;
+      }
+
+      let target;
+      let directionName;
       if (key === 'l') {
-        // 👈 Look LEFT with over-the-shoulder offset
-        const offset = new THREE.Vector3(-0.8, 0, 0); // Shift left
-        const newCamPos = currentPos.clone().add(offset);
-        camera.position.copy(newCamPos);
-        
-        const leftLookAt = new THREE.Vector3(0.79, -0.58, 0.22);
-        const lookAtDistance = 10;
-        const target = new THREE.Vector3(
-          newCamPos.x + leftLookAt.x * lookAtDistance,
-          newCamPos.y + leftLookAt.y * lookAtDistance,
-          newCamPos.z + leftLookAt.z * lookAtDistance
-        );
-        controlsRef.current.target.copy(target);
-        controlsRef.current.update();
+        target = presets.lookLeft?.target;
+        directionName = 'LEFT';
+      } else if (key === 'r') {
+        target = presets.lookRight?.target;
+        directionName = 'RIGHT';
+      } else if (key === 'c') {
+        target = presets.lookCenter?.target;
+        directionName = 'CENTER';
       }
-      else if (key === 'c' && initialRotation) {
-        // 🎯 Look at screen (center) — no offset
-        const direction = new THREE.Vector3(0, 0, -1);
-        const euler = new THREE.Euler(
-          initialRotation[0] * Math.PI / 180,
-          initialRotation[1] * Math.PI / 180,
-          initialRotation[2] * Math.PI / 180,
-          'XYZ'
-        );
-        direction.applyEuler(euler);
-        const lookAtDistance = 10;
-        const target = new THREE.Vector3(
-          userSeatPosition[0] + direction.x * lookAtDistance,
-          userSeatPosition[1] + direction.y * lookAtDistance,
-          userSeatPosition[2] + direction.z * lookAtDistance
-        );
-        controlsRef.current.target.copy(target);
-        controlsRef.current.update();
-      } 
-      else if (key === 'r' && initialRotation) {
-        // 👉 Look RIGHT with over-the-shoulder offset
-        const offset = new THREE.Vector3(0.8, 0, 0); // Shift right
-        const newCamPos = currentPos.clone().add(offset);
-        camera.position.copy(newCamPos);
-        
-        const screenDir = new THREE.Vector3(0, 0, -1);
-        const euler = new THREE.Euler(
-          initialRotation[0] * Math.PI / 180,
-          initialRotation[1] * Math.PI / 180,
-          initialRotation[2] * Math.PI / 180,
-          'XYZ'
-        );
-        screenDir.applyEuler(euler);
-        
-        const leftLookAt = new THREE.Vector3(0.79, -0.58, 0.22);
-        const screenLookAt = new THREE.Vector3(0.07, -0.00, 1.00);
-        const leftOffset = new THREE.Vector3().subVectors(leftLookAt, screenLookAt);
-        const rightLookAt = new THREE.Vector3().subVectors(screenLookAt, leftOffset);
-        
-        const lookAtDistance = 10;
-        const target = new THREE.Vector3(
-          newCamPos.x + rightLookAt.x * lookAtDistance,
-          newCamPos.y + rightLookAt.y * lookAtDistance,
-          newCamPos.z + rightLookAt.z * lookAtDistance
-        );
-        controlsRef.current.target.copy(target);
-        controlsRef.current.update();
+
+      if (!target) {
+        console.warn(`⚠️ Missing ${directionName} target in presets`, presets);
+        return;
       }
+
+      // 🔍 DEBUG LOGS
+      const camPos = camera.position.toArray();
+      const deltaX = target[0] - camPos[0];
+      console.log(`[LOOK ${directionName}]`);
+      console.log(`  Camera position: [${camPos.map(x => x.toFixed(2)).join(', ')}]`);
+      console.log(`  Target: [${target.map(x => x.toFixed(2)).join(', ')}]`);
+      console.log(`  Delta X (target - camera): ${deltaX.toFixed(2)}`);
+      console.log(`  Interpretation: ${deltaX < 0 ? 'Target is LEFT of camera' : 'Target is RIGHT of camera'}`);
+
+      controls.target.copy(new THREE.Vector3(...target));
+      controls.update();
     };
 
     window.addEventListener('keydown', handleLookDirection);
     return () => window.removeEventListener('keydown', handleLookDirection);
-  }, [initialRotation, userSeatPosition, camera]);
+  }, [seatData, camera]);
 
   // Reset camera position when view is locked (but preserve orientation)
   useEffect(() => {
@@ -624,6 +604,7 @@ export default function CinemaScene3D({
             isViewLocked={isViewLocked}
             currentUserEmote={currentUserEmote}
             userColor={currentUserColor}
+            seatData={assignedSeat}
           />
 
           {/* Dynamic lighting - toggle between bright and dark */}
