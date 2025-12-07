@@ -1,4 +1,5 @@
 import React from 'react';
+import EmojiImage from './EmojiImage';
 
 /**
  * EmotePicker - Dropdown emote selector
@@ -48,8 +49,8 @@ export default function EmotePicker({ isOpen, onClose, onEmoteSelect }) {
               className="flex flex-col items-center justify-center p-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors group"
               title={`${emote.label} (Key: ${emote.key})`}
             >
-              <div className="text-3xl mb-1 group-hover:scale-110 transition-transform">
-                {emote.emoji}
+              <div className="mb-1 group-hover:scale-110 transition-transform">
+                <EmojiImage emoji={emote.emoji} size={48} />
               </div>
               <div className="text-[9px] text-gray-400">{emote.label}</div>
               <div className="text-[8px] text-gray-500 mt-0.5">Key: {emote.key}</div>

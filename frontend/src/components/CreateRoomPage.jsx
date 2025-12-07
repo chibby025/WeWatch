@@ -6,6 +6,7 @@ import { createRoom } from '../services/api'; // Assume you'll create this funct
 const CreateRoomPage = () => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [isPublic, setIsPublic] = useState(true); // ✅ Privacy toggle state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate(); // Hook for programmatic navigation
@@ -22,7 +23,11 @@ const CreateRoomPage = () => {
 
     try {
       // Prepare data for the API call
-      const roomData = { name: name.trim(), description };
+      const roomData = { 
+        name: name.trim(), 
+        description,
+        is_public: isPublic // ✅ Include privacy setting
+      };
 
       // Call the createRoom function from the API service
       const data = await createRoom(roomData);
@@ -92,6 +97,59 @@ const CreateRoomPage = () => {
             className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline disabled:opacity-50"
           ></textarea>
           <p className="text-xs italic text-gray-500 mt-1">Provide a brief description (max 500 characters).</p>
+        </div>
+
+        {/* ✅ Privacy Toggle */}
+        <div className="mb-6">
+          <label className="block text-gray-700 text-sm font-bold mb-3">Room Privacy</label>
+          <div className="flex items-center space-x-4">
+            <button
+              type="button"
+              onClick={() => setIsPublic(true)}
+              disabled={loading}
+              className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
+                isPublic
+                  ? 'bg-green-500 text-white shadow-md'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              } disabled:opacity-50`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM8 11a1 1 0 100-2 1 1 0 000 2zm4 0a1 1 0 100-2 1 1 0 000 2z"/>
+                </svg>
+                <span>Public</span>
+              </div>
+              {isPublic && (
+                <p className="text-xs mt-1 opacity-90">Anyone can find and join</p>
+              )}
+            </button>
+            
+            <button
+              type="button"
+              onClick={() => setIsPublic(false)}
+              disabled={loading}
+              className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
+                !isPublic
+                  ? 'bg-orange-500 text-white shadow-md'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              } disabled:opacity-50`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd"/>
+                </svg>
+                <span>Private</span>
+              </div>
+              {!isPublic && (
+                <p className="text-xs mt-1 opacity-90">Invite-only access</p>
+              )}
+            </button>
+          </div>
+          <p className="text-xs italic text-gray-500 mt-2">
+            {isPublic 
+              ? "Public rooms appear in the lobby for everyone to join."
+              : "Private rooms require an invite link to join. You can share invites from the room page."}
+          </p>
         </div>
         
         <div className="flex items-center justify-between">

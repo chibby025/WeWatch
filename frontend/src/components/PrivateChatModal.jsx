@@ -1,7 +1,14 @@
 // frontend/src/components/PrivateChatModal.jsx
 import React, { useState } from 'react';
 
-export default function PrivateChatModal({ otherUser, messages = [], onSendMessage, onBack, onClose }) {
+export default function PrivateChatModal({ 
+  otherUser, 
+  messages = [], 
+  onSendMessage, 
+  onBack, 
+  onClose,
+  currentUser // ✅ Add this
+}) {
   const [input, setInput] = useState('');
 
   const handleSubmit = () => {

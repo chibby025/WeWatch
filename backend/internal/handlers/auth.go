@@ -2,8 +2,13 @@
 package handlers
 
 import (
+    "fmt"
     "log"
     "net/http"
+    "os"
+    "path/filepath"
+    "strings"
+    "time"
     "wewatch-backend/internal/models"
     "wewatch-backend/internal/utils"
 
@@ -237,9 +242,11 @@ func GetCurrentUserHandler(c *gin.Context) {
     token, _ := c.Cookie("wewatch_token")
     response := gin.H{
         "user": gin.H{
-            "id":        user.ID,
-            "username":  user.Username,
-            "email":     user.Email,
+            "id":         user.ID,
+            "username":   user.Username,
+            "email":      user.Email,
+            "avatar_url": user.AvatarURL,
+            "bio":        user.Bio,
             "created_at": user.CreatedAt,
         },
     }
@@ -251,7 +258,7 @@ func GetCurrentUserHandler(c *gin.Context) {
     c.JSON(http.StatusOK, response)
 }
 
-// Profile Handler
+// Profile Handler - Update user profile (username, bio, avatar)
 func UpdateProfileHandler(c *gin.Context) {
     userIDValue, exists := c.Get("user_id")
     if !exists {
@@ -263,19 +270,93 @@ func UpdateProfileHandler(c *gin.Context) {
         c.JSON(500, gin.H{"error": "Server error"})
         return
     }
-    var req struct {
-        AvatarURL string `json:"avatar_url" binding:"required,url"`
+
+    // Support both JSON and multipart/form-data (for avatar upload)
+    contentType := c.GetHeader("Content-Type")
+    
+    var username, bio, avatarURL string
+    
+    if strings.Contains(contentType, "multipart/form-data") {
+        // Handle multipart form data (with file upload)
+        username = c.PostForm("username")
+        bio = c.PostForm("bio")
+        
+        // Handle avatar file upload
+        file, err := c.FormFile("avatar")
+        if err == nil {
+            // Avatar file provided - save it
+            uploadDir := "./uploads/avatars"
+            os.MkdirAll(uploadDir, os.ModePerm)
+            
+            // Generate unique filename
+            ext := filepath.Ext(file.Filename)
+            filename := fmt.Sprintf("avatar_%d_%d%s", userID, time.Now().Unix(), ext)
+            filepath := filepath.Join(uploadDir, filename)
+            
+            if err := c.SaveUploadedFile(file, filepath); err != nil {
+                log.Printf("Failed to save avatar file: %v", err)
+                c.JSON(500, gin.H{"error": "Failed to save avatar"})
+                return
+            }
+            
+            avatarURL = fmt.Sprintf("/uploads/avatars/%s", filename)
+        }
+    } else {
+        // Handle JSON request
+        var req struct {
+            Username  string `json:"username"`
+            Bio       string `json:"bio"`
+            AvatarURL string `json:"avatar_url"`
+        }
+        if err := c.ShouldBindJSON(&req); err != nil {
+            c.JSON(400, gin.H{"error": "Invalid request"})
+            return
+        }
+        username = req.Username
+        bio = req.Bio
+        avatarURL = req.AvatarURL
     }
-    if err := c.ShouldBindJSON(&req); err != nil {
-        c.JSON(400, gin.H{"error": "Invalid request"})
+
+    // Build update map
+    updates := make(map[string]interface{})
+    if username != "" {
+        updates["username"] = username
+    }
+    if bio != "" {
+        updates["bio"] = bio
+    }
+    if avatarURL != "" {
+        updates["avatar_url"] = avatarURL
+    }
+
+    // Only update if there are changes
+    if len(updates) == 0 {
+        c.JSON(400, gin.H{"error": "No fields to update"})
         return
     }
-    // ✅ FIXED: Added missing ) after &models.User{}
-    // ✅ FIXED: Removed extra . after req.AvatarURL
-    DB.Model(&models.User{}).Where("id = ?", userID).Updates(models.User{
-        AvatarURL: req.AvatarURL, // ← No dot here
+
+    // Update user
+    result := DB.Model(&models.User{}).Where("id = ?", userID).Updates(updates)
+    if result.Error != nil {
+        log.Printf("Failed to update user profile: %v", result.Error)
+        c.JSON(500, gin.H{"error": "Failed to update profile"})
+        return
+    }
+
+    // Fetch updated user
+    var user models.User
+    DB.First(&user, userID)
+
+    c.JSON(200, gin.H{
+        "message": "Profile updated successfully",
+        "user": gin.H{
+            "id":         user.ID,
+            "username":   user.Username,
+            "email":      user.Email,
+            "avatar_url": user.AvatarURL,
+            "bio":        user.Bio,
+        },
     })
-    c.JSON(200, gin.H{"message": "Profile updated"})
 }
 
 

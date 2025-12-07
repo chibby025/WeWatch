@@ -1,9 +1,8 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import UsernameLabel from './UsernameLabel';
 import ChatBubble from './ChatBubble';
-import EmoteAnimation from './EmoteAnimation';
 import FloatingEmote from './FloatingEmote';
 import { Html } from '@react-three/drei';
 
@@ -30,12 +29,11 @@ export default function UserAvatar({
   recentMessage = null,
   avatarColor = null, // Optional override
   isDemo = false, // ✅ Demo flag passed from AvatarManager
+  onEmoteComplete = null, // Callback when emote animation finishes
 }) {
   const groupRef = useRef();
   const headRef = useRef();
   const bodyRef = useRef();
-  const leftArmRef = useRef();
-  const rightArmRef = useRef();
 
   // Generate consistent color from user ID
   const userColor = useMemo(() => {
@@ -157,13 +155,6 @@ export default function UserAvatar({
         </mesh>
       )}
 
-      {/* FLOATING EMOTE (only for real users) */}
-      {!isDemo && currentEmote && (
-        <FloatingEmote 
-          emote={currentEmote}
-          position={[0, 0, 0]} // relative to group
-        />
-      )}
       {/* USERNAME LABEL */}
       <UsernameLabel 
         username={username}
@@ -173,7 +164,7 @@ export default function UserAvatar({
         isCurrentUser={isCurrentUser}
       />
 
-      {/* CHAT & EMOTES (only for real users) */}
+      {/* CHAT BUBBLE (only for real users) */}
       {!isDemo && recentMessage && (
         <ChatBubble
           message={recentMessage.text}
@@ -183,14 +174,13 @@ export default function UserAvatar({
           onComplete={() => {}}
         />
       )}
+
+      {/* FLOATING EMOTE (only for real users) */}
       {!isDemo && currentEmote && (
-        <EmoteAnimation
+        <FloatingEmote 
           emote={currentEmote}
-          headRef={headRef}
-          bodyRef={bodyRef}
-          leftArmRef={leftArmRef}
-          rightArmRef={rightArmRef}
-          userColor={userColor}
+          position={[0, 0.5, 0]} // Start from head position
+          onComplete={onEmoteComplete}
         />
       )}
     </group>

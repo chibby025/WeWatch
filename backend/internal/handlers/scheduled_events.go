@@ -1,11 +1,11 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 	"strconv"
-	//"encoding/json"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -15,10 +15,12 @@ import (
 
 // ScheduledEventInput defines the expected structure for creating a scheduled event
 type ScheduledEventInput struct {
-	MediaItemID uint   `json:"media_item_id" binding:"required"`
-	StartTime   string `json:"start_time" binding:"required"` // ISO 8601 string (e.g., "2025-09-15T20:00:00Z")
-	Title       string `json:"title" binding:"required"`
-	Description string `json:"description"`
+	MediaItemID   *uint  `json:"media_item_id"`                          // Optional: reference to uploaded media
+	WatchType     string `json:"watch_type" binding:"required"`          // Required: "3d_cinema" or "video_watch"
+	MediaFilePath string `json:"media_file_path"`                        // Optional: localhost file path
+	StartTime     string `json:"start_time" binding:"required"`          // ISO 8601 string (e.g., "2025-09-15T20:00:00Z")
+	Title         string `json:"title" binding:"required"`
+	Description   string `json:"description"`
 }
 
 // CreateScheduledEventHandler handles POST /api/rooms/:id/scheduled-events
@@ -65,42 +67,63 @@ func CreateScheduledEventHandler(c *gin.Context) {
 		return
 	}
 
-	// 5. Parse StartTime
+	// 5. Validate watch_type
+	if input.WatchType != "3d_cinema" && input.WatchType != "video_watch" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid watch_type. Must be '3d_cinema' or 'video_watch'"})
+		return
+	}
+
+	// 6. Parse StartTime
 	startTime, err := time.Parse(time.RFC3339, input.StartTime)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid start_time format. Use ISO 8601 (e.g., 2025-09-15T20:00:00Z)"})
 		return
 	}
 
-	// 6. Validate MediaItem exists and belongs to this room
-	var mediaItem models.MediaItem
-	if err := DB.First(&mediaItem, input.MediaItemID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Media item not found"})
-		return
-	}
-	if mediaItem.RoomID != uint(roomID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Media item does not belong to this room"})
-		return
+	// 7. Validate MediaItem if provided (optional)
+	if input.MediaItemID != nil {
+		var mediaItem models.MediaItem
+		if err := DB.First(&mediaItem, *input.MediaItemID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Media item not found"})
+			return
+		}
+		if mediaItem.RoomID != uint(roomID) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Media item does not belong to this room"})
+			return
+		}
 	}
 
-	// 7. Create ScheduledEvent
+	// 8. Create ScheduledEvent
 	event := models.ScheduledEvent{
-		RoomID:      uint(roomID),
-		MediaItemID: input.MediaItemID,
-		StartTime:   startTime,
-		Title:       input.Title,
-		Description: input.Description,
-		HostUserID:  authenticatedUserID,
+		RoomID:        uint(roomID),
+		MediaItemID:   input.MediaItemID,
+		WatchType:     input.WatchType,
+		MediaFilePath: input.MediaFilePath,
+		StartTime:     startTime,
+		Title:         input.Title,
+		Description:   input.Description,
+		HostUserID:    authenticatedUserID,
 	}
 
-	// 8. Save to DB
+	// 9. Save to DB
 	if err := DB.Create(&event).Error; err != nil {
 		log.Printf("Error creating scheduled event: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create scheduled event"})
 		return
 	}
 
-	// 9. Return success
+	// 10. Broadcast to room via WebSocket
+	broadcastData := map[string]interface{}{
+		"type":  "scheduled_event_created",
+		"event": event,
+	}
+	jsonData, _ := json.Marshal(broadcastData)
+	hub.BroadcastToRoom(uint(roomID), OutgoingMessage{
+		Data:     jsonData,
+		IsBinary: false,
+	}, nil)
+
+	// 11. Return success
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Scheduled event created successfully",
 		"event":   event,
@@ -216,7 +239,13 @@ func UpdateScheduledEventHandler(c *gin.Context) {
 		return
 	}
 
-	// 4. Fetch the event
+	// 4. Validate watch_type
+	if input.WatchType != "3d_cinema" && input.WatchType != "video_watch" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid watch_type. Must be '3d_cinema' or 'video_watch'"})
+		return
+	}
+
+	// 5. Fetch the event
 	var event models.ScheduledEvent
 	if err := DB.First(&event, uint(eventID)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -227,7 +256,7 @@ func UpdateScheduledEventHandler(c *gin.Context) {
 		return
 	}
 
-	// 5. Check if user is host
+	// 6. Check if user is host
 	var room models.Room
 	if err := DB.First(&room, event.RoomID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch room"})
@@ -238,19 +267,23 @@ func UpdateScheduledEventHandler(c *gin.Context) {
 		return
 	}
 
-	// 6. Validate MediaItem belongs to room
-	var mediaItem models.MediaItem
-	if err := DB.First(&mediaItem, input.MediaItemID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Media item not found"})
-		return
-	}
-	if mediaItem.RoomID != event.RoomID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Media item does not belong to this room"})
-		return
+	// 7. Validate MediaItem if provided (optional)
+	if input.MediaItemID != nil {
+		var mediaItem models.MediaItem
+		if err := DB.First(&mediaItem, *input.MediaItemID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Media item not found"})
+			return
+		}
+		if mediaItem.RoomID != event.RoomID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Media item does not belong to this room"})
+			return
+		}
 	}
 
-	// 7. Update event
+	// 8. Update event
 	event.MediaItemID = input.MediaItemID
+	event.WatchType = input.WatchType
+	event.MediaFilePath = input.MediaFilePath
 	event.StartTime, _ = time.Parse(time.RFC3339, input.StartTime)
 	event.Title = input.Title
 	event.Description = input.Description

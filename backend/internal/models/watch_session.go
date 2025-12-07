@@ -12,6 +12,7 @@ type WatchSession struct {
 	SessionID string    `gorm:"type:varchar(36);uniqueIndex;not null" json:"session_id"`
 	RoomID    uint      `gorm:"not null;index" json:"room_id"`
 	HostID    uint      `gorm:"not null" json:"host_id"`
+	WatchType string    `gorm:"type:varchar(50);default:'video'" json:"watch_type"` // "video" or "3d_cinema"
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
 	Members   []WatchSessionMember `json:"members"` // Active session participants
@@ -26,6 +27,7 @@ type WatchSessionMember struct {
 	LeftAt         *time.Time `json:"left_at,omitempty"`
 	IsActive       bool      `gorm:"default:true" json:"is_active"`
 	UserRole       string    `gorm:"type:varchar(20);default:'viewer'" json:"user_role"` // viewer, broadcaster
+	CanBroadcast   bool      `gorm:"default:false" json:"can_broadcast"` // Host-granted permission to speak to whole room
 	// Client         *Client   `gorm:"-" json:"-"` // WebSocket client reference (not stored in DB)
 }
 

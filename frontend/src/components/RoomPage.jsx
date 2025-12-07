@@ -3,10 +3,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 // Import API service functions
-import { getRoom, getMediaItemsForRoom, uploadMediaToRoom, getRoomMembers, getActiveSession, createWatchSessionForRoom } from '../services/api';
+import { getRoom, getMediaItemsForRoom, uploadMediaToRoom, getRoomMembers, getActiveSession, createWatchSessionForRoom, getScheduledEvents, createScheduledEvent, updateScheduledEvent, deleteScheduledEvent, downloadICal, deleteChatMessage, editChatMessage } from '../services/api';
 // Import the VideoPlayer component
 import VideoPlayer from './VideoPlayer'; // Adjust path if needed
 import MemberList from './MemberList';
+import Sidebar from './Sidebar';
+import ScheduleEventModal from './ScheduleEventModal';
+import WatchTypeModal from './WatchTypeModal';
 //import UploadSection from './UploadSection';
 //import MediaItemList from './MediaItemList'; // Your existing media list component
 // Import Heroicons
@@ -73,6 +76,22 @@ const [activeSessionId, setActiveSessionId] = useState(null);
     isActive: false,
     hostId: null
   });
+
+  // --- Scheduled Events State ---
+  const [scheduledEvents, setScheduledEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [eventToEdit, setEventToEdit] = useState(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isHovering, setIsHovering] = useState(false);
+  const [activeTab, setActiveTab] = useState('upcoming');
+  const [notificationPermission, setNotificationPermission] = useState('default');
+  const [notifiedEvents, setNotifiedEvents] = useState(new Set()); // Track which events we've already notified about
+  
+  // --- Watch Type Modal State ---
+  const [isWatchTypeModalOpen, setIsWatchTypeModalOpen] = useState(false);
+  const [activeWatchType, setActiveWatchType] = useState(null); // 'video' or '3d_cinema'
+  
   // --- EFFECTS ---
 
   // Fetch Room Data
@@ -193,6 +212,21 @@ const [activeSessionId, setActiveSessionId] = useState(null);
           setChatMessages(prev => [...prev, msg.data]);
         }
         
+        // ✅ Handle session ended (auto-ended after host disconnect grace period)
+        if (msg.type === 'session_ended') {
+          console.log('🔚 Session auto-ended:', msg.data);
+          setSessionStatus({
+            isActive: false,
+            hostId: null
+          });
+          setActiveSessionId(null);
+          
+          // Show notification to user
+          if (msg.data.reason === 'host_timeout') {
+            alert('The watch session has ended because the host did not return within 10 minutes.');
+          }
+        }
+        
       } catch (e) {
         console.error("WebSocket message parse error:", e);
       }
@@ -269,13 +303,15 @@ useEffect(() => {
       
       if (sessionData?.session_id) {
         setActiveSessionId(sessionData.session_id);
+        setActiveWatchType(sessionData.watch_type || 'video'); // ✅ Store watch type
         setSessionStatus({ 
           isActive: true, 
-          hostId: room?.host_id 
+          hostId: sessionData.host_id || room?.host_id 
         });
         console.log("✅ Found active session:", sessionData);
       } else {
         setActiveSessionId(null);
+        setActiveWatchType(null);
         setSessionStatus({ 
           isActive: false, 
           hostId: room?.host_id 
@@ -352,6 +388,103 @@ useEffect(() => {
 
   autoJoinRoom();
 }, [roomId, currentUser]);
+
+// ✅ Fetch scheduled events
+useEffect(() => {
+  const fetchScheduledEvents = async () => {
+    if (!roomId) return;
+    
+    setEventsLoading(true);
+    try {
+      const response = await getScheduledEvents(roomId);
+      setScheduledEvents(response.events || []);
+    } catch (err) {
+      console.error("Failed to fetch scheduled events:", err);
+    } finally {
+      setEventsLoading(false);
+    }
+  };
+
+  fetchScheduledEvents();
+}, [roomId]);
+
+// ✅ Request notification permission on mount
+useEffect(() => {
+  if ('Notification' in window) {
+    setNotificationPermission(Notification.permission);
+    
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        setNotificationPermission(permission);
+      });
+    }
+  }
+}, []);
+
+// ✅ Check for upcoming events and show reminders
+useEffect(() => {
+  const checkUpcomingEvents = () => {
+    const now = new Date();
+    
+    scheduledEvents.forEach(event => {
+      const eventTime = new Date(event.start_time);
+      const timeUntilEvent = eventTime - now;
+      const minutesUntilEvent = Math.floor(timeUntilEvent / 60000);
+      
+      // Create unique key for this notification
+      const notificationKey = `${event.ID}-${minutesUntilEvent}`;
+      
+      // Show notification at 5 minutes and 1 minute before event
+      if ((minutesUntilEvent === 5 || minutesUntilEvent === 1) && !notifiedEvents.has(notificationKey)) {
+        // Mark as notified
+        setNotifiedEvents(prev => new Set([...prev, notificationKey]));
+        
+        // Show in-app toast notification
+        toast(`📅 Event "${event.title}" starts in ${minutesUntilEvent} minute${minutesUntilEvent > 1 ? 's' : ''}!`, {
+          duration: 10000,
+          icon: '⏰',
+        });
+        
+        // Show browser notification if permission granted
+        if (notificationPermission === 'granted') {
+          new Notification('WeWatch - Scheduled Event', {
+            body: `"${event.title}" starts in ${minutesUntilEvent} minute${minutesUntilEvent > 1 ? 's' : ''}!`,
+            icon: '/icons/seat.svg',
+            badge: '/icons/seat.svg',
+            tag: `event-${event.ID}`,
+          });
+        }
+      }
+      
+      // Show notification when event starts
+      if (minutesUntilEvent === 0 && !notifiedEvents.has(`${event.ID}-start`)) {
+        setNotifiedEvents(prev => new Set([...prev, `${event.ID}-start`]));
+        
+        toast.success(`🎬 Event "${event.title}" is starting now!`, {
+          duration: 15000,
+        });
+        
+        if (notificationPermission === 'granted') {
+          new Notification('WeWatch - Event Starting!', {
+            body: `"${event.title}" is starting now!`,
+            icon: '/icons/seat.svg',
+            badge: '/icons/seat.svg',
+            tag: `event-${event.ID}-start`,
+            requireInteraction: true,
+          });
+        }
+      }
+    });
+  };
+  
+  // Check every 30 seconds
+  const interval = setInterval(checkUpcomingEvents, 30000);
+  
+  // Check immediately on mount
+  checkUpcomingEvents();
+  
+  return () => clearInterval(interval);
+}, [scheduledEvents, notificationPermission, notifiedEvents]);
   
   // --- EVENT HANDLERS ---
 
@@ -363,21 +496,25 @@ useEffect(() => {
       const sessionData = activeSessionResponse.data;
       
       if (sessionData?.session_id) {
-        // Active session exists - rejoin it
-        console.log("✅ Rejoining existing session:", sessionData.session_id);
-        if (sessionData.is_existing) {
-          toast.success('Rejoining watch session...');
+        // Active session exists - rejoin it with correct watch type
+        console.log("✅ Rejoining existing session:", sessionData.session_id, "Type:", sessionData.watch_type);
+        const watchType = sessionData.watch_type || 'video';
+        
+        toast.success(`Rejoining ${watchType === '3d_cinema' ? '3D Cinema' : 'Video Watch'}...`);
+        
+        // Route to correct watch type
+        if (watchType === '3d_cinema') {
+          navigate(`/cinema-3d-demo/${roomId}?session_id=${sessionData.session_id}`, {
+            state: { isHost, sessionId: sessionData.session_id }
+          });
+        } else {
+          navigate(`/watch/${roomId}?session_id=${sessionData.session_id}`);
         }
-        navigate(`/watch/${roomId}?session_id=${sessionData.session_id}`);
       } else {
         // No active session - only host can create
         if (isHost) {
-          const newSessionResponse = await createWatchSessionForRoom(roomId);
-          const newSessionId = newSessionResponse.data.session_id;
-          console.log("✅ Created new session:", newSessionId);
-          setActiveSessionId(newSessionId);
-          toast.success('Starting watch session...');
-          navigate(`/watch/${roomId}?session_id=${newSessionId}`);
+          // Show modal to choose watch type
+          setIsWatchTypeModalOpen(true);
         } else {
           toast.error('No active session. Wait for host to start.');
         }
@@ -385,6 +522,34 @@ useEffect(() => {
     } catch (error) {
       console.error('Error starting/joining watch:', error);
       toast.error('Failed to join watch session');
+    }
+  };
+
+  // ✅ Handle watch type selection from modal
+  const handleWatchTypeSelected = async (watchType) => {
+    try {
+      setIsWatchTypeModalOpen(false);
+      
+      const newSessionResponse = await createWatchSessionForRoom(roomId, watchType);
+      const newSessionId = newSessionResponse.data.session_id;
+      
+      console.log("✅ Created new session:", newSessionId, "Type:", watchType);
+      setActiveSessionId(newSessionId);
+      setActiveWatchType(watchType);
+      
+      toast.success(`Starting ${watchType === '3d_cinema' ? '3D Cinema' : 'Video Watch'}...`);
+      
+      // Route to correct watch type
+      if (watchType === '3d_cinema') {
+        navigate(`/cinema-3d-demo/${roomId}?session_id=${newSessionId}`, {
+          state: { isHost: true, sessionId: newSessionId }
+        });
+      } else {
+        navigate(`/watch/${roomId}?session_id=${newSessionId}`);
+      }
+    } catch (error) {
+      console.error('Error creating watch session:', error);
+      toast.error('Failed to start watch session');
     }
   };
 
@@ -531,6 +696,149 @@ const handlePlayMedia = (mediaItemId) => {
     setIsMediaPanelOpen(!isMediaPanelOpen);
   };
 
+  // ✅ Chat Message Handlers
+  const handleDeleteMessage = async (messageId) => {
+    try {
+      console.log(`🗑️ Deleting message ${messageId} from room ${roomId}`);
+      const response = await deleteChatMessage(roomId, messageId);
+      
+      // If deleted by host (soft delete), update message in place
+      if (response.deleted_by_host) {
+        setChatMessages(prev => prev.map(msg => 
+          msg.ID === messageId 
+            ? { ...msg, Message: '[Message deleted by host]', DeletedByHost: true }
+            : msg
+        ));
+      } else {
+        // Owner deleted their own message (hard delete) - remove from state
+        setChatMessages(prev => prev.filter(msg => msg.ID !== messageId));
+      }
+      
+      toast.success('Message deleted');
+    } catch (error) {
+      console.error('Failed to delete message:', error);
+      toast.error('Failed to delete message');
+      throw error;
+    }
+  };
+
+  const handleEditMessage = async (messageId, newMessage) => {
+    try {
+      console.log(`✏️ Editing message ${messageId} in room ${roomId}`);
+      await editChatMessage(roomId, messageId, newMessage);
+      // Update local state
+      setChatMessages(prev => prev.map(msg => 
+        msg.ID === messageId ? { ...msg, Message: newMessage } : msg
+      ));
+      toast.success('Message updated');
+    } catch (error) {
+      console.error('Failed to edit message:', error);
+      toast.error('Failed to edit message');
+      throw error;
+    }
+  };
+
+  // ✅ Scheduled Events Handlers
+  const handleCreateEvent = async (eventData) => {
+    try {
+      await createScheduledEvent(roomId, eventData);
+      toast.success('Event scheduled successfully!');
+      
+      // Refresh events list
+      const response = await getScheduledEvents(roomId);
+      setScheduledEvents(response.events || []);
+      
+      setIsScheduleModalOpen(false);
+      setEventToEdit(null);
+    } catch (err) {
+      console.error('Failed to create event:', err);
+      toast.error('Failed to schedule event');
+    }
+  };
+
+  const handleEditEvent = (eventId) => {
+    const event = scheduledEvents.find(e => e.ID === eventId);
+    if (event) {
+      setEventToEdit(event);
+      setIsScheduleModalOpen(true);
+    }
+  };
+
+  const handleUpdateEvent = async (eventData) => {
+    try {
+      await updateScheduledEvent(eventToEdit.ID, eventData);
+      toast.success('Event updated successfully!');
+      
+      // Refresh events list
+      const response = await getScheduledEvents(roomId);
+      setScheduledEvents(response.events || []);
+      
+      setIsScheduleModalOpen(false);
+      setEventToEdit(null);
+    } catch (err) {
+      console.error('Failed to update event:', err);
+      toast.error('Failed to update event');
+    }
+  };
+
+  const handleDeleteEvent = async (eventId) => {
+    if (!window.confirm('Are you sure you want to delete this event?')) return;
+    
+    try {
+      await deleteScheduledEvent(eventId);
+      toast.success('Event deleted successfully!');
+      
+      // Refresh events list
+      const response = await getScheduledEvents(roomId);
+      setScheduledEvents(response.events || []);
+    } catch (err) {
+      console.error('Failed to delete event:', err);
+      toast.error('Failed to delete event');
+    }
+  };
+
+  const handleJoinOnSchedule = (eventId) => {
+    const event = scheduledEvents.find(e => e.ID === eventId);
+    if (!event) return;
+    
+    const eventTime = new Date(event.start_time);
+    const now = new Date();
+    const timeUntilEvent = eventTime - now;
+    
+    if (timeUntilEvent <= 0) {
+      toast.success('Event is starting! Redirecting to cinema...');
+      handleBeginWatch();
+    } else {
+      const minutes = Math.floor(timeUntilEvent / 60000);
+      toast(`Event starts in ${minutes} minute${minutes !== 1 ? 's' : ''}. You'll be notified when it begins!`, {
+        duration: 5000,
+        icon: '⏰',
+      });
+    }
+  };
+
+  const handleAddToCalendar = async (eventId) => {
+    try {
+      // Call the API to download the .ics file
+      const blob = await downloadICal(eventId);
+      
+      // Create a download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `event-${eventId}.ics`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      toast.success('Calendar file downloaded! Add it to your calendar app.');
+    } catch (err) {
+      console.error('Failed to download calendar file:', err);
+      toast.error('Failed to download calendar file');
+    }
+  };
+
   // --- RENDERING ---
 
   if (loading) {
@@ -632,7 +940,7 @@ const handlePlayMedia = (mediaItemId) => {
       </div>
 
       {/* --- Unified Watch Buttons --- */}
-      <div className="mt-4 flex gap-3">
+      <div className="mt-4 flex gap-3 items-center">
         {/* Standard Watch */}
         <button
           onClick={handleBeginWatch}
@@ -645,38 +953,29 @@ const handlePlayMedia = (mediaItemId) => {
           </svg>
           {activeSessionId ? 'Standard Watch' : (isHost ? 'Begin Standard Watch' : 'Waiting for host...')}
         </button>
+        
+        {/* ✅ Schedule Event Button (Host Only) */}
+        {isHost && (
+          <button
+            onClick={() => setIsScheduleModalOpen(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg flex items-center"
+          >
+            <CalendarIcon className="h-5 w-5 mr-2" />
+            Schedule Event
+          </button>
+        )}
 
-        {/* ✅ 3D Watch */}
-        <button
-          onClick={async () => {
-            if (activeSessionId) {
-              navigate(`/cinema-3d-demo/${roomId}`, {
-                state: { isHost, sessionId: activeSessionId }
-              });
-            } else if (isHost) {
-              try {
-                const res = await createWatchSessionForRoom(roomId);
-                const sessionId = res.data.session_id;
-                setActiveSessionId(sessionId);
-                navigate(`/cinema-3d-demo/${roomId}`, {
-                  state: { isHost: true, sessionId }
-                });
-              } catch (err) {
-                console.error("Failed to start 3D session:", err);
-                toast.error("Failed to start 3D session");
-              }
-            } else {
-              toast.error('No active session. Wait for host to start.');
-            }
-          }}
-          disabled={!isHost && !activeSessionId}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2" />
-          </svg>
-          {activeSessionId ? '3D Watch' : (isHost ? 'Begin 3D Watch' : 'Waiting for host...')}
-        </button>
+        {/* ✅ Watch Type Badge (Show when session is active) */}
+        {activeSessionId && activeWatchType && (
+          <div className={`${
+            activeWatchType === '3d_cinema' ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-purple-100 text-purple-800 border-purple-300'
+          } px-4 py-2 rounded-lg flex items-center border-2`}>
+            <span className="text-lg mr-2">{activeWatchType === '3d_cinema' ? '🎭' : '🎬'}</span>
+            <span className="font-semibold">
+              {activeWatchType === '3d_cinema' ? '3D Cinema' : 'Video Watch'} Session Active
+            </span>
+          </div>
+        )}
       </div>
 
       {isMembersPanelOpen && (
@@ -919,10 +1218,68 @@ const handlePlayMedia = (mediaItemId) => {
             isHost={isHost}
             chatMessages={chatMessages}
             setChatMessages={setChatMessages}
+            onDelete={handleDeleteMessage}
+            onEdit={handleEditMessage}
           />
         </div>
       </div>
     </div>
+
+    {/* ✅ Scheduled Events Sidebar */}
+    <Sidebar
+      scheduledEvents={scheduledEvents}
+      isSidebarOpen={isSidebarOpen}
+      setIsSidebarOpen={setIsSidebarOpen}
+      isHovering={isHovering}
+      setIsHovering={setIsHovering}
+      activeTab={activeTab}
+      setActiveTab={setActiveTab}
+      handleEditEvent={handleEditEvent}
+      handleDeleteEvent={handleDeleteEvent}
+      handleJoinOnSchedule={handleJoinOnSchedule}
+      handleAddToCalendar={handleAddToCalendar}
+      isHost={isHost}
+      isMobile={false}
+    />
+
+    {/* ✅ Watch Type Selection Modal */}
+    <WatchTypeModal
+      isOpen={isWatchTypeModalOpen}
+      onClose={() => setIsWatchTypeModalOpen(false)}
+      onSelectType={handleWatchTypeSelected}
+    />
+
+    {/* ✅ Schedule Event Modal */}
+    {isScheduleModalOpen && (
+      <ScheduleEventModal
+        roomId={roomId}
+        mediaItems={mediaItems}
+        onClose={() => {
+          setIsScheduleModalOpen(false);
+          setEventToEdit(null);
+        }}
+        onCreate={eventToEdit ? handleUpdateEvent : handleCreateEvent}
+        eventToEdit={eventToEdit}
+      />
+    )}
+
+    {/* ✅ Members Panel Modal */}
+    {isMembersPanelOpen && (
+      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+        <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xl font-bold">Room Members</h3>
+            <button
+              onClick={() => setIsMembersPanelOpen(false)}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              ✕
+            </button>
+          </div>
+          <MemberList members={roomMembers} />
+        </div>
+      </div>
+    )}
   </div>
 );
 };

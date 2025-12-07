@@ -1,7 +1,22 @@
+port: 7880
+bind_addresses:
+  - ""
+
 keys:
   dev-key: a77cf9f63f8e47f9fdd9d1550e129731
 
-http:
-  cors:
-    allow_origins:
-      - "http://localhost:5173"
+rtc:
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: true
+  # Force relay candidates for testing
+  # force_relay: true  # ❌ Commented out - no TURN server configured
+
+room:
+  max_participants: 100
+  empty_timeout: 300
+  auto_create: true
+
+logging:
+  level: debug
+  pion_level: info

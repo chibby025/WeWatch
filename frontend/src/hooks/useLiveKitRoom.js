@@ -14,7 +14,17 @@ export default function useLiveKitRoom(roomId, currentUser) {
     try {
       console.log('🔗 [LiveKit] Fetching token for room:', roomId);
       
-      const res = await fetch(`http://localhost:8080/api/rooms/${roomId}/livekit-token`, {
+      // ✅ Generate unique tab ID for this browser tab (prevents identity collision)
+      let tabId = sessionStorage.getItem('livekit_tab_id');
+      if (!tabId) {
+        tabId = crypto.randomUUID().substring(0, 8);
+        sessionStorage.setItem('livekit_tab_id', tabId);
+        console.log('🆔 [LiveKit] Generated new tab ID:', tabId);
+      } else {
+        console.log('🆔 [LiveKit] Using existing tab ID:', tabId);
+      }
+      
+      const res = await fetch(`http://localhost:8080/api/rooms/${roomId}/livekit-token?tab_id=${tabId}`, {
         method: 'GET',
         credentials: 'include',
         headers: {
@@ -46,9 +56,20 @@ export default function useLiveKitRoom(roomId, currentUser) {
           console.log('👥 [LiveKit] Found existing participants:', existingParticipants.length);
           setRemoteParticipants(existingParticipants);
         })
-        .on(RoomEvent.Disconnected, () => {
-          console.log('🔌 LiveKit: Disconnected');
+        .on(RoomEvent.Disconnected, (reason) => {
+          console.log('🔌 LiveKit: Disconnected', reason);
           setIsConnected(false);
+          
+          // Auto-reconnect if disconnected unexpectedly (not by user action)
+          if (reason !== 'USER_INITIATED') {
+            console.log('🔄 LiveKit: Unexpected disconnection, attempting to reconnect in 2 seconds...');
+            setTimeout(() => {
+              if (roomRef.current?.state === 'disconnected') {
+                console.log('🔄 LiveKit: Reconnecting...');
+                connect();
+              }
+            }, 2000);
+          }
         })
         .on(RoomEvent.ParticipantConnected, (participant) => {
           console.log('👤 LiveKit: Participant connected', participant.identity);
@@ -71,12 +92,27 @@ export default function useLiveKitRoom(roomId, currentUser) {
         });
 
       console.log('🔗 [LiveKit] Connecting to:', url);
-      await newRoom.connect(url, token);
+      console.log('🔗 [LiveKit] Token preview:', token.substring(0, 50) + '...');
+      
+      await newRoom.connect(url, token, {
+        autoSubscribe: true,
+        publishDefaults: {
+          audioBitrate: 96000,
+        },
+      });
+      
       console.log('✅ [LiveKit] Connection successful!');
+      console.log('✅ [LiveKit] Room SID:', newRoom.sid);
+      console.log('✅ [LiveKit] Local participant:', newRoom.localParticipant.identity);
       // ✅ NO getAudioContext() call
       
     } catch (err) {
       console.error('❌ LiveKit connection failed:', err);
+      console.error('❌ LiveKit error details:', {
+        name: err.name,
+        message: err.message,
+        stack: err.stack?.split('\n').slice(0, 5)
+      });
       setError(err.message || 'Connection failed');
     }
   };

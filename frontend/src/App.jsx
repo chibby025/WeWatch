@@ -11,10 +11,12 @@ import ProtectedRoute from './components/ProtectedRoute';
 import CreateRoomPage  from './components/CreateRoomPage';
 import RoomsListPage from './components/RoomsListPage';
 import RoomPage from './components/RoomPage';
+import RoomPageNew from './components/RoomPageNew'; // ✅ NEW: Room hub redesign
 import LobbyPage from './components/LobbyPage';
 import VideoWatch from './components/cinema/VideoWatch';
 import CinemaScene3DDemo from './components/cinema/3d-cinema/CinemaScene3DDemo';
 import ErrorBoundary from './components/ErrorBoundary';
+import { AuthProvider } from './contexts/AuthContext';
 // ✅ ALL AVATAR DEMO IMPORTS COMMENTED/REMOVED
 /*
 import AvatarImageDemo from './components/cinema/3d-cinema/AvatarImageDemo';
@@ -25,8 +27,9 @@ import GLBAvatarTest from './components/cinema/3d-cinema/GLBAvatarTest';
 
 function App() {
   return (
-    <Router>
-      <div className="min-h-screen bg-gray-50">
+    <AuthProvider>
+      <Router>
+        <div className="min-h-screen bg-gray-50">
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
@@ -51,7 +54,7 @@ function App() {
 
           <Route path="/rooms/:id" element={
             <ErrorBoundary>
-              <ProtectedRoute><RoomPage /></ProtectedRoute>
+              <ProtectedRoute><RoomPageNew /></ProtectedRoute>
             </ErrorBoundary>
           } />
 
@@ -82,6 +85,7 @@ function App() {
         </Routes>
       </div>
     </Router>
+    </AuthProvider>
   );
 }
 

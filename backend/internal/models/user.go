@@ -14,5 +14,6 @@ type User struct {
 	// Passwordhash to store hashed password not plain text!
 	PasswordHash string `gorm:"type:varchar(255);not null" json:"-"`
 	AvatarURL string `gorm:"default:'/avatars/default.png'" json:"avatar_url"`
+	Bio       string `gorm:"type:text" json:"bio"` // User bio/description
 }
 

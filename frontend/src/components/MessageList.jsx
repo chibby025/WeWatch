@@ -2,7 +2,7 @@
 import React from 'react';
 import MessageItem from './MessageItem';
 
-const MessageList = ({ messages, currentUserID, onReact, onDelete }) => {
+const MessageList = ({ messages, currentUserID, onReact, onDelete, onEdit }) => {
   if (messages.length === 0) {
     return (
       <div className="text-center py-8 text-gray-500">
@@ -20,8 +20,8 @@ const MessageList = ({ messages, currentUserID, onReact, onDelete }) => {
           isOwnMessage={message.UserID === currentUserID}
           onReact={onReact}
           onDelete={onDelete}
+          onEdit={onEdit}
           authenticatedUserID={currentUserID}
-          // Pass formatted time to MessageItem if needed
         />
       ))}
     </div>

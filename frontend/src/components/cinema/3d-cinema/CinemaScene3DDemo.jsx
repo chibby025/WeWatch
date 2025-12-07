@@ -1,13 +1,16 @@
 // src/components/cinema/3d-cinema/CinemaScene3DDemo.jsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import useAuth from '../../../hooks/useAuth';
 import useWebSocket from '../../../hooks/useWebSocket';
 import { getChatHistory } from '../../../services/api';
+import apiClient from '../../../services/api';
 import CinemaScene3D from './CinemaScene3D';
 import Taskbar from '../../Taskbar';
 import LeftSidebar from '../ui/LeftSidebar';
 import MembersModal from '../../MembersModal';
+import TheaterOverviewModal from '../../TheaterOverviewModal';
 import CinemaSeatGridModal from './ui/CinemaSeatGridModal';
 import CinemaVideoPlayer from '../ui/CinemaVideoPlayer';
 import { useFrame } from '@react-three/fiber';
@@ -22,6 +25,9 @@ import { useSeatSwap } from '../../../hooks/useSeatSwap';
 // Add near the top with other imports
 import UserProfileModal from "../../../components/UserProfileModal";
 import PrivateChatModal from "../../../components/PrivateChatModal";
+import ChatHomeModal from '../../ChatHomeModal';
+import useEmoteSounds from '../../../hooks/useEmoteSounds';
+import RemoteAudioPlayer from '../ui/RemoteAudioPlayer';
 
 export default function CinemaScene3DDemo() {
   const { roomId } = useParams();
@@ -32,7 +38,7 @@ export default function CinemaScene3DDemo() {
   const urlParams = new URLSearchParams(window.location.search);
   const sessionIdFromUrl = urlParams.get('session_id');
   const finalSessionId = sessionIdFromState || sessionIdFromUrl;
-  const { currentUser, wsToken, loading: authLoading } = useAuth();
+  const { currentUser, wsToken, loading: authLoading, refreshUser } = useAuth();
   const stableTokenRef = useRef(null);
   const [showSeatMarkers, setShowSeatMarkers] = useState(false);
   // === State ===
@@ -42,19 +48,35 @@ export default function CinemaScene3DDemo() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
+  const [isTheaterOverviewOpen, setIsTheaterOverviewOpen] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
   const [isAudioActive, setIsAudioActive] = useState(false);
-  const [isSeatedMode, setIsSeatedMode] = useState(false);
+  const [isSeatedMode] = useState(true); // ✅ Always enabled in 3D cinema - row-based audio by default
   const [userSeats, setUserSeats] = useState({});
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isHostBroadcasting, setIsHostBroadcasting] = useState(false);
+  const [audioDevices, setAudioDevices] = useState([]);
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState(null);
   const chatEndRef = useRef(null);
   const processedMessageCountRef = useRef(0);
   const [isViewLocked, setIsViewLocked] = useState(true);   // ✅ ADD THIS
   const [lightsOn, setLightsOn] = useState(true);          // ✅ ADD THIS
   const [isSeatGridModalOpen, setIsSeatGridModalOpen] = useState(false);
   const [outgoingSwapRequest, setOutgoingSwapRequest] = useState(null); // { targetUserId, targetSeatId }
-  //const currentUserSeatId = currentUser?.id ? userSeats[currentUser.id] : null;
+  const [showChatHome, setShowChatHome] = useState(false);
+  
+  // 🔇 Silence mode state
+  const [isSilenceMode, setIsSilenceMode] = useState(false);
+  
+  // 🔊 Broadcast permissions (userId -> boolean)
+  const [broadcastPermissions, setBroadcastPermissions] = useState({});
+  const [remoteAudioStates, setRemoteAudioStates] = useState({});
+  
+  // 🎭 Theater assignments (userId -> {theater_number, seat_row, seat_col})
+  const [userTheaters, setUserTheaters] = useState({});
+  const [broadcastRequests, setBroadcastRequests] = useState([]); // Array of user IDs with pending requests
+  const [theaters, setTheaters] = useState([]); // List of all theaters for this session
+  
   const { currentSeat, jumpToSeat, currentSeatKey } = useSeatController({
     currentUser,
     //initialSeatId: currentUser ? `${Math.floor((currentUser.id % 42) / 7)}-${(currentUser.id % 42) % 7}` : '0-0',
@@ -80,6 +102,27 @@ export default function CinemaScene3DDemo() {
   const videoInitializedRef = useRef(false);
   const screenMeshRef = useRef(null);
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
+  // Ref to trigger local emote notification in CinemaScene3D
+  const triggerLocalEmoteRef = useRef(null);
+  
+  // Initialize emote sounds
+  const { playEmoteSound } = useEmoteSounds();
+  
+  // 🔊 User join sound
+  const joinSoundRef = useRef(null);
+  
+  // 🎤 Floating audio notification state
+  const [audioNotification, setAudioNotification] = useState(null); // { text: string, timestamp: number }
+  useEffect(() => {
+    joinSoundRef.current = new Audio('/sounds/userjoin.mp3');
+    joinSoundRef.current.volume = 0.5; // 50% volume
+    return () => {
+      if (joinSoundRef.current) {
+        joinSoundRef.current.pause();
+        joinSoundRef.current = null;
+      }
+    };
+  }, []);
  
   const [currentTime, setCurrentTime] = useState(0);
   // === VIDEO/PLAYBACK STATE ===
@@ -128,8 +171,22 @@ export default function CinemaScene3DDemo() {
 
   const { sendMessage, messages, isConnected, sessionStatus } = useWebSocket(
     roomId,
-    stableTokenRef.current
+    stableTokenRef.current,
+    finalSessionId
   );
+
+  // Handle session errors - redirect if session has ended
+  useEffect(() => {
+    if (sessionStatus?.error && !sessionStatus?.isActive) {
+      console.error('❌ Session error detected:', sessionStatus.error);
+      toast.error(sessionStatus.error);
+      
+      // Clear session_id from URL and navigate back to room page
+      setTimeout(() => {
+        navigate(`/rooms/${roomId}`, { replace: true });
+      }, 2000); // Give user time to read the error message
+    }
+  }, [sessionStatus?.error, sessionStatus?.isActive, roomId, navigate]);
 
   // Error management
   const playIgnoringBenign = (videoEl, context = '') => {
@@ -148,6 +205,55 @@ export default function CinemaScene3DDemo() {
     }
   };
 
+  // Shared emote handler for both keyboard and Taskbar clicks
+  // 🎤 Show floating audio notification
+  const showAudioNotification = useCallback((message) => {
+    setAudioNotification({
+      text: message,
+      timestamp: Date.now()
+    });
+    
+    // Auto-hide after 1.5 seconds
+    setTimeout(() => {
+      setAudioNotification(null);
+    }, 1500);
+  }, []);
+
+  const handleEmoteSend = useCallback((emoteData) => {
+    // console.log('🎭 [CinemaScene3DDemo] handleEmoteSend called:', emoteData);
+    
+    // Trigger local notification in CinemaScene3D
+    if (triggerLocalEmoteRef.current) {
+      // console.log('✨ [CinemaScene3DDemo] Triggering local emote notification');
+      triggerLocalEmoteRef.current(emoteData.emote);
+    }
+    
+    // Send to WebSocket
+    if (sendMessage && sessionStatus?.id) {
+      sendMessage({
+        type: 'emote',
+        data: {
+          ...emoteData,
+          session_id: sessionStatus.id,
+          user_id: currentUser?.id,
+          username: currentUser?.username
+        }
+      });
+    }
+  }, [sendMessage, sessionStatus, currentUser]);
+
+  // Add to your handlers section
+  const handleToggleLights = () => {
+    const newLightsState = !lightsOn;
+    setLightsOn(newLightsState);
+    if (sendMessage) {
+      sendMessage({
+        type: 'update_lights',
+        data: { lightsOn: newLightsState }
+      });
+    }
+  };
+
   // livekit setup
   const {
     room,
@@ -159,7 +265,14 @@ export default function CinemaScene3DDemo() {
 
   useEffect(() => {
     if (roomId && currentUser) connectLiveKit();
-    return () => disconnectLiveKit();
+    return () => {
+      // Cleanup: unpublish audio track
+      if (publishedAudioTrackRef.current) {
+        publishedAudioTrackRef.current.stop();
+        publishedAudioTrackRef.current = null;
+      }
+      disconnectLiveKit();
+    };
   }, [roomId, currentUser?.id]);
 
   // Preload current media
@@ -174,6 +287,32 @@ export default function CinemaScene3DDemo() {
       video.load();
     }
   }, [currentMedia?.mediaUrl]);
+
+  // 🎤 Enumerate audio devices
+  useEffect(() => {
+    const getAudioDevices = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = devices.filter(device => device.kind === 'audioinput');
+        console.log('🎤 [CinemaScene3D] Available audio devices:', audioInputs);
+        setAudioDevices(audioInputs);
+        
+        // Set default device if none selected
+        if (!selectedAudioDeviceId && audioInputs.length > 0) {
+          setSelectedAudioDeviceId(audioInputs[0].deviceId);
+          console.log('🎤 [CinemaScene3D] Default audio device selected:', audioInputs[0].label);
+        }
+      } catch (err) {
+        console.error('❌ [CinemaScene3D] Failed to enumerate audio devices:', err);
+      }
+    };
+
+    getAudioDevices();
+
+    // Update device list when devices change
+    navigator.mediaDevices.addEventListener('devicechange', getAudioDevices);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', getAudioDevices);
+  }, [selectedAudioDeviceId]);
 
   // Full screen view of cinemascreen
   const toggleImmersiveMode = () => {
@@ -207,6 +346,13 @@ export default function CinemaScene3DDemo() {
       setViewGuidanceExpiresAt(Date.now() + 300_000);
     }
   }, [currentSeat]);
+
+  // 🎭 Fetch theaters when session starts
+  useEffect(() => {
+    if (sessionStatus?.id) {
+      fetchTheaters();
+    }
+  }, [sessionStatus?.id]);
 
   // Handle C/R/L/F keys
   useEffect(() => {
@@ -338,6 +484,14 @@ export default function CinemaScene3DDemo() {
     // 👇 Update userSeats with demo assignments
     setUserSeats(prev => ({ ...prev, ...newSeats }));
   }, [showDemoAvatars]);
+
+  // 🔄 Request fresh seat state when seat modal opens or members modal opens
+  useEffect(() => {
+    if ((isSeatGridModalOpen || isMembersModalOpen) && sendMessage && isConnected) {
+      console.log('🔄 [CinemaScene3D] Modal opened - requesting fresh seat state');
+      sendMessage({ type: 'request_seat_state' });
+    }
+  }, [isSeatGridModalOpen, isMembersModalOpen, sendMessage, isConnected]);
 
   // Local track
   useEffect(() => {
@@ -498,6 +652,19 @@ export default function CinemaScene3DDemo() {
     }
   }, [isImmersiveMode, currentTime, isPlaying]);
 
+  // Auto-turn off lights when media starts playing
+  useEffect(() => {
+    if (isPlaying && lightsOn) {
+      setLightsOn(false);
+      if (sendMessage) {
+        sendMessage({
+          type: 'update_lights',
+          data: { lightsOn: false }
+        });
+      }
+    }
+  }, [isPlaying, lightsOn, sendMessage]);
+
   // === Load chat history ===
   useEffect(() => {
     if (!roomId || !sessionStatus?.id) return;
@@ -517,14 +684,29 @@ export default function CinemaScene3DDemo() {
  
   // Auto-assign current user to their seat on mount
   useEffect(() => {
-    if (currentUser && currentSeatKey && Object.keys(userSeats).length === 0) {
-      // Only set if not already assigned (avoid overriding manual picks)
+    if (currentUser && currentSeatKey && !userSeats[currentUser.id]) {
+      console.log('🪑 [CinemaScene3D] Auto-assigning current user to seat:', currentSeatKey);
+      
+      // Set locally
       setUserSeats(prev => {
         if (prev[currentUser.id]) return prev; // already set
         return { ...prev, [currentUser.id]: currentSeatKey };
       });
+      
+      // Broadcast to backend and other clients
+      if (sendMessage) {
+        const [rowStr, colStr] = currentSeatKey.split('-');
+        sendMessage({
+          type: 'take_seat',
+          seat_id: currentSeatKey,
+          row: parseInt(rowStr),
+          col: parseInt(colStr),
+          user_id: currentUser.id
+        });
+        console.log('📡 [CinemaScene3D] Broadcasted seat assignment to backend');
+      }
     }
-  }, [currentUser, currentSeatKey, userSeats]);
+  }, [currentUser, currentSeatKey, userSeats, sendMessage]);
 
   // === Process WebSocket messages ===
   useEffect(() => {
@@ -537,6 +719,114 @@ export default function CinemaScene3DDemo() {
 
       // ⚠️ All other messages
       switch (msg.type) {
+        case 'theater_created':
+          // 🎭 Show notification when new theater is created
+          if (msg.data?.message) {
+            toast.success(msg.data.message, {
+              duration: 5000,
+              icon: '🎭',
+            });
+          }
+          // Refresh theaters list
+          fetchTheaters();
+          break;
+        case 'theater_assigned':
+          // 🎭 User assigned to theater
+          if (msg.data) {
+            console.log('🎭 [CinemaScene3D] Assigned to theater:', msg.data);
+            
+            // Update userTheaters state
+            if (msg.data.user_id && msg.data.theater_number) {
+              setUserTheaters(prev => ({
+                ...prev,
+                [msg.data.user_id]: {
+                  theater_number: msg.data.theater_number,
+                  seat_row: msg.data.seat_row,
+                  seat_col: msg.data.seat_col,
+                }
+              }));
+            }
+            
+            // Show toast for current user
+            if (msg.data.user_id === currentUser?.id) {
+              toast.success(`Assigned to ${msg.data.theater_name || 'Theater ' + msg.data.theater_number}`, {
+                duration: 3000,
+                icon: '🎭',
+              });
+            }
+          }
+          break;
+        case 'broadcast_request':
+          // 🎤 User requested broadcast permission
+          if (msg.data && isHost) {
+            console.log('🎤 [CinemaScene3D] Broadcast request:', msg.data);
+            
+            // Add to broadcast requests list
+            if (msg.data.user_id && !broadcastRequests.includes(msg.data.user_id)) {
+              setBroadcastRequests(prev => [...prev, msg.data.user_id]);
+              
+              // Show toast notification for host
+              const username = msg.data.username || 'A user';
+              toast(`${username} is requesting broadcast permission`, {
+                duration: 10000,
+                icon: '🎤',
+                style: {
+                  background: '#f97316',
+                  color: '#fff',
+                },
+              });
+            }
+          }
+          break;
+        case 'broadcast_granted':
+          // ✅ Broadcast permission granted
+          if (msg.data && msg.data.user_id) {
+            console.log('✅ [CinemaScene3D] Broadcast granted to:', msg.data.user_id);
+            
+            // Update broadcast permissions
+            setBroadcastPermissions(prev => ({
+              ...prev,
+              [msg.data.user_id]: true
+            }));
+            
+            // Remove from requests list
+            setBroadcastRequests(prev => prev.filter(id => id !== msg.data.user_id));
+            
+            // Show toast for the user who got permission
+            if (msg.data.user_id === currentUser?.id) {
+              toast.success('You can now broadcast to the whole room!', {
+                duration: 5000,
+                icon: '🔊',
+              });
+            }
+          }
+          break;
+        case 'broadcast_revoked':
+          // 🚫 Broadcast permission revoked
+          if (msg.data && msg.data.user_id) {
+            console.log('🚫 [CinemaScene3D] Broadcast revoked from:', msg.data.user_id);
+            
+            // Update broadcast permissions
+            setBroadcastPermissions(prev => ({
+              ...prev,
+              [msg.data.user_id]: false
+            }));
+            
+            // Show toast for the user who lost permission
+            if (msg.data.user_id === currentUser?.id) {
+              toast('Your broadcast permission was revoked', {
+                duration: 3000,
+                icon: '🔇',
+              });
+            }
+          }
+          break;
+        case 'emote':
+          // Play sound when receiving emote from another user
+          if (msg.data?.emote) {
+            playEmoteSound(msg.data.emote, 0.5);
+          }
+          break;
         case 'chat_message':
           if (msg.data.session_id === sessionStatus.id) {
             setSessionChatMessages(prev => {
@@ -545,12 +835,27 @@ export default function CinemaScene3DDemo() {
             });
           }
           break;
+       
+        case 'update_lights':
+          if (msg.data?.lightsOn !== undefined) {
+            setLightsOn(msg.data.lightsOn);
+          }
+          break;
         case 'take_seat':
           if (msg.user_id && msg.seat_id) {
-            setUserSeats(prev => ({
-              ...prev,
-              [msg.user_id]: msg.seat_id
-            }));
+            console.log('🪑 [CinemaScene3D] Received take_seat broadcast:', {
+              user_id: msg.user_id,
+              seat_id: msg.seat_id,
+              isCurrentUser: msg.user_id === currentUser?.id
+            });
+            setUserSeats(prev => {
+              const updated = {
+                ...prev,
+                [msg.user_id]: msg.seat_id
+              };
+              console.log('🪑 [CinemaScene3D] Updated userSeats:', updated);
+              return updated;
+            });
           }
           break;
         case "playback_control":
@@ -593,7 +898,55 @@ export default function CinemaScene3DDemo() {
           }
           break;
         case 'seats_auto_assigned':
-          if (msg.user_seats) setUserSeats(msg.user_seats);
+          // msg shape: { user_seats: {"7":"2-3"}, usernames: {"7":"chibi"} }
+          const incomingUserSeats = msg.user_seats || (msg.data && msg.data.user_seats);
+          const incomingUsernames = msg.usernames || (msg.data && msg.data.usernames);
+          
+          console.log('🪑 [CinemaScene3D] Received seats_auto_assigned:', {
+            incomingUserSeats,
+            incomingUsernames,
+            currentUserSeats: userSeats
+          });
+          
+          if (incomingUserSeats) {
+            // ✅ MERGE instead of REPLACE to preserve existing seat assignments
+            setUserSeats(prev => {
+              const merged = { ...prev, ...incomingUserSeats };
+              console.log('🪑 [CinemaScene3D] Merged userSeats:', {
+                previous: prev,
+                incoming: incomingUserSeats,
+                merged
+              });
+              return merged;
+            });
+          }
+
+          // If backend included a small username map for seated users, merge them into roomMembers so UI can label seats
+          if (incomingUsernames && Object.keys(incomingUsernames).length) {
+            setRoomMembers(prev => {
+              const existingIds = new Set(prev.map(m => m.id));
+              const additions = Object.keys(incomingUsernames).reduce((acc, uidStr) => {
+                const idNum = parseInt(uidStr, 10);
+                if (!existingIds.has(idNum)) {
+                  acc.push({ id: idNum, username: incomingUsernames[uidStr], user_role: 'viewer' });
+                }
+                return acc;
+              }, []);
+              
+              // 🔊 Play join sound when new users are added (excluding self on initial load)
+              if (additions.length > 0 && joinSoundRef.current && currentUser) {
+                const isCurrentUserJoining = additions.some(a => a.id === currentUser.id);
+                if (!isCurrentUserJoining) {
+                  joinSoundRef.current.currentTime = 0;
+                  joinSoundRef.current.play().catch(err => console.log('Join sound play error:', err));
+                  console.log('🔊 Playing join sound for', additions.length, 'new user(s)');
+                }
+              }
+              
+              if (additions.length === 0) return prev;
+              return [...prev, ...additions];
+            });
+          }
           break;
         case 'seat_update':
           if (msg.userId && msg.seat) {
@@ -601,28 +954,130 @@ export default function CinemaScene3DDemo() {
           }
           break;
         case 'session_status':
-          if (Array.isArray(msg.data.members)) {
-            const memberMap = new Map();
-            msg.data.members.forEach(m => {
-              const id = m.user_id || m.id;
-              if (id && !memberMap.has(id)) {
-                memberMap.set(id, {
-                  id,
-                  username: m.username || m.Username || m.name || `User${id}`,
-                  user_role: m.user_role || 'viewer'
-                });
-              }
-            });
-            const deduplicated = Array.from(memberMap.values());
-            setRoomMembers(prev => {
-              const demoUsers = prev.filter(u => u.is_demo);
-              return [...deduplicated, ...demoUsers];
+          // Process seating assignments from backend
+          if (msg.data.seating && typeof msg.data.seating === 'object') {
+            console.log('🪑 [CinemaScene3D] Received seating assignments from backend:', msg.data.seating);
+            setUserSeats(prev => {
+              const updated = { ...prev };
+              // Backend sends { "5-0": 7, "4-6": 8 } - convert to { 7: "5-0", 8: "4-6" }
+              Object.entries(msg.data.seating).forEach(([seatId, userId]) => {
+                updated[userId] = seatId;
+              });
+              console.log('🪑 [CinemaScene3D] Updated userSeats from session_status:', updated);
+              return updated;
             });
           }
+
+          // ✅ REPLACE strategy: Clear all non-demo members and rebuild from fresh data
+          // This prevents accumulation of stale/disconnected users
+          setRoomMembers(prev => {
+            const demoUsers = prev.filter(u => u.is_demo);
+            const freshMembers = new Map();
+            
+            // ✅ Build set of active user IDs from seated_usernames (backend-filtered)
+            const activeUserIDs = new Set();
+            if (msg.data.seated_usernames && typeof msg.data.seated_usernames === 'object') {
+              Object.keys(msg.data.seated_usernames).forEach(userIdStr => {
+                activeUserIDs.add(parseInt(userIdStr, 10));
+              });
+            }
+            // Always include current user
+            if (currentUser) {
+              activeUserIDs.add(currentUser.id);
+            }
+            
+            console.log('🪑 [CinemaScene3D] Active user IDs from backend:', Array.from(activeUserIDs));
+            
+            // Add current user first
+            if (currentUser) {
+              freshMembers.set(currentUser.id, {
+                id: currentUser.id,
+                username: currentUser.username || `User${currentUser.id}`,
+                user_role: 'viewer'
+              });
+            }
+            
+            // Add users from seated_usernames (active users only, filtered by backend)
+            if (msg.data.seated_usernames && typeof msg.data.seated_usernames === 'object') {
+              console.log('🪑 [CinemaScene3D] Received seated usernames from backend:', msg.data.seated_usernames);
+              Object.entries(msg.data.seated_usernames).forEach(([userIdStr, username]) => {
+                const userId = parseInt(userIdStr, 10);
+                if (!freshMembers.has(userId)) {
+                  freshMembers.set(userId, {
+                    id: userId,
+                    username: username,
+                    user_role: 'viewer'
+                  });
+                  console.log(`🪑 [CinemaScene3D] Added seated user to roomMembers: ${username} (ID: ${userId})`);
+                }
+              });
+            }
+            
+            // ✅ CLIENT-SIDE FILTER: Only process members who are in activeUserIDs
+            // This is a safety net in case backend sends unfiltered data
+            if (Array.isArray(msg.data.members)) {
+              let filtered = 0;
+              let accepted = 0;
+              msg.data.members.forEach(m => {
+                const id = m.user_id || m.id;
+                if (!id) return;
+                
+                // ✅ ONLY accept if user is in activeUserIDs (from seated_usernames)
+                if (!activeUserIDs.has(id)) {
+                  filtered++;
+                  return; // Skip stale users
+                }
+                
+                if (!freshMembers.has(id)) {
+                  freshMembers.set(id, {
+                    id,
+                    username: m.username || m.Username || m.name || `User${id}`,
+                    user_role: m.user_role || 'viewer'
+                  });
+                  accepted++;
+                }
+              });
+              console.log(`🪑 [CinemaScene3D] Members filtering: ${accepted} accepted, ${filtered} filtered out of ${msg.data.members.length} total`);
+            }
+            
+            const finalMembers = Array.from(freshMembers.values());
+            
+            console.log('🪑 [CinemaScene3D] Rebuilt roomMembers (REPLACE strategy):', {
+              demo: demoUsers.length,
+              fresh: finalMembers.length,
+              members: finalMembers.map(u => ({ id: u.id, username: u.username }))
+            });
+            
+            return [...finalMembers, ...demoUsers];
+          });
           break;
         case 'user_audio_state':
           if (msg.userId === currentUser?.id) {
             setIsAudioActive(msg.isAudioActive);
+          }
+          // Track all users' audio states for MembersModal
+          setRemoteAudioStates(prev => ({
+            ...prev,
+            [msg.userId]: msg.isAudioActive
+          }));
+          break;
+        
+        case 'broadcast_permission_changed':
+          const { user_id: affectedUserId, can_broadcast } = msg;
+          
+          // Update broadcast permissions state
+          setBroadcastPermissions(prev => ({
+            ...prev,
+            [affectedUserId]: can_broadcast
+          }));
+          
+          // Show toast notification to affected user
+          if (affectedUserId === currentUser?.id) {
+            if (can_broadcast) {
+              toast.success('🔊 You can now speak to the whole room!');
+            } else {
+              toast.info('🔈 You can now only speak to your row');
+            }
           }
           break;
         case 'private_chat_message':
@@ -642,6 +1097,137 @@ export default function CinemaScene3DDemo() {
             [other_user_id]: history
           }));
           break;
+        case 'participant_join':
+          // Real-time update when a user joins
+          if (msg.data?.userId && msg.data?.username) {
+            setRoomMembers(prev => {
+              const exists = prev.some(m => m.id === msg.data.userId);
+              if (exists) return prev;
+              return [...prev, {
+                id: msg.data.userId,
+                username: msg.data.username,
+                user_role: 'viewer'
+              }];
+            });
+          }
+          break;
+        case 'participant_leave':
+          // Real-time update when a user leaves
+          if (msg.data?.userId) {
+            console.log('👋 [CinemaScene3D] User left:', msg.data.userId);
+            setRoomMembers(prev => {
+              const updated = prev.filter(m => m.id !== msg.data.userId);
+              console.log('👋 [CinemaScene3D] Updated roomMembers after user left:', {
+                before: prev.length,
+                after: updated.length,
+                removedUser: prev.find(m => m.id === msg.data.userId)?.username
+              });
+              return updated;
+            });
+            // Remove their seat assignment
+            setUserSeats(prev => {
+              const updated = { ...prev };
+              delete updated[msg.data.userId];
+              console.log('🪑 [CinemaScene3D] Updated seats after user left:', updated);
+              return updated;
+            });
+          }
+          break;
+        case 'user_left_seat':
+          // Real-time seat cleanup when user explicitly leaves their seat
+          if (msg.data?.user_id) {
+            console.log('🪑 [CinemaScene3D] User left seat:', msg.data.user_id);
+            setUserSeats(prev => {
+              const updated = { ...prev };
+              delete updated[msg.data.user_id];
+              return updated;
+            });
+          }
+          break;
+        
+        case 'seat_state_refresh':
+          // Periodic seat state refresh from backend
+          console.log('🔄 [CinemaScene3D] Received seat_state_refresh:', msg.data);
+          console.log('🔄 [CinemaScene3D] Current roomMembers before refresh:', roomMembers.length);
+          
+          // Update seating assignments
+          if (msg.data.seating && typeof msg.data.seating === 'object') {
+            setUserSeats(prev => {
+              const updated = { ...prev }; // Preserve existing seats (including demo users)
+              
+              // Update with real users from backend
+              // Convert backend format { "5-0": 7 } to { 7: "5-0" }
+              Object.entries(msg.data.seating).forEach(([seatId, userId]) => {
+                updated[userId] = seatId;
+              });
+              
+              console.log('🔄 [CinemaScene3D] Refreshed userSeats:', updated);
+              return updated;
+            });
+          }
+          
+          // Update roomMembers with fresh seated users
+          if (msg.data.seated_usernames && typeof msg.data.seated_usernames === 'object') {
+            setRoomMembers(prev => {
+              const demoUsers = prev.filter(u => u.is_demo);
+              const freshMembers = new Map();
+              
+              // Keep current user
+              if (currentUser) {
+                freshMembers.set(currentUser.id, {
+                  id: currentUser.id,
+                  username: currentUser.username || `User${currentUser.id}`,
+                  user_role: 'viewer'
+                });
+              }
+              
+              // Add only active seated users (backend already filtered)
+              Object.entries(msg.data.seated_usernames).forEach(([userIdStr, username]) => {
+                const userId = parseInt(userIdStr, 10);
+                if (!freshMembers.has(userId)) {
+                  freshMembers.set(userId, {
+                    id: userId,
+                    username: username,
+                    user_role: 'viewer'
+                  });
+                }
+              });
+              
+              const finalMembers = [...Array.from(freshMembers.values()), ...demoUsers];
+              console.log('🔄 [CinemaScene3D] Refreshed roomMembers:', {
+                before: prev.length,
+                after: finalMembers.length,
+                members: finalMembers.map(m => ({ id: m.id, username: m.username, is_demo: m.is_demo }))
+              });
+              return finalMembers;
+            });
+          }
+          break;
+        
+        case 'session_ended':
+          // Session ended - either manually by host or auto-ended after grace period
+          console.log('🔚 [CinemaScene3D] Session ended:', msg.data);
+          
+          // Show toast notification
+          const reason = msg.data?.reason;
+          if (reason === 'host_timeout') {
+            toast('Session ended - Host disconnected for over 10 minutes', {
+              icon: '⏰',
+              duration: 5000,
+            });
+          } else {
+            toast('3D Cinema session ended', {
+              icon: 'ℹ️',
+              duration: 3000,
+            });
+          }
+          
+          // Navigate back to room page after a brief delay
+          setTimeout(() => {
+            handleLeaveCall();
+          }, 2000);
+          break;
+        
         default:
           break;
       }
@@ -678,48 +1264,319 @@ export default function CinemaScene3DDemo() {
   };
 
   const handleLeaveCall = async () => {
-    navigate(`/rooms/${roomId}`);
-  };
-
-  const handleToggleSeatedMode = () => {
-    const newMode = !isSeatedMode;
-    setIsSeatedMode(newMode);
-    if (sendMessage) {
-      sendMessage({ type: 'seating_mode_toggle', enabled: newMode });
+    console.log('🚪 [CinemaScene3D] Leaving call...');
+    
+    // ✅ HOST: Show confirmation and end session for everyone
+    if (isHost) {
+      const confirmed = window.confirm(
+        "End this 3D Cinema session for everyone? All participants will be returned to the lobby."
+      );
+      
+      if (!confirmed) {
+        console.log('❌ [CinemaScene3D] Host cancelled leave - staying in session');
+        return; // Host cancelled, stay in session
+      }
+      
+      // Host confirmed - end the session
+      try {
+        if (finalSessionId) {
+          console.log('🛑 [CinemaScene3D] Host ending session:', finalSessionId);
+          await apiClient.post(`/api/rooms/watch-sessions/${finalSessionId}/end`);
+          console.log('✅ [CinemaScene3D] Session ended successfully');
+        }
+      } catch (error) {
+        console.error('❌ [CinemaScene3D] Failed to end session:', error);
+        // Continue with cleanup even if API call fails
+      }
+    }
+    
+    try {
+      // 1. Unpublish audio track if active
+      if (isAudioActive && publishedAudioTrackRef.current && localParticipant) {
+        console.log('🎤 [CinemaScene3D] Unpublishing audio track...');
+        await localParticipant.unpublishTrack(publishedAudioTrackRef.current);
+        publishedAudioTrackRef.current.stop();
+        publishedAudioTrackRef.current = null;
+        setIsAudioActive(false);
+      }
+      
+      // 2. Disconnect from LiveKit
+      if (disconnectLiveKit) {
+        console.log('🔌 [CinemaScene3D] Disconnecting from LiveKit...');
+        await disconnectLiveKit();
+      }
+      
+      // 3. Notify backend to clear seat assignment
+      if (sendMessage && currentUser) {
+        console.log('🪑 [CinemaScene3D] Notifying backend of seat departure...');
+        sendMessage({
+          type: 'leave_seat',
+          user_id: currentUser.id
+        });
+      }
+      
+      console.log('✅ [CinemaScene3D] Cleanup complete, navigating away...');
+    } catch (error) {
+      console.error('❌ [CinemaScene3D] Error during leave call:', error);
+    }
+    
+    // 4. Force navigation: if this was an instant watch, go back to lobby; otherwise go to room page
+    try {
+      console.log('🔍 [CinemaScene3D] Current URL:', window.location.href);
+      const urlParams = new URLSearchParams(window.location.search);
+      const instantParam = urlParams.get('instant');
+      console.log('🔍 [CinemaScene3D] instant param from URL:', instantParam);
+      
+      if (instantParam === 'true') {
+        console.log('✅ [CinemaScene3D] Instant watch detected - navigating to Lobby...');
+        window.location.href = `/lobby`;
+      } else {
+        console.log('✅ [CinemaScene3D] Regular room - navigating to RoomPage...');
+        window.location.href = `/rooms/${roomId}`;
+      }
+    } catch (err) {
+      console.error('⚠️ [CinemaScene3D] Error checking instant param:', err);
+      console.log('🏠 [CinemaScene3D] Navigating to RoomPage (fallback)...');
+      window.location.href = `/rooms/${roomId}`;
     }
   };
 
-  const toggleAudio = () => {
+  // 🎤 Ref to track published audio track
+  const publishedAudioTrackRef = useRef(null);
+
+  // 🎤 Toggle audio with LiveKit publishing
+  const toggleAudio = async () => {
+    console.log('🎤 [CinemaScene3D] toggleAudio called, current state:', isAudioActive);
+    console.log('🎤 [CinemaScene3D] Room state:', room?.state);
+    console.log('🎤 [CinemaScene3D] LocalParticipant:', !!localParticipant);
     const newState = !isAudioActive;
-    setIsAudioActive(newState);
-    if (sendMessage) {
-      sendMessage({
-        type: 'user_audio_state',
-        userId: currentUser?.id,
-        isAudioActive: newState
-      });
+    console.log('🎤 [CinemaScene3D] New state will be:', newState);
+
+    if (!localParticipant) {
+      console.warn('⚠️ [CinemaScene3D] No localParticipant - LiveKit not connected yet. Please wait...');
+      alert('Please wait for LiveKit to connect before toggling audio.');
+      return;
     }
+
+    try {
+      if (newState) {
+        // Enable: Publish microphone
+        console.log('🎤 [CinemaScene3D] Publishing microphone...');
+        
+        // Stop and unpublish old track if exists
+        if (publishedAudioTrackRef.current) {
+          try {
+            await localParticipant.unpublishTrack(publishedAudioTrackRef.current);
+            publishedAudioTrackRef.current.stop();
+          } catch (err) {
+            console.warn('⚠️ [CinemaScene3D] Failed to unpublish old track:', err);
+          }
+          publishedAudioTrackRef.current = null;
+        }
+
+        // Create new audio track with selected device
+        const constraints = {
+          deviceId: selectedAudioDeviceId ? { exact: selectedAudioDeviceId } : undefined,
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: false,
+        };
+
+        console.log('🎤 [CinemaScene3D] Creating audio track with constraints:', constraints);
+        console.log('🎤 [CinemaScene3D] Selected device ID:', selectedAudioDeviceId);
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+        const audioTrack = stream.getAudioTracks()[0];
+        console.log('🎤 [CinemaScene3D] Got audio track:', audioTrack.label);
+        console.log('🎤 [CinemaScene3D] Audio track enabled:', audioTrack.enabled);
+
+        // Publish to LiveKit
+        const publication = await localParticipant.publishTrack(audioTrack, {
+          name: 'microphone',
+          source: 'microphone', // ✅ Explicitly set source
+        });
+        publishedAudioTrackRef.current = audioTrack;
+        console.log('✅ [CinemaScene3D] Microphone published successfully');
+        console.log('✅ [CinemaScene3D] Publication source:', publication.source);
+        console.log('✅ [CinemaScene3D] Publication kind:', publication.kind);
+        
+        setIsAudioActive(true);
+        
+        // 🎤 Show floating notification (only on unmute)
+        if (currentUser?.username) {
+          const currentUserSeatId = userSeats[currentUser?.id];
+          const currentUserRow = currentUserSeatId ? parseInt(currentUserSeatId.split('-')[0]) : null;
+          
+          // Count members in same row
+          let rowMemberCount = 0;
+          if (currentUserRow !== null) {
+            Object.entries(userSeats).forEach(([userId, seatId]) => {
+              if (seatId && parseInt(seatId.split('-')[0]) === currentUserRow) {
+                rowMemberCount++;
+              }
+            });
+          }
+          
+          // ✅ Check if user has broadcast permission
+          const hasUserBroadcastPermission = broadcastPermissions[currentUser?.id] || false;
+          const isGlobalBroadcast = (isHost && isHostBroadcasting) || hasUserBroadcastPermission;
+          
+          let notificationText;
+          if (isGlobalBroadcast) {
+            notificationText = `${currentUser.username} is speaking to everyone`;
+          } else if (currentUserRow !== null) {
+            notificationText = `${currentUser.username} is speaking to Row ${currentUserRow} (${rowMemberCount} members)`;
+          } else {
+            notificationText = `${currentUser.username} is speaking`;
+          }
+          
+          showAudioNotification(notificationText);
+        }
+      } else {
+        // Disable: Unpublish microphone
+        console.log('🎤 [CinemaScene3D] Unpublishing microphone...');
+        if (publishedAudioTrackRef.current) {
+          await localParticipant.unpublishTrack(publishedAudioTrackRef.current);
+          publishedAudioTrackRef.current.stop();
+          publishedAudioTrackRef.current = null;
+          console.log('✅ [CinemaScene3D] Microphone unpublished');
+        }
+        setIsAudioActive(false);
+      }
+
+      // Send WebSocket message for UI state sync
+      if (sendMessage) {
+        const currentUserSeatId = userSeats[currentUser?.id];
+        const currentUserRow = currentUserSeatId ? parseInt(currentUserSeatId.split('-')[0]) : null;
+        
+        // ✅ Check if user has broadcast permission
+        const hasUserBroadcastPermission = broadcastPermissions[currentUser?.id] || false;
+        const isGlobalBroadcast = (isHost && isHostBroadcasting) || hasUserBroadcastPermission;
+        
+        sendMessage({
+          type: 'user_audio_state',
+          userId: currentUser?.id,
+          isAudioActive: newState,
+          isSeatedMode: isSeatedMode,
+          isGlobalBroadcast: isGlobalBroadcast,
+          row: isSeatedMode && currentUserRow !== null ? currentUserRow : null,
+        });
+      }
+    } catch (err) {
+      console.error('❌ [CinemaScene3D] Failed to toggle audio:', err);
+      // Revert state on error
+      setIsAudioActive(isAudioActive);
+    }
+  };
+
+  // 🎤 Handle audio device change
+  const handleAudioDeviceChange = async (deviceId) => {
+    console.log('🎤 [CinemaScene3D] Changing audio device to:', deviceId);
+    setSelectedAudioDeviceId(deviceId);
+
+    // If currently active, republish with new device
+    if (isAudioActive && localParticipant && publishedAudioTrackRef.current) {
+      try {
+        // Unpublish current track
+        await localParticipant.unpublishTrack(publishedAudioTrackRef.current);
+        publishedAudioTrackRef.current.stop();
+        publishedAudioTrackRef.current = null;
+
+        // Publish with new device
+        const constraints = {
+          deviceId: { exact: deviceId },
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: false,
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+        const audioTrack = stream.getAudioTracks()[0];
+        await localParticipant.publishTrack(audioTrack);
+        publishedAudioTrackRef.current = audioTrack;
+        console.log('✅ [CinemaScene3D] Switched to new audio device:', audioTrack.label);
+      } catch (err) {
+        console.error('❌ [CinemaScene3D] Failed to switch audio device:', err);
+      }
+    }
+  };
+
+  // 🔊 Toggle broadcast permission for a user (host only)
+  const handleToggleBroadcast = (userId, currentState) => {
+    if (!isHost) return; // Only host can toggle
+    
+    const messageType = currentState ? 'revoke_broadcast' : 'grant_broadcast';
+    
+    sendMessage({
+      type: messageType,
+      session_id: sessionId,
+      user_id: userId
+    });
+  };
+
+  // 🎤 Request broadcast permission (non-host users)
+  const handleRequestBroadcast = () => {
+    if (isHost) return; // Host doesn't need to request
+    
+    sendMessage({
+      type: 'request_broadcast',
+      session_id: sessionId,
+      user_id: currentUser?.id
+    });
+    
+    toast.success('Broadcast request sent to host', {
+      duration: 3000,
+      icon: '🎤',
+    });
   };
 
   const openMembers = () => {
     setIsMembersModalOpen(true);
   };
 
+  const openTheaterOverview = () => {
+    setIsTheaterOverviewOpen(true);
+  };
+
+  // 🎭 Fetch theaters for the session
+  const fetchTheaters = async () => {
+    if (!sessionStatus?.id) return;
+    
+    try {
+      const response = await apiClient.get(`/api/sessions/${sessionStatus.id}/theaters`);
+      setTheaters(response.data || []);
+    } catch (error) {
+      console.error('Failed to fetch theaters:', error);
+    }
+  };
 
   const handleSeatSelect = (seatId) => {
     if (!currentUser || !sendMessage) return;
+
+    console.log('🪑 [CinemaScene3D] handleSeatSelect called:', {
+      seatId,
+      userId: currentUser.id,
+      currentSeats: userSeats
+    });
 
     const occupantId = Object.keys(userSeats).find(userId => userSeats[userId] === seatId);
     const isOccupied = !!occupantId;
     const isMe = occupantId === String(currentUser.id);
 
+    console.log('🪑 [CinemaScene3D] Seat analysis:', {
+      occupantId,
+      isOccupied,
+      isMe
+    });
+
     if (isMe) {
+      console.log('🪑 [CinemaScene3D] Already in this seat, closing modal');
       setIsSeatGridModalOpen(false);
       setOutgoingSwapRequest(null);
       return;
     }
 
     if (isOccupied) {
+      console.log('🪑 [CinemaScene3D] Seat occupied, initiating swap request');
       const [row, col] = seatId.split('-').map(Number);
       setOutgoingSwapRequest({ targetUserId: occupantId, targetSeatId: seatId });
       sendMessage({
@@ -733,8 +1590,13 @@ export default function CinemaScene3DDemo() {
       return;
     } else {
       // Empty seat → take it AND close
+      console.log('🪑 [CinemaScene3D] Taking empty seat:', seatId);
       jumpToSeat(seatId);
-      setUserSeats(prev => ({ ...prev, [currentUser.id]: seatId }));
+      setUserSeats(prev => {
+        const updated = { ...prev, [currentUser.id]: seatId };
+        console.log('🪑 [CinemaScene3D] Locally updated seats:', updated);
+        return updated;
+      });
       sendMessage({
         type: 'take_seat',
         seat_id: seatId,
@@ -742,6 +1604,7 @@ export default function CinemaScene3DDemo() {
         col: parseInt(seatId.split('-')[1]),
         user_id: currentUser.id
       });
+      console.log('📡 [CinemaScene3D] Sent take_seat message to backend');
       setIsSeatGridModalOpen(false); // ✅ Close only for empty seats
       setOutgoingSwapRequest(null);
     }
@@ -810,6 +1673,47 @@ export default function CinemaScene3DDemo() {
     setIsProfileOpen(true);
   };
 
+  const openOwnProfile = () => {
+    setSelectedUser(currentUser);
+    setIsProfileOpen(true);
+  };
+
+  const handleSaveProfile = async ({ username, bio, avatarFile }) => {
+    try {
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+      const formData = new FormData();
+      
+      if (username) formData.append('username', username);
+      if (bio) formData.append('bio', bio);
+      if (avatarFile) formData.append('avatar', avatarFile);
+
+      const response = await fetch(`${baseUrl}/api/users/profile`, {
+        method: 'PUT',
+        credentials: 'include', // Include cookies for authentication
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update profile');
+      }
+
+      const data = await response.json();
+      console.log('✅ Profile updated:', data);
+      
+      // Refresh user data from server
+      const updatedUser = await refreshUser();
+      
+      // Update selectedUser to show new data in modal
+      setSelectedUser(updatedUser);
+      
+      alert('Profile updated successfully!');
+      
+    } catch (error) {
+      console.error('❌ Failed to update profile:', error);
+      alert('Failed to update profile. Please try again.');
+    }
+  };
+
   const startChat = (userId) => {
     setIsProfileOpen(false);
     setIsChatOpen(true);
@@ -847,12 +1751,15 @@ export default function CinemaScene3DDemo() {
 
   return (
     <div className="relative w-full h-screen bg-[#0a0a0a] overflow-hidden">
+      {/* Remote Audio Player - renders audio for all remote participants */}
+      {room && <RemoteAudioPlayer room={room} silenceMode={isSilenceMode} />}
+
       {/* 3D Scene */}
       <CinemaScene3D
         useGLBModel="improved"
         authenticatedUserID={currentUser?.id}
         videoElement={videoRef.current}
-        onAvatarClick={openProfile} // ✅ ADD THIS
+        onAvatarClick={openProfile}
         onVideoTextureUpdate={(fn) => {
           videoTextureUpdateRef.current = fn;
         }}
@@ -864,22 +1771,12 @@ export default function CinemaScene3DDemo() {
         debugMode={true}
         lightsOn={lightsOn}
         roomMembers={roomMembers}
+        userSeats={userSeats} // ✅ Pass seat assignments for avatar filtering
         remoteParticipants={remoteParticipantsMap}
         onEmoteReceived={() => {}}
         onChatMessageReceived={() => {}}
-        onEmoteSend={(emoteData) => {
-          if (sendMessage && sessionStatus?.id) {
-            sendMessage({
-              type: 'emote',
-              data: {
-                ...emoteData,
-                session_id: sessionStatus.id,
-                user_id: currentUser?.id,
-                username: currentUser?.username
-              }
-            });
-          }
-        }}
+        onEmoteSend={handleEmoteSend}
+        triggerLocalEmoteRef={triggerLocalEmoteRef}
       />
       {/* {console.log('🎬 Final roomMembers passed to Taskbar:', roomMembers)} */}
       {/* Taskbar */}
@@ -904,12 +1801,43 @@ export default function CinemaScene3DDemo() {
         showPositionDebug={showPositionDebug}
         onTogglePositionDebug={setShowPositionDebug}
         isHost={isHost}
-        isSeatedMode={isSeatedMode}
+        isHostBroadcasting={isHostBroadcasting}
+        onHostBroadcastToggle={() => {
+          const newBroadcastState = !isHostBroadcasting;
+          setIsHostBroadcasting(newBroadcastState);
+          
+          // 🎤 Show notification if host is currently speaking
+          if (isAudioActive && currentUser?.username) {
+            const currentUserSeatId = userSeats[currentUser?.id];
+            const currentUserRow = currentUserSeatId ? parseInt(currentUserSeatId.split('-')[0]) : null;
+            
+            // Count members in same row
+            let rowMemberCount = 0;
+            if (currentUserRow !== null) {
+              Object.entries(userSeats).forEach(([userId, seatId]) => {
+                if (seatId && parseInt(seatId.split('-')[0]) === currentUserRow) {
+                  rowMemberCount++;
+                }
+              });
+            }
+            
+            let notificationText;
+            if (newBroadcastState) {
+              notificationText = `${currentUser.username} is speaking to everyone`;
+            } else if (currentUserRow !== null) {
+              notificationText = `${currentUser.username} is speaking to Row ${currentUserRow} (${rowMemberCount} members)`;
+            } else {
+              notificationText = `${currentUser.username} is speaking`;
+            }
+            
+            showAudioNotification(notificationText);
+          }
+        }}
         roomMembers={roomMembers} // ✅ pass full list
-        toggleSeatedMode={handleToggleSeatedMode}
-        openChat={() => setIsChatOpen(prev => !prev)}
+        openChat={() => setShowChatHome(true)}
         onMembersClick={openMembers}
         onShareRoom={() => alert('Share room')}
+        onOpenUserProfile={openOwnProfile} // ✅ NEW: Open current user's profile
         onSeatsClick={() => {
           setIsSeatGridModalOpen(current => {
             const newOpenState = !current;
@@ -919,27 +1847,21 @@ export default function CinemaScene3DDemo() {
             return newOpenState;
           });
         }}
+        onTheaterOverviewClick={openTheaterOverview} // ✅ Right-click to open theater overview
         seats={[]}
         isCameraOn={isCameraOn}
         toggleCamera={() => {}}
         onLeaveCall={handleLeaveCall}
-        onEmoteSend={(emoteData) => {
-          if (sendMessage && sessionStatus?.id) {
-            sendMessage({
-              type: 'emote',
-              data: {
-                ...emoteData,
-                session_id: sessionStatus.id,
-                user_id: currentUser?.id,
-                username: currentUser?.username
-              }
-            });
-          }
-        }}
+        onEmoteSend={handleEmoteSend}
         showEmotes={true}
         showSeatModeToggle={false}
         showVideoToggle={false}
-        
+        audioDevices={audioDevices}
+        selectedAudioDeviceId={selectedAudioDeviceId}
+        onAudioDeviceChange={handleAudioDeviceChange}
+        isSilenceMode={isSilenceMode}
+        onToggleSilenceMode={() => setIsSilenceMode(!isSilenceMode)}
+        broadcastPermissions={broadcastPermissions}
       />
 
       {/* Left Sidebar */}
@@ -1026,11 +1948,34 @@ export default function CinemaScene3DDemo() {
                 Be the first to chat!
               </div>
             ) : (
-              sessionChatMessages.map((msg) => (
+              sessionChatMessages.map((msg) => {
+                // 🎭 Theater badge colors
+                const getTheaterBadgeColor = (theaterNumber) => {
+                  const colors = [
+                    'bg-blue-500 text-white',    // Theater 1
+                    'bg-green-500 text-white',   // Theater 2
+                    'bg-purple-500 text-white',  // Theater 3
+                    'bg-orange-500 text-white',  // Theater 4
+                    'bg-pink-500 text-white',    // Theater 5
+                    'bg-teal-500 text-white',    // Theater 6
+                  ];
+                  return colors[(theaterNumber - 1) % colors.length];
+                };
+
+                return (
                 <div key={msg.ID} className="text-white text-sm group">
-                  <div>
-                    <span className="font-medium text-purple-300">{msg.Username}:</span>{' '}
-                    <span>{msg.Message}</span>
+                  <div className="flex items-center gap-2">
+                    {/* 🎭 Theater Badge - only shown when theater_number exists (2+ theaters) */}
+                    {msg.theater_number && (
+                      <span 
+                        className={`px-1.5 py-0.5 rounded text-xs font-bold ${getTheaterBadgeColor(msg.theater_number)}`}
+                        title={msg.theater_name || `Theater ${msg.theater_number}`}
+                      >
+                        T{msg.theater_number}
+                      </span>
+                    )}
+                    <span className="font-medium text-purple-300">{msg.Username}:</span>
+                    <span className="flex-1">{msg.Message}</span>
                   </div>
                   {msg.reactions && msg.reactions.length > 0 && (
                     <div className="flex gap-1 mt-1 flex-wrap">
@@ -1062,7 +2007,8 @@ export default function CinemaScene3DDemo() {
                     ))}
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
             <div ref={chatEndRef} />
           </div>
@@ -1091,11 +2037,31 @@ export default function CinemaScene3DDemo() {
       {/* Members Modal */}
       {isMembersModalOpen && (
         <MembersModal
-          //isOpen={true}
           isOpen={isMembersModalOpen}
           onClose={() => setIsMembersModalOpen(false)}
           members={roomMembers}
           onMemberClick={openProfile}
+          isHost={isHost}
+          currentUserId={currentUser?.id}
+          audioStates={remoteAudioStates}
+          broadcastPermissions={broadcastPermissions}
+          onToggleBroadcast={handleToggleBroadcast}
+          userSeats={userSeats}
+          sessionId={sessionId}
+          userTheaters={userTheaters}
+          onRequestBroadcast={handleRequestBroadcast}
+          broadcastRequests={broadcastRequests}
+          watchType="3d_cinema"
+        />
+      )}
+
+      {/* Theater Overview Modal */}
+      {isTheaterOverviewOpen && (
+        <TheaterOverviewModal
+          isOpen={isTheaterOverviewOpen}
+          onClose={() => setIsTheaterOverviewOpen(false)}
+          sessionId={sessionStatus?.id}
+          isHost={isHost}
         />
       )}
 
@@ -1115,6 +2081,9 @@ export default function CinemaScene3DDemo() {
         onSwapAccept={acceptSwap}
         onSwapDecline={declineSwap}
         onTakeSeat={handleSeatSelect}
+        isHost={isHost}
+        theaters={theaters}
+        userTheaters={userTheaters}
       />
       {/* ✅ Immersive Fullscreen Video — using shared player */}
       {isImmersiveMode && (
@@ -1155,11 +2124,13 @@ export default function CinemaScene3DDemo() {
         <UserProfileModal
           user={selectedUser}
           isOpen={isProfileOpen}
+          isOwnProfile={selectedUser?.id === currentUser?.id}
           onClose={() => {
             setIsProfileOpen(false);
             setSelectedUser(null);
           }}
-          onMessage={() => startChat(selectedUser.id)}
+          onMessage={selectedUser?.id !== currentUser?.id ? () => startChat(selectedUser.id) : undefined}
+          onSaveProfile={handleSaveProfile}
         />
       )}
 
@@ -1176,8 +2147,77 @@ export default function CinemaScene3DDemo() {
             setIsChatOpen(false);
             setSelectedUser(null);
           }}
+          currentUser={currentUser}
         />
       )}
+      {/* Chat Entry Modals */}
+      {showChatHome && (
+        <ChatHomeModal
+          roomId={roomId}
+          roomMembers={roomMembers}
+          privateMessages={privateMessages}
+          currentUser={currentUser}
+          onClose={() => setShowChatHome(false)}
+          onOpenRoomChat={() => {
+            setShowChatHome(false);
+            setIsChatOpen(true);
+          }}
+          onOpenPrivateChat={(user) => {
+            setShowChatHome(false);
+            setSelectedUser(user);
+            setIsProfileOpen(false);
+            setIsChatOpen(true);
+            // Fetch history if needed
+            if (!privateMessages[user.id]?.length) {
+              sendMessage({
+                type: 'fetch_private_chat',
+                data: { other_user_id: user.id }
+              });
+            }
+          }}
+        />
+      )}
+
+      {/* 🎤 Floating Audio Notification */}
+      {audioNotification && (
+        <div
+          key={audioNotification.timestamp}
+          className="fixed bottom-32 left-1/2 transform -translate-x-1/2 z-[1100] pointer-events-none"
+          style={{
+            animation: 'floatUp 1.5s ease-out forwards'
+          }}
+        >
+          <div className="bg-black/80 backdrop-blur-sm text-white px-6 py-3 rounded-full shadow-2xl border border-white/10">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">🎤</span>
+              <span className="text-sm font-medium whitespace-nowrap">
+                {audioNotification.text}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CSS Animation for floating notification */}
+      <style jsx>{`
+        @keyframes floatUp {
+          0% {
+            opacity: 0;
+            transform: translate(-50%, 20px);
+          }
+          10% {
+            opacity: 1;
+          }
+          80% {
+            opacity: 1;
+            transform: translate(-50%, -120px);
+          }
+          100% {
+            opacity: 0;
+            transform: translate(-50%, -140px);
+          }
+        }
+      `}</style>
     </div> // 👈 Only one root element
   );
 }

@@ -270,6 +270,46 @@ export const deleteChatMessage = async (roomId, messageId) => {
   }
 };
 
+// Delete a room message (persistent room chat)
+export const deleteRoomMessage = async (roomId, messageId) => {
+  console.log(`➡️ DELETE /api/rooms/${roomId}/messages/${messageId}`);
+  try {
+    const response = await apiClient.delete(`/api/rooms/${roomId}/messages/${messageId}`);
+    return response.data;
+  } catch (error) {
+    console.error("API delete request failed:", error);
+    throw error;
+  }
+};
+
+// Edit a chat message
+export const editChatMessage = async (roomId, messageId, newMessage) => {
+  console.log(`➡️ PUT /api/rooms/${roomId}/chat/${messageId}`);
+  try {
+    const response = await apiClient.put(`/api/rooms/${roomId}/chat/${messageId}`, {
+      message: newMessage
+    });
+    return response.data;
+  } catch (error) {
+    console.error("API edit request failed:", error);
+    throw error;
+  }
+};
+
+// Edit a room message (persistent room chat)
+export const editRoomMessage = async (roomId, messageId, newMessage) => {
+  console.log(`➡️ PUT /api/rooms/${roomId}/messages/${messageId}`);
+  try {
+    const response = await apiClient.put(`/api/rooms/${roomId}/messages/${messageId}`, {
+      message: newMessage
+    });
+    return response.data;
+  } catch (error) {
+    console.error("API edit request failed:", error);
+    throw error;
+  }
+};
+
 // Get chat history for a room/session
 export const getChatHistory = async (roomId, sessionId = null) => {
   try {
@@ -450,10 +490,11 @@ export const deleteSingleTemporaryMediaItem = async (roomId, itemId) => {
 /**
  * Creates a new watch session for a room (host-only)
  * @param {string|number} roomId 
+ * @param {string} watchType - "video" or "3d_cinema"
  * @returns {Promise<AxiosResponse>}
  */
-export const createWatchSessionForRoom = (roomId) => {
-  return apiClient.post(`/api/rooms/${roomId}/watch-session`);
+export const createWatchSessionForRoom = (roomId, watchType = 'video') => {
+  return apiClient.post(`/api/rooms/${roomId}/watch-session`, { watch_type: watchType });
 };
 
 
@@ -535,6 +576,119 @@ export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, 
     return response.data;
   } catch (error) {
     console.error('API Error (uploadMediaToRoom):', error);
+    throw error;
+  }
+};
+
+// --- RoomTV Content API ---
+export const getRoomTVContent = async (roomId) => {
+  try {
+    const response = await apiClient.get(`/api/rooms/${roomId}/tv-content`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getRoomTVContent):', error);
+    throw error;
+  }
+};
+
+export const createRoomTVContent = async (roomId, contentData) => {
+  try {
+    const response = await apiClient.post(`/api/rooms/${roomId}/tv-content`, contentData);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (createRoomTVContent):', error);
+    throw error;
+  }
+};
+
+export const deleteRoomTVContent = async (roomId, contentId) => {
+  try {
+    const response = await apiClient.delete(`/api/rooms/${roomId}/tv-content/${contentId}`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (deleteRoomTVContent):', error);
+    throw error;
+  }
+};
+
+// ✅ Get all active watch sessions for lobby
+export const getActiveSessions = async () => {
+  try {
+    const response = await apiClient.get('/api/sessions/active');
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getActiveSessions):', error);
+    throw error;
+  }
+};
+
+// ✅ Verify if a session still exists and is active
+export const verifySessionExists = async (sessionId) => {
+  try {
+    // Try to fetch active sessions and check if this one exists
+    const response = await apiClient.get('/api/sessions/active');
+    const sessions = response.data.sessions || [];
+    
+    // Check if the session_id exists in the active sessions list
+    const sessionExists = sessions.some(s => s.session_id === sessionId);
+    
+    return { exists: sessionExists };
+  } catch (error) {
+    console.error('API Error (verifySessionExists):', error);
+    // If API fails, assume session doesn't exist to be safe
+    return { exists: false };
+  }
+};
+
+// ✅ Room invitation APIs
+export const createRoomInviteLink = async (roomId, expiresInHours = null) => {
+  try {
+    const response = await apiClient.post(`/api/rooms/${roomId}/invites/link`, {
+      expires_in_hours: expiresInHours
+    });
+    return response.data;
+  } catch (error) {
+    console.error('API Error (createRoomInviteLink):', error);
+    throw error;
+  }
+};
+
+export const acceptInviteByToken = async (token) => {
+  try {
+    const response = await apiClient.post(`/api/invites/${token}/accept`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (acceptInviteByToken):', error);
+    throw error;
+  }
+};
+
+export const getRoomInvites = async (roomId) => {
+  try {
+    const response = await apiClient.get(`/api/rooms/${roomId}/invites`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getRoomInvites):', error);
+    throw error;
+  }
+};
+
+export const revokeRoomInvite = async (roomId, inviteId) => {
+  try {
+    const response = await apiClient.delete(`/api/rooms/${roomId}/invites/${inviteId}`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (revokeRoomInvite):', error);
+    throw error;
+  }
+};
+
+export const checkRoomAccess = async (roomId) => {
+  try {
+    const response = await apiClient.get(`/api/rooms/${roomId}/check-access`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (checkRoomAccess):', error);
     throw error;
   }
 };

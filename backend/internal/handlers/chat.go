@@ -109,32 +109,107 @@ func DeleteChatMessageHandler(c *gin.Context) {
         return
     }
 
-    // Allow delete if user is sender OR room host
-    if message.UserID != userID {
+    // Check if user is the sender or room host
+    isOwner := message.UserID == userID
+    isHost := false
+    
+    if !isOwner {
         var room models.Room
-        if err := DB.First(&room, message.RoomID).Error; err != nil || room.HostID != userID {
+        if err := DB.First(&room, message.RoomID).Error; err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch room"})
+            return
+        }
+        if room.HostID != userID {
             c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete other users' messages"})
             return
         }
+        isHost = true
     }
 
-    // ✅ Delete from database
-    if err := DB.Delete(&message).Error; err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete message"})
-        return
+    // If host is deleting someone else's message, soft delete with flag
+    if isHost && !isOwner {
+        message.Message = "[Message deleted by host]"
+        message.DeletedByHost = true
+        if err := DB.Save(&message).Error; err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete message"})
+            return
+        }
+        c.JSON(http.StatusOK, gin.H{"message": "Message deleted", "deleted_by_host": true})
+    } else {
+        // Owner deleting their own message - hard delete
+        if err := DB.Delete(&message).Error; err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete message"})
+            return
+        }
+        c.JSON(http.StatusOK, gin.H{"message": "Message deleted", "deleted_by_host": false})
     }
-
-    // ✅ Broadcast deletion
-    //deletionMsg := map[string]interface{}{
-      //  "type": "chat_message_deleted",
-     //   "data": map[string]uint{"message_id": message.ID},
-   // }
-  //  broadcastData, _ := json.Marshal(deletionMsg)
-  //  hub.BroadcastToRoom(message.RoomID, broadcastData, c)
-
-    c.JSON(http.StatusOK, gin.H{"message": "Message deleted"})
 }
 
+// UpdateChatMessageHandler handles PUT /api/rooms/:id/chat/:message_id
+func UpdateChatMessageHandler(c *gin.Context) {
+	roomIDStr := c.Param("id")
+	messageIDStr := c.Param("message_id")
+	
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+	
+	messageID, err := strconv.ParseUint(messageIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid message ID"})
+		return
+	}
+
+	// Get authenticated user ID
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userID := userIDValue.(uint)
+
+	// Parse request body
+	var input struct {
+		Message string `json:"message" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Find the message
+	var message models.ChatMessage
+	if err := DB.Where("id = ? AND room_id = ?", uint(messageID), uint(roomID)).First(&message).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Message not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		}
+		return
+	}
+
+	// Check if user owns the message
+	if message.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only edit your own messages"})
+		return
+	}
+
+	// Update the message
+	message.Message = input.Message
+	if err := DB.Save(&message).Error; err != nil {
+		log.Printf("Error updating message: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update message"})
+		return
+	}
+
+	log.Printf("✏️ User %d edited message %d in room %d", userID, messageID, roomID)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Message updated successfully",
+		"data":    message,
+	})
+}
 
 // GetChatHistoryHandler handles GET /api/rooms/:id/chat/history
 func GetChatHistoryHandler(c *gin.Context) {

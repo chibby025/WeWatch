@@ -24,7 +24,6 @@ export default function FlatUserIcon({
   currentEmote = null,
   recentMessage = null,
   avatarColor = null,
-  userPhotoUrl = '/icons/user1.jpg',
   hideLabelsForLocalViewer = false,
   isActiveTimed = false,
   isHovered = false,
@@ -33,7 +32,7 @@ export default function FlatUserIcon({
 }) {
   const groupRef = useRef();
   const planeRef = useRef();
-  const [profileTexture, setProfileTexture] = useState(null);
+  const [svgTexture, setSvgTexture] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const orbRef = useRef();
   const [isPulsing, setIsPulsing] = useState(false);
@@ -49,33 +48,30 @@ export default function FlatUserIcon({
     return `hsl(${hue}, 65%, 50%)`;
   }, [userId, isPremium, avatarColor]);
 
-  // Load user profile image
+  // ✅ Load black silhouette SVG (same for everyone)
   useEffect(() => {
-    if (!userPhotoUrl) {
-      setProfileTexture(null);
-      return;
-    }
-
+    const svgPath = '/icons/user1avatar.svg'; // Same SVG for all users
+    
     setIsLoading(true);
     const loader = new TextureLoader();
     loader.load(
-      userPhotoUrl,
+      svgPath,
       (texture) => {
         texture.wrapS = THREE.ClampToEdgeWrapping;
         texture.wrapT = THREE.ClampToEdgeWrapping;
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
-        setProfileTexture(texture);
+        setSvgTexture(texture);
         setIsLoading(false);
       },
       undefined,
       () => {
-        console.warn('⚠️ Failed to load profile image for:', username);
-        setProfileTexture(null);
+        console.warn('⚠️ Failed to load SVG avatar for:', username);
+        setSvgTexture(null);
         setIsLoading(false);
       }
     );
-  }, [userPhotoUrl, username]);
+  }, []); // ✅ Only load once (same SVG for all)
 
   // Billboard effect - always face camera
   useFrame(({ camera }) => {
@@ -122,7 +118,7 @@ export default function FlatUserIcon({
       position={seatPosition}
       scale={[rowScale, rowScale, rowScale]}
     >
-      {/* MAIN AVATAR PLANE */}
+      {/* MAIN AVATAR PLANE - Black Silhouette SVG */}
       <mesh
         ref={planeRef}
         position={[0, 0, 0]}
@@ -131,7 +127,7 @@ export default function FlatUserIcon({
       >
         <planeGeometry args={[1, 1]} />
         <meshBasicMaterial
-          map={profileTexture || null}
+          map={svgTexture || null}
           transparent
           side={THREE.DoubleSide}
         />

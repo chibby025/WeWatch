@@ -7,8 +7,8 @@ import (
     "os"
     "fmt"
     "time"
+    "encoding/json"
     "github.com/google/uuid"
-    //"encoding/json"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -18,8 +18,9 @@ import (
 
 // CreateRoomInput defines the expected structure for creating a room.
 type CreateRoomInput struct {
-	Name string `json:"name" binding:"required,min=1,max=100"`
-	Description	string	`json:"description" binding:"max=500"`
+	Name        string `json:"name" binding:"required,min=1,max=100"`
+	Description string `json:"description" binding:"max=500"`
+	IsPublic    *bool  `json:"is_public"` // Pointer to allow nil (defaults to true)
 	// MediaFileName is set later when a file is uploaded not during the initial creation in this MVP step.
 	// HostID will be determined from the authenticated user (JWT)
 }
@@ -57,10 +58,16 @@ func CreateRoomHandler(c *gin.Context) {
     }
 
     // Create the room
+    isPublic := true // Default to public
+    if input.IsPublic != nil {
+        isPublic = *input.IsPublic
+    }
+    
     newRoom := models.Room{
         Name:        input.Name,
         Description: input.Description,
         HostID:      id,
+        IsPublic:    isPublic,
     }
 
     if err := tx.Create(&newRoom).Error; err != nil {
@@ -109,6 +116,73 @@ func CreateRoomHandler(c *gin.Context) {
     })
 }
 
+// UpdateRoomHandler handles PUT /api/rooms/:id
+func UpdateRoomHandler(c *gin.Context) {
+	roomID := c.Param("id")
+	userID := c.MustGet("user_id").(uint)
+	log.Printf("UpdateRoomHandler: User %d attempting to update room %s", userID, roomID)
+
+	var room models.Room
+	if err := DB.First(&room, roomID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("UpdateRoomHandler: Room %s not found", roomID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		} else {
+			log.Printf("UpdateRoomHandler: Database error finding room: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		}
+		return
+	}
+
+	// Check if user is the room host
+	if room.HostID != userID {
+		log.Printf("UpdateRoomHandler: User %d is not host of room %d (host is %d)", userID, room.ID, room.HostID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can update room settings"})
+		return
+	}
+
+	// Bind update data
+	var input struct {
+		Name            string `json:"name"`
+		Description     string `json:"description"`
+		ShowHost        *bool  `json:"show_host"`
+		ShowDescription *bool  `json:"show_description"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("UpdateRoomHandler: Error binding JSON: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Printf("UpdateRoomHandler: Input data: Name=%s, ShowHost=%v, ShowDescription=%v", input.Name, input.ShowHost, input.ShowDescription)
+
+	// Update fields
+	if input.Name != "" {
+		room.Name = input.Name
+	}
+	if input.Description != "" {
+		room.Description = input.Description
+	}
+	if input.ShowHost != nil {
+		room.ShowHost = *input.ShowHost
+		log.Printf("UpdateRoomHandler: Setting ShowHost to %v", *input.ShowHost)
+	}
+	if input.ShowDescription != nil {
+		room.ShowDescription = *input.ShowDescription
+	}
+
+	// Save updates
+	if err := DB.Save(&room).Error; err != nil {
+		log.Printf("UpdateRoomHandler: Failed to save room to database: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to update room: %v", err)})
+		return
+	}
+
+	log.Printf("UpdateRoomHandler: Room %d updated successfully by user %d", room.ID, userID)
+	c.JSON(http.StatusOK, room)
+}
+
 // Handle Ending the watch session
 func EndWatchSessionHandler(c *gin.Context) {
 	// ✅ FIX: Use "session_id" to match route :session_id
@@ -149,6 +223,19 @@ func EndWatchSessionHandler(c *gin.Context) {
 	}
 
 	log.Printf("✅ EndWatchSessionHandler: User %d (room host) ending session %s", userID, sessionID)
+	
+	// ✅ Clear host disconnect timer if host manually ends session
+	if hub != nil {
+		hub.hostDisconnectMutex.Lock()
+		if _, exists := hub.hostDisconnectTimes[sessionID]; exists {
+			delete(hub.hostDisconnectTimes, sessionID)
+			log.Printf("✅ Cleared host disconnect timer for session %s (manually ended by host)", sessionID)
+		}
+		hub.hostDisconnectMutex.Unlock()
+	}
+
+	// ✅ Check if this is an instant watch (temporary room) - reuse room variable from above
+	isInstantWatch := room.IsTemporary
 
 	// 🔁 Use transaction for data consistency
 	tx := DB.Begin()
@@ -158,14 +245,22 @@ func EndWatchSessionHandler(c *gin.Context) {
 		return
 	}
 
-	// Mark session as ended
+	// Declare now for use in marking members as inactive
 	now := time.Now()
-	session.EndedAt = &now
-	if err := tx.Save(&session).Error; err != nil {
-		tx.Rollback()
-		log.Printf("EndWatchSessionHandler: Failed to update session: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to end session"})
-		return
+
+	// ✅ For regular rooms: Mark session as ended
+	// ✅ For instant watch: We'll delete the session later (skip marking as ended)
+	if !isInstantWatch {
+		session.EndedAt = &now
+		if err := tx.Save(&session).Error; err != nil {
+			tx.Rollback()
+			log.Printf("EndWatchSessionHandler: Failed to update session: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to end session"})
+			return
+		}
+		log.Printf("✅ Marked regular room session %s as ended", sessionID)
+	} else {
+		log.Printf("🔄 Instant watch session %s will be fully deleted", sessionID)
 	}
 
 	// Delete temporary media files and records
@@ -191,6 +286,19 @@ func EndWatchSessionHandler(c *gin.Context) {
 		} else {
 			log.Printf("✅ Deleted DB record: ID=%d", item.ID)
 		}
+	}
+
+	// ✅ Mark all session members as inactive
+	result := tx.Model(&models.WatchSessionMember{}).
+		Where("watch_session_id = ? AND is_active = ?", session.ID, true).
+		Updates(map[string]interface{}{
+			"is_active": false,
+			"left_at":   now,
+		})
+	if result.Error != nil {
+		log.Printf("⚠️ EndWatchSessionHandler: Failed to mark members as inactive: %v", result.Error)
+	} else {
+		log.Printf("✅ EndWatchSessionHandler: Marked %d members as inactive for session %s", result.RowsAffected, sessionID)
 	}
 
 	// ✅ Delete session chat messages and reactions
@@ -228,19 +336,47 @@ func EndWatchSessionHandler(c *gin.Context) {
 		}
 	}
 
-	// Delete room if it's temporary (reuse existing room variable from earlier)
-	// Refresh room data in case it was modified
-	if err := tx.First(&room, session.RoomID).Error; err != nil {
-		if err != gorm.ErrRecordNotFound {
-			log.Printf("EndWatchSessionHandler: DB error fetching room %d: %v", session.RoomID, err)
+	// ✅ Delete room if it's temporary (instant watch)
+	if isInstantWatch {
+		// Delete all related data for temporary room
+		// Delete UserRoom memberships
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.UserRoom{}).Error; err != nil {
+			log.Printf("⚠️ Failed to delete UserRoom memberships for room %d: %v", room.ID, err)
 		}
-		// Don't rollback — room may have been deleted already
-	} else if room.IsTemporary {
+		
+		// Delete room invitations (if any)
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.RoomInvitation{}).Error; err != nil {
+			log.Printf("⚠️ Failed to delete room invitations for room %d: %v", room.ID, err)
+		}
+		
+		// Delete media items
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.MediaItem{}).Error; err != nil {
+			log.Printf("⚠️ Failed to delete media items for room %d: %v", room.ID, err)
+		}
+		
+		// Delete scheduled events
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.ScheduledEvent{}).Error; err != nil {
+			log.Printf("⚠️ Failed to delete scheduled events for room %d: %v", room.ID, err)
+		}
+		
+		// Delete RoomTV content
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.RoomTVContent{}).Error; err != nil {
+			log.Printf("⚠️ Failed to delete RoomTV content for room %d: %v", room.ID, err)
+		}
+		
+		// ✅ DELETE THE SESSION ITSELF for instant watch (before deleting room)
+		if err := tx.Delete(&models.WatchSession{}, session.ID).Error; err != nil {
+			log.Printf("⚠️ Failed to delete session %s: %v", sessionID, err)
+		} else {
+			log.Printf("🗑️ Deleted instant watch session: %s", sessionID)
+		}
+		
+		// Finally, delete the room itself
 		if err := tx.Delete(&models.Room{}, room.ID).Error; err != nil {
 			log.Printf("⚠️ EndWatchSessionHandler: Failed to delete temporary room %d: %v", room.ID, err)
 			// Still commit — session cleanup is more important
 		} else {
-			log.Printf("🗑️ Deleted temporary room %d after session end", room.ID)
+			log.Printf("🗑️ Deleted temporary room %d and all related data after session end", room.ID)
 		}
 	}
 	if err := tx.Commit().Error; err != nil {
@@ -271,6 +407,199 @@ func EndWatchSessionHandler(c *gin.Context) {
 
 	log.Printf("✅ Session %s ended successfully by host %d", sessionID, userID)
 	c.JSON(http.StatusOK, gin.H{"message": "Session ended"})
+}
+
+// ✅ AutoEndSession ends a session automatically (e.g., when host is gone > 10 minutes)
+// This is the internal version without HTTP context
+func AutoEndSession(sessionID string) error {
+	log.Printf("🤖 AutoEndSession called for session %s", sessionID)
+	
+	// Fetch session
+	var session models.WatchSession
+	if err := DB.Where("session_id = ?", sessionID).First(&session).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("AutoEndSession: Session %s not found (may have been manually ended)", sessionID)
+			return nil // Not an error - session already gone
+		}
+		return fmt.Errorf("database error: %v", err)
+	}
+	
+	// Check if already ended
+	if session.EndedAt != nil {
+		log.Printf("AutoEndSession: Session %s already ended at %v", sessionID, session.EndedAt)
+		return nil
+	}
+	
+	log.Printf("✅ AutoEndSession: Auto-ending session %s (room %d)", sessionID, session.RoomID)
+	
+	// ✅ Check if this is an instant watch (temporary room) FIRST
+	var room models.Room
+	if err := DB.First(&room, session.RoomID).Error; err != nil {
+		log.Printf("AutoEndSession: Failed to fetch room %d: %v", session.RoomID, err)
+		return fmt.Errorf("failed to fetch room: %v", err)
+	}
+	
+	isInstantWatch := room.IsTemporary
+	
+	// 🔁 Use transaction for data consistency
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to start transaction: %v", tx.Error)
+	}
+	
+	// Declare now for use in marking members as inactive
+	now := time.Now()
+
+	// ✅ For regular rooms: Mark session as ended
+	// ✅ For instant watch: We'll delete the session later (skip marking as ended)
+	if !isInstantWatch {
+		session.EndedAt = &now
+		if err := tx.Save(&session).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to update session: %v", err)
+		}
+		log.Printf("⏰ Marked regular session %s as ended", sessionID)
+	} else {
+		log.Printf("🗑️ Instant watch session %s - will be deleted entirely", sessionID)
+	}
+	
+	// ✅ Delete temporary media files and records
+	var tempItems []models.TemporaryMediaItem
+	if err := tx.Where("session_id = ?", sessionID).Find(&tempItems).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to fetch temp media: %v", err)
+	}
+	
+	log.Printf("🗑️ AutoEndSession: Found %d temporary media items to delete for session %s", len(tempItems), sessionID)
+	for _, item := range tempItems {
+		log.Printf("🗑️ Deleting temporary media: ID=%d, File=%s, SessionID=%s", item.ID, item.FileName, item.SessionID)
+		if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("⚠️ AutoEndSession: Failed to delete file %s: %v", item.FilePath, err)
+		} else {
+			log.Printf("✅ Deleted file: %s", item.FilePath)
+		}
+		if err := tx.Delete(&item).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete DB record for %s: %v", item.FilePath, err)
+		} else {
+			log.Printf("✅ Deleted DB record: ID=%d", item.ID)
+		}
+	}
+	
+	// ✅ Mark all session members as inactive
+	result := tx.Model(&models.WatchSessionMember{}).
+		Where("watch_session_id = ? AND is_active = ?", session.ID, true).
+		Updates(map[string]interface{}{
+			"is_active": false,
+			"left_at":   now,
+		})
+	if result.Error != nil {
+		log.Printf("⚠️ AutoEndSession: Failed to mark members as inactive: %v", result.Error)
+	} else {
+		log.Printf("✅ AutoEndSession: Marked %d members as inactive for session %s", result.RowsAffected, sessionID)
+	}
+	
+	// ✅ Delete session chat messages and reactions
+	var chatMessages []models.ChatMessage
+	if err := tx.Where("session_id = ?", sessionID).Find(&chatMessages).Error; err != nil {
+		log.Printf("⚠️ AutoEndSession: Failed to fetch chat messages: %v", err)
+	} else {
+		log.Printf("🗑️ AutoEndSession: Found %d chat messages to delete for session %s", len(chatMessages), sessionID)
+		
+		messageIDs := make([]uint, len(chatMessages))
+		for i, msg := range chatMessages {
+			messageIDs[i] = msg.ID
+		}
+		
+		if len(messageIDs) > 0 {
+			var reactions []models.Reaction
+			if err := tx.Where("message_id IN ?", messageIDs).Find(&reactions).Error; err != nil {
+				log.Printf("⚠️ AutoEndSession: Failed to fetch reactions: %v", err)
+			} else {
+				log.Printf("🗑️ AutoEndSession: Found %d reactions to delete", len(reactions))
+				if err := tx.Where("message_id IN ?", messageIDs).Delete(&models.Reaction{}).Error; err != nil {
+					log.Printf("⚠️ AutoEndSession: Failed to delete reactions: %v", err)
+				} else {
+					log.Printf("✅ Deleted %d reactions", len(reactions))
+				}
+			}
+		}
+		
+		if err := tx.Where("session_id = ?", sessionID).Delete(&models.ChatMessage{}).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete chat messages: %v", err)
+		} else {
+			log.Printf("✅ Deleted %d chat messages", len(chatMessages))
+		}
+	}
+	
+	// ✅ Delete room if it's temporary (instant watch)
+	if isInstantWatch {
+		// Delete all related data for temporary room
+		// Delete UserRoom memberships
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.UserRoom{}).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete UserRoom memberships for room %d: %v", room.ID, err)
+		}
+		
+		// Delete room invitations (if any)
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.RoomInvitation{}).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete room invitations for room %d: %v", room.ID, err)
+		}
+		
+		// Delete media items
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.MediaItem{}).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete media items for room %d: %v", room.ID, err)
+		}
+		
+		// Delete scheduled events
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.ScheduledEvent{}).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete scheduled events for room %d: %v", room.ID, err)
+		}
+		
+		// Delete RoomTV content
+		if err := tx.Where("room_id = ?", room.ID).Delete(&models.RoomTVContent{}).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete RoomTV content for room %d: %v", room.ID, err)
+		}
+		
+		// ✅ DELETE THE SESSION ITSELF for instant watch (before deleting room)
+		if err := tx.Delete(&models.WatchSession{}, session.ID).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete session %s: %v", sessionID, err)
+		} else {
+			log.Printf("🗑️ Deleted instant watch session: %s", sessionID)
+		}
+		
+		// Finally, delete the room itself
+		if err := tx.Delete(&models.Room{}, room.ID).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete temporary room %d: %v", room.ID, err)
+		} else {
+			log.Printf("🗑️ Deleted temporary room %d and all related data after session auto-end", room.ID)
+		}
+	}
+	
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("transaction commit failed: %v", err)
+	}
+	
+	// ✅ DELETE LIVEKIT ROOM (after successful DB commit)
+	livekitRoomName := fmt.Sprintf("room-%d", session.RoomID)
+	if err := utils.DeleteLiveKitRoom(livekitRoomName); err != nil {
+		log.Printf("⚠️ AutoEndSession: Failed to delete LiveKit room %s: %v", livekitRoomName, err)
+	}
+	
+	// ✅ BROADCAST SESSION_ENDED TO ALL PARTICIPANTS
+	if hub != nil {
+		broadcastMsg := OutgoingMessage{
+			Data:     []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d,"reason":"host_timeout"}}`, sessionID, session.RoomID)),
+			IsBinary: false,
+		}
+		hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)
+		log.Printf("📡 Broadcast session_ended (host timeout) to room %d", session.RoomID)
+		
+		// Disconnect all WebSocket clients
+		time.Sleep(500 * time.Millisecond)
+		hub.DisconnectRoomClients(session.RoomID)
+	}
+	
+	log.Printf("✅ Session %s auto-ended successfully after host timeout", sessionID)
+	return nil
 }
 
 // Cleanup Session
@@ -417,7 +746,15 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 	}
 
 	isHost := room.HostID == userID
+	
+	// ✅ Use tab_id from query params to make identity unique per browser tab
+	tabID := c.Query("tab_id")
 	identity := "user-" + strconv.FormatUint(uint64(userID), 10)
+	if tabID != "" {
+		identity = identity + "-" + tabID
+		log.Printf("🆔 [LiveKit] Using tab-unique identity: %s", identity)
+	}
+	
 	roomName := "room-" + roomIDStr
 
 	log.Printf("🎬 [LiveKit] Generating token: room=%s, identity=%s, isHost=%v", roomName, identity, isHost)
@@ -452,6 +789,20 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		return
 	}
 
+	// Parse watch_type from request body
+	var input struct {
+		WatchType string `json:"watch_type"` // "video" or "3d_cinema"
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		// Default to "video" if not specified
+		input.WatchType = "video"
+	}
+	
+	// Validate watch_type
+	if input.WatchType != "video" && input.WatchType != "3d_cinema" {
+		input.WatchType = "video"
+	}
+
 	// 🔁 BEGIN TRANSACTION
 	tx := DB.Begin()
 	if tx.Error != nil {
@@ -460,7 +811,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		return
 	}
 
-	// Create temporary room
+	// Create temporary room with watch type indicator
 	roomName := fmt.Sprintf("Instant Watch – %s", time.Now().Format("15:04"))
 	newRoom := models.Room{
 		Name:        roomName,
@@ -490,12 +841,13 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		return
 	}
 
-	// Create watch session
+	// Create watch session with watch_type
 	sessionUUID := uuid.New().String()
 	watchSession := models.WatchSession{
 		SessionID: sessionUUID,
 		RoomID:    newRoom.ID,
 		HostID:    userID,
+		WatchType: input.WatchType,
 		StartedAt: time.Now(),
 	}
 
@@ -514,6 +866,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 	}
 
 	// Success
+	log.Printf("✅ Created instant watch session: room=%d, session=%s, type=%s", newRoom.ID, sessionUUID, input.WatchType)
 	c.JSON(http.StatusCreated, gin.H{
 		"room_id":    newRoom.ID,
 		"session":    watchSession,
@@ -538,13 +891,42 @@ func GetRoomsHandler(c *gin.Context) {
 	// }
 	// For now, we'll allow listing even without strict user context for simplicity.
 
-	// Query the database for rooms
-	// Use GORM's find method to get all rooms
-	var rooms []models.Room
-	// Example: Get all rooms. You can add conditions, limits, offsets for pagination.
-	// result := DB.Find(&rooms)
-	// Example: Get first 10 rooms ordered by creation date (newest first)
-	result := DB.Order("created_at DESC").Limit(10).Find(&rooms)
+	// Get authenticated user ID (optional - for filtering private rooms)
+	userIDValue, userExists := c.Get("user_id")
+	var userID uint
+	if userExists {
+		userID, _ = userIDValue.(uint)
+	}
+
+	// Query the database for rooms with host username
+	// Use LEFT JOIN to include username even if user is deleted
+	type RoomWithUsername struct {
+		models.Room
+		HostUsername string `gorm:"column:host_username"`
+	}
+	
+	var roomsWithUsername []RoomWithUsername
+	
+	// Build query based on authentication
+	query := DB.Table("rooms").
+		Select("rooms.*, users.username as host_username").
+		Joins("LEFT JOIN users ON rooms.host_id = users.id")
+	
+	if userExists && userID > 0 {
+		// Authenticated user: Show public rooms OR private rooms where user is a member
+		query = query.Where(
+			"rooms.is_public = ? OR rooms.id IN (SELECT room_id FROM user_rooms WHERE user_id = ?)",
+			true, userID,
+		)
+	} else {
+		// Unauthenticated user: Show only public rooms
+		query = query.Where("rooms.is_public = ?", true)
+	}
+	
+	result := query.Order("rooms.created_at DESC").
+		Limit(10).
+		Scan(&roomsWithUsername)
+	
 	if result.Error != nil {
 		log.Printf("GetRoomsHandler: Error fetching rooms from the database: %v", result.Error)
 		c.JSON(http.StatusInternalServerError, gin.H{"error":"Failed to fetch rooms"})
@@ -552,28 +934,37 @@ func GetRoomsHandler(c *gin.Context) {
 	}
 
 	// Create a slice of simplified room data to return
-	roomsResponse := make([]gin.H, len(rooms))
-	for i, room := range rooms {
+	roomsResponse := make([]gin.H, len(roomsWithUsername))
+	for i, roomData := range roomsWithUsername {
+		// Use username if available, fallback to "User {id}"
+		hostDisplay := roomData.HostUsername
+		if hostDisplay == "" {
+			hostDisplay = fmt.Sprintf("User %d", roomData.Room.HostID)
+		}
+		
 		roomsResponse[i] = gin.H{
-			"id":              room.ID,
-			"name":            room.Name,
-			"description":     room.Description,
-			"host_id":         room.HostID,
-			"media_file_name": room.MediaFileName, // Show if a file is associated
-			"playback_state":  room.PlaybackState,
-			"playback_time":   room.PlaybackTime,
-			"created_at":      room.CreatedAt,
-			"currently_playing": room.CurrentlyPlaying,
-			"coming_next": room.ComingNext,
-			"is_screen_sharing": room.IsScreenSharing,
+			"id":                roomData.Room.ID,
+			"name":              roomData.Room.Name,
+			"description":       roomData.Room.Description,
+			"host_id":           roomData.Room.HostID,
+			"host_username":     hostDisplay,
+			"is_public":         roomData.Room.IsPublic,
+			"is_temporary":      roomData.Room.IsTemporary,
+			"media_file_name":   roomData.Room.MediaFileName,
+			"playback_state":    roomData.Room.PlaybackState,
+			"playback_time":     roomData.Room.PlaybackTime,
+			"created_at":        roomData.Room.CreatedAt,
+			"currently_playing": roomData.Room.CurrentlyPlaying,
+			"coming_next":       roomData.Room.ComingNext,
+			"is_screen_sharing": roomData.Room.IsScreenSharing,
 		}
 	}
 
 	// Respond with the list of rooms.
-	log.Printf("GetRoomsHandler: Fetched %d rooms", len(rooms))
+	log.Printf("GetRoomsHandler: Fetched %d rooms", len(roomsWithUsername))
 	c.JSON(http.StatusOK, gin.H {
 		"message": "Rooms fetched successfully",
-		"count":   len(rooms),
+		"count":   len(roomsWithUsername),
 		"rooms":   roomsResponse,
 	})
 }
@@ -855,22 +1246,115 @@ func DeleteRoomHandler(c *gin.Context) {
         return
     }
     
-    // Delete the room
-    result = DB.Delete(&room, uint(roomID))
-    if result.Error != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete room"})
+    // Cascade delete all related records in a transaction
+    err = DB.Transaction(func(tx *gorm.DB) error {
+        roomIDUint := uint(roomID)
+        
+        // 1. Delete media items
+        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.MediaItem{}).Error; err != nil {
+            return err
+        }
+        
+        // 2. Delete temporary media items
+        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.TemporaryMediaItem{}).Error; err != nil {
+            return err
+        }
+        
+        // 3. Delete scheduled events
+        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.ScheduledEvent{}).Error; err != nil {
+            return err
+        }
+        
+        // 4. Delete room TV content
+        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.RoomTVContent{}).Error; err != nil {
+            return err
+        }
+        
+        // 5. Delete room messages (chat)
+        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.RoomMessage{}).Error; err != nil {
+            return err
+        }
+        
+        // 6. Delete watch sessions
+        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.WatchSession{}).Error; err != nil {
+            return err
+        }
+        
+        // 7. Delete broadcast requests
+        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.BroadcastRequest{}).Error; err != nil {
+            return err
+        }
+        
+        // 8. Delete broadcast permissions
+        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.BroadcastPermission{}).Error; err != nil {
+            return err
+        }
+        
+        // 9. Delete user room memberships
+        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.UserRoom{}).Error; err != nil {
+            return err
+        }
+        
+        // 10. Finally, delete the room itself
+        if err := tx.Delete(&room, roomIDUint).Error; err != nil {
+            return err
+        }
+        
+        return nil
+    })
+    
+    if err != nil {
+        log.Printf("Error deleting room %d: %v", roomID, err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete room and related data"})
         return
     }
     
-    // Also delete related records (optional but recommended)
-    // Delete all media items in the room
-    DB.Where("room_id = ?", uint(roomID)).Delete(&models.MediaItem{})
+    // Queue file deletion in background (non-blocking)
+    go func() {
+        roomIDUint := uint(roomID)
+        
+        // Delete uploaded media files
+        var mediaItems []models.MediaItem
+        if err := DB.Unscoped().Where("room_id = ?", roomIDUint).Find(&mediaItems).Error; err == nil {
+            for _, item := range mediaItems {
+                if item.FilePath != "" {
+                    os.Remove(item.FilePath)
+                    log.Printf("Deleted file: %s", item.FilePath)
+                }
+                // Also delete poster if exists
+                if item.PosterURL != "" {
+                    os.Remove(item.PosterURL)
+                    log.Printf("Deleted poster: %s", item.PosterURL)
+                }
+            }
+        }
+        
+        // Delete temporary media files
+        var tempItems []models.TemporaryMediaItem
+        if err := DB.Unscoped().Where("room_id = ?", roomIDUint).Find(&tempItems).Error; err == nil {
+            for _, item := range tempItems {
+                if item.FilePath != "" {
+                    os.Remove(item.FilePath)
+                    log.Printf("Deleted temp file: %s", item.FilePath)
+                }
+            }
+        }
+        
+        log.Printf("Room %d and all related files deleted successfully", roomID)
+    }()
     
-    // Delete all user room relationships
-    DB.Where("room_id = ?", uint(roomID)).Delete(&models.UserRoom{})
+    // Broadcast room deletion via WebSocket
+    broadcastMsg := map[string]interface{}{
+        "type":    "room_deleted",
+        "room_id": uint(roomID),
+        "message": "This room has been deleted by the host",
+    }
+    if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+        hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+    }
     
     c.JSON(http.StatusOK, gin.H{
-        "message": "Room deleted successfully",
+        "message": "Room and all related data deleted successfully",
     })
 }
 
@@ -1094,6 +1578,8 @@ func GetActiveSessionHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"session_id":   session.SessionID,
+		"watch_type":   session.WatchType,
+		"host_id":      session.HostID,
 		"is_existing":  true,
 		"started_at":   session.StartedAt,
 		"member_count": memberCount,
@@ -1104,6 +1590,20 @@ func GetActiveSessionHandler(c *gin.Context) {
 func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 	roomID, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+
+	// Parse watch_type from request body
+	var input struct {
+		WatchType string `json:"watch_type"` // "video" or "3d_cinema"
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		// Default to "video" if not specified
+		input.WatchType = "video"
+	}
+	
+	// Validate watch_type
+	if input.WatchType != "video" && input.WatchType != "3d_cinema" {
+		input.WatchType = "video"
+	}
 
 	// Verify user is host
 	var room models.Room
@@ -1121,7 +1621,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	result := DB.Where("room_id = ? AND ended_at IS NULL", roomID).First(&existingSession)
 	if result.Error == nil {
 		// Active session already exists - return it
-		log.Printf("✅ Found existing active session for room %d: %s", roomID, existingSession.SessionID)
+		log.Printf("✅ Found existing active session for room %d: %s (type: %s)", roomID, existingSession.SessionID, existingSession.WatchType)
 		
 		// Count active members
 		var memberCount int64
@@ -1129,6 +1629,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		
 		c.JSON(200, gin.H{
 			"session_id":   existingSession.SessionID,
+			"watch_type":   existingSession.WatchType,
 			"is_existing":  true,
 			"started_at":   existingSession.StartedAt,
 			"member_count": memberCount,
@@ -1143,6 +1644,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		SessionID: sessionID,
 		RoomID:    uint(roomID),
 		HostID:    userID,
+		WatchType: input.WatchType,
 		StartedAt: time.Now(),
 	}
 	if err := DB.Create(&session).Error; err != nil {
@@ -1151,9 +1653,10 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ Created new watch session for room %d: %s", roomID, sessionID)
+	log.Printf("✅ Created new watch session for room %d: %s (type: %s)", roomID, sessionID, input.WatchType)
 	c.JSON(201, gin.H{
 		"session_id":   sessionID,
+		"watch_type":   input.WatchType,
 		"is_existing":  false,
 		"started_at":   session.StartedAt,
 		"member_count": 0,
