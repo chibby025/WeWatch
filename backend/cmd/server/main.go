@@ -54,11 +54,12 @@ func main() {
 	// --- Auto Migrate Schema ---
 	// GORM to auto creates/updates db tables based on the models
 	err = DB.AutoMigrate(&models.User{}, &models.Room{}, &models.MediaItem{}, &models.TemporaryMediaItem{}, &models.UserRoom{}, &models.ScheduledEvent{}, &models.ChatMessage{},&models.Reaction{}, 
-		&models.WatchSession{}, &models.PrivateChatHistory{}, &models.PrivateChatMessage{}, &models.WatchSessionMember{}) // Pass pointers to model structs
+		&models.WatchSession{}, &models.WatchSessionMember{}, &models.RoomMessage{}, &models.RoomTVContent{},
+		&models.Theater{}, &models.UserTheaterAssignment{}, &models.BroadcastPermission{}, &models.BroadcastRequest{}) // Pass pointers to model structs
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
-	log.Println("Database schema (User, Room, MediaItem) migrated successfully")
+	log.Println("Database schema migrated successfully")
 
 	
 	// --- Initialize WebSocket Hub ---
@@ -171,6 +172,13 @@ func main() {
 	// Apply the AuthMiddleware to the /api/auth/me route
 	r.GET("/api/auth/me", handlers.AuthMiddleware(), handlers.GetCurrentUserHandler)
 
+	// --- Invite Routes (Semi-public - requires auth) ---
+	inviteGroup := r.Group("/api/invites")
+	inviteGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
+	{
+		inviteGroup.POST("/:token/accept", handlers.AcceptInviteByTokenHandler) // POST /api/invites/:token/accept (Accept invite link)
+	}
+
 	// --- Room Routes (Protected) ---
 	// All room-related endpoints require authentication
 	roomGroup := r.Group("/api/rooms")
@@ -194,6 +202,7 @@ func main() {
 		roomGroup.POST("/:id/join", handlers.JoinRoomHandler)
 		roomGroup.POST("/:id/leave", handlers.LeaveRoomHandler)
 		roomGroup.DELETE("/:id", handlers.DeleteRoomHandler)
+		roomGroup.PUT("/:id", handlers.UpdateRoomHandler)
 		roomGroup.PUT("/:id/media/order", handlers.UpdateMediaOrderHandler)
  		roomGroup.PUT("/:id/loop-mode", handlers.UpdateRoomLoopModeHandler)
 		roomGroup.POST("/:id/scheduled-events", handlers.CreateScheduledEventHandler)
@@ -201,6 +210,28 @@ func main() {
 		roomGroup.POST("/:id/chat", handlers.CreateChatMessageHandler)
 		roomGroup.GET("/:id/chat/history", handlers.GetChatHistoryHandler)
 		roomGroup.DELETE("/:id/chat/:message_id", handlers.DeleteChatMessageHandler)
+		roomGroup.PUT("/:id/chat/:message_id", handlers.UpdateChatMessageHandler)
+		
+		// --- Room-level persistent chat (new) ---
+		roomGroup.GET("/:id/messages", handlers.GetRoomMessages)         // GET /api/rooms/:id/messages (Get all room messages)
+		roomGroup.POST("/:id/messages", handlers.CreateRoomMessage)      // POST /api/rooms/:id/messages (Send room message)
+		roomGroup.DELETE("/:id/messages/:message_id", handlers.DeleteRoomMessage) // DELETE /api/rooms/:id/messages/:message_id (Delete room message)
+		roomGroup.PUT("/:id/messages/:message_id", handlers.EditRoomMessage)      // PUT /api/rooms/:id/messages/:message_id (Edit room message)
+		
+		// --- RoomTV content routes (new) ---
+		roomGroup.GET("/:id/tv-content", handlers.GetRoomTVContent)           // GET /api/rooms/:id/tv-content (Get active TV content)
+		roomGroup.POST("/:id/tv-content", handlers.CreateRoomTVContent)       // POST /api/rooms/:id/tv-content (Host creates content)
+		roomGroup.DELETE("/:id/tv-content/:content_id", handlers.DeleteRoomTVContent) // DELETE /api/rooms/:id/tv-content/:content_id (Host dismisses content)
+		
+		// --- Room invitation routes (for private rooms) ---
+		roomGroup.POST("/:id/invites/link", handlers.CreateRoomInviteLinkHandler)         // POST /api/rooms/:id/invites/link (Create invite link)
+		roomGroup.GET("/:id/invites", handlers.GetRoomInvitesHandler)                     // GET /api/rooms/:id/invites (List invites)
+		roomGroup.DELETE("/:id/invites/:invite_id", handlers.RevokeRoomInviteHandler)     // DELETE /api/rooms/:id/invites/:invite_id (Revoke invite)
+		roomGroup.GET("/:id/check-access", handlers.CheckUserRoomAccessHandler)           // GET /api/rooms/:id/check-access (Check user access)
+		
+		// --- Session management routes (new) ---
+		roomGroup.POST("/:id/sessions", handlers.CreateWatchSession)   // POST /api/rooms/:id/sessions (Create new watch session)
+		
 		roomGroup.POST("/:id/watch-session", handlers.CreateWatchSessionForRoomHandler) // Regular Room Video Watch
 		roomGroup.GET("/:id/active-session", handlers.GetActiveSessionHandler)
 		roomGroup.PUT("/:id/status", handlers.UpdateRoomStatusHandler)
@@ -216,6 +247,31 @@ func main() {
     	// --- --- ---
 	}
 
+	// --- THEATER & BROADCAST ROUTES (Protected) ---
+	sessionGroup := r.Group("/api/sessions")
+	sessionGroup.Use(handlers.AuthMiddleware())
+	{
+		// Get all active sessions for lobby
+		sessionGroup.GET("/active", handlers.GetAllActiveSessionsHandler)        // GET /api/sessions/active
+		
+		// Theater management
+		sessionGroup.GET("/:id/theaters", handlers.GetSessionTheaters)           // GET /api/sessions/:id/theaters
+		
+		// Broadcast permissions
+		sessionGroup.POST("/:id/broadcast/request", handlers.RequestBroadcast)   // POST /api/sessions/:id/broadcast/request
+		sessionGroup.POST("/:id/broadcast/grant", handlers.GrantBroadcast)       // POST /api/sessions/:id/broadcast/grant
+		sessionGroup.POST("/:id/broadcast/revoke", handlers.RevokeBroadcast)     // POST /api/sessions/:id/broadcast/revoke
+		sessionGroup.GET("/:id/broadcast/active", handlers.GetActiveBroadcasters) // GET /api/sessions/:id/broadcast/active
+		sessionGroup.GET("/:id/broadcast/requests", handlers.GetPendingBroadcastRequests) // GET /api/sessions/:id/broadcast/requests
+	}
+
+	theaterGroup := r.Group("/api/theaters")
+	theaterGroup.Use(handlers.AuthMiddleware())
+	{
+		theaterGroup.PUT("/:id/name", handlers.RenameTheater)             // PUT /api/theaters/:id/name
+		theaterGroup.GET("/:id/occupancy", handlers.GetTheaterOccupancy)  // GET /api/theaters/:id/occupancy
+	}
+
 	// --- SCHEDULED EVENTS ROUTES (Protected, not in roomGroup) ---
 	protected := r.Group("/api")
 	protected.Use(handlers.AuthMiddleware()) // ✅ Apply auth to all sub-routes
@@ -224,6 +280,9 @@ func main() {
 		protected.PUT("/scheduled-events/:id", handlers.UpdateScheduledEventHandler)
 		protected.DELETE("/scheduled-events/:id", handlers.DeleteScheduledEventHandler)
 		protected.GET("/scheduled-events/:id/ical", handlers.DownloadICalHandler)
+		
+		// --- USER PROFILE ROUTES ---
+		protected.PUT("/users/profile", handlers.UpdateProfileHandler) // Update current user's profile
 	}
 	// --- Placeholder for Future Routes ---
 	// roomGroup.PUT("/:id", handlers.UpdateRoomHandler)

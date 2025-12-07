@@ -152,3 +152,30 @@ video:fullscreen {
 .room-container.rave .chat-panel {
   display: none;
 }
+
+/* Green pulse animation for audio/speaker icons */
+@keyframes pulseGreen {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.8), 0 0 16px rgba(34, 197, 94, 0.4);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(34, 197, 94, 1), 0 0 24px rgba(34, 197, 94, 0.6);
+    opacity: 0.9;
+  }
+}
+
+.animate-pulse-green {
+  animation: pulseGreen 1.5s ease-in-out infinite;
+  border-radius: 50%;
+}
+
+/* Hide scrollbar while maintaining scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari and Opera */
+}

@@ -16,13 +16,13 @@ export default function useAuth() {
       try {
         console.log(`🔍 [useAuth #${effectId}] Calling getCurrentUser API...`);
         const response = await getCurrentUser();
-        console.log(`🔑 [useAuth #${effectId}] User authenticated. Response:`, response);
+        // console.log(`🔑 [useAuth #${effectId}] User authenticated. Response:`, response);
         console.log(`👤 [useAuth #${effectId}] User ID: ${response.user?.id}, Username: ${response.user?.username}`);
         
         setCurrentUser(response.user);
         const token = response.ws_token;
         if (token) {
-          console.log(`🎫 [useAuth #${effectId}] Setting wsToken:`, token.substring(0, 20) + '...');
+          // console.log(`🎫 [useAuth #${effectId}] Setting wsToken:`, token.substring(0, 20) + '...');
           sessionStorage.setItem('wewatch_ws_token', token);
           setWsToken(token);
         } else {
@@ -61,5 +61,20 @@ export default function useAuth() {
     setWsToken(null);
   };
 
-  return { currentUser, wsToken, loading, logout }; // ✅ now `logout` exists
+  // ✅ DEFINE refresh function to reload user data
+  const refreshUser = async () => {
+    try {
+      console.log('🔄 [useAuth] Refreshing user data...');
+      const response = await getCurrentUser();
+      console.log('✅ [useAuth] User data refreshed:', response.user);
+      setCurrentUser(response.user);
+      localStorage.setItem('user', JSON.stringify(response.user));
+      return response.user;
+    } catch (err) {
+      console.warn('❌ [useAuth] Failed to refresh user:', err);
+      throw err;
+    }
+  };
+
+  return { currentUser, wsToken, loading, logout, refreshUser }; // ✅ expose refreshUser
 }

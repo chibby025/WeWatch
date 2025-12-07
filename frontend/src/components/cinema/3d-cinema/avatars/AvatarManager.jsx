@@ -9,6 +9,7 @@ import { assignUserToSeat, generateAllSeats } from '../seatCalculator';
  */
 export default function AvatarManager({
   roomMembers = [],
+  userSeats = {}, // ✅ NEW: Only render avatars for users with seats
   currentUserId,
   onEmoteReceived,
   onChatMessageReceived,
@@ -23,10 +24,12 @@ export default function AvatarManager({
 
   const allSeats = useMemo(() => generateAllSeats(), []);
 
+  // ✅ Calculate seat assignments for all users (demo and real users use same logic now)
   const userSeatAssignments = useMemo(() => {
     const assignments = {};
     roomMembers.forEach((member) => {
       if (member.is_demo) {
+        // Demo users: extract row/col from their ID (format: "demo-row-col")
         const [, rowStr, colStr] = member.id.split('-');
         const row = parseInt(rowStr, 10);
         const col = parseInt(colStr, 10);
@@ -39,6 +42,7 @@ export default function AvatarManager({
           };
         }
       } else {
+        // Real users: assign seat using deterministic function
         const assignedSeat = assignUserToSeat(member.id);
         assignments[member.id] = assignedSeat;
       }
@@ -98,9 +102,21 @@ export default function AvatarManager({
     setHoveredUserId(userId);
   };
 
+  // ✅ Filter: Only render members who have seats assigned
+  const membersWithSeats = useMemo(() => {
+    return roomMembers.filter(member => {
+      // Check if user has a seat (userSeats is userId -> seatId map)
+      const hasSeat = userSeats[member.id] !== undefined;
+      if (!hasSeat) {
+        console.log(`🪑 [AvatarManager] Skipping member ${member.username} (ID: ${member.id}) - no seat assigned`);
+      }
+      return hasSeat;
+    });
+  }, [roomMembers, userSeats]);
+
   return (
     <group name="avatar-manager">
-      {roomMembers.map((member) => {
+      {membersWithSeats.map((member) => {
         const seatAssignment = userSeatAssignments[member.id];
         if (!seatAssignment) return null;
         const isCurrentUser = member.id === currentUserId;
@@ -135,7 +151,6 @@ export default function AvatarManager({
               currentEmote={currentEmote}
               recentMessage={recentMessage}
               avatarColor={member.avatar_color}
-              userPhotoUrl={member.avatar_url || '/icons/user1.jpg'}
               hideLabelsForLocalViewer={hideLabelsForLocalViewer}
               isActiveTimed={isActiveTimed}
               isHovered={isHovered}

@@ -27,6 +27,7 @@ import MembersModal from '../../components/MembersModal.jsx';
 import RemoteAudioPlayer from './ui/RemoteAudioPlayer';
 // Import sounds
 import { playSeatSound, playMicOnSound, playMicOffSound } from '../../utils/audio';
+import ChatHomeModal from '../ChatHomeModal.jsx';
 
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
@@ -53,6 +54,19 @@ export default function VideoWatch() {
     roomId,
     stableTokenRef.current
   );
+
+  // Handle session errors - redirect if session has ended
+  useEffect(() => {
+    if (sessionStatus?.error && !sessionStatus?.isActive) {
+      console.error('❌ Session error detected:', sessionStatus.error);
+      toast.error(sessionStatus.error);
+      
+      // Clear session_id from URL and navigate back to room page
+      setTimeout(() => {
+        navigate(`/rooms/${roomId}`, { replace: true });
+      }, 2000); // Give user time to read the error message
+    }
+  }, [sessionStatus?.error, sessionStatus?.isActive, roomId, navigate]);
 
   // ✅ LIVEKIT INTEGRATION
   const {
@@ -87,7 +101,7 @@ export default function VideoWatch() {
   const [hasMicPermission, setHasMicPermission] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [activePlatformShare, setActivePlatformShare] = useState(null);
-  const [isSeatedMode, setIsSeatedMode] = useState(false);
+  const [isSeatedMode] = useState(true); // ✅ Always enabled - row-based audio by default
   const [cameraPreviewStream, setCameraPreviewStream] = useState(null);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [isScreenSharingActive, setIsScreenSharingActive] = useState(false);
@@ -125,6 +139,17 @@ export default function VideoWatch() {
 
   // 🪑 Seat swap notifications
   const [seatSwapRequest, setSeatSwapRequest] = useState(null);
+  const [showChatHome, setShowChatHome] = useState(false);
+  const [privateChatUser, setPrivateChatUser] = useState(null);
+  const [showPrivateChat, setShowPrivateChat] = useState(false);
+  const [privateMessages, setPrivateMessages] = useState({});
+
+  // 🔇 Silence mode state
+  const [isSilenceMode, setIsSilenceMode] = useState(false);
+
+  // 🔊 Broadcast permissions tracking
+  const [broadcastPermissions, setBroadcastPermissions] = useState({}); // userId -> boolean
+  const [remoteAudioStates, setRemoteAudioStates] = useState({}); // userId -> boolean (speaking/muted)
 
   useEffect(() => {
     if (roomId && currentUser) {
@@ -413,7 +438,10 @@ export default function VideoWatch() {
     { id: 'africamagic', name: 'Africa Magic', url: 'https://www.youtube.com/@AfricaMagic    ' },
   ];
 
-  
+  // Handle chat modal
+  const openChat = () => {
+    setShowChatHome(true);
+  };
 
   // Monitor LiveKit local participant for screen share track
   useEffect(() => {
@@ -1173,16 +1201,64 @@ export default function VideoWatch() {
           console.log('🛑 [WebSocket] Session ended by host');
           console.log('📋 Session data:', message.data);
           
-          // ✅ Show toast notification
-          toast('Videowatch session ended', {
-            icon: 'ℹ️',
-            duration: 3000,
-          });
+          // ✅ Show toast notification with appropriate message
+          const reason = message.data?.reason;
+          if (reason === 'host_timeout') {
+            toast('Session ended - Host disconnected for over 10 minutes', {
+              icon: '⏰',
+              duration: 5000,
+            });
+          } else {
+            toast('Videowatch session ended', {
+              icon: 'ℹ️',
+              duration: 3000,
+            });
+          }
           
           // Perform cleanup and navigate
           performCleanupAndExit();
           break;
-
+        case 'private_chat_message':
+          if (message.to_user_id === currentUser?.id || message.from_user_id === currentUser?.id) {
+            const otherUserId = message.from_user_id === currentUser?.id ? message.to_user_id : message.from_user_id;
+            setPrivateMessages(prev => ({
+              ...prev,
+              [otherUserId]: [...(prev[otherUserId] || []), message]
+            }));
+          }
+          break;
+        case 'private_chat_history':
+          const { other_user_id, messages: history } = message.data;
+          setPrivateMessages(prev => ({
+            ...prev,
+            [other_user_id]: history
+          }));
+          break;
+        case 'broadcast_permission_changed':
+          // Host granted/revoked broadcast permission
+          const { user_id: affectedUserId, can_broadcast } = message.data;
+          console.log('🔊 [VideoWatch] Broadcast permission changed:', affectedUserId, can_broadcast);
+          
+          setBroadcastPermissions(prev => ({
+            ...prev,
+            [affectedUserId]: can_broadcast
+          }));
+          
+          // Show toast notification
+          if (affectedUserId === currentUser?.id) {
+            if (can_broadcast) {
+              toast.success('You can now speak to the whole room!', {
+                icon: '🔊',
+                duration: 4000,
+              });
+            } else {
+              toast('You can now only speak to your row', {
+                icon: '🔈',
+                duration: 4000,
+              });
+            }
+          }
+          break;
         default:
           console.warn("[VideoWatch] Unknown WebSocket message type:", message.type, message);
       }
@@ -1312,9 +1388,25 @@ export default function VideoWatch() {
 
     // 4. WebSocket cleanup happens automatically via useWebSocket cleanup
 
-    // 5. Navigate back to RoomPage
-    console.log('🏠 Navigating to RoomPage...');
-    navigate(`/rooms/${roomId}`); // ✅ FIXED: /rooms/ not /room/
+    // 5. Force navigation: if this was an instant watch, go back to lobby; otherwise go to room page
+    try {
+      console.log('🔍 [VideoWatch] Current URL:', window.location.href);
+      const urlParams = new URLSearchParams(window.location.search);
+      const instantParam = urlParams.get('instant');
+      console.log('🔍 [VideoWatch] instant param from URL:', instantParam);
+      
+      if (instantParam === 'true') {
+        console.log('✅ [VideoWatch] Instant watch detected - navigating to Lobby...');
+        window.location.href = `/lobby`;
+      } else {
+        console.log('✅ [VideoWatch] Regular room - navigating to RoomPage...');
+        window.location.href = `/rooms/${roomId}`;
+      }
+    } catch (err) {
+      console.error('⚠️ [VideoWatch] Error checking instant param:', err);
+      console.log('🏠 [VideoWatch] Navigating to RoomPage (fallback)...');
+      window.location.href = `/rooms/${roomId}`;
+    }
   };
 
   // Cleanup camera
@@ -1386,6 +1478,19 @@ export default function VideoWatch() {
     }
   }, [roomId]);
 
+  // 🔊 Toggle broadcast permission for a user (host only)
+  const handleToggleBroadcast = useCallback((userId, currentState) => {
+    if (!isHost) return; // Only host can toggle
+    
+    const messageType = currentState ? 'revoke_broadcast' : 'grant_broadcast';
+    
+    sendMessage({
+      type: messageType,
+      session_id: sessionId,
+      user_id: userId
+    });
+  }, [isHost, sessionId, sendMessage]);
+
   useEffect(() => {
     if (!roomId || !currentUser) return;
     fetchRoomMembers();
@@ -1427,6 +1532,9 @@ export default function VideoWatch() {
       await localParticipant.publishTrack(audioTrack);
       publishedAudioTrackRef.current = audioTrack;
       console.log('✅ [VideoWatch] Microphone published successfully');
+      console.log('🎤 [VideoWatch] Audio track enabled:', audioTrack.enabled);
+      console.log('🎤 [VideoWatch] Audio track readyState:', audioTrack.readyState);
+      console.log('🎤 [VideoWatch] Audio track settings:', audioTrack.getSettings());
       playMicOnSound();
       return true;
     } catch (err) {
@@ -1458,29 +1566,40 @@ export default function VideoWatch() {
 
   // ✅ Audio toggle function with device-specific publishing
   const toggleAudio = useCallback(async () => {
+    console.log('🎤 [toggleAudio] Called, current state:', isAudioActive);
     const newAudioState = !isAudioActive;
+    console.log('🎤 [toggleAudio] New state will be:', newAudioState);
 
     // 🎙️ Toggle LiveKit microphone with selected device
     let success = false;
     if (newAudioState) {
       // Enable: publish the selected device
+      console.log('🎤 [toggleAudio] Attempting to publish mic with device:', selectedAudioDeviceId);
       success = await publishMicDevice(selectedAudioDeviceId);
+      console.log('🎤 [toggleAudio] Publish result:', success);
       if (!success) {
         // Failed to publish, revert state
+        console.error('❌ [toggleAudio] Failed to publish mic, aborting state change');
         return;
       }
     } else {
       // Disable: unpublish mic
+      console.log('🎤 [toggleAudio] Unpublishing mic...');
       await unpublishMic();
       success = true;
     }
 
     if (success) {
+      console.log('✅ [toggleAudio] Setting isAudioActive to:', newAudioState);
       setIsAudioActive(newAudioState);
       
       // Extract current user's row from userSeats
       const currentUserSeatId = userSeats[currentUser?.id];
       const currentUserRow = currentUserSeatId ? parseInt(currentUserSeatId.split('-')[0]) : null;
+      
+      // ✅ Check if user has broadcast permission
+      const hasUserBroadcastPermission = broadcastPermissions[currentUser?.id] || false;
+      const isGlobalBroadcast = (isHost && isHostBroadcasting) || hasUserBroadcastPermission;
 
       // 📡 Send real-time update over WebSocket for UI state sync
       sendMessage({
@@ -1488,11 +1607,11 @@ export default function VideoWatch() {
         isAudioActive: newAudioState,
         userId: currentUser.id,
         isSeatedMode: isSeatedMode,
-        isGlobalBroadcast: isHost && isSeatedMode && isHostBroadcasting,
+        isGlobalBroadcast: isGlobalBroadcast,
         row: isSeatedMode && currentUserRow !== null ? currentUserRow : null,
       });
     }
-  }, [isAudioActive, selectedAudioDeviceId, publishMicDevice, unpublishMic, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage]);
+  }, [isAudioActive, selectedAudioDeviceId, publishMicDevice, unpublishMic, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage, broadcastPermissions]);
 
   // detect if user stops sharing via browser controls
   useEffect(() => {
@@ -1640,6 +1759,41 @@ export default function VideoWatch() {
     );
   }
 
+  // Private chat handlers
+  const sendPrivateMessage = (text) => {
+    if (!privateChatUser || !text.trim() || !sendMessage) return;
+    const msg = {
+      type: 'private_chat_message',
+      data: {
+        to_user_id: privateChatUser.id,
+        message: text.trim()
+      }
+    };
+    sendMessage(msg);
+    // Optimistic UI
+    const newMsg = {
+      id: Date.now(),
+      from_user_id: currentUser.id,
+      to_user_id: privateChatUser.id,
+      message: text.trim(),
+      timestamp: Date.now()
+    };
+    setPrivateMessages(prev => ({
+      ...prev,
+      [privateChatUser.id]: [...(prev[privateChatUser.id] || []), newMsg]
+    }));
+  };
+
+  // Fetch private chat history when modal opens
+  useEffect(() => {
+    if (showPrivateChat && privateChatUser && !privateMessages[privateChatUser.id]?.length) {
+      sendMessage({
+        type: 'fetch_private_chat',
+        data: { other_user_id: privateChatUser.id }
+      });
+    }
+  }, [showPrivateChat, privateChatUser, sendMessage]);
+
   return (
     <div className="relative w-full h-screen bg-[#0a0a0a] text-white overflow-hidden">
       {/* ✅ Toast Notifications */}
@@ -1677,14 +1831,17 @@ export default function VideoWatch() {
       />
       
       {/* 🔊 Remote Audio Player - Handles audio from screen share */}
-      {room && <RemoteAudioPlayer room={room} />}
+      {room && <RemoteAudioPlayer room={room} silenceMode={isSilenceMode} />}
 
       {/* Rest of UI (Taskbar, Sidebar, Chat, etc.) — UNCHANGED */}
       <Taskbar 
           authenticatedUserID={currentUser?.id}
           isAudioActive={isAudioActive}
           toggleAudio={toggleAudio}
+          isSilenceMode={isSilenceMode}
+          onToggleSilenceMode={() => setIsSilenceMode(!isSilenceMode)}
           showEmotes={false}
+          openChat={openChat}
           showProgram = {false}
           isVisible={isVisible}
           isGlowing={isGlowing}
@@ -1694,22 +1851,10 @@ export default function VideoWatch() {
           openVideoSidebar={() => setIsVideoSidebarOpen(prev => !prev)}
           isVideoSidebarOpen={isVideoSidebarOpen}
           isHost={isHost}
-          isHostBroadcasting={isHost ? isHostBroadcasting : undefined}
-          onHostBroadcastToggle={isHost ? () => setIsHostBroadcasting(prev => !prev) : undefined}
+          isHostBroadcasting={isHostBroadcasting}
+          onHostBroadcastToggle={() => setIsHostBroadcasting(prev => !prev)}
           isCameraOn={isCameraOn}
           toggleCamera={toggleCamera}
-          openChat={() => setIsChatOpen(prev => !prev)}
-          isSeatedMode={isSeatedMode}
-          toggleSeatedMode={() => {
-            const newMode = !isSeatedMode;
-            console.log('🪑 [toggleSeatedMode] Toggling seating mode:', { from: isSeatedMode, to: newMode });
-            setIsSeatedMode(newMode);
-            console.log('🪑 [toggleSeatedMode] Sending seating_mode_toggle message:', { enabled: newMode });
-            sendMessage({
-              type: 'seating_mode_toggle',
-              enabled: newMode
-            });
-          }}
           onSeatsClick={handleSeatsClick}
           seats={seats}
           userSeats={userSeats}
@@ -1726,6 +1871,7 @@ export default function VideoWatch() {
           availableCameras={availableCameras}
           selectedCameraId={selectedCameraId}
           onCameraSwitch={switchCamera}
+          broadcastPermissions={broadcastPermissions}
         />
 
       {isSeatsModalOpen && (
@@ -1992,7 +2138,51 @@ export default function VideoWatch() {
         onClose={() => setShowMembersModal(false)}
         members={roomMembers}
         fetchMembers={fetchRoomMembers}
+        isHost={isHost}
+        currentUserId={currentUser?.id}
+        audioStates={remoteAudioStates}
+        broadcastPermissions={broadcastPermissions}
+        onToggleBroadcast={handleToggleBroadcast}
+        userSeats={userSeats}
+        sessionId={sessionId}
+        userTheaters={{}}
+        onRequestBroadcast={null}
+        broadcastRequests={[]}
+        watchType="video_watch"
       />
+      {/* Chat Entry Modals */}
+      {showChatHome && (
+        <ChatHomeModal
+          roomId={roomId}
+          currentUser={currentUser}
+          roomMembers={roomMembers}
+          privateMessages={privateMessages}
+          onClose={() => setShowChatHome(false)}
+          onOpenRoomChat={() => {
+            setShowChatHome(false);
+            setIsChatOpen(true);
+          }}
+          onOpenPrivateChat={(user) => {
+            setShowChatHome(false);
+            setPrivateChatUser(user);
+            setShowPrivateChat(true);
+          }}
+        />
+      )}
+
+      {showPrivateChat && privateChatUser && (
+        <PrivateChatModal
+          otherUser={privateChatUser}
+          messages={privateMessages[privateChatUser.id] || []}
+          onSendMessage={sendPrivateMessage}
+          currentUser={currentUser}
+          onBack={() => {
+            setShowPrivateChat(false);
+            setShowChatHome(true);
+          }}
+          onClose={() => setShowPrivateChat(false)}
+        />
+      )}
     </div>
   );
 }

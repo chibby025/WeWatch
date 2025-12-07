@@ -1,7 +1,7 @@
 // frontend/src/hooks/useWebSocket.js
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-export default function useWebSocket(roomId, wsToken = null) {
+export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
   const [socket, setSocket] = useState(null);
   const [messages, setMessages] = useState([]); // For text messages
   const [isConnected, setIsConnected] = useState(false);
@@ -73,7 +73,9 @@ export default function useWebSocket(roomId, wsToken = null) {
     if (wsToken) {
       queryParams.push(`token=${encodeURIComponent(wsToken)}`);
     }
-    // ✅ DO NOT include session_id in WebSocket URL
+    if (sessionId) {
+      queryParams.push(`session_id=${encodeURIComponent(sessionId)}`);
+    }
     const queryString = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
 
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -168,6 +170,12 @@ export default function useWebSocket(roomId, wsToken = null) {
           } else if (message.type === 'session_member_update') {
             console.log(`[${now}] useWebSocket: 👥 Received 'session_member_update':`, message.data?.members);
             setSessionStatus(prev => ({ ...prev, members: message.data?.members || [] }));
+          } else if (message.type === 'theater_created') {
+            console.log(`[${now}] useWebSocket: 🎭 Theater created:`, message.data);
+            // Toast notification will be handled by component
+          } else if (message.type === 'theater_assigned') {
+            console.log(`[${now}] useWebSocket: 🎭 Theater assigned:`, message.data);
+            // Component can display theater info
           }
 
           setMessages(prev => [...prev, message]);
@@ -228,7 +236,7 @@ export default function useWebSocket(roomId, wsToken = null) {
     };
 
     ws.onclose = (event) => {
-      console.log(`useWebSocket: 🔌 WebSocket closed for room ${roomId}. Code: ${event.code}, Attempts: ${reconnectAttemptRef.current}`);
+      console.log(`useWebSocket: 🔌 WebSocket closed for room ${roomId}. Code: ${event.code}, Reason: ${event.reason}, Attempts: ${reconnectAttemptRef.current}`);
       setIsConnected(false);
       isConnectingRef.current = false; // ✅ Allow reconnection
       
@@ -239,6 +247,21 @@ export default function useWebSocket(roomId, wsToken = null) {
         totalMessagesSent: 0,
         queuedMessages: messageQueueRef.current.length
       };
+
+      // Check for session ended (close code 1008 = policy violation or 1011 = internal error)
+      // Backend returns 410 Gone which causes immediate close
+      if (event.code === 1006 && sessionId && reconnectAttemptRef.current === 0) {
+        // Code 1006 = abnormal closure (no close frame from server)
+        // This happens when backend rejects connection before WebSocket upgrade
+        console.error("useWebSocket: ❌ Connection rejected - possibly ended session");
+        setSessionStatus(prev => ({ 
+          ...prev, 
+          error: "This watch session has ended. Please start a new session.",
+          isActive: false 
+        }));
+        setIsReconnecting(false);
+        return; // Don't attempt reconnection
+      }
 
       // Attempt to reconnect unless we've hit the limit
       if (reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
@@ -334,8 +357,6 @@ export default function useWebSocket(roomId, wsToken = null) {
       return false;
     }
   }, [socket]);
-
-
 
   return { 
     sendMessage, 

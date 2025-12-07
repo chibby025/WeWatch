@@ -84,6 +84,10 @@ type Hub struct {
 
 	// Track disconnections for delayed cleanup
 	orphanedSessions map[string]time.Time // session_id → disconnect time
+	
+	// ✅ Track host disconnections for auto-end after grace period
+	hostDisconnectTimes map[string]time.Time // session_id → host disconnect time
+	hostDisconnectMutex sync.RWMutex
 
 	// Track which user is streaming in each room (server broadcast)
 	roomStreamHost  map[uint]uint  // roomID -> userID of the stream host
@@ -146,20 +150,51 @@ func (hub *Hub) handleDisconnect(client *Client) {
 // NewHub creates a new Hub instance.
 func NewHub() *Hub {
 	return &Hub{
-		broadcast:        make(chan OutgoingMessage, 2048),
-		broadcastToRoom:  make(chan RoomBroadcastMessage, 2048),
-		broadcastToUsers: make(chan UserBroadcastMessage, 2048),
-		register:         make(chan *Client, 256),
-		unregister:       make(chan *Client, 256),
-		rooms:            make(map[uint]map[*Client]bool),
-		activeSessions:   make(map[string]*models.WatchSession),
-		sessionMembers:   make(map[string]map[*Client]bool),
-		orphanedSessions: make(map[string]time.Time),
-		roomStreamHost:   make(map[uint]uint),
-		roomStreamActive: make(map[uint]bool),
-		clientRegistry:   make(map[uint]map[uint]*Client),
-		seatingAssignments: make(map[uint]map[string]uint),
-		seatingMutex:     sync.RWMutex{},
+		broadcast:           make(chan OutgoingMessage, 2048),
+		broadcastToRoom:     make(chan RoomBroadcastMessage, 2048),
+		broadcastToUsers:    make(chan UserBroadcastMessage, 2048),
+		register:            make(chan *Client, 256),
+		unregister:          make(chan *Client, 256),
+		rooms:               make(map[uint]map[*Client]bool),
+		activeSessions:      make(map[string]*models.WatchSession),
+		sessionMembers:      make(map[string]map[*Client]bool),
+		orphanedSessions:    make(map[string]time.Time),
+		hostDisconnectTimes: make(map[string]time.Time), // ✅ Initialize host disconnect tracking
+		roomStreamHost:      make(map[uint]uint),
+		roomStreamActive:    make(map[uint]bool),
+		clientRegistry:      make(map[uint]map[uint]*Client),
+		seatingAssignments:  make(map[uint]map[string]uint),
+		seatingMutex:        sync.RWMutex{},
+	}
+}
+
+// ✅ CheckHostDisconnectTimers runs periodically to auto-end sessions when host is gone > 10 minutes
+func (h *Hub) CheckHostDisconnectTimers() {
+	h.hostDisconnectMutex.Lock()
+	defer h.hostDisconnectMutex.Unlock()
+	
+	now := time.Now()
+	const gracePeriod = 10 * time.Minute
+	
+	for sessionID, disconnectTime := range h.hostDisconnectTimes {
+		elapsed := now.Sub(disconnectTime)
+		
+		if elapsed >= gracePeriod {
+			log.Printf("⏰ Host disconnect grace period exceeded for session %s (%.1f minutes) - auto-ending session", 
+				sessionID, elapsed.Minutes())
+			
+			// Remove from tracking map
+			delete(h.hostDisconnectTimes, sessionID)
+			
+			// Auto-end the session (run in goroutine to avoid blocking)
+			go func(sid string) {
+				if err := AutoEndSession(sid); err != nil {
+					log.Printf("❌ Failed to auto-end session %s: %v", sid, err)
+				} else {
+					log.Printf("✅ Successfully auto-ended session %s after host disconnect", sid)
+				}
+			}(sessionID)
+		}
 	}
 }
 
@@ -167,6 +202,12 @@ func NewHub() *Hub {
 func (h *Hub) startBroadcastWorkers() {
     // Room broadcast worker
     go func() {
+        defer func() {
+            if r := recover(); r != nil {
+                log.Printf("⚠️ [Hub] Recovered from panic in broadcast worker: %v", r)
+            }
+        }()
+        
         for msg := range h.broadcastToRoom {
             roomID := msg.roomID
             data := msg.data
@@ -181,23 +222,32 @@ func (h *Hub) startBroadcastWorkers() {
 
             // Fan-out non-blocking to each client
             for c := range clients {
-                select {
-                case c.send <- data:
-                    // enqueued ok
-                default:
-                    // drop for slow client; log and notify host if possible
-                    log.Printf("[Hub] drop outgoing to user %d in room %d (send buffer full)", c.userID, roomID)
-                    // Try to notify the room host of backpressure (best-effort)
-                    // Produce a lightweight control message
-                    bdata, _ := json.Marshal(WebSocketMessage{Type: "screen_share_backpressure", Data: map[string]interface{}{"user_id": c.userID, "room_id": roomID}})
-                    // Send backpressure notifications via hub.broadcastToRoom as text so host can react
-                    // Note: this may re-enter this loop, but that's acceptable for low-frequency notifications
+                // ✅ Check if channel is closed before sending
+                func() {
+                    defer func() {
+                        if r := recover(); r != nil {
+                            log.Printf("⚠️ [Hub] Recovered from panic sending to user %d: %v", c.userID, r)
+                        }
+                    }()
+                    
                     select {
-                    case h.broadcastToRoom <- RoomBroadcastMessage{roomID: roomID, data: OutgoingMessage{Data: bdata, IsBinary: false}, sender: nil}:
+                    case c.send <- data:
+                        // enqueued ok
                     default:
-                        // drop notification if queue full
+                        // drop for slow client; log and notify host if possible
+                        log.Printf("[Hub] drop outgoing to user %d in room %d (send buffer full)", c.userID, roomID)
+                        // Try to notify the room host of backpressure (best-effort)
+                        // Produce a lightweight control message
+                        bdata, _ := json.Marshal(WebSocketMessage{Type: "screen_share_backpressure", Data: map[string]interface{}{"user_id": c.userID, "room_id": roomID}})
+                        // Send backpressure notifications via hub.broadcastToRoom as text so host can react
+                        // Note: this may re-enter this loop, but that's acceptable for low-frequency notifications
+                        select {
+                        case h.broadcastToRoom <- RoomBroadcastMessage{roomID: roomID, data: OutgoingMessage{Data: bdata, IsBinary: false}, sender: nil}:
+                        default:
+                            // drop notification if queue full
+                        }
                     }
-                }
+                }() // ✅ Close anonymous function
             }
         }
     }()
@@ -287,15 +337,25 @@ func (h *Hub) cleanupClientSync(client *Client) {
     h.mutex.Lock()
     if roomClients, ok := h.rooms[client.roomID]; ok {
         if _, exists := roomClients[client]; exists {
+            // ✅ Remove from room FIRST so broadcasts won't try to send to this client
             delete(roomClients, client)
-            log.Printf("[cleanupClientSync] 🔹 Closing send channel for client %p", client)
-            close(client.send)
             if len(roomClients) == 0 {
                 delete(h.rooms, client.roomID)
             }
         }
     }
     h.mutex.Unlock()
+    
+    // ✅ Close send channel AFTER removing from rooms (prevents race with broadcast worker)
+    func() {
+        defer func() {
+            if r := recover(); r != nil {
+                log.Printf("⚠️ [cleanupClientSync] Recovered from panic closing channel: %v", r)
+            }
+        }()
+        log.Printf("[cleanupClientSync] 🔹 Closing send channel for client %p", client)
+        close(client.send)
+    }()
 
     // 2. Clean up clientRegistry
     // ⚠️ NO LOCK HERE - caller (WebSocketHandler) already holds registryMutex during deduplication
@@ -345,6 +405,62 @@ func (h *Hub) Run() {
 			roomClients, ok := h.rooms[client.roomID]
 			if ok {
 				if _, exists := roomClients[client]; exists {
+					// ✅ Clean up seat assignment
+					h.seatingMutex.Lock()
+					if roomSeats, seatExists := h.seatingAssignments[client.roomID]; seatExists {
+						for seatID, userID := range roomSeats {
+							if userID == client.userID {
+								delete(roomSeats, seatID)
+                                log.Printf("🪑 Auto-cleanup: Seat vacated on disconnect - room=%d, seat=%s, user=%d", client.roomID, seatID, client.userID)
+
+                                // Broadcast user_left_seat so clients update their seat maps
+                                leaveSeatMsg := WebSocketMessage{
+                                    Type: "user_left_seat",
+                                    Data: map[string]interface{}{
+                                        "user_id": client.userID,
+                                    },
+                                }
+                                if leaveBytes, err := json.Marshal(leaveSeatMsg); err == nil {
+                                    client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leaveBytes, IsBinary: false}, nil)
+                                }
+								break
+							}
+						}
+					}
+					h.seatingMutex.Unlock()
+
+					// ✅ DATABASE CLEANUP: Mark user as left in watch_session_members
+					// Find active session for this room
+					var activeSession models.WatchSession
+					if err := DB.Where("room_id = ? AND ended_at IS NULL", client.roomID).First(&activeSession).Error; err == nil {
+						// Mark user as inactive and set left_at timestamp
+						now := time.Now()
+						result := DB.Model(&models.WatchSessionMember{}).
+							Where("watch_session_id = ? AND user_id = ? AND is_active = ?", activeSession.ID, client.userID, true).
+							Updates(map[string]interface{}{
+								"is_active": false,
+								"left_at":   now,
+							})
+						
+						if result.Error != nil {
+							log.Printf("⚠️ Failed to mark user %d as left from session %d: %v", client.userID, activeSession.ID, result.Error)
+						} else if result.RowsAffected > 0 {
+							log.Printf("✅ Marked user %d as left from session %s (watch_session_id=%d)", client.userID, activeSession.SessionID, activeSession.ID)
+						}
+						
+						// ✅ CHECK IF DISCONNECTING USER IS THE HOST
+						// If host disconnects, start 10-minute countdown to auto-end session
+						var room models.Room
+						if err := DB.First(&room, activeSession.RoomID).Error; err == nil {
+							if room.HostID == client.userID {
+								h.hostDisconnectMutex.Lock()
+								h.hostDisconnectTimes[activeSession.SessionID] = now
+								h.hostDisconnectMutex.Unlock()
+								log.Printf("⏱️ Host (user %d) disconnected from session %s - 10-minute auto-end timer started", client.userID, activeSession.SessionID)
+							}
+						}
+					}
+
 					// ✅ Broadcast 'participant_leave' to others in the room
 					leaveMsg := WebSocketMessage{
 						Type: "participant_leave",
@@ -361,7 +477,17 @@ func (h *Hub) Run() {
 					}
 
 					delete(roomClients, client)
-					close(client.send)
+					
+					// ✅ Safely close channel (may already be closed by cleanupClientSync)
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("⚠️ [Hub.unregister] Channel already closed for user %d: %v", client.userID, r)
+							}
+						}()
+						close(client.send)
+					}()
+					
 					log.Printf("Hub: Client %p (User %d) unregistered from room %d", client, client.userID, client.roomID)
 
 					// Check if this client was the stream host
@@ -403,12 +529,19 @@ func (h *Hub) Run() {
 			h.mutex.RLock()
 			for _, roomClients := range h.rooms {
 				for client := range roomClients {
-					select {
-					case client.send <- message:
-					default:
-						log.Printf("Hub: Dropping message for client %p (buffer full)", client)
-						// Consider closing the client connection if buffer is consistently full
-					}
+					// ✅ FIX: Protect against sending to closed channels
+					func(c *Client) {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("⚠️ [Hub] Recovered from panic sending to user %d: %v", c.userID, r)
+							}
+						}()
+						select {
+						case c.send <- message:
+						default:
+							log.Printf("Hub: Dropping message for client %p (buffer full)", c)
+						}
+					}(client)
 				}
 			}
 			h.mutex.RUnlock()
@@ -422,11 +555,20 @@ func (h *Hub) Run() {
 					if roomBroadcast.sender != nil && client == roomBroadcast.sender {
 						continue
 					}
-					select {
-					case client.send <- roomBroadcast.data:
-					default:
-						log.Printf("Hub: Dropping message for client %p in room %d (buffer full)", client, roomBroadcast.roomID)
-					}
+					
+					// ✅ FIX: Protect against sending to closed channels
+					func(c *Client) {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("⚠️ [Hub] Recovered from panic sending to user %d: %v", c.userID, r)
+							}
+						}()
+						select {
+						case c.send <- roomBroadcast.data:
+						default:
+							log.Printf("Hub: Dropping message for client %p in room %d (buffer full)", c, roomBroadcast.roomID)
+						}
+					}(client)
 				}
 			} else {
 				log.Printf("Hub: Attempted to broadcast to non-existent room %d", roomBroadcast.roomID)
@@ -514,14 +656,16 @@ func (h *Hub) DisconnectRoomClients(roomID uint) {
 	log.Printf("🔌 [Hub] Disconnecting %d clients from room %d", len(clients), roomID)
 
 	for client := range clients {
-		// Close the send channel to trigger graceful shutdown
-		select {
-		case <-client.send:
-			// Already closed
-		default:
+		// ✅ Safely close the send channel (may already be closed)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("⚠️ [Hub.DisconnectAllClients] Channel already closed for user %d: %v", client.userID, r)
+				}
+			}()
 			close(client.send)
 			log.Printf("🔌 [Hub] Closed send channel for user %d in room %d", client.userID, roomID)
-		}
+		}()
 	}
 
 	// Clear the room from the hub
@@ -738,6 +882,25 @@ func WebSocketHandler(c *gin.Context) {
 	
 	log.Printf("📡 [%s] WebSocket connection request: User %d → Room %d", timestamp, authenticatedUserID, roomID)
 
+	// --- Session validation BEFORE WebSocket upgrade ---
+	sessionID := c.Query("session_id")
+	if sessionID != "" {
+		// Check if session exists but was ended
+		var endedSession models.WatchSession
+		if err := DB.Where("session_id = ?", sessionID).First(&endedSession).Error; err == nil {
+			// Session exists - check if it's ended
+			if endedSession.EndedAt != nil {
+				log.Printf("❌ WebSocket connection rejected: session %s has ended", sessionID)
+				c.JSON(http.StatusGone, gin.H{
+					"error":   "session_ended",
+					"message": "This watch session has ended. Please start a new session.",
+				})
+				return
+			}
+		}
+	}
+
+	// Now safe to upgrade WebSocket connection
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("WebSocketHandler: WebSocket upgrade failed: %v", err)
@@ -746,11 +909,13 @@ func WebSocketHandler(c *gin.Context) {
 
 	// --- Session logic ---
 	var watchSession models.WatchSession
-	sessionID := c.Query("session_id")
 
 	if sessionID != "" {
 		if err := DB.Where("session_id = ? AND ended_at IS NULL", sessionID).First(&watchSession).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// Session doesn't exist at all - create new one
+				
+				// Session doesn't exist at all - create new one
 				watchSession = models.WatchSession{
 					SessionID: sessionID,
 					RoomID:    roomID,
@@ -839,6 +1004,86 @@ func WebSocketHandler(c *gin.Context) {
 		}
 	}
 
+	// ✅ SMART RECONNECTION: Check if user was previously in this session and disconnected
+	// ⚠️ CRITICAL: Only reactivate if session_id was provided in query params
+	// This prevents RoomPage reconnections from cancelling the auto-end timer
+	var restoredSeatID string
+	sessionIDFromQuery := c.Query("session_id")
+	if sessionIDFromQuery != "" && watchSession.ID != 0 {
+		var inactiveMember models.WatchSessionMember
+		err := DB.Where("watch_session_id = ? AND user_id = ? AND is_active = ?", 
+			watchSession.ID, authenticatedUserID, false).
+			Order("left_at DESC"). // Get most recent disconnect
+			First(&inactiveMember).Error
+		
+		if err == nil {
+			// User was previously in this session! Reactivate them
+			log.Printf("🔄 User %d reconnecting to session %s (with session_id param) - reactivating membership", authenticatedUserID, sessionID)
+			
+			now := time.Now()
+			result := DB.Model(&models.WatchSessionMember{}).
+				Where("id = ?", inactiveMember.ID).
+				Updates(map[string]interface{}{
+					"is_active": true,
+					"left_at":   nil,
+					"joined_at": now, // Update rejoin time
+				})
+			
+			if result.Error != nil {
+				log.Printf("⚠️ Failed to reactivate member: %v", result.Error)
+			} else {
+				log.Printf("✅ Reactivated session membership for user %d", authenticatedUserID)
+				
+				// ✅ CANCEL HOST AUTO-END TIMER IF HOST RECONNECTS
+				var room models.Room
+				if err := DB.First(&room, watchSession.RoomID).Error; err == nil {
+					if room.HostID == authenticatedUserID {
+						hub.hostDisconnectMutex.Lock()
+						if disconnectTime, exists := hub.hostDisconnectTimes[sessionID]; exists {
+							delete(hub.hostDisconnectTimes, sessionID)
+							elapsed := time.Since(disconnectTime)
+							log.Printf("✅ Host (user %d) reconnected to session %s after %.1f seconds - auto-end timer cancelled", 
+								authenticatedUserID, sessionID, elapsed.Seconds())
+						}
+						hub.hostDisconnectMutex.Unlock()
+					}
+				}
+				
+				// Try to restore their previous seat
+				hub.seatingMutex.Lock()
+				if _, exists := hub.seatingAssignments[roomID]; !exists {
+					hub.seatingAssignments[roomID] = make(map[string]uint)
+				}
+				roomSeats := hub.seatingAssignments[roomID]
+				
+				// Look for user's previous seat assignment
+				for seatID, userID := range roomSeats {
+					if userID == authenticatedUserID {
+						restoredSeatID = seatID
+						log.Printf("🪑 User %d's seat %s is still reserved for them", authenticatedUserID, seatID)
+						break
+					}
+				}
+				
+				// If seat not found, they'll get auto-assigned by frontend
+				if restoredSeatID == "" {
+					log.Printf("🪑 User %d's previous seat not found in current assignments - frontend will assign new seat", authenticatedUserID)
+				}
+				
+				hub.seatingMutex.Unlock()
+			}
+		} else if err != gorm.ErrRecordNotFound {
+			log.Printf("⚠️ Error checking for previous membership: %v", err)
+		} else {
+			// First time joining this session - normal flow
+			log.Printf("👋 User %d joining session %s for the first time", authenticatedUserID, sessionID)
+		}
+	} else if sessionID != "" && sessionIDFromQuery == "" {
+		// Active session exists but user connected to RoomPage (no session_id param)
+		// Do NOT reactivate membership - let the auto-end timer continue
+		log.Printf("⏸️ User %d connected to RoomPage while session %s exists - NOT reactivating (auto-end timer preserved)", authenticatedUserID, sessionID)
+	}
+
 	// --- COLLECT STARTUP MESSAGES (but DO NOT send yet) ---
 	var startupMessages []OutgoingMessage
 
@@ -866,6 +1111,16 @@ func WebSocketHandler(c *gin.Context) {
 				}
 			}
 
+			// Get current seating assignments for this room
+			hub.seatingMutex.Lock()
+			seatingMap := make(map[string]uint)
+			if roomSeating, exists := hub.seatingAssignments[roomID]; exists {
+				for seatID, userID := range roomSeating {
+					seatingMap[seatID] = userID
+				}
+			}
+			hub.seatingMutex.Unlock()
+
 			// Screen sharing is now handled by LiveKit
 			statusMsg := WebSocketMessage{
 				Type: "session_status",
@@ -874,6 +1129,7 @@ func WebSocketHandler(c *gin.Context) {
 					"host_id":    watchSession.HostID,
 					"members":    trimmedMembers,
 					"started_at": watchSession.StartedAt,
+					"seating":    seatingMap, // Include current seating assignments
 				},
 			}
 			if msgBytes, err := json.Marshal(statusMsg); err == nil {
@@ -973,7 +1229,74 @@ func InitializeHub() {
         hub = NewHub()
         go hub.Run()
         hub.startBroadcastWorkers()
+        
+        // ✅ Start host disconnect checker (runs every minute)
+        go func() {
+            ticker := time.NewTicker(1 * time.Minute)
+            defer ticker.Stop()
+            for range ticker.C {
+                hub.CheckHostDisconnectTimers()
+            }
+        }()
+        log.Println("✅ Host disconnect auto-end checker started (10-minute grace period)")
+        
+        // ✅ Start stale session cleanup (runs every hour)
+        go func() {
+            ticker := time.NewTicker(1 * time.Hour)
+            defer ticker.Stop()
+            for range ticker.C {
+                CleanupStaleSessions()
+            }
+        }()
+        log.Println("✅ Stale session cleanup started (runs hourly, ends sessions >24 hours old)")
     }
+}
+
+// CleanupStaleSessions ends watch sessions that have been active for more than 24 hours
+// This prevents zombie sessions from persisting indefinitely
+func CleanupStaleSessions() {
+	log.Println("🧹 [CleanupStaleSessions] Running stale session cleanup...")
+	
+	var staleSessions []models.WatchSession
+	cutoffTime := time.Now().Add(-24 * time.Hour)
+	
+	// Find sessions that started more than 24 hours ago and are still active
+	if err := DB.Where("started_at < ? AND ended_at IS NULL", cutoffTime).Find(&staleSessions).Error; err != nil {
+		log.Printf("❌ [CleanupStaleSessions] Error querying stale sessions: %v", err)
+		return
+	}
+	
+	if len(staleSessions) == 0 {
+		log.Println("✅ [CleanupStaleSessions] No stale sessions found")
+		return
+	}
+	
+	log.Printf("🗑️ [CleanupStaleSessions] Found %d stale sessions to clean up", len(staleSessions))
+	
+	for _, session := range staleSessions {
+		sessionAge := time.Since(session.StartedAt)
+		log.Printf("🔚 [CleanupStaleSessions] Ending stale session %s (age: %.1f hours)", 
+			session.SessionID, sessionAge.Hours())
+		
+		// End the session
+		now := time.Now()
+		if err := DB.Model(&session).Update("ended_at", now).Error; err != nil {
+			log.Printf("❌ [CleanupStaleSessions] Failed to end session %s: %v", session.SessionID, err)
+			continue
+		}
+		
+		// Broadcast session_ended to the room (in case any clients are still connected)
+		broadcastMsg := OutgoingMessage{
+			Data: []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d,"reason":"stale_cleanup"}}`, 
+				session.SessionID, session.RoomID)),
+			IsBinary: false,
+		}
+		hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)
+		
+		log.Printf("✅ [CleanupStaleSessions] Ended stale session %s", session.SessionID)
+	}
+	
+	log.Printf("✅ [CleanupStaleSessions] Cleanup complete - ended %d stale sessions", len(staleSessions))
 }
 
 // Helper to create a pointer to an int
@@ -1036,14 +1359,67 @@ func (client *Client) handleMessage(message []byte) {
             members = []models.WatchSessionMember{}
         }
 
+        // Get current seating assignments for this room
+        client.hub.seatingMutex.Lock()
+        seatingMap := make(map[string]uint)
+        if roomSeating, exists := client.hub.seatingAssignments[client.roomID]; exists {
+            for seatID, userID := range roomSeating {
+                seatingMap[seatID] = userID
+            }
+        }
+        client.hub.seatingMutex.Unlock()
+        log.Printf("🪑 [client_ready] Sending seating assignments to user %d: %+v", client.userID, seatingMap)
+
+        // Build set of active user IDs currently connected to this room
+        activeUserIDs := make(map[uint]bool)
+        client.hub.mutex.RLock()
+        if roomClients, ok := client.hub.rooms[client.roomID]; ok {
+            for c := range roomClients {
+                activeUserIDs[c.userID] = true
+            }
+        }
+        client.hub.mutex.RUnlock()
+        log.Printf("🪑 [client_ready] Active users in room %d: %+v", client.roomID, activeUserIDs)
+
+        // ✅ FILTER members array to only include active WebSocket clients
+        activeMembers := []models.WatchSessionMember{}
+        for _, member := range members {
+            if activeUserIDs[member.UserID] {
+                activeMembers = append(activeMembers, member)
+            } else {
+                log.Printf("⚠️ [client_ready] Skipping inactive member %d from members list", member.UserID)
+            }
+        }
+        log.Printf("✅ [client_ready] Filtered members: %d active out of %d total", len(activeMembers), len(members))
+
+        // Build usernames map for seated users - ONLY include active users
+        seatedUsernames := make(map[uint]string)
+        filteredSeatingMap := make(map[string]uint)
+        for seatID, userID := range seatingMap {
+            if !activeUserIDs[userID] {
+                log.Printf("⚠️ [client_ready] Skipping inactive user %d from seating (seat %s)", userID, seatID)
+                continue
+            }
+            filteredSeatingMap[seatID] = userID
+            var user models.User
+            if err := DB.First(&user, userID).Error; err == nil {
+                seatedUsernames[userID] = user.Username
+            } else {
+                seatedUsernames[userID] = fmt.Sprintf("User%d", userID)
+            }
+        }
+        log.Printf("🪑 [client_ready] Filtered seated usernames (active only): %+v", seatedUsernames)
+
         // Build session_status (screen sharing handled by LiveKit)
         statusMsg := WebSocketMessage{
             Type: "session_status",
             Data: map[string]interface{}{
-                "session_id": watchSession.SessionID,
-                "host_id":    watchSession.HostID,
-                "members":    members,
-                "started_at": watchSession.StartedAt,
+                "session_id":       watchSession.SessionID,
+                "host_id":          watchSession.HostID,
+                "members":          activeMembers, // ✅ Send FILTERED active members only
+                "started_at":       watchSession.StartedAt,
+                "seating":          filteredSeatingMap, // Include FILTERED seating assignments (active users only)
+                "seated_usernames": seatedUsernames,    // Include usernames for seated users (active only)
             },
         }
 
@@ -1053,6 +1429,64 @@ func (client *Client) handleMessage(message []byte) {
                 log.Printf("Sent session_status to client %d", client.userID)
             default:
                 log.Printf("Dropped session_status for client %d (buffer full)", client.userID)
+            }
+        }
+
+        // ALSO: send authoritative seat assignments for this room (seats_auto_assigned)
+        // Build user->seat map from seatingAssignments (seatId -> userID)
+        h := client.hub
+        userSeats := make(map[string]string)
+        h.seatingMutex.RLock()
+        log.Printf("🪑 [seats_auto_assigned] Building seat map for room %d. seatingAssignments: %+v", 
+            client.roomID, h.seatingAssignments[client.roomID])
+        if roomSeats, exists := h.seatingAssignments[client.roomID]; exists {
+            for seatID, userID := range roomSeats {
+                // Only include active users
+                if !activeUserIDs[userID] {
+                    log.Printf("⚠️ [seats_auto_assigned] Skipping inactive user %d from seat %s", userID, seatID)
+                    continue
+                }
+                // use numeric userID as string key so JSON keys are strings in JS
+                userSeats[fmt.Sprintf("%d", userID)] = seatID
+            }
+            log.Printf("🪑 [seats_auto_assigned] Built userSeats map (active only): %+v", userSeats)
+        } else {
+            log.Printf("⚠️ [seats_auto_assigned] No seating assignments found for room %d", client.roomID)
+        }
+        h.seatingMutex.RUnlock()
+
+        // Also include usernames for currently seated users (help frontend show labels even when session members list is empty)
+        usernames := make(map[string]string)
+        for uidStr := range userSeats {
+            // parse uidStr back to uint
+            if uidStr == "" {
+                continue
+            }
+            uid64, err := strconv.ParseUint(uidStr, 10, 64)
+            if err != nil {
+                continue
+            }
+            var user models.User
+            if err := DB.First(&user, uint(uid64)).Error; err == nil {
+                usernames[uidStr] = user.Username
+            } else {
+                usernames[uidStr] = fmt.Sprintf("User%d", uid64)
+            }
+        }
+
+        seatsMsg := WebSocketMessage{
+            Type: "seats_auto_assigned",
+            Data: map[string]interface{}{
+                "user_seats": userSeats,
+                "usernames": usernames,
+            },
+        }
+        if seatsBytes, err := json.Marshal(seatsMsg); err == nil {
+            select {
+            case client.send <- OutgoingMessage{Data: seatsBytes, IsBinary: false}:
+                log.Printf("Sent seats_auto_assigned to client %d", client.userID)
+            default:
+                log.Printf("Dropped seats_auto_assigned for client %d (buffer full)", client.userID)
             }
         }
 
@@ -1068,8 +1502,74 @@ func (client *Client) handleMessage(message []byte) {
         }
         return // ✅ Important: stop here
     }
+
+    // ✅ Handle request_seat_state: re-send fresh seat data (for periodic refresh)
+    if msg.Type == "request_seat_state" {
+        log.Printf("🔄 Client %d requested seat state refresh for room %d", client.userID, client.roomID)
+
+        // Get current seating assignments for this room
+        client.hub.seatingMutex.Lock()
+        seatingMap := make(map[string]uint)
+        if roomSeating, exists := client.hub.seatingAssignments[client.roomID]; exists {
+            for seatID, userID := range roomSeating {
+                seatingMap[seatID] = userID
+            }
+        }
+        client.hub.seatingMutex.Unlock()
+
+        // Build set of active user IDs currently connected to this room
+        activeUserIDs := make(map[uint]bool)
+        client.hub.mutex.RLock()
+        if roomClients, ok := client.hub.rooms[client.roomID]; ok {
+            for c := range roomClients {
+                activeUserIDs[c.userID] = true
+            }
+        }
+        client.hub.mutex.RUnlock()
+
+        // Build usernames map for seated users - ONLY include active users
+        seatedUsernames := make(map[uint]string)
+        filteredSeatingMap := make(map[string]uint)
+        for seatID, userID := range seatingMap {
+            if !activeUserIDs[userID] {
+                log.Printf("⚠️ [request_seat_state] Skipping inactive user %d from seating (seat %s)", userID, seatID)
+                continue
+            }
+            filteredSeatingMap[seatID] = userID
+            var user models.User
+            if err := DB.First(&user, userID).Error; err == nil {
+                seatedUsernames[userID] = user.Username
+            } else {
+                seatedUsernames[userID] = fmt.Sprintf("User%d", userID)
+            }
+        }
+
+        // Send refreshed seat state
+        refreshMsg := WebSocketMessage{
+            Type: "seat_state_refresh",
+            Data: map[string]interface{}{
+                "seating":          filteredSeatingMap,
+                "seated_usernames": seatedUsernames,
+            },
+        }
+
+        if msgBytes, err := json.Marshal(refreshMsg); err == nil {
+            select {
+            case client.send <- OutgoingMessage{Data: msgBytes, IsBinary: false}:
+                log.Printf("🔄 Sent seat_state_refresh to client %d", client.userID)
+            default:
+                log.Printf("Dropped seat_state_refresh for client %d (buffer full)", client.userID)
+            }
+        }
+        return
+    }
+
     // Inside handleMessage in websocket.go
     if msg.Type == "user_audio_state" {
+        log.Printf("[audio] 🔍 Received user_audio_state message")
+        log.Printf("[audio] 🔍 msg.Data type: %T, value: %+v", msg.Data, msg.Data)
+        log.Printf("[audio] 🔍 msg.UserID: %d", msg.UserID)
+        
         var audioData struct {
             UserID            uint   `json:"userId"`
             IsAudioActive     bool   `json:"isAudioActive"`
@@ -1078,25 +1578,13 @@ func (client *Client) handleMessage(message []byte) {
             Row               *int   `json:"row"` // nullable
         }
 
-        if dataBytes, ok := msg.Data.([]byte); ok {
-            if err := json.Unmarshal(dataBytes, &audioData); err != nil {
-                log.Printf("[audio] Failed to parse audio state: %v", err)
-                return
-            }
-        } else if m, ok := msg.Data.(map[string]interface{}); ok {
-            // Fallback if Data is already a map (Gin sometimes does this)
-            audioData.UserID = uint(m["userId"].(float64))
-            audioData.IsAudioActive = m["isAudioActive"].(bool)
-            audioData.IsSeatedMode = m["isSeatedMode"].(bool)
-            audioData.IsGlobalBroadcast = m["isGlobalBroadcast"].(bool)
-            if rowVal, exists := m["row"]; exists && rowVal != nil {
-                row := int(rowVal.(float64))
-                audioData.Row = &row
-            }
-        } else {
-            log.Printf("[audio] Unexpected data type for user_audio_state")
+        // Try unmarshaling the entire message again to get all fields
+        if err := json.Unmarshal(message, &audioData); err != nil {
+            log.Printf("[audio] ❌ Failed to unmarshal audio data: %v", err)
             return
         }
+        
+        log.Printf("[audio] ✅ Parsed audioData: %+v", audioData)
 
         // 🔊 Decide who receives the audio state
         recipients := []uint{}
@@ -1256,19 +1744,44 @@ func (client *Client) handleMessage(message []byte) {
     // Handle take_seat - user claims an empty seat
     if msg.Type == "take_seat" {
         var takeSeat struct {
+            Type   string `json:"type"`
             SeatID string `json:"seat_id"` // "row-col"
             Row    int    `json:"row"`
             Col    int    `json:"col"`
             UserID uint   `json:"user_id"`
         }
 
-        if dataBytes, ok := msg.Data.([]byte); ok {
-            json.Unmarshal(dataBytes, &takeSeat)
-        } else if m, ok := msg.Data.(map[string]interface{}); ok {
-            takeSeat.SeatID = m["seat_id"].(string)
-            takeSeat.Row = int(m["row"].(float64))
-            takeSeat.Col = int(m["col"].(float64))
-            takeSeat.UserID = uint(m["user_id"].(float64))
+        // ✅ The incoming JSON is flat: {"type":"take_seat","seat_id":"4-6","row":4,"col":6,"user_id":8}
+        // We need to re-unmarshal the original message bytes to extract all fields
+        log.Printf("🪑 [take_seat] Parsing take_seat message from user %d", client.userID)
+        
+        // Get the raw message bytes from readPump (they're already available in handleMessage)
+        // Since we already unmarshaled into msg, let's re-unmarshal the original bytes
+        var rawMsg map[string]interface{}
+        if err := json.Unmarshal(message, &rawMsg); err == nil {
+            if seatID, ok := rawMsg["seat_id"].(string); ok {
+                takeSeat.SeatID = seatID
+            }
+            if row, ok := rawMsg["row"].(float64); ok {
+                takeSeat.Row = int(row)
+            }
+            if col, ok := rawMsg["col"].(float64); ok {
+                takeSeat.Col = int(col)
+            }
+            if userID, ok := rawMsg["user_id"].(float64); ok {
+                takeSeat.UserID = uint(userID)
+            }
+            log.Printf("🪑 [take_seat] Successfully parsed: seat_id=%s, row=%d, col=%d, user_id=%d", 
+                takeSeat.SeatID, takeSeat.Row, takeSeat.Col, takeSeat.UserID)
+        } else {
+            log.Printf("❌ [take_seat] Failed to re-unmarshal message: %v", err)
+            return
+        }
+        
+        // ✅ Validate that seat_id is not empty
+        if takeSeat.SeatID == "" {
+            log.Printf("❌ [take_seat] Invalid seat_id (empty) from user %d", client.userID)
+            return
         }
 
         // Update seating map
@@ -1278,12 +1791,158 @@ func (client *Client) handleMessage(message []byte) {
             h.seatingAssignments[client.roomID] = make(map[string]uint)
         }
         h.seatingAssignments[client.roomID][takeSeat.SeatID] = takeSeat.UserID
+        log.Printf("🪑 [take_seat] Updated seatingAssignments[%d]: %+v", client.roomID, h.seatingAssignments[client.roomID])
         h.seatingMutex.Unlock()
 
-        log.Printf("Seat taken: room=%d, seat=%s, user=%d", client.roomID, takeSeat.SeatID, takeSeat.UserID)
+        // 🎭 THEATER ASSIGNMENT: Assign user to theater (only for 3D cinema)
+        var activeSession models.WatchSession
+        if err := DB.Where("room_id = ? AND ended_at IS NULL", client.roomID).First(&activeSession).Error; err == nil {
+            if activeSession.WatchType == "3d_cinema" {
+                // Get or create theater for this session
+                theater, isNewTheater, err := GetOrCreateTheaterForSession(&activeSession)
+                if err != nil {
+                    log.Printf("❌ [take_seat] Failed to get theater: %v", err)
+                } else if theater != nil {
+                    // Extract row letter and column from seat ID (e.g., "4-6" -> row D, col 6)
+                    // Row numbers: 0=A, 1=B, 2=C, 3=D, 4=E, 5=F, 6=G
+                    rowLetter := string(rune('A' + takeSeat.Row))
+                    
+                    // Assign user to theater
+                    if err := AssignUserToTheater(takeSeat.UserID, activeSession.ID, theater.ID, rowLetter, takeSeat.Col+1); err != nil {
+                        log.Printf("❌ [take_seat] Failed to assign user %d to theater: %v", takeSeat.UserID, err)
+                    } else {
+                        log.Printf("✅ [take_seat] User %d assigned to Theater %d, Seat %s-%d", 
+                            takeSeat.UserID, theater.TheaterNumber, rowLetter, takeSeat.Col+1)
+                        
+                        // Notify host if new theater was created
+                        if isNewTheater {
+                            var room models.Room
+                            if err := DB.First(&room, client.roomID).Error; err == nil {
+                                notifyMsg := WebSocketMessage{
+                                    Type: "theater_created",
+                                    Data: map[string]interface{}{
+                                        "theater_number": theater.TheaterNumber,
+                                        "message": fmt.Sprintf("Theater %d is full (42/42). Theater %d created automatically.", 
+                                            theater.TheaterNumber-1, theater.TheaterNumber),
+                                    },
+                                }
+                                if notifyBytes, err := json.Marshal(notifyMsg); err == nil {
+                                    // Send to host via clientRegistry
+                                    h.registryMutex.RLock()
+                                    if userMap, exists := h.clientRegistry[room.HostID]; exists {
+                                        if hostClient, ok := userMap[client.roomID]; ok {
+                                            select {
+                                            case hostClient.send <- OutgoingMessage{Data: notifyBytes, IsBinary: false}:
+                                                log.Printf("✅ Sent theater_created notification to host %d", room.HostID)
+                                            default:
+                                                log.Printf("⚠️ Host %d send buffer full, dropped theater_created", room.HostID)
+                                            }
+                                        }
+                                    }
+                                    h.registryMutex.RUnlock()
+                                }
+                            }
+                        }
+                        
+                        // Send theater assignment to user
+                        assignmentMsg := WebSocketMessage{
+                            Type: "theater_assigned",
+                            Data: map[string]interface{}{
+                                "theater_id":     theater.ID,
+                                "theater_number": theater.TheaterNumber,
+                                "theater_name":   theater.GetDisplayName(),
+                                "seat_row":       rowLetter,
+                                "seat_col":       takeSeat.Col + 1,
+                            },
+                        }
+                        if assignBytes, err := json.Marshal(assignmentMsg); err == nil {
+                            // Send to user via their client
+                            h.registryMutex.RLock()
+                            if userMap, exists := h.clientRegistry[takeSeat.UserID]; exists {
+                                if userClient, ok := userMap[client.roomID]; ok {
+                                    select {
+                                    case userClient.send <- OutgoingMessage{Data: assignBytes, IsBinary: false}:
+                                        log.Printf("✅ Sent theater_assigned to user %d", takeSeat.UserID)
+                                    default:
+                                        log.Printf("⚠️ User %d send buffer full, dropped theater_assigned", takeSeat.UserID)
+                                    }
+                                }
+                            }
+                            h.registryMutex.RUnlock()
+                        }
+                    }
+                }
+            }
+        }
+
+        log.Printf("✅ Seat taken: room=%d, seat=%s, user=%d", client.roomID, takeSeat.SeatID, takeSeat.UserID)
         
         // Broadcast to all room members so they see the updated grid
         client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, nil)
+        return
+    }
+
+    // Handle leave_seat - user leaves their seat (explicit leave or disconnect)
+    if msg.Type == "leave_seat" {
+        var leaveSeat struct {
+            UserID uint `json:"user_id"`
+        }
+
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            json.Unmarshal(dataBytes, &leaveSeat)
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            leaveSeat.UserID = uint(m["user_id"].(float64))
+        }
+
+        // Remove user from seating map
+        h := client.hub
+        h.seatingMutex.Lock()
+        if roomSeats, exists := h.seatingAssignments[client.roomID]; exists {
+            for seatID, userID := range roomSeats {
+                if userID == leaveSeat.UserID {
+                    delete(roomSeats, seatID)
+                    log.Printf("🪑 Seat vacated: room=%d, seat=%s, user=%d", client.roomID, seatID, leaveSeat.UserID)
+                    break
+                }
+            }
+        }
+        h.seatingMutex.Unlock()
+
+        // ✅ DATABASE CLEANUP: Mark user as left in watch_session_members
+        var activeSession models.WatchSession
+        if err := DB.Where("room_id = ? AND ended_at IS NULL", client.roomID).First(&activeSession).Error; err == nil {
+            now := time.Now()
+            result := DB.Model(&models.WatchSessionMember{}).
+                Where("watch_session_id = ? AND user_id = ? AND is_active = ?", activeSession.ID, leaveSeat.UserID, true).
+                Updates(map[string]interface{}{
+                    "is_active": false,
+                    "left_at":   now,
+                })
+            
+            if result.Error != nil {
+                log.Printf("⚠️ [leave_seat] Failed to mark user %d as left: %v", leaveSeat.UserID, result.Error)
+            } else if result.RowsAffected > 0 {
+                log.Printf("✅ [leave_seat] Marked user %d as left from session %s", leaveSeat.UserID, activeSession.SessionID)
+            }
+            
+            // 🎭 THEATER CLEANUP: Remove user from theater assignment
+            if activeSession.WatchType == "3d_cinema" {
+                if err := RemoveUserFromTheater(leaveSeat.UserID, activeSession.ID); err != nil {
+                    log.Printf("⚠️ [leave_seat] Failed to remove theater assignment: %v", err)
+                }
+            }
+        }
+
+        // Broadcast user_left_seat to all room members
+        leaveMsg := WebSocketMessage{
+            Type: "user_left_seat",
+            Data: map[string]interface{}{
+                "user_id": leaveSeat.UserID,
+            },
+        }
+        if leaveBytes, err := json.Marshal(leaveMsg); err == nil {
+            client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leaveBytes, IsBinary: false}, nil)
+        }
         return
     }
 
@@ -1438,6 +2097,29 @@ func (client *Client) handleMessage(message []byte) {
             }
         }
 
+        // 🎭 Get theater info for this user (only for 3D cinema)
+        var theaterNumber int
+        var theaterName string
+        var totalTheaters int
+        
+        var activeSession models.WatchSession
+        if err := DB.Where("session_id = ?", chatData.SessionID).First(&activeSession).Error; err == nil {
+            if activeSession.WatchType == "3d_cinema" {
+                // Get user's theater assignment
+                assignment, err := GetUserTheaterAssignment(chatData.UserID, activeSession.ID)
+                if err == nil && assignment != nil && assignment.Theater != nil {
+                    theaterNumber = assignment.Theater.TheaterNumber
+                    theaterName = assignment.Theater.GetDisplayName()
+                }
+                
+                // Count total theaters for this session
+                var theaters []models.Theater
+                if err := DB.Where("watch_session_id = ?", activeSession.ID).Find(&theaters).Error; err == nil {
+                    totalTheaters = len(theaters)
+                }
+            }
+        }
+
         // Save to database
         chatMessage := models.ChatMessage{
             RoomID:    client.roomID,
@@ -1453,18 +2135,28 @@ func (client *Client) handleMessage(message []byte) {
             log.Printf("[chat_message] ✅ Saved message ID=%d from user %d in session %s", chatMessage.ID, chatData.UserID, chatData.SessionID)
         }
 
-        // Broadcast enriched message with DB ID
+        // Broadcast enriched message with DB ID and theater info
+        messageData := map[string]interface{}{
+            "ID":         chatMessage.ID,
+            "UserID":     chatMessage.UserID,
+            "Username":   chatMessage.Username,
+            "Message":    chatMessage.Message,
+            "session_id": chatMessage.SessionID,
+            "CreatedAt":  chatMessage.CreatedAt,
+            "reactions":  []interface{}{}, // Empty reactions initially
+        }
+        
+        // ✅ SMART THEATER BADGE: Only include theater info if 2+ theaters exist
+        if totalTheaters >= 2 {
+            messageData["theater_number"] = theaterNumber
+            messageData["theater_name"] = theaterName
+            messageData["total_theaters"] = totalTheaters
+            log.Printf("[chat_message] 🎭 User %d in Theater %d (total: %d theaters)", chatData.UserID, theaterNumber, totalTheaters)
+        }
+        
         enrichedMsg := map[string]interface{}{
             "type": "chat_message",
-            "data": map[string]interface{}{
-                "ID":         chatMessage.ID,
-                "UserID":     chatMessage.UserID,
-                "Username":   chatMessage.Username,
-                "Message":    chatMessage.Message,
-                "session_id": chatMessage.SessionID,
-                "CreatedAt":  chatMessage.CreatedAt,
-                "reactions":  []interface{}{}, // Empty reactions initially
-            },
+            "data": messageData,
         }
 
         if broadcastBytes, err := json.Marshal(enrichedMsg); err == nil {
@@ -1535,6 +2227,206 @@ func (client *Client) handleMessage(message []byte) {
             default:
                 log.Printf("Dropped private chat history for user %d", client.userID)
             }
+        }
+        return
+    }
+
+    // ✅ Handle request_broadcast - user requests permission to broadcast to whole room
+    if msg.Type == "request_broadcast" {
+        var requestData struct {
+            UserID    uint   `json:"user_id"`
+            SessionID string `json:"session_id"`
+        }
+        
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            if err := json.Unmarshal(dataBytes, &requestData); err != nil {
+                log.Printf("[request_broadcast] ❌ Failed to parse data: %v", err)
+                return
+            }
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            if uid, ok := m["user_id"].(float64); ok {
+                requestData.UserID = uint(uid)
+            }
+            if sid, ok := m["session_id"].(string); ok {
+                requestData.SessionID = sid
+            }
+        }
+        
+        log.Printf("[request_broadcast] 🎤 User %d requesting broadcast permission in session %s", 
+            requestData.UserID, requestData.SessionID)
+        
+        // Get session and host
+        var session models.WatchSession
+        if err := DB.Where("session_id = ?", requestData.SessionID).First(&session).Error; err != nil {
+            log.Printf("[request_broadcast] ❌ Session not found: %v", err)
+            return
+        }
+        
+        // Get username for the request
+        var user models.User
+        var username string
+        if err := DB.First(&user, requestData.UserID).Error; err == nil {
+            username = user.Username
+        } else {
+            username = "Unknown User"
+        }
+        
+        // Send broadcast_request message to host
+        requestMsg := map[string]interface{}{
+            "type": "broadcast_request",
+            "data": map[string]interface{}{
+                "user_id":    requestData.UserID,
+                "username":   username,
+                "session_id": requestData.SessionID,
+            },
+        }
+        
+        if msgBytes, err := json.Marshal(requestMsg); err == nil {
+            client.hub.BroadcastToUsers([]uint{session.HostID}, OutgoingMessage{
+                Data:     msgBytes,
+                IsBinary: false,
+            })
+            log.Printf("[request_broadcast] ✅ Sent broadcast request from user %d to host %d", 
+                requestData.UserID, session.HostID)
+        }
+        
+        return
+    }
+
+    // ✅ Handle grant_broadcast - host grants user permission to speak to whole room
+    if msg.Type == "grant_broadcast" {
+        var broadcastData struct {
+            UserID    uint   `json:"user_id"`
+            SessionID string `json:"session_id"`
+        }
+        
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            if err := json.Unmarshal(dataBytes, &broadcastData); err != nil {
+                log.Printf("[grant_broadcast] ❌ Failed to parse data: %v", err)
+                return
+            }
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            if uid, ok := m["user_id"].(float64); ok {
+                broadcastData.UserID = uint(uid)
+            }
+            if sid, ok := m["session_id"].(string); ok {
+                broadcastData.SessionID = sid
+            }
+        }
+        
+        log.Printf("[grant_broadcast] 🔊 Host (user %d) granting broadcast permission to user %d in session %s", 
+            client.userID, broadcastData.UserID, broadcastData.SessionID)
+        
+        // Verify sender is the host
+        var session models.WatchSession
+        if err := DB.Where("session_id = ?", broadcastData.SessionID).First(&session).Error; err != nil {
+            log.Printf("[grant_broadcast] ❌ Session not found: %v", err)
+            return
+        }
+        
+        if session.HostID != client.userID {
+            log.Printf("[grant_broadcast] ❌ User %d is not the host (host is %d)", client.userID, session.HostID)
+            return
+        }
+        
+        // Update session member's can_broadcast flag
+        result := DB.Model(&models.WatchSessionMember{}).
+            Where("watch_session_id = ? AND user_id = ? AND is_active = ?", session.ID, broadcastData.UserID, true).
+            Update("can_broadcast", true)
+        
+        if result.Error != nil {
+            log.Printf("[grant_broadcast] ❌ Failed to update member: %v", result.Error)
+            return
+        }
+        
+        if result.RowsAffected == 0 {
+            log.Printf("[grant_broadcast] ⚠️ No active member found for user %d in session %s", broadcastData.UserID, broadcastData.SessionID)
+            return
+        }
+        
+        log.Printf("[grant_broadcast] ✅ Granted broadcast permission to user %d", broadcastData.UserID)
+        
+        // Broadcast permission granted to all room members
+        permissionMsg := map[string]interface{}{
+            "type": "broadcast_granted",
+            "data": map[string]interface{}{
+                "user_id":    broadcastData.UserID,
+                "session_id": broadcastData.SessionID,
+            },
+        }
+        
+        if broadcastBytes, err := json.Marshal(permissionMsg); err == nil {
+            client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, nil)
+            log.Printf("[grant_broadcast] 📢 Broadcasted permission granted to room %d", client.roomID)
+        }
+        return
+    }
+
+    // ✅ Handle revoke_broadcast - host revokes user's whole-room broadcast permission
+    if msg.Type == "revoke_broadcast" {
+        var broadcastData struct {
+            UserID    uint   `json:"user_id"`
+            SessionID string `json:"session_id"`
+        }
+        
+        if dataBytes, ok := msg.Data.([]byte); ok {
+            if err := json.Unmarshal(dataBytes, &broadcastData); err != nil {
+                log.Printf("[revoke_broadcast] ❌ Failed to parse data: %v", err)
+                return
+            }
+        } else if m, ok := msg.Data.(map[string]interface{}); ok {
+            if uid, ok := m["user_id"].(float64); ok {
+                broadcastData.UserID = uint(uid)
+            }
+            if sid, ok := m["session_id"].(string); ok {
+                broadcastData.SessionID = sid
+            }
+        }
+        
+        log.Printf("[revoke_broadcast] 🔇 Host (user %d) revoking broadcast permission from user %d in session %s", 
+            client.userID, broadcastData.UserID, broadcastData.SessionID)
+        
+        // Verify sender is the host
+        var session models.WatchSession
+        if err := DB.Where("session_id = ?", broadcastData.SessionID).First(&session).Error; err != nil {
+            log.Printf("[revoke_broadcast] ❌ Session not found: %v", err)
+            return
+        }
+        
+        if session.HostID != client.userID {
+            log.Printf("[revoke_broadcast] ❌ User %d is not the host (host is %d)", client.userID, session.HostID)
+            return
+        }
+        
+        // Update session member's can_broadcast flag
+        result := DB.Model(&models.WatchSessionMember{}).
+            Where("watch_session_id = ? AND user_id = ? AND is_active = ?", session.ID, broadcastData.UserID, true).
+            Update("can_broadcast", false)
+        
+        if result.Error != nil {
+            log.Printf("[revoke_broadcast] ❌ Failed to update member: %v", result.Error)
+            return
+        }
+        
+        if result.RowsAffected == 0 {
+            log.Printf("[revoke_broadcast] ⚠️ No active member found for user %d in session %s", broadcastData.UserID, broadcastData.SessionID)
+            return
+        }
+        
+        log.Printf("[revoke_broadcast] ✅ Revoked broadcast permission from user %d", broadcastData.UserID)
+        
+        // Broadcast permission revoked to all room members
+        permissionMsg := map[string]interface{}{
+            "type": "broadcast_revoked",
+            "data": map[string]interface{}{
+                "user_id":    broadcastData.UserID,
+                "session_id": broadcastData.SessionID,
+            },
+        }
+        
+        if broadcastBytes, err := json.Marshal(permissionMsg); err == nil {
+            client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, nil)
+            log.Printf("[revoke_broadcast] 📢 Broadcasted permission revoked to room %d", client.roomID)
         }
         return
     }

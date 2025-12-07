@@ -2,36 +2,64 @@
 import React, { useState, useEffect, useRef } from 'react';
 import SettingsModal from './cinema/ui/SettingsModal';
 import EmotePicker from './cinema/ui/EmotePicker';
+import EmojiImage from './cinema/ui/EmojiImage';
+import AudioSettingsDropdown from './AudioSettingsDropdown';
 
 // Import SVG icons
 const LeaveCallIcon = '/icons/LeaveCallIcon.svg';
 const ChatIcon = '/icons/ChatIcon.svg';
 const SeatsIcon = '/icons/SeatsIcon.svg';
 const AudioIcon = '/icons/AudioIcon.svg';
+const SilenceIcon = '/icons/silenceIcon.svg';
 const VideoIcon = '/icons/VideoIcon.svg';
 const MembersIcon = '/icons/MembersIcon.svg';
-const SeatToggleIcon = '/icons/SeatToggleIcon.svg';
 const SettingsIcon = '/icons/settingsIcon.svg';
 const EmotesIcon = '😊';
 const ProgramMenuIcon = '/icons/mediaScheduleIcon.svg';
+const SpeakerIcon = '/icons/speaker.svg';
 
 // ✅ Extracted and memoized — won't reset hover on parent re-renders
-const TaskbarButton = React.memo(({ icon, label, onClick, showCancelIndicator = false, isEmoji = false }) => {
+const TaskbarButton = React.memo(({ 
+  icon, 
+  label, 
+  onClick, 
+  onRightClick,
+  showCancelIndicator = false, 
+  isEmoji = false,
+  shouldPulse = false,
+  subtitle = null,
+  buttonRef = null
+}) => {
   const [isHovered, setIsHovered] = useState(false);
+  
+  // Debug: log pulse state for Audio button
+  useEffect(() => {
+    if (label === 'Audio') {
+      console.log('🔊 [TaskbarButton] Audio button - shouldPulse:', shouldPulse);
+    }
+  }, [shouldPulse, label]);
+
   return (
-    <div className="relative">
+    <div className="relative flex flex-col items-center">
       <button
+        ref={buttonRef}
         className={`flex flex-col items-center justify-center text-white text-sm font-medium bg-transparent border-none p-2 rounded-md transition-colors duration-200 ${isHovered ? 'bg-white/10' : ''}`}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         onClick={onClick}
+        onContextMenu={(e) => {
+          if (onRightClick) {
+            e.preventDefault();
+            onRightClick(e);
+          }
+        }}
         aria-label={label}
       >
-        <div className="relative h-6 w-6 flex items-center justify-center">
+        <div className={`relative h-8 w-8 flex items-center justify-center ${shouldPulse ? 'animate-pulse-green' : ''}`}>
           {isEmoji ? (
-            <span className="text-2xl">{icon}</span>
+            <EmojiImage emoji={icon} size={32} />
           ) : (
-            <img src={icon} alt={label} className="h-6 w-6" />
+            <img src={icon} alt={label} className="h-8 w-8" />
           )}
           {showCancelIndicator && (
             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center">
@@ -40,15 +68,14 @@ const TaskbarButton = React.memo(({ icon, label, onClick, showCancelIndicator = 
           )}
         </div>
         <span className="text-xs mt-1 whitespace-normal text-center w-full px-1">
-          {label === "Toggle Seat Mode" ? (
-            <>
-              Toggle
-              <br />
-              Seat Mode
-            </>
-          ) : label}
+          {label}
         </span>
       </button>
+      {subtitle && (
+        <span className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">
+          {subtitle}
+        </span>
+      )}
     </div>
   );
 });
@@ -58,14 +85,14 @@ const Taskbar = ({
   isAudioActive,
   toggleAudio,
   isHost,
-  isSeatedMode,
-  toggleSeatedMode,
   openChat,
   onMembersClick,
   showPositionDebug,
   onTogglePositionDebug,
   onShareRoom,
+  onOpenUserProfile, // ✅ NEW: Handler for opening user's own profile
   onSeatsClick,
+  onTheaterOverviewClick, // ✅ Right-click on Seats icon to open theater overview
   userSeats,
   currentUser,
   roomMembers,
@@ -91,18 +118,33 @@ const Taskbar = ({
   onEmoteSend,
   showProgram = true,
   showEmotes = true,
-  showSeatModeToggle = true,
   showVideoToggle = true,
   onToggleLeftSidebar,
   seatSwapRequest,
+  isSilenceMode = false,
+  onToggleSilenceMode,
+  broadcastPermissions = {},
 }) => {
+  // 🔍 Debug: Log isAudioActive prop changes
+  useEffect(() => {
+    console.log('🔊 [Taskbar] isAudioActive prop changed:', isAudioActive);
+  }, [isAudioActive]);
+
   const [isVisible, setIsVisible] = useState(true);
   const [showMicDropdown, setShowMicDropdown] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showEmotePicker, setShowEmotePicker] = useState(false);
+  const [showAudioSettings, setShowAudioSettings] = useState(false);
+  const audioButtonRef = useRef(null);
+  // ✅ Count all members (including demo users) - this is intentional for cinema mode
   const memberCount = roomMembers.length;
   const hideTimerRef = useRef(null);
   const lastEventTimeRef = useRef(0);
+
+  // 🔍 Debug: Log member count changes
+  useEffect(() => {
+    console.log('👥 [Taskbar] Member count updated:', memberCount, 'members:', roomMembers.map(m => ({ id: m.id, username: m.username, is_demo: m.is_demo })));
+  }, [memberCount, roomMembers]);
 
   // Auto-show for 3 seconds on mount
   useEffect(() => {
@@ -234,14 +276,21 @@ const Taskbar = ({
         <div className="flex items-center space-x-4">
           <TaskbarButton icon={ChatIcon} label="Chat" onClick={openChat} />
 
-          {isHost && showSeatModeToggle && (
-            <TaskbarButton
-              icon={SeatToggleIcon}
-              label="Seat Mode"
-              onClick={toggleSeatedMode}
-              showCancelIndicator={!isSeatedMode}
-            />
-          )}
+          {/* Speaker button - only show for host when audio is unmuted */}
+          {isHost && isAudioActive && onHostBroadcastToggle && (() => {
+            // Get host's row number
+            const hostSeatId = userSeats?.[authenticatedUserID];
+            const rowNumber = hostSeatId ? hostSeatId.split('-')[0] : '?';
+            
+            return (
+              <TaskbarButton
+                icon={SpeakerIcon}
+                label={isHostBroadcasting ? "Whole Room" : "Row Audio"}
+                onClick={onHostBroadcastToggle}
+                shouldPulse={isHostBroadcasting}
+              />
+            );
+          })()}
 
           <div className="relative">
             {seatSwapRequest && (
@@ -253,31 +302,37 @@ const Taskbar = ({
               icon={SeatsIcon}
               label="Seats"
               onClick={onSeatsClick}
+              onRightClick={onTheaterOverviewClick}
             />
           </div>
 
-          <div className="flex flex-col items-center relative">
-            <div className={isHost && isHostBroadcasting && isSeatedMode ? "mic-pulse" : ""}>
-              <TaskbarButton
-                icon={AudioIcon}
-                label="Audio"
-                onClick={toggleAudio}
-                showCancelIndicator={!isAudioActive}
-              />
-            </div>
-
-            {isHost && isSeatedMode && (
-              <button
-                onClick={onHostBroadcastToggle}
-                className={`mt-1 px-2 py-0.5 rounded text-[9px] font-medium whitespace-nowrap ${
-                  isHostBroadcasting ? 'bg-green-500 text-white' : 'bg-gray-700 text-gray-300'
-                }`}
-                title="Speak to everyone"
-              >
-                🌍 Global
-              </button>
-            )}
-          </div>
+          <TaskbarButton
+            buttonRef={audioButtonRef}
+            icon={isSilenceMode ? SilenceIcon : AudioIcon}
+            label="Audio"
+            onClick={toggleAudio}
+            onRightClick={() => setShowAudioSettings(!showAudioSettings)}
+            showCancelIndicator={!isAudioActive && !isSilenceMode}
+            shouldPulse={isAudioActive && !isSilenceMode}
+            subtitle={
+              isSilenceMode 
+                ? "Silence ON" 
+                : (!isAudioActive ? "Mic OFF" : (() => {
+                    // ✅ Check if user has broadcast permission or is host broadcasting
+                    const hasBroadcastPermission = broadcastPermissions[authenticatedUserID];
+                    const isGlobalBroadcast = (isHost && isHostBroadcasting) || hasBroadcastPermission;
+                    
+                    if (isGlobalBroadcast) {
+                      return "Whole Room";
+                    }
+                    
+                    // Show row number for row-based audio
+                    const userSeatId = userSeats?.[authenticatedUserID];
+                    const rowNumber = userSeatId ? userSeatId.split('-')[0] : '?';
+                    return `Row ${rowNumber}`;
+                  })())
+            }
+          />
 
           {showVideoToggle && (
             <TaskbarButton
@@ -326,6 +381,7 @@ const Taskbar = ({
         isOpen={showSettingsMenu}
         onClose={() => setShowSettingsMenu(false)}
         onShareRoom={onShareRoom}
+        onOpenUserProfile={onOpenUserProfile} // ✅ NEW: Pass profile handler
         audioDevices={audioDevices}
         selectedAudioDeviceId={selectedAudioDeviceId}
         onAudioDeviceChange={onAudioDeviceChange}
@@ -359,6 +415,20 @@ const Taskbar = ({
           }}
         />
       )}
+
+      {/* Audio Settings Dropdown */}
+      <AudioSettingsDropdown
+        isOpen={showAudioSettings}
+        onClose={() => setShowAudioSettings(false)}
+        isAudioActive={isAudioActive}
+        onToggleAudio={toggleAudio}
+        isSilenceMode={isSilenceMode}
+        onToggleSilenceMode={onToggleSilenceMode}
+        audioDevices={audioDevices}
+        selectedAudioDeviceId={selectedAudioDeviceId}
+        onAudioDeviceChange={onAudioDeviceChange}
+        anchorRef={audioButtonRef}
+      />
     </>
   );
 };

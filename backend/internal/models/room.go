@@ -13,6 +13,7 @@ type Room struct {
 	Description   string  `gorm:"type:text" json:"description"`
 	HostID        uint    `gorm:"not null" json:"host_id"`
 	IsTemporary   bool    `gorm:"default:false" json:"is_temporary"`
+	IsPublic      bool    `gorm:"default:true" json:"is_public"`
 	MediaFileName string  `gorm:"type:varchar(255)" json:"media_file_name"`
 	PlaybackState string  `gorm:"type:varchar(20);default:'paused'" json:"playback_state"`
 	PlaybackTime  float64 `gorm:"type:decimal(10,3);default:0.000" json:"playback_time"`
@@ -27,6 +28,8 @@ type Room struct {
 	OverrideComingNext	string	`gorm:"override_coming_next,omitempty"`
 	SeatingModeEnabled   bool `json:"seating_mode_enabled"`
     HostBroadcastEnabled bool `json:"host_broadcast_enabled"`
+	ShowHost             bool `gorm:"default:true" json:"show_host"`
+	ShowDescription      bool `gorm:"default:true" json:"show_description"`
 	// Add more fields later like MaxViewers, Password, etc.
 }
 

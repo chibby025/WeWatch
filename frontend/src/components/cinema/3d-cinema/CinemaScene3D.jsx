@@ -9,6 +9,8 @@ import { generateAllSeats, assignUserToSeat, getSeatByPosition } from './seatCal
 import AvatarManager from './avatars/AvatarManager';
 import FirstPersonAvatar from './avatars/FirstPersonAvatar';
 import { useGLTF } from '@react-three/drei';
+import LocalEmoteNotification from './ui/LocalEmoteNotification';
+import useEmoteSounds from '../../../hooks/useEmoteSounds';
 
 /**
  * CinemaCamera - Handles camera movement and controls
@@ -465,7 +467,6 @@ function DynamicLighting({ screenRef, intensity = 1, lightsOn = false }) {
  */
 export default function CinemaScene3D({ 
   videoElement, 
-  userSeats = [],
   authenticatedUserID,
   onVideoTextureUpdate,
   hideLabelsForLocalViewer = false,
@@ -482,9 +483,11 @@ export default function CinemaScene3D({
   lightsOn = true,         // Lights state (controlled by parent)
   setLightsOn,             // Function to update lights state
   roomMembers = [],        // Array of users in the room
+  userSeats = {},          // ✅ Map of userId -> seatId for filtering avatars
   onEmoteReceived,         // WebSocket emote event handler
   onChatMessageReceived,   // WebSocket chat message event handler
-  onEmoteSend              // Function to send emote via WebSocket
+  onEmoteSend,             // Function to send emote via WebSocket
+  triggerLocalEmoteRef     // Ref to expose function for triggering local emotes
 }) {
   const screenRef = useRef();
   const theaterRef = useRef();
@@ -494,6 +497,32 @@ export default function CinemaScene3D({
     lookingAt: [0, 0, 0]
   });
   const [currentUserEmote, setCurrentUserEmote] = useState(null); // Current user's active emote
+  const [localEmoteNotifications, setLocalEmoteNotifications] = useState([]); // Array of {id, emote} for 2D overlay
+
+  // Initialize emote sounds
+  const { playEmoteSound, preloadAllSounds } = useEmoteSounds();
+
+  // Preload all sounds on mount
+  useEffect(() => {
+    preloadAllSounds();
+  }, [preloadAllSounds]);
+
+  // Expose function to trigger local emote notifications via ref
+  useEffect(() => {
+    if (triggerLocalEmoteRef) {
+      triggerLocalEmoteRef.current = (emote) => {
+        // console.log('🎨 [CinemaScene3D] triggerLocalEmote called with:', emote);
+        const emoteId = Date.now();
+        setLocalEmoteNotifications(prev => {
+          // console.log('📝 [CinemaScene3D] Adding local notification via ref');
+          return [...prev, { id: emoteId, emote }];
+        });
+        
+        // Play emote sound
+        playEmoteSound(emote, 0.6);
+      };
+    }
+  }, [triggerLocalEmoteRef, playEmoteSound]);
 
   // GLB model position - center of the cinema box
   const glbModelPosition = [66, 2, 25];
@@ -516,8 +545,11 @@ export default function CinemaScene3D({
   // Keyboard emote listeners (1-5 keys)
   useEffect(() => {
     const handleEmoteKey = (e) => {
+      // console.log('🔑 [CinemaScene3D] Key pressed:', e.key, 'Target:', e.target.tagName);
+      
       // Don't trigger if typing in an input/textarea
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        // console.log('⚠️ [CinemaScene3D] Ignoring key in input/textarea');
         return;
       }
 
@@ -532,11 +564,22 @@ export default function CinemaScene3D({
 
       const emote = emoteMap[e.key];
       if (emote) {
-        console.log('👋 [CinemaScene3D] Sending emote:', emote);
+        // console.log('👋 [CinemaScene3D] Sending emote:', emote);
+        // console.log('📍 [CinemaScene3D] Current localEmoteNotifications:', localEmoteNotifications.length);
         
-        // Set local emote for first-person avatar
+        // Show local 2D emote overlay for current user
+        const emoteId = Date.now();
+        setLocalEmoteNotifications(prev => {
+          // console.log('📝 [CinemaScene3D] Adding emote notification:', { id: emoteId, emote });
+          return [...prev, { id: emoteId, emote }];
+        });
+        
+        // Play emote sound
+        playEmoteSound(emote, 0.6);
+        
+        // Set local emote for first-person avatar (if needed for any other purpose)
         setCurrentUserEmote(emote);
-        setTimeout(() => setCurrentUserEmote(null), 2000); // Clear after 2 seconds
+        setTimeout(() => setCurrentUserEmote(null), 2500); // Clear after 2.5 seconds
         
         // Broadcast to other users
         if (onEmoteSend) {
@@ -548,11 +591,18 @@ export default function CinemaScene3D({
           });
         }
       }
+      // else {
+      //   console.log('🚫 [CinemaScene3D] Key not mapped to emote:', e.key);
+      // }
     };
 
+    // console.log('🎯 [CinemaScene3D] Attaching emote keyboard listener');
     window.addEventListener('keydown', handleEmoteKey);
-    return () => window.removeEventListener('keydown', handleEmoteKey);
-  }, [authenticatedUserID, assignedSeat.id, onEmoteSend]);
+    return () => {
+      // console.log('🗑️ [CinemaScene3D] Removing emote keyboard listener');
+      window.removeEventListener('keydown', handleEmoteKey);
+    };
+  }, [authenticatedUserID, assignedSeat.id, onEmoteSend, localEmoteNotifications, playEmoteSound]);
 
   // Handle camera position updates
   const handlePositionUpdate = (posData) => {
@@ -712,11 +762,12 @@ export default function CinemaScene3D({
           {!hideLabelsForLocalViewer && (
             <AvatarManager
               roomMembers={roomMembers}
+              userSeats={userSeats} // ✅ Pass seat assignments for filtering
               currentUserId={authenticatedUserID}
               onEmoteReceived={onEmoteReceived}
               onAvatarClick={onAvatarClick}
               onChatMessageReceived={onChatMessageReceived}
-              //useGLB={useGLBModel}
+              remoteParticipants={remoteParticipants}
               hideLabelsForLocalViewer={hideLabelsForLocalViewer}
             />
           )}
@@ -763,6 +814,19 @@ export default function CinemaScene3D({
           </div>
         </div>
       )}
+
+      {/* Local Emote Notifications (2D overlay for current user) */}
+      {localEmoteNotifications.map(notification => (
+        <LocalEmoteNotification
+          key={notification.id}
+          emote={notification.emote}
+          onComplete={() => {
+            setLocalEmoteNotifications(prev => 
+              prev.filter(n => n.id !== notification.id)
+            );
+          }}
+        />
+      ))}
     </div>
   );
 }

@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 
 const ScheduleEventModal = ({
+  isOpen,
   roomId,
-  mediaItems,
   onClose,
   onCreate,
   eventToEdit,
 }) => {
+  if (!isOpen) return null;
   // State for form fields
-  const [selectedMedia, setSelectedMedia] = useState('');
+  const [watchType, setWatchType] = useState('3d_cinema');
+  const [mediaFile, setMediaFile] = useState(null);
   const [startTime, setStartTime] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -16,13 +18,14 @@ const ScheduleEventModal = ({
   // Populate form if editing
   useEffect(() => {
     if (eventToEdit) {
-      setSelectedMedia(eventToEdit.media_item_id?.toString() || '');
+      setWatchType(eventToEdit.watch_type || '3d_cinema');
       setStartTime(new Date(eventToEdit.start_time).toISOString().slice(0, 16));
       setTitle(eventToEdit.title || '');
       setDescription(eventToEdit.description || '');
     } else {
       // Reset form for new event
-      setSelectedMedia('');
+      setWatchType('3d_cinema');
+      setMediaFile(null);
       setStartTime('');
       setTitle('');
       setDescription('');
@@ -32,14 +35,15 @@ const ScheduleEventModal = ({
   // Handle form submit
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedMedia || !startTime || !title) return;
+    if (!watchType || !startTime || !title) return;
 
     // Convert local time to UTC
     const localTime = new Date(startTime);
     const utcTime = localTime.toISOString();
 
     const eventData = {
-      media_item_id: parseInt(selectedMedia),
+      watch_type: watchType,
+      media_file_path: mediaFile?.name || '', // Store filename for reference
       start_time: utcTime,
       title,
       description,
@@ -66,20 +70,29 @@ const ScheduleEventModal = ({
         
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700">Media Item</label>
+            <label className="block text-sm font-medium text-gray-700">Watch Type</label>
             <select
-              value={selectedMedia}
-              onChange={(e) => setSelectedMedia(e.target.value)}
+              value={watchType}
+              onChange={(e) => setWatchType(e.target.value)}
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
               required
             >
-              <option value="">Select a media item</option>
-              {mediaItems.map((item) => (
-                <option key={item.ID} value={item.ID}>
-                  {item.original_name}
-                </option>
-              ))}
+              <option value="3d_cinema">🎬 3D Cinema</option>
+              <option value="video_watch">📺 Video Watch</option>
             </select>
+          </div>
+          
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700">Media File (Optional)</label>
+            <input
+              type="file"
+              onChange={(e) => setMediaFile(e.target.files[0])}
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              accept="video/*,audio/*"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Select a media file from your computer (optional)
+            </p>
           </div>
           
           <div className="mb-4">

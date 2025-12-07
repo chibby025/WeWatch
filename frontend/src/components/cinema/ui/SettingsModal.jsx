@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 
 const ShareIcon = '/icons/ShareIcon.svg';
+const UserIcon = '/icons/user1avatar.svg';
 
 const SettingsModal = ({
   isOpen,
@@ -27,10 +28,13 @@ const SettingsModal = ({
   setIsViewLocked,
   lightsOn,
   setLightsOn,
+  // ✅ NEW: User Profile
+  onOpenUserProfile,
 }) => {
   if (!isOpen) return null;
 
   const [seatInput, setSeatInput] = useState('1');
+  const [seatViewExpanded, setSeatViewExpanded] = useState(false);
 
   const handleSeatInputChange = (e) => {
     let val = e.target.value;
@@ -89,6 +93,20 @@ const SettingsModal = ({
             </button>
           </div>
 
+          {/* User Profile */}
+          <div className="px-6 py-4 border-b border-gray-700">
+            <button
+              onClick={() => {
+                onOpenUserProfile?.();
+                onClose();
+              }}
+              className="w-full flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-gray-800 text-gray-200 transition-colors"
+            >
+              <img src={UserIcon} alt="Profile" className="w-6 h-6" />
+              <span className="text-base font-medium">User Profile</span>
+            </button>
+          </div>
+
           {/* Seat Markers Toggle */}
           <div className="px-6 py-4 border-b border-gray-700">
             <label className="flex items-center justify-between cursor-pointer">
@@ -109,9 +127,21 @@ const SettingsModal = ({
             </label>
           </div>
 
-          {/* 🪑 SEAT CONTROLS SECTION */}
+          {/* 🎮 SEAT & VIEW CONTROLS (COLLAPSIBLE) */}
           <div className="px-6 py-4 border-b border-gray-700">
-            <h3 className="text-sm font-semibold text-yellow-400 mb-3">🪑 Seat Controls</h3>
+            <button
+              onClick={() => setSeatViewExpanded(!seatViewExpanded)}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-lg hover:bg-gray-800 text-gray-200 transition-colors"
+            >
+              <span className="text-base font-medium">🎮 Seat & View Controls</span>
+              <span className="text-xl">{seatViewExpanded ? '▼' : '▶'}</span>
+            </button>
+            
+            {seatViewExpanded && (
+              <div className="mt-4 space-y-4">
+                {/* 🪑 SEAT CONTROLS SECTION */}
+                <div>
+                  <h3 className="text-sm font-semibold text-yellow-400 mb-3">🪑 Seat Controls</h3>
             
             {/* Go to Seat Input */}
             <div className="mb-3">
@@ -172,66 +202,69 @@ const SettingsModal = ({
               </div>
             </div>
 
-            <div className="mt-2 text-[10px] text-gray-400">
-              <p>⭐ = Premium middle seats</p>
-            </div>
-          </div>
+                  <div className="mt-2 text-[10px] text-gray-400">
+                    <p>⭐ = Premium middle seats</p>
+                  </div>
+                </div>
 
-          {/* 🎮 VIEW CONTROLS SECTION */}
-          <div className="px-6 py-4 border-b border-gray-700">
-            <h3 className="text-sm font-semibold text-blue-400 mb-3">🎮 View Controls</h3>
-            
-            <button
-              onClick={() => setIsViewLocked(!isViewLocked)}
-              className={`w-full mb-2 px-4 py-2 rounded font-medium transition-colors ${
-                isViewLocked 
-                  ? 'bg-red-600 hover:bg-red-700' 
-                  : 'bg-green-600 hover:bg-green-700'
-              }`}
-            >
-              {isViewLocked ? '🔒 View Locked' : '🔓 View Unlocked'}
-            </button>
+                {/* 🎮 VIEW CONTROLS SECTION */}
+                <div className="pt-4 border-t border-gray-700">
+                  <h3 className="text-sm font-semibold text-blue-400 mb-3">🎮 View Controls</h3>
+                  
+                  <button
+                    onClick={() => setIsViewLocked(!isViewLocked)}
+                    className={`w-full mb-2 px-4 py-2 rounded font-medium transition-colors ${
+                      isViewLocked 
+                        ? 'bg-red-600 hover:bg-red-700' 
+                        : 'bg-green-600 hover:bg-green-700'
+                    }`}
+                  >
+                    {isViewLocked ? '🔒 View Locked' : '🔓 View Unlocked'}
+                  </button>
 
-            <button
-              onClick={() => setLightsOn(!lightsOn)}
-              className={`w-full px-4 py-2 rounded font-medium transition-colors ${
-                lightsOn 
-                  ? 'bg-yellow-600 hover:bg-yellow-700' 
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-            >
-              {lightsOn ? '💡 Lights On' : '🌑 Lights Off'}
-            </button>
+                  <button
+                    onClick={() => setLightsOn(!lightsOn)}
+                    className={`w-full px-4 py-2 rounded font-medium transition-colors ${
+                      lightsOn 
+                        ? 'bg-yellow-600 hover:bg-yellow-700' 
+                        : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                  >
+                    {lightsOn ? '💡 Lights On' : '🌑 Lights Off'}
+                  </button>
 
-            <div className="mt-3 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
-              <p className="font-bold text-white mb-1">🎭 Avatar System:</p>
-              <p>• {roomMembers?.length || 0} users in cinema</p>
-              <p>• Rayman-style floating hands</p>
-              <p>• White gloves with colored glow</p>
-              <p>• Breathing & look-around animations</p>
-            </div>
+                  <div className="mt-3 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
+                    <p className="font-bold text-white mb-1">🎭 Avatar System:</p>
+                    <p>• {roomMembers?.length || 0} users in cinema</p>
+                    <p>• Rayman-style floating hands</p>
+                    <p>• White gloves with colored glow</p>
+                    <p>• Breathing & look-around animations</p>
+                  </div>
 
-            <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
-              <p className="font-bold text-white mb-1">😊 Emote Controls:</p>
-              <p>• Press 1: 👋 Wave</p>
-              <p>• Press 2: 👏 Clap</p>
-              <p>• Press 3: 👍 Thumbs Up</p>
-              <p>• Press 4: 😂 Laugh</p>
-              <p>• Press 5: ❤️ Heart</p>
-            </div>
+                  <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
+                    <p className="font-bold text-white mb-1">😊 Emote Controls:</p>
+                    <p>• Press 1: 👋 Wave</p>
+                    <p>• Press 2: 👏 Clap</p>
+                    <p>• Press 3: 👍 Thumbs Up</p>
+                    <p>• Press 4: 😂 Laugh</p>
+                    <p>• Press 5: ❤️ Heart</p>
+                  </div>
 
-            <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
-              <p className="font-bold text-white mb-1">🔒 Locked Mode (Seated):</p>
-              <p>• WASD / Arrow Keys: Look around</p>
-              <p>• L/C/R: Look left/center/right</p>
-              <p>• Position locked to seat</p>
-              
-              <p className="font-bold text-white mt-2 mb-1">🔓 Unlocked Mode (Free Roam):</p>
-              <p>• WASD: Move</p>
-              <p>• Q/E: Move up/down</p>
-              <p>• Arrow Keys: Pan view</p>
-              <p>• 1-6: Snap to axis views</p>
-            </div>
+                  <div className="mt-2 pt-2 border-t border-gray-700 text-[10px] text-gray-400">
+                    <p className="font-bold text-white mb-1">🔒 Locked Mode (Seated):</p>
+                    <p>• WASD / Arrow Keys: Look around</p>
+                    <p>• L/C/R: Look left/center/right</p>
+                    <p>• Position locked to seat</p>
+                    
+                    <p className="font-bold text-white mt-2 mb-1">🔓 Unlocked Mode (Free Roam):</p>
+                    <p>• WASD: Move</p>
+                    <p>• Q/E: Move up/down</p>
+                    <p>• Arrow Keys: Pan view</p>
+                    <p>• 1-6: Snap to axis views</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Position Debug Toggle */}

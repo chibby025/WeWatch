@@ -15,22 +15,81 @@ const CinemaSeatGridModal = ({
   onSwapDecline,
   // New: allow parent to override take-seat logic
   onTakeSeat,
+  // Theater-specific props
+  isHost = false,
+  theaters = [],
+  selectedTheaterId = null,
+  onTheaterChange = null,
+  userTheaters = {}, // Map of userId -> {theater_number, seat_row, seat_col}
 }) => {
+  const [localSelectedTheater, setLocalSelectedTheater] = React.useState(null);
+
+  // Determine which theater to display
+  const activeTheaterId = selectedTheaterId || localSelectedTheater || theaters[0]?.id;
   if (!isOpen) return null;
+
+  // Debug logging
+  console.log('🪑 [CinemaSeatGridModal] Rendering with:', {
+    userSeats,
+    currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+    roomMembers: roomMembers.map(m => ({ id: m.id, username: m.username })),
+    currentUserSeatId: currentUser?.id ? userSeats[currentUser.id] : null
+  });
 
   const rowLetter = (row) => String.fromCharCode(65 + row); // A-F
 
-  // Build seat → username map
+  // Get current user's seat (must be declared before using it)
+  const currentUserSeatId = currentUser?.id ? userSeats[currentUser.id] : null;
+  console.log('🪑 [CinemaSeatGridModal] Current user seat:', currentUserSeatId);
+
+  // Get selected theater info
+  const selectedTheater = theaters.find(t => t.id === activeTheaterId);
+  const selectedTheaterNumber = selectedTheater?.theater_number;
+
+  // Build seat → username map (filtered by theater if applicable)
   const usernameBySeat = {};
   roomMembers.forEach(member => {
-    const seatId = userSeats[member.id];
+    // Check both id and user_id fields for compatibility
+    const userId = member.id || member.user_id;
+    const seatId = userSeats[userId];
+    
+    // If viewing specific theater as host, only show users in that theater
+    if (isHost && theaters.length > 1 && selectedTheaterNumber) {
+      const memberTheater = userTheaters[userId];
+      // Skip users not in the selected theater
+      if (!memberTheater || memberTheater.theater_number !== selectedTheaterNumber) {
+        return;
+      }
+    }
+    
+    console.log(`🪑 [CinemaSeatGridModal] Checking member:`, {
+      member_id: member.id,
+      member_user_id: member.user_id,
+      userId,
+      seatId,
+      username: member.username,
+      userSeats_for_this_id: userSeats[userId]
+    });
+    
     if (seatId) {
-      usernameBySeat[seatId] = member.username || `User${member.id}`;
+      usernameBySeat[seatId] = member.username || `User${userId}`;
+      console.log(`🪑 [CinemaSeatGridModal] Mapped seat ${seatId} to ${member.username} (ID: ${userId})`);
     }
   });
-
-  // Get current user's seat
-  const currentUserSeatId = currentUser?.id ? userSeats[currentUser.id] : null;
+  
+  // ✅ Ensure current user's name is displayed on their seat (if in selected theater)
+  if (currentUser && currentUserSeatId) {
+    // Only show current user if in selected theater (when filtering)
+    if (isHost && theaters.length > 1 && selectedTheaterNumber) {
+      const currentUserTheater = userTheaters[currentUser.id];
+      if (currentUserTheater && currentUserTheater.theater_number === selectedTheaterNumber) {
+        usernameBySeat[currentUserSeatId] = currentUser.username || `User${currentUser.id}`;
+      }
+    } else {
+      usernameBySeat[currentUserSeatId] = currentUser.username || `User${currentUser.id}`;
+    }
+    console.log(`🪑 [CinemaSeatGridModal] Force-mapped current user seat ${currentUserSeatId} to ${currentUser.username}`);
+  }
 
   // Modal is in swap mode?
   const isSwapMode = !!seatSwapRequest;
@@ -116,17 +175,41 @@ const CinemaSeatGridModal = ({
         className="bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-600 w-full max-w-lg max-h-[85vh] overflow-hidden shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center p-5 border-b border-gray-700">
-          <h3 className="text-white font-bold text-lg">
-            {isRequestingSwap ? 'Seat Swap Requested' : 'Choose Your Seat'}
-          </h3>
-          <button 
-            onClick={onClose}
-            className="text-gray-400 hover:text-white text-2xl font-bold"
-            aria-label="Close seat selector"
-          >
+        <div className="p-5 border-b border-gray-700">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-white font-bold text-lg">
+              {isRequestingSwap ? 'Seat Swap Requested' : 'Choose Your Seat'}
+            </h3>
+            <button 
+              onClick={onClose}
+              className="text-gray-400 hover:text-white text-2xl font-bold"
+              aria-label="Close seat selector"
+            >
             &times;
           </button>
+          </div>
+          
+          {/* Theater Selector Dropdown (Host only, when multiple theaters exist) */}
+          {isHost && theaters.length > 1 && (
+            <div className="flex items-center gap-3">
+              <label className="text-gray-400 text-sm font-medium">Theater:</label>
+              <select
+                value={activeTheaterId || ''}
+                onChange={(e) => {
+                  const theaterId = parseInt(e.target.value);
+                  setLocalSelectedTheater(theaterId);
+                  onTheaterChange?.(theaterId);
+                }}
+                className="bg-gray-700 text-white px-3 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500 text-sm"
+              >
+                {theaters.map(theater => (
+                  <option key={theater.id} value={theater.id}>
+                    {theater.custom_name || `Theater ${theater.theater_number}`} ({theater.occupied_seats}/{theater.max_seats})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="p-5 overflow-y-auto max-h-[65vh]">
@@ -181,8 +264,8 @@ const CinemaSeatGridModal = ({
                     />
                   </button>
 
-                  {username && !isCurrentUser && (
-                    <span className="text-[9px] text-blue-300 mt-1 max-w-12 truncate text-center font-medium">
+                  {username && (
+                    <span className={`text-[9px] mt-1 max-w-12 truncate text-center font-medium ${isCurrentUser ? 'text-green-300 font-bold' : 'text-blue-300'}`}>
                       {username}
                     </span>
                   )}

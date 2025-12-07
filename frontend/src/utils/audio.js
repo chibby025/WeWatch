@@ -20,3 +20,17 @@ export const playMicOffSound = () => {
   audio.volume = 0.25;
   audio.play().catch(e => console.warn("Mic off sound failed:", e));
 };
+
+// Silence mode on sound
+export const playSilenceOnSound = () => {
+  const audio = new Audio('/sounds/mic-off.mp3'); // Reuse mic-off sound for now
+  audio.volume = 0.2;
+  audio.play().catch(e => console.warn("Silence on sound failed:", e));
+};
+
+// Silence mode off sound
+export const playSilenceOffSound = () => {
+  const audio = new Audio('/sounds/mic-on.mp3'); // Reuse mic-on sound for now
+  audio.volume = 0.2;
+  audio.play().catch(e => console.warn("Silence off sound failed:", e));
+};
