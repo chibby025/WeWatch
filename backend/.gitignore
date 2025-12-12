@@ -1,0 +1,35 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Binary files
+main
+server
+*.exe
+*.exe~
+*.test
+
+# Uploads directory (user-generated content)
+uploads/
+!uploads/.gitkeep
+
+# Database files
+*.db
+*.sqlite
+
+# Go coverage files
+*.out
+coverage.*
+*.coverprofile
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+tmp/
