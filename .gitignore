@@ -66,4 +66,6 @@ Thumbs.db
 # Database / Uploads
 # ======================
 *.db
-uploads/
+uploads/WITHDRAWAL_ISSUES_ANALYSIS.md
+documentation/PAYMENT_FLOW_EXPLAINED.md
+documentation/PAYSTACK_TRANSFER_SETUP.md
