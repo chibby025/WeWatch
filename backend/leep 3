@@ -1,0 +1,4 @@
+ id | name | status | session_id | ended_at | room_id 
+----+------+--------+------------+----------+---------
+(0 rows)
+

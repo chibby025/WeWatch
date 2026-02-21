@@ -83,6 +83,20 @@ func RegisterHandler(c *gin.Context) {
         return
     }
 
+    // Create wallet for new user
+    wallet := models.UserWallet{
+        UserID:         newUser.ID,
+        TokenBalance:   0,
+        LifetimeEarned: 0,
+        LifetimeSpent:  0,
+    }
+    if err := DB.Create(&wallet).Error; err != nil {
+        log.Printf("⚠️ Warning: Failed to create wallet for user %d: %v", newUser.ID, err)
+        // Don't fail registration if wallet creation fails - can be created later
+    } else {
+        log.Printf("💰 Wallet created for new user %d", newUser.ID)
+    }
+
     // User created successfully!
     log.Printf("User registered successfully: ID=%d, Username=%s, Email=%s", newUser.ID, newUser.Username, newUser.Email)
 
@@ -155,8 +169,8 @@ func LoginHandler(c *gin.Context) {
         Path:     "/",
         MaxAge:   7 * 24 * 60 * 60, // 7 days
         HttpOnly: true,
-        Secure:   false, // Set to true in production with HTTPS
-        SameSite: http.SameSiteLaxMode,
+        Secure:   true, // Required for SameSite=None (works with HTTPS/tunnels)
+        SameSite: http.SameSiteNoneMode, // Allow cross-origin cookies for tunnels
     }
     http.SetCookie(c.Writer, cookie)
 
@@ -182,8 +196,8 @@ func LogoutHandler(c *gin.Context) {
         Path:     "/",
         MaxAge:   -1, // Expire immediately
         HttpOnly: true,
-        Secure:   false,
-        SameSite: http.SameSiteLaxMode,
+        Secure:   true,
+        SameSite: http.SameSiteNoneMode,
     }
     http.SetCookie(c.Writer, cookie)
 
@@ -238,6 +252,13 @@ func GetCurrentUserHandler(c *gin.Context) {
         }
     }
 
+    // ✅ Fetch user's room memberships for instant client-side checks
+    var roomMemberships []uint
+    DB.Model(&models.UserRoom{}).
+        Where("user_id = ?", user.ID).
+        Pluck("room_id", &roomMemberships)
+    log.Printf("Fetched %d room memberships for user %d", len(roomMemberships), user.ID)
+
     // ✅ DEV-ONLY: Include token for WebSocket (remove before production)
     token, _ := c.Cookie("wewatch_token")
     response := gin.H{
@@ -247,11 +268,19 @@ func GetCurrentUserHandler(c *gin.Context) {
             "email":      user.Email,
             "avatar_url": user.AvatarURL,
             "bio":        user.Bio,
+            "role":       user.Role,
             "created_at": user.CreatedAt,
         },
+        "room_memberships": roomMemberships,
     }
     if token != "" {
-        response["ws_token"] = token // Only for WebSocket setup in dev
+        // ✅ Validate token before returning it (ensure it's a valid JWT, not a UUID)
+        _, err := utils.ValidateJWT(token)
+        if err == nil {
+            response["ws_token"] = token // Only include if valid
+        } else {
+            log.Printf("⚠️ Invalid token in cookie for user %d, not including ws_token: %v", user.ID, err)
+        }
     }
 
     log.Printf("Fetched current user details: ID=%d, Username=%s", user.ID, user.Username)

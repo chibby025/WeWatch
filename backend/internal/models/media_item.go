@@ -1,6 +1,7 @@
 package models
 
 import (
+	"time"
 	"gorm.io/gorm"
 )
 
@@ -30,8 +31,10 @@ type MediaItem struct {
 	UploaderID uint `gorm:"not null;index" json:"uploader_id"` // Index for faster lookups
 	Uploader User `gorm:"foreignKey:UploaderID" json:"-"` // Optional: Embed User data
 	OrderIndex 	int 	`gorm:"type:int;default:0" json:"order_index"`
-	PosterURL string `gorm:"type:text;not null;default:''" json:"poster_url"` // ← NEW
-	Duration  string `gorm:"type:varchar(20);not null;default:''" json:"duration"` // ← NEW
+	PosterURL string `gorm:"type:text;not null;default:''" json:"poster_url"` // Thumbnail image
+	Duration  string `gorm:"type:varchar(20);not null;default:''" json:"duration"` // Video duration
+	PreviewURL string `gorm:"type:text" json:"preview_url,omitempty"` // Animated preview GIF
+	PreviewGeneratedAt *time.Time `json:"preview_generated_at,omitempty"` // When preview was last generated
 
 	// Add fields later like Title, Description, Duration (if extractable), ThumbnailPath, etc
 }

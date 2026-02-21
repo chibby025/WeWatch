@@ -6,7 +6,8 @@ import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
 import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory } from '../../services/api';
 import apiClient from '../../services/api';
-import { getRoom, getRoomMembers } from '../../services/api';
+import { getRoom, getRoomMembers, getActiveSession } from '../../services/api';
+import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
 // ✅ Import LiveKit hook + events
 import useLiveKitRoom from '../../hooks/useLiveKitRoom';
 import { Track, ParticipantEvent, RoomEvent } from 'livekit-client';
@@ -25,24 +26,54 @@ import ScrollableSeatGrid from './ui/ScrollableSeatGrid';
 import ShareModal from '../ShareModal';
 import MembersModal from '../../components/MembersModal.jsx';
 import RemoteAudioPlayer from './ui/RemoteAudioPlayer';
+import FloatingGiftIcon from '../FloatingGiftIcon';
+import DonationNotification from '../DonationNotification';
+import axios from 'axios';
 // Import sounds
 import { playSeatSound, playMicOnSound, playMicOffSound } from '../../utils/audio';
 import ChatHomeModal from '../ChatHomeModal.jsx';
+import PrivateChatModal from '../PrivateChatModal.jsx';
+// Quiz system modals
+import QuizManagementModal from './modals/QuizManagementModal';
+import MakeQuizModal from './modals/MakeQuizModal';
+import TakeQuizModal from './modals/TakeQuizModal';
+import QuizResultsModal from './modals/QuizResultsModal';
 
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
+  
+  // Move these to top before any useEffect that uses them
+  const location = useLocation();
+  const [roomHostId, setRoomHostId] = useState(null);
+  const { roomId } = useParams();
+  const navigate = useNavigate();
+  const { currentUser, wsToken, loading: authLoading } = useAuth();
+  
   useEffect(() => {
     console.log(`🏁🏁🏁 [${componentIdRef.current}] COMPONENT MOUNTED`);
     return () => {
       console.log(`💀💀💀 [${componentIdRef.current}] COMPONENT UNMOUNTED`);
     };
   }, []);
-
-  const location = useLocation();
-  const [roomHostId, setRoomHostId] = useState(null);
-  const { roomId } = useParams();
-  const navigate = useNavigate();
-  const { currentUser, wsToken, loading: authLoading } = useAuth();
+  
+  // 🎁 Fetch wallet balance on mount
+  useEffect(() => {
+    const fetchWallet = async () => {
+      try {
+        const response = await axios.get('/api/wallets/me', {
+          withCredentials: true
+        });
+        setTokenBalance(response.data?.wallet?.token_balance || 0);
+      } catch (err) {
+        console.error('Error fetching wallet:', err);
+        setTokenBalance(0);
+      }
+    };
+    
+    if (currentUser) {
+      fetchWallet();
+    }
+  }, [currentUser]);
   
 
   const stableTokenRef = useRef(null);
@@ -50,10 +81,71 @@ export default function VideoWatch() {
     stableTokenRef.current = wsToken;
   }
 
+  // ✅ Extract session_id from URL for WebSocket connection and instant watch flag
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlSessionId = urlParams.get('session_id');
+  const isInstantWatch = urlParams.get('instant') === 'true';
+  console.log('🔍 [VideoWatch] Extracted session_id from URL:', urlSessionId);
+
   const { sendMessage, messages, isConnected, sessionStatus, setBinaryMessageHandler } = useWebSocket(
     roomId,
-    stableTokenRef.current
+    stableTokenRef.current,
+    urlSessionId  // ✅ Pass session_id to WebSocket so backend can add us to session members
   );
+
+  // 🎯 HYBRID WATCH TYPE DETECTION
+  // Primary: Use sessionStatus from WebSocket
+  // Fallback: Parse from URL for initial render
+  const watchType = sessionStatus?.watch_type || (
+    location.pathname.includes('/lecture-hall/') ? 'classroom' :
+    location.pathname.includes('/cinema-3d-demo/') ? '3d_cinema' :
+    'video'
+  );
+  const classType = sessionStatus?.class_type || (
+    location.pathname.includes('/lecture-hall/') ? 'lecture_hall' : null
+  );
+  
+  // Derived flags for feature detection
+  const isClassroom = watchType === 'classroom';
+  const isLectureHall = isClassroom && classType === 'lecture_hall';
+
+  // 🎫 Ticket enforcement - check on mount for paid sessions
+  useEffect(() => {
+    const checkTicket = async () => {
+      if (!urlSessionId || !currentUser) return;
+      
+      try {
+        // Get session details to check if ticketing is enabled
+        const response = await apiClient.get(`/api/rooms/${roomId}/active-session`);
+        const sessionDetails = response.data;
+        
+        if (!sessionDetails || sessionDetails.session_id !== urlSessionId) {
+          console.log('❌ [VideoWatch] Session not found or mismatch');
+          return;
+        }
+        
+        const isUserHost = currentUser.id === sessionDetails.host_id;
+        
+        if (sessionDetails.ticketing_enabled && !isUserHost) {
+          console.log('🎟️ [VideoWatch] Paid session detected, checking ticket...');
+          
+          // Check cache first
+          if (!hasTicketCache(sessionDetails.id)) {
+            console.log('❌ [VideoWatch] No ticket found - redirecting to room page');
+            toast.error('This is a paid session. Please purchase a ticket.');
+            navigate(`/rooms/${roomId}?openTicketModal=true`);
+            return;
+          }
+          
+          console.log('✅ [VideoWatch] Ticket verified in cache');
+        }
+      } catch (err) {
+        console.error('❌ [VideoWatch] Failed to check ticket:', err);
+      }
+    };
+    
+    checkTicket();
+  }, [urlSessionId, currentUser, roomId, navigate]);
 
   // Handle session errors - redirect if session has ended
   useEffect(() => {
@@ -68,15 +160,15 @@ export default function VideoWatch() {
     }
   }, [sessionStatus?.error, sessionStatus?.isActive, roomId, navigate]);
 
-  // ✅ LIVEKIT INTEGRATION
+  // ✅ LIVEKIT INTEGRATION with auto-subscribe (everyone hears everyone)
   const {
     room,
     localParticipant,
     remoteParticipants,
-    isLiveKitConnected,
+    isConnected: isLiveKitConnected,
     connect: connectLiveKit,
     disconnect: disconnectLiveKit
-  } = useLiveKitRoom(roomId, currentUser);
+  } = useLiveKitRoom(roomId, currentUser, true); // ✅ autoSubscribe=true for watch sessions
 
   // 🎥 ALL STATE DECLARATIONS (must be before useEffects that use them)
   const [currentMedia, setCurrentMedia] = useState(null);
@@ -101,7 +193,9 @@ export default function VideoWatch() {
   const [hasMicPermission, setHasMicPermission] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [activePlatformShare, setActivePlatformShare] = useState(null);
-  const [isSeatedMode] = useState(true); // ✅ Always enabled - row-based audio by default
+  // 🪑 Seats Mode: Only enabled for 3D Cinema & Lecture Hall (row-based audio)
+  // VideoWatch (2D) = No seats, everyone in global audio space
+  const [isSeatedMode] = useState(watchType !== 'video');
   const [cameraPreviewStream, setCameraPreviewStream] = useState(null);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [isScreenSharingActive, setIsScreenSharingActive] = useState(false);
@@ -115,18 +209,121 @@ export default function VideoWatch() {
   const [sessionChatMessages, setSessionChatMessages] = useState([]);
   const [newSessionMessage, setNewSessionMessage] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const urlParams = new URLSearchParams(window.location.search);
-  const isInstantWatch = urlParams.get('instant') === 'true';
   const [showCinemaSeatView, setShowCinemaSeatView] = useState(false);
   const [isHostBroadcasting, setIsHostBroadcasting] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
+  
+  // 🔍 Debug: Log roomMembers changes
+  useEffect(() => {
+    console.log('👥 [VideoWatch] roomMembers state changed:', roomMembers);
+    console.log('👥 [VideoWatch] roomMembers count:', roomMembers?.length);
+  }, [roomMembers]);
+  
+  // ✅ Fetch session members from API (active watch session participants)
+  useEffect(() => {
+    console.log('🔄 [fetchSessionMembers useEffect] TRIGGERED with roomId:', roomId);
+    
+    const fetchSessionMembers = async () => {
+      console.log('🚀 [fetchSessionMembers] Function starting...');
+      console.log('🔍 [fetchSessionMembers] roomId value:', roomId, 'type:', typeof roomId);
+      
+      if (!roomId) {
+        console.warn('⚠️ [fetchSessionMembers] No roomId, ABORTING fetch');
+        return;
+      }
+      
+      try {
+        console.log('📡 [fetchSessionMembers] ✅ About to call getActiveSession API for room:', roomId);
+        const response = await getActiveSession(roomId);
+        console.log('📥 [fetchSessionMembers] ✅ API call completed successfully');
+        console.log('📥 [fetchSessionMembers] Full response object:', response);
+        console.log('📥 [fetchSessionMembers] response.data:', response.data);
+        console.log('📥 [fetchSessionMembers] response.data type:', typeof response.data);
+        console.log('📥 [fetchSessionMembers] response.data.members:', response.data?.members);
+        
+        const sessionMembers = response.data?.members || [];
+        console.log('👥 [fetchSessionMembers] Extracted sessionMembers array:', sessionMembers);
+        console.log('👥 [fetchSessionMembers] sessionMembers.length:', sessionMembers.length);
+        console.log('👥 [fetchSessionMembers] Is array?:', Array.isArray(sessionMembers));
+        
+        if (sessionMembers.length > 0) {
+          console.log('✅ [fetchSessionMembers] Found', sessionMembers.length, 'members:');
+          sessionMembers.forEach((m, idx) => {
+            console.log(`  Member ${idx + 1}:`, {
+              user_id: m.user_id,
+              username: m.username,
+              user_role: m.user_role,
+              raw: m
+            });
+          });
+        } else {
+          console.warn('⚠️ [fetchSessionMembers] sessionMembers array is EMPTY');
+        }
+        
+        // Transform to match component format
+        console.log('🔄 [fetchSessionMembers] Transforming members to component format...');
+        const formattedMembers = sessionMembers.map(member => {
+          const formatted = {
+            id: member.user_id,
+            Username: member.username || `User ${member.user_id}`,
+            username: member.username || `User ${member.user_id}`,
+            avatar_url: member.avatar_url || null,
+            user_role: member.user_role || 'viewer',
+          };
+          console.log('  Formatted member:', formatted);
+          return formatted;
+        });
+        
+        console.log('📤 [fetchSessionMembers] About to call setRoomMembers with', formattedMembers.length, 'members');
+        console.log('📤 [fetchSessionMembers] formattedMembers:', formattedMembers);
+        setRoomMembers(formattedMembers);
+        console.log('✅ [fetchSessionMembers] setRoomMembers called successfully');
+        
+      } catch (error) {
+        console.error('❌ [fetchSessionMembers] API call FAILED');
+        console.error('❌ [fetchSessionMembers] Error object:', error);
+        console.error('❌ [fetchSessionMembers] Error message:', error?.message);
+        console.error('❌ [fetchSessionMembers] Error response:', error?.response);
+        console.error('❌ [fetchSessionMembers] Error response data:', error?.response?.data);
+        console.error('❌ [fetchSessionMembers] Error response status:', error?.response?.status);
+        // Don't show error to user - member list will populate from WebSocket events
+      }
+    };
+    
+    console.log('⏱️ [fetchSessionMembers useEffect] About to call fetchSessionMembers()...');
+    fetchSessionMembers();
+    console.log('⏱️ [fetchSessionMembers useEffect] fetchSessionMembers() called (async, will complete later)');
+  }, [roomId]);
+  
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [screenShareUrl, setScreenShareUrl] = useState(null);
   const sidebarRef = useRef(null);
   const processedMessageCountRef = useRef(0);
   const chatEndRef = useRef(null);
+  const videoPlayerRef = useRef(null); // 🎬 Direct access to video element
   const [localScreenTrack, setLocalScreenTrack] = useState(null);
+  const [pendingSeekTime, setPendingSeekTime] = useState(null); // ⏱️ State-based seek (triggers re-renders)
+  
+  // 📹 LiveShare state (screen + camera)
+  const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both'
+  const [sharingSource, setSharingSource] = useState(null); // 'liveshare' | 'watchfrom' | null
+  const screenShareTrackRef = useRef(null);
+  const cameraShareTrackRef = useRef(null);
+  const liveShareVideoRef = useRef(null); // Separate ref for LiveShare main video
+  const liveShareCameraVideoRef = useRef(null); // Separate ref for LiveShare PIP camera
+  const [screenShareTrackSid, setScreenShareTrackSid] = useState(null);
+  const [cameraShareTrackSid, setCameraShareTrackSid] = useState(null);
+
+  // 📝 QUIZ SYSTEM STATE
+  const [quizzes, setQuizzes] = useState([]); // All quizzes in this session
+  const [activeQuiz, setActiveQuiz] = useState(null); // Currently in-progress quiz
+  const [currentQuizData, setCurrentQuizData] = useState(null); // Quiz for student to take
+  const [quizResults, setQuizResults] = useState(null); // Student's results
+  const [isQuizManagementOpen, setIsQuizManagementOpen] = useState(false);
+  const [isMakeQuizOpen, setIsMakeQuizOpen] = useState(false);
+  const [isTakeQuizOpen, setIsTakeQuizOpen] = useState(false);
+  const [isQuizResultsOpen, setIsQuizResultsOpen] = useState(false);
   
   // 🎤 Audio device management
   const [audioDevices, setAudioDevices] = useState([]);
@@ -143,19 +340,85 @@ export default function VideoWatch() {
   const [privateChatUser, setPrivateChatUser] = useState(null);
   const [showPrivateChat, setShowPrivateChat] = useState(false);
   const [privateMessages, setPrivateMessages] = useState({});
+  const [unreadMessages, setUnreadMessages] = useState({}); // {userId: unreadCount} - ✅ Unread tracking
 
   // 🔇 Silence mode state
   const [isSilenceMode, setIsSilenceMode] = useState(false);
+  
+  // 🎁 Wallet balance for gifting
+  const [tokenBalance, setTokenBalance] = useState(0);
 
   // 🔊 Broadcast permissions tracking
   const [broadcastPermissions, setBroadcastPermissions] = useState({}); // userId -> boolean
-  const [remoteAudioStates, setRemoteAudioStates] = useState({}); // userId -> boolean (speaking/muted)
+  const [remoteAudioStates, setRemoteAudioStates] = useState({}); // userId -> {isSpeaking, audioLevel, isMuted}
+  
+  // 🔇 Host mute control
+  const [isMutedByHost, setIsMutedByHost] = useState(false); // Locked mute by host
+  const [showMuteAllBanner, setShowMuteAllBanner] = useState(false); // Show mute notification
+  const [isMuteAllActive, setIsMuteAllActive] = useState(false); // Track toggle state for host
 
+  // 🎭 Determine if current user is host (MUST BE BEFORE useEffects that use isHost)
+  const isHost = React.useMemo(() => {
+    // ✅ Primary: Use sessionStatus.hostId from WebSocket
+    // ✅ Fallback: Use roomHostId from session_status members
+    const hostId = sessionStatus?.hostId || roomHostId;
+    const result = currentUser?.id === hostId;
+    
+    return result;
+  }, [currentUser?.id, sessionStatus?.hostId, roomHostId]);
+
+  // 🔄 MEMBER: Request current playback state on connect/reconnect
   useEffect(() => {
-    if (roomId && currentUser) {
-      connectLiveKit();
+    if (!isConnected || !currentUser?.id || isHost) return;
+    
+    // Wait a moment for host to be established
+    const timer = setTimeout(() => {
+      console.log('🔄 [VideoWatch] MEMBER requesting current state from host');
+      sendMessage({
+        type: 'request_playback_state',
+        requester_id: currentUser.id,
+        timestamp: Date.now()
+      });
+    }, 500); // Small delay to ensure host is ready
+    
+    return () => clearTimeout(timer);
+  }, [isConnected, currentUser?.id, isHost, sendMessage]);
+
+  // ✅ Connect to LiveKit when room and user are ready
+  const hasAttemptedLiveKitConnection = useRef(false);
+  
+  useEffect(() => {
+    if (!roomId || !currentUser?.id || hasAttemptedLiveKitConnection.current) {
+      console.log('⏳ [VideoWatch] Waiting for LiveKit connection requirements:', {
+        hasRoomId: !!roomId,
+        hasCurrentUser: !!currentUser?.id,
+        hasAttempted: hasAttemptedLiveKitConnection.current
+      });
+      return;
     }
-  }, [roomId, currentUser?.id]);
+    
+    console.log('🎵 [VideoWatch] Connecting to LiveKit for room:', roomId, 'user:', currentUser.id);
+    hasAttemptedLiveKitConnection.current = true;
+    connectLiveKit();
+    
+    return () => {
+      console.log('🔌 [VideoWatch] Disconnecting from LiveKit');
+      disconnectLiveKit();
+      hasAttemptedLiveKitConnection.current = false;
+    };
+  }, [roomId, currentUser?.id, connectLiveKit, disconnectLiveKit]);
+  
+  // 🔍 Debug: Log LiveKit connection status changes
+  useEffect(() => {
+    console.log('🔍 [VideoWatch] LiveKit status:', {
+      isLiveKitConnected,
+      hasLocalParticipant: !!localParticipant,
+      hasRoom: !!room,
+      roomState: room?.state,
+      localParticipantIdentity: localParticipant?.identity,
+      remoteParticipantsCount: room?.remoteParticipants?.size || 0
+    });
+  }, [isLiveKitConnected, localParticipant, room]);
 
   // ✅ Listen for remote participant track events
   useEffect(() => {
@@ -187,6 +450,236 @@ export default function VideoWatch() {
       room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
     };
   }, [room]);
+
+  // ✅ Track speaking state and audio levels from LiveKit using activeSpeakersChanged
+  useEffect(() => {
+    if (!room) {
+      console.log('⚠️ [LiveKit Audio] No room - skipping audio tracking');
+      return;
+    }
+
+    console.log('🎤 [LiveKit Audio] Setting up activeSpeakersChanged listener');
+
+    /**
+     * Track ALL active speakers in the room (fires when speaker list changes)
+     * Updates remoteAudioStates with real-time audio levels for dynamic waveform animation
+     */
+    const handleActiveSpeakersChanged = (speakers) => {
+      // Build new state: { userId: { isSpeaking: true, audioLevel: 0-255 } }
+      const newAudioStates = {};
+      
+      speakers.forEach((speaker) => {
+        // Parse userId from identity (format: "user-123" or "user-123-abc")
+        const identityParts = speaker.identity.split('-');
+        const speakerUserId = identityParts[1]; // Extract user ID
+        
+        const audioLevel = speaker.audioLevel || 0; // 0-1 float from LiveKit
+        const normalizedLevel = Math.round(audioLevel * 255); // Convert to 0-255 for waveform
+        
+        newAudioStates[speakerUserId] = {
+          isSpeaking: true,
+          audioLevel: normalizedLevel,
+        };
+        
+        console.log(`🎧 [Audio State] User ${speakerUserId}: audioLevel=${normalizedLevel}/255 (${Math.round(audioLevel * 100)}%)`);
+      });
+      
+      // Update state: reset all to silent, then override with active speakers
+      setRemoteAudioStates(prev => {
+        const next = {};
+        
+        // Reset all existing users to silent
+        Object.keys(prev).forEach(userId => {
+          next[userId] = { 
+            ...prev[userId], 
+            isSpeaking: false, 
+            audioLevel: 0 
+          };
+        });
+        
+        // Add active speakers (overrides silent state)
+        Object.keys(newAudioStates).forEach(userId => {
+          next[userId] = {
+            ...prev[userId], // Preserve isMuted from WebSocket
+            ...newAudioStates[userId]
+          };
+        });
+        
+        console.log('🔊 [remoteAudioStates] Updated state:', next);
+        return next;
+      });
+      
+      // Log only when there are active speakers (reduce console noise)
+      if (speakers.length > 0) {
+        console.log(`🎤 [Active Speakers] ${speakers.length} speaking:`,
+          speakers.map(s => {
+            const userId = s.identity.split('-')[1];
+            return `User ${userId} (${Math.round(s.audioLevel * 100)}%)`;
+          }).join(', ')
+        );
+      }
+    };
+
+    // Register room-level speaker tracking
+    room.on('activeSpeakersChanged', handleActiveSpeakersChanged);
+    console.log('✅ [LiveKit Audio] activeSpeakersChanged listener registered');
+
+    // Cleanup
+    return () => {
+      console.log('🧹 [LiveKit Audio] Cleaning up activeSpeakersChanged listener');
+      room.off('activeSpeakersChanged', handleActiveSpeakersChanged);
+    };
+  }, [room]);
+
+  // ✅ MEMBER: Explicitly subscribe to video tracks (screen share, camera)
+  useEffect(() => {
+    if (!room) return;
+
+    const handleTrackPublished = (publication, participant) => {
+      console.log('🎬 [VideoWatch MEMBER] Track published:', {
+        source: publication.source,
+        kind: publication.kind,
+        trackSid: publication.trackSid,
+        participant: participant.identity,
+        isSubscribed: publication.isSubscribed
+      });
+      
+      // ✅ Subscribe to all video tracks (screen share, camera)
+      if (publication.kind === 'video') {
+        console.log('📹 [VideoWatch MEMBER] Subscribing to video track:', publication.trackSid);
+        publication.setSubscribed(true);
+      }
+    };
+
+    // ✅ Subscribe to any existing video tracks on mount
+    room.remoteParticipants.forEach((participant) => {
+      participant.videoTrackPublications.forEach((publication) => {
+        if (!publication.isSubscribed) {
+          console.log('📹 [VideoWatch MEMBER] Subscribing to existing video track:', {
+            participant: participant.identity,
+            trackSid: publication.trackSid,
+            source: publication.source
+          });
+          publication.setSubscribed(true);
+        }
+      });
+    });
+
+    // Listen for new track publications
+    room.on(RoomEvent.TrackPublished, handleTrackPublished);
+
+    return () => {
+      room.off(RoomEvent.TrackPublished, handleTrackPublished);
+    };
+  }, [room]);
+
+  // 📝 QUIZ SYSTEM: WebSocket Message Handlers
+  useEffect(() => {
+    if (!messages || messages.length === 0) return;
+
+    const latestMessage = messages[messages.length - 1];
+    if (!latestMessage) return;
+
+    try {
+      const messageData = typeof latestMessage === 'string' 
+        ? JSON.parse(latestMessage) 
+        : latestMessage;
+
+      // ✅ Handle quiz_created - Host receives confirmation
+      if (messageData.type === 'quiz_created') {
+        console.log('📝 [VideoWatch] Quiz created:', messageData.data);
+        toast.success(`Quiz "${messageData.data.name}" created successfully!`);
+        
+        // Add to quizzes list
+        setQuizzes(prev => [...prev, messageData.data]);
+      }
+
+      // ✅ Handle quiz_published - All users receive notification
+      if (messageData.type === 'quiz_published') {
+        console.log('📝 [VideoWatch] Quiz published:', messageData.data);
+        
+        const quizInfo = messageData.data;
+        setActiveQuiz(quizInfo);
+        
+        // Show notification to students
+        if (!isHost) {
+          toast.success(`📝 New quiz available: ${quizInfo.name}`, {
+            duration: 5000,
+            icon: '📝'
+          });
+          
+          // Auto-open quiz modal for students
+          setTimeout(() => {
+            handleRequestQuiz(quizInfo.quiz_id);
+          }, 1000);
+        } else {
+          toast.success(`Quiz "${quizInfo.name}" published to all students!`);
+        }
+      }
+
+      // ✅ Handle quiz_data - Student receives quiz questions
+      if (messageData.type === 'quiz_data') {
+        console.log('📝 [VideoWatch] Received quiz data:', messageData.data);
+        setCurrentQuizData(messageData.data);
+        setIsTakeQuizOpen(true);
+      }
+
+      // ✅ Handle quiz_results - Student receives graded results
+      if (messageData.type === 'quiz_results') {
+        console.log('📝 [VideoWatch] Received quiz results:', messageData.data);
+        setQuizResults(messageData.data);
+        setIsTakeQuizOpen(false);
+        setIsQuizResultsOpen(true);
+        
+        // Show score notification
+        const percentage = ((messageData.data.score / messageData.data.total) * 100).toFixed(1);
+        toast.success(`Quiz submitted! Score: ${messageData.data.score}/${messageData.data.total} (${percentage}%)`, {
+          duration: 6000
+        });
+      }
+
+      // ✅ Handle quiz_submission_received - Host receives notification
+      if (messageData.type === 'quiz_submission_received') {
+        console.log('📝 [VideoWatch] Student submitted quiz:', messageData.data);
+        
+        if (isHost) {
+          toast.success(`${messageData.data.username} submitted the quiz! Score: ${messageData.data.score}/${messageData.data.total}`, {
+            duration: 4000,
+            icon: '✅'
+          });
+        }
+      }
+
+      // ✅ Handle quiz_ended - All users receive notification
+      if (messageData.type === 'quiz_ended') {
+        console.log('📝 [VideoWatch] Quiz ended:', messageData.data);
+        
+        setActiveQuiz(null);
+        setIsTakeQuizOpen(false);
+        
+        toast.success('Quiz has ended', {
+          duration: 3000
+        });
+        
+        if (isHost) {
+          toast.success(`Total submissions: ${messageData.data.total_submissions}, Avg score: ${messageData.data.average_score?.toFixed(1)}`, {
+            duration: 5000
+          });
+        }
+      }
+
+      // ✅ Handle quiz_error
+      if (messageData.type === 'quiz_error') {
+        console.error('❌ [VideoWatch] Quiz error:', messageData.data);
+        toast.error(messageData.data.message || 'Quiz error occurred');
+      }
+
+    } catch (error) {
+      console.error('❌ [VideoWatch] Error processing quiz message:', error);
+    }
+  }, [messages, isHost]);
+
+  
 
   // 🎤 Enumerate audio devices on mount
   useEffect(() => {
@@ -225,29 +718,68 @@ export default function VideoWatch() {
     };
   }, []);
 
-  // 🎤 Request microphone permission on mount (start muted)
+  // 🎤 Publish audio track to LiveKit (keeps track published, toggles enabled state)
+  // This is REQUIRED for activeSpeakersChanged to work - LiveKit needs a published track
   useEffect(() => {
-    if (!localParticipant || hasMicPermission) return;
+    if (!localParticipant || !selectedAudioDeviceId) {
+      console.log('⏳ [VideoWatch Audio] Waiting for localParticipant and device selection');
+      return;
+    }
 
-    const requestMic = async () => {
+    const publishAudioTrack = async () => {
       try {
-        console.log('🎤 [VideoWatch] Requesting microphone permission...');
+        console.log('🎤 [VideoWatch Audio] Publishing audio track to LiveKit');
+        console.log('   Device:', selectedAudioDeviceId);
         
-        // Request mic but keep it disabled initially
-        await localParticipant.setMicrophoneEnabled(false);
+        // ✅ Create audio track with selected device
+        const constraints = {
+          deviceId: { exact: selectedAudioDeviceId },
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: false,
+        };
         
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+        const audioTrack = stream.getAudioTracks()[0];
+        
+        // ✅ Publish to LiveKit first
+        const publication = await localParticipant.publishTrack(audioTrack, {
+          source: 'microphone',
+          name: 'microphone',
+        });
+        
+        // ✅ Set track to disabled (muted) AFTER publishing
+        // LiveKit's publishTrack() enables tracks by default, so we must disable after
+        audioTrack.enabled = false;
+        
+        publishedAudioTrackRef.current = audioTrack;
         setHasMicPermission(true);
         setIsAudioActive(false); // Start muted
         
-        console.log('✅ [VideoWatch] Microphone permission granted (muted by default)');
+        console.log('✅ [VideoWatch Audio] Audio track published to LiveKit');
+        console.log('   Track ID:', audioTrack.id);
+        console.log('   Track enabled:', audioTrack.enabled);
+        console.log('   Publication SID:', publication.trackSid);
+        
       } catch (err) {
-        console.error('❌ [VideoWatch] Microphone permission denied:', err);
+        console.error('❌ [VideoWatch Audio] Failed to publish audio track:', err);
         setHasMicPermission(false);
       }
     };
 
-    requestMic();
-  }, [localParticipant, hasMicPermission]);
+    publishAudioTrack();
+    
+    // Cleanup: unpublish on unmount
+    return () => {
+      if (publishedAudioTrackRef.current) {
+        console.log('🧹 [VideoWatch Audio] Unpublishing audio track');
+        localParticipant.unpublishTrack(publishedAudioTrackRef.current)
+          .catch(err => console.warn('⚠️ Unpublish error:', err));
+        publishedAudioTrackRef.current.stop();
+        publishedAudioTrackRef.current = null;
+      }
+    };
+  }, [localParticipant, selectedAudioDeviceId]);
 
   // 📹 Binary WebSocket handler for receiving camera streams
   useEffect(() => {
@@ -285,10 +817,6 @@ export default function VideoWatch() {
       setBinaryMessageHandler(null);
     };
   }, [setBinaryMessageHandler]);
-
-  const isHost = React.useMemo(() => {
-    return currentUser?.id === roomHostId;
-  }, [currentUser?.id, roomHostId]);
 
   // Camera toggle - Use LiveKit instead of WebSocket binary
   const toggleCamera = async () => {
@@ -383,6 +911,43 @@ export default function VideoWatch() {
     }
   };
 
+  // 📝 QUIZ SYSTEM: Handler Functions
+  const handleQuizClick = useCallback(() => {
+    if (isHost) {
+      setIsQuizManagementOpen(true);
+    } else {
+      // Student clicks quiz button - show active quiz if available
+      if (activeQuiz) {
+        handleRequestQuiz(activeQuiz.quiz_id);
+      } else {
+        toast.error('No active quiz available');
+      }
+    }
+  }, [isHost, activeQuiz]);
+
+  const handleRequestQuiz = useCallback((quizId) => {
+    if (!sendMessage) {
+      console.error('❌ [VideoWatch] sendMessage not available');
+      return;
+    }
+    
+    sendMessage({
+      type: 'quiz_request',
+      data: { quiz_id: quizId }
+    });
+  }, [sendMessage]);
+
+  const handleCreateQuiz = useCallback(() => {
+    setIsQuizManagementOpen(false);
+    setIsMakeQuizOpen(true);
+  }, []);
+
+  const handleViewResults = useCallback((quizId) => {
+    // TODO: Fetch quiz results from backend
+    console.log('📊 View results for quiz:', quizId);
+    toast.info('Results view coming soon!');
+  }, []);
+
   // Define stable callbacks
   const handlePlay = useCallback(() => setIsPlaying(true), []);
   const handlePause = useCallback(() => setIsPlaying(false), []);
@@ -422,6 +987,11 @@ export default function VideoWatch() {
     }
   }, [isHost, isConnected, currentMedia, sendMessage]);
 
+  // ⏰ Callback to update playback position from video player
+  const handleTimeUpdate = useCallback((currentTime) => {
+    playbackPositionRef.current = currentTime;
+  }, []);
+
   // PLATFORMS list (unchanged)
   const PLATFORMS = [
     { id: 'youtube', name: 'YouTube', url: 'https://www.youtube.com    ' },
@@ -442,6 +1012,39 @@ export default function VideoWatch() {
   const openChat = () => {
     setShowChatHome(true);
   };
+
+  // 🎯 Apply pending seek time when video loads (for late joiner sync)
+  useEffect(() => {
+    const video = videoPlayerRef.current;
+    if (!video || !currentMedia || liveShareMode) return;
+
+    const handleLoadedData = () => {
+      console.log('✅ [VideoWatch] Video data loaded', {
+        readyState: video.readyState,
+        currentTime: video.currentTime,
+        isPlaying,
+        hasPendingSeek: pendingSeekTime !== null,
+        pendingSeekTime
+      });
+      
+      // 🎯 Apply pending seek time if available (for mid-playback sync)
+      if (pendingSeekTime !== null && pendingSeekTime > 0) {
+        console.log(`🎯 [VideoWatch] Applying pending seek time: ${pendingSeekTime}s`);
+        video.currentTime = pendingSeekTime;
+        setPendingSeekTime(null); // Clear after applying
+      }
+      
+      if (isPlaying) {
+        console.log('▶️ [VideoWatch] Starting playback after load...');
+        video.play().catch(err => console.error('❌ [VideoWatch] Failed to play:', err));
+      } else {
+        console.log('⏸️ [VideoWatch] Video loaded but isPlaying=false, not starting playback');
+      }
+    };
+
+    video.addEventListener('loadeddata', handleLoadedData);
+    return () => video.removeEventListener('loadeddata', handleLoadedData);
+  }, [currentMedia, liveShareMode, isPlaying, pendingSeekTime]);
 
   // Monitor LiveKit local participant for screen share track
   useEffect(() => {
@@ -590,6 +1193,8 @@ export default function VideoWatch() {
     if (!roomId || !currentUser) return;
     const joinRoomIfNeeded = async () => {
       try {
+        // ✅ Only check membership, don't fetch all members
+        // Session members will be populated via session_member_joined WebSocket events
         const members = await getRoomMembers(roomId);
         const memberList = Array.isArray(members) ? members : members?.members || [];
         const isMember = memberList.some(m => m.id === currentUser.id);
@@ -597,19 +1202,7 @@ export default function VideoWatch() {
           await apiClient.post(`/api/rooms/${roomId}/join`);
         }
         
-        // ✅ Populate participants state with all room members
-        const participantsList = memberList.map(member => ({
-          id: member.id,
-          name: member.username || `User${String(member.id).slice(0, 4)}`,
-          isSpeaking: false,
-          isCameraOn: false,
-          isMuted: true,
-          row: null,
-          col: null,
-          stream: null
-        }));
-        setParticipants(participantsList);
-        console.log('👥 [VideoWatch] Initialized participants from room members:', participantsList);
+        console.log('✅ [VideoWatch] Room membership verified - session members will come from WebSocket');
 
         // ✅ Fetch active session ID
         const sessionResponse = await apiClient.get(`/api/rooms/${roomId}/active-session`);
@@ -628,13 +1221,16 @@ export default function VideoWatch() {
 
   // ✅ Load chat history when session becomes active
   useEffect(() => {
-    if (!roomId || !sessionStatus?.id) return;
+    // Use sessionStatus.id or fallback to URL session_id
+    const activeSessionId = sessionStatus?.id || urlSessionId;
+    
+    if (!roomId || !activeSessionId) return;
     
     const loadChatHistory = async () => {
       setIsChatLoading(true);
       try {
-        console.log('💬 [VideoWatch] Loading chat history for session:', sessionStatus.id);
-        const response = await getChatHistory(roomId, sessionStatus.id);
+        console.log('💬 [VideoWatch] Loading chat history for session:', activeSessionId);
+        const response = await getChatHistory(roomId, activeSessionId);
         const messages = response.messages || [];
         console.log(`💬 [VideoWatch] Loaded ${messages.length} chat messages with reactions:`, messages);
         setSessionChatMessages(messages);
@@ -646,7 +1242,7 @@ export default function VideoWatch() {
     };
 
     loadChatHistory();
-  }, [roomId, sessionStatus?.id]);
+  }, [roomId, sessionStatus?.id, urlSessionId]);
 
   // Initialize Seats
   useEffect(() => {
@@ -688,8 +1284,16 @@ export default function VideoWatch() {
     setCurrentMedia(normalizedMediaItem);
     setIsPlaying(true);
     playbackPositionRef.current = 0;
+    
+    console.log('🎬 [VideoWatch] Host about to send playback_control:', {
+      isHost,
+      isConnected,
+      mediaUrl: normalizedMediaItem.mediaUrl,
+      currentUserId: currentUser?.id
+    });
+    
     if (isHost && isConnected) {
-      sendMessage({
+      const playbackMsg = {
         type: "playback_control",
         command: "play",
         media_item_id: id,
@@ -699,7 +1303,18 @@ export default function VideoWatch() {
         seek_time: 0,
         timestamp: Date.now(),
         sender_id: currentUser.id,
+      };
+      console.log('📤 [VideoWatch] HOST SENDING playback_control:', playbackMsg);
+      sendMessage(playbackMsg);
+    } else {
+      console.warn('⚠️ [VideoWatch] NOT sending playback_control:', {
+        isHost,
+        isConnected,
+        reason: !isHost ? 'Not host' : 'Not connected'
       });
+    }
+    
+    if (isHost && isConnected) {
       sendMessage({
         type: "update_room_status",
         data: {
@@ -709,110 +1324,315 @@ export default function VideoWatch() {
           screen_sharing_user_id: 0,
         }
       });
+      
+      // ✅ Auto-update session title with media name
+      if (sessionStatus?.id) {
+        sendMessage({
+          type: 'session_title_update',
+          data: {
+            session_id: sessionStatus.id,
+            title: normalizedMediaItem.original_name
+          }
+        });
+      }
     }
   };
 
-  // ✅ LIVEKIT SCREEN SHARE HANDLERS
-  const handleStartScreenShare = async () => {
-    console.log('🎬 [VideoWatch] handleStartScreenShare called');
-    console.log('   localParticipant:', !!localParticipant);
-    console.log('   isLiveKitConnected:', isLiveKitConnected);
-    
-    if (!localParticipant) {
-      alert('LiveKit not ready');
+  // ⏰ Periodic seek time update for preview generation (every 30 seconds)
+  useEffect(() => {
+    if (!isHost || !currentMedia || currentMedia.type !== 'upload' || !isPlaying) {
       return;
     }
+
+    const updateInterval = setInterval(() => {
+      const currentSeekTime = Math.floor(playbackPositionRef.current);
+      console.log(`⏰ [VideoWatch] Periodic seek time update: ${currentSeekTime}s`);
+      
+      sendMessage({
+        type: "playback_control",
+        command: "seek",
+        media_item_id: currentMedia.ID || currentMedia.id,
+        file_path: currentMedia.file_path,
+        file_url: currentMedia.mediaUrl,
+        original_name: currentMedia.original_name,
+        seek_time: currentSeekTime,
+        timestamp: Date.now(),
+        sender_id: currentUser?.id,
+      });
+    }, 30000); // Update every 30 seconds
+
+    return () => clearInterval(updateInterval);
+  }, [isHost, currentMedia, isPlaying, sendMessage, currentUser?.id]);
+
+  // ✅ LIVEKIT SCREEN SHARE HANDLERS - LiveShare Mode
+  const handleStartLiveShare = async (mode = 'screen', source = 'liveshare') => {
+    console.log('🎥 [VideoWatch] handleStartLiveShare called:', {
+      mode,
+      source,
+      isLiveKitConnected,
+      hasLocalParticipant: !!localParticipant,
+      hasRoom: !!room,
+      roomId,
+      userId: currentUser?.id
+    });
+    
+    if (!localParticipant || !room) {
+      toast.error('LiveKit not connected. Please wait and try again...');
+      console.error('❌ [VideoWatch] Cannot start - LiveKit not ready', {
+        isConnected: isLiveKitConnected,
+        hasParticipant: !!localParticipant,
+        hasRoom: !!room
+      });
+      return;
+    }
+    
     try {
-      console.log('📹 [VideoWatch] Calling setScreenShareEnabled(true)...');
+      console.log(`🎥 [VideoWatch] Starting LiveShare mode: ${mode}, source: ${source}`);
       
-      // Enable screen share with system audio - using captureOptions
-      const captureOptions = {
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false
-        },
-        video: true,
-        selfBrowserSurface: 'exclude',
-        surfaceSwitching: 'include',
-        systemAudio: 'include'
-      };
+      let screenStream = null;
+      let cameraStream = null;
       
-      console.log('🎵 [VideoWatch] Requesting screen share with audio options:', captureOptions);
-      await localParticipant.setScreenShareEnabled(true, captureOptions);
-      console.log('✅ [VideoWatch] Screen share enabled successfully');
-      
-      // Check if audio track was published
-      setTimeout(() => {
-        const audioTrackPubs = localParticipant.audioTrackPublications || new Map();
-        const videoTrackPubs = localParticipant.videoTrackPublications || new Map();
-        console.log('🎤 [VideoWatch] Audio tracks after screen share:', audioTrackPubs.size);
-        console.log('📹 [VideoWatch] Video tracks after screen share:', videoTrackPubs.size);
-        
-        Array.from(audioTrackPubs.values()).forEach(pub => {
-          console.log('   Audio track:', { 
-            source: pub.source, 
-            kind: pub.kind, 
-            trackSid: pub.trackSid,
-            enabled: pub.track?.enabled,
-            muted: pub.track?.muted 
-          });
+      // Start screen share
+      if (mode === 'screen' || mode === 'both') {
+        console.log('🖥️ [VideoWatch] Starting screen share...');
+        await localParticipant.setScreenShareEnabled(true, {
+          audio: true,
+          resolution: { width: 1920, height: 1080, frameRate: 30 },
+          simulcast: false,
+          videoBitrate: 3000000
         });
         
-        Array.from(videoTrackPubs.values()).forEach(pub => {
-          console.log('   Video track:', { 
-            source: pub.source, 
-            kind: pub.kind,
-            trackSid: pub.trackSid
-          });
-        });
-      }, 1000);
-      
-      // Manually check for the track (use videoTrackPublications)
-      const trackPubs = localParticipant.videoTrackPublications || localParticipant.videoTracks;
-      if (trackPubs && trackPubs.size > 0) {
-        const screenSharePub = Array.from(trackPubs.values()).find(
-          pub => pub.source === Track.Source.ScreenShare
-        );
-        if (screenSharePub?.track) {
-          console.log('🎯 [VideoWatch] Manually found screen share track after enabling');
-          setLocalScreenTrack(screenSharePub.track);
+        // ✅ Get track publication immediately
+        const screenTrackPub = localParticipant.getTrackPublication(Track.Source.ScreenShare);
+        if (screenTrackPub && screenTrackPub.track) {
+          screenStream = new MediaStream([screenTrackPub.track.mediaStreamTrack]);
+          screenShareTrackRef.current = screenTrackPub.track;
+          setScreenShareTrackSid(screenTrackPub.trackSid);
+          setLocalScreenTrack(screenTrackPub);
+          console.log('✅ [VideoWatch] Screen track acquired:', screenTrackPub.trackSid);
+          
+          // ✅ CREATE FRESH VIDEO ELEMENT for screen share
+          const screenVideo = document.createElement('video');
+          screenVideo.srcObject = screenStream;
+          screenVideo.autoplay = true;
+          screenVideo.playsInline = true;
+          screenVideo.muted = false; // Don't mute screen share (may have tab audio)
+          screenVideo.style.cssText = 'position: absolute; width: 1px; height: 1px; opacity: 0;';
+          document.body.appendChild(screenVideo);
+          
+          // Store in LiveShare ref
+          liveShareVideoRef.current = screenVideo;
+          
+          screenVideo.play().catch(e => console.warn('⚠️ [VideoWatch] Screen play failed:', e));
+          
+          console.log('✅ [VideoWatch] Fresh screen video element created');
         } else {
-          console.warn('⚠️ [VideoWatch] No screen share track found immediately after enabling');
+          throw new Error('Screen share track not available');
         }
-      } else {
-        console.log('⏳ [VideoWatch] videoTrackPublications not populated yet, waiting for TrackPublished event');
       }
       
+      // Start camera share
+      if (mode === 'camera' || mode === 'both') {
+        console.log('📹 [VideoWatch] Starting camera...');
+        
+        // Stop existing camera track if present
+        if (cameraShareTrackRef.current) {
+          console.log('🧹 [VideoWatch] Cleaning up existing camera track');
+          try {
+            await localParticipant.unpublishTrack(cameraShareTrackRef.current);
+            cameraShareTrackRef.current.stop();
+          } catch (cleanupErr) {
+            console.warn('⚠️ [VideoWatch] Camera cleanup warning:', cleanupErr);
+          }
+          cameraShareTrackRef.current = null;
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        // Get camera stream
+        const cameraDevices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = cameraDevices.filter(d => d.kind === 'videoinput');
+        
+        if (videoDevices.length === 0) {
+          toast.error('No camera devices found');
+          if (mode === 'camera') return;
+        } else {
+          // Use first available camera
+          const device = videoDevices[0];
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              deviceId: { exact: device.deviceId },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              frameRate: { ideal: 30 }
+            },
+            audio: false
+          });
+          
+          console.log('✅ [VideoWatch] Camera stream acquired');
+          
+          // Create LocalVideoTrack and publish
+          const videoTrack = stream.getVideoTracks()[0];
+          const LocalVideoTrack = (await import('livekit-client')).LocalVideoTrack;
+          const localVideoTrack = new LocalVideoTrack(videoTrack);
+          
+          const cameraPublication = await localParticipant.publishTrack(localVideoTrack, {
+            source: Track.Source.Camera,
+            name: 'camera-share',
+            simulcast: false,
+            videoEncoding: {
+              maxBitrate: 4000000,
+              maxFramerate: 30
+            }
+          });
+          
+          console.log('✅ [VideoWatch] Camera track published:', cameraPublication.trackSid);
+          setCameraShareTrackSid(cameraPublication.trackSid);
+          
+          cameraStream = new MediaStream([localVideoTrack.mediaStreamTrack]);
+          cameraShareTrackRef.current = localVideoTrack;
+          
+          // ✅ CREATE FRESH VIDEO ELEMENT for camera
+          const video = document.createElement('video');
+          video.srcObject = cameraStream;
+          video.autoplay = true;
+          video.playsInline = true;
+          video.muted = true;
+          video.style.cssText = 'position: absolute; width: 1px; height: 1px; opacity: 0;';
+          document.body.appendChild(video);
+          
+          liveShareCameraVideoRef.current = video;
+          
+          video.play().catch(err => console.warn('⚠️ [VideoWatch] Camera play failed:', err.message));
+          
+          console.log('✅ [VideoWatch] Fresh camera video element created');
+        }
+      }
+      
+      setLiveShareMode(mode);
+      setSharingSource(source);
+      
+      // ✅ Include streams in currentMedia for CinemaVideoPlayer
+      setCurrentMedia({ 
+        type: 'liveshare', 
+        title: `LiveShare (${mode})`,
+        stream: screenStream,
+        cameraStream: cameraStream
+      });
+      setIsPlaying(true);
       setIsScreenSharingActive(true);
+      
       sendMessage({
         type: "update_room_status",
         data: {
           is_screen_sharing: true,
           screen_sharing_user_id: currentUser.id,
-          currently_playing: "Live Screen Share",
-          coming_next: ""
+          currently_playing: `LiveShare (${mode})`,
+          liveshare_mode: mode
         }
       });
+      
+      toast.success(`LiveShare started: ${mode}`);
     } catch (err) {
-      console.error("❌ [VideoWatch] Screen share error:", err);
-      alert("Failed to start screen share: " + err.message);
+      console.error('❌ [VideoWatch] LiveShare error:', err);
+      toast.error(`Failed to start ${mode} share`);
+      
+      // Cleanup on error
+      if (localParticipant) {
+        await localParticipant.setScreenShareEnabled(false);
+        if (cameraShareTrackRef.current) {
+          try {
+            await localParticipant.unpublishTrack(cameraShareTrackRef.current);
+            cameraShareTrackRef.current.stop();
+          } catch (cleanupErr) {
+            console.error('❌ [VideoWatch] Cleanup error:', cleanupErr);
+          }
+          cameraShareTrackRef.current = null;
+        }
+      }
     }
+  };
+  
+  // 📹 Legacy screen share handler (calls new unified handler)
+  const handleStartScreenShare = async () => {
+    await handleStartLiveShare('screen', 'liveshare');
   };
 
   const handleEndScreenShare = () => {
-    if (localParticipant) {
+    console.log('🛑 [VideoWatch] Ending LiveShare');
+    
+    // Stop screen share
+    if (localParticipant && screenShareTrackRef.current) {
       localParticipant.setScreenShareEnabled(false);
+      screenShareTrackRef.current = null;
+      setScreenShareTrackSid(null);
+      setLocalScreenTrack(null);
     }
+    
+    // Stop camera share
+    if (cameraShareTrackRef.current) {
+      localParticipant?.unpublishTrack(cameraShareTrackRef.current);
+      cameraShareTrackRef.current.stop();
+      cameraShareTrackRef.current = null;
+      setCameraShareTrackSid(null);
+    }
+    
+    // ✅ Clean up LiveShare video elements
+    if (liveShareVideoRef.current) {
+      liveShareVideoRef.current.pause();
+      liveShareVideoRef.current.srcObject = null;
+      if (document.body.contains(liveShareVideoRef.current)) {
+        document.body.removeChild(liveShareVideoRef.current);
+      }
+      liveShareVideoRef.current = null;
+    }
+    
+    if (liveShareCameraVideoRef.current) {
+      liveShareCameraVideoRef.current.pause();
+      liveShareCameraVideoRef.current.srcObject = null;
+      if (document.body.contains(liveShareCameraVideoRef.current)) {
+        document.body.removeChild(liveShareCameraVideoRef.current);
+      }
+      liveShareCameraVideoRef.current = null;
+    }
+    
+    setLiveShareMode(null);
+    setSharingSource(null);
     setIsScreenSharingActive(false);
+    setCurrentMedia(null);
+    setIsPlaying(false);
+    
     sendMessage({
       type: "update_room_status",
       data: {
         is_screen_sharing: false,
         screen_sharing_user_id: 0,
         currently_playing: "",
+        liveshare_mode: null
       }
     });
+    
+    toast.success('LiveShare ended');
+  };
+  
+  // 📹 Handle WatchFrom platform screen share
+  const handleStartPlatformScreenShare = async (platformId, platformName, platformUrl) => {
+    console.log(`🌐 [VideoWatch] Starting WatchFrom: ${platformName}`);
+    
+    // Open platform in new window
+    window.open(platformUrl, '_blank', 'noopener,noreferrer');
+    
+    // Wait a moment for window to open
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Prompt user to share that specific tab
+    try {
+      setSharingSource('watchfrom');
+      await handleStartLiveShare('screen', 'watchfrom');
+      toast.success(`Share the ${platformName} tab from the browser prompt`);
+    } catch (err) {
+      toast.error('Screen share cancelled');
+      setSharingSource(null);
+    }
   };
 
   // ✅ HANDLE MEDIA SELECTION (FOR SIDEBAR)
@@ -886,32 +1706,58 @@ export default function VideoWatch() {
 
   // Handle ALL WebSocket messages
   useEffect(() => {
+    console.log('📨 [VideoWatch] Messages array length:', messages?.length, 'Processed:', processedMessageCountRef.current);
     const newMessages = messages.slice(processedMessageCountRef.current);
+    console.log('📨 [VideoWatch] New messages to process:', newMessages.length);
     if (newMessages.length === 0) return;
 
     newMessages.forEach((message) => {
+      console.log('📨 [VideoWatch] Processing message type:', message.type, 'data:', message.data);
       switch (message.type) {
         case "session_status":
           const data = message.data;
+          console.log('📊 [VideoWatch] session_status received - FULL DATA:', data);
+          console.log('📊 [VideoWatch] session_status members field:', data.members);
+          console.log('📊 [VideoWatch] session_status members type:', typeof data.members, 'isArray:', Array.isArray(data.members));
 
-          // ✅ Normalize and deduplicate members
+          // ✅ SESSION MEMBERS from WebSocket (active watch participants)
+          // This is the SOURCE OF TRUTH for who's in the session
           if (Array.isArray(data.members)) {
+            console.log('📊 [VideoWatch] Processing session members, length:', data.members.length);
             const memberMap = new Map();
-            data.members.forEach(member => {
+            
+            data.members.forEach((member, index) => {
+              console.log(`📊 [VideoWatch] Processing session member ${index}:`, member);
               const id = member.user_id || member.id;
-              if (!id) return; // skip invalid
-
-              // Prefer richer data if already present, otherwise use this entry
-              if (!memberMap.has(id)) {
-                memberMap.set(id, {
-                  id,
-                  Username: member.Username || member.username || 'Anonymous',
-                  user_role: member.user_role || 'viewer',
-                  // Add other fields you need (e.g., avatar, etc.)
-                });
+              if (!id) {
+                console.warn('⚠️ [VideoWatch] Skipping member with no ID:', member);
+                return;
               }
+
+              const normalizedMember = {
+                id,
+                Username: member.Username || member.username || 'Anonymous',
+                username: member.Username || member.username || 'Anonymous',
+                avatar_url: member.avatar_url || null,
+                user_role: member.user_role || 'viewer',
+              };
+              console.log(`📊 [VideoWatch] Normalized session member ${id}:`, normalizedMember);
+              console.log(`📊 [VideoWatch] Member ${id} avatar_url:`, member.avatar_url);
+              memberMap.set(id, normalizedMember);
             });
-            setRoomMembers(Array.from(memberMap.values()));
+            
+            const membersArray = Array.from(memberMap.values());
+            console.log(`✅ [VideoWatch] Setting ${membersArray.length} session members:`, membersArray);
+            setRoomMembers(membersArray);
+            
+            // ✅ Request current audio states from all members in the room
+            console.log('🎤 [VideoWatch] Requesting audio states from all members');
+            sendMessage({
+              type: "request_audio_states",
+              userId: currentUser?.id,
+            });
+          } else {
+            console.error('❌ [VideoWatch] session_status members is NOT an array!', typeof data.members, data.members);
           }
 
           // 👇 Rest of your screen share logic (unchanged)
@@ -950,6 +1796,111 @@ export default function VideoWatch() {
           setScreenSharerUserId(null);
           showNotification('Screen sharing ended', 'info');
           break;
+        
+        // ✅ SESSION MEMBER EVENTS - Track active watch session participants
+        case 'session_member_joined':
+          // Real-time member join from backend
+          console.log('📨 [VideoWatch] session_member_joined RAW:', message);
+          if (message.data?.user_id && message.data?.username) {
+            const userId = message.data.user_id;
+            const username = message.data.username;
+            const userRole = message.data.user_role || 'viewer';
+            
+            console.log(`👥 [VideoWatch] ${username} (ID:${userId}, role:${userRole}) joined session`);
+            
+            // 🎬 HOST: Broadcast current playback state to new member
+            if (isHost && currentMedia && currentMedia.type === 'upload' && isConnected) {
+              const videoEl = document.querySelector('video');
+              const currentTime = videoEl?.currentTime || 0;
+              
+              console.log('🎯 [VideoWatch] HOST sending current state to new member:', {
+                newMember: username,
+                currentTime,
+                mediaUrl: currentMedia.mediaUrl,
+                isPlaying
+              });
+              
+              sendMessage({
+                type: 'playback_control',
+                command: isPlaying ? 'play' : 'pause',
+                media_item_id: currentMedia.ID || currentMedia.id,
+                file_path: currentMedia.file_path,
+                file_url: currentMedia.mediaUrl,
+                original_name: currentMedia.original_name,
+                seek_time: currentTime,
+                timestamp: Date.now(),
+                sender_id: currentUser.id,
+              });
+            }
+            
+            setRoomMembers(prev => {
+              const exists = prev.some(m => m.id === userId);
+              if (exists) {
+                console.log(`⚠️ [VideoWatch] ${username} already in session, skipping duplicate`);
+                return prev;
+              }
+              const newMembers = [...prev, {
+                id: userId,
+                Username: username,
+                username: username,
+                user_role: userRole
+              }];
+              console.log(`✅ [VideoWatch] ${username} added → Session now has ${newMembers.length} members:`, newMembers);
+              return newMembers;
+            });
+          } else {
+            console.error('❌ [VideoWatch] session_member_joined missing user_id or username:', message.data);
+          }
+          break;
+        
+        case 'session_member_left':
+          // Real-time member leave from backend
+          if (message.data?.user_id) {
+            const userId = message.data.user_id;
+            const username = message.data.username;
+            
+            console.log(`👋 [VideoWatch] ${username} (ID:${userId}) left session`);
+            setRoomMembers(prev => {
+              const updated = prev.filter(m => m.id !== userId);
+              console.log(`👋 [VideoWatch] Session now has ${updated.length} members`);
+              return updated;
+            });
+          }
+          break;
+        
+        case "request_playback_state":
+          console.log('📨 [VideoWatch] Received playback state request:', {
+            requester_id: message.requester_id,
+            isHost,
+            currentMedia: currentMedia?.file_path
+          });
+          
+          // Only host responds to state requests
+          if (isHost && currentMedia && currentMedia.type === 'upload' && isConnected) {
+            const videoEl = document.querySelector('video');
+            const currentTime = videoEl?.currentTime || 0;
+            
+            console.log('📤 [VideoWatch] HOST responding to state request with current playback:', {
+              requester_id: message.requester_id,
+              currentTime,
+              isPlaying,
+              media: currentMedia.original_name
+            });
+            
+            sendMessage({
+              type: 'playback_control',
+              command: isPlaying ? 'play' : 'pause',
+              media_item_id: currentMedia.ID || currentMedia.id,
+              file_path: currentMedia.file_path,
+              file_url: currentMedia.mediaUrl,
+              original_name: currentMedia.original_name,
+              seek_time: currentTime,
+              timestamp: Date.now(),
+              sender_id: currentUser.id,
+            });
+          }
+          break;
+        
         // ... keep all other message handlers (chat, seats, camera, etc.)
         case 'participant_join':
           console.log('👤 [WebSocket] participant_join received:', message);
@@ -973,14 +1924,40 @@ export default function VideoWatch() {
           }]);
           break;
         case "playback_control":
-          if (message.sender_id && message.sender_id === currentUser?.id) break;
+          console.log('📥 [VideoWatch] RECEIVED playback_control:', {
+            sender_id: message.sender_id,
+            currentUserId: currentUser?.id,
+            command: message.command,
+            file_path: message.file_path,
+            file_url: message.file_url,
+            timestamp: message.timestamp
+          });
+          
+          if (message.sender_id && message.sender_id === currentUser?.id) {
+            console.log('⏭️ [VideoWatch] Ignoring own playback_control message');
+            break;
+          }
+          
           if (message.file_path) {
             const isSameMedia = currentMedia && currentMedia.file_path === message.file_path;
+            console.log('🔍 [VideoWatch] Playback control check:', {
+              isSameMedia,
+              currentMediaPath: currentMedia?.file_path,
+              newMediaPath: message.file_path,
+              isPlaying,
+              newCommand: message.command
+            });
+            
             if (!isSameMedia || isPlaying !== (message.command === "play")) {
               // ✅ Construct full URL for uploaded media
               const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
               const fileUrl = message.file_url || message.file_path;
               const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+              
+              console.log('✅ [VideoWatch] MEMBER loading media:', {
+                mediaUrl,
+                original_name: message.original_name
+              });
               
               setCurrentMedia({
                 ID: message.media_item_id,
@@ -992,9 +1969,27 @@ export default function VideoWatch() {
               const now = Date.now();
               const latency = now - message.timestamp;
               const adjustedTime = message.seek_time + (latency / 1000);
-              playbackPositionRef.current = adjustedTime;
-              setIsPlaying(message.command === "play");
+              console.log('⏱️ [VideoWatch] Latency compensation:', {
+                latency_ms: latency,
+                seek_time: message.seek_time,
+                adjusted_time: adjustedTime,
+                command: message.command,
+                current_isPlaying: isPlaying,
+                will_change_playState: message.command === "play" || message.command === "pause"
+              });
+              setPendingSeekTime(adjustedTime); // ✅ Use state instead of ref
+              
+              // 🎯 FIX: Only update play/pause for explicit play/pause commands, not seek-only
+              if (message.command === "play" || message.command === "pause") {
+                setIsPlaying(message.command === "play");
+                console.log(`🎬 [VideoWatch] ${message.command === "play" ? "Playing" : "Pausing"} video from playback_control`);
+              }
+              // For "seek" commands, maintain current play state
+            } else {
+              console.log('⏭️ [VideoWatch] Skipping - same media and state');
             }
+          } else {
+            console.warn('⚠️ [VideoWatch] playback_control missing file_path!');
           }
           break;
         case "camera_toggle":
@@ -1018,7 +2013,9 @@ export default function VideoWatch() {
           });
           break;
         case "chat_message":
-          if (message.data.session_id === sessionStatus.id) {
+          // ✅ Match against sessionStatus.id OR URL session_id
+          const activeSessionId = sessionStatus?.id || urlSessionId;
+          if (message.data.session_id === activeSessionId) {
             const chatMsg = { ...message.data, reactions: message.data.reactions || [] };
             setSessionChatMessages(prev => {
               const exists = prev.some(msg => msg.ID === chatMsg.ID);
@@ -1027,7 +2024,9 @@ export default function VideoWatch() {
           }
           break;
         case "reaction":
-          if (message.data.session_id === sessionStatus.id) {
+          // ✅ Match against sessionStatus.id OR URL session_id
+          const reactionSessionId = sessionStatus?.id || urlSessionId;
+          if (message.data.session_id === reactionSessionId) {
             console.log('👍 [VideoWatch] Received reaction:', message.data);
             setSessionChatMessages(prev =>
               prev.map(msg => {
@@ -1045,6 +2044,18 @@ export default function VideoWatch() {
           break;
         case 'participant_leave':
           setParticipants(prev => prev.filter(p => p.id !== message.userId));
+          break;
+        case 'user_left':
+          // ✅ Handle WebSocket disconnect cleanup - remove from member list
+          if (message.data?.userId || message.data?.user_id) {
+            const leftUserId = message.data.userId || message.data.user_id;
+            console.log('👋 [VideoWatch] User left (disconnect):', leftUserId);
+            setRoomMembers(prev => {
+              const updated = prev.filter(m => m.id !== leftUserId);
+              console.log('👋 [VideoWatch] Updated member count:', prev.length, '→', updated.length);
+              return updated;
+            });
+          }
           break;
         case 'seat_update':
           const { userId, seat } = message;
@@ -1078,8 +2089,14 @@ export default function VideoWatch() {
           
           console.log(`🔊 [VideoWatch] Received user_audio_state from user ${audioUserId}: ${remoteAudioActive ? 'UNMUTED' : 'MUTED'}`);
           
-          // Don't update state for our own messages (already handled locally)
-          if (audioUserId === currentUser?.id) break;
+          // ✅ Update remoteAudioStates for ALL users (including self for cross-tab sync)
+          setRemoteAudioStates(prev => ({
+            ...prev,
+            [audioUserId]: {
+              ...prev[audioUserId],
+              isMuted: !remoteAudioActive,
+            }
+          }));
           
           // Update speaking users set
           setSpeakingUsers(prev => {
@@ -1096,6 +2113,29 @@ export default function VideoWatch() {
           setParticipants(prev => 
             prev.map(p => p.id === audioUserId ? { ...p, isMuted: !remoteAudioActive } : p)
           );
+          break;
+        case 'broadcast_audio_state':
+          // Another member is requesting audio states - send our current state
+          console.log('🎤 [VideoWatch] Received broadcast_audio_state request - sending current state');
+          
+          // Extract current user's row from userSeats
+          const currentUserSeatId = userSeats[currentUser?.id];
+          const currentUserRow = currentUserSeatId ? parseInt(currentUserSeatId.split('-')[0]) : null;
+          
+          // Check if user has broadcast permission
+          const hasUserBroadcastPermission = broadcastPermissions[currentUser?.id] || false;
+          const isGlobalBroadcast = (isHost && isHostBroadcasting) || hasUserBroadcastPermission;
+          
+          // Send current audio state
+          sendMessage({
+            type: "user_audio_state",
+            isAudioActive: isAudioActive,
+            userId: currentUser.id,
+            isSeatedMode: isSeatedMode,
+            isGlobalBroadcast: isGlobalBroadcast,
+            row: isSeatedMode && currentUserRow !== null ? currentUserRow : null,
+          });
+          console.log(`🎤 [VideoWatch] Sent audio state: ${isAudioActive ? 'UNMUTED' : 'MUTED'}`);
           break;
         case "platform_selected":
           if (message.data?.user_id === currentUser?.id) {
@@ -1201,6 +2241,30 @@ export default function VideoWatch() {
           console.log('🛑 [WebSocket] Session ended by host');
           console.log('📋 Session data:', message.data);
           
+          // ✅ Clear private messages and unread counts
+          setPrivateMessages({});
+          setUnreadMessages({});
+          
+          // Clear ticket cache for this session
+          if (urlSessionId) {
+            clearTicketCache(message.data?.session_id || urlSessionId);
+            console.log('🗑️ [VideoWatch] Cleared ticket cache for ended session');
+          }
+          
+          // ✅ Store session data for rating modal (if not the host)
+          const isCurrentUserHost = currentUser?.id === message.data?.host_id;
+          if (!isCurrentUserHost && message.data?.session_id) {
+            console.log('⭐ [VideoWatch] Storing session data for rating modal');
+            sessionStorage.setItem(`pending_rating_${roomId}`, JSON.stringify({
+              sessionId: message.data.session_id,
+              hostId: message.data.host_id,
+              hostName: message.data.host_name || 'Unknown Host',
+              sessionTitle: message.data.session_title || 'Untitled Session',
+              watchType: message.data.watch_type,
+              isTemporary: message.data.is_temporary || false,
+            }));
+          }
+          
           // ✅ Show toast notification with appropriate message
           const reason = message.data?.reason;
           if (reason === 'host_timeout') {
@@ -1218,13 +2282,31 @@ export default function VideoWatch() {
           // Perform cleanup and navigate
           performCleanupAndExit();
           break;
+        case 'ticket_required':
+          // Backend rejected connection - no ticket for paid session
+          console.log('❌ [VideoWatch] Ticket required:', message.data);
+          toast.error('This is a paid session. Please purchase a ticket.');
+          setTimeout(() => {
+            navigate(`/rooms/${roomId}?openTicketModal=true`);
+          }, 1000);
+          break;
         case 'private_chat_message':
-          if (message.to_user_id === currentUser?.id || message.from_user_id === currentUser?.id) {
-            const otherUserId = message.from_user_id === currentUser?.id ? message.to_user_id : message.from_user_id;
+          // ✅ Only process if current user is the RECEIVER (not sender)
+          // This prevents duplicates from WebSocket echo when we send messages
+          if (message.to_user_id === currentUser?.id) {
+            const otherUserId = message.from_user_id;
             setPrivateMessages(prev => ({
               ...prev,
               [otherUserId]: [...(prev[otherUserId] || []), message]
             }));
+            
+            // ✅ Increment unread count if chat is not currently open with this user
+            if (privateChatUser?.id !== otherUserId) {
+              setUnreadMessages(prev => ({
+                ...prev,
+                [otherUserId]: (prev[otherUserId] || 0) + 1
+              }));
+            }
           }
           break;
         case 'private_chat_history':
@@ -1259,25 +2341,90 @@ export default function VideoWatch() {
             }
           }
           break;
+        
+        case "force_mute":
+          // Host has muted all members
+          console.log('🔇 [VideoWatch] Received force_mute command');
+          setIsMutedByHost(true);
+          setShowMuteAllBanner(true);
+          
+          // Force disable microphone
+          if (publishedAudioTrackRef.current) {
+            publishedAudioTrackRef.current.enabled = false;
+          }
+          if (localParticipant) {
+            localParticipant.audioTrackPublications.forEach(publication => {
+              if (publication.track) {
+                publication.track.mute();
+              }
+            });
+          }
+          setIsAudioActive(false);
+          
+          // Hide banner after 5 seconds
+          setTimeout(() => setShowMuteAllBanner(false), 5000);
+          break;
+
+        case "unlock_mute":
+          // Host has unmuted all members
+          console.log('🔊 [VideoWatch] Received unlock_mute command');
+          setIsMutedByHost(false);
+          
+          // Show brief notification
+          toast.success('Host has allowed unmuting', {
+            icon: '🔊',
+            duration: 3000,
+          });
+          break;
+          
         default:
           console.warn("[VideoWatch] Unknown WebSocket message type:", message.type, message);
       }
     });
     processedMessageCountRef.current = messages.length;
-  }, [messages, sessionStatus.id, currentUser?.id, currentMedia]);
+  }, [messages, sessionStatus.id, currentUser?.id, currentMedia, localParticipant]);
 
   // Handle Chat
   const handleSendSessionMessage = async () => {
-    if (!newSessionMessage.trim() || !sessionStatus.id || !sendMessage) return;
+    // ✅ Use sessionStatus.id or fallback to URL session_id
+    const activeSessionId = sessionStatus?.id || urlSessionId;
+    
+    console.log('💬 [VideoWatch] handleSendSessionMessage called', {
+      hasMessage: !!newSessionMessage.trim(),
+      sessionStatusId: sessionStatus?.id,
+      urlSessionId: urlSessionId,
+      activeSessionId: activeSessionId,
+      hasSendMessage: !!sendMessage,
+      currentUser: currentUser?.id,
+      messageContent: newSessionMessage
+    });
+    
+    if (!newSessionMessage.trim()) {
+      console.warn('💬 [VideoWatch] Empty message, not sending');
+      return;
+    }
+    
+    if (!activeSessionId) {
+      console.error('💬 [VideoWatch] No session ID available!', { sessionStatus, urlSessionId });
+      return;
+    }
+    
+    if (!sendMessage) {
+      console.error('💬 [VideoWatch] sendMessage function not available!');
+      return;
+    }
+    
     const chatMessage = {
       type: "chat_message",
       data: { 
         message: newSessionMessage.trim(), 
-        session_id: sessionStatus.id,
+        session_id: activeSessionId,
         user_id: currentUser?.id,
         username: currentUser?.username || `User${currentUser?.id}`
       },
     };
+    
+    console.log('💬 [VideoWatch] Sending chat message:', chatMessage);
     sendMessage(chatMessage);
     setNewSessionMessage('');
   };
@@ -1329,8 +2476,8 @@ export default function VideoWatch() {
 
   // Handle Leave Room
   const handleLeaveRoom = async () => {
-    // Check if current user is the host
-    const isHost = currentUser?.id === roomHostId;
+    // � Get the current session ID (prioritize WebSocket over API state)
+    const finalSessionId = sessionStatus?.id || urlSessionId || activeSessionId;
 
     if (isHost) {
       // Host: Show confirmation dialog
@@ -1344,17 +2491,21 @@ export default function VideoWatch() {
 
       // Host confirmed: End the session
       try {
-        if (activeSessionId) {
-          console.log('🛑 Host ending session:', activeSessionId);
-          await apiClient.post(`/api/rooms/watch-sessions/${activeSessionId}/end`);
-          console.log('✅ Session ended successfully');
+        if (finalSessionId) {
+          await apiClient.post(`/api/rooms/${roomId}/sessions/${finalSessionId}/end`);
+          
+          // ✅ Set flag to prevent showing stale session UI on RoomPage
+          sessionStorage.setItem(`session_ended_${roomId}`, 'true');
+          
+          // Small delay to ensure backend broadcasts before navigation
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
       } catch (error) {
-        console.error('❌ Failed to end session:', error);
+        console.error('❌ [VideoWatch] Failed to end session:', error);
         // Continue with cleanup even if API call fails
       }
     }
-
+    
     // Cleanup and exit (both host and members)
     await performCleanupAndExit();
   };
@@ -1388,22 +2539,40 @@ export default function VideoWatch() {
 
     // 4. WebSocket cleanup happens automatically via useWebSocket cleanup
 
-    // 5. Force navigation: if this was an instant watch, go back to lobby; otherwise go to room page
+    // 5. Force navigation: if this was a temporary room (instant watch), go back to lobby; otherwise go to room page
     try {
-      console.log('🔍 [VideoWatch] Current URL:', window.location.href);
-      const urlParams = new URLSearchParams(window.location.search);
-      const instantParam = urlParams.get('instant');
-      console.log('🔍 [VideoWatch] instant param from URL:', instantParam);
+      console.log('🔍 [VideoWatch] Checking session data for redirect...');
+      const sessionDataStr = sessionStorage.getItem(`pending_rating_${roomId}`);
+      let isTemporary = false;
       
-      if (instantParam === 'true') {
-        console.log('✅ [VideoWatch] Instant watch detected - navigating to Lobby...');
+      // Try to get is_temporary from session data if available
+      if (sessionDataStr) {
+        try {
+          const sessionData = JSON.parse(sessionDataStr);
+          isTemporary = sessionData.isTemporary || false;
+          console.log('🔍 [VideoWatch] is_temporary from session data:', isTemporary);
+        } catch (e) {
+          console.error('⚠️ [VideoWatch] Error parsing session data:', e);
+        }
+      }
+      
+      // Fallback: check URL parameter (for backwards compatibility)
+      if (!isTemporary) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const instantParam = urlParams.get('instant');
+        isTemporary = instantParam === 'true';
+        console.log('🔍 [VideoWatch] is_temporary from URL fallback:', isTemporary);
+      }
+      
+      if (isTemporary) {
+        console.log('✅ [VideoWatch] Temporary room detected - navigating to Lobby...');
         window.location.href = `/lobby`;
       } else {
-        console.log('✅ [VideoWatch] Regular room - navigating to RoomPage...');
+        console.log('✅ [VideoWatch] Persistent room - navigating to RoomPage...');
         window.location.href = `/rooms/${roomId}`;
       }
     } catch (err) {
-      console.error('⚠️ [VideoWatch] Error checking instant param:', err);
+      console.error('⚠️ [VideoWatch] Error checking room type:', err);
       console.log('🏠 [VideoWatch] Navigating to RoomPage (fallback)...');
       window.location.href = `/rooms/${roomId}`;
     }
@@ -1486,132 +2655,104 @@ export default function VideoWatch() {
     
     sendMessage({
       type: messageType,
-      session_id: sessionId,
+      session_id: sessionStatus.id,
       user_id: userId
     });
-  }, [isHost, sessionId, sendMessage]);
+  }, [isHost, sessionStatus.id, sendMessage]);
 
-  useEffect(() => {
-    if (!roomId || !currentUser) return;
-    fetchRoomMembers();
-  }, [roomId, currentUser, fetchRoomMembers]);
+  // ❌ REMOVED: Don't fetch room members from API - use session members from WebSocket only
+  // useEffect(() => {
+  //   if (!roomId || !currentUser) return;
+  //   fetchRoomMembers();
+  // }, [roomId, currentUser, fetchRoomMembers]);
 
-  // 🎤 Publish microphone with specific device
-  const publishMicDevice = useCallback(async (deviceId) => {
-    if (!localParticipant) {
-      console.warn('⚠️ [VideoWatch] No localParticipant for mic publish');
-      return false;
-    }
-    try {
-      console.log(`🎤 [VideoWatch] Publishing mic device: ${deviceId}`);
-      // Stop and unpublish old track if exists
-      if (publishedAudioTrackRef.current) {
-        try {
-          await localParticipant.unpublishTrack(publishedAudioTrackRef.current);
-          publishedAudioTrackRef.current.stop();
-        } catch (err) {
-          console.warn('⚠️ [VideoWatch] Failed to unpublish old track:', err);
-        }
-        publishedAudioTrackRef.current = null;
-      }
-
-      // ✅ FIX: Use minimal audio constraints for voice clarity
-      const constraints = {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        echoCancellation: true,      // Keep this (helps with feedback)
-        noiseSuppression: false,     // ← DISABLE
-        autoGainControl: false,      // ← DISABLE
-      };
-
-      console.log('🎤 [VideoWatch] Creating audio track with constraints:', constraints);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
-      const audioTrack = stream.getAudioTracks()[0];
-      console.log(`🎤 [VideoWatch] Got audio track: ${audioTrack.label}`);
-
-      // Publish to LiveKit
-      await localParticipant.publishTrack(audioTrack);
-      publishedAudioTrackRef.current = audioTrack;
-      console.log('✅ [VideoWatch] Microphone published successfully');
-      console.log('🎤 [VideoWatch] Audio track enabled:', audioTrack.enabled);
-      console.log('🎤 [VideoWatch] Audio track readyState:', audioTrack.readyState);
-      console.log('🎤 [VideoWatch] Audio track settings:', audioTrack.getSettings());
-      playMicOnSound();
-      return true;
-    } catch (err) {
-      console.error('❌ [VideoWatch] Failed to publish microphone:', err);
-      publishedAudioTrackRef.current = null;
-      return false;
-    }
-  }, [localParticipant]);
-
-  // 🎤 Unpublish microphone
-  const unpublishMic = useCallback(async () => {
-    if (!localParticipant) return;
-
-    try {
-      console.log('🎤 [VideoWatch] Unpublishing microphone');
-      
-      if (publishedAudioTrackRef.current) {
-        await localParticipant.unpublishTrack(publishedAudioTrackRef.current);
-        publishedAudioTrackRef.current.stop();
-        publishedAudioTrackRef.current = null;
-      }
-      
-      console.log('✅ [VideoWatch] Microphone unpublished');
-      playMicOffSound();
-    } catch (err) {
-      console.error('❌ [VideoWatch] Failed to unpublish microphone:', err);
-    }
-  }, [localParticipant]);
-
-  // ✅ Audio toggle function with device-specific publishing
+  // ✅ Audio toggle function - keeps track published, just toggles enabled (for activeSpeakersChanged)
   const toggleAudio = useCallback(async () => {
     console.log('🎤 [toggleAudio] Called, current state:', isAudioActive);
     const newAudioState = !isAudioActive;
     console.log('🎤 [toggleAudio] New state will be:', newAudioState);
 
-    // 🎙️ Toggle LiveKit microphone with selected device
-    let success = false;
-    if (newAudioState) {
-      // Enable: publish the selected device
-      console.log('🎤 [toggleAudio] Attempting to publish mic with device:', selectedAudioDeviceId);
-      success = await publishMicDevice(selectedAudioDeviceId);
-      console.log('🎤 [toggleAudio] Publish result:', success);
-      if (!success) {
-        // Failed to publish, revert state
-        console.error('❌ [toggleAudio] Failed to publish mic, aborting state change');
-        return;
-      }
-    } else {
-      // Disable: unpublish mic
-      console.log('🎤 [toggleAudio] Unpublishing mic...');
-      await unpublishMic();
-      success = true;
+    // ✅ Toggle audio track enabled state (track stays published to LiveKit)
+    const audioTrack = publishedAudioTrackRef.current;
+    if (!audioTrack) {
+      console.warn('⚠️ [toggleAudio] No audio track published yet');
+      return;
     }
 
-    if (success) {
-      console.log('✅ [toggleAudio] Setting isAudioActive to:', newAudioState);
-      setIsAudioActive(newAudioState);
-      
-      // Extract current user's row from userSeats
-      const currentUserSeatId = userSeats[currentUser?.id];
-      const currentUserRow = currentUserSeatId ? parseInt(currentUserSeatId.split('-')[0]) : null;
-      
-      // ✅ Check if user has broadcast permission
-      const hasUserBroadcastPermission = broadcastPermissions[currentUser?.id] || false;
-      const isGlobalBroadcast = (isHost && isHostBroadcasting) || hasUserBroadcastPermission;
+    // Toggle enabled state
+    audioTrack.enabled = newAudioState;
+    setIsAudioActive(newAudioState);
+    
+    console.log('✅ [toggleAudio] Audio track enabled:', newAudioState);
+    
+    // ✅ Update local user's audio state for MembersModal
+    setRemoteAudioStates(prev => ({
+      ...prev,
+      [currentUser.id]: {
+        ...prev[currentUser.id],
+        isMuted: !newAudioState,
+        isSpeaking: false, // Will be updated by activeSpeakersChanged
+        audioLevel: 0,
+      }
+    }));
+    
+    // Extract current user's row from userSeats
+    const currentUserSeatId = userSeats[currentUser?.id];
+    const currentUserRow = currentUserSeatId ? parseInt(currentUserSeatId.split('-')[0]) : null;
+    
+    // ✅ Check if user has broadcast permission
+    const hasUserBroadcastPermission = broadcastPermissions[currentUser?.id] || false;
+    const isGlobalBroadcast = (isHost && isHostBroadcasting) || hasUserBroadcastPermission;
 
-      // 📡 Send real-time update over WebSocket for UI state sync
+    // 📡 Send real-time update over WebSocket for UI state sync
+    sendMessage({
+      type: "user_audio_state",
+      isAudioActive: newAudioState,
+      userId: currentUser.id,
+      isSeatedMode: isSeatedMode,
+      isGlobalBroadcast: isGlobalBroadcast,
+      row: isSeatedMode && currentUserRow !== null ? currentUserRow : null,
+    });
+  }, [isAudioActive, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage, broadcastPermissions]);
+
+  // ✅ Host-only: Toggle mute all members (locked mute, requires host approval to unmute)
+  const handleMuteAll = useCallback(() => {
+    if (!isHost) {
+      console.warn('🚫 [VideoWatch] Non-host attempted to toggle mute all');
+      return;
+    }
+
+    const newMuteState = !isMuteAllActive;
+    console.log(`🔇 [VideoWatch] Host toggling mute all: ${newMuteState ? 'ON' : 'OFF'}`);
+    
+    if (newMuteState) {
+      // Muting all members
       sendMessage({
-        type: "user_audio_state",
-        isAudioActive: newAudioState,
-        userId: currentUser.id,
-        isSeatedMode: isSeatedMode,
-        isGlobalBroadcast: isGlobalBroadcast,
-        row: isSeatedMode && currentUserRow !== null ? currentUserRow : null,
+        type: "mute_all_members",
+        hostId: currentUser.id,
+        sessionId: sessionStatus?.id,
+      });
+
+      setIsMuteAllActive(true);
+      toast.success('All members have been muted', {
+        icon: '🔇',
+        duration: 3000,
+      });
+    } else {
+      // Unmuting all members
+      sendMessage({
+        type: "unmute_all_members",
+        hostId: currentUser.id,
+        sessionId: sessionStatus?.id,
+      });
+
+      setIsMuteAllActive(false);
+      toast.success('All members can now unmute', {
+        icon: '🔊',
+        duration: 3000,
       });
     }
-  }, [isAudioActive, selectedAudioDeviceId, publishMicDevice, unpublishMic, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage, broadcastPermissions]);
+  }, [isHost, isMuteAllActive, sendMessage, currentUser, sessionStatus]);
 
   // detect if user stops sharing via browser controls
   useEffect(() => {
@@ -1637,6 +2778,16 @@ export default function VideoWatch() {
       localParticipant.off('trackUnpublished', handleTrackUnpublished);
     };
   }, [localParticipant, sendMessage]);
+
+  // Fetch private chat history when modal opens
+  useEffect(() => {
+    if (showPrivateChat && privateChatUser && !privateMessages[privateChatUser.id]?.length) {
+      sendMessage({
+        type: 'fetch_private_chat',
+        data: { other_user_id: privateChatUser.id }
+      });
+    }
+  }, [showPrivateChat, privateChatUser, sendMessage, privateMessages]);
 
   // ✅ FIND SCREEN SHARE TRACK FROM LIVEKIT (MUST BE BEFORE EARLY RETURN)
   const remoteScreenTrack = React.useMemo(() => {
@@ -1770,52 +2921,55 @@ export default function VideoWatch() {
       }
     };
     sendMessage(msg);
-    // Optimistic UI
-    const newMsg = {
+    
+    // ✅ Optimistic update: Add sent message immediately
+    const optimisticMsg = {
       id: Date.now(),
       from_user_id: currentUser.id,
       to_user_id: privateChatUser.id,
       message: text.trim(),
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      _optimistic: true
     };
     setPrivateMessages(prev => ({
       ...prev,
-      [privateChatUser.id]: [...(prev[privateChatUser.id] || []), newMsg]
+      [privateChatUser.id]: [...(prev[privateChatUser.id] || []), optimisticMsg]
     }));
   };
-
-  // Fetch private chat history when modal opens
-  useEffect(() => {
-    if (showPrivateChat && privateChatUser && !privateMessages[privateChatUser.id]?.length) {
-      sendMessage({
-        type: 'fetch_private_chat',
-        data: { other_user_id: privateChatUser.id }
-      });
-    }
-  }, [showPrivateChat, privateChatUser, sendMessage]);
 
   return (
     <div className="relative w-full h-screen bg-[#0a0a0a] text-white overflow-hidden">
       {/* ✅ Toast Notifications */}
       <Toaster position="top-center" />
       
+      {/* 🔇 Mute All Banner */}
+      {showMuteAllBanner && (
+        <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-50 animate-fade-in">
+          <div className="bg-red-600 text-white px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3">
+            <span className="text-2xl">🔇</span>
+            <span className="font-medium">Host has muted all members</span>
+          </div>
+        </div>
+      )}
+      
       {/* Top-Left Menu Icon */}
-      <div className="absolute top-0 left-0 p-4 z-50">
+      <div className="absolute top-0 left-0 p-3 sm:p-4 z-50">
         <button
           onClick={() => setIsLeftSidebarOpen(prev => !prev)}
-          className="h-6 w-6"
+          className="h-8 w-8 sm:h-6 sm:w-6 p-1 touch-manipulation"
           aria-label={isLeftSidebarOpen ? "Close menu" : "Open menu"}
         >
           <img 
             src="/icons/MenuIcon.svg" 
             alt="Menu" 
-            className={`h-6 w-6 transition-transform duration-300 ${isLeftSidebarOpen ? 'rotate-90' : ''}`}
+            className={`h-full w-full transition-transform duration-300 ${isLeftSidebarOpen ? 'rotate-90' : ''}`}
           />
         </button>
       </div>
 
       {/* 📺 Main Video Player — PASS LIVEKIT TRACK */}
       <CinemaVideoPlayer
+        ref={videoPlayerRef}
         mediaItem={currentMedia}
         isPlaying={isPlaying}
         isHost={isHost}
@@ -1827,6 +2981,7 @@ export default function VideoWatch() {
         onEnded={handleVideoEnd}
         onError={handleError}
         onPauseBroadcast={handlePauseBroadcast}
+        onTimeUpdate={handleTimeUpdate}
         // ❌ REMOVED: onBinaryHandlerReady, onScreenShareReady (not needed with LiveKit)
       />
       
@@ -1835,14 +2990,19 @@ export default function VideoWatch() {
 
       {/* Rest of UI (Taskbar, Sidebar, Chat, etc.) — UNCHANGED */}
       <Taskbar 
+          watchType={watchType}
+          classType={classType}
           authenticatedUserID={currentUser?.id}
           isAudioActive={isAudioActive}
           toggleAudio={toggleAudio}
+          localAudioLevel={remoteAudioStates[currentUser?.id]?.audioLevel || 0}
           isSilenceMode={isSilenceMode}
           onToggleSilenceMode={() => setIsSilenceMode(!isSilenceMode)}
+          showProgram={isClassroom} // Show Board button for classrooms
           showEmotes={false}
           openChat={openChat}
-          showProgram = {false}
+          onQuizClick={handleQuizClick}
+          activeQuizCount={activeQuiz ? 1 : 0}
           isVisible={isVisible}
           isGlowing={isGlowing}
           onShareRoom={handleShareRoom}
@@ -1859,7 +3019,13 @@ export default function VideoWatch() {
           seats={seats}
           userSeats={userSeats}
           currentUser={currentUser}
-          onMembersClick={() => { fetchRoomMembers(); setShowMembersModal(true);}}
+          watchSessionMembers={roomMembers}
+          onMembersClick={() => { 
+            // ✅ Don't fetch room members - use session members already in state from session_status WebSocket message
+            console.log('👥 [VideoWatch] Members button clicked, current roomMembers:', roomMembers);
+            console.log('👥 [VideoWatch] Members count:', roomMembers?.length);
+            setShowMembersModal(true);
+          }}
           audioDevices={audioDevices}
           selectedAudioDeviceId={selectedAudioDeviceId}
           onAudioDeviceChange={(deviceId) => {
@@ -1872,6 +3038,7 @@ export default function VideoWatch() {
           selectedCameraId={selectedCameraId}
           onCameraSwitch={switchCamera}
           broadcastPermissions={broadcastPermissions}
+          unreadMessages={unreadMessages}
         />
 
       {isSeatsModalOpen && (
@@ -1952,11 +3119,18 @@ export default function VideoWatch() {
             roomId={roomId}
             mousePosition={mousePosition}
             isLeftSidebarOpen={isLeftSidebarOpen}
+            onQuizClick={handleQuizClick}
+            watchType={watchType}
+            classType={classType}
             isScreenSharingActive={isScreenSharingActive}
-            onStartScreenShare={handleStartScreenShare}
+            sharingSource={sharingSource}
+            isLiveKitConnected={isLiveKitConnected}
+            onStartScreenShare={handleStartLiveShare}
             onEndScreenShare={handleEndScreenShare}
+            onStartPlatformScreenShare={handleStartPlatformScreenShare}
             isConnected={isConnected}
             playlist={playlist}
+            currentMedia={currentMedia}
             currentUser={currentUser}
             sendMessage={sendMessage}
             onDeleteMedia={onDeleteMedia}
@@ -1973,10 +3147,10 @@ export default function VideoWatch() {
       {/* Other UI components (Chat, Camera Preview, Video Tiles, Modals, etc.) — keep as-is */}
       {selectedPlatform && (
         <div 
-          className="fixed left-80 top-1/2 transform -translate-y-1/2 w-80 z-40"
-          style={{ maxWidth: 'calc(100vw - 240px)' }}
+          className="fixed left-4 right-4 sm:left-80 sm:right-auto top-1/2 transform -translate-y-1/2 sm:w-80 z-40"
+          style={{ maxWidth: 'calc(100vw - 2rem)' }}
         >
-          <div className="bg-gray-800/90 p-4 rounded-lg border border-gray-700">
+          <div className="bg-gray-800/90 p-3 sm:p-4 rounded-lg border border-gray-700">
             <h4 className="font-medium text-white mb-2">Selected: {selectedPlatform.name}</h4>
             <p className="text-gray-300 text-sm mb-3">
               Start screen sharing to watch {selectedPlatform.name} together.
@@ -2015,7 +3189,7 @@ export default function VideoWatch() {
       {/* TikTok-Style Floating Chat */}
       {isChatOpen && (
         <div 
-          className="fixed bottom-24 right-4 w-80 bg-black/80 backdrop-blur-md rounded-xl border border-gray-700 shadow-2xl z-50 animate-fade-in"
+          className="fixed bottom-20 sm:bottom-24 left-4 right-4 sm:left-auto sm:right-4 sm:w-80 bg-black/80 backdrop-blur-md rounded-xl border border-gray-700 shadow-2xl z-50 animate-fade-in"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -2137,18 +3311,31 @@ export default function VideoWatch() {
         isOpen={showMembersModal}
         onClose={() => setShowMembersModal(false)}
         members={roomMembers}
-        fetchMembers={fetchRoomMembers}
+        fetchMembers={null}
+        onMemberClick={(member) => {
+          setShowMembersModal(false);
+          setPrivateChatUser(member);
+          setShowPrivateChat(true);
+          
+          // ✅ Mark messages from this user as read
+          setUnreadMessages(prev => ({
+            ...prev,
+            [member.id]: 0
+          }));
+        }}
         isHost={isHost}
         currentUserId={currentUser?.id}
         audioStates={remoteAudioStates}
         broadcastPermissions={broadcastPermissions}
         onToggleBroadcast={handleToggleBroadcast}
         userSeats={userSeats}
-        sessionId={sessionId}
+        sessionId={sessionStatus.id}
         userTheaters={{}}
         onRequestBroadcast={null}
         broadcastRequests={[]}
         watchType="video_watch"
+        onMuteAll={handleMuteAll}
+        isMuteAllActive={isMuteAllActive}
       />
       {/* Chat Entry Modals */}
       {showChatHome && (
@@ -2157,6 +3344,7 @@ export default function VideoWatch() {
           currentUser={currentUser}
           roomMembers={roomMembers}
           privateMessages={privateMessages}
+          unreadMessages={unreadMessages}
           onClose={() => setShowChatHome(false)}
           onOpenRoomChat={() => {
             setShowChatHome(false);
@@ -2166,6 +3354,12 @@ export default function VideoWatch() {
             setShowChatHome(false);
             setPrivateChatUser(user);
             setShowPrivateChat(true);
+            
+            // ✅ Mark messages from this user as read
+            setUnreadMessages(prev => ({
+              ...prev,
+              [user.id]: 0
+            }));
           }}
         />
       )}
@@ -2181,6 +3375,80 @@ export default function VideoWatch() {
             setShowChatHome(true);
           }}
           onClose={() => setShowPrivateChat(false)}
+          onMarkAsRead={(userId) => {
+            setUnreadMessages(prev => ({
+              ...prev,
+              [userId]: 0
+            }));
+          }}
+        />
+      )}
+
+      {/* 🎁 Floating Gift Icon - Only shows for non-hosts */}
+      <FloatingGiftIcon
+        hostId={roomHostId}
+        currentUserId={currentUser?.id}
+        tokenBalance={tokenBalance}
+        isVisible={!showCinemaSeatView}
+        isFullscreen={showCinemaSeatView}
+        isLeftSidebarOpen={isLeftSidebarOpen}
+        onGiftSent={(updatedBalance) => {
+          // Update local token balance
+          setTokenBalance(updatedBalance.token_balance);
+        }}
+      />
+
+      {/* 🎊 Donation Notifications - Visible to ALL users (including host) */}
+      <DonationNotification
+        messages={messages}
+        currentUserId={currentUser?.id}
+      />
+
+      {/* 📝 QUIZ SYSTEM MODALS */}
+      {isQuizManagementOpen && isHost && (
+        <QuizManagementModal
+          isOpen={isQuizManagementOpen}
+          onClose={() => setIsQuizManagementOpen(false)}
+          isHost={isHost}
+          quizzes={quizzes}
+          activeQuiz={activeQuiz}
+          onCreateQuiz={handleCreateQuiz}
+          onViewResults={handleViewResults}
+          sendMessage={sendMessage}
+          currentUser={currentUser}
+        />
+      )}
+
+      {isMakeQuizOpen && isHost && (
+        <MakeQuizModal
+          isOpen={isMakeQuizOpen}
+          onClose={() => {
+            setIsMakeQuizOpen(false);
+            setIsQuizManagementOpen(true); // Return to management
+          }}
+          sendMessage={sendMessage}
+          currentUser={currentUser}
+          roomId={roomId}
+          sessionId={sessionStatus?.id}
+        />
+      )}
+
+      {isTakeQuizOpen && !isHost && (
+        <TakeQuizModal
+          isOpen={isTakeQuizOpen}
+          onClose={() => setIsTakeQuizOpen(false)}
+          quiz={currentQuizData}
+          sendMessage={sendMessage}
+          currentUser={currentUser}
+        />
+      )}
+
+      {isQuizResultsOpen && !isHost && (
+        <QuizResultsModal
+          isOpen={isQuizResultsOpen}
+          onClose={() => setIsQuizResultsOpen(false)}
+          results={quizResults}
+          quiz={currentQuizData}
         />
       )}
     </div>

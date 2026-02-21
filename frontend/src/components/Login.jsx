@@ -36,7 +36,6 @@ const Login = () => {
         }
 
         console.log("User stored in localStorage");
-        alert("Login successful!");
         
         // ✅ NOW NAVIGATE — auth state is ready
         navigate('/lobby');
@@ -44,8 +43,38 @@ const Login = () => {
         throw new Error("Login successful, but missing user data.");
       }
     } catch (err) {
-      console.error("Login failed:", err);
-      // ... error handling
+      // ✅ Log error for debugging (not shown to user)
+      console.error("Login failed:", err.response?.status || err.message);
+      
+      // ✅ User-friendly error messages (no internal details exposed)
+      let errorMessage = "Unable to log in. Please try again.";
+      
+      if (err.response) {
+        // Server responded with error
+        const status = err.response.status;
+        
+        if (status === 401) {
+          errorMessage = "Invalid email or password. Please check your credentials.";
+        } else if (status === 403) {
+          errorMessage = "Access denied. Please contact support if this continues.";
+        } else if (status === 429) {
+          errorMessage = "Too many login attempts. Please wait a few minutes and try again.";
+        } else if (status === 400) {
+          errorMessage = "Invalid login information. Please check your email and password.";
+        } else if (status >= 500) {
+          errorMessage = "Server is temporarily unavailable. Please try again in a few moments.";
+        } else {
+          errorMessage = "Unable to log in at this time. Please try again later.";
+        }
+      } else if (err.request) {
+        // Network error - no response received
+        errorMessage = "Cannot connect to server. Please check your internet connection and try again.";
+      } else {
+        // Generic error
+        errorMessage = "An unexpected error occurred. Please try again.";
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }

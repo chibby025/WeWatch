@@ -8,6 +8,7 @@ import { Html } from '@react-three/drei';
  * - Styled with user's avatar color
  * - Premium indicator (⭐)
  * - Current user indicator (YOU)
+ * - Speaker indicator (🎤) when user is speaking
  */
 export default function UsernameLabel({
   username,
@@ -15,12 +16,13 @@ export default function UsernameLabel({
   position = [0, 1.4, 0],
   isPremium = false,
   isCurrentUser = false,
+  isSpeaking = false, // 🎤 Show microphone icon when speaking
 }) {
   return (
     <Html
       position={position}
       center
-      distanceFactor={6} // Size scaling with distance
+      distanceFactor={5} // ✅ Reduced from 20 to 5 (divided by 4 for smaller size)
       style={{
         pointerEvents: 'none',
         userSelect: 'none',
@@ -30,17 +32,18 @@ export default function UsernameLabel({
         style={{
           background: 'rgba(0, 0, 0, 0.7)',
           color: color || '#ffffff',
-          padding: '4px 8px',
-          borderRadius: '8px',
+          padding: '1px 3px',
+          borderRadius: '3px',
           border: `1px solid ${color || '#ffffff'}`,
-          fontSize: '12px',
-          fontWeight: 'bold',
+          fontSize: '8px',
+          fontWeight: '600',
           whiteSpace: 'nowrap',
           textAlign: 'center',
-          boxShadow: `0 0 10px ${color || '#ffffff'}40`, // Subtle glow
+          boxShadow: `0 0 4px ${color || '#ffffff'}20`,
           fontFamily: 'Arial, sans-serif',
         }}
       >
+        {isSpeaking && <span style={{ marginRight: '4px' }}>🎤</span>}
         {isPremium && <span style={{ marginRight: '4px' }}>⭐</span>}
         {username}
         {isCurrentUser && (

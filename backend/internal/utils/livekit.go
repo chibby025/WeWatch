@@ -2,8 +2,13 @@
 package utils
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/livekit/protocol/auth"
@@ -77,6 +82,80 @@ func DeleteLiveKitRoom(roomName string) error {
 	log.Printf("✅ DeleteLiveKitRoom: Successfully deleted LiveKit room %s", roomName)
 	return nil
 	*/
+}
+
+// IsHostActiveInLiveKit checks if a user is currently connected to a LiveKit room
+// Returns true if the user has an active connection (publishing or subscribed)
+func IsHostActiveInLiveKit(roomName string, userIdentity string) bool {
+	apiKey := os.Getenv("LIVEKIT_API_KEY")
+	apiSecret := os.Getenv("LIVEKIT_API_SECRET")
+	livekitURL := os.Getenv("LIVEKIT_URL")
+
+	if apiKey == "" || apiSecret == "" || livekitURL == "" {
+		log.Printf("⚠️ IsHostActiveInLiveKit: Missing LiveKit config")
+		return false
+	}
+
+	// Create a token to authenticate API requests
+	at := auth.NewAccessToken(apiKey, apiSecret).
+		SetValidFor(5 * time.Minute)
+	
+	token, err := at.ToJWT()
+	if err != nil {
+		log.Printf("⚠️ IsHostActiveInLiveKit: Failed to create auth token: %v", err)
+		return false
+	}
+
+	// Make HTTP request to LiveKit API to list participants
+	// Format: POST /twirp/livekit.RoomService/ListParticipants
+	requestBody := fmt.Sprintf(`{"room":"%s"}`, roomName)
+	req, err := http.NewRequest("POST", livekitURL+"/twirp/livekit.RoomService/ListParticipants", 
+		strings.NewReader(requestBody))
+	if err != nil {
+		log.Printf("⚠️ IsHostActiveInLiveKit: Failed to create request: %v", err)
+		return false
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("⚠️ IsHostActiveInLiveKit: HTTP request failed: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("⚠️ IsHostActiveInLiveKit: API returned status %d: %s", resp.StatusCode, string(body))
+		return false
+	}
+
+	// Parse response
+	var result struct {
+		Participants []struct {
+			Identity string `json:"identity"`
+			State    string `json:"state"`
+		} `json:"participants"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("⚠️ IsHostActiveInLiveKit: Failed to parse response: %v", err)
+		return false
+	}
+
+	// Check if user is in the participants list and is active
+	for _, p := range result.Participants {
+		if p.Identity == userIdentity && p.State == "ACTIVE" {
+			log.Printf("✅ IsHostActiveInLiveKit: User %s is ACTIVE in room %s", userIdentity, roomName)
+			return true
+		}
+	}
+
+	log.Printf("❌ IsHostActiveInLiveKit: User %s NOT found or not active in room %s", userIdentity, roomName)
+	return false
 }
 
 // Custom error

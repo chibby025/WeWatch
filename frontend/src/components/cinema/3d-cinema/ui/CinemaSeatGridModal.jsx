@@ -24,37 +24,32 @@ const CinemaSeatGridModal = ({
 }) => {
   const [localSelectedTheater, setLocalSelectedTheater] = React.useState(null);
 
-  // Determine which theater to display
-  const activeTheaterId = selectedTheaterId || localSelectedTheater || theaters[0]?.id;
-  if (!isOpen) return null;
+  // Ensure theaters is always an array
+  const safeTheaters = Array.isArray(theaters) ? theaters : [];
 
-  // Debug logging
-  console.log('🪑 [CinemaSeatGridModal] Rendering with:', {
-    userSeats,
-    currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
-    roomMembers: roomMembers.map(m => ({ id: m.id, username: m.username })),
-    currentUserSeatId: currentUser?.id ? userSeats[currentUser.id] : null
-  });
+  // Determine which theater to display
+  const activeTheaterId = selectedTheaterId || localSelectedTheater || safeTheaters[0]?.id;
+  if (!isOpen) return null;
 
   const rowLetter = (row) => String.fromCharCode(65 + row); // A-F
 
   // Get current user's seat (must be declared before using it)
   const currentUserSeatId = currentUser?.id ? userSeats[currentUser.id] : null;
-  console.log('🪑 [CinemaSeatGridModal] Current user seat:', currentUserSeatId);
 
   // Get selected theater info
-  const selectedTheater = theaters.find(t => t.id === activeTheaterId);
+  const selectedTheater = safeTheaters.find(t => t.id === activeTheaterId);
   const selectedTheaterNumber = selectedTheater?.theater_number;
 
   // Build seat → username map (filtered by theater if applicable)
   const usernameBySeat = {};
+  
   roomMembers.forEach(member => {
     // Check both id and user_id fields for compatibility
     const userId = member.id || member.user_id;
     const seatId = userSeats[userId];
     
     // If viewing specific theater as host, only show users in that theater
-    if (isHost && theaters.length > 1 && selectedTheaterNumber) {
+    if (isHost && safeTheaters.length > 1 && selectedTheaterNumber) {
       const memberTheater = userTheaters[userId];
       // Skip users not in the selected theater
       if (!memberTheater || memberTheater.theater_number !== selectedTheaterNumber) {
@@ -62,25 +57,15 @@ const CinemaSeatGridModal = ({
       }
     }
     
-    console.log(`🪑 [CinemaSeatGridModal] Checking member:`, {
-      member_id: member.id,
-      member_user_id: member.user_id,
-      userId,
-      seatId,
-      username: member.username,
-      userSeats_for_this_id: userSeats[userId]
-    });
-    
     if (seatId) {
       usernameBySeat[seatId] = member.username || `User${userId}`;
-      console.log(`🪑 [CinemaSeatGridModal] Mapped seat ${seatId} to ${member.username} (ID: ${userId})`);
     }
   });
   
   // ✅ Ensure current user's name is displayed on their seat (if in selected theater)
   if (currentUser && currentUserSeatId) {
     // Only show current user if in selected theater (when filtering)
-    if (isHost && theaters.length > 1 && selectedTheaterNumber) {
+    if (isHost && safeTheaters.length > 1 && selectedTheaterNumber) {
       const currentUserTheater = userTheaters[currentUser.id];
       if (currentUserTheater && currentUserTheater.theater_number === selectedTheaterNumber) {
         usernameBySeat[currentUserSeatId] = currentUser.username || `User${currentUser.id}`;
@@ -88,7 +73,6 @@ const CinemaSeatGridModal = ({
     } else {
       usernameBySeat[currentUserSeatId] = currentUser.username || `User${currentUser.id}`;
     }
-    console.log(`🪑 [CinemaSeatGridModal] Force-mapped current user seat ${currentUserSeatId} to ${currentUser.username}`);
   }
 
   // Modal is in swap mode?
@@ -190,7 +174,7 @@ const CinemaSeatGridModal = ({
           </div>
           
           {/* Theater Selector Dropdown (Host only, when multiple theaters exist) */}
-          {isHost && theaters.length > 1 && (
+          {isHost && safeTheaters.length > 1 && (
             <div className="flex items-center gap-3">
               <label className="text-gray-400 text-sm font-medium">Theater:</label>
               <select
@@ -202,7 +186,7 @@ const CinemaSeatGridModal = ({
                 }}
                 className="bg-gray-700 text-white px-3 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500 text-sm"
               >
-                {theaters.map(theater => (
+                {safeTheaters.map(theater => (
                   <option key={theater.id} value={theater.id}>
                     {theater.custom_name || `Theater ${theater.theater_number}`} ({theater.occupied_seats}/{theater.max_seats})
                   </option>
@@ -212,7 +196,27 @@ const CinemaSeatGridModal = ({
           )}
         </div>
 
-        <div className="p-5 overflow-y-auto max-h-[65vh]">
+        <div className="p-5 overflow-y-auto max-h-[65vh] custom-scrollbar">
+          <style>{`
+            .custom-scrollbar::-webkit-scrollbar {
+              width: 6px;
+            }
+            .custom-scrollbar::-webkit-scrollbar-track {
+              background: rgba(31, 41, 55, 0.5);
+              border-radius: 10px;
+            }
+            .custom-scrollbar::-webkit-scrollbar-thumb {
+              background: rgba(156, 163, 175, 0.5);
+              border-radius: 10px;
+            }
+            .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+              background: rgba(156, 163, 175, 0.8);
+            }
+            .custom-scrollbar {
+              scrollbar-width: thin;
+              scrollbar-color: rgba(156, 163, 175, 0.5) rgba(31, 41, 55, 0.5);
+            }
+          `}</style>
           <div className="grid grid-cols-7 gap-4 justify-items-center">
             {allSeats.map(seat => {
               const seatId = seat.id;

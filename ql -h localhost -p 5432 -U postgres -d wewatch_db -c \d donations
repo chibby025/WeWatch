@@ -1,0 +1,32 @@
+                                            Table "public.session_tickets"
+        Column         |           Type           | Collation | Nullable |                   Default                   
+-----------------------+--------------------------+-----------+----------+---------------------------------------------
+ id                    | bigint                   |           | not null | nextval('session_tickets_id_seq'::regclass)
+ session_id            | bigint                   |           | not null | 
+ user_id               | bigint                   |           | not null | 
+ host_id               | bigint                   |           | not null | 
+ payment_method        | character varying(20)    |           | not null | 
+ ticket_price_tokens   | bigint                   |           |          | 0
+ ticket_price_currency | character varying(10)    |           |          | 
+ ticket_price_amount   | numeric(10,2)            |           |          | 0
+ is_early_bird         | boolean                  |           |          | false
+ transaction_id        | bigint                   |           |          | 
+ gateway_earning_id    | bigint                   |           |          | 
+ is_gift               | boolean                  |           |          | false
+ gifted_by_user_id     | bigint                   |           |          | 
+ is_refunded           | boolean                  |           |          | false
+ refund_reason         | text                     |           |          | 
+ refunded_at           | timestamp with time zone |           |          | 
+ created_at            | timestamp with time zone |           |          | 
+ updated_at            | timestamp with time zone |           |          | 
+Indexes:
+    "session_tickets_pkey" PRIMARY KEY, btree (id)
+    "idx_session_tickets_created_at" btree (created_at)
+    "idx_session_tickets_gateway_earning_id" btree (gateway_earning_id)
+    "idx_session_tickets_gifted_by_user_id" btree (gifted_by_user_id)
+    "idx_session_tickets_host_id" btree (host_id)
+    "idx_session_tickets_is_refunded" btree (is_refunded)
+    "idx_session_tickets_session_id" btree (session_id)
+    "idx_session_tickets_transaction_id" btree (transaction_id)
+    "idx_session_tickets_user_id" btree (user_id)
+

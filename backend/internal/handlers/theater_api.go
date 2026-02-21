@@ -12,22 +12,17 @@ import (
 // GetSessionTheaters returns all theaters for a session
 // GET /api/sessions/:id/theaters
 func GetSessionTheaters(c *gin.Context) {
-	sessionIDStr := c.Param("id")
-	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
-		return
-	}
+	sessionIDStr := c.Param("id") // UUID session_id
 
-	// Verify session exists
+	// Find session by UUID session_id
 	var session models.WatchSession
-	if err := DB.First(&session, uint(sessionID)).Error; err != nil {
+	if err := DB.Where("session_id = ?", sessionIDStr).First(&session).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
 		return
 	}
 
-	// Get all theaters
-	theaters, err := GetAllTheatersForSession(uint(sessionID))
+	// Get all theaters using numeric ID
+	theaters, err := GetAllTheatersForSession(session.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch theaters"})
 		return

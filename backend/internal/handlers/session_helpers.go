@@ -3,6 +3,8 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"strconv"
+	"time"
 	"wewatch-backend/internal/models"
 	"gorm.io/gorm"
 	"github.com/gin-gonic/gin"
@@ -15,29 +17,73 @@ func GetSessionMembers(DB *gorm.DB, sessionID uint) ([]models.WatchSessionMember
 	return members, err
 }
 
-// GetAllActiveSessionsHandler handles GET /api/sessions/active
+// GetAllActiveSessionsHandler handles GET /api/sessions/active?limit=10&offset=0
 // Returns all active watch sessions with room and member details for lobby display
+// Supports pagination for infinite scroll
 func GetAllActiveSessionsHandler(c *gin.Context) {
 	type SessionResponse struct {
-		SessionID        string `json:"session_id"`
-		RoomID           uint   `json:"room_id"`
-		RoomName         string `json:"room_name"`
-		HostID           uint   `json:"host_id"`
-		HostUsername     string `json:"host_username"`
-		WatchType        string `json:"watch_type"`
-		IsTemporary      bool   `json:"is_temporary"`
-		IsPublic         bool   `json:"is_public"`
-		MemberCount      int    `json:"member_count"`
-		CurrentlyPlaying string `json:"currently_playing,omitempty"`
-		StartedAt        string `json:"started_at"`
+		SessionID             string  `json:"session_id"`
+		RoomID                uint    `json:"room_id"`
+		RoomName              string  `json:"room_name"`
+		HostID                uint    `json:"host_id"`
+		HostUsername          string  `json:"host_username"`
+		WatchType             string  `json:"watch_type"`
+		ClassType             string  `json:"class_type,omitempty"`
+		IsTemporary           bool    `json:"is_temporary"`
+		IsPublic              bool    `json:"is_public"`
+		MemberCount           int     `json:"member_count"`
+		CurrentlyPlaying      string  `json:"currently_playing,omitempty"`
+		SessionTitle          string  `json:"session_title,omitempty"`
+		StartedAt             string  `json:"started_at"`
+		CurrentMediaURL       string  `json:"current_media_url,omitempty"`
+		CurrentMediaType      string  `json:"current_media_type,omitempty"`
+		IsScreenSharingActive bool    `json:"is_screen_sharing_active"`
+		SharingSource         string  `json:"sharing_source,omitempty"`
+		AverageRating         float64 `json:"average_rating"`     // ✅ Room's average rating
+		TotalRatings          int     `json:"total_ratings"`      // ✅ Number of ratings
 	}
 
-	log.Printf("🔍 [GetAllActiveSessionsHandler] Fetching active sessions...")
+	// ✅ Get current user ID for privacy filtering
+	currentUserID, exists := c.Get("user_id")
+	var userID uint
+	if exists {
+		if uid, ok := currentUserID.(uint); ok {
+			userID = uid
+		}
+	}
+
+	// ✅ Parse pagination parameters
+	limit := 10 // Default
+	if l := c.Query("limit"); l != "" {
+		if parsedLimit, err := strconv.Atoi(l); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
 	
-	// Query all active sessions (EndedAt is NULL)
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsedOffset, err := strconv.Atoi(o); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	log.Printf("🔍 [GetAllActiveSessionsHandler] Fetching active sessions for user %d (limit: %d, offset: %d)...", userID, limit, offset)
+	
+	// Get total count for pagination
+	var totalCount int64
+	if err := DB.Model(&models.WatchSession{}).Where("ended_at IS NULL").Count(&totalCount).Error; err != nil {
+		log.Printf("❌ Error counting active sessions: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count active sessions"})
+		return
+	}
+	
+	// Query active sessions with pagination (EndedAt is NULL)
 	var sessions []models.WatchSession
 	if err := DB.Where("ended_at IS NULL").
 		Preload("Members", "is_active = ?", true).
+		Order("started_at DESC"). // Most recent first
+		Limit(limit).
+		Offset(offset).
 		Find(&sessions).Error; err != nil {
 		log.Printf("❌ Error fetching active sessions: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch active sessions"})
@@ -50,6 +96,24 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 	var response []SessionResponse
 	for _, session := range sessions {
 		log.Printf("🔍 [GetAllActiveSessionsHandler] Processing session %s (room %d)", session.SessionID, session.RoomID)
+		
+		// ✅ PRIVACY FILTER: Skip private sessions unless user is a member
+		if session.IsPrivate && userID > 0 {
+			// Check if user is a member of this private session
+			isMember := false
+			for _, member := range session.Members {
+				if member.UserID == userID {
+					isMember = true
+					break
+				}
+			}
+			if !isMember {
+				log.Printf("  └─ 🔒 SKIPPING private session (user %d not a member)", userID)
+				continue
+			}
+			log.Printf("  ├─ 🔓 User %d is member of private session", userID)
+		}
+		
 		// Fetch room details
 		var room models.Room
 		if err := DB.First(&room, session.RoomID).Error; err != nil {
@@ -63,8 +127,18 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 
 		// If this is a temporary instant-watch room with no active members,
 		// it's stale/orphaned — try to clean it up and skip returning it in the lobby.
+		// ✅ GRACE PERIOD: Don't cleanup sessions created within last 10 seconds (give user time to join)
 		if room.IsTemporary && activeMemberCount == 0 {
-			log.Printf("  └─ 🧹 ORPHANED! Cleaning up instant-watch session %s (room %d)", session.SessionID, room.ID)
+			timeSinceCreation := time.Since(session.StartedAt)
+			if timeSinceCreation < 10*time.Second {
+				log.Printf("  └─ ⏰ GRACE PERIOD: Session %s is only %.1f seconds old, skipping cleanup", 
+					session.SessionID, timeSinceCreation.Seconds())
+				// Don't add to response yet, but don't delete either
+				continue
+			}
+			
+			log.Printf("  └─ 🧹 ORPHANED! Cleaning up instant-watch session %s (room %d, age: %.1f seconds)", 
+				session.SessionID, room.ID, timeSinceCreation.Seconds())
 
 			tx := DB.Begin()
 			if tx.Error == nil {
@@ -123,26 +197,44 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			hostUsername = user.Username
 		}
 
+		// ✅ DEBUG: Log session media state fields
+		log.Printf("  ├─ Media State: url=%v, type=%v, sharing=%v, source=%v",
+			session.CurrentMediaURL, session.CurrentMediaType,
+			session.IsScreenSharingActive, session.SharingSource)
+
 		sessionResp := SessionResponse{
-			SessionID:        session.SessionID,
-			RoomID:           session.RoomID,
-			RoomName:         room.Name,
-			HostID:           room.HostID,
-			HostUsername:     hostUsername,
-			WatchType:        session.WatchType,
-			IsTemporary:      room.IsTemporary,
-			IsPublic:         room.IsPublic,
-			MemberCount:      activeMemberCount,
-			CurrentlyPlaying: room.CurrentlyPlaying,
-			StartedAt:        session.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
+			SessionID:             session.SessionID,
+			RoomID:                session.RoomID,
+			RoomName:              room.Name,
+			HostID:                room.HostID,
+			HostUsername:          hostUsername,
+			WatchType:             session.WatchType,
+			ClassType:             session.ClassType,
+			IsTemporary:           room.IsTemporary,
+			IsPublic:              room.IsPublic,
+			MemberCount:           activeMemberCount,
+			CurrentlyPlaying:      room.CurrentlyPlaying,
+			SessionTitle:          session.SessionTitle,
+			StartedAt:             session.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
+			CurrentMediaURL:       session.CurrentMediaURL,
+			CurrentMediaType:      session.CurrentMediaType,
+			IsScreenSharingActive: session.IsScreenSharingActive,
+			SharingSource:         session.SharingSource,
+			AverageRating:         room.AverageRating,  // ✅ Include room rating
+			TotalRatings:          room.TotalRatings,   // ✅ Include rating count
 		}
 		log.Printf("  └─ ✅ ADDING to response: %s (temp: %v, members: %d)", room.Name, room.IsTemporary, activeMemberCount)
 		response = append(response, sessionResp)
 	}
 
-	log.Printf("✅ [GetAllActiveSessionsHandler] Returning %d active sessions to client", len(response))
+	log.Printf("✅ [GetAllActiveSessionsHandler] Returning %d active sessions to client (total: %d, has_more: %v)", 
+		len(response), totalCount, int64(offset + limit) < totalCount)
 	c.JSON(http.StatusOK, gin.H{
 		"sessions": response,
 		"count":    len(response),
+		"total":    totalCount,
+		"limit":    limit,
+		"offset":   offset,
+		"has_more": int64(offset + limit) < totalCount,
 	})
 }

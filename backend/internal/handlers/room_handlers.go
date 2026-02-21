@@ -4,9 +4,12 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"wewatch-backend/internal/models"
@@ -34,6 +37,59 @@ func CreateWatchSessionWithType(roomID uint, hostID uint, watchType string) (*mo
 	}
 
 	log.Printf("✅ CreateWatchSessionWithType: Created session %s for room %d (type: %s)", sessionID, roomID, watchType)
+	return &session, nil
+}
+
+// CreateWatchSessionWithTypeAndTicketing creates a watch session with ticketing configuration
+// Input struct should match the JSON binding in CreateWatchSession handler
+func CreateWatchSessionWithTypeAndTicketing(roomID uint, hostID uint, watchType string, input interface{}) (*models.WatchSession, error) {
+	sessionID := uuid.New().String()
+	session := models.WatchSession{
+		SessionID: sessionID,
+		RoomID:    roomID,
+		HostID:    hostID,
+		WatchType: watchType,
+		StartedAt: time.Now(),
+	}
+
+	// Extract ticketing configuration using type assertion
+	if ticketingInput, ok := input.(struct {
+		WatchType            string  `json:"watch_type" binding:"required"`
+		ClassType            string  `json:"class_type"`
+		TicketingEnabled     bool    `json:"ticketing_enabled"`
+		TicketPriceTokens    int     `json:"ticket_price_tokens"`
+		TicketPriceCurrency  string  `json:"ticket_price_currency"`
+		TicketPriceAmount    float64 `json:"ticket_price_amount"`
+		EarlyBirdEnabled     bool    `json:"early_bird_enabled"`
+		EarlyBirdPriceTokens int     `json:"early_bird_price_tokens"`
+		EarlyBirdEndTime     string  `json:"early_bird_end_time"`
+	}); ok {
+		session.ClassType = ticketingInput.ClassType
+		session.TicketingEnabled = ticketingInput.TicketingEnabled
+		session.TicketPriceTokens = ticketingInput.TicketPriceTokens
+		session.TicketPriceCurrency = ticketingInput.TicketPriceCurrency
+		session.TicketPriceAmount = ticketingInput.TicketPriceAmount
+		session.EarlyBirdEnabled = ticketingInput.EarlyBirdEnabled
+		session.EarlyBirdPriceTokens = ticketingInput.EarlyBirdPriceTokens
+		
+		// Set early bird as active if enabled (will be deactivated when end time passes)
+		if ticketingInput.EarlyBirdEnabled {
+			session.EarlyBirdActive = true
+			// Note: Early bird end time tracking would be handled by a scheduled job
+			// For now, early bird remains active until manually deactivated
+			if ticketingInput.EarlyBirdEndTime != "" {
+				log.Printf("ℹ️ Early bird end time provided: %s (stored for future scheduled deactivation)", ticketingInput.EarlyBirdEndTime)
+			}
+		}
+	}
+
+	if err := DB.Create(&session).Error; err != nil {
+		log.Printf("❌ CreateWatchSessionWithTypeAndTicketing: Failed to create session: %v", err)
+		return nil, err
+	}
+
+	log.Printf("✅ CreateWatchSessionWithTypeAndTicketing: Created session %s for room %d (type: %s, ticketing: %v)", 
+		sessionID, roomID, watchType, session.TicketingEnabled)
 	return &session, nil
 }
 
@@ -132,6 +188,116 @@ func CreateRoomMessage(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": message})
 }
 
+// UploadVoiceNote handles voice note uploads for room messages
+func UploadVoiceNote(c *gin.Context) {
+	roomIDStr := c.Param("id")
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	// Get authenticated user ID
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	// Parse multipart form
+	file, err := c.FormFile("audio")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Audio file is required"})
+		return
+	}
+
+	// Check file size (5MB max)
+	if file.Size > 5*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Audio file too large (max 5MB)"})
+		return
+	}
+
+	// Get duration from form
+	durationStr := c.PostForm("duration")
+	duration, _ := strconv.Atoi(durationStr)
+
+	// Create directory structure: uploads/room_media/voice_notes/room_{roomID}/
+	uploadDir := fmt.Sprintf("uploads/room_media/voice_notes/room_%d", roomID)
+	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
+		log.Printf("Failed to create voice note directory: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create storage directory"})
+		return
+	}
+
+	// Generate unique filename
+	timestamp := time.Now().Unix()
+	ext := ".webm"
+	if strings.HasSuffix(file.Filename, ".mp4") {
+		ext = ".mp4"
+	}
+	filename := fmt.Sprintf("vn_%d_%d%s", userID, timestamp, ext)
+	filepath := fmt.Sprintf("%s/%s", uploadDir, filename)
+
+	// Save file
+	if err := c.SaveUploadedFile(file, filepath); err != nil {
+		log.Printf("Failed to save voice note: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save audio file"})
+		return
+	}
+
+	// Construct public URL
+	audioURL := fmt.Sprintf("/%s", filepath)
+
+	// Get username
+	var user models.User
+	if err := DB.Select("username").Where("id = ?", userID).First(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
+		return
+	}
+
+	// Create room message with voice note
+	message := models.RoomMessage{
+		RoomID:      uint(roomID),
+		UserID:      userID.(uint),
+		Username:    user.Username,
+		Message:     "[Voice Note]",
+		AudioURL:    &audioURL,
+		Duration:    &duration,
+		MessageType: "voice_note",
+		CreatedAt:   time.Now(),
+	}
+
+	if err := DB.Create(&message).Error; err != nil {
+		log.Printf("Error creating voice note message: %v", err)
+		// Try to delete the uploaded file on database error
+		os.Remove(filepath)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create message"})
+		return
+	}
+
+	// Broadcast voice note message via WebSocket
+	broadcastMsg := map[string]interface{}{
+		"type": "room_chat",
+		"data": map[string]interface{}{
+			"id":           message.ID,
+			"user_id":      message.UserID,
+			"username":     message.Username,
+			"message":      message.Message,
+			"audio_url":    message.AudioURL,
+			"duration":     message.Duration,
+			"message_type": message.MessageType,
+			"created_at":   message.CreatedAt,
+		},
+	}
+	if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+		hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+	} else {
+		log.Printf("Failed to marshal voice note message: %v", err)
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": message})
+}
+
 // CreateWatchSession creates a new watch session for a room
 func CreateWatchSession(c *gin.Context) {
 	roomIDStr := c.Param("id")
@@ -150,6 +316,18 @@ func CreateWatchSession(c *gin.Context) {
 
 	var input struct {
 		WatchType string `json:"watch_type" binding:"required"`
+		ClassType string `json:"class_type"` // "classroom" or "lecture_hall" (for watch_type="classroom")
+		
+		// Ticketing fields
+		TicketingEnabled     bool    `json:"ticketing_enabled"`
+		TicketPriceTokens    int     `json:"ticket_price_tokens"`
+		TicketPriceCurrency  string  `json:"ticket_price_currency"`
+		TicketPriceAmount    float64 `json:"ticket_price_amount"`
+		
+		// Early bird fields
+		EarlyBirdEnabled     bool   `json:"early_bird_enabled"`
+		EarlyBirdPriceTokens int    `json:"early_bird_price_tokens"`
+		EarlyBirdEndTime     string `json:"early_bird_end_time"` // ISO 8601 string
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -158,9 +336,80 @@ func CreateWatchSession(c *gin.Context) {
 	}
 
 	// Validate watch_type
-	if input.WatchType != "video" && input.WatchType != "3d_cinema" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "watch_type must be 'video' or '3d_cinema'"})
+	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "watch_type must be 'video', '3d_cinema', or 'classroom'"})
 		return
+	}
+
+	// Validate ticketing configuration
+	if input.TicketingEnabled {
+		// Must have either token price or fiat price
+		if input.TicketPriceTokens == 0 && input.TicketPriceAmount == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Ticket price (tokens or fiat amount) required for paid sessions",
+			})
+			return
+		}
+
+		// If fiat amount set, currency is required
+		if input.TicketPriceAmount > 0 && input.TicketPriceCurrency == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Currency required when setting fiat ticket price",
+			})
+			return
+		}
+
+		// Validate currency
+		if input.TicketPriceCurrency != "" {
+			validCurrencies := []string{"USD", "NGN", "GHS", "KES", "EUR", "GBP"}
+			isValid := false
+			for _, curr := range validCurrencies {
+				if input.TicketPriceCurrency == curr {
+					isValid = true
+					break
+				}
+			}
+			if !isValid {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": "Invalid currency. Supported: USD, NGN, GHS, KES, EUR, GBP",
+				})
+				return
+			}
+		}
+
+		// Validate early bird
+		if input.EarlyBirdEnabled {
+			if input.EarlyBirdPriceTokens == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": "Early bird price required when early bird is enabled",
+				})
+				return
+			}
+
+			if input.EarlyBirdPriceTokens >= input.TicketPriceTokens {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": "Early bird price must be less than regular price",
+				})
+				return
+			}
+
+			if input.EarlyBirdEndTime != "" {
+				earlyBirdTime, parseErr := time.Parse(time.RFC3339, input.EarlyBirdEndTime)
+				if parseErr != nil {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error": "Invalid early bird end time format (use ISO 8601/RFC3339)",
+					})
+					return
+				}
+
+				if earlyBirdTime.Before(time.Now()) {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error": "Early bird end time must be in the future",
+					})
+					return
+				}
+			}
+		}
 	}
 
 	// Check if there's already an active session
@@ -173,8 +422,8 @@ func CreateWatchSession(c *gin.Context) {
 		return
 	}
 
-	// Create new session with watch_type
-	session, err := CreateWatchSessionWithType(uint(roomID), userID.(uint), input.WatchType)
+	// Create new session with watch_type and ticketing config
+	session, err := CreateWatchSessionWithTypeAndTicketing(uint(roomID), userID.(uint), input.WatchType, input)
 	if err != nil {
 		log.Printf("Error creating watch session: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
@@ -185,9 +434,11 @@ func CreateWatchSession(c *gin.Context) {
 	sessionMsg := map[string]interface{}{
 		"type": "session_started",
 		"data": map[string]interface{}{
-			"session_id": session.SessionID,
-			"watch_type": session.WatchType,
-			"host_id":    session.HostID,
+			"session_id":        session.SessionID,
+			"watch_type":        session.WatchType,
+			"host_id":           session.HostID,
+			"ticketing_enabled": session.TicketingEnabled,
+			"ticket_price":      session.TicketPriceTokens,
 		},
 	}
 	if msgBytes, err := json.Marshal(sessionMsg); err == nil {
@@ -197,8 +448,11 @@ func CreateWatchSession(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"session_id": session.SessionID,
-		"watch_type": session.WatchType,
+		"session_id":        session.SessionID,
+		"watch_type":        session.WatchType,
+		"class_type":        session.ClassType,
+		"ticketing_enabled": session.TicketingEnabled,
+		"ticket_price":      session.TicketPriceTokens,
 	})
 }
 
@@ -366,5 +620,326 @@ func EditRoomMessage(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": message.Message})
+}
+
+// ========================================
+// POLL HANDLERS
+// ========================================
+
+// CreatePollInput defines the structure for creating a poll
+type CreatePollInput struct {
+	Question      string   `json:"question" binding:"required,min=1,max=200"`
+	Options       []string `json:"options" binding:"required,min=2,max=10"`
+	AllowMultiple bool     `json:"allow_multiple"`
+}
+
+// CreatePoll handles POST /api/rooms/:id/messages/poll
+// Creates a new poll as a special message type
+func CreatePoll(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	roomID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	// Verify user is a member of the room
+	var membership models.UserRoom
+	if err := DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&membership).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You must be a member of this room to create polls"})
+		return
+	}
+
+	var input CreatePollInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate options
+	if len(input.Options) < 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "At least 2 options required"})
+		return
+	}
+	if len(input.Options) > 10 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Maximum 10 options allowed"})
+		return
+	}
+
+	// Filter out empty options
+	validOptions := []string{}
+	for _, opt := range input.Options {
+		trimmed := strings.TrimSpace(opt)
+		if trimmed != "" {
+			validOptions = append(validOptions, trimmed)
+		}
+	}
+
+	if len(validOptions) < 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "At least 2 non-empty options required"})
+		return
+	}
+
+	// Create poll data
+	pollData := &models.PollData{
+		Question:      strings.TrimSpace(input.Question),
+		Options:       validOptions,
+		AllowMultiple: input.AllowMultiple,
+		Votes:         []models.PollVote{}, // Empty initially
+		IsClosed:      false,
+	}
+
+	// Get username for broadcast
+	var user models.User
+	if err := DB.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user info"})
+		return
+	}
+
+	// Create room message with poll type
+	message := models.RoomMessage{
+		RoomID:      uint(roomID),
+		UserID:      userID.(uint),
+		Message:     input.Question, // Store question in message field for search/display
+		MessageType: "poll",
+		PollData:    pollData,
+	}
+
+	if err := DB.Create(&message).Error; err != nil {
+		log.Printf("Error creating poll message: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create poll"})
+		return
+	}
+
+	// Prepare response with username
+	message.Username = user.Username
+
+	// Broadcast poll via WebSocket
+	broadcastMsg := map[string]interface{}{
+		"type": "room_chat",
+		"data": message,
+	}
+	if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+		hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"poll":    message,
+		"message": "Poll created successfully",
+	})
+}
+
+// VotePollInput defines the structure for voting on a poll
+type VotePollInput struct {
+	OptionIndex int `json:"option_index" binding:"required,min=0"`
+}
+
+// VotePoll handles POST /api/rooms/:roomId/polls/:pollId/vote
+// Adds a vote to a poll
+func VotePoll(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	roomID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	// Verify user is a member of the room
+	var membership models.UserRoom
+	if err := DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&membership).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You must be a member of this room to vote"})
+		return
+	}
+
+	pollID, err := strconv.Atoi(c.Param("pollId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid poll ID"})
+		return
+	}
+
+	var input VotePollInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get the poll message
+	var message models.RoomMessage
+	if err := DB.Where("id = ? AND room_id = ? AND message_type = ?", pollID, roomID, "poll").First(&message).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Poll not found"})
+		return
+	}
+
+	if message.PollData == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid poll data"})
+		return
+	}
+
+	// Check if poll is closed
+	if message.PollData.IsClosed {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Poll is closed"})
+		return
+	}
+
+	// Validate option index
+	if input.OptionIndex < 0 || input.OptionIndex >= len(message.PollData.Options) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid option index"})
+		return
+	}
+
+	// Check if user already voted for this option
+	uid := userID.(uint)
+	for _, vote := range message.PollData.Votes {
+		if vote.UserID == uid && vote.OptionIndex == input.OptionIndex {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Already voted for this option"})
+			return
+		}
+	}
+
+	// If not allow_multiple, remove any previous votes from this user
+	if !message.PollData.AllowMultiple {
+		newVotes := []models.PollVote{}
+		for _, vote := range message.PollData.Votes {
+			if vote.UserID != uid {
+				newVotes = append(newVotes, vote)
+			}
+		}
+		message.PollData.Votes = newVotes
+	}
+
+	// Add the new vote
+	newVote := models.PollVote{
+		UserID:      uid,
+		OptionIndex: input.OptionIndex,
+	}
+	message.PollData.Votes = append(message.PollData.Votes, newVote)
+
+	// Save updated poll
+	if err := DB.Save(&message).Error; err != nil {
+		log.Printf("Error saving vote: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save vote"})
+		return
+	}
+
+	// Broadcast vote update via WebSocket
+	broadcastMsg := map[string]interface{}{
+		"type": "poll_vote_updated",
+		"data": map[string]interface{}{
+			"poll_id":   message.ID,
+			"poll_data": message.PollData,
+		},
+	}
+	if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+		hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"vote":    newVote,
+		"message": "Vote recorded",
+	})
+}
+
+// RemoveVoteInput defines the structure for removing a vote
+type RemoveVoteInput struct {
+	OptionIndex int `json:"option_index" binding:"required,min=0"`
+}
+
+// RemoveVote handles DELETE /api/rooms/:roomId/polls/:pollId/vote
+// Removes a vote from a poll
+func RemoveVote(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	roomID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	// Verify user is a member of the room
+	var membership models.UserRoom
+	if err := DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&membership).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You must be a member of this room to remove votes"})
+		return
+	}
+
+	pollID, err := strconv.Atoi(c.Param("pollId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid poll ID"})
+		return
+	}
+
+	var input RemoveVoteInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get the poll message
+	var message models.RoomMessage
+	if err := DB.Where("id = ? AND room_id = ? AND message_type = ?", pollID, roomID, "poll").First(&message).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Poll not found"})
+		return
+	}
+
+	if message.PollData == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid poll data"})
+		return
+	}
+
+	// Remove the vote
+	uid := userID.(uint)
+	newVotes := []models.PollVote{}
+	voteRemoved := false
+	for _, vote := range message.PollData.Votes {
+		if vote.UserID == uid && vote.OptionIndex == input.OptionIndex {
+			voteRemoved = true
+			continue // Skip this vote
+		}
+		newVotes = append(newVotes, vote)
+	}
+
+	if !voteRemoved {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Vote not found"})
+		return
+	}
+
+	message.PollData.Votes = newVotes
+
+	// Save updated poll
+	if err := DB.Save(&message).Error; err != nil {
+		log.Printf("Error removing vote: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove vote"})
+		return
+	}
+
+	// Broadcast vote update via WebSocket
+	broadcastMsg := map[string]interface{}{
+		"type": "poll_vote_updated",
+		"data": map[string]interface{}{
+			"poll_id":   message.ID,
+			"poll_data": message.PollData,
+		},
+	}
+	if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+		hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Vote removed",
+	})
 }
 

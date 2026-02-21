@@ -261,3 +261,89 @@ func GetChatHistoryHandler(c *gin.Context) {
 		"messages": messagesWithReactions,
 	})
 }
+
+// GetPrivateMessagesHandler handles GET /api/private-messages/:userId
+// Fetches all private messages between current user and specified user
+func GetPrivateMessagesHandler(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	currentUserID := userIDValue.(uint)
+
+	otherUserIDStr := c.Param("userId")
+	otherUserID, err := strconv.ParseUint(otherUserIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	var messages []models.PrivateMessage
+
+	// Fetch messages where current user is sender OR receiver AND other user is the opposite
+	if err := DB.Where(
+		"(sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)",
+		currentUserID, uint(otherUserID), uint(otherUserID), currentUserID,
+	).Order("created_at ASC").Find(&messages).Error; err != nil {
+		log.Printf("Error fetching private messages: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch messages"})
+		return
+	}
+
+	log.Printf("📬 Fetched %d private messages between user %d and user %d", len(messages), currentUserID, otherUserID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"messages": messages,
+	})
+}
+
+// DeleteSessionPrivateMessagesHandler handles DELETE /api/sessions/:sessionId/private-messages
+// Deletes all private messages for a specific session (called when session ends)
+func DeleteSessionPrivateMessagesHandler(c *gin.Context) {
+	sessionID := c.Param("sessionId")
+	
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Session ID required"})
+		return
+	}
+
+	// Get all members of this session
+	var members []models.WatchSessionMember
+	if err := DB.Where("session_id = ?", sessionID).Find(&members).Error; err != nil {
+		log.Printf("Error fetching session members: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch session members"})
+		return
+	}
+
+	if len(members) == 0 {
+		log.Printf("No members found for session %s, nothing to delete", sessionID)
+		c.JSON(http.StatusOK, gin.H{"deleted_count": 0})
+		return
+	}
+
+	// Extract user IDs
+	userIDs := make([]uint, len(members))
+	for i, member := range members {
+		userIDs[i] = member.UserID
+	}
+
+	// Delete all private messages between these users
+	result := DB.Where(
+		"sender_id IN (?) AND receiver_id IN (?)",
+		userIDs, userIDs,
+	).Delete(&models.PrivateMessage{})
+
+	if result.Error != nil {
+		log.Printf("Error deleting private messages: %v", result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete messages"})
+		return
+	}
+
+	log.Printf("🗑️ Deleted %d private messages for session %s", result.RowsAffected, sessionID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"deleted_count": result.RowsAffected,
+		"message":       "Private messages deleted successfully",
+	})
+}

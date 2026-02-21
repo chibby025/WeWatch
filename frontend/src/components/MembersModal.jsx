@@ -1,5 +1,8 @@
 // frontend/src/components/MembersModal.jsx
 import React from 'react';
+import AudioWaveform from './AudioWaveform';
+import { getBatchFriendshipStatuses, sendFriendRequest, acceptFriendRequest } from '../services/api';
+import toast from 'react-hot-toast';
 
 export default function MembersModal({ 
   isOpen, 
@@ -18,12 +21,111 @@ export default function MembersModal({
   onRequestBroadcast = null, // Callback for user to request broadcast permission
   broadcastRequests = [], // Array of pending broadcast request user IDs
   watchType = 'video_watch', // Session watch type ('video_watch' or '3d_cinema')
+  onMuteAll = null, // ✅ Callback to toggle mute all students
+  isMuteAllActive = false, // ✅ Current mute-all toggle state
 }) {
+  // ✅ ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
+  const [friendshipStatuses, setFriendshipStatuses] = React.useState({}); // userId -> friendship status
+  const [loadingFriendships, setLoadingFriendships] = React.useState(false);
+  const [friendActionLoading, setFriendActionLoading] = React.useState({}); // userId -> boolean
+
   React.useEffect(() => {
     if (isOpen && fetchMembers) {
       fetchMembers();
     }
   }, [isOpen, fetchMembers]);
+
+  // Fetch friendship statuses when modal opens
+  React.useEffect(() => {
+    if (!isOpen || !currentUserId || members.length === 0) return;
+
+    const fetchFriendshipStatuses = async () => {
+      setLoadingFriendships(true);
+      try {
+        const userIds = members
+          .filter(m => m.id !== currentUserId) // Exclude current user
+          .map(m => m.id);
+        
+        if (userIds.length > 0) {
+          const statuses = await getBatchFriendshipStatuses(userIds);
+          setFriendshipStatuses(statuses);
+          console.log('👥 [MembersModal] Fetched friendship statuses:', statuses);
+        }
+      } catch (error) {
+        console.error('❌ [MembersModal] Failed to fetch friendship statuses:', error);
+      } finally {
+        setLoadingFriendships(false);
+      }
+    };
+
+    fetchFriendshipStatuses();
+  }, [isOpen, currentUserId, members]);
+
+  // Handle Add Friend / Accept Request
+  const handleFriendAction = async (userId, action) => {
+    setFriendActionLoading(prev => ({ ...prev, [userId]: true }));
+    
+    try {
+      if (action === 'add') {
+        await sendFriendRequest(userId);
+        toast.success('Friend request sent!');
+        // Update local state
+        setFriendshipStatuses(prev => ({
+          ...prev,
+          [userId]: { status: 'pending', is_requester: true }
+        }));
+      } else if (action === 'accept') {
+        await acceptFriendRequest(userId);
+        toast.success('Friend request accepted!');
+        // Update local state
+        setFriendshipStatuses(prev => ({
+          ...prev,
+          [userId]: { status: 'accepted' }
+        }));
+      }
+    } catch (error) {
+      console.error('❌ [MembersModal] Friend action failed:', error);
+      toast.error(error.response?.data?.error || 'Failed to process request');
+    } finally {
+      setFriendActionLoading(prev => ({ ...prev, [userId]: false }));
+    }
+  };
+
+  // 🔍 Debug: Log when modal opens/closes
+  React.useEffect(() => {
+    if (isOpen) {
+      console.log('🚪 [MembersModal] Modal OPENED');
+      console.log('👥 [MembersModal] Members count:', members.length);
+      console.log('🔊 [MembersModal] audioStates prop on open:', audioStates);
+      console.log('🔊 [MembersModal] audioStates keys:', Object.keys(audioStates));
+    } else {
+      console.log('🚪 [MembersModal] Modal CLOSED');
+    }
+  }, [isOpen]);
+
+  // 🔍 Debug: Track audioStates prop changes
+  React.useEffect(() => {
+    if (isOpen) {
+      console.log('🔄 [MembersModal] audioStates prop CHANGED:', audioStates);
+      Object.entries(audioStates).forEach(([userId, state]) => {
+        console.log(`  User ${userId}:`, state);
+      });
+    }
+  }, [audioStates, isOpen]);
+
+  // 🔍 Debug: Log members data when modal opens
+  React.useEffect(() => {
+    if (isOpen && members.length > 0) {
+      console.log('🔍 [MembersModal] Members data:', members);
+      members.forEach(member => {
+        console.log(`🔍 [MembersModal] Member ${member.id} (${member.username}):`, {
+          avatar_url: member.avatar_url,
+          hasAvatar: !!member.avatar_url,
+          fullMemberData: member
+        });
+      });
+    }
+  }, [isOpen, members]);
 
   // Color function for theater badges
   const getTheaterBadgeColor = (theaterNumber) => {
@@ -38,6 +140,14 @@ export default function MembersModal({
     return colors[(theaterNumber - 1) % colors.length];
   };
 
+  // Dynamic title based on watch type
+  const getModalTitle = () => {
+    if (watchType === '3d_cinema') return 'Cinema Members';
+    if (watchType === 'classroom' || watchType === 'lecture_hall') return 'Lecture Hall Members';
+    return 'Watch Party Members'; // video_watch or default
+  };
+
+  // ✅ CONDITIONAL RETURN AFTER ALL HOOKS
   if (!isOpen) return null;
 
   return (
@@ -45,19 +155,47 @@ export default function MembersModal({
       <div className="bg-gray-800 p-6 rounded-lg w-full max-w-md">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-white text-lg font-bold">
-            Room Members ({members.length})
+            {getModalTitle()} ({members.length})
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">×</button>
+          <div className="flex items-center gap-3">
+            {/* Mute All Toggle Button (Host only) */}
+            {isHost && onMuteAll && (
+              <button
+                onClick={onMuteAll}
+                className={`px-3 py-1.5 ${
+                  isMuteAllActive 
+                    ? 'bg-green-600 hover:bg-green-700' 
+                    : 'bg-red-600 hover:bg-red-700'
+                } text-white text-sm font-medium rounded transition-all`}
+                title={isMuteAllActive ? "Unmute all members" : "Mute all members"}
+              >
+                {isMuteAllActive ? '🔊 Unmute All' : '🔇 Mute All'}
+              </button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-white">×</button>
+          </div>
         </div>
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {members.map(member => {
-            const isAudioActive = audioStates[member.id] || false;
+            const audioState = audioStates[member.id] || {};
+            const isSpeaking = audioState.isSpeaking || false;
+            const audioLevel = audioState.audioLevel || 0;
+            const isMuted = audioState.isMuted !== false; // Default to muted if no data
             const canBroadcast = broadcastPermissions[member.id] || false;
             const isRoomHost = member.user_role === 'host' || member.is_host;
             const memberSeatId = userSeats[member.id];
             const rowNumber = memberSeatId ? memberSeatId.split('-')[0] : '?';
             const theaterInfo = userTheaters[member.id];
             const hasBroadcastRequest = broadcastRequests.includes(member.id);
+            
+            // 🔍 Debug: Log audio state for EVERY member (unconditional)
+            console.log(`🎵 [MembersModal RENDER] User ${member.id} (${member.username}):`, {
+              audioLevel,
+              isSpeaking,
+              isMuted,
+              audioState,
+              rawAudioStates: audioStates[member.id]
+            });
             
             return (
               <div 
@@ -71,9 +209,19 @@ export default function MembersModal({
                     onClick={() => onMemberClick?.(member)}
                   >
                     {/* Avatar */}
-                    <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-semibold">
-                      {member.username?.charAt(0).toUpperCase() || 'U'}
-                    </div>
+                    <img 
+                      src={member.avatar_url || '/icons/user1avatar.svg'} 
+                      alt={member.username}
+                      onError={(e) => {
+                        console.log(`🔍 [MembersModal] Avatar load failed for user ${member.id} (${member.username}), URL: ${e.target.src}`);
+                        e.target.onerror = null;
+                        e.target.src = '/icons/user1avatar.svg';
+                      }}
+                      onLoad={(e) => {
+                        console.log(`✅ [MembersModal] Avatar loaded successfully for user ${member.id} (${member.username}), URL: ${e.target.src}`);
+                      }}
+                      className="w-10 h-10 rounded-full object-cover border-2 border-gray-600"
+                    />
                     
                     {/* Name + Status */}
                     <div className="flex-1">
@@ -108,52 +256,125 @@ export default function MembersModal({
                         </div>
                       )}
                       
-                      {/* Audio State */}
+                      {/* Audio State with Waveform */}
                       <div className="flex items-center gap-2 mt-1">
-                        <span className={`text-xs ${isAudioActive ? 'text-green-400' : 'text-gray-400'}`}>
-                          {isAudioActive ? '🎤 Speaking' : '🔇 Muted'}
-                        </span>
-                        
-                        {/* Broadcast State */}
-                        {isAudioActive && (
-                          <span className="text-xs text-gray-300">
-                            •
-                          </span>
-                        )}
-                        {isAudioActive && (canBroadcast || isRoomHost) && (
-                          <span className="text-xs text-blue-400 font-medium">
-                            🔊 Whole Room
-                          </span>
-                        )}
-                        {isAudioActive && !canBroadcast && !isRoomHost && watchType === '3d_cinema' && theaterInfo && (
-                          <span className="text-xs text-gray-400">
-                            🔈 Theater {theaterInfo.theater_number}
-                          </span>
-                        )}
-                        {isAudioActive && !canBroadcast && !isRoomHost && watchType === 'video_watch' && (
-                          <span className="text-xs text-gray-400">
-                            🔈 Row {rowNumber}
-                          </span>
+                        {!isMuted ? (
+                          <>
+                            <AudioWaveform audioLevel={audioLevel} color="#10b981" />
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-xl">🔇</span>
+                            <span className="text-xs text-gray-400">Muted</span>
+                          </>
                         )}
                       </div>
                     </div>
                   </div>
                   
-                  {/* Right: Broadcast Toggle (Host Only) or Request Button (Non-Host) */}
+                  {/* Right: Friend Button + Message Icon + Broadcast Toggle */}
                   <div className="flex items-center gap-2">
+                    {/* Friend Button (Add Friend / Friends / Accept Request) */}
+                    {member.id !== currentUserId && (() => {
+                      const friendStatus = friendshipStatuses[member.id];
+                      const isLoading = friendActionLoading[member.id];
+                      const status = friendStatus?.status || 'none';
+                      const isRequester = friendStatus?.is_requester;
+
+                      // Already friends
+                      if (status === 'accepted') {
+                        return (
+                          <button
+                            disabled
+                            className="px-3 py-1.5 rounded bg-gray-600 text-gray-400 text-xs font-medium cursor-not-allowed flex items-center gap-1.5"
+                            title="Already friends"
+                          >
+                            <img src="/icons/MembersIcon.svg" alt="" className="w-4 h-4 opacity-50" />
+                            Friends
+                          </button>
+                        );
+                      }
+
+                      // Pending request sent by current user
+                      if (status === 'pending' && isRequester) {
+                        return (
+                          <button
+                            disabled
+                            className="px-3 py-1.5 rounded bg-gray-600 text-gray-400 text-xs font-medium cursor-not-allowed flex items-center gap-1.5"
+                            title="Friend request sent"
+                          >
+                            <img src="/icons/MembersIcon.svg" alt="" className="w-4 h-4 opacity-50" />
+                            Sent
+                          </button>
+                        );
+                      }
+
+                      // Pending request received from other user - show Accept button
+                      if (status === 'pending' && !isRequester) {
+                        return (
+                          <button
+                            onClick={() => handleFriendAction(member.id, 'accept')}
+                            disabled={isLoading}
+                            className="px-3 py-1.5 rounded bg-green-600 hover:bg-green-700 text-white text-xs font-medium transition-all flex items-center gap-1.5 disabled:opacity-50"
+                            title="Accept friend request"
+                          >
+                            <img src="/icons/MembersIcon.svg" alt="" className="w-4 h-4" />
+                            {isLoading ? 'Accepting...' : 'Accept'}
+                          </button>
+                        );
+                      }
+
+                      // Not friends - show Add Friend button
+                      return (
+                        <button
+                          onClick={() => handleFriendAction(member.id, 'add')}
+                          disabled={isLoading || loadingFriendships}
+                          className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-all flex items-center gap-1.5 disabled:opacity-50"
+                          title="Send friend request"
+                        >
+                          <img src="/icons/MembersIcon.svg" alt="" className="w-4 h-4" />
+                          {isLoading ? 'Sending...' : 'Add Friend'}
+                        </button>
+                      );
+                    })()}
+                    
+                    {/* Message Icon (Opens private chat) */}
+                    {member.id !== currentUserId && (
+                      <button
+                        onClick={() => onMemberClick?.(member)}
+                        className="p-2 rounded bg-gray-600 hover:bg-gray-500 text-white transition-all"
+                        title="Send private message"
+                      >
+                        <svg 
+                          xmlns="http://www.w3.org/2000/svg" 
+                          className="h-5 w-5" 
+                          fill="none" 
+                          viewBox="0 0 24 24" 
+                          stroke="currentColor"
+                        >
+                          <path 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                            strokeWidth={2} 
+                            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" 
+                          />
+                        </svg>
+                      </button>
+                    )}
+                    
                     {/* Request Broadcast Button (Non-Host, for own row) */}
                     {!isHost && member.id === currentUserId && !canBroadcast && !isRoomHost && onRequestBroadcast && (
                       <button
                         onClick={() => onRequestBroadcast()}
-                        className="ml-3 px-3 py-1.5 rounded bg-green-600 hover:bg-green-700 text-white text-xs font-medium transition-all"
+                        className="px-3 py-1.5 rounded bg-green-600 hover:bg-green-700 text-white text-xs font-medium transition-all"
                         title="Request whole-room broadcast permission"
                       >
                         🎤 Request Broadcast
                       </button>
                     )}
                     
-                    {/* Broadcast Toggle (Host Only) */}
-                    {isHost && !isRoomHost && member.id !== currentUserId && sessionId && (
+                    {/* Broadcast Toggle (Host Only) - Hidden for video_watch */}
+                    {isHost && !isRoomHost && member.id !== currentUserId && sessionId && watchType !== 'video_watch' && (
                       <button
                         onClick={() => onToggleBroadcast?.(member.id, !canBroadcast)}
                         className={`ml-3 p-2 rounded transition-all ${

@@ -3,8 +3,9 @@
 import React, { useState } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { uploadTVContentVideo } from '../services/api';
 
-const CreateTVContentModal = ({ isOpen, onClose, onSubmit, activeSessionId = null }) => {
+const CreateTVContentModal = ({ isOpen, onClose, onSubmit, activeSessionId = null, roomId }) => {
   const [contentType, setContentType] = useState('announcement');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -14,6 +15,10 @@ const CreateTVContentModal = ({ isOpen, onClose, onSubmit, activeSessionId = nul
   const [uploadType, setUploadType] = useState('url'); // 'url' or 'file'
   const [mediaFile, setMediaFile] = useState(null);
   
+  // Upload progress
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  
   // Animation settings
   const [animationType, setAnimationType] = useState('scroll-left');
   const [textColor, setTextColor] = useState('#FFFFFF');
@@ -22,6 +27,47 @@ const CreateTVContentModal = ({ isOpen, onClose, onSubmit, activeSessionId = nul
   const [useCustomGradient, setUseCustomGradient] = useState(false);
   const [gradientColor1, setGradientColor1] = useState('#667eea');
   const [gradientColor2, setGradientColor2] = useState('#764ba2');
+  
+  // Video validation function
+  const validateVideo = (file) => {
+    return new Promise((resolve, reject) => {
+      // Check file size (100 MB)
+      const maxSize = 100 * 1024 * 1024;
+      if (file.size > maxSize) {
+        reject(`File too large: ${(file.size / 1024 / 1024).toFixed(2)} MB. Max: 100 MB`);
+        return;
+      }
+
+      // Check file type
+      const allowedTypes = ['video/mp4', 'video/webm'];
+      if (!allowedTypes.includes(file.type)) {
+        reject('Invalid format. Only MP4 and WebM allowed');
+        return;
+      }
+
+      // Check video duration
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      
+      video.onloadedmetadata = () => {
+        window.URL.revokeObjectURL(video.src);
+        
+        const duration = Math.floor(video.duration);
+        if (duration > 600) { // 10 minutes
+          reject(`Video too long: ${(duration / 60).toFixed(1)} minutes. Max: 10 minutes`);
+          return;
+        }
+        
+        resolve(duration); // Return duration in seconds
+      };
+      
+      video.onerror = () => {
+        reject('Failed to read video file. Please try another file.');
+      };
+      
+      video.src = URL.createObjectURL(file);
+    });
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -37,40 +83,98 @@ const CreateTVContentModal = ({ isOpen, onClose, onSubmit, activeSessionId = nul
         ? `linear-gradient(90deg, ${gradientColor1} 0%, ${gradientColor2} 100%)`
         : bgGradient;
 
-      await onSubmit({
-        content_type: contentType,
-        title: title.trim(),
-        description: description.trim(),
-        content_url: contentUrl.trim(),
-        thumbnail_url: thumbnailUrl.trim(),
-        duration_mins: durationMins,
-        animation_type: animationType,
-        text_color: textColor,
-        bg_gradient: finalGradient,
-        animation_speed: animationSpeed,
-        session_id: activeSessionId, // Link to active session if exists
-      });
-      
-      // Reset form
-      setTitle('');
-      setDescription('');
-      setContentUrl('');
-      setThumbnailUrl('');
-      setDurationMins(30);
-      setContentType('announcement');
-      setUploadType('url');
-      setMediaFile(null);
-      setAnimationType('scroll-left');
-      setTextColor('#FFFFFF');
-      setBgGradient('linear-gradient(90deg, #667eea 0%, #764ba2 100%)');
-      setAnimationSpeed('medium');
-      setUseCustomGradient(false);
-      setGradientColor1('#667eea');
-      setGradientColor2('#764ba2');
-      onClose();
+      // ✅ VIDEO FILE UPLOAD (New)
+      if (uploadType === 'file' && mediaFile) {
+        setIsUploading(true);
+        
+        try {
+          // Validate video BEFORE uploading
+          const videoDuration = await validateVideo(mediaFile);
+          
+          // Build FormData
+          const formData = new FormData();
+          formData.append('video', mediaFile);
+          formData.append('title', title.trim());
+          formData.append('description', description.trim());
+          formData.append('duration_mins', durationMins);
+          formData.append('video_duration', videoDuration);
+          formData.append('animation_type', animationType);
+          formData.append('text_color', textColor);
+          formData.append('bg_gradient', finalGradient);
+          formData.append('animation_speed', animationSpeed);
+          if (activeSessionId) {
+            formData.append('session_id', activeSessionId);
+          }
+
+          // Upload with progress
+          await uploadTVContentVideo(roomId, formData, (progress) => {
+            setUploadProgress(progress);
+          });
+          
+          toast.success('Video uploaded successfully!');
+          
+          // Reset form
+          setTitle('');
+          setDescription('');
+          setContentUrl('');
+          setThumbnailUrl('');
+          setDurationMins(30);
+          setContentType('announcement');
+          setUploadType('url');
+          setMediaFile(null);
+          setAnimationType('scroll-left');
+          setTextColor('#FFFFFF');
+          setBgGradient('linear-gradient(90deg, #667eea 0%, #764ba2 100%)');
+          setAnimationSpeed('medium');
+          setUseCustomGradient(false);
+          setGradientColor1('#667eea');
+          setGradientColor2('#764ba2');
+          
+          onClose();
+        } catch (validationError) {
+          toast.error(validationError);
+        } finally {
+          setIsUploading(false);
+          setUploadProgress(0);
+        }
+      } 
+      // ✅ URL/ANNOUNCEMENT SUBMISSION (Existing)
+      else {
+        await onSubmit({
+          content_type: contentType,
+          title: title.trim(),
+          description: description.trim(),
+          content_url: contentUrl.trim(),
+          thumbnail_url: thumbnailUrl.trim(),
+          duration_mins: durationMins,
+          animation_type: animationType,
+          text_color: textColor,
+          bg_gradient: finalGradient,
+          animation_speed: animationSpeed,
+          session_id: activeSessionId, // Link to active session if exists
+        });
+        
+        // Reset form
+        setTitle('');
+        setDescription('');
+        setContentUrl('');
+        setThumbnailUrl('');
+        setDurationMins(30);
+        setContentType('announcement');
+        setUploadType('url');
+        setMediaFile(null);
+        setAnimationType('scroll-left');
+        setTextColor('#FFFFFF');
+        setBgGradient('linear-gradient(90deg, #667eea 0%, #764ba2 100%)');
+        setAnimationSpeed('medium');
+        setUseCustomGradient(false);
+        setGradientColor1('#667eea');
+        setGradientColor2('#764ba2');
+        onClose();
+      }
     } catch (err) {
       console.error('Failed to create TV content:', err);
-      toast.error('Failed to create content');
+      toast.error(err.response?.data?.error || 'Failed to create content');
     }
   };
 
@@ -78,7 +182,7 @@ const CreateTVContentModal = ({ isOpen, onClose, onSubmit, activeSessionId = nul
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-gray-800 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto custom-sleek-scrollbar">
         {/* Header */}
         <div className="sticky top-0 bg-gray-800 border-b border-gray-700 px-6 py-4 flex items-center justify-between z-10">
           <h2 className="text-xl font-bold text-white">Create RoomTV Content</h2>
@@ -398,18 +502,37 @@ const CreateTVContentModal = ({ isOpen, onClose, onSubmit, activeSessionId = nul
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-medium transition-colors"
+              disabled={isUploading}
+              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition-colors"
+              disabled={isUploading}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Create Content
+              {isUploading ? 'Uploading...' : 'Create Content'}
             </button>
           </div>
         </form>
+
+        {/* Upload Progress Overlay */}
+        {isUploading && (
+          <div className="absolute inset-0 bg-black/80 z-50 flex items-center justify-center rounded-xl">
+            <div className="bg-gray-800 rounded-lg p-6 w-96 max-w-[90%]">
+              <h3 className="text-white text-lg font-bold mb-4">Uploading Video...</h3>
+              <div className="w-full bg-gray-700 rounded-full h-4 mb-2">
+                <div 
+                  className="bg-blue-600 h-4 rounded-full transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+              <p className="text-gray-400 text-sm text-center">{uploadProgress}%</p>
+              <p className="text-gray-500 text-xs text-center mt-2">Please don't close this window</p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

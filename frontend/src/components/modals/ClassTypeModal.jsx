@@ -1,0 +1,191 @@
+import React, { useState } from 'react';
+
+/**
+ * ClassTypeModal - Choose between Classroom (25 seats) and Lecture Hall (145 seats)
+ * Displays after user selects "Classroom" watch type
+ */
+export default function ClassTypeModal({ isOpen, onClose, onSelectClassType, currentUser }) {
+  const [selectedType, setSelectedType] = useState(null);
+
+  if (!isOpen) return null;
+
+  const handleSelect = (type) => {
+    setSelectedType(type);
+  };
+
+  const handleConfirm = () => {
+    if (selectedType && onSelectClassType) {
+      onSelectClassType(selectedType);
+      onClose();
+    }
+  };
+
+  const allClassTypes = [
+    {
+      id: 'classroom',
+      name: 'Classroom',
+      capacity: 25,
+      icon: '🎓',
+      description: 'Interactive classroom setting',
+      features: [
+        'Up to 25 students',
+        'Single audio zone',
+        'Intimate learning space',
+        'Interactive whiteboard',
+        'Real-time quizzes'
+      ],
+      bestFor: 'Small classes, workshops, tutorials'
+    },
+    {
+      id: 'lecture_hall',
+      name: 'Lecture Hall',
+      capacity: 145,
+      icon: '🏛️',
+      description: 'Large lecture hall with tiered seating',
+      features: [
+        'Up to 145 students',
+        '3-section audio zones',
+        'Tiered seating layout',
+        'Interactive whiteboard',
+        'Real-time quizzes',
+        'Breakout rooms'
+      ],
+      bestFor: 'Large lectures, seminars, conferences'
+    }
+  ];
+
+  // ✅ Filter out regular Classroom for non-super-admins (feature in development)
+  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const classTypes = isSuperAdmin 
+    ? allClassTypes 
+    : allClassTypes.filter(type => type.id !== 'classroom');
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+      <div className="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto border border-green-500/20">
+        {/* Header */}
+        <div className="sticky top-0 bg-gradient-to-r from-green-600 to-emerald-600 p-6 rounded-t-2xl z-10">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-3xl font-bold text-white flex items-center gap-3">
+                <span className="text-4xl">🎓</span>
+                Choose Class Type
+              </h2>
+              <p className="text-green-100 mt-2">
+                Select the classroom size that fits your needs
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-white hover:text-gray-200 transition-colors p-2 hover:bg-white/10 rounded-lg"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          {/* Class Type Options */}
+          <div className="grid md:grid-cols-2 gap-6 mb-6">
+            {classTypes.map((type) => (
+              <div
+                key={type.id}
+                onClick={() => handleSelect(type.id)}
+                className={`
+                  relative cursor-pointer rounded-xl p-6 border-2 transition-all duration-300
+                  ${
+                    selectedType === type.id
+                      ? 'border-green-500 bg-gradient-to-br from-green-900/40 to-emerald-900/40 shadow-lg shadow-green-500/20 scale-[1.02]'
+                      : 'border-gray-700 bg-gradient-to-br from-gray-800 to-gray-900 hover:border-green-600/50 hover:shadow-md'
+                  }
+                `}
+              >
+                {/* Selection indicator */}
+                {selectedType === type.id && (
+                  <div className="absolute top-4 right-4 bg-green-500 rounded-full p-1">
+                    <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                )}
+
+                {/* Icon and Title */}
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="text-6xl">{type.icon}</div>
+                  <div>
+                    <h3 className="text-2xl font-bold text-white">{type.name}</h3>
+                    <p className="text-green-400 font-semibold">{type.capacity} Seats</p>
+                  </div>
+                </div>
+
+                {/* Description */}
+                <p className="text-gray-300 mb-4">{type.description}</p>
+
+                {/* Features */}
+                <div className="space-y-2 mb-4">
+                  {type.features.map((feature, idx) => (
+                    <div key={idx} className="flex items-start gap-2 text-sm">
+                      <svg className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      <span className="text-gray-300">{feature}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Best For */}
+                <div className="pt-4 border-t border-gray-700">
+                  <p className="text-xs text-gray-400 uppercase font-semibold mb-1">Best For</p>
+                  <p className="text-sm text-gray-300">{type.bestFor}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Info Banner */}
+          <div className="bg-blue-900/30 border border-blue-500/30 rounded-lg p-4 mb-6">
+            <div className="flex items-start gap-3">
+              <svg className="w-6 h-6 text-blue-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+              <div>
+                <p className="text-blue-300 font-semibold mb-1">ClassWatch Features</p>
+                <p className="text-blue-200 text-sm">
+                  Both classroom types include interactive whiteboard, real-time quizzes, screen sharing, 
+                  and persistent chat. Choose based on your expected class size.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-4">
+            <button
+              onClick={onClose}
+              className="flex-1 px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-semibold transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirm}
+              disabled={!selectedType}
+              className={`
+                flex-1 px-6 py-3 rounded-lg font-semibold transition-all
+                ${
+                  selectedType
+                    ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white shadow-lg shadow-green-500/30'
+                    : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                }
+              `}
+            >
+              Continue with {selectedType === 'classroom' ? 'Classroom' : selectedType === 'lecture_hall' ? 'Lecture Hall' : 'Selected Type'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

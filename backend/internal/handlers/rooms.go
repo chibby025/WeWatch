@@ -8,11 +8,13 @@ import (
     "fmt"
     "time"
     "encoding/json"
+    "strings"
     "github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/services"
 	"wewatch-backend/internal/utils"
 )
 
@@ -96,6 +98,20 @@ func CreateRoomHandler(c *gin.Context) {
         log.Printf("CreateRoomHandler: Failed to commit transaction: %v", err)
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to finalize room creation"})
         return
+    }
+
+    // Broadcast to lobby for real-time room list updates
+    lobbyBroadcastData := map[string]interface{}{
+        "type":    "room_created",
+        "room_id": newRoom.ID,
+    }
+    lobbyJsonData, _ := json.Marshal(lobbyBroadcastData)
+    hub := GetHub()
+    if hub != nil {
+        hub.BroadcastToLobby(OutgoingMessage{
+            Data:     lobbyJsonData,
+            IsBinary: false,
+        })
     }
 
     // Success
@@ -183,17 +199,218 @@ func UpdateRoomHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, room)
 }
 
+// UpdateRoomImageHandler handles PUT /api/rooms/:id/image
+// Uploads and updates room profile image (circular avatar)
+func UpdateRoomImageHandler(c *gin.Context) {
+	roomIDStr := c.Param("id")
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil {
+		log.Printf("UpdateRoomImageHandler: Invalid room ID: %s", roomIDStr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+	roomIDUint := uint(roomID)
+
+	// Get authenticated user
+	userID, exists := c.Get("user_id")
+	if !exists {
+		log.Println("UpdateRoomImageHandler: Unauthorized access")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	id := userID.(uint)
+
+	// Fetch room and verify ownership
+	var room models.Room
+	if err := DB.First(&room, roomIDUint).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("UpdateRoomImageHandler: Room %d not found", roomIDUint)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		} else {
+			log.Printf("UpdateRoomImageHandler: Database error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		}
+		return
+	}
+
+	// Check if user is room host
+	if room.HostID != id {
+		log.Printf("UpdateRoomImageHandler: User %d is not host of room %d", id, roomIDUint)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only room host can update image"})
+		return
+	}
+
+	// Get uploaded file
+	file, err := c.FormFile("image")
+	if err != nil {
+		log.Printf("UpdateRoomImageHandler: Error reading file: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Image file is required"})
+		return
+	}
+
+	// Validate file type (images only)
+	ext := ""
+	switch file.Header.Get("Content-Type") {
+	case "image/jpeg", "image/jpg":
+		ext = ".jpg"
+	case "image/png":
+		ext = ".png"
+	case "image/gif":
+		ext = ".gif"
+	case "image/webp":
+		ext = ".webp"
+	default:
+		log.Printf("UpdateRoomImageHandler: Invalid file type: %s", file.Header.Get("Content-Type"))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only image files (jpg, png, gif, webp) are allowed"})
+		return
+	}
+
+	// Validate file size (max 5MB)
+	if file.Size > 5*1024*1024 {
+		log.Printf("UpdateRoomImageHandler: File too large: %d bytes", file.Size)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Image size must be less than 5MB"})
+		return
+	}
+
+	// Create uploads directory if not exists
+	uploadDir := "uploads/room_images"
+	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
+		log.Printf("UpdateRoomImageHandler: Failed to create upload directory: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save image"})
+		return
+	}
+
+	// Generate unique filename
+	filename := fmt.Sprintf("room_%d_%d%s", roomIDUint, time.Now().Unix(), ext)
+	filepath := fmt.Sprintf("%s/%s", uploadDir, filename)
+
+	// Save file
+	if err := c.SaveUploadedFile(file, filepath); err != nil {
+		log.Printf("UpdateRoomImageHandler: Failed to save file: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save image"})
+		return
+	}
+
+	// Delete old image if exists
+	if room.ImageURL != "" {
+		// Remove leading slash if present for file system path
+		oldPath := room.ImageURL
+		if oldPath[0] == '/' {
+			oldPath = oldPath[1:] // Remove leading slash
+		}
+		if _, err := os.Stat(oldPath); err == nil {
+			if err := os.Remove(oldPath); err != nil {
+				log.Printf("UpdateRoomImageHandler: Failed to delete old image: %v", err)
+			} else {
+				log.Printf("UpdateRoomImageHandler: Deleted old image: %s", oldPath)
+			}
+		}
+	}
+
+	// Update database with new image URL
+	imageURL := fmt.Sprintf("/uploads/room_images/%s", filename)
+	if err := DB.Model(&room).Update("image_url", imageURL).Error; err != nil {
+		log.Printf("UpdateRoomImageHandler: Failed to update database: %v", err)
+		// Try to clean up uploaded file
+		os.Remove(filepath)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update image"})
+		return
+	}
+
+	log.Printf("UpdateRoomImageHandler: Room %d image updated successfully: %s", roomIDUint, imageURL)
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Room image updated successfully",
+		"image_url": imageURL,
+	})
+}
+
+// DeleteRoomImageHandler handles DELETE /api/rooms/:id/image
+// Removes room profile image
+func DeleteRoomImageHandler(c *gin.Context) {
+	roomIDStr := c.Param("id")
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil {
+		log.Printf("DeleteRoomImageHandler: Invalid room ID: %s", roomIDStr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+	roomIDUint := uint(roomID)
+
+	// Get authenticated user
+	userID, exists := c.Get("user_id")
+	if !exists {
+		log.Println("DeleteRoomImageHandler: Unauthorized access")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	id := userID.(uint)
+
+	// Fetch room and verify ownership
+	var room models.Room
+	if err := DB.First(&room, roomIDUint).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("DeleteRoomImageHandler: Room %d not found", roomIDUint)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		} else {
+			log.Printf("DeleteRoomImageHandler: Database error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		}
+		return
+	}
+
+	// Check if user is room host
+	if room.HostID != id {
+		log.Printf("DeleteRoomImageHandler: User %d is not host of room %d", id, roomIDUint)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only room host can delete image"})
+		return
+	}
+
+	// Check if image exists
+	if room.ImageURL == "" {
+		c.JSON(http.StatusOK, gin.H{"message": "No image to delete"})
+		return
+	}
+
+	// Delete file from disk
+	oldPath := room.ImageURL
+	if oldPath[0] == '/' {
+		oldPath = oldPath[1:] // Remove leading slash
+	}
+	if _, err := os.Stat(oldPath); err == nil {
+		if err := os.Remove(oldPath); err != nil {
+			log.Printf("DeleteRoomImageHandler: Failed to delete file: %v", err)
+		} else {
+			log.Printf("DeleteRoomImageHandler: Deleted file: %s", oldPath)
+		}
+	}
+
+	// Update database to remove image URL
+	if err := DB.Model(&room).Update("image_url", nil).Error; err != nil {
+		log.Printf("DeleteRoomImageHandler: Failed to update database: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete image"})
+		return
+	}
+
+	log.Printf("DeleteRoomImageHandler: Room %d image deleted successfully", roomIDUint)
+	c.JSON(http.StatusOK, gin.H{"message": "Room image deleted successfully"})
+}
+
 // Handle Ending the watch session
 func EndWatchSessionHandler(c *gin.Context) {
+	log.Println("🔴🔴🔴 [EndWatchSessionHandler] ===== API CALLED =====")
+	
 	// ✅ FIX: Use "session_id" to match route :session_id
 	sessionID := c.Param("session_id")
+	log.Printf("🔍 [EndWatchSessionHandler] Extracted session_id from URL: %s", sessionID)
+	
 	if sessionID == "" {
-		log.Println("EndWatchSessionHandler: Missing session_id in URL")
+		log.Println("❌ [EndWatchSessionHandler] Missing session_id in URL")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
 		return
 	}
 
 	userID := c.MustGet("user_id").(uint)
+	log.Printf("🔍 [EndWatchSessionHandler] Request from user_id: %d", userID)
 
 	// Fetch session
 	var session models.WatchSession
@@ -224,15 +441,15 @@ func EndWatchSessionHandler(c *gin.Context) {
 
 	log.Printf("✅ EndWatchSessionHandler: User %d (room host) ending session %s", userID, sessionID)
 	
-	// ✅ Clear host disconnect timer if host manually ends session
-	if hub != nil {
-		hub.hostDisconnectMutex.Lock()
-		if _, exists := hub.hostDisconnectTimes[sessionID]; exists {
-			delete(hub.hostDisconnectTimes, sessionID)
-			log.Printf("✅ Cleared host disconnect timer for session %s (manually ended by host)", sessionID)
-		}
-		hub.hostDisconnectMutex.Unlock()
-	}
+	// ⚠️ DISABLED: Auto-end timer clearing (feature disabled)
+	// if hub != nil {
+	// 	hub.hostDisconnectMutex.Lock()
+	// 	if _, exists := hub.hostDisconnectTimes[sessionID]; exists {
+	// 		delete(hub.hostDisconnectTimes, sessionID)
+	// 		log.Printf("✅ Cleared host disconnect timer for session %s (manually ended by host)", sessionID)
+	// 	}
+	// 	hub.hostDisconnectMutex.Unlock()
+	// }
 
 	// ✅ Check if this is an instant watch (temporary room) - reuse room variable from above
 	isInstantWatch := room.IsTemporary
@@ -336,6 +553,14 @@ func EndWatchSessionHandler(c *gin.Context) {
 		}
 	}
 
+	// ✅ EPHEMERAL: Delete all private messages for this session (simple and scalable)
+	pmResult := tx.Where("session_id = ?", sessionID).Delete(&models.PrivateMessage{})
+	if pmResult.Error != nil {
+		log.Printf("⚠️ EndWatchSessionHandler: Failed to delete private messages: %v", pmResult.Error)
+	} else if pmResult.RowsAffected > 0 {
+		log.Printf("🗑️ EndWatchSessionHandler: Deleted %d ephemeral private messages for session %s", pmResult.RowsAffected, sessionID)
+	}
+
 	// ✅ Delete room if it's temporary (instant watch)
 	if isInstantWatch {
 		// Delete all related data for temporary room
@@ -379,10 +604,58 @@ func EndWatchSessionHandler(c *gin.Context) {
 			log.Printf("🗑️ Deleted temporary room %d and all related data after session end", room.ID)
 		}
 	}
+	
+	// ✅ COMMIT TRANSACTION BEFORE QUIZ CLEANUP (quiz cleanup uses separate DB connection)
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("EndWatchSessionHandler: Transaction commit failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Session ended but cleanup incomplete"})
 		return
+	}
+
+	// ✅ DELETE ALL QUIZZES AND RESPONSES FOR THIS SESSION
+	log.Printf("🗑️ [EndWatchSessionHandler] Deleting quizzes for session %s", sessionID)
+	quizService := services.NewQuizService(DB)
+	if err := quizService.DeleteQuizzesBySession(session.SessionID); err != nil {
+		log.Printf("⚠️ EndWatchSessionHandler: Failed to delete quizzes: %v", err)
+	} else {
+		log.Printf("✅ EndWatchSessionHandler: Deleted all quizzes and responses for session %s", sessionID)
+	}
+
+	// ✅ DELETE SESSION-SPECIFIC ROOMTV CONTENT (after successful DB commit)
+	var sessionTVContent []models.RoomTVContent
+	if err := DB.Where("session_id = ?", session.ID).Find(&sessionTVContent).Error; err != nil {
+		log.Printf("⚠️ EndWatchSessionHandler: Failed to fetch session TV content: %v", err)
+	} else if len(sessionTVContent) > 0 {
+		log.Printf("🗑️ EndWatchSessionHandler: Found %d RoomTV items linked to session %d", len(sessionTVContent), session.ID)
+		
+		// Delete video files if uploaded
+		for _, content := range sessionTVContent {
+			if content.IsUploaded && content.FilePath != "" {
+				if err := os.Remove(content.FilePath); err != nil {
+					log.Printf("⚠️ Failed to delete video file %s: %v", content.FilePath, err)
+				} else {
+					log.Printf("✅ Deleted video file: %s", content.FilePath)
+				}
+			}
+		}
+		
+		// Delete database records
+		if err := DB.Where("session_id = ?", session.ID).Delete(&models.RoomTVContent{}).Error; err != nil {
+			log.Printf("⚠️ EndWatchSessionHandler: Failed to delete RoomTV content: %v", err)
+		} else {
+			log.Printf("✅ Deleted %d RoomTV items for session %d", len(sessionTVContent), session.ID)
+			
+			// Broadcast removal to room
+			for _, content := range sessionTVContent {
+				broadcastMsg := map[string]interface{}{
+					"type":       "room_tv_content_removed",
+					"content_id": content.ID,
+				}
+				if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+					hub.BroadcastToRoom(session.RoomID, OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+				}
+			}
+		}
 	}
 
 	// ✅ DELETE LIVEKIT ROOM (after successful DB commit)
@@ -391,21 +664,82 @@ func EndWatchSessionHandler(c *gin.Context) {
 		log.Printf("⚠️ EndWatchSessionHandler: Failed to delete LiveKit room %s: %v", livekitRoomName, err)
 		// Don't fail the entire operation - session is already ended in DB
 	}
+	
+	// ✅ CLEANUP SESSION PREVIEW FILES
+	if err := CleanupSessionPreviews(sessionID); err != nil {
+		log.Printf("⚠️ EndWatchSessionHandler: Failed to cleanup preview files for session %s: %v", sessionID, err)
+	}
+	
+	// ✅ CLEANUP MEDIA SWITCH HANDLER STATE (timers, queue, etc.)
+	if mediaSwitchHandler != nil {
+		mediaSwitchHandler.HandleSessionEnd(sessionID)
+	}
+
+	// ✅ CLEAR SEATING ASSIGNMENTS for this room (prevent stale seat data in new sessions)
+	if hub != nil {
+		hub.seatingMutex.Lock()
+		if _, exists := hub.seatingAssignments[session.RoomID]; exists {
+			delete(hub.seatingAssignments, session.RoomID)
+			log.Printf("🪑 [EndWatchSessionHandler] Cleared seating assignments for room %d", session.RoomID)
+		}
+		hub.seatingMutex.Unlock()
+	}
 
 	// ✅ BROADCAST SESSION_ENDED TO ALL PARTICIPANTS
+	log.Printf("📡 [EndWatchSessionHandler] Broadcasting session_ended to room %d", session.RoomID)
+	
+	// Get host info for rating modal (reuse existing 'room' variable from line 429)
+	var hostUser models.User
+	hostName := "Unknown Host"
+	if err := DB.First(&hostUser, room.HostID).Error; err == nil {
+		hostName = hostUser.Username
+	} else {
+		log.Printf("⚠️ [EndWatchSessionHandler] Failed to load host user: %v", err)
+	}
+	
+	// Build session_ended message with rating modal data
+	sessionEndedData := map[string]interface{}{
+		"type": "session_ended",
+		"data": map[string]interface{}{
+			"session_id":       sessionID,
+			"room_id":          session.RoomID,
+			"was_paid_session": session.TicketingEnabled,
+			"session_title":    session.SessionTitle,
+			"host_id":          room.HostID,
+			"host_name":        hostName,
+			"watch_type":       session.WatchType,
+			"is_temporary":     room.IsTemporary,
+		},
+	}
+	
+	sessionEndedBytes, _ := json.Marshal(sessionEndedData)
 	broadcastMsg := OutgoingMessage{
-		Data:     []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d}}`, sessionID, session.RoomID)),
+		Data:     sessionEndedBytes,
 		IsBinary: false,
 	}
 	hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)
-	log.Printf("📡 Broadcast session_ended to room %d", session.RoomID)
+	log.Printf("✅ [EndWatchSessionHandler] session_ended message broadcasted")
+
+	// Broadcast to lobby for real-time session list updates
+	lobbyBroadcastData := map[string]interface{}{
+		"type":    "session_ended",
+		"room_id": session.RoomID,
+	}
+	if lobbyJsonData, err := json.Marshal(lobbyBroadcastData); err == nil {
+		hub.BroadcastToLobby(OutgoingMessage{
+			Data:     lobbyJsonData,
+			IsBinary: false,
+		})
+	}
 
 	// ✅ DISCONNECT ALL WEBSOCKET CLIENTS IN THIS ROOM
 	// Give clients a moment to receive the session_ended message before disconnecting
+	log.Printf("⏳ [EndWatchSessionHandler] Waiting 500ms before disconnecting clients...")
 	time.Sleep(500 * time.Millisecond)
+	log.Printf("🔌 [EndWatchSessionHandler] Disconnecting all WebSocket clients in room %d", session.RoomID)
 	hub.DisconnectRoomClients(session.RoomID)
 
-	log.Printf("✅ Session %s ended successfully by host %d", sessionID, userID)
+	log.Printf("✅✅✅ [EndWatchSessionHandler] Session %s ended successfully by host %d", sessionID, userID)
 	c.JSON(http.StatusOK, gin.H{"message": "Session ended"})
 }
 
@@ -531,6 +865,43 @@ func AutoEndSession(sessionID string) error {
 		}
 	}
 	
+	// ✅ DELETE SESSION-SPECIFIC ROOMTV CONTENT (before room deletion check)
+	var sessionTVContent []models.RoomTVContent
+	if err := tx.Where("session_id = ?", session.ID).Find(&sessionTVContent).Error; err != nil {
+		log.Printf("⚠️ AutoEndSession: Failed to fetch session TV content: %v", err)
+	} else if len(sessionTVContent) > 0 {
+		log.Printf("🗑️ AutoEndSession: Found %d RoomTV items linked to session %s", len(sessionTVContent), sessionID)
+		
+		// Delete video files if uploaded
+		for _, content := range sessionTVContent {
+			if content.IsUploaded && content.FilePath != "" {
+				if err := os.Remove(content.FilePath); err != nil {
+					log.Printf("⚠️ Failed to delete video file %s: %v", content.FilePath, err)
+				} else {
+					log.Printf("✅ Deleted video file: %s", content.FilePath)
+				}
+			}
+		}
+		
+		// Delete database records
+		if err := tx.Where("session_id = ?", session.ID).Delete(&models.RoomTVContent{}).Error; err != nil {
+			log.Printf("⚠️ AutoEndSession: Failed to delete RoomTV content: %v", err)
+		} else {
+			log.Printf("✅ Deleted %d RoomTV items for session %s", len(sessionTVContent), sessionID)
+			
+			// Note: Broadcasting will happen after transaction commits (in session_ended broadcast)
+		}
+	}
+
+	// ✅ DELETE ALL QUIZZES AND RESPONSES FOR THIS SESSION
+	log.Printf("🗑️ [AutoEndSession] Deleting quizzes for session %s", sessionID)
+	quizService := services.NewQuizService(DB)
+	if err := quizService.DeleteQuizzesBySession(session.SessionID); err != nil {
+		log.Printf("⚠️ AutoEndSession: Failed to delete quizzes: %v", err)
+	} else {
+		log.Printf("✅ AutoEndSession: Deleted all quizzes and responses for session %s", sessionID)
+	}
+	
 	// ✅ Delete room if it's temporary (instant watch)
 	if isInstantWatch {
 		// Delete all related data for temporary room
@@ -584,10 +955,30 @@ func AutoEndSession(sessionID string) error {
 		log.Printf("⚠️ AutoEndSession: Failed to delete LiveKit room %s: %v", livekitRoomName, err)
 	}
 	
+	// ✅ CLEANUP SESSION PREVIEW FILES
+	if err := CleanupSessionPreviews(sessionID); err != nil {
+		log.Printf("⚠️ AutoEndSession: Failed to cleanup preview files for session %s: %v", sessionID, err)
+	}
+	
+	// ✅ CLEANUP MEDIA SWITCH HANDLER STATE (timers, queue, etc.)
+	if mediaSwitchHandler != nil {
+		mediaSwitchHandler.HandleSessionEnd(sessionID)
+	}
+	
+	// ✅ CLEAR SEATING ASSIGNMENTS for this room (prevent stale seat data in new sessions)
+	if hub != nil {
+		hub.seatingMutex.Lock()
+		if _, exists := hub.seatingAssignments[session.RoomID]; exists {
+			delete(hub.seatingAssignments, session.RoomID)
+			log.Printf("🪑 [AutoEndSession] Cleared seating assignments for room %d", session.RoomID)
+		}
+		hub.seatingMutex.Unlock()
+	}
+	
 	// ✅ BROADCAST SESSION_ENDED TO ALL PARTICIPANTS
 	if hub != nil {
 		broadcastMsg := OutgoingMessage{
-			Data:     []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d,"reason":"host_timeout"}}`, sessionID, session.RoomID)),
+			Data:     []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d,"reason":"host_timeout","is_temporary":%t}}`, sessionID, session.RoomID, room.IsTemporary)),
 			IsBinary: false,
 		}
 		hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)
@@ -703,6 +1094,116 @@ func CleanupExpiredSessions() {
 	}
 }
 
+// ✅ CleanupOrphanedInstantWatchRooms deletes temporary rooms where the session has ended OR no session exists
+// This catches rooms that weren't properly deleted during session end
+func CleanupOrphanedInstantWatchRooms() {
+	log.Println("🧹 [CleanupOrphanedInstantWatchRooms] Checking for orphaned instant watch rooms...")
+	
+	// Find all temporary rooms (including soft-deleted ones)
+	var allTempRooms []models.Room
+	result := DB.Unscoped().Where("is_temporary = ?", true).Find(&allTempRooms)
+	if result.Error != nil {
+		log.Printf("❌ [CleanupOrphanedInstantWatchRooms] Failed to query temporary rooms: %v", result.Error)
+		return
+	}
+	
+	log.Printf("📊 [CleanupOrphanedInstantWatchRooms] Query executed: is_temporary = true")
+	log.Printf("📊 [CleanupOrphanedInstantWatchRooms] Rows affected: %d", result.RowsAffected)
+	log.Printf("📊 [CleanupOrphanedInstantWatchRooms] Found %d temporary rooms in database", len(allTempRooms))
+	
+	// Debug: Print first few room IDs
+	if len(allTempRooms) > 0 {
+		log.Printf("🔍 [CleanupOrphanedInstantWatchRooms] First 5 room IDs: ")
+		for i := 0; i < len(allTempRooms) && i < 5; i++ {
+			log.Printf("  - Room ID %d: %s (is_temporary=%v)", allTempRooms[i].ID, allTempRooms[i].Name, allTempRooms[i].IsTemporary)
+		}
+	}
+	
+	// Filter to only orphaned rooms (where session has ended or doesn't exist or has no active members)
+	var orphanedRooms []models.Room
+	for _, room := range allTempRooms {
+		var session models.WatchSession
+		err := DB.Where("room_id = ?", room.ID).First(&session).Error
+		
+		if err == gorm.ErrRecordNotFound {
+			// No session found - orphaned room
+			log.Printf("🗑️ [CleanupOrphanedInstantWatchRooms] Room %d has no watch session - marking for deletion", room.ID)
+			orphanedRooms = append(orphanedRooms, room)
+		} else if err == nil && session.EndedAt != nil {
+			// Session ended - orphaned room
+			log.Printf("🗑️ [CleanupOrphanedInstantWatchRooms] Room %d has ended session - marking for deletion", room.ID)
+			orphanedRooms = append(orphanedRooms, room)
+		} else if err == nil && session.EndedAt == nil {
+			// Session exists but not marked as ended - check if it has any active members
+			var activeCount int64
+			if err := DB.Model(&models.WatchSessionMember{}).
+				Where("watch_session_id = ? AND is_active = ?", session.ID, true).
+				Count(&activeCount).Error; err != nil {
+				log.Printf("⚠️ [CleanupOrphanedInstantWatchRooms] Error counting active members for room %d: %v", room.ID, err)
+			} else if activeCount == 0 {
+				// No active members - session is orphaned
+				log.Printf("🗑️ [CleanupOrphanedInstantWatchRooms] Room %d has 0 active members - marking for deletion", room.ID)
+				orphanedRooms = append(orphanedRooms, room)
+			} else {
+				log.Printf("✅ [CleanupOrphanedInstantWatchRooms] Room %d has %d active members - keeping", room.ID, activeCount)
+			}
+		} else if err != nil {
+			log.Printf("⚠️ [CleanupOrphanedInstantWatchRooms] Error checking session for room %d: %v", room.ID, err)
+		}
+	}
+	
+	if len(orphanedRooms) == 0 {
+		log.Println("✅ [CleanupOrphanedInstantWatchRooms] No orphaned instant watch rooms found")
+		return
+	}
+	
+	log.Printf("🗑️ [CleanupOrphanedInstantWatchRooms] Found %d orphaned instant watch rooms to delete", len(orphanedRooms))
+	
+	for _, room := range orphanedRooms {
+		log.Printf("🗑️ [CleanupOrphanedInstantWatchRooms] Deleting room %d (%s)", room.ID, room.Name)
+		
+		tx := DB.Begin()
+		if tx.Error != nil {
+			log.Printf("❌ Failed to start transaction for room %d", room.ID)
+			continue
+		}
+		
+		// Delete all related data (hard delete with Unscoped)
+		// Order matters: delete children before parents to avoid foreign key violations
+		
+		// First, delete deepest children
+		tx.Exec("DELETE FROM watch_session_members WHERE watch_session_id IN (SELECT id FROM watch_sessions WHERE room_id = ?)", room.ID)
+		tx.Exec("DELETE FROM user_theater_assignments WHERE theater_id IN (SELECT id FROM theaters WHERE watch_session_id IN (SELECT id FROM watch_sessions WHERE room_id = ?))", room.ID)
+		tx.Exec("DELETE FROM theaters WHERE watch_session_id IN (SELECT id FROM watch_sessions WHERE room_id = ?)", room.ID)
+		
+		// Then delete other related data
+		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.UserRoom{})
+		// Note: room_invitations table doesn't exist yet - skip for now
+		// tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.RoomInvitation{})
+		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.MediaItem{})
+		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.ScheduledEvent{})
+		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.RoomTVContent{})
+		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.WatchSession{})
+		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.RoomMessage{})
+		
+		// Delete the room itself (hard delete)
+		if err := tx.Unscoped().Delete(&room).Error; err != nil {
+			tx.Rollback()
+			log.Printf("❌ Failed to delete room %d: %v", room.ID, err)
+			continue
+		}
+		
+		if err := tx.Commit().Error; err != nil {
+			log.Printf("❌ Failed to commit deletion for room %d: %v", room.ID, err)
+			continue
+		}
+		
+		log.Printf("✅ Successfully deleted orphaned instant watch room %d", room.ID)
+	}
+	
+	log.Printf("✅ [CleanupOrphanedInstantWatchRooms] Cleanup complete - deleted %d orphaned rooms", len(orphanedRooms))
+}
+
 // GenerateLiveKitTokenHandler returns a LiveKit access token for the room
 func GenerateLiveKitTokenHandler(c *gin.Context) {
 	log.Printf("🎫 [LiveKit] GenerateLiveKitTokenHandler called for room %s", c.Param("id"))
@@ -766,7 +1267,41 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 		return
 	}
 
+	// 🔄 Dynamic LiveKit URL based on request origin
 	livekitURL := os.Getenv("LIVEKIT_URL")
+	
+	// Check multiple sources to determine if request is from localhost or external
+	requestHost := c.Request.Host
+	origin := c.GetHeader("Origin")
+	referer := c.GetHeader("Referer")
+	forwardedHost := c.GetHeader("X-Forwarded-Host")
+	
+	log.Printf("🔍 [LiveKit] Request headers - Host: %s, Origin: %s, Referer: %s, X-Forwarded-Host: %s", 
+		requestHost, origin, referer, forwardedHost)
+	
+	// Determine if request is from localhost or external
+	isLocalhost := false
+	
+	// Check Origin header (most reliable for AJAX requests)
+	if origin != "" {
+		isLocalhost = strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1")
+	} else if referer != "" {
+		// Fallback to Referer if no Origin
+		isLocalhost = strings.Contains(referer, "localhost") || strings.Contains(referer, "127.0.0.1")
+	} else {
+		// Fallback to Host header
+		isLocalhost = strings.Contains(requestHost, "localhost") || strings.Contains(requestHost, "127.0.0.1")
+	}
+	
+	if isLocalhost {
+		livekitURL = "http://localhost:7880"
+		log.Printf("🏠 [LiveKit] Localhost request detected, using localhost LiveKit URL")
+	} else {
+		// External request - use public IP
+		livekitURL = "http://105.113.102.72:7880"
+		log.Printf("🌍 [LiveKit] External request detected, using public IP LiveKit URL")
+	}
+	
 	log.Printf("✅ [LiveKit] Token generated successfully. URL=%s", livekitURL)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -791,7 +1326,10 @@ func CreateInstantWatchHandler(c *gin.Context) {
 
 	// Parse watch_type from request body
 	var input struct {
-		WatchType string `json:"watch_type"` // "video" or "3d_cinema"
+		WatchType string  `json:"watch_type"` // "video", "3d_cinema", or "classroom"
+		ClassType *string `json:"class_type"` // "classroom" (25 seats) or "lecture_hall" (145 seats) - only for classroom watch_type
+		IsPublic  *bool   `json:"is_public"`  // Pointer to allow nil (defaults to true)
+		IsPrivate *bool   `json:"is_private"` // If true, session hidden from lobby unless user is member
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		// Default to "video" if not specified
@@ -799,8 +1337,31 @@ func CreateInstantWatchHandler(c *gin.Context) {
 	}
 	
 	// Validate watch_type
-	if input.WatchType != "video" && input.WatchType != "3d_cinema" {
+	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" {
 		input.WatchType = "video"
+	}
+
+	// Validate class_type if watch_type is classroom
+	var classType string
+	if input.WatchType == "classroom" {
+		if input.ClassType != nil && (*input.ClassType == "classroom" || *input.ClassType == "lecture_hall") {
+			classType = *input.ClassType
+		} else {
+			// Default to lecture_hall if not specified or invalid
+			classType = "lecture_hall"
+		}
+	}
+
+	// Default to public if not specified
+	isPublic := true
+	if input.IsPublic != nil {
+		isPublic = *input.IsPublic
+	}
+
+	// Default to not private (public in lobby)
+	isPrivate := false
+	if input.IsPrivate != nil {
+		isPrivate = *input.IsPrivate
 	}
 
 	// 🔁 BEGIN TRANSACTION
@@ -818,6 +1379,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		Description: "Temporary session – auto-deleted after use",
 		HostID:      userID,
 		IsTemporary: true,
+		IsPublic:    isPublic,
 	}
 
 	if err := tx.Create(&newRoom).Error; err != nil {
@@ -841,13 +1403,15 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		return
 	}
 
-	// Create watch session with watch_type
+	// Create watch session with watch_type and optional class_type
 	sessionUUID := uuid.New().String()
 	watchSession := models.WatchSession{
 		SessionID: sessionUUID,
 		RoomID:    newRoom.ID,
 		HostID:    userID,
 		WatchType: input.WatchType,
+		ClassType: classType,  // ✅ Set class_type for classroom sessions
+		IsPrivate: isPrivate,  // ✅ Hide from lobby if private
 		StartedAt: time.Now(),
 	}
 
@@ -865,8 +1429,27 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		return
 	}
 
+	// Broadcast to lobby for real-time session list updates
+	lobbyBroadcastData := map[string]interface{}{
+		"type":    "session_started",
+		"room_id": newRoom.ID,
+	}
+	if lobbyJsonData, err := json.Marshal(lobbyBroadcastData); err == nil {
+		hub := GetHub()
+		if hub != nil {
+			hub.BroadcastToLobby(OutgoingMessage{
+				Data:     lobbyJsonData,
+				IsBinary: false,
+			})
+		}
+	}
+
 	// Success
-	log.Printf("✅ Created instant watch session: room=%d, session=%s, type=%s", newRoom.ID, sessionUUID, input.WatchType)
+	if input.WatchType == "classroom" {
+		log.Printf("✅ Created instant watch session: room=%d, session=%s, type=%s, class_type=%s", newRoom.ID, sessionUUID, input.WatchType, classType)
+	} else {
+		log.Printf("✅ Created instant watch session: room=%d, session=%s, type=%s", newRoom.ID, sessionUUID, input.WatchType)
+	}
 	c.JSON(http.StatusCreated, gin.H{
 		"room_id":    newRoom.ID,
 		"session":    watchSession,
@@ -910,7 +1493,8 @@ func GetRoomsHandler(c *gin.Context) {
 	// Build query based on authentication
 	query := DB.Table("rooms").
 		Select("rooms.*, users.username as host_username").
-		Joins("LEFT JOIN users ON rooms.host_id = users.id")
+		Joins("LEFT JOIN users ON rooms.host_id = users.id").
+		Where("rooms.deleted_at IS NULL") // ✅ Exclude soft-deleted rooms
 	
 	if userExists && userID > 0 {
 		// Authenticated user: Show public rooms OR private rooms where user is a member
@@ -942,21 +1526,39 @@ func GetRoomsHandler(c *gin.Context) {
 			hostDisplay = fmt.Sprintf("User %d", roomData.Room.HostID)
 		}
 		
+		// Check if room has upcoming events
+		var upcomingCount int64
+		DB.Model(&models.ScheduledEvent{}).
+			Where("room_id = ? AND start_time > ?", roomData.Room.ID, time.Now()).
+			Count(&upcomingCount)
+		
+		// Count room members
+		var memberCount int64
+		DB.Model(&models.UserRoom{}).
+			Where("room_id = ?", roomData.Room.ID).
+			Count(&memberCount)
+		
 		roomsResponse[i] = gin.H{
-			"id":                roomData.Room.ID,
-			"name":              roomData.Room.Name,
-			"description":       roomData.Room.Description,
-			"host_id":           roomData.Room.HostID,
-			"host_username":     hostDisplay,
-			"is_public":         roomData.Room.IsPublic,
-			"is_temporary":      roomData.Room.IsTemporary,
-			"media_file_name":   roomData.Room.MediaFileName,
-			"playback_state":    roomData.Room.PlaybackState,
-			"playback_time":     roomData.Room.PlaybackTime,
-			"created_at":        roomData.Room.CreatedAt,
-			"currently_playing": roomData.Room.CurrentlyPlaying,
-			"coming_next":       roomData.Room.ComingNext,
-			"is_screen_sharing": roomData.Room.IsScreenSharing,
+			"id":                  roomData.Room.ID,
+			"name":                roomData.Room.Name,
+			"description":         roomData.Room.Description,
+			"host_id":             roomData.Room.HostID,
+			"host_username":       hostDisplay,
+			"is_public":           roomData.Room.IsPublic,
+			"is_temporary":        roomData.Room.IsTemporary,
+			"media_file_name":     roomData.Room.MediaFileName,
+			"playback_state":      roomData.Room.PlaybackState,
+			"playback_time":       roomData.Room.PlaybackTime,
+			"created_at":          roomData.Room.CreatedAt,
+			"currently_playing":   roomData.Room.CurrentlyPlaying,
+			"coming_next":         roomData.Room.ComingNext,
+			"is_screen_sharing":   roomData.Room.IsScreenSharing,
+			"image_url":           roomData.Room.ImageURL,
+			"has_upcoming_events": upcomingCount > 0,
+			"upcoming_events_count": upcomingCount,
+			"average_rating":      roomData.Room.AverageRating,      // ✅ Room rating
+			"total_ratings":       roomData.Room.TotalRatings,       // ✅ Number of ratings
+			"member_count":        memberCount,                      // ✅ Room member count
 		}
 	}
 
@@ -1022,10 +1624,11 @@ func GetRoomMembersHandler(c *gin.Context) {
         isHost := userRoom.UserID == room.HostID
         
         memberList[i] = map[string]interface{}{
-            "id":        userRoom.UserID,
-            "username":  userRoom.User.Username, // This should work now with Preload
-            "is_host":   isHost,
-            "user_role": userRoom.UserRole,      // Now we can access the role!
+            "id":         userRoom.UserID,
+            "username":   userRoom.User.Username,
+            "avatar_url": userRoom.User.AvatarURL, // ✅ Include avatar URL
+            "is_host":    isHost,
+            "user_role":  userRoom.UserRole,
         }
     }
 
@@ -1343,7 +1946,7 @@ func DeleteRoomHandler(c *gin.Context) {
         log.Printf("Room %d and all related files deleted successfully", roomID)
     }()
     
-    // Broadcast room deletion via WebSocket
+    // Broadcast room deletion via WebSocket to room members
     broadcastMsg := map[string]interface{}{
         "type":    "room_deleted",
         "room_id": uint(roomID),
@@ -1351,6 +1954,18 @@ func DeleteRoomHandler(c *gin.Context) {
     }
     if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
         hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+    }
+    
+    // Broadcast to lobby for real-time room list updates
+    lobbyBroadcastData := map[string]interface{}{
+        "type":    "room_deleted",
+        "room_id": uint(roomID),
+    }
+    if lobbyJsonData, err := json.Marshal(lobbyBroadcastData); err == nil {
+        hub.BroadcastToLobby(OutgoingMessage{
+            Data:     lobbyJsonData,
+            IsBinary: false,
+        })
     }
     
     c.JSON(http.StatusOK, gin.H{
@@ -1576,13 +2191,62 @@ func GetActiveSessionHandler(c *gin.Context) {
 		Where("watch_session_id = ? AND is_active = ?", session.ID, true).
 		Count(&memberCount)
 
+	// ✅ Fetch active members with user details
+	type MemberResponse struct {
+		UserID    uint   `json:"user_id"`
+		Username  string `json:"username"`
+		AvatarURL string `json:"avatar_url"`
+		IsActive  bool   `json:"is_active"`
+		UserRole  string `json:"user_role"`
+	}
+	
+	var members []MemberResponse
+	DB.Table("watch_session_members").
+		Select("watch_session_members.user_id, users.username, users.avatar_url, watch_session_members.is_active, user_rooms.user_role").
+		Joins("JOIN users ON users.id = watch_session_members.user_id").
+		Joins("JOIN user_rooms ON user_rooms.user_id = watch_session_members.user_id AND user_rooms.room_id = ?", roomID).
+		Where("watch_session_members.watch_session_id = ? AND watch_session_members.is_active = ?", session.ID, true).
+		Scan(&members)
+	
+	log.Printf("� [GetActiveSessionHandler] Query completed, found %d members", len(members))
+	for i, member := range members {
+		log.Printf("👤 [GetActiveSessionHandler] Member %d: UserID=%d, Username=%s, AvatarURL=%s, UserRole=%s", 
+			i+1, member.UserID, member.Username, member.AvatarURL, member.UserRole)
+	}
+	
+	log.Printf("✅ [GetActiveSessionHandler] Returning %d active members for session %s", len(members), session.SessionID)
+
+	// ✅ Fetch host username for ticket purchase modal
+	var hostUser models.User
+	hostName := "Unknown Host"
+	if err := DB.First(&hostUser, session.HostID).Error; err == nil {
+		hostName = hostUser.Username
+	} else {
+		log.Printf("⚠️ [GetActiveSessionHandler] Failed to load host user: %v", err)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"session_id":   session.SessionID,
-		"watch_type":   session.WatchType,
-		"host_id":      session.HostID,
-		"is_existing":  true,
-		"started_at":   session.StartedAt,
-		"member_count": memberCount,
+		"id":                     session.ID,  // Numeric DB ID for API calls
+		"session_id":            session.SessionID,  // UUID string for WebSocket
+		"watch_type":            session.WatchType,
+		"class_type":            session.ClassType,
+		"session_title":         session.SessionTitle,
+		"host_id":               session.HostID,
+		"host_name":             hostName,  // ✅ Add host name for ticket purchase modal
+		"is_existing":           true,
+		"started_at":            session.StartedAt,
+		"member_count":          memberCount,
+		"members":               members,
+		// ✅ TICKET ENFORCEMENT: Include ticketing fields for frontend validation
+		"ticketing_enabled":      session.TicketingEnabled,
+		"ticket_price_tokens":    session.TicketPriceTokens,
+		"ticket_price_currency":  session.TicketPriceCurrency,
+		"ticket_price_amount":    session.TicketPriceAmount,
+		// ✅ Early bird pricing fields
+		"early_bird_enabled":     session.EarlyBirdEnabled,
+		"early_bird_price_tokens": session.EarlyBirdPriceTokens,
+		"early_bird_price_amount": session.EarlyBirdPriceAmount,
+		"early_bird_active":      session.EarlyBirdActive,
 	})
 }
 
@@ -1688,38 +2352,56 @@ func GetRoomHandler(c *gin.Context) {
 	roomIDUint := uint(roomID)
 
 
-	// Query the database for the specific room by ID
-	var room models.Room
-	result := DB.First(&room, roomIDUint) // Find by primary key
+	// Query the database for the specific room by ID with host username
+	type RoomWithUsername struct {
+		models.Room
+		HostUsername string `gorm:"column:host_username"`
+	}
+	
+	var roomData RoomWithUsername
+	result := DB.Table("rooms").
+		Select("rooms.*, users.username as host_username").
+		Joins("LEFT JOIN users ON rooms.host_id = users.id").
+		Where("rooms.id = ? AND rooms.deleted_at IS NULL", roomIDUint).
+		Scan(&roomData)
+	
 	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
-			log.Printf("GetRoomHandler: Room with ID %d not found", roomIDUint)
-			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
-			return
-		} else {
-			log.Printf("GetRoomHandler: Database error fetching room %d: %v", roomIDUint, result.Error)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-			return
-		}
+		log.Printf("GetRoomHandler: Database error fetching room %d: %v", roomIDUint, result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+	
+	if roomData.Room.ID == 0 {
+		log.Printf("GetRoomHandler: Room with ID %d not found", roomIDUint)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	// Use username if available, fallback to "User {id}"
+	hostDisplay := roomData.HostUsername
+	if hostDisplay == "" {
+		hostDisplay = fmt.Sprintf("User %d", roomData.Room.HostID)
 	}
 
 	// 5. Room found. Prepare the response.
-	log.Printf("GetRoomHandler: Fetched room: ID=%d, Name=%s", room.ID, room.Name)
+	log.Printf("GetRoomHandler: Fetched room: ID=%d, Name=%s, Host=%s", roomData.Room.ID, roomData.Room.Name, hostDisplay)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Room fetched successfully",
 		"room": gin.H{
-			"id":              room.ID,
-			"name":            room.Name,
-			"description":     room.Description,
-			"host_id":         room.HostID,
-			"media_file_name": room.MediaFileName,
-			"playback_state":  room.PlaybackState,
-			"playback_time":   room.PlaybackTime,
-			"created_at":      room.CreatedAt,
-            "loop_mode":       room.LoopMode,
-            "currently_playing":  room.CurrentlyPlaying, // ✅ Cinema field
-            "coming_next":        room.ComingNext,       // ✅ Cinema field
-            "is_screen_sharing":  room.IsScreenSharing,  // ✅ Cinema field
+			"id":              roomData.Room.ID,
+			"name":            roomData.Room.Name,
+			"description":     roomData.Room.Description,
+			"host_id":         roomData.Room.HostID,
+			"host_username":   hostDisplay,
+			"media_file_name": roomData.Room.MediaFileName,
+			"playback_state":  roomData.Room.PlaybackState,
+			"playback_time":   roomData.Room.PlaybackTime,
+			"created_at":      roomData.Room.CreatedAt,
+			"image_url":       roomData.Room.ImageURL,
+            "loop_mode":       roomData.Room.LoopMode,
+            "currently_playing":  roomData.Room.CurrentlyPlaying, // ✅ Cinema field
+            "coming_next":        roomData.Room.ComingNext,       // ✅ Cinema field
+            "is_screen_sharing":  roomData.Room.IsScreenSharing,  // ✅ Cinema field
 			// Add host details or member list later if needed
 		},
 	})

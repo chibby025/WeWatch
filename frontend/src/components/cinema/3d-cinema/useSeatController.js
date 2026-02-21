@@ -1,51 +1,70 @@
 // useSeatController.js
 import { useState, useCallback, useMemo } from 'react';
-import { getSeatByPosition, assignUserToSeat } from './seatCalculator';
 
 export function useSeatController({
   currentUser,
   initialSeatId = null,
-  onSeatChange = null // Optional: (seatId, seatData) => void
+  onSeatChange = null, // Optional: (seatId, seatData) => void
+  cinemaSeats = { seats: [] } // ✅ NEW: cinemaSeats.json data
 }) {
   const [currentSeatKey, setCurrentSeatKey] = useState(initialSeatId);
 
-  // Compute actual seat data from key like "2-3"
+  // Compute actual seat data from key like "2-3" using cinemaSeats.json
   const currentSeat = useMemo(() => {
     if (!currentUser) return null;
 
-    let seatData = null;
+    // Create lookup map for fast seat access
+    const seatMap = new Map();
+    cinemaSeats.seats.forEach(seat => {
+      seatMap.set(seat.id, seat);
+    });
+
     if (currentSeatKey?.includes('-')) {
       const [rowStr, colStr] = currentSeatKey.split('-');
       const row = parseInt(rowStr, 10);
       const col = parseInt(colStr, 10);
+      
       if (!isNaN(row) && !isNaN(col)) {
-        const seatInRow = col + 1;
-        seatData = getSeatByPosition(row + 1, seatInRow);
+        // ✅ Convert "row-col" (0-indexed) to seat ID (1-42)
+        const seatId = row * 7 + col + 1;
+        const seatData = seatMap.get(seatId);
+        
         if (seatData) {
           return {
-            ...seatData,
             id: seatData.id,
             key: currentSeatKey,
-            avatarPosition: seatData.position,
-            cameraPosition: getCameraPositionFromAvatar(seatData.position, seatData.id),
-            label: `Row ${row + 1}, Seat ${seatInRow}`
+            position: seatData.position,
+            row: seatData.row,
+            seatInRow: seatData.seatInRow,
+            // ✅ Use center camera view from JSON
+            cameraPosition: seatData.cameraViews?.center?.position || seatData.position,
+            cameraLookAt: seatData.cameraViews?.center?.lookAt || [0, 3, 0],
+            // Store all camera views for L/C/R switching
+            cameraViews: seatData.cameraViews,
+            label: `Row ${seatData.row}, Seat ${seatData.seatInRow}`
           };
         }
       }
     }
 
-    // Fallback: assign by user ID
-    if (!seatData) {
-      seatData = assignUserToSeat(currentUser.id || 1);
+    // Fallback: use first seat if no seat key
+    const firstSeat = seatMap.get(1);
+    if (firstSeat) {
       return {
-        ...seatData,
-        key: `${seatData.row - 1}-${seatData.seatInRow - 1}`, // convert to 0-based key
-        cameraPosition: getCameraPositionFromAvatar(seatData.position, seatData.id)
+        id: firstSeat.id,
+        key: '0-0',
+        position: firstSeat.position,
+        row: firstSeat.row,
+        seatInRow: firstSeat.seatInRow,
+        cameraPosition: firstSeat.cameraViews?.center?.position || firstSeat.position,
+        cameraLookAt: firstSeat.cameraViews?.center?.lookAt || [0, 3, 0],
+        cameraViews: firstSeat.cameraViews,
+        label: `Row ${firstSeat.row}, Seat ${firstSeat.seatInRow}`
       };
     }
 
-    return seatData;
-  }, [currentSeatKey, currentUser]);
+    return null;
+  }, [currentSeatKey, currentUser, cinemaSeats.seats]);
 
   const jumpToSeat = useCallback((seatKey) => {
     if (!seatKey) return;
@@ -60,16 +79,4 @@ export function useSeatController({
     jumpToSeat,
     currentSeatKey
   };
-}
-
-// Helper: extract camera position (reuse from seatCalculator)
-function getCameraPositionFromAvatar(avatarPosition, seatId = null) {
-  const [x, y, z] = avatarPosition;
-  // ✅ Row 1 seats (A1-A7, seats 1-7) - Raised slightly to look more downward
-  if (seatId >= 1 && seatId <= 7) return [x, 2.35, -0.86];
-  // ✅ Row 2 seats (B1-B7, seats 8-14) - All use same Y & Z from B1, keep individual X
-  if (seatId >= 8 && seatId <= 14) return [x, 2.65, -2.38];
-  // ✅ Apply same camera adjustment to all Row 5 seats (E1-E7, seats 29-35)
-  if (seatId >= 29 && seatId <= 35) return [x, y * 1.22, z - 0.3];
-  return [x, y * 1.07, z * 0.91];
 }

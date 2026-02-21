@@ -13,45 +13,77 @@ export function useSeatSwap({ sendMessage, currentUser, onSwapAccepted }) {
 
   // Handle incoming WebSocket messages
   const handleSeatSwapMessage = useCallback((message) => {
+    console.log('🪑 [handleSeatSwapMessage] Received message:', message.type, message);
+    
+    // ✅ Fields can be at root level OR under data key - check both
+    const msg = message.data || message;
+    
     switch (message.type) {
       case 'seat_swap_request':
-        if (message.data?.target_user_id === currentUser?.id) {
+        console.log('🪑 [seat_swap_request] Checking if for me:', { 
+          targetUserId: msg.target_user_id, 
+          myUserId: currentUser?.id, 
+          isForMe: msg.target_user_id === currentUser?.id 
+        });
+        
+        if (msg.target_user_id === currentUser?.id) {
+          console.log('✅ [seat_swap_request] This request is for ME! Setting state...');
           setSeatSwapRequest({
-            requesterId: message.data.requester_id,
-            requesterName: message.data.requester_name || `User${message.data.requester_id}`,
-            targetSeat: message.data.target_seat,
-            requesterSeat: message.data.requester_seat,
+            requesterId: msg.requester_id,
+            requesterName: msg.requester_name || `User${msg.requester_id}`,
+            targetSeat: msg.target_seat,
+            requesterSeat: msg.requester_seat,
           });
+        } else {
+          console.log('⏭️ [seat_swap_request] Not for me, ignoring');
         }
-        break;
+        console.log('🪑 [handleSeatSwapMessage] Handled seat_swap_request, returning true');
+        return true;
 
       case 'seat_swap_accepted':
       case 'seat_swap_declined':
         if (
-          (message.data?.requester_id === currentUser?.id) ||
-          (message.data?.target_id === currentUser?.id)
+          (msg.requester_id === currentUser?.id) ||
+          (msg.target_id === currentUser?.id)
         ) {
           if (message.type === 'seat_swap_accepted' && onSwapAccepted) {
-            onSwapAccepted(message.data);
+            onSwapAccepted(msg);
           }
           setSeatSwapRequest(null);
         }
-        break;
+        console.log('🪑 [handleSeatSwapMessage] Handled seat_swap_accepted/declined, returning true');
+        return true;
 
       default:
+        // ✅ Silent return for non-swap messages (chat_message is normal, not an error)
+        if (message.type !== 'chat_message') {
+          console.log('🪑 [handleSeatSwapMessage] Message type not handled, returning false:', message.type);
+        }
         return false; // not handled
     }
-    return true; // handled
   }, [currentUser?.id, onSwapAccepted]);
 
   const sendSwapRequest = useCallback((targetUserId, targetSeat) => {
-    if (!sendMessage || !currentUser) return;
-    sendMessage({
+    console.log('🪑 [sendSwapRequest] Called:', { targetUserId, targetSeat, currentUserId: currentUser?.id });
+    
+    if (!sendMessage || !currentUser) {
+      console.error('❌ [sendSwapRequest] Missing dependencies:', { hasSendMessage: !!sendMessage, hasCurrentUser: !!currentUser });
+      return;
+    }
+    
+    // Convert seat ID to integer if it's a string
+    const seatId = typeof targetSeat === 'string' ? parseInt(targetSeat, 10) : targetSeat;
+    
+    const message = {
       type: 'seat_swap_request',
       requester_id: currentUser.id,
       target_user_id: targetUserId,
-      target_seat: targetSeat,
-    });
+      target_seat: seatId, // Send as simple number (seat ID)
+    };
+    
+    console.log('📤 [sendSwapRequest] Sending message:', message);
+    sendMessage(message);
+    console.log('✅ [sendSwapRequest] Message sent successfully');
   }, [sendMessage, currentUser]);
 
   const acceptSwap = useCallback(() => {

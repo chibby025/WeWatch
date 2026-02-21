@@ -6,16 +6,43 @@ export default function UserProfileModal({
   isOpen, 
   onClose, 
   onMessage,
+  onAddFriend, // ✅ NEW: Callback to add user as friend
   isOwnProfile = false,
-  onSaveProfile
+  isInWatchSession = false, // ✅ NEW: Flag to show "Add Friend" instead of "Close"
+  onSaveProfile,
+  friendshipStatus = null, // ✅ NEW: 'none', 'pending', 'accepted'
+  isRequester = false, // ✅ NEW: Did current user send the request?
 }) {
   if (!isOpen || !user) return null;
+
+  // 🐛 DEBUG: Log props on render
+  console.log('👤 [UserProfileModal] Rendering with props:', {
+    username: user.username,
+    userId: user.id,
+    isOwnProfile,
+    isInWatchSession,
+    friendshipStatus,
+    isRequester,
+    hasOnAddFriend: !!onAddFriend,
+    hasOnMessage: !!onMessage
+  });
+  
+  // 🐛 DEBUG: Log button visibility logic
+  const shouldShowAddFriendButton = isInWatchSession && friendshipStatus !== 'accepted';
+  console.log('🔍 [UserProfileModal] Button visibility logic:', {
+    isInWatchSession,
+    friendshipStatus,
+    friendshipStatusIsNotAccepted: friendshipStatus !== 'accepted',
+    shouldShowAddFriendButton,
+    willRenderAddFriendButton: shouldShowAddFriendButton && !!onAddFriend
+  });
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedUsername, setEditedUsername] = useState(user.username || '');
   const [editedBio, setEditedBio] = useState(user.bio || '');
   const [previewImage, setPreviewImage] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [isAvatarExpanded, setIsAvatarExpanded] = useState(false); // ✅ NEW: Expandable avatar
   const fileInputRef = useRef(null);
 
   // Update state when user prop changes (after profile update)
@@ -83,8 +110,14 @@ export default function UserProfileModal({
           <div className="relative mx-auto w-24 h-24 mb-4">
             <img 
               src={currentAvatar} 
-              alt={user.username} 
-              className="w-24 h-24 rounded-full mx-auto object-cover border-4 border-gray-700"
+              alt={user.username}
+              onError={(e) => {
+                e.target.onerror = null;
+                e.target.src = '/avatars/default.png';
+              }}
+              onClick={() => setIsAvatarExpanded(true)}
+              className="w-24 h-24 rounded-full mx-auto object-cover border-4 border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
+              title="Click to view full size"
             />
             {isEditing && (
               <button
@@ -123,24 +156,26 @@ export default function UserProfileModal({
             )}
           </div>
 
-          {/* Bio */}
-          <div className="mb-6">
-            <label className="text-xs text-gray-400 block mb-1">Bio</label>
-            {isEditing ? (
-              <textarea
-                value={editedBio}
-                onChange={(e) => setEditedBio(e.target.value)}
-                className="w-full bg-gray-900 text-white px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none resize-none"
-                rows={3}
-                maxLength={200}
-                placeholder="Tell us about yourself..."
-              />
-            ) : (
-              <p className="text-gray-300 text-sm">
-                {user.bio || 'No bio yet'}
-              </p>
-            )}
-          </div>
+          {/* Bio - Only show if bio exists or editing */}
+          {(isEditing || user.bio) && (
+            <div className="mb-6">
+              <label className="text-xs text-gray-400 block mb-1">Bio</label>
+              {isEditing ? (
+                <textarea
+                  value={editedBio}
+                  onChange={(e) => setEditedBio(e.target.value)}
+                  className="w-full bg-gray-900 text-white px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none resize-none"
+                  rows={3}
+                  maxLength={200}
+                  placeholder="Tell us about yourself..."
+                />
+              ) : (
+                <p className="text-gray-300 text-sm">
+                  {user.bio}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* User Stats (Optional) */}
           {!isEditing && (
@@ -188,25 +223,130 @@ export default function UserProfileModal({
               )
             ) : (
               <>
-                <button 
-                  onClick={onClose}
-                  className="flex-1 bg-gray-700 hover:bg-gray-600 py-2 rounded text-white font-medium transition-colors"
-                >
-                  Close
-                </button>
-                {onMessage && (
-                  <button 
-                    onClick={onMessage}
-                    className="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded text-white font-medium transition-colors"
-                  >
-                    Message
-                  </button>
+                {/* ✅ Show "Add Friend" button only when in watch session AND not already friends */}
+                {isInWatchSession && friendshipStatus !== 'accepted' ? (
+                  <>
+                    {onAddFriend && (
+                      <button 
+                        onClick={onAddFriend}
+                        className={`flex-1 py-3 rounded text-white font-medium transition-colors flex items-center justify-center gap-2 ${
+                          friendshipStatus === 'pending' && isRequester
+                            ? 'bg-gray-500 hover:bg-gray-600'
+                            : 'bg-green-600 hover:bg-green-700'
+                        }`}
+                        title={
+                          friendshipStatus === 'pending' && isRequester
+                            ? 'Click to cancel request'
+                            : friendshipStatus === 'pending'
+                            ? 'Friend request pending'
+                            : 'Add Friend'
+                        }
+                      >
+                        {friendshipStatus === 'pending' && isRequester ? (
+                          <>
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>Request Sent</span>
+                          </>
+                        ) : friendshipStatus === 'pending' ? (
+                          <>
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>Pending...</span>
+                          </>
+                        ) : (
+                          <img 
+                            src="/icons/addMemberIcon.svg" 
+                            alt="Add Friend"
+                            className="w-8 h-8"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        )}
+                      </button>
+                    )}
+                    {onMessage && (
+                      <button 
+                        onClick={onMessage}
+                        className="flex-1 bg-purple-600 hover:bg-purple-700 py-3 rounded text-white font-medium transition-colors flex items-center justify-center group relative"
+                        title="Message"
+                      >
+                        <img 
+                          src="/icons/chat.svg" 
+                          alt="Message"
+                          className="w-8 h-8"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'block';
+                          }}
+                        />
+                        <span className="hidden">Message</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <button 
+                      onClick={onClose}
+                      className="flex-1 bg-gray-700 hover:bg-gray-600 py-2 rounded text-white font-medium transition-colors"
+                    >
+                      Close
+                    </button>
+                    {onMessage && (
+                      <button 
+                        onClick={onMessage}
+                        className="flex-1 bg-purple-600 hover:bg-purple-700 py-3 rounded text-white font-medium transition-colors flex items-center justify-center group relative"
+                        title="Message"
+                      >
+                        <img 
+                          src="/icons/chat.svg" 
+                          alt="Message"
+                          className="w-8 h-8"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'block';
+                          }}
+                        />
+                        <span className="hidden">Message</span>
+                      </button>
+                    )}
+                  </>
                 )}
               </>
             )}
           </div>
         </div>
       </div>
+
+      {/* ✅ Expanded Avatar Overlay */}
+      {isAvatarExpanded && (
+        <div 
+          className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4"
+          onClick={() => setIsAvatarExpanded(false)}
+        >
+          <div className="relative">
+            <button 
+              onClick={() => setIsAvatarExpanded(false)}
+              className="absolute -top-12 right-0 text-white hover:text-gray-300 text-3xl leading-none"
+            >
+              ×
+            </button>
+            <img 
+              src={currentAvatar} 
+              alt={user.username}
+              onError={(e) => {
+                e.target.onerror = null;
+                e.target.src = '/avatars/default.png';
+              }}
+              className="max-w-[600px] max-h-[600px] w-auto h-auto object-contain rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

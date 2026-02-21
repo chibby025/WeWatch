@@ -8,4 +8,5 @@ type PrivateMessage struct {
 	SenderID   uint   `gorm:"not null;index:idx_private_chat"`
 	ReceiverID uint   `gorm:"not null;index:idx_private_chat"`
 	Message    string `gorm:"type:text;not null"`
+	SessionID  string `gorm:"type:varchar(36);index:idx_private_messages_session_id"` // For ephemeral session-based messages
 }

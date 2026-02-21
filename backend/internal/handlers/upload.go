@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -144,28 +143,8 @@ func UploadMediaHandler(c *gin.Context) {
 		return
 	}
 	log.Printf("✅ UploadMediaHandler: File saved successfully to '%s'", filePath)
-	// ✅ OPTIMIZE MP4 FOR WEB STREAMING
-	if ext == ".mp4" {
-	log.Printf("🎥 Optimizing MP4 for web streaming: %s", filePath)
-	tempOptimizedPath := filePath + ".optimized"
-	cmd := exec.Command("ffmpeg",
-		"-i", filePath,
-		"-c", "copy",              // stream copy (fast, no re-encode)
-		"-movflags", "+faststart", // move moov atom to front
-		tempOptimizedPath,
-	)
-	if err := cmd.Run(); err != nil {
-		log.Printf("⚠️ Failed to optimize MP4, using original: %v", err)
-		// Keep original if optimization fails
-	} else {
-		// Replace original with optimized version
-		os.Remove(filePath)
-		os.Rename(tempOptimizedPath, filePath)
-		log.Printf("✅ MP4 optimized successfully: %s", filePath)
-		}
-	} // ← THIS BRACE WAS MISSING!
 
-	// ✅ GET DURATION
+	// ✅ GET DURATION (fast operation, keep synchronous)
 	log.Printf("⏱️ UploadMediaHandler: Extracting duration for '%s'", filePath)
 	duration, err := utils.GetVideoDuration(filePath)
 	if err != nil {
@@ -174,27 +153,15 @@ func UploadMediaHandler(c *gin.Context) {
 	}
 	log.Printf("✅ UploadMediaHandler: Duration extracted successfully: %s", duration)
 
-	// ✅ GENERATE POSTER/THUMBNAIL
-	log.Printf("🎨 UploadMediaHandler: Generating poster for '%s'", filePath)
+	// ✅ USE PLACEHOLDER POSTER (will be replaced by async generation)
 	posterFilename := fmt.Sprintf("%s_poster.jpg", strings.TrimSuffix(uniqueFilename, filepath.Ext(uniqueFilename)))
 	var posterPath string
-	var posterURL string
+	posterURL := "/icons/placeholder-poster.jpg" // Start with placeholder
 	
 	if isTemporary {
 		posterPath = filepath.Join(UploadDir, "temp", posterFilename)
-		posterURL = fmt.Sprintf("/uploads/temp/%s", posterFilename)
 	} else {
 		posterPath = filepath.Join(UploadDir, posterFilename)
-		posterURL = fmt.Sprintf("/uploads/%s", posterFilename)
-	}
-	
-	err = utils.ExtractThumbnail(filePath, posterPath)
-	if err != nil {
-		log.Printf("⚠️ UploadMediaHandler: Failed to generate poster: %v", err)
-		// Use placeholder poster if thumbnail generation fails
-		posterURL = "/icons/placeholder-poster.jpg"
-	} else {
-		log.Printf("✅ UploadMediaHandler: Poster generated successfully: %s", posterPath)
 	}
 
 	if isTemporary {
@@ -219,6 +186,39 @@ func UploadMediaHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "File uploaded but failed to save temporary media information"})
 			return
 		}
+
+		// ✅ ASYNC POSTER GENERATION (don't block response)
+		go func(itemID uint, videoPath, posterPath string, isTemp bool) {
+			log.Printf("🎨 [Async] Starting poster generation for item %d", itemID)
+			
+			err := utils.ExtractThumbnail(videoPath, posterPath)
+			if err != nil {
+				log.Printf("⚠️ [Async] Failed to generate poster for item %d: %v", itemID, err)
+				return
+			}
+			
+			// Update database with real poster URL
+			var posterURL string
+			if isTemp {
+				posterURL = fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
+			} else {
+				posterURL = fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
+			}
+			
+			if isTemp {
+				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
+					log.Printf("❌ [Async] Failed to update poster URL for temp item %d: %v", itemID, err)
+				} else {
+					log.Printf("✅ [Async] Poster generated and updated for temp item %d: %s", itemID, posterURL)
+				}
+			} else {
+				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
+					log.Printf("❌ [Async] Failed to update poster URL for item %d: %v", itemID, err)
+				} else {
+					log.Printf("✅ [Async] Poster generated and updated for item %d: %s", itemID, posterURL)
+				}
+			}
+		}(newTempMediaItem.ID, filePath, posterPath, true)
 
 		// ✅ BROADCAST TO ROOM — FIXED
 		//message := map[string]interface{}{
@@ -273,6 +273,39 @@ func UploadMediaHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "File uploaded but failed to save media information"})
 			return
 		}
+
+		// ✅ ASYNC POSTER GENERATION (don't block response)
+		go func(itemID uint, videoPath, posterPath string, isTemp bool) {
+			log.Printf("🎨 [Async] Starting poster generation for item %d", itemID)
+			
+			err := utils.ExtractThumbnail(videoPath, posterPath)
+			if err != nil {
+				log.Printf("⚠️ [Async] Failed to generate poster for item %d: %v", itemID, err)
+				return
+			}
+			
+			// Update database with real poster URL
+			var posterURL string
+			if isTemp {
+				posterURL = fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
+			} else {
+				posterURL = fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
+			}
+			
+			if isTemp {
+				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
+					log.Printf("❌ [Async] Failed to update poster URL for temp item %d: %v", itemID, err)
+				} else {
+					log.Printf("✅ [Async] Poster generated and updated for temp item %d: %s", itemID, posterURL)
+				}
+			} else {
+				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
+					log.Printf("❌ [Async] Failed to update poster URL for item %d: %v", itemID, err)
+				} else {
+					log.Printf("✅ [Async] Poster generated and updated for item %d: %s", itemID, posterURL)
+				}
+			}
+		}(newMediaItem.ID, filePath, posterPath, false)
 
 		// ✅ BROADCAST TO ROOM — FIXED
 		//message := map[string]interface{}{

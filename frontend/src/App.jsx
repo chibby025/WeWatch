@@ -5,6 +5,8 @@ import './index.css';
 
 // Import page/component files
 import Home from './pages/Home';
+import PaymentPage from './pages/PaymentPage';
+import AdminDashboard from './pages/AdminDashboard';
 import Login from './components/Login';
 import Register from './components/Register';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -15,8 +17,17 @@ import RoomPageNew from './components/RoomPageNew'; // ✅ NEW: Room hub redesig
 import LobbyPage from './components/LobbyPage';
 import VideoWatch from './components/cinema/VideoWatch';
 import CinemaScene3DDemo from './components/cinema/3d-cinema/CinemaScene3DDemo';
+import LectureHallPage from './pages/LectureHallPage';
+import PositionCalculatorPage from './pages/PositionCalculatorPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider } from './contexts/AuthContext';
+import { PaymentProvider } from './contexts/PaymentContext';
+import WalletPage from './pages/WalletPage';
+import WithdrawalPage from './pages/WithdrawalPage';
+import PaymentAccountManagement from './components/payment/PaymentAccountManagement';
+import WithdrawalRequestForm from './components/payment/WithdrawalRequestForm';
+import KYCSubmissionForm from './components/payment/KYCSubmissionForm';
+import SVGComparison from './components/dev/SVGComparison';
 // ✅ ALL AVATAR DEMO IMPORTS COMMENTED/REMOVED
 /*
 import AvatarImageDemo from './components/cinema/3d-cinema/AvatarImageDemo';
@@ -26,11 +37,59 @@ import GLBAvatarTest from './components/cinema/3d-cinema/GLBAvatarTest';
 */
 
 function App() {
+  // 📱 Mobile debugging console - shows on-screen console for mobile testing
+  React.useEffect(() => {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    if (isMobile && import.meta.env.DEV) {
+      // Capture all console logs
+      const logs = [];
+      const originalLog = console.log;
+      const originalError = console.error;
+      const originalWarn = console.warn;
+      
+      console.log = (...args) => {
+        logs.push({ type: 'log', time: new Date().toISOString(), args: args.map(a => 
+          typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
+        ).join(' ') });
+        originalLog.apply(console, args);
+      };
+      
+      console.error = (...args) => {
+        logs.push({ type: 'error', time: new Date().toISOString(), args: args.map(a => 
+          typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
+        ).join(' ') });
+        originalError.apply(console, args);
+      };
+      
+      console.warn = (...args) => {
+        logs.push({ type: 'warn', time: new Date().toISOString(), args: args.map(a => 
+          typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
+        ).join(' ') });
+        originalWarn.apply(console, args);
+      };
+    }
+  }, []);
+
+  // 🧹 GLOBAL CLEANUP: Remove any old/expired tokens on app startup
+  // This prevents zombie WebSocket reconnection attempts with expired tokens
+  React.useEffect(() => {
+    const legacyKeys = ['wewatch_token', 'old_wewatch_ws_token'];
+    legacyKeys.forEach(key => {
+      if (sessionStorage.getItem(key) || localStorage.getItem(key)) {
+        console.log(`[App] 🧹 Cleaning up legacy token: ${key}`);
+        sessionStorage.removeItem(key);
+        localStorage.removeItem(key);
+      }
+    });
+  }, []);
+
   return (
     <AuthProvider>
-      <Router>
-        <div className="min-h-screen bg-gray-50">
-        <Routes>
+      <PaymentProvider>
+        <Router>
+          <div className="min-h-screen bg-gray-900">
+          <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
@@ -42,7 +101,35 @@ function App() {
           
           <Route path="/lobby" element={
             <ProtectedRoute><LobbyPage /></ProtectedRoute>
-          } />          
+          } />
+          
+          <Route path="/payment" element={
+            <ProtectedRoute><PaymentPage /></ProtectedRoute>
+          } />
+
+          <Route path="/admin/dashboard" element={
+            <ProtectedRoute><AdminDashboard /></ProtectedRoute>
+          } />
+
+          <Route path="/wallet" element={
+            <ProtectedRoute><WalletPage /></ProtectedRoute>
+          } />
+
+          <Route path="/withdraw" element={
+            <ProtectedRoute><WithdrawalPage /></ProtectedRoute>
+          } />
+
+          <Route path="/wallet/accounts" element={
+            <ProtectedRoute><PaymentAccountManagement /></ProtectedRoute>
+          } />
+
+          <Route path="/wallet/withdraw" element={
+            <ProtectedRoute><WithdrawalRequestForm /></ProtectedRoute>
+          } />
+
+          <Route path="/wallet/kyc" element={
+            <ProtectedRoute><KYCSubmissionForm /></ProtectedRoute>
+          } />
 
           <Route path="/rooms" element={
             <ProtectedRoute><RoomsListPage /></ProtectedRoute>
@@ -66,6 +153,23 @@ function App() {
             <ProtectedRoute><CinemaScene3DDemo /></ProtectedRoute>
           } />
 
+          <Route path="/lecture-hall/:roomId" element={
+            <ProtectedRoute><LectureHallPage /></ProtectedRoute>
+          } />
+
+          <Route path="/position-calculator/classroom" element={
+            <ProtectedRoute><PositionCalculatorPage /></ProtectedRoute>
+          } />
+
+          <Route path="/position-calculator/lecture-hall" element={
+            <ProtectedRoute><PositionCalculatorPage /></ProtectedRoute>
+          } />
+
+          {/* 🎨 DEV TOOLS */}
+          <Route path="/dev/svg-comparison" element={
+            <SVGComparison />
+          } />
+
           {/* ✅ ALL DEMO ROUTES COMMENTED OUT */}
           {/*
           <Route path="/avatar-image-demo" element={
@@ -83,8 +187,9 @@ function App() {
           */}
 
         </Routes>
-      </div>
-    </Router>
+        </div>
+      </Router>
+      </PaymentProvider>
     </AuthProvider>
   );
 }

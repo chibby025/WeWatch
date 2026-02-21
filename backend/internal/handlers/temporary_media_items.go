@@ -150,8 +150,27 @@ func GetTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 		}
 	}
 
+	// ✅ ONLY return temporary media for the ACTIVE session
+	var activeSession models.WatchSession
+	if err := DB.Where("room_id = ? AND ended_at IS NULL", roomIDUint).First(&activeSession).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// No active session = no temporary media to show
+			log.Printf("GetTemporaryMediaItemsForRoomHandler: No active session for room %d", roomIDUint)
+			c.JSON(http.StatusOK, gin.H{
+				"message":              "No active session",
+				"count":                0,
+				"temporary_media_items": []models.TemporaryMediaItem{},
+				"room_id":              roomIDUint,
+			})
+			return
+		}
+		log.Printf("GetTemporaryMediaItemsForRoomHandler: Database error fetching active session: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch session"})
+		return
+	}
+
 	var temporaryMediaItems []models.TemporaryMediaItem
-	result = DB.Where("room_id = ?", roomIDUint).Order("created_at ASC").Find(&temporaryMediaItems)
+	result = DB.Where("session_id = ?", activeSession.SessionID).Order("created_at ASC").Find(&temporaryMediaItems)
 	if result.Error != nil {
 		log.Printf("GetTemporaryMediaItemsForRoomHandler: Database error fetching temporary media items for room %d: %v", roomIDUint, result.Error)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch temporary media items"})
@@ -203,6 +222,104 @@ func GetTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 		"count":                len(temporaryMediaItems),
 		"temporary_media_items": temporaryMediaItems,
 		"room_id":              roomIDUint,
+	})
+}
+
+// ✅ NEW: GetTemporaryMediaItemsForSessionHandler handles GET /api/sessions/:id/temporary-media
+// Fetches temporary media items for a specific session (not room)
+func GetTemporaryMediaItemsForSessionHandler(c *gin.Context) {
+	log.Println("GetTemporaryMediaItemsForSessionHandler: Request received")
+
+	// Check authentication
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		log.Println("GetTemporaryMediaItemsForSessionHandler: Unauthorized access")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	_, ok := userIDValue.(uint)
+	if !ok {
+		log.Println("GetTemporaryMediaItemsForSessionHandler: Error asserting user ID type")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Get session_id from URL parameter (note: parameter name is "id" in route)
+	sessionID := c.Param("id")
+	if sessionID == "" {
+		log.Println("GetTemporaryMediaItemsForSessionHandler: Missing session ID parameter")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Session ID is required"})
+		return
+	}
+
+	// Verify session exists
+	var session models.WatchSession
+	result := DB.Where("session_id = ?", sessionID).First(&session)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			log.Printf("GetTemporaryMediaItemsForSessionHandler: Session %s not found", sessionID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+			return
+		}
+		log.Printf("GetTemporaryMediaItemsForSessionHandler: Database error: %v", result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// Fetch temporary media items for this session
+	var temporaryMediaItems []models.TemporaryMediaItem
+	result = DB.Where("session_id = ?", sessionID).Order("created_at ASC").Find(&temporaryMediaItems)
+	if result.Error != nil {
+		log.Printf("GetTemporaryMediaItemsForSessionHandler: Error fetching items: %v", result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch temporary media items"})
+		return
+	}
+
+	// ✅ Generate missing posters (same logic as room handler)
+	for i := range temporaryMediaItems {
+		item := &temporaryMediaItems[i]
+		
+		// Skip if poster already exists and is not placeholder
+		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+			continue
+		}
+		
+		// Generate poster for items without one
+		if item.FilePath != "" {
+			log.Printf("🎨 Generating missing poster for %s", item.FileName)
+			
+			posterFilename := fmt.Sprintf("%s_poster.jpg", strings.TrimSuffix(item.FileName, filepath.Ext(item.FileName)))
+			posterPath := filepath.Join("./uploads/temp", posterFilename)
+			posterURL := fmt.Sprintf("/uploads/temp/%s", posterFilename)
+			
+			// Check if poster file already exists on disk
+			if _, err := os.Stat(posterPath); os.IsNotExist(err) {
+				// Generate new poster
+				err = utils.ExtractThumbnail(item.FilePath, posterPath)
+				if err != nil {
+					log.Printf("⚠️ Failed to generate poster for %s: %v", item.FileName, err)
+					item.PosterURL = "/icons/placeholder-poster.jpg"
+				} else {
+					log.Printf("✅ Poster generated: %s", posterPath)
+					item.PosterURL = posterURL
+				}
+			} else {
+				// Poster file exists, just update the URL
+				log.Printf("✅ Found existing poster on disk: %s", posterPath)
+				item.PosterURL = posterURL
+			}
+			
+			// Update database with new poster URL
+			DB.Model(item).Update("poster_url", item.PosterURL)
+		}
+	}
+
+	log.Printf("GetTemporaryMediaItemsForSessionHandler: Fetched %d items for session %s", len(temporaryMediaItems), sessionID)
+	c.JSON(http.StatusOK, gin.H{
+		"message":               "Temporary media items fetched successfully",
+		"count":                 len(temporaryMediaItems),
+		"temporary_media_items": temporaryMediaItems,
+		"session_id":            sessionID,
 	})
 }
 

@@ -5,13 +5,17 @@ const AuthContext = createContext({
   currentUser: null,
   wsToken: null,
   loading: false,
+  roomMemberships: [],
   setCurrentUser: () => {},
   refreshUser: () => {},
+  addRoomMembership: () => {},
+  removeRoomMembership: () => {},
 });
 
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [wsToken, setWsToken] = useState(null);
+  const [roomMemberships, setRoomMemberships] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const fetchUser = async () => {
@@ -24,6 +28,12 @@ export const AuthProvider = ({ children }) => {
         setWsToken(response.ws_token);
       }
       
+      // ✅ Store room memberships for instant checks
+      if (response.room_memberships) {
+        setRoomMemberships(response.room_memberships);
+        console.log('🏠 [AuthContext] Loaded memberships for', response.room_memberships.length, 'rooms');
+      }
+      
       localStorage.setItem('user', JSON.stringify(response.user));
     } catch (err) {
       console.warn('Failed to fetch user:', err);
@@ -31,6 +41,7 @@ export const AuthProvider = ({ children }) => {
       sessionStorage.removeItem('wewatch_ws_token');
       setCurrentUser(null);
       setWsToken(null);
+      setRoomMemberships([]);
     } finally {
       setLoading(false);
     }
@@ -40,6 +51,12 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await getCurrentUser();
       setCurrentUser(response.user);
+      
+      // ✅ Refresh room memberships too
+      if (response.room_memberships) {
+        setRoomMemberships(response.room_memberships);
+      }
+      
       localStorage.setItem('user', JSON.stringify(response.user));
       return response.user;
     } catch (err) {
@@ -48,12 +65,39 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // ✅ Add/remove room membership helpers
+  const addRoomMembership = (roomId) => {
+    setRoomMemberships(prev => {
+      const numRoomId = Number(roomId);
+      if (prev.includes(numRoomId)) return prev;
+      console.log('➕ [AuthContext] Added membership for room', numRoomId);
+      return [...prev, numRoomId];
+    });
+  };
+
+  const removeRoomMembership = (roomId) => {
+    setRoomMemberships(prev => {
+      const numRoomId = Number(roomId);
+      console.log('➖ [AuthContext] Removed membership for room', numRoomId);
+      return prev.filter(id => id !== numRoomId);
+    });
+  };
+
   useEffect(() => {
     fetchUser();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ currentUser, wsToken, loading, setCurrentUser, refreshUser }}>
+    <AuthContext.Provider value={{ 
+      currentUser, 
+      wsToken, 
+      loading, 
+      roomMemberships,
+      setCurrentUser, 
+      refreshUser,
+      addRoomMembership,
+      removeRoomMembership
+    }}>
       {children}
     </AuthContext.Provider>
   );

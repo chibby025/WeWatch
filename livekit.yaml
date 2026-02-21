@@ -9,8 +9,11 @@ rtc:
   port_range_start: 50000
   port_range_end: 50100
   use_external_ip: true
-  # Force relay candidates for testing
-  # force_relay: true  # ❌ Commented out - no TURN server configured
+  
+  # STUN servers for NAT traversal
+  stun_servers:
+    - stun.l.google.com:19302
+    - stun1.l.google.com:19302
 
 room:
   max_participants: 100

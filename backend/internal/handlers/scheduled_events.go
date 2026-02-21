@@ -2,25 +2,44 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
 	"strconv"
 	"strings"
+	"os"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 )
 
 // ScheduledEventInput defines the expected structure for creating a scheduled event
 type ScheduledEventInput struct {
-	MediaItemID   *uint  `json:"media_item_id"`                          // Optional: reference to uploaded media
-	WatchType     string `json:"watch_type" binding:"required"`          // Required: "3d_cinema" or "video_watch"
-	MediaFilePath string `json:"media_file_path"`                        // Optional: localhost file path
-	StartTime     string `json:"start_time" binding:"required"`          // ISO 8601 string (e.g., "2025-09-15T20:00:00Z")
-	Title         string `json:"title" binding:"required"`
-	Description   string `json:"description"`
+	MediaItemID         *uint   `json:"media_item_id"`                          // Optional: reference to uploaded media
+	WatchType           string  `json:"watch_type" binding:"required"`          // Required: "3d_cinema" or "video_watch"
+	MediaFilePath       string  `json:"media_file_path"`                        // Optional: localhost file path
+	StartTime           string  `json:"start_time" binding:"required"`          // ISO 8601 string (e.g., "2025-09-15T20:00:00Z")
+	Title               string  `json:"title" binding:"required"`
+	Description         string  `json:"description"`
+	IsPaid              bool    `json:"is_paid"`                                // Whether this is a paid event
+	TicketPriceTokens   int     `json:"ticket_price_tokens"`                    // Price in tokens (if is_paid=true)
+	TicketPriceCurrency string  `json:"ticket_price_currency"`                  // Currency (USD, NGN, etc.)
+	TicketPriceAmount   float64 `json:"ticket_price_amount"`                    // Price in fiat currency
+	
+	// Early Bird fields
+	EarlyBirdEnabled     bool    `json:"early_bird_enabled"`                    // Whether early bird pricing is enabled
+	EarlyBirdPriceTokens int     `json:"early_bird_price_tokens"`               // Discounted price in tokens
+	EarlyBirdPriceAmount float64 `json:"early_bird_price_amount"`               // Discounted price in fiat
+	
+	// Trailer fields
+	TrailerURL      string `json:"trailer_url"`       // Uploaded trailer file path
+	TrailerTitle    string `json:"trailer_title"`     // Custom trailer title
+	TrailerDuration int    `json:"trailer_duration"`  // Duration in seconds
 }
 
 // CreateScheduledEventHandler handles POST /api/rooms/:id/scheduled-events
@@ -73,11 +92,101 @@ func CreateScheduledEventHandler(c *gin.Context) {
 		return
 	}
 
+	// 5b. Validate paid event requirements
+	if input.IsPaid {
+		// Check for verified payment account
+		var paymentAccount models.PaymentAccount
+		if err := DB.Where("user_id = ? AND is_verified = ?", authenticatedUserID, true).
+			First(&paymentAccount).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":              "Payment account required",
+					"message":            "You must set up a verified payment account before creating paid events. This allows you to receive payments from ticket sales.",
+					"action":             "setup_payment_account",
+					"redirect":           "/wallet/accounts",
+					"needs_kyc":          true,
+					"setup_instructions": "1. Complete KYC verification at /wallet/kyc\n2. Add a payment account (Paystack or Stripe) at /wallet/accounts\n3. Wait for account verification\n4. Return to create your paid event",
+				})
+				return
+			}
+			// Database error
+			log.Printf("Error checking payment account: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify payment account"})
+			return
+		}
+
+		// Validate that either token price or fiat price is provided
+		if input.TicketPriceTokens <= 0 && input.TicketPriceAmount <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Paid events must have a ticket price (tokens or currency amount)"})
+			return
+		}
+
+		// If fiat amount provided, currency is required
+		if input.TicketPriceAmount > 0 && input.TicketPriceCurrency == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "ticket_price_currency is required when ticket_price_amount is set"})
+			return
+		}
+
+		// Validate currency if provided
+		if input.TicketPriceCurrency != "" {
+			validCurrencies := []string{"USD", "NGN", "GHS", "ZAR", "KES", "EUR", "GBP"}
+			isValid := false
+			for _, curr := range validCurrencies {
+				if input.TicketPriceCurrency == curr {
+					isValid = true
+					break
+				}
+			}
+			if !isValid {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid currency. Supported: USD, NGN, GHS, ZAR, KES, EUR, GBP"})
+				return
+			}
+		}
+	}
+
 	// 6. Parse StartTime
 	startTime, err := time.Parse(time.RFC3339, input.StartTime)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid start_time format. Use ISO 8601 (e.g., 2025-09-15T20:00:00Z)"})
 		return
+	}
+	
+	// 6b. Validate early bird pricing
+	if input.EarlyBirdEnabled {
+		// Early bird requires paid event
+		if !input.IsPaid {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Early bird pricing requires a paid event"})
+			return
+		}
+		
+		// Early bird price must be set
+		if input.EarlyBirdPriceTokens <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Early bird price must be greater than 0"})
+			return
+		}
+		
+		// Early bird price must be less than regular price
+		if input.EarlyBirdPriceTokens >= input.TicketPriceTokens {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Early bird price must be less than regular price"})
+			return
+		}
+		
+		// Validate that event is scheduled far enough in advance
+		// Early bird ends 1 hour before event, so need at least some lead time
+		earlyBirdEndTime := startTime.Add(-1 * time.Hour)
+		if earlyBirdEndTime.Before(time.Now()) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Event must be scheduled more than 1 hour in advance to enable early bird pricing",
+				"message": "Early bird pricing ends 1 hour before the event starts",
+			})
+			return
+		}
+		
+		log.Printf("✅ [ScheduledEvents] Early bird pricing validated for event '%s'", input.Title)
+		log.Printf("   Event starts: %s", startTime.Format(time.RFC3339))
+		log.Printf("   Early bird ends: %s (1 hour before)", earlyBirdEndTime.Format(time.RFC3339))
+		log.Printf("   Regular: %d tokens ($%.2f %s)", input.TicketPriceTokens, input.TicketPriceAmount, input.TicketPriceCurrency)
+		log.Printf("   Early Bird: %d tokens ($%.2f %s)", input.EarlyBirdPriceTokens, input.EarlyBirdPriceAmount, input.TicketPriceCurrency)
 	}
 
 	// 7. Validate MediaItem if provided (optional)
@@ -95,14 +204,32 @@ func CreateScheduledEventHandler(c *gin.Context) {
 
 	// 8. Create ScheduledEvent
 	event := models.ScheduledEvent{
-		RoomID:        uint(roomID),
-		MediaItemID:   input.MediaItemID,
-		WatchType:     input.WatchType,
-		MediaFilePath: input.MediaFilePath,
-		StartTime:     startTime,
-		Title:         input.Title,
-		Description:   input.Description,
-		HostUserID:    authenticatedUserID,
+		RoomID:              uint(roomID),
+		MediaItemID:         input.MediaItemID,
+		WatchType:           input.WatchType,
+		MediaFilePath:       input.MediaFilePath,
+		StartTime:           startTime,
+		Title:               input.Title,
+		Description:         input.Description,
+		HostUserID:          authenticatedUserID,
+		IsPaid:              input.IsPaid,
+		TicketPriceTokens:   input.TicketPriceTokens,
+		TicketPriceCurrency: input.TicketPriceCurrency,
+		TicketPriceAmount:   input.TicketPriceAmount,
+		EarlyBirdEnabled:    input.EarlyBirdEnabled,
+		EarlyBirdPriceTokens: input.EarlyBirdPriceTokens,
+		EarlyBirdPriceAmount: input.EarlyBirdPriceAmount,
+		EarlyBirdActive:     input.EarlyBirdEnabled, // Active by default if enabled
+		TrailerURL:          input.TrailerURL,
+		TrailerTitle:        input.TrailerTitle,
+		TrailerDuration:     input.TrailerDuration,
+	}
+	
+	// Set trailer uploaded time if trailer URL is provided
+	if input.TrailerURL != "" {
+		now := time.Now()
+		event.TrailerUploadedAt = &now
+		log.Printf("✅ [CreateScheduledEvent] Trailer uploaded for event '%s': %s", input.Title, input.TrailerURL)
 	}
 
 	// 9. Save to DB
@@ -123,6 +250,17 @@ func CreateScheduledEventHandler(c *gin.Context) {
 		IsBinary: false,
 	}, nil)
 
+	// 10b. Broadcast to lobby for real-time event count updates
+	lobbyBroadcastData := map[string]interface{}{
+		"type":    "event_created",
+		"room_id": uint(roomID),
+	}
+	lobbyJsonData, _ := json.Marshal(lobbyBroadcastData)
+	hub.BroadcastToLobby(OutgoingMessage{
+		Data:     lobbyJsonData,
+		IsBinary: false,
+	})
+
 	// 11. Return success
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Scheduled event created successfully",
@@ -139,9 +277,12 @@ func GetScheduledEventsHandler(c *gin.Context) {
 		return
 	}
 
-	// Fetch all scheduled events for this room (future events only)
+	// Fetch scheduled events for this room (exclude events older than 7 days)
+	// This keeps recent past events visible for a week, then auto-cleans
+	sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour)
+	
 	var events []models.ScheduledEvent
-	if err := DB.Where("room_id = ?", uint(roomID)).
+	if err := DB.Where("room_id = ? AND start_time >= ?", uint(roomID), sevenDaysAgo).
 		Order("start_time ASC").
 		Find(&events).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch scheduled events"})
@@ -150,6 +291,61 @@ func GetScheduledEventsHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"events": events,
+	})
+}
+
+// GetScheduledEventsWithTrailersHandler handles GET /api/scheduled-events/with-trailers?limit=10&offset=0
+// Returns upcoming events that have trailers for lobby "Watching Now" infinite scroll
+func GetScheduledEventsWithTrailersHandler(c *gin.Context) {
+	// ✅ Parse pagination parameters
+	limit := 10 // Default
+	if l := c.Query("limit"); l != "" {
+		if parsedLimit, err := strconv.Atoi(l); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsedOffset, err := strconv.Atoi(o); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+	
+	log.Printf("🔍 [GetScheduledEventsWithTrailersHandler] Fetching trailers (limit: %d, offset: %d)...", limit, offset)
+	
+	// Get total count for pagination
+	var totalCount int64
+	if err := DB.Model(&models.ScheduledEvent{}).
+		Where("trailer_url != '' AND trailer_deleted_at IS NULL AND start_time > ?", time.Now()).
+		Count(&totalCount).Error; err != nil {
+		log.Printf("❌ Error counting trailers: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count trailers"})
+		return
+	}
+	
+	// Fetch events with trailers (upcoming only, not deleted)
+	var events []models.ScheduledEvent
+	if err := DB.Preload("Room").Where("trailer_url != '' AND trailer_deleted_at IS NULL AND start_time > ?", time.Now()).
+		Order("start_time ASC"). // Soonest events first
+		Limit(limit).
+		Offset(offset).
+		Find(&events).Error; err != nil {
+		log.Printf("❌ Error fetching trailers: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch trailers"})
+		return
+	}
+	
+	log.Printf("✅ [GetScheduledEventsWithTrailersHandler] Returning %d trailers (total: %d, has_more: %v)", 
+		len(events), totalCount, int64(offset + limit) < totalCount)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"events":   events,
+		"count":    len(events),
+		"total":    totalCount,
+		"limit":    limit,
+		"offset":   offset,
+		"has_more": int64(offset + limit) < totalCount,
 	})
 }
 
@@ -203,6 +399,17 @@ func DeleteScheduledEventHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete event"})
 		return
 	}
+
+	// 5b. Broadcast to lobby for real-time event count updates
+	lobbyBroadcastData := map[string]interface{}{
+		"type":    "event_deleted",
+		"room_id": event.RoomID,
+	}
+	lobbyJsonData, _ := json.Marshal(lobbyBroadcastData)
+	hub.BroadcastToLobby(OutgoingMessage{
+		Data:     lobbyJsonData,
+		IsBinary: false,
+	})
 
 	// 6. Return success
 	c.JSON(http.StatusOK, gin.H{
@@ -294,9 +501,160 @@ func UpdateScheduledEventHandler(c *gin.Context) {
 		return
 	}
 
+	// 8b. Broadcast to lobby for real-time event updates
+	lobbyBroadcastData := map[string]interface{}{
+		"type":    "event_updated",
+		"room_id": event.RoomID,
+	}
+	lobbyJsonData, _ := json.Marshal(lobbyBroadcastData)
+	hub.BroadcastToLobby(OutgoingMessage{
+		Data:     lobbyJsonData,
+		IsBinary: false,
+	})
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Event updated successfully",
 		"event":   event,
+	})
+}
+
+// ToggleEarlyBirdHandler handles PATCH /api/scheduled-events/:id/early-bird
+// Allows host to manually activate/deactivate early bird pricing
+func ToggleEarlyBirdHandler(c *gin.Context) {
+	// 1. Get authenticated user ID
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	authenticatedUserID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// 2. Get event ID
+	eventIDStr := c.Param("id")
+	eventID, err := strconv.ParseUint(eventIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid event ID"})
+		return
+	}
+
+	// 3. Bind input
+	var input struct {
+		EarlyBirdActive bool `json:"early_bird_active"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body. Expected: {\"early_bird_active\": true/false}"})
+		return
+	}
+
+	// 4. Fetch the event
+	var event models.ScheduledEvent
+	if err := DB.First(&event, uint(eventID)).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Event not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		}
+		return
+	}
+
+	// 5. Check if user is host
+	var room models.Room
+	if err := DB.First(&room, event.RoomID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch room"})
+		return
+	}
+	if room.HostID != authenticatedUserID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can toggle early bird pricing"})
+		return
+	}
+
+	// 6. Validate early bird is enabled for this event
+	if !event.EarlyBirdEnabled {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Early bird pricing is not enabled for this event",
+			"message": "You can only toggle early bird status for events that have early bird pricing configured",
+		})
+		return
+	}
+
+	// 7. Check if trying to re-activate after event has already started
+	if input.EarlyBirdActive && time.Now().After(event.StartTime) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Cannot activate early bird for past events",
+			"message": "The event has already started",
+		})
+		return
+	}
+
+	// 8. Check if trying to re-activate when less than 1 hour remains
+	if input.EarlyBirdActive {
+		earlyBirdEndTime := event.StartTime.Add(-1 * time.Hour)
+		if time.Now().After(earlyBirdEndTime) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Cannot activate early bird within 1 hour of event start",
+				"message": "Early bird pricing automatically ends 1 hour before the event",
+				"early_bird_end_time": earlyBirdEndTime.Format(time.RFC3339),
+			})
+			return
+		}
+	}
+
+	// 9. Update early bird status
+	previousStatus := event.EarlyBirdActive
+	if err := DB.Model(&event).Update("early_bird_active", input.EarlyBirdActive).Error; err != nil {
+		log.Printf("Error toggling early bird: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update early bird status"})
+		return
+	}
+
+	// 10. Log the change
+	if input.EarlyBirdActive && !previousStatus {
+		log.Printf("✅ [ToggleEarlyBird] Early bird RE-ACTIVATED for event %d: '%s'", event.ID, event.Title)
+		log.Printf("   Host %d manually enabled early bird pricing", authenticatedUserID)
+		log.Printf("   Early bird price: %d tokens ($%.2f %s)", 
+			event.EarlyBirdPriceTokens, event.EarlyBirdPriceAmount, event.TicketPriceCurrency)
+	} else if !input.EarlyBirdActive && previousStatus {
+		log.Printf("⏹️ [ToggleEarlyBird] Early bird MANUALLY DEACTIVATED for event %d: '%s'", event.ID, event.Title)
+		log.Printf("   Host %d ended early bird pricing early", authenticatedUserID)
+		log.Printf("   Regular price now in effect: %d tokens ($%.2f %s)", 
+			event.TicketPriceTokens, event.TicketPriceAmount, event.TicketPriceCurrency)
+	}
+
+	// 11. Broadcast to room via WebSocket
+	broadcastData := map[string]interface{}{
+		"type":                "early_bird_toggled",
+		"event_id":            event.ID,
+		"event_title":         event.Title,
+		"early_bird_active":   input.EarlyBirdActive,
+		"early_bird_price_tokens": event.EarlyBirdPriceTokens,
+		"early_bird_price_amount": event.EarlyBirdPriceAmount,
+		"regular_price_tokens": event.TicketPriceTokens,
+		"regular_price_amount": event.TicketPriceAmount,
+		"currency":            event.TicketPriceCurrency,
+	}
+	jsonData, _ := json.Marshal(broadcastData)
+	hub.BroadcastToRoom(event.RoomID, OutgoingMessage{
+		Data:     jsonData,
+		IsBinary: false,
+	}, nil)
+
+	// 12. Refresh event from database to get updated values
+	DB.First(&event, uint(eventID))
+
+	// 13. Return success
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Early bird pricing %s successfully", 
+			map[bool]string{true: "activated", false: "deactivated"}[input.EarlyBirdActive]),
+		"event": event,
+		"early_bird_active": event.EarlyBirdActive,
+		"status": map[bool]string{
+			true:  "Early bird pricing is now active - discounted tickets available",
+			false: "Early bird pricing ended - regular pricing now in effect",
+		}[input.EarlyBirdActive],
 	})
 }
 
@@ -369,4 +727,123 @@ DESCRIPTION:` + description + `
 LOCATION:` + location + `
 END:VEVENT
 END:VCALENDAR`
+}
+
+// UploadTrailerHandler handles POST /api/scheduled-events/upload-trailer
+// Uploads a trailer video file for a scheduled event
+func UploadTrailerHandler(c *gin.Context) {
+	// 1. Get authenticated user ID
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	authenticatedUserID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	log.Printf("🎬 [UploadTrailer] Upload initiated by user %d", authenticatedUserID)
+
+	// 2. Parse multipart form (60 MB limit for trailers)
+	const maxMemory int64 = 64 << 20 // 64 MB memory buffer
+	const maxSize int64 = 60 << 20   // 60 MB max file size for trailers
+
+	if err := c.Request.ParseMultipartForm(maxMemory); err != nil {
+		log.Printf("❌ [UploadTrailer] Error parsing multipart form: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error parsing upload data"})
+		return
+	}
+
+	// 3. Get file from form
+	formFile, err := c.FormFile("trailerFile")
+	if err != nil {
+		log.Printf("❌ [UploadTrailer] Error retrieving file from form: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided or error reading file"})
+		return
+	}
+
+	log.Printf("📹 [UploadTrailer] Received file: %s (size: %.2f MB)", formFile.Filename, float64(formFile.Size)/(1024*1024))
+
+	// 4. Enforce 60MB limit
+	if formFile.Size > maxSize {
+		log.Printf("❌ [UploadTrailer] File too large (%d bytes). Max size: %d bytes", formFile.Size, maxSize)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File too large. Maximum size is 60 MB for trailers."})
+		return
+	}
+
+	// 5. Validate file type (video only)
+	allowedExtensions := map[string]bool{
+		".mp4": true, ".webm": true, ".mov": true, ".mkv": true,
+	}
+	ext := strings.ToLower(filepath.Ext(formFile.Filename))
+	if !allowedExtensions[ext] {
+		log.Printf("❌ [UploadTrailer] Invalid file type: %s", ext)
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid file type '%s'. Allowed types: mp4, webm, mov, mkv", ext)})
+		return
+	}
+
+	// 6. Create unique filename
+	uniqueID := uuid.New()
+	uniqueFilename := fmt.Sprintf("trailer_%s%s", uniqueID.String(), ext)
+
+	// 7. Create trailers directory
+	trailerUploadDir := "./uploads/trailers"
+	if err := os.MkdirAll(trailerUploadDir, os.ModePerm); err != nil {
+		log.Printf("❌ [UploadTrailer] Failed to create trailer directory '%s': %v", trailerUploadDir, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare storage"})
+		return
+	}
+
+	filePath := filepath.Join(trailerUploadDir, uniqueFilename)
+	log.Printf("💾 [UploadTrailer] Saving file to: %s", filePath)
+
+	// 8. Save file
+	if err := c.SaveUploadedFile(formFile, filePath); err != nil {
+		log.Printf("❌ [UploadTrailer] Error saving file to '%s': %v", filePath, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save uploaded file"})
+		return
+	}
+
+	log.Printf("✅ [UploadTrailer] File saved successfully to '%s'", filePath)
+
+	// 9. Get video duration
+	log.Printf("⏱️ [UploadTrailer] Extracting duration for '%s'", filePath)
+	durationStr, err := utils.GetVideoDuration(filePath)
+	if err != nil {
+		log.Printf("⚠️ [UploadTrailer] Could not extract duration: %v (defaulting to 60s)", err)
+		durationStr = "00:01:00" // Default to 60 seconds if extraction fails
+	}
+
+	// Parse duration from HH:MM:SS format to seconds
+	var durationSeconds int
+	parts := strings.Split(durationStr, ":")
+	if len(parts) == 3 {
+		hours, _ := strconv.Atoi(parts[0])
+		minutes, _ := strconv.Atoi(parts[1])
+		seconds, _ := strconv.Atoi(parts[2])
+		durationSeconds = hours*3600 + minutes*60 + seconds
+	} else {
+		durationSeconds = 60 // Default if parsing fails
+	}
+
+	// 10. Validate duration (max 60 seconds)
+	if durationSeconds > 60 {
+		log.Printf("❌ [UploadTrailer] Trailer too long: %ds (max 60s)", durationSeconds)
+		// Delete the file
+		os.Remove(filePath)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Trailer must be 60 seconds or less"})
+		return
+	}
+
+	log.Printf("✅ [UploadTrailer] Duration: %ds", durationSeconds)
+
+	// 11. Return success with file path and duration
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Trailer uploaded successfully",
+		"file_path": filePath,
+		"duration": durationSeconds,
+		"size":     formFile.Size,
+	})
 }

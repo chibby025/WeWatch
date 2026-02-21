@@ -1,0 +1,301 @@
+// WeWatch/backend/internal/handlers/lobby_chats.go
+package handlers
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"wewatch-backend/internal/models"
+)
+
+// GetLobbyChatFriendsHandler returns list of users who have chatted with current user
+// GET /api/lobby-chats/friends
+func GetLobbyChatFriendsHandler(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		log.Println("GetLobbyChatFriendsHandler: Unauthorized - user_id not found")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	currentUserID, ok := userID.(uint)
+	if !ok {
+		log.Println("GetLobbyChatFriendsHandler: Error asserting user ID type")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	db := c.MustGet("db").(*gorm.DB)
+
+	var friends []models.User
+
+	// Get all accepted friends (mutual friendship required)
+	// Exclude blocked users (both directions)
+	err := db.Raw(`
+		SELECT DISTINCT users.id, users.username, users.email, users.created_at, users.updated_at
+		FROM users
+		INNER JOIN friendships ON 
+			((friendships.requester_id = ? AND friendships.recipient_id = users.id) OR
+			 (friendships.recipient_id = ? AND friendships.requester_id = users.id))
+		WHERE friendships.status = 'accepted'
+		  AND NOT EXISTS (
+			SELECT 1 FROM user_blocks 
+			WHERE (blocker_id = ? AND blocked_id = users.id)
+			   OR (blocker_id = users.id AND blocked_id = ?)
+		  )
+		ORDER BY users.username
+	`, currentUserID, currentUserID, currentUserID, currentUserID).Scan(&friends).Error
+
+	if err != nil {
+		log.Printf("GetLobbyChatFriendsHandler: Database error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch friends"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"friends": friends})
+}
+
+// GetLobbyChatMessagesHandler returns all messages between current user and specified user
+// GET /api/lobby-chats/messages/:userId
+func GetLobbyChatMessagesHandler(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		log.Println("GetLobbyChatMessagesHandler: Unauthorized - user_id not found")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	currentUserID, ok := userID.(uint)
+	if !ok {
+		log.Println("GetLobbyChatMessagesHandler: Error asserting user ID type")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	otherUserIDStr := c.Param("userId")
+	otherUserID, err := strconv.ParseUint(otherUserIDStr, 10, 32)
+	if err != nil {
+		log.Printf("GetLobbyChatMessagesHandler: Invalid user ID: %s", otherUserIDStr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	db := c.MustGet("db").(*gorm.DB)
+
+	// Check if users have blocked each other
+	var blockCheck int64
+	db.Model(&models.UserBlock{}).Where(
+		"(blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)",
+		currentUserID, uint(otherUserID), uint(otherUserID), currentUserID,
+	).Count(&blockCheck)
+
+	if blockCheck > 0 {
+		log.Printf("GetLobbyChatMessagesHandler: Block exists between users %d and %d", currentUserID, otherUserID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot view messages - user blocked"})
+		return
+	}
+
+	var messages []models.LobbyChat
+
+	// Get messages between these two users, filtering by deletion status
+	// For messages sent BY current user: check deleted_by_sender
+	// For messages sent TO current user: check deleted_by_recipient
+	log.Printf("GetLobbyChatMessagesHandler: Fetching messages for user %d with user %d", currentUserID, otherUserID)
+	
+	err = db.Where(
+		"((sender_id = ? AND recipient_id = ? AND deleted_by_sender = FALSE) OR "+
+		"(sender_id = ? AND recipient_id = ? AND deleted_by_recipient = FALSE)) AND deleted_at IS NULL",
+		currentUserID, uint(otherUserID), uint(otherUserID), currentUserID,
+	).Order("created_at ASC").Find(&messages).Error
+
+	if err != nil {
+		log.Printf("GetLobbyChatMessagesHandler: Database error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch messages"})
+		return
+	}
+	
+	log.Printf("GetLobbyChatMessagesHandler: Found %d messages between user %d and user %d", len(messages), currentUserID, otherUserID)
+
+	// Mark all unread messages from other user as read
+	now := time.Now()
+	db.Model(&models.LobbyChat{}).
+		Where("sender_id = ? AND recipient_id = ? AND read_at IS NULL AND deleted_at IS NULL", uint(otherUserID), currentUserID).
+		Update("read_at", now)
+
+	log.Printf("GetLobbyChatMessagesHandler: Fetched %d messages between user %d and user %d", len(messages), currentUserID, otherUserID)
+
+	c.JSON(http.StatusOK, gin.H{"messages": messages})
+}
+
+// SendLobbyChatMessageRequest defines the request body for sending a lobby chat
+type SendLobbyChatMessageRequest struct {
+	RecipientID uint   `json:"recipient_id" binding:"required"`
+	Message     string `json:"message" binding:"required,max=1000"`
+}
+
+// SendLobbyChatMessageHandler sends a message to another user
+// POST /api/lobby-chats/send
+func SendLobbyChatMessageHandler(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		log.Println("SendLobbyChatMessageHandler: Unauthorized - user_id not found")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	senderID, ok := userID.(uint)
+	if !ok {
+		log.Println("SendLobbyChatMessageHandler: Error asserting user ID type")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	var req SendLobbyChatMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("SendLobbyChatMessageHandler: Invalid request: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Prevent sending messages to self
+	if req.RecipientID == senderID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot send message to yourself"})
+		return
+	}
+
+	// Trim and validate message
+	trimmedMessage := strings.TrimSpace(req.Message)
+	if len(trimmedMessage) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Message cannot be empty"})
+		return
+	}
+
+	db := c.MustGet("db").(*gorm.DB)
+
+	// Verify recipient exists
+	var recipient models.User
+	if err := db.First(&recipient, req.RecipientID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("SendLobbyChatMessageHandler: Recipient not found: %d", req.RecipientID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Recipient not found"})
+			return
+		}
+		log.Printf("SendLobbyChatMessageHandler: Database error checking recipient: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Check if users have blocked each other
+	var blockCheck int64
+	db.Model(&models.UserBlock{}).Where(
+		"(blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)",
+		senderID, req.RecipientID, req.RecipientID, senderID,
+	).Count(&blockCheck)
+
+	if blockCheck > 0 {
+		log.Printf("SendLobbyChatMessageHandler: Block exists between users %d and %d", senderID, req.RecipientID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot send message - user blocked"})
+		return
+	}
+
+	// Check if friendship exists and is accepted (required for private messaging)
+	var friendship models.Friendship
+	err := db.Where(
+		"((requester_id = ? AND recipient_id = ?) OR (requester_id = ? AND recipient_id = ?)) AND status = ?",
+		senderID, req.RecipientID, req.RecipientID, senderID, models.FriendshipStatusAccepted,
+	).First(&friendship).Error
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("SendLobbyChatMessageHandler: No accepted friendship between users %d and %d", senderID, req.RecipientID)
+			c.JSON(http.StatusForbidden, gin.H{"error": "You must be friends to send private messages"})
+			return
+		}
+		log.Printf("SendLobbyChatMessageHandler: Database error checking friendship: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Create lobby chat message
+	chat := models.LobbyChat{
+		SenderID:    senderID,
+		RecipientID: req.RecipientID,
+		Message:     trimmedMessage,
+	}
+
+	if err := db.Create(&chat).Error; err != nil {
+		log.Printf("SendLobbyChatMessageHandler: Failed to create message: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send message"})
+		return
+	}
+
+	// Load sender info for WebSocket broadcast
+	var sender models.User
+	db.First(&sender, senderID)
+
+	// Prepare response with sender info
+	chatResponse := struct {
+		models.LobbyChat
+		SenderUsername string `json:"sender_username"`
+	}{
+		LobbyChat:      chat,
+		SenderUsername: sender.Username,
+	}
+
+	log.Printf("SendLobbyChatMessageHandler: Message sent from user %d to user %d", senderID, req.RecipientID)
+
+	// Broadcast via WebSocket to both users
+	BroadcastLobbyChatMessage(db, chat, sender)
+
+	c.JSON(http.StatusOK, chatResponse)
+}
+
+// BroadcastLobbyChatMessage sends the message to both sender and recipient via WebSocket
+func BroadcastLobbyChatMessage(db *gorm.DB, chat models.LobbyChat, sender models.User) {
+	// Get WebSocket manager
+	manager := GetWebSocketManager()
+	if manager == nil {
+		log.Println("BroadcastLobbyChatMessage: WebSocket manager not available")
+		return
+	}
+
+	// Prepare message payload
+	payload := map[string]interface{}{
+		"id":              chat.ID,
+		"sender_id":       chat.SenderID,
+		"recipient_id":    chat.RecipientID,
+		"message":         chat.Message,
+		"created_at":      chat.CreatedAt,
+		"read_at":         chat.ReadAt,
+		"sender_username": sender.Username,
+	}
+
+	wsMessage := map[string]interface{}{
+		"type": "lobby_chat",
+		"data": payload,
+	}
+
+	// Convert to JSON bytes
+	jsonBytes, err := json.Marshal(wsMessage)
+	if err != nil {
+		log.Printf("BroadcastLobbyChatMessage: Failed to marshal message: %v", err)
+		return
+	}
+
+	// Create OutgoingMessage
+	outgoingMsg := OutgoingMessage{
+		Data:     jsonBytes,
+		IsBinary: false,
+	}
+
+	// Broadcast to both sender and recipient
+	manager.BroadcastToUsers([]uint{chat.SenderID, chat.RecipientID}, outgoingMsg)
+
+	log.Printf("BroadcastLobbyChatMessage: Broadcast sent to users %d and %d", chat.SenderID, chat.RecipientID)
+}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { CalendarIcon, ClockIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import { CalendarIcon, ClockIcon } from '@heroicons/react/24/outline';
 import apiClient from '../services/api';
+import CalendarDropdown from './CalendarDropdown';
 
 const ScheduledEventsNotification = ({ roomId }) => {
   const [events, setEvents] = useState([]);
@@ -54,24 +55,8 @@ const ScheduledEventsNotification = ({ roomId }) => {
     setGlowingEvents(glowing);
   };
 
-  const handleDownloadICal = async (eventId) => {
-    try {
-      const response = await apiClient.get(`/api/scheduled-events/${eventId}/ical`, {
-        responseType: 'blob',
-      });
-      
-      // Create download link
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `event-${eventId}.ics`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (err) {
-      console.error('Failed to download iCal:', err);
-    }
-  };
+  // Room URL for calendar links
+  const roomUrl = `${window.location.origin}/rooms/${roomId}`;
 
   const formatEventTime = (startTime) => {
     const date = new Date(startTime);
@@ -173,14 +158,7 @@ const ScheduledEventsNotification = ({ roomId }) => {
                       </span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDownloadICal(event.ID)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors"
-                    title="Add to Calendar"
-                  >
-                    <ArrowDownTrayIcon className="h-4 w-4" />
-                    Add to Calendar
-                  </button>
+                  <CalendarDropdown event={event} roomUrl={roomUrl} />
                 </div>
               </div>
             );

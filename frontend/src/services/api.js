@@ -1,15 +1,65 @@
 import axios from "axios";
-console.log("🔧 API_BASE_URL from .env.local:", import.meta.env.VITE_API_BASE_URL);
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+// Smart API URL detection: automatically choose backend based on how frontend is accessed
+const getApiBaseUrl = () => {
+  const currentHostname = window.location.hostname;
+  
+  // If accessed via Cloudflare Tunnel, use Cloudflare backend
+  if (currentHostname.includes('trycloudflare.com')) {
+    const cloudflareBackendUrl = import.meta.env.VITE_CLOUDFLARE_BACKEND_URL;
+    console.log('☁️ [API Config] Detected Cloudflare Tunnel access, using Cloudflare backend:', cloudflareBackendUrl);
+    return cloudflareBackendUrl;
+  }
+  
+  // If accessed via localtunnel, use localtunnel backend
+  if (currentHostname.includes('loca.lt')) {
+    const localtunnelBackendUrl = import.meta.env.VITE_LOCALTUNNEL_BACKEND_URL || window.location.origin;
+    console.log('🔗 [API Config] Detected localtunnel access, using localtunnel backend:', localtunnelBackendUrl);
+    return localtunnelBackendUrl;
+  }
+  
+  // Otherwise, use localhost backend (or configured URL)
+  const localBackendUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+  console.log('🏠 [API Config] Detected localhost access, using local backend:', localBackendUrl);
+  return localBackendUrl;
+};
+
+const API_BASE_URL = getApiBaseUrl();
+const isDevelopment = import.meta.env.DEV;
+const currentHostname = window.location.hostname;
+
+// Debug log to check what API_BASE_URL is being used
+console.log('🔧 [API Config] VITE_API_BASE_URL from env:', import.meta.env.VITE_API_BASE_URL);
+console.log('🔧 [API Config] VITE_CLOUDFLARE_BACKEND_URL from env:', import.meta.env.VITE_CLOUDFLARE_BACKEND_URL);
+console.log('🔧 [API Config] Final API_BASE_URL:', API_BASE_URL);
+console.log('🔧 [API Config] Current origin:', window.location.origin);
+
+// Helper for conditional logging (only in development)
+const devLog = (...args) => {
+  if (isDevelopment) {
+    console.log(...args);
+  }
+};
+
+// Smart header configuration - only add Cloudflare header when using Cloudflare Tunnel
+const getDefaultHeaders = () => {
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  
+  // Only add Cloudflare header when actually using Cloudflare Tunnel
+  if (currentHostname.includes('trycloudflare.com')) {
+    headers['CF-Access-Client-Id'] = 'wewatch-app';
+  }
+  
+  return headers;
+};
 
 export const apiClient = axios.create({
     baseURL: API_BASE_URL,
     timeout: 10000,
     withCredentials: true,
-    headers: {
-        'Content-Type': 'application/json',
-        // Authorization header will be added dynamically based on token
-    },
+    headers: getDefaultHeaders(),
 });
 
 
@@ -76,19 +126,106 @@ export const getReactions = async (roomId) => {
 // Runs after each response is recieved success/error
 apiClient.interceptors.response.use(
     (response) => {
+        // Debug: Log CORS headers in development
+        if (isDevelopment && response.config.url?.includes('/auth/')) {
+            console.log('🔍 CORS Headers for', response.config.url, {
+                origin: response.headers['access-control-allow-origin'],
+                credentials: response.headers['access-control-allow-credentials']
+            });
+        }
         return response;
     },
     (error) => {
-        console.error('API Response Error:', error);
-        if (error.response && error.response.status === 401) {
-            console.warn('Unauthorized access - Token might be invalid/expired');
+        // Only log unexpected errors (not 404 for unimplemented features)
+        if (error.response?.status === 401) {
             // Clear the token from storage
             localStorage.removeItem('wewatch_token');
-
+        } else if (error.response?.status !== 404 && error.response?.status !== 400) {
+            console.error('API Error:', error.response?.data?.error || error.message);
         }
         return Promise.reject(error)
     }
 );
+
+// --- Admin API Calls ---
+/**
+ * Get pending withdrawal requests (admin only)
+ * @returns {Promise} Axios promise resolving to pending payouts
+ */
+export const getAdminPendingPayouts = async () => {
+    try {
+        const response = await apiClient.get('/api/admin/payouts/pending');
+        return response.data;
+    } catch (error) {
+        console.error('API Error (getAdminPendingPayouts):', error);
+        throw error;
+    }
+};
+
+/**
+ * Approve a pending withdrawal (admin only)
+ * @param {number} payoutId - The payout ID to approve
+ * @returns {Promise} Axios promise resolving to approval result
+ */
+export const approveAdminPayout = async (payoutId) => {
+    try {
+        const response = await apiClient.post(`/api/admin/payouts/${payoutId}/process`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error (approveAdminPayout):', error);
+        throw error;
+    }
+};
+
+/**
+ * Reject a pending withdrawal (admin only)
+ * @param {number} payoutId - The payout ID to reject
+ * @param {string} reason - Rejection reason
+ * @returns {Promise} Axios promise resolving to rejection result
+ */
+export const rejectAdminPayout = async (payoutId, reason) => {
+    try {
+        const response = await apiClient.post(`/api/admin/payouts/${payoutId}/reject`, { reason });
+        return response.data;
+    } catch (error) {
+        console.error('API Error (rejectAdminPayout):', error);
+        throw error;
+    }
+};
+
+/**
+ * Get all processing payouts (admin only) - for manual completion workflow
+ * @returns {Promise} Axios promise resolving to list of processing payouts
+ */
+export const getAdminProcessingPayouts = async () => {
+    try {
+        const response = await apiClient.get('/api/admin/payouts/processing');
+        return response.data;
+    } catch (error) {
+        console.error('API Error (getAdminProcessingPayouts):', error);
+        throw error;
+    }
+};
+
+/**
+ * Mark a processing payout as completed (admin only) - after manual transfer via Paystack dashboard
+ * @param {number} payoutId - The payout ID to mark as completed
+ * @param {string} transferReference - Optional Paystack transfer reference/code
+ * @param {string} notes - Optional admin notes
+ * @returns {Promise} Axios promise resolving to completion result
+ */
+export const completeAdminPayout = async (payoutId, transferReference = null, notes = null) => {
+    try {
+        const response = await apiClient.post(`/api/admin/payouts/${payoutId}/complete`, {
+            transfer_reference: transferReference,
+            notes: notes
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error (completeAdminPayout):', error);
+        throw error;
+    }
+};
 
 // --- Authentication API Calls ---
 /**
@@ -183,6 +320,12 @@ export const getRooms = async () => {
         return response.data;
     } catch (error) {
         console.error('Error fetching rooms (api.js):', error);
+        console.error('Error details:', {
+            status: error.response?.status,
+            statusText: error.response?.statusText,
+            data: error.response?.data,
+            message: error.message
+        });
         throw error;
     }
 };
@@ -345,6 +488,26 @@ export const getScheduledEvents = async (roomId) => {
   }
 };
 
+// ✅ Get active sessions with pagination (for lobby infinite scroll)
+export const getActiveSessions = async (limit = 10, offset = 0) => {
+  try {
+    const response = await apiClient.get(`/api/sessions/active?limit=${limit}&offset=${offset}`);
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
+// ✅ Get scheduled events with trailers (for lobby "Watching Now")
+export const getScheduledEventsWithTrailers = async (limit = 10, offset = 0) => {
+  try {
+    const response = await apiClient.get(`/api/scheduled-events/with-trailers?limit=${limit}&offset=${offset}`);
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
 // Delete a scheduled event
 export const deleteScheduledEvent = async (eventId) => {
   try {
@@ -417,6 +580,24 @@ export const getTemporaryMediaItemsForRoom = async (roomId) => {
         return response.data.temporary_media_items || response.data || [];
     } catch (error) {
         console.error('API Error (getTemporaryMediaItemsForRoom):', error);
+        throw error;
+    }
+};
+
+/**
+ * ✅ NEW: Fetches the list of temporary media items for a specific session (not room)
+ * @param {string} sessionId - The session ID (UUID string)
+ * @returns {Promise} Axios promise resolving to the response data (array of temporary media items with poster_url)
+ */
+export const getSessionTemporaryMedia = async (sessionId) => {
+    try {
+        console.log(`📥 API: Fetching temporary media items for session ${sessionId}`);
+        const response = await apiClient.get(`/api/sessions/${sessionId}/temporary-media`);
+        console.log(`📥 API Response (getSessionTemporaryMedia):`, response.data);
+        // Ensure it always returns an array, even if empty
+        return response.data.temporary_media_items || response.data || [];
+    } catch (error) {
+        console.error('API Error (getSessionTemporaryMedia):', error);
         throw error;
     }
 };
@@ -505,6 +686,24 @@ export const createWatchSessionForRoom = (roomId, watchType = 'video') => {
  */
 export const getActiveSession = (roomId) => {
   return apiClient.get(`/api/rooms/${roomId}/active-session`);
+};
+
+/**
+ * End a watch session (host only)
+ * @param {string|number} roomId - The ID of the room
+ * @param {string} sessionId - The session ID to end
+ * @returns {Promise} Axios promise resolving to the response
+ */
+export const endWatchSession = async (roomId, sessionId) => {
+  try {
+    console.log(`Ending watch session ${sessionId} in room ${roomId}...`);
+    const response = await apiClient.post(`/api/rooms/${roomId}/sessions/${sessionId}/end`);
+    console.log(`Session ${sessionId} ended successfully`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (endWatchSession):', error);
+    throw error;
+  }
 };
 
 export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false, sessionId = null) => {
@@ -611,13 +810,42 @@ export const deleteRoomTVContent = async (roomId, contentId) => {
   }
 };
 
-// ✅ Get all active watch sessions for lobby
-export const getActiveSessions = async () => {
+// Upload video file for RoomTV (100MB max, 10min max)
+export const uploadTVContentVideo = async (roomId, formData, onProgress) => {
   try {
-    const response = await apiClient.get('/api/sessions/active');
+    const response = await apiClient.post(
+      `/api/rooms/${roomId}/tv-content/upload`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            if (onProgress) {
+              onProgress(percentCompleted);
+            }
+          }
+        },
+      }
+    );
     return response.data;
   } catch (error) {
-    console.error('API Error (getActiveSessions):', error);
+    console.error('API Error (uploadTVContentVideo):', error);
+    throw error;
+  }
+};
+
+// Mark video as completed (triggers event-driven deletion)
+export const markTVContentCompleted = async (roomId, contentId) => {
+  try {
+    const response = await apiClient.post(`/api/rooms/${roomId}/tv-content/${contentId}/complete`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (markTVContentCompleted):', error);
     throw error;
   }
 };
@@ -689,6 +917,238 @@ export const checkRoomAccess = async (roomId) => {
     return response.data;
   } catch (error) {
     console.error('API Error (checkRoomAccess):', error);
+    throw error;
+  }
+};
+
+// ==================== FRIENDSHIP API FUNCTIONS ====================
+
+// Send friend request
+export const sendFriendRequest = async (userId) => {
+  return await apiClient.post(`/api/friendships/request/${userId}`);
+};
+
+// Accept friend request
+export const acceptFriendRequest = async (userId) => {
+  return await apiClient.post(`/api/friendships/accept/${userId}`);
+};
+
+// Reject friend request
+export const rejectFriendRequest = async (userId) => {
+  return await apiClient.post(`/api/friendships/reject/${userId}`);
+};
+
+// Get pending friend requests (received)
+export const getPendingFriendRequests = async () => {
+  return await apiClient.get('/api/friendships/requests/pending');
+};
+
+// Get sent friend requests (outgoing)
+export const getSentFriendRequests = async () => {
+  return await apiClient.get('/api/friendships/requests/sent');
+};
+
+// Get friends list
+export const getFriendsList = async () => {
+  return await apiClient.get('/api/friendships/list');
+};
+
+// Remove friend
+export const removeFriend = async (userId) => {
+  return await apiClient.delete(`/api/friendships/remove/${userId}`);
+};
+
+// Check friendship status with another user
+export const getFriendshipStatus = async (userId) => {
+  return await apiClient.get(`/api/friendships/status/${userId}`);
+};
+
+// Batch fetch friendship statuses for multiple users
+export const getBatchFriendshipStatuses = async (userIds) => {
+  const statuses = {};
+  await Promise.all(
+    userIds.map(async (userId) => {
+      try {
+        const response = await getFriendshipStatus(userId);
+        statuses[userId] = response.data;
+      } catch (error) {
+        console.error(`Failed to fetch friendship status for user ${userId}:`, error);
+        statuses[userId] = { status: 'none', can_request: true };
+      }
+    })
+  );
+  return statuses;
+};
+
+// ==================== PRIVATE MESSAGES API FUNCTIONS ====================
+
+// Get private messages with another user
+export const getPrivateMessages = async (userId) => {
+  return await apiClient.get(`/api/private-messages/${userId}`);
+};
+
+// ==================== PAYMENT API FUNCTIONS ====================
+
+// Wallet & Balance
+export const getWallet = async () => {
+  const response = await apiClient.get('/api/wallets/me');
+  return response.data;
+};
+
+// Purchase tokens with Paystack
+export const purchaseTokens = async (amount, paymentId, currency = 'NGN') => {
+  const response = await apiClient.post('/api/wallets/purchase-tokens', {
+    amount,
+    payment_method: 'paystack',
+    payment_id: paymentId,
+    currency
+  });
+  return response.data;
+};
+
+// Get token transaction history
+export const getTokenTransactions = async (limit = 50) => {
+  const response = await apiClient.get(`/api/token-transactions/me?limit=${limit}`);
+  return response.data;
+};
+
+export const getGatewayEarnings = async () => {
+  try {
+    const response = await apiClient.get('/api/gateway-earnings/me');
+    return response.data;
+  } catch (error) {
+    // Gateway earnings tracking not implemented yet - fail silently
+    throw error;
+  }
+};
+
+// Payment Accounts
+export const getPaymentAccounts = async () => {
+  try {
+    const response = await apiClient.get('/api/payment-accounts');
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getPaymentAccounts):', error);
+    throw error;
+  }
+};
+
+export const addPaystackAccount = async (accountData) => {
+  try {
+    const response = await apiClient.post('/api/payment-accounts/paystack', accountData);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (addPaystackAccount):', error);
+    throw error;
+  }
+};
+
+export const createStripeConnectAccount = async (countryCode) => {
+  try {
+    const response = await apiClient.post('/api/payment-accounts/stripe/connect', { country: countryCode });
+    return response.data;
+  } catch (error) {
+    console.error('API Error (createStripeConnectAccount):', error);
+    throw error;
+  }
+};
+
+export const getStripeAccountStatus = async (accountId) => {
+  try {
+    const response = await apiClient.get(`/api/payment-accounts/stripe/${accountId}/status`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getStripeAccountStatus):', error);
+    throw error;
+  }
+};
+
+export const refreshStripeOnboardingLink = async (accountId) => {
+  try {
+    const response = await apiClient.post(`/api/payment-accounts/stripe/${accountId}/refresh-link`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (refreshStripeOnboardingLink):', error);
+    throw error;
+  }
+};
+
+export const setPrimaryAccount = async (accountId) => {
+  try {
+    const response = await apiClient.post(`/api/payment-accounts/${accountId}/set-primary`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (setPrimaryAccount):', error);
+    throw error;
+  }
+};
+
+export const deletePaymentAccount = async (accountId) => {
+  try {
+    const response = await apiClient.delete(`/api/payment-accounts/${accountId}`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (deletePaymentAccount):', error);
+    throw error;
+  }
+};
+
+export const getPaystackBanks = async (country = 'NG') => {
+  try {
+    const response = await apiClient.get(`/api/payment-accounts/paystack/banks/${country}`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getPaystackBanks):', error);
+    throw error;
+  }
+};
+
+// Withdrawals
+export const requestWithdrawal = async (withdrawalData) => {
+  try {
+    const response = await apiClient.post('/api/withdrawals/request', withdrawalData);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (requestWithdrawal):', error);
+    throw error;
+  }
+};
+
+// Payouts (transaction history)
+export const getMyPayouts = async () => {
+  try {
+    const response = await apiClient.get('/api/payouts/me');
+    return response.data;
+  } catch (error) {
+    // Payouts history not fully implemented yet - fail silently
+    throw error;
+  }
+};
+
+// Export payment history as CSV
+export const exportPaymentHistory = async (startDate, endDate) => {
+  try {
+    const params = new URLSearchParams();
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
+    
+    const response = await apiClient.get(`/api/payments/export?${params.toString()}`, {
+      responseType: 'blob',
+    });
+    
+    // Create download link
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `wewatch_transactions_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    
+    return { success: true };
+  } catch (error) {
+    console.error('API Error (exportPaymentHistory):', error);
     throw error;
   }
 };

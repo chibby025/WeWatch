@@ -1,9 +1,26 @@
 // WeWatch/frontend/src/components/CreateNewModal.jsx
 // Modal to choose between Instant Watch or Create Persistent Room
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
+import CreateNewInfoModal from './CreateNewInfoModal';
 
 const CreateNewModal = ({ isOpen, onClose, onInstantWatch, onCreateRoom }) => {
+  const [showInfoModal, setShowInfoModal] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      // Check if user has dismissed the info modal
+      const hideInfo = localStorage.getItem('hideCreateNewInfo');
+      if (!hideInfo) {
+        setShowInfoModal(true);
+      }
+    }
+  }, [isOpen]);
+
+  const handleInfoContinue = () => {
+    setShowInfoModal(false);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -73,6 +90,13 @@ const CreateNewModal = ({ isOpen, onClose, onInstantWatch, onCreateRoom }) => {
           </button>
         </div>
       </div>
+
+      {/* Info Modal */}
+      <CreateNewInfoModal
+        isOpen={showInfoModal}
+        onClose={() => setShowInfoModal(false)}
+        onContinue={handleInfoContinue}
+      />
     </div>
   );
 };

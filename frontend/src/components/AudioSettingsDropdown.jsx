@@ -13,6 +13,11 @@ export default function AudioSettingsDropdown({
   selectedAudioDeviceId,
   onAudioDeviceChange,
   anchorRef,
+  isHost = false,
+  handRaised = false,
+  hasHostApproval = false,
+  onRaiseHand,
+  onLowerHand,
 }) {
   const dropdownRef = useRef(null);
 
@@ -98,6 +103,54 @@ export default function AudioSettingsDropdown({
         />
         <span className="text-white text-sm">Watch in Silence</span>
       </label>
+
+      {/* Raise Hand Button (Students Only) */}
+      {!isHost && onRaiseHand && onLowerHand && (
+        <>
+          <div className="border-t border-gray-600 my-3"></div>
+          
+          {hasHostApproval ? (
+            <div className="bg-green-900/30 border border-green-600/30 rounded p-3 mb-3">
+              <div className="flex items-center gap-2 text-green-300 text-sm font-medium mb-1">
+                <span className="text-xl">📢</span>
+                Broadcasting to All
+              </div>
+              <p className="text-green-200 text-xs">
+                Host approved your request. Everyone can hear you!
+              </p>
+            </div>
+          ) : handRaised ? (
+            <button
+              onClick={() => {
+                onLowerHand();
+                onClose();
+              }}
+              className="w-full px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded font-medium transition-colors text-sm"
+            >
+              🙋 Lower Hand
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                onRaiseHand();
+                onClose();
+              }}
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors text-sm"
+            >
+              🙋 Raise Hand to Speak to All
+            </button>
+          )}
+          
+          <p className="text-xs text-gray-400 mt-2 italic">
+            {hasHostApproval 
+              ? '📢 Your mic broadcasts to everyone'
+              : handRaised
+              ? '⏳ Waiting for host approval...'
+              : '💬 Default: Speak to your row only'
+            }
+          </p>
+        </>
+      )}
 
       {/* Divider */}
       <div className="border-t border-gray-600 my-3"></div>

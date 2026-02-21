@@ -24,7 +24,7 @@ export default function AvatarManager({
 
   const allSeats = useMemo(() => generateAllSeats(), []);
 
-  // ✅ Calculate seat assignments for all users (demo and real users use same logic now)
+  // ✅ Calculate seat assignments for all users using backend-assigned seat keys
   const userSeatAssignments = useMemo(() => {
     const assignments = {};
     roomMembers.forEach((member) => {
@@ -42,13 +42,25 @@ export default function AvatarManager({
           };
         }
       } else {
-        // Real users: assign seat using deterministic function
-        const assignedSeat = assignUserToSeat(member.id);
-        assignments[member.id] = assignedSeat;
+        // Real users: Use backend-assigned seat key from userSeats prop
+        const seatKey = userSeats[member.id]; // e.g., "5-0" for Row 6 Col 1
+        if (seatKey) {
+          const [rowStr, colStr] = seatKey.split('-');
+          const row = parseInt(rowStr, 10);
+          const col = parseInt(colStr, 10);
+          const seatId = row * 7 + col + 1; // Convert 0-indexed to seat ID (1-42)
+          const seat = allSeats.find(s => s.id === seatId);
+          if (seat) {
+            assignments[member.id] = {
+              ...seat,
+              avatarPosition: seat.position,
+            };
+          }
+        }
       }
     });
     return assignments;
-  }, [roomMembers, allSeats]);
+  }, [roomMembers, userSeats, allSeats]);
 
   const resetActivityTimer = (userId) => {
     setActiveUserIds(prev => new Set([...prev, userId]));
@@ -104,14 +116,7 @@ export default function AvatarManager({
 
   // ✅ Filter: Only render members who have seats assigned
   const membersWithSeats = useMemo(() => {
-    return roomMembers.filter(member => {
-      // Check if user has a seat (userSeats is userId -> seatId map)
-      const hasSeat = userSeats[member.id] !== undefined;
-      if (!hasSeat) {
-        console.log(`🪑 [AvatarManager] Skipping member ${member.username} (ID: ${member.id}) - no seat assigned`);
-      }
-      return hasSeat;
-    });
+    return roomMembers.filter(member => userSeats[member.id] !== undefined);
   }, [roomMembers, userSeats]);
 
   return (
@@ -131,10 +136,16 @@ export default function AvatarManager({
         const remoteParticipant = remoteParticipants.get(participantId);
         const isSpeaking = !!remoteParticipant?.isSpeaking;
 
+        // ✅ Special adjustment for seat E7 (seat ID 35, row 5 seat 7)
+        let avatarPosition = [...seatAssignment.avatarPosition];
+        if (seatAssignment.id === 35) {
+          avatarPosition[1] *= 1.10; // Raise by 10%
+        }
+
         return (
           <group
             key={member.id}
-            position={seatAssignment.avatarPosition}
+            position={avatarPosition}
             onClick={(e) => {
               e.stopPropagation(); // Prevent orbit controls from interfering
               onAvatarClick?.(member); // ✅ TRIGGER PROFILE MODAL

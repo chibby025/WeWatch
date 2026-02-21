@@ -1,0 +1,5 @@
+ id | username |      email      |    role     
+----+----------+-----------------+-------------
+  7 | chibi    | chibi@gmail.com | super_admin
+(1 row)
+

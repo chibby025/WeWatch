@@ -12,12 +12,28 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   onPause,
   onEnded,
   onError,
+  onTimeUpdate, // ⏰ Callback to update playback position
   muted = false, // 👈 NEW: default to false (so 2D mode works unchanged)
+  playbackPositionRef, // 🎯 Ref containing adjusted seek time from latency compensation
 }, ref) {
   const videoRef = useRef(null);
+  const cameraVideoRef = useRef(null); // 📹 Separate ref for PIP camera
 
   // 🔑 Expose the actual <video> DOM element to parent
   useImperativeHandle(ref, () => videoRef.current, []);
+
+  // ⏰ Update playback position for periodic seek time tracking
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !onTimeUpdate) return;
+
+    const handleTimeUpdateEvent = () => {
+      onTimeUpdate(video.currentTime);
+    };
+
+    video.addEventListener('timeupdate', handleTimeUpdateEvent);
+    return () => video.removeEventListener('timeupdate', handleTimeUpdateEvent);
+  }, [onTimeUpdate]);
 
   // ... (rest of your existing logic UNCHANGED)
   useEffect(() => {
@@ -31,17 +47,52 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
 
     if ((isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && track?.mediaStreamTrack)) {
       const mediaStreamTrack = isHost ? localScreenTrack.mediaStreamTrack : track.mediaStreamTrack;
-      console.log(`🎬 [CinemaVideoPlayer] ${isHost ? 'HOST' : 'VIEWER'}: Attaching screen share track`);
+      console.log(`🎬 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Attaching track`, {
+        trackId: mediaStreamTrack.id,
+        trackKind: mediaStreamTrack.kind,
+        trackEnabled: mediaStreamTrack.enabled,
+        trackReadyState: mediaStreamTrack.readyState,
+        trackMuted: mediaStreamTrack.muted,
+        hasVideo: !!video,
+        videoReadyState: video?.readyState
+      });
       stream = new MediaStream([mediaStreamTrack]);
       video.srcObject = stream;
-      //video.muted = isHost;
       video.muted = muted !== undefined ? muted : isHost;
-      video.play().catch(onError);
+      
+      video.play()
+        .then(() => {
+          console.log(`✅ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Video playing`, {
+            videoWidth: video.videoWidth,
+            videoHeight: video.videoHeight,
+            currentTime: video.currentTime
+          });
+        })
+        .catch((err) => {
+          console.error(`❌ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Play failed:`, err);
+          if (onError) onError(err);
+        });
+      
       return () => {
+        console.log(`🧹 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Cleanup`);
         if (video.srcObject) {
           video.srcObject.getTracks().forEach(t => t.stop());
           video.srcObject = null;
         }
+      };
+    }
+
+    // ✅ Handle LiveShare: screen only OR camera only (not both)
+    else if ((mediaItem?.stream && !mediaItem?.cameraStream) || (!mediaItem?.stream && mediaItem?.cameraStream)) {
+      const streamToUse = mediaItem.stream || mediaItem.cameraStream;
+      const streamType = mediaItem.stream ? 'screen' : 'camera';
+      console.log(`📹 [CinemaVideoPlayer] Attaching LiveShare ${streamType} stream`);
+      video.srcObject = streamToUse;
+      video.muted = streamType === 'camera' ? true : (muted !== undefined ? muted : false);
+      video.play().catch(onError);
+      return () => {
+        // Don't stop tracks - they're managed by handleEndScreenShare
+        video.srcObject = null;
       };
     }
 
@@ -50,6 +101,24 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       video.srcObject = null;
       video.src = mediaItem.mediaUrl;
       video.muted = muted !== undefined ? muted : false; // ✅ Respect the prop
+      
+      // 🔍 DEBUG: Log video element properties when metadata loads
+      const handleMetadataLoaded = () => {
+        console.log('📊 [CinemaVideoPlayer] Video metadata loaded:', {
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+          duration: video.duration,
+          videoCodec: video.videoTracks?.[0]?.label || 'unknown',
+          playbackRate: video.playbackRate,
+          readyState: video.readyState,
+          networkState: video.networkState,
+          muted: video.muted,
+          volume: video.volume,
+          // Check if this is fullscreen player (muted = true) or 3D player (muted = false by default)
+          playerType: muted ? 'FULLSCREEN' : '3D_CINEMA_SCREEN',
+        });
+      };
+      video.addEventListener('loadedmetadata', handleMetadataLoaded, { once: true });
       
       const handleLoadError = (e) => {
         console.error('❌ [CinemaVideoPlayer] Video load error:', {
@@ -73,7 +142,44 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       video.srcObject = null;
       video.src = '';
     }
-  }, [track, localScreenTrack, isHost, mediaItem]);
+  }, [track, localScreenTrack, isHost, mediaItem, muted, onError]);
+
+  // 📹 Handle PIP camera when BOTH screen and camera streams are present
+  useEffect(() => {
+    const cameraVideo = cameraVideoRef.current;
+    if (!cameraVideo) return;
+
+    // Only attach camera stream when BOTH streams exist (LiveShare 'both' mode)
+    if (mediaItem?.stream && mediaItem?.cameraStream) {
+      console.log('📹 [CinemaVideoPlayer] Attaching PIP camera stream for both mode');
+      cameraVideo.srcObject = mediaItem.cameraStream;
+      cameraVideo.muted = true; // Camera PIP is always muted
+      cameraVideo.play().catch(err => console.warn('⚠️ Camera PIP play failed:', err));
+      return () => {
+        cameraVideo.srcObject = null;
+      };
+    } else {
+      // Clear camera video if not in 'both' mode
+      cameraVideo.srcObject = null;
+    }
+  }, [mediaItem?.stream, mediaItem?.cameraStream]);
+
+  // Handle main video (screen share) when BOTH streams exist
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Only handle screen stream when BOTH exist (LiveShare 'both' mode)
+    if (mediaItem?.stream && mediaItem?.cameraStream) {
+      console.log('📹 [CinemaVideoPlayer] Attaching screen stream for both mode');
+      video.srcObject = mediaItem.stream;
+      video.muted = muted !== undefined ? muted : false; // Screen share with audio
+      video.play().catch(onError);
+      return () => {
+        video.srcObject = null;
+      };
+    }
+  }, [mediaItem?.stream, mediaItem?.cameraStream, muted, onError]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -110,20 +216,83 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
     };
   }, [isPlaying, onError]);
 
+  // 🎯 Apply latency-compensated seek time when media loads (VideoWatch only)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playbackPositionRef?.current || !mediaItem?.mediaUrl) return;
+
+    const seekTime = playbackPositionRef.current;
+    if (seekTime <= 0) return;
+
+    const applySeek = () => {
+      if (Math.abs(video.currentTime - seekTime) > 0.5) { // Only seek if difference > 0.5s
+        console.log('⏱️ [CinemaVideoPlayer] Applying latency-compensated seek:', {
+          from: video.currentTime,
+          to: seekTime
+        });
+        video.currentTime = seekTime;
+        playbackPositionRef.current = 0; // Reset after applying
+      }
+    };
+
+    if (video.readyState >= 2) {
+      applySeek();
+    } else {
+      video.addEventListener('loadeddata', applySeek, { once: true });
+      return () => video.removeEventListener('loadeddata', applySeek);
+    }
+  }, [mediaItem?.mediaUrl, playbackPositionRef]);
+
+  // Determine if we're in 'both' mode (showing PIP camera)
+  const showCameraPIP = mediaItem?.stream && mediaItem?.cameraStream;
+
   return (
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      crossOrigin="anonymous"
-      muted={muted} // 👈 Apply the prop
-      className="w-full h-full object-contain bg-black"
-      onPlay={onPlay}
-      onPause={onPause}
-      onEnded={onEnded}
-      onError={onError}
-      style={{ backgroundColor: '#000' }}
-    />
+    <div className="w-full h-full relative bg-black">
+      {/* Main video (screen share or single stream) */}
+      <video
+        ref={(el) => {
+          videoRef.current = el;
+          if (el) {
+            // 🔍 DEBUG: Log video element CSS properties
+            setTimeout(() => {
+              const rect = el.getBoundingClientRect();
+              const computed = window.getComputedStyle(el);
+              console.log('🎬 [CinemaVideoPlayer] Video element CSS:', {
+                playerType: muted ? 'FULLSCREEN' : '3D_CINEMA_SCREEN',
+                dimensions: `${rect.width}x${rect.height}`,
+                objectFit: computed.objectFit,
+                display: computed.display,
+                transform: computed.transform,
+                willChange: computed.willChange,
+              });
+            }, 100);
+          }
+        }}
+        autoPlay
+        playsInline
+        crossOrigin="anonymous"
+        muted={muted} // 👈 Apply the prop
+        className="w-full h-full object-contain bg-black"
+        onPlay={onPlay}
+        onPause={onPause}
+        onEnded={onEnded}
+        onError={onError}
+        style={{ backgroundColor: '#000' }}
+      />
+      
+      {/* PIP camera overlay (only shown in 'both' mode) */}
+      {showCameraPIP && (
+        <div className="absolute top-8 right-8 w-80 h-45 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 bg-black">
+          <video
+            ref={cameraVideoRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full h-full object-contain"
+          />
+        </div>
+      )}
+    </div>
   );
 });
 

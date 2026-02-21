@@ -17,6 +17,7 @@ type Room struct {
 	MediaFileName string  `gorm:"type:varchar(255)" json:"media_file_name"`
 	PlaybackState string  `gorm:"type:varchar(20);default:'paused'" json:"playback_state"`
 	PlaybackTime  float64 `gorm:"type:decimal(10,3);default:0.000" json:"playback_time"`
+	ImageURL      string  `gorm:"type:text" json:"image_url,omitempty"` // Room profile image
 	// Lobby Display Fields
 	CurrentlyPlaying	string `gorm:"type:varchar(255)" json:"currently_playing,omitempty"`
 	ComingNext			string `gorm:"type:varchar(255)" json:"coming_next,omitempty"`
@@ -30,6 +31,11 @@ type Room struct {
     HostBroadcastEnabled bool `json:"host_broadcast_enabled"`
 	ShowHost             bool `gorm:"default:true" json:"show_host"`
 	ShowDescription      bool `gorm:"default:true" json:"show_description"`
+	
+	// Rating fields (competitive quality system)
+	AverageRating       float64 `gorm:"type:decimal(3,2);default:0.00" json:"average_rating"`
+	TotalRatings        int     `gorm:"default:0" json:"total_ratings"`
+	CumulativeRatingSum int     `gorm:"default:0" json:"cumulative_rating_sum"`
 	// Add more fields later like MaxViewers, Password, etc.
 }
 

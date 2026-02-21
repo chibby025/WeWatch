@@ -23,6 +23,8 @@ type TemporaryMediaItem struct {
 	PosterURL    string    `gorm:"type:text;not null" json:"poster_url"` // URL to the generated poster/thumbnail
 	Duration     string    `gorm:"type:varchar(20);not null;default:'00:00:00'" json:"duration"` // Extracted duration (HH:MM:SS)
 	OrderIndex   int       `gorm:"type:int;default:0" json:"order_index"` // For playlist ordering
+	PreviewURL   string    `gorm:"type:text" json:"preview_url,omitempty"` // Animated preview GIF
+	PreviewGeneratedAt *time.Time `json:"preview_generated_at,omitempty"` // When preview was last generated
 
 	// --- Foreign Keys for Relationships ---
 	RoomID       uint      `gorm:"not null;index" json:"room_id"` // Link to the room this media belongs to

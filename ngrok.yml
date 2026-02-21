@@ -1,0 +1,17 @@
+version: "2"
+authtoken: 2y3XagimhNRn1lEYC3Cpds6uTNX_2wtNN8Bhxxctsj61Gg9A9
+
+tunnels:
+  backend:
+    proto: http
+    addr: 127.0.0.1:8080
+    inspect: true
+    schemes:
+      - https
+  
+  frontend:
+    proto: http
+    addr: 127.0.0.1:5173
+    inspect: true
+    schemes:
+      - https
