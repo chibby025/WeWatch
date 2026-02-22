@@ -1279,29 +1279,7 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 	log.Printf("🔍 [LiveKit] Request headers - Host: %s, Origin: %s, Referer: %s, X-Forwarded-Host: %s", 
 		requestHost, origin, referer, forwardedHost)
 	
-	// Determine if request is from localhost or external
-	isLocalhost := false
-	
-	// Check Origin header (most reliable for AJAX requests)
-	if origin != "" {
-		isLocalhost = strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1")
-	} else if referer != "" {
-		// Fallback to Referer if no Origin
-		isLocalhost = strings.Contains(referer, "localhost") || strings.Contains(referer, "127.0.0.1")
-	} else {
-		// Fallback to Host header
-		isLocalhost = strings.Contains(requestHost, "localhost") || strings.Contains(requestHost, "127.0.0.1")
-	}
-	
-	if isLocalhost {
-		livekitURL = "http://localhost:7880"
-		log.Printf("🏠 [LiveKit] Localhost request detected, using localhost LiveKit URL")
-	} else {
-		// External request - use public IP
-		livekitURL = "http://105.113.102.72:7880"
-		log.Printf("🌍 [LiveKit] External request detected, using public IP LiveKit URL")
-	}
-	
+	// Use LIVEKIT_URL from environment (supports both local dev and production LiveKit Cloud)
 	log.Printf("✅ [LiveKit] Token generated successfully. URL=%s", livekitURL)
 
 	c.JSON(http.StatusOK, gin.H{
