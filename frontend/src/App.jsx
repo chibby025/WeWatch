@@ -96,7 +96,7 @@ function App() {
           
           {/* Protected routes */}
           <Route path="/" element={
-            <ProtectedRoute><Home /></ProtectedRoute>
+            <ProtectedRoute><LobbyPage /></ProtectedRoute>
           } />
           
           <Route path="/lobby" element={

@@ -577,26 +577,25 @@ const RoomPageNew = () => {
     console.log(`🔑 [RoomPageNew] Using auth token: ${tokenPreview}`);
     console.log(`📊 [RoomPageNew] Token length: ${wsToken.length} chars`);
 
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const host = window.location.hostname;
+    // ✅ FIX: Use API backend URL (Railway/localhost) instead of window.location (Vercel)
+    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    const apiUrl = new URL(apiBaseUrl);
+    const protocol = apiUrl.protocol === 'https:' ? 'wss' : 'ws';
+    const host = apiUrl.hostname;
+    const port = apiUrl.port ? `:${apiUrl.port}` : '';
     
-    // Smart URL construction for different environments
-    let wsUrl;
-    if (host === 'localhost' || host === '127.0.0.1') {
-      // Localhost: Direct backend connection
-      const backendPort = import.meta.env.VITE_API_PORT || '8080';
-      wsUrl = `${protocol}://${host}:${backendPort}/api/rooms/${roomId}/ws?token=${encodeURIComponent(wsToken)}`;
-    } else {
-      // Tunnel: Use Vite proxy (no port specification)
-      const frontendPort = window.location.port ? `:${window.location.port}` : '';
-      wsUrl = `${protocol}://${host}${frontendPort}/api/rooms/${roomId}/ws?token=${encodeURIComponent(wsToken)}`;
-    }
+    // Build WebSocket URL using backend domain (Railway in production, localhost in dev)
+    const wsUrl = `${protocol}://${host}${port}/api/rooms/${roomId}/ws?token=${encodeURIComponent(wsToken)}`;
+    
+    console.log(`🔧 [RoomPageNew] Backend URL: ${apiBaseUrl}`);
+    console.log(`🔧 [RoomPageNew] WebSocket protocol: ${protocol}, host: ${host}, port: ${port}`);
+    console.log(`🌐 [RoomPageNew] Full WebSocket URL: ${wsUrl.split('?')[0]}`);
+    console.log(`📍 [RoomPageNew] Component mounted: ${isMountedRef.current}`);
+
+    // Remove the old duplicate logs below
 
     // ⚠️ DON'T add session_id here - this WebSocket is for ROOM chat/presence only
     // Session membership is handled by CinemaScene3D/useWebSocket when user clicks "Join"
-
-    console.log(`🌐 [RoomPageNew] Connecting to: ${wsUrl.split('?')[0]}`);
-    console.log(`📍 [RoomPageNew] Component mounted: ${isMountedRef.current}`);
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
