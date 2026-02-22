@@ -393,6 +393,12 @@ func UpdateProfileHandler(c *gin.Context) {
 // It checks for a valid JWT Bearer token in the Authorization header or query parameter (for WebSockets).
 func AuthMiddleware() gin.HandlerFunc {
     return func(c *gin.Context) {
+        // Skip auth for OPTIONS preflight requests (CORS)
+        if c.Request.Method == "OPTIONS" {
+            c.Next()
+            return
+        }
+
         tokenString := ""
 
         // 1. For WebSocket upgrade, prioritize query param
