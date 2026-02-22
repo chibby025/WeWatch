@@ -1272,11 +1272,12 @@ func (c *Client) writePump() {
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
-		// Allow frontend dev server, backend, and tunnels
+		// Allow frontend dev server, backend, tunnels, and Vercel
 		return origin == "http://localhost:5173" || 
 		       origin == "http://localhost:8080" || 
 		       strings.Contains(origin, "trycloudflare.com") || // Cloudflare tunnel
 		       strings.Contains(origin, "loca.lt") || // Localtunnel
+		       strings.Contains(origin, ".vercel.app") || // Vercel deployments
 		       origin == ""
 	},
 }
