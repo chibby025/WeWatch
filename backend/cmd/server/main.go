@@ -169,6 +169,10 @@ func main() {
 			if strings.Contains(origin, ".loca.lt") {
 				return true
 			}
+			// Allow Vercel deployments (HTTPS)
+			if strings.Contains(origin, ".vercel.app") {
+				return true
+			}
 			// Allow specific IPs (HTTP)
 			if strings.HasPrefix(origin, "http://192.168.") || strings.HasPrefix(origin, "http://10.") {
 				return true
