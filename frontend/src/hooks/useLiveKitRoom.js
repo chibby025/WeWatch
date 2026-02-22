@@ -40,17 +40,8 @@ export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true
         logger.debug('🆔 [LiveKit] Using existing tab ID:', tabId);
       }
       
-      // ✅ Dynamic backend URL detection
-      // - Localhost: Use :8080 (backend port, not :5173 frontend)
-      // - Tunnel/External: Use window.location.origin (already correct domain)
-      let backendUrl;
-      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        backendUrl = 'http://localhost:8080';
-        console.log('🏠 [LiveKit MOBILE DEBUG] Localhost detected - using backend port 8080');
-      } else {
-        backendUrl = window.location.origin;
-        console.log('🌍 [LiveKit MOBILE DEBUG] External request - using origin:', backendUrl);
-      }
+      // ✅ Use backend URL from environment variable (Railway production URL)
+      const backendUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
       
       const tokenUrl = `${backendUrl}/api/rooms/${roomId}/livekit-token?tab_id=${tabId}`;
       

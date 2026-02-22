@@ -193,22 +193,13 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
     }
     const queryString = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
 
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const host = window.location.hostname;
-    
-    // ✅ Smart WebSocket URL construction:
-    // - localhost: use explicit port 8080 (direct backend connection)
-    // - tunnel/remote: use same domain/port as frontend (Vite proxy routes /api/* to backend)
-    let wsUrl;
-    if (host === 'localhost' || host === '127.0.0.1') {
-      // Direct connection to backend
-      const backendPort = import.meta.env.VITE_API_PORT || '8080';
-      wsUrl = `${protocol}://${host}:${backendPort}/api/rooms/${roomId}/ws${queryString}`;
-    } else {
-      // Use same host:port as frontend (proxy will route to backend)
-      const frontendPort = window.location.port ? `:${window.location.port}` : '';
-      wsUrl = `${protocol}://${host}${frontendPort}/api/rooms/${roomId}/ws${queryString}`;
-    }
+    // ✅ Use backend URL from environment variable (Railway production URL)
+    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    const apiUrl = new URL(apiBaseUrl);
+    const protocol = apiUrl.protocol === 'https:' ? 'wss' : 'ws';
+    const host = apiUrl.hostname;
+    const port = apiUrl.port ? `:${apiUrl.port}` : '';
+    const wsUrl = `${protocol}://${host}${port}/api/rooms/${roomId}/ws${queryString}`;
     
     console.log(`🔗 [useWebSocket] Connecting to: ${wsUrl}`);
 
