@@ -974,19 +974,15 @@ const LobbyPage = () => {
 
     const connectWebSocket = () => {
       try {
-        // Smart URL construction for different environments
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const host = window.location.hostname;
+        // ✅ FIX: Use API backend URL (Railway/localhost) instead of window.location (Vercel)
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+        const apiUrl = new URL(apiBaseUrl);
+        const protocol = apiUrl.protocol === 'https:' ? 'wss' : 'ws';
+        const host = apiUrl.hostname;
+        const port = apiUrl.port ? `:${apiUrl.port}` : '';
         
-        let wsUrl;
-        if (host === 'localhost' || host === '127.0.0.1') {
-          // Localhost: Direct backend connection
-          wsUrl = `${protocol}://${host}:8080/api/lobby/ws?token=${encodeURIComponent(wsToken)}`;
-        } else {
-          // Tunnel: Use Vite proxy (no port specification)
-          const frontendPort = window.location.port ? `:${window.location.port}` : '';
-          wsUrl = `${protocol}://${host}${frontendPort}/api/lobby/ws?token=${encodeURIComponent(wsToken)}`;
-        }
+        // Build WebSocket URL using backend domain (Railway in production, localhost in dev)
+        const wsUrl = `${protocol}://${host}${port}/api/lobby/ws?token=${encodeURIComponent(wsToken)}`;
         
         console.log(`🔗 [LobbyPage WS] Connecting to: ${wsUrl.split('?')[0]}`);
           
