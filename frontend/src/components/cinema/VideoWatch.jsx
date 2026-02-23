@@ -685,6 +685,11 @@ export default function VideoWatch() {
   useEffect(() => {
     const enumerateDevices = async () => {
       try {
+        // ✅ Request microphone permission first to get device labels
+        await navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+          stream.getTracks().forEach(track => track.stop()); // Stop the temporary permission stream
+        });
+        
         const devices = await navigator.mediaDevices.enumerateDevices();
         const audioInputs = devices.filter(d => d.kind === 'audioinput');
         setAudioDevices(audioInputs);
@@ -694,11 +699,24 @@ export default function VideoWatch() {
           // Prefer non-default devices (avoid "Default" which browser auto-switches)
           const preferredDevice = audioInputs.find(d => !d.label.toLowerCase().includes('default')) || audioInputs[0];
           setSelectedAudioDeviceId(preferredDevice.deviceId);
+          console.log('🎤 [VideoWatch] Default audio device selected:', preferredDevice.label, preferredDevice.deviceId);
         }
         
         console.log('🎤 [VideoWatch] Available audio devices:', audioInputs.map(d => ({ label: d.label, id: d.deviceId })));
       } catch (err) {
         console.error('❌ [VideoWatch] Failed to enumerate devices:', err);
+        // Fallback: Try without permission (will get generic labels)
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const audioInputs = devices.filter(d => d.kind === 'audioinput');
+          setAudioDevices(audioInputs);
+          if (!selectedAudioDeviceId && audioInputs.length > 0) {
+            setSelectedAudioDeviceId(audioInputs[0].deviceId);
+            console.log('🎤 [VideoWatch] Fallback: Selected first audio device');
+          }
+        } catch (fallbackErr) {
+          console.error('❌ [VideoWatch] Fallback device enumeration failed:', fallbackErr);
+        }
       }
     };
 
@@ -707,7 +725,7 @@ export default function VideoWatch() {
     // Listen for device changes (e.g., headset plugged in)
     navigator.mediaDevices.addEventListener('devicechange', enumerateDevices);
     return () => navigator.mediaDevices.removeEventListener('devicechange', enumerateDevices);
-  }, []);
+  }, [selectedAudioDeviceId]);
 
   useEffect(() => {
     return () => {
@@ -721,8 +739,13 @@ export default function VideoWatch() {
   // 🎤 Publish audio track to LiveKit (keeps track published, toggles enabled state)
   // This is REQUIRED for activeSpeakersChanged to work - LiveKit needs a published track
   useEffect(() => {
-    if (!localParticipant || !selectedAudioDeviceId) {
-      console.log('⏳ [VideoWatch Audio] Waiting for localParticipant and device selection');
+    if (!localParticipant) {
+      console.log('⏳ [VideoWatch Audio] Waiting for localParticipant');
+      return;
+    }
+    
+    if (!selectedAudioDeviceId) {
+      console.log('⏳ [VideoWatch Audio] Waiting for audio device selection');
       return;
     }
 
@@ -742,6 +765,12 @@ export default function VideoWatch() {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
         const audioTrack = stream.getAudioTracks()[0];
         
+        if (!audioTrack) {
+          throw new Error('No audio track obtained from getUserMedia');
+        }
+        
+        console.log('🎤 [VideoWatch Audio] Got audio track from device:', audioTrack.label);
+        
         // ✅ Publish to LiveKit first
         const publication = await localParticipant.publishTrack(audioTrack, {
           source: 'microphone',
@@ -758,12 +787,24 @@ export default function VideoWatch() {
         
         console.log('✅ [VideoWatch Audio] Audio track published to LiveKit');
         console.log('   Track ID:', audioTrack.id);
+        console.log('   Track label:', audioTrack.label);
         console.log('   Track enabled:', audioTrack.enabled);
         console.log('   Publication SID:', publication.trackSid);
         
       } catch (err) {
         console.error('❌ [VideoWatch Audio] Failed to publish audio track:', err);
+        console.error('   Error name:', err.name);
+        console.error('   Error message:', err.message);
         setHasMicPermission(false);
+        
+        // Show user-friendly error
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          alert('Microphone permission denied. Please allow microphone access to unmute.');
+        } else if (err.name === 'NotFoundError') {
+          alert('No microphone found. Please connect a microphone.');
+        } else {
+          alert(`Microphone error: ${err.message}`);
+        }
       }
     };
 
@@ -2676,6 +2717,16 @@ export default function VideoWatch() {
     const audioTrack = publishedAudioTrackRef.current;
     if (!audioTrack) {
       console.warn('⚠️ [toggleAudio] No audio track published yet');
+      console.warn('   LocalParticipant exists:', !!localParticipant);
+      console.warn('   Selected audio device:', selectedAudioDeviceId);
+      console.warn('   Mic permission:', hasMicPermission);
+      
+      // ✅ Show user-friendly error with actionable guidance
+      if (!hasMicPermission) {
+        alert('⚠️ Microphone not initialized yet.\n\nPlease:\n1. Allow microphone permission when prompted\n2. Wait a moment for audio to initialize\n3. Try unmuting again');
+      } else {
+        alert('⚠️ Audio is still initializing. Please wait a moment and try again.');
+      }
       return;
     }
 
@@ -2713,7 +2764,7 @@ export default function VideoWatch() {
       isGlobalBroadcast: isGlobalBroadcast,
       row: isSeatedMode && currentUserRow !== null ? currentUserRow : null,
     });
-  }, [isAudioActive, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage, broadcastPermissions]);
+  }, [isAudioActive, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage, broadcastPermissions, localParticipant, selectedAudioDeviceId, hasMicPermission]);
 
   // ✅ Host-only: Toggle mute all members (locked mute, requires host approval to unmute)
   const handleMuteAll = useCallback(() => {
