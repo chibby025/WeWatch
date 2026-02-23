@@ -1319,9 +1319,14 @@ export default function VideoWatch() {
     console.log('   videoTrackPublications:', localParticipant.videoTrackPublications);
 
     const handleTrackPublished = (publication) => {
-      console.log('📡 [VideoWatch] Track published:', publication.source, publication.kind);
-      console.log('   Publication track:', !!publication.track);
-      console.log('   Publication trackSid:', publication.trackSid);
+      console.log('📡 [VideoWatch HOST] LocalParticipant.TrackPublished event!', {
+        source: publication.source,
+        kind: publication.kind,
+        trackSid: publication.trackSid,
+        trackName: publication.trackName,
+        hasTrack: !!publication.track
+      });
+      console.log('📡 [VideoWatch HOST] This track should be broadcast to all remote participants');
       
       if (publication.source === Track.Source.ScreenShare) {
         console.log('✅ [VideoWatch] Screen share track detected!');
@@ -1745,7 +1750,16 @@ export default function VideoWatch() {
             }
           });
           
-          console.log('✅ [VideoWatch] Camera track published:', cameraPublication.trackSid);
+          console.log('✅ [VideoWatch HOST] Camera track published:', {
+            trackSid: cameraPublication.trackSid,
+            source: cameraPublication.source,
+            kind: cameraPublication.kind,
+            isPublished: true,
+            trackName: cameraPublication.trackName
+          });
+          console.log('📡 [VideoWatch HOST] Track should now be visible to all remote participants');
+          console.log('📡 [VideoWatch HOST] Remote participants count:', room.remoteParticipants.size);
+          
           setCameraShareTrackSid(cameraPublication.trackSid);
           
           cameraStream = new MediaStream([localVideoTrack.mediaStreamTrack]);
