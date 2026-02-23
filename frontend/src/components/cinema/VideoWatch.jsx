@@ -2607,15 +2607,15 @@ export default function VideoWatch() {
       
       if (isTemporary) {
         console.log('✅ [VideoWatch] Temporary room detected - navigating to Lobby...');
-        window.location.href = `/lobby`;
+        navigate('/lobby', { replace: true });
       } else {
         console.log('✅ [VideoWatch] Persistent room - navigating to RoomPage...');
-        window.location.href = `/rooms/${roomId}`;
+        navigate(`/rooms/${roomId}`, { replace: true });
       }
     } catch (err) {
       console.error('⚠️ [VideoWatch] Error checking room type:', err);
       console.log('🏠 [VideoWatch] Navigating to RoomPage (fallback)...');
-      window.location.href = `/rooms/${roomId}`;
+      navigate(`/rooms/${roomId}`, { replace: true });
     }
   };
 

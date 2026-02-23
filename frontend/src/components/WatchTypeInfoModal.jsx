@@ -27,6 +27,11 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
           src: '/icons/Videowatch3.png',
           title: 'Connect Without Limits',
           description: 'From 2 to 200 people'
+        },
+        {
+          src: '/icons/Videowatch4.png',
+          title: 'Infinite Possibilities',
+          description: 'From telemedicine to TV shows, any video works together'
         }
       ],
       features: [
@@ -94,6 +99,11 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
           src: '/icons/lecture3.png',
           title: 'Community of Minds',
           description: 'Every voice heard, every answer counted, learning together'
+        },
+        {
+          src: '/icons/onlineclass.png',
+          title: 'Attend Classes Online',
+          description: 'Learning without borders, education from anywhere, presence that transcends distance'
         }
       ],
       features: [
