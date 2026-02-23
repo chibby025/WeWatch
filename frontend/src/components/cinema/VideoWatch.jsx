@@ -1741,7 +1741,7 @@ export default function VideoWatch() {
           const localVideoTrack = new LocalVideoTrack(videoTrack);
           
           const cameraPublication = await localParticipant.publishTrack(localVideoTrack, {
-            source: Track.Source.Camera,
+            source: Track.Source.ScreenShare, // ✅ Try ScreenShare instead of Camera
             name: 'camera-share',
             simulcast: false,
             videoEncoding: {
@@ -1750,7 +1750,7 @@ export default function VideoWatch() {
             }
           });
           
-          console.log('✅ [VideoWatch HOST] Camera track published:', {
+          console.log('✅ [VideoWatch HOST] Camera track published as ScreenShare:', {
             trackSid: cameraPublication.trackSid,
             source: cameraPublication.source,
             kind: cameraPublication.kind,
