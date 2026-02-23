@@ -430,26 +430,68 @@ export default function VideoWatch() {
     // Helper function to attach audio track to DOM
     const attachAudioTrack = (track, participant) => {
       console.log('🔊 [VideoWatch] Attaching audio track from', participant.identity);
+      console.log('🔍 [VideoWatch Audio Debug] Track details:', {
+        kind: track.kind,
+        enabled: track.enabled,
+        muted: track.muted,
+        mediaStreamTrack: track.mediaStreamTrack,
+        readyState: track.mediaStreamTrack?.readyState
+      });
       
       try {
         // Create audio element and attach track
         const audioElement = track.attach();
+        
+        // Configure audio element for playback
         audioElement.volume = 1.0; // Full volume
         audioElement.autoplay = true; // Auto-play when track starts
+        audioElement.muted = false; // Ensure NOT muted
+        audioElement.style.display = 'none'; // Hidden
         
-        // Add to DOM (hidden, for playback only)
-        audioElement.style.display = 'none';
+        // CRITICAL: Log audio element state
+        console.log('🔍 [VideoWatch Audio Debug] Audio element created:', {
+          volume: audioElement.volume,
+          muted: audioElement.muted,
+          autoplay: audioElement.autoplay,
+          srcObject: audioElement.srcObject,
+          paused: audioElement.paused,
+          readyState: audioElement.readyState
+        });
+        
+        // Add to DOM FIRST (required for some browsers)
         document.body.appendChild(audioElement);
         
         // Store reference for cleanup
         const key = `${participant.sid}-audio`;
+        
+        // Clean up old audio element if exists
+        const oldElement = audioElements.get(key);
+        if (oldElement) {
+          console.warn('⚠️ [VideoWatch] Replacing existing audio element for', participant.identity);
+          oldElement.pause();
+          oldElement.srcObject = null;
+          oldElement.remove();
+        }
+        
         audioElements.set(key, audioElement);
         
-        // Play the audio (required for some browsers)
+        // Force play the audio (required for some browsers)
         audioElement.play().then(() => {
           console.log('✅ [VideoWatch] Audio playback started for', participant.identity);
+          console.log('🔍 [VideoWatch Audio Debug] After play():', {
+            paused: audioElement.paused,
+            currentTime: audioElement.currentTime,
+            volume: audioElement.volume,
+            muted: audioElement.muted
+          });
         }).catch(err => {
-          console.warn('⚠️ [VideoWatch] Audio autoplay blocked, user interaction may be needed:', err);
+          console.error('❌ [VideoWatch] Audio autoplay FAILED:', err);
+          console.error('🔍 [VideoWatch] Audio element state:', {
+            paused: audioElement.paused,
+            readyState: audioElement.readyState,
+            networkState: audioElement.networkState,
+            error: audioElement.error
+          });
         });
         
       } catch (err) {
