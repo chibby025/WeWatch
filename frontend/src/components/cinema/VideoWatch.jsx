@@ -2535,6 +2535,21 @@ export default function VideoWatch() {
           console.log('🔊 [VideoWatch] Received unlock_mute command');
           setIsMutedByHost(false);
           
+          // ✅ CRITICAL FIX: Re-enable audio track when unlocked
+          if (publishedAudioTrackRef.current) {
+            console.log('🔊 [VideoWatch] Re-enabling audio track after unlock_mute');
+            publishedAudioTrackRef.current.enabled = true;
+          }
+          if (localParticipant) {
+            localParticipant.audioTrackPublications.forEach(publication => {
+              if (publication.track) {
+                console.log('🔊 [VideoWatch] Unmuting publication track:', publication.trackSid);
+                publication.track.unmute();
+              }
+            });
+          }
+          setIsAudioActive(true);
+          
           // Show brief notification
           toast.success('Host has allowed unmuting', {
             icon: '🔊',
