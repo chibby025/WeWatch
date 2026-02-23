@@ -2510,26 +2510,24 @@ export default function VideoWatch() {
         case "force_mute":
           // Host has muted all members
           console.log('🔇 [VideoWatch] Received force_mute command from backend');
-          console.log('🔇 [VideoWatch] Current audio state before force_mute:', {
+          console.log('🔇 [VideoWatch] BEFORE force_mute - Track state:', {
             isAudioActive,
             isMutedByHost,
-            trackEnabled: publishedAudioTrackRef.current?.enabled
+            trackEnabled: publishedAudioTrackRef.current?.enabled,
+            trackIsMuted: publishedAudioTrackRef.current?.isMuted,
+            trackExists: !!publishedAudioTrackRef.current
           });
           
           setIsMutedByHost(true);
           setShowMuteAllBanner(true);
           
-          // Force disable microphone
+          // Force disable microphone (only use .enabled, not .mute())
           if (publishedAudioTrackRef.current) {
-            console.log('🔇 [VideoWatch] Disabling audio track');
+            console.log('🔇 [VideoWatch] Disabling audio track via enabled=false');
             publishedAudioTrackRef.current.enabled = false;
-          }
-          if (localParticipant) {
-            localParticipant.audioTrackPublications.forEach(publication => {
-              if (publication.track) {
-                console.log('🔇 [VideoWatch] Muting publication track');
-                publication.track.mute();
-              }
+            console.log('🔇 [VideoWatch] AFTER disabling - Track state:', {
+              trackEnabled: publishedAudioTrackRef.current.enabled,
+              trackIsMuted: publishedAudioTrackRef.current.isMuted
             });
           }
           setIsAudioActive(false);
@@ -2566,10 +2564,12 @@ export default function VideoWatch() {
           // Host has unlocked mute - enable button but keep audio muted
           // User must manually unmute if they want to speak
           console.log('🔊 [VideoWatch] Received unlock_mute command from backend');
-          console.log('🔊 [VideoWatch] Current audio state before unlock_mute:', {
+          console.log('🔊 [VideoWatch] BEFORE unlock_mute - Track state:', {
             isAudioActive,
             isMutedByHost,
-            trackEnabled: publishedAudioTrackRef.current?.enabled
+            trackEnabled: publishedAudioTrackRef.current?.enabled,
+            trackIsMuted: publishedAudioTrackRef.current?.isMuted,
+            trackExists: !!publishedAudioTrackRef.current
           });
           
           setIsMutedByHost(false);
@@ -2596,10 +2596,11 @@ export default function VideoWatch() {
             userId: currentUser.id,
           });
           
-          console.log('🔊 [VideoWatch] Audio state after unlock_mute:', {
+          console.log('🔊 [VideoWatch] AFTER unlock_mute - Track state:', {
             isAudioActive,
             isMutedByHost: false,
-            trackEnabled: publishedAudioTrackRef.current?.enabled
+            trackEnabled: publishedAudioTrackRef.current?.enabled,
+            trackIsMuted: publishedAudioTrackRef.current?.isMuted
           });
           
           // Show brief notification
@@ -2901,6 +2902,13 @@ export default function VideoWatch() {
   // ✅ Audio toggle function - keeps track published, just toggles enabled (for activeSpeakersChanged)
   const toggleAudio = useCallback(async () => {
     console.log('🎤 [toggleAudio] Called, current state:', isAudioActive);
+    console.log('🎤 [toggleAudio] BEFORE toggle - Track state:', {
+      isAudioActive,
+      isMutedByHost,
+      trackEnabled: publishedAudioTrackRef.current?.enabled,
+      trackIsMuted: publishedAudioTrackRef.current?.isMuted,
+      trackExists: !!publishedAudioTrackRef.current
+    });
     
     // ✅ Prevent unmuting if host has locked mute
     if (isMutedByHost && !isAudioActive) {
@@ -2936,7 +2944,11 @@ export default function VideoWatch() {
     audioTrack.enabled = newAudioState;
     setIsAudioActive(newAudioState);
     
-    console.log('✅ [toggleAudio] Audio track enabled:', newAudioState);
+    console.log('✅ [toggleAudio] AFTER toggle - Track state:', {
+      trackEnabled: audioTrack.enabled,
+      trackIsMuted: audioTrack.isMuted,
+      newAudioState
+    });
     
     // ✅ Update local user's audio state for MembersModal
     setRemoteAudioStates(prev => ({
