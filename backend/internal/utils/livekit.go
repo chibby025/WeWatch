@@ -35,6 +35,7 @@ func GenerateLiveKitToken(roomName string, identity string, isHost bool) (string
 		CanPublish:      boolPtr(true), // ✅ Everyone can publish audio/video
 		CanSubscribe:    boolPtr(true),
 		CanPublishData:  boolPtr(true),
+		CanPublishSources: []string{"camera", "microphone", "screen_share"}, // ✅ Explicit video sources
 	}
 
 	at := auth.NewAccessToken(apiKey, apiSecret).
