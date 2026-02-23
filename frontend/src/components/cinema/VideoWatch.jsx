@@ -1726,9 +1726,12 @@ export default function VideoWatch() {
           const stream = await navigator.mediaDevices.getUserMedia({
             video: {
               deviceId: { exact: device.deviceId },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
-              frameRate: { ideal: 30 }
+              width: { ideal: 1280 }, // ✅ Lower resolution = lower latency
+              height: { ideal: 720 },
+              frameRate: { ideal: 30, max: 30 },
+              // ✅ Low-latency optimizations
+              latency: { ideal: 0 }, // Request lowest possible latency
+              aspectRatio: { ideal: 16/9 }
             },
             audio: false
           });
@@ -1741,13 +1744,17 @@ export default function VideoWatch() {
           const localVideoTrack = new LocalVideoTrack(videoTrack);
           
           const cameraPublication = await localParticipant.publishTrack(localVideoTrack, {
-            source: Track.Source.ScreenShare, // ✅ Try ScreenShare instead of Camera
+            source: Track.Source.ScreenShare, // ✅ ScreenShare routes correctly through LiveKit Cloud
             name: 'camera-share',
             simulcast: false,
             videoEncoding: {
-              maxBitrate: 4000000,
+              maxBitrate: 2500000, // ✅ Reduced for lower latency
               maxFramerate: 30
-            }
+            },
+            // ✅ Lower latency settings
+            dtx: false, // Disable discontinuous transmission
+            red: false, // Disable redundant encoding
+            priority: 'high' // High priority for faster delivery
           });
           
           console.log('✅ [VideoWatch HOST] Camera track published as ScreenShare:', {
