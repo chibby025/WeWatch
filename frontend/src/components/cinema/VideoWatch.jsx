@@ -2534,6 +2534,24 @@ export default function VideoWatch() {
           }
           setIsAudioActive(false);
           
+          // ✅ Update remote audio states so Members Modal shows mute icon
+          setRemoteAudioStates(prev => ({
+            ...prev,
+            [currentUser.id]: {
+              ...prev[currentUser.id],
+              isMuted: true,
+              isSpeaking: false,
+              audioLevel: 0,
+            }
+          }));
+          
+          // ✅ Broadcast muted state to all members
+          sendMessage({
+            type: "user_audio_state",
+            isAudioActive: false,
+            userId: currentUser.id,
+          });
+          
           console.log('🔇 [VideoWatch] Audio state after force_mute:', {
             isAudioActive: false,
             isMutedByHost: true,
@@ -2559,6 +2577,25 @@ export default function VideoWatch() {
           // ✅ Keep audio muted - user can manually unmute if desired
           // Do NOT auto-enable the track or set isAudioActive to true
           console.log('🔊 [VideoWatch] Mute button unlocked but audio remains muted');
+          
+          // ✅ Update remote audio states to keep muted icon (stays muted until user manually unmutes)
+          setRemoteAudioStates(prev => ({
+            ...prev,
+            [currentUser.id]: {
+              ...prev[currentUser.id],
+              isMuted: true, // Still muted, just unlocked
+              isSpeaking: false,
+              audioLevel: 0,
+            }
+          }));
+          
+          // ✅ Broadcast still-muted state
+          sendMessage({
+            type: "user_audio_state",
+            isAudioActive: false, // Still muted
+            userId: currentUser.id,
+          });
+          
           console.log('🔊 [VideoWatch] Audio state after unlock_mute:', {
             isAudioActive,
             isMutedByHost: false,
