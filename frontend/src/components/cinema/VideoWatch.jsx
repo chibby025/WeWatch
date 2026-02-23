@@ -534,12 +534,25 @@ export default function VideoWatch() {
       if (track.kind === 'audio') {
         attachAudioTrack(track, participant);
       }
+      
+      // ✅ VIDEO PLAYBACK: Handle screen share and camera tracks
+      if (track.kind === 'video') {
+        console.log('📹 [VideoWatch] Video track subscribed:', {
+          source: publication.source,
+          trackName: publication.trackName,
+          participant: participant.identity
+        });
+        
+        // Trigger re-render to pick up new video track
+        setRemoteParticipants(prev => [...prev]);
+      }
     };
 
     const handleTrackUnsubscribed = (track, publication, participant) => {
       console.log('📤 [VideoWatch] Remote track unsubscribed:', {
         participant: participant.identity,
-        source: publication.source
+        source: publication.source,
+        kind: track.kind
       });
       
       // ✅ CLEANUP: Remove audio element when track unsubscribes
@@ -554,6 +567,17 @@ export default function VideoWatch() {
           audioElement.remove();
           audioElements.delete(key);
         }
+      }
+      
+      // ✅ VIDEO CLEANUP: Trigger re-render when video track removed
+      if (track.kind === 'video') {
+        console.log('📹 [VideoWatch] Video track unsubscribed:', {
+          source: publication.source,
+          participant: participant.identity
+        });
+        
+        // Trigger re-render to update UI
+        setRemoteParticipants(prev => [...prev]);
       }
     };
 
