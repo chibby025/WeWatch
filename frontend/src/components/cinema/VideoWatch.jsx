@@ -420,9 +420,12 @@ export default function VideoWatch() {
     });
   }, [isLiveKitConnected, localParticipant, room]);
 
-  // ✅ Listen for remote participant track events
+  // ✅ Listen for remote participant track events and attach audio elements for playback
   useEffect(() => {
     if (!room) return;
+
+    // Store audio elements for cleanup
+    const audioElements = new Map(); // participant.sid -> audioElement
 
     const handleTrackSubscribed = (track, publication, participant) => {
       console.log('📥 [VideoWatch] Remote track subscribed:', {
@@ -432,7 +435,36 @@ export default function VideoWatch() {
         enabled: track.enabled,
         muted: track.muted
       });
-      // Audio handling is done by RemoteAudioPlayer component
+      
+      // ✅ AUDIO PLAYBACK: Attach audio tracks to DOM elements
+      if (track.kind === 'audio') {
+        console.log('🔊 [VideoWatch] Attaching audio track from', participant.identity);
+        
+        try {
+          // Create audio element and attach track
+          const audioElement = track.attach();
+          audioElement.volume = 1.0; // Full volume
+          audioElement.autoplay = true; // Auto-play when track starts
+          
+          // Add to DOM (hidden, for playback only)
+          audioElement.style.display = 'none';
+          document.body.appendChild(audioElement);
+          
+          // Store reference for cleanup
+          const key = `${participant.sid}-audio`;
+          audioElements.set(key, audioElement);
+          
+          // Play the audio (required for some browsers)
+          audioElement.play().then(() => {
+            console.log('✅ [VideoWatch] Audio playback started for', participant.identity);
+          }).catch(err => {
+            console.warn('⚠️ [VideoWatch] Audio autoplay blocked, user interaction may be needed:', err);
+          });
+          
+        } catch (err) {
+          console.error('❌ [VideoWatch] Failed to attach audio track:', err);
+        }
+      }
     };
 
     const handleTrackUnsubscribed = (track, publication, participant) => {
@@ -440,6 +472,20 @@ export default function VideoWatch() {
         participant: participant.identity,
         source: publication.source
       });
+      
+      // ✅ CLEANUP: Remove audio element when track unsubscribes
+      if (track.kind === 'audio') {
+        const key = `${participant.sid}-audio`;
+        const audioElement = audioElements.get(key);
+        
+        if (audioElement) {
+          console.log('🧹 [VideoWatch] Removing audio element for', participant.identity);
+          audioElement.pause();
+          audioElement.srcObject = null;
+          audioElement.remove();
+          audioElements.delete(key);
+        }
+      }
     };
 
     room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
@@ -448,6 +494,15 @@ export default function VideoWatch() {
     return () => {
       room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
       room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+      
+      // Cleanup all audio elements on unmount
+      audioElements.forEach((audioElement, key) => {
+        console.log('🧹 [VideoWatch] Cleanup: Removing audio element', key);
+        audioElement.pause();
+        audioElement.srcObject = null;
+        audioElement.remove();
+      });
+      audioElements.clear();
     };
   }, [room]);
 
