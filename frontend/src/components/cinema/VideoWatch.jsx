@@ -710,9 +710,10 @@ export default function VideoWatch() {
     if (!room) return;
     
     console.log('📹 [VideoWatch] Video subscription effect running');
+    console.log('📹 [VideoWatch] Room state:', room.state);
 
     const handleTrackPublished = (publication, participant) => {
-      console.log('🎬 [VideoWatch MEMBER] Track published:', {
+      console.log('🎬 [VideoWatch MEMBER] RoomEvent.TrackPublished fired!', {
         source: publication.source,
         kind: publication.kind,
         trackSid: publication.trackSid,
@@ -722,14 +723,18 @@ export default function VideoWatch() {
       
       // ✅ Subscribe to all video tracks (screen share, camera)
       if (publication.kind === 'video') {
-        console.log('📹 [VideoWatch MEMBER] Subscribing to video track:', publication.trackSid);
+        console.log('📹 [VideoWatch MEMBER] Video track detected, subscribing:', publication.trackSid);
         publication.setSubscribed(true);
+        
+        // Force re-render to detect new track
+        setRemoteParticipants(prev => [...prev]);
       }
     };
 
     // ✅ Subscribe to any existing video tracks on mount
     console.log('📹 [VideoWatch] Checking for existing video tracks...');
     console.log('📹 [VideoWatch] Remote participants count:', room.remoteParticipants.size);
+    console.log('📹 [VideoWatch] Room.remoteParticipants:', Array.from(room.remoteParticipants.keys()));
     
     room.remoteParticipants.forEach((participant) => {
       console.log('📹 [VideoWatch] Participant:', participant.identity, {
@@ -763,8 +768,27 @@ export default function VideoWatch() {
     room.on(RoomEvent.TrackPublished, handleTrackPublished);
     console.log('✅ [VideoWatch] TrackPublished listener registered');
 
+    // ✅ POLLING: Check for new video tracks every 2 seconds (fallback if TrackPublished doesn't fire)
+    const pollInterval = setInterval(() => {
+      console.log('🔄 [VideoWatch] Polling for video tracks...');
+      room.remoteParticipants.forEach((participant) => {
+        participant.videoTrackPublications.forEach((publication) => {
+          if (!publication.isSubscribed && publication.kind === 'video') {
+            console.log('🔄 [VideoWatch] Found unsubscribed video track during poll:', {
+              participant: participant.identity,
+              trackSid: publication.trackSid,
+              source: publication.source
+            });
+            publication.setSubscribed(true);
+            setRemoteParticipants(prev => [...prev]);
+          }
+        });
+      });
+    }, 2000);
+
     return () => {
       room.off(RoomEvent.TrackPublished, handleTrackPublished);
+      clearInterval(pollInterval);
     };
   }, [room]);
 
