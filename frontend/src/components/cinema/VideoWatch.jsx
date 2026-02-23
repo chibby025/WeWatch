@@ -2531,27 +2531,17 @@ export default function VideoWatch() {
           break;
 
         case "unlock_mute":
-          // Host has unmuted all members
+          // Host has unlocked mute - enable button but keep audio muted
+          // User must manually unmute if they want to speak
           console.log('🔊 [VideoWatch] Received unlock_mute command');
           setIsMutedByHost(false);
           
-          // ✅ CRITICAL FIX: Re-enable audio track when unlocked
-          if (publishedAudioTrackRef.current) {
-            console.log('🔊 [VideoWatch] Re-enabling audio track after unlock_mute');
-            publishedAudioTrackRef.current.enabled = true;
-          }
-          if (localParticipant) {
-            localParticipant.audioTrackPublications.forEach(publication => {
-              if (publication.track) {
-                console.log('🔊 [VideoWatch] Unmuting publication track:', publication.trackSid);
-                publication.track.unmute();
-              }
-            });
-          }
-          setIsAudioActive(true);
+          // ✅ Keep audio muted - user can manually unmute if desired
+          // Do NOT auto-enable the track or set isAudioActive to true
+          console.log('🔊 [VideoWatch] Mute button unlocked but audio remains muted');
           
           // Show brief notification
-          toast.success('Host has allowed unmuting', {
+          toast.success('Host has unlocked your microphone - you can now unmute', {
             icon: '🔊',
             duration: 3000,
           });
@@ -2849,6 +2839,17 @@ export default function VideoWatch() {
   // ✅ Audio toggle function - keeps track published, just toggles enabled (for activeSpeakersChanged)
   const toggleAudio = useCallback(async () => {
     console.log('🎤 [toggleAudio] Called, current state:', isAudioActive);
+    
+    // ✅ Prevent unmuting if host has locked mute
+    if (isMutedByHost && !isAudioActive) {
+      console.log('🔒 [toggleAudio] Cannot unmute - host has locked mute');
+      toast.error('Host has muted all members', {
+        icon: '🔒',
+        duration: 3000,
+      });
+      return;
+    }
+    
     const newAudioState = !isAudioActive;
     console.log('🎤 [toggleAudio] New state will be:', newAudioState);
 
@@ -2903,7 +2904,7 @@ export default function VideoWatch() {
       isGlobalBroadcast: isGlobalBroadcast,
       row: isSeatedMode && currentUserRow !== null ? currentUserRow : null,
     });
-  }, [isAudioActive, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage, broadcastPermissions, localParticipant, selectedAudioDeviceId, hasMicPermission]);
+  }, [isAudioActive, isMutedByHost, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage, broadcastPermissions, localParticipant, selectedAudioDeviceId, hasMicPermission]);
 
   // ✅ Host-only: Toggle mute all members (locked mute, requires host approval to unmute)
   const handleMuteAll = useCallback(() => {
