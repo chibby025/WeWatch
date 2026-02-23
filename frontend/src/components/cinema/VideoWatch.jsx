@@ -427,6 +427,58 @@ export default function VideoWatch() {
     // Store audio elements for cleanup
     const audioElements = new Map(); // participant.sid -> audioElement
 
+    // Helper function to attach audio track to DOM
+    const attachAudioTrack = (track, participant) => {
+      console.log('🔊 [VideoWatch] Attaching audio track from', participant.identity);
+      
+      try {
+        // Create audio element and attach track
+        const audioElement = track.attach();
+        audioElement.volume = 1.0; // Full volume
+        audioElement.autoplay = true; // Auto-play when track starts
+        
+        // Add to DOM (hidden, for playback only)
+        audioElement.style.display = 'none';
+        document.body.appendChild(audioElement);
+        
+        // Store reference for cleanup
+        const key = `${participant.sid}-audio`;
+        audioElements.set(key, audioElement);
+        
+        // Play the audio (required for some browsers)
+        audioElement.play().then(() => {
+          console.log('✅ [VideoWatch] Audio playback started for', participant.identity);
+        }).catch(err => {
+          console.warn('⚠️ [VideoWatch] Audio autoplay blocked, user interaction may be needed:', err);
+        });
+        
+      } catch (err) {
+        console.error('❌ [VideoWatch] Failed to attach audio track:', err);
+      }
+    };
+
+    // ✅ CRITICAL FIX: Attach audio elements for ALREADY SUBSCRIBED tracks
+    console.log('🔍 [VideoWatch] Checking for existing remote participants...');
+    room.remoteParticipants.forEach((participant) => {
+      console.log('👤 [VideoWatch] Found existing participant:', participant.identity);
+      
+      // Check all audio track publications
+      participant.audioTrackPublications.forEach((publication) => {
+        console.log('🎵 [VideoWatch] Audio publication:', {
+          participant: participant.identity,
+          trackSid: publication.trackSid,
+          isSubscribed: publication.isSubscribed,
+          track: publication.track
+        });
+        
+        // If track is already subscribed, attach it now
+        if (publication.track && publication.isSubscribed) {
+          console.log('🔌 [VideoWatch] Attaching EXISTING audio track from', participant.identity);
+          attachAudioTrack(publication.track, participant);
+        }
+      });
+    });
+
     const handleTrackSubscribed = (track, publication, participant) => {
       console.log('📥 [VideoWatch] Remote track subscribed:', {
         participant: participant.identity,
@@ -438,32 +490,7 @@ export default function VideoWatch() {
       
       // ✅ AUDIO PLAYBACK: Attach audio tracks to DOM elements
       if (track.kind === 'audio') {
-        console.log('🔊 [VideoWatch] Attaching audio track from', participant.identity);
-        
-        try {
-          // Create audio element and attach track
-          const audioElement = track.attach();
-          audioElement.volume = 1.0; // Full volume
-          audioElement.autoplay = true; // Auto-play when track starts
-          
-          // Add to DOM (hidden, for playback only)
-          audioElement.style.display = 'none';
-          document.body.appendChild(audioElement);
-          
-          // Store reference for cleanup
-          const key = `${participant.sid}-audio`;
-          audioElements.set(key, audioElement);
-          
-          // Play the audio (required for some browsers)
-          audioElement.play().then(() => {
-            console.log('✅ [VideoWatch] Audio playback started for', participant.identity);
-          }).catch(err => {
-            console.warn('⚠️ [VideoWatch] Audio autoplay blocked, user interaction may be needed:', err);
-          });
-          
-        } catch (err) {
-          console.error('❌ [VideoWatch] Failed to attach audio track:', err);
-        }
+        attachAudioTrack(track, participant);
       }
     };
 
