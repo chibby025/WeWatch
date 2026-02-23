@@ -580,13 +580,39 @@ export default function VideoWatch() {
         setRemoteParticipants(prev => [...prev]);
       }
     };
+    
+    // ✅ Handle when remote participant connects (check for existing tracks)
+    const handleParticipantConnected = (participant) => {
+      console.log('👤 [VideoWatch] Participant connected:', participant.identity);
+      console.log('📹 [VideoWatch] Participant track publications:', {
+        audio: participant.audioTrackPublications.size,
+        video: participant.videoTrackPublications.size
+      });
+      
+      // Check for video tracks that might already be published
+      participant.videoTrackPublications.forEach((publication) => {
+        console.log('📹 [VideoWatch] Found video publication on connect:', {
+          trackSid: publication.trackSid,
+          source: publication.source,
+          isSubscribed: publication.isSubscribed,
+          hasTrack: !!publication.track
+        });
+        
+        if (!publication.isSubscribed && publication.kind === 'video') {
+          console.log('📹 [VideoWatch] Auto-subscribing to video track');
+          publication.setSubscribed(true);
+        }
+      });
+    };
 
     room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
     room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    room.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
 
     return () => {
       room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
       room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+      room.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
       
       // Cleanup all audio elements on unmount
       audioElements.forEach((audioElement, key) => {
@@ -682,6 +708,8 @@ export default function VideoWatch() {
   // ✅ MEMBER: Explicitly subscribe to video tracks (screen share, camera)
   useEffect(() => {
     if (!room) return;
+    
+    console.log('📹 [VideoWatch] Video subscription effect running');
 
     const handleTrackPublished = (publication, participant) => {
       console.log('🎬 [VideoWatch MEMBER] Track published:', {
@@ -700,8 +728,24 @@ export default function VideoWatch() {
     };
 
     // ✅ Subscribe to any existing video tracks on mount
+    console.log('📹 [VideoWatch] Checking for existing video tracks...');
+    console.log('📹 [VideoWatch] Remote participants count:', room.remoteParticipants.size);
+    
     room.remoteParticipants.forEach((participant) => {
+      console.log('📹 [VideoWatch] Participant:', participant.identity, {
+        videoTrackPublications: participant.videoTrackPublications.size,
+        audioTrackPublications: participant.audioTrackPublications.size
+      });
+      
       participant.videoTrackPublications.forEach((publication) => {
+        console.log('📹 [VideoWatch] Found existing video publication:', {
+          participant: participant.identity,
+          trackSid: publication.trackSid,
+          source: publication.source,
+          isSubscribed: publication.isSubscribed,
+          track: !!publication.track
+        });
+        
         if (!publication.isSubscribed) {
           console.log('📹 [VideoWatch MEMBER] Subscribing to existing video track:', {
             participant: participant.identity,
@@ -709,12 +753,15 @@ export default function VideoWatch() {
             source: publication.source
           });
           publication.setSubscribed(true);
+        } else {
+          console.log('📹 [VideoWatch] Track already subscribed');
         }
       });
     });
 
     // Listen for new track publications
     room.on(RoomEvent.TrackPublished, handleTrackPublished);
+    console.log('✅ [VideoWatch] TrackPublished listener registered');
 
     return () => {
       room.off(RoomEvent.TrackPublished, handleTrackPublished);
