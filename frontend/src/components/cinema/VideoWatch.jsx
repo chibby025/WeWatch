@@ -2509,22 +2509,36 @@ export default function VideoWatch() {
         
         case "force_mute":
           // Host has muted all members
-          console.log('🔇 [VideoWatch] Received force_mute command');
+          console.log('🔇 [VideoWatch] Received force_mute command from backend');
+          console.log('🔇 [VideoWatch] Current audio state before force_mute:', {
+            isAudioActive,
+            isMutedByHost,
+            trackEnabled: publishedAudioTrackRef.current?.enabled
+          });
+          
           setIsMutedByHost(true);
           setShowMuteAllBanner(true);
           
           // Force disable microphone
           if (publishedAudioTrackRef.current) {
+            console.log('🔇 [VideoWatch] Disabling audio track');
             publishedAudioTrackRef.current.enabled = false;
           }
           if (localParticipant) {
             localParticipant.audioTrackPublications.forEach(publication => {
               if (publication.track) {
+                console.log('🔇 [VideoWatch] Muting publication track');
                 publication.track.mute();
               }
             });
           }
           setIsAudioActive(false);
+          
+          console.log('🔇 [VideoWatch] Audio state after force_mute:', {
+            isAudioActive: false,
+            isMutedByHost: true,
+            trackEnabled: publishedAudioTrackRef.current?.enabled
+          });
           
           // Hide banner after 5 seconds
           setTimeout(() => setShowMuteAllBanner(false), 5000);
@@ -2533,12 +2547,23 @@ export default function VideoWatch() {
         case "unlock_mute":
           // Host has unlocked mute - enable button but keep audio muted
           // User must manually unmute if they want to speak
-          console.log('🔊 [VideoWatch] Received unlock_mute command');
+          console.log('🔊 [VideoWatch] Received unlock_mute command from backend');
+          console.log('🔊 [VideoWatch] Current audio state before unlock_mute:', {
+            isAudioActive,
+            isMutedByHost,
+            trackEnabled: publishedAudioTrackRef.current?.enabled
+          });
+          
           setIsMutedByHost(false);
           
           // ✅ Keep audio muted - user can manually unmute if desired
           // Do NOT auto-enable the track or set isAudioActive to true
           console.log('🔊 [VideoWatch] Mute button unlocked but audio remains muted');
+          console.log('🔊 [VideoWatch] Audio state after unlock_mute:', {
+            isAudioActive,
+            isMutedByHost: false,
+            trackEnabled: publishedAudioTrackRef.current?.enabled
+          });
           
           // Show brief notification
           toast.success('Host has unlocked your microphone - you can now unmute', {
@@ -2915,14 +2940,19 @@ export default function VideoWatch() {
 
     const newMuteState = !isMuteAllActive;
     console.log(`🔇 [VideoWatch] Host toggling mute all: ${newMuteState ? 'ON' : 'OFF'}`);
+    console.log('🔇 [VideoWatch] sendMessage exists:', !!sendMessage);
+    console.log('🔇 [VideoWatch] currentUser.id:', currentUser?.id);
+    console.log('🔇 [VideoWatch] sessionStatus?.id:', sessionStatus?.id);
     
     if (newMuteState) {
       // Muting all members
-      sendMessage({
+      const message = {
         type: "mute_all_members",
         hostId: currentUser.id,
         sessionId: sessionStatus?.id,
-      });
+      };
+      console.log('🔇 [VideoWatch] Sending mute_all_members message:', message);
+      sendMessage(message);
 
       setIsMuteAllActive(true);
       toast.success('All members have been muted', {
@@ -2931,11 +2961,13 @@ export default function VideoWatch() {
       });
     } else {
       // Unmuting all members
-      sendMessage({
+      const message = {
         type: "unmute_all_members",
         hostId: currentUser.id,
         sessionId: sessionStatus?.id,
-      });
+      };
+      console.log('🔇 [VideoWatch] Sending unmute_all_members message:', message);
+      sendMessage(message);
 
       setIsMuteAllActive(false);
       toast.success('All members can now unmute', {
