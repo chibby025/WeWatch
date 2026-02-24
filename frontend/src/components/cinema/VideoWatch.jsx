@@ -42,48 +42,44 @@ import QuizResultsModal from './modals/QuizResultsModal';
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
   
-  // 📋 EXPORT LOGS: Add window function to download console logs
+  // 📋 CAPTURE LOGS: Intercept console methods and store logs globally
   useEffect(() => {
-    window.exportLogs = () => {
-      const logs = [];
-      const originalLog = console.log;
-      const originalWarn = console.warn;
-      const originalError = console.error;
-      
-      // Intercept console methods
-      console.log = (...args) => {
-        logs.push({ type: 'log', time: new Date().toISOString(), message: args });
-        originalLog(...args);
-      };
-      console.warn = (...args) => {
-        logs.push({ type: 'warn', time: new Date().toISOString(), message: args });
-        originalWarn(...args);
-      };
-      console.error = (...args) => {
-        logs.push({ type: 'error', time: new Date().toISOString(), message: args });
-        originalError(...args);
-      };
-      
-      // Download function
-      window.downloadLogs = () => {
-        const logText = logs.map(l => `[${l.time}] [${l.type.toUpperCase()}] ${JSON.stringify(l.message)}`).join('\n');
-        const blob = new Blob([logText], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `wewatch-logs-${Date.now()}.txt`;
-        a.click();
-        URL.revokeObjectURL(url);
-        console.log(`✅ Downloaded ${logs.length} log entries`);
-      };
-      
-      console.log('📋 Log capture started. Call window.downloadLogs() to download.');
-      return { logs, download: window.downloadLogs };
+    // Initialize global log storage
+    if (!window.capturedLogs) {
+      window.capturedLogs = [];
+    }
+    
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    const originalInfo = console.info;
+    
+    // Intercept console methods and store logs
+    console.log = (...args) => {
+      window.capturedLogs.push({ type: 'log', time: Date.now(), args });
+      originalLog(...args);
+    };
+    console.warn = (...args) => {
+      window.capturedLogs.push({ type: 'warn', time: Date.now(), args });
+      originalWarn(...args);
+    };
+    console.error = (...args) => {
+      window.capturedLogs.push({ type: 'error', time: Date.now(), args });
+      originalError(...args);
+    };
+    console.info = (...args) => {
+      window.capturedLogs.push({ type: 'info', time: Date.now(), args });
+      originalInfo(...args);
     };
     
+    console.log('📋 [VideoWatch] Log capture started - logs stored in window.capturedLogs');
+    
+    // Cleanup on unmount
     return () => {
-      delete window.exportLogs;
-      delete window.downloadLogs;
+      console.log = originalLog;
+      console.warn = originalWarn;
+      console.error = originalError;
+      console.info = originalInfo;
     };
   }, []);
   
@@ -4011,29 +4007,12 @@ export default function VideoWatch() {
       <button
         onClick={async () => {
           try {
-            // Get all console logs from Eruda
+            // Use captured logs instead of Eruda API
             const logs = [];
             
-            // Try multiple methods to access Eruda console history
-            let erudaConsole = null;
-            
-            // Method 1: Original API
-            if (window.eruda?._$get?.('console')) {
-              erudaConsole = window.eruda._$get('console');
-            }
-            // Method 2: Alternative API (no underscore)
-            else if (window.eruda?.get?.('console')) {
-              erudaConsole = window.eruda.get('console');
-            }
-            // Method 3: Direct access
-            else if (window.eruda?._devTools?.get?.('console')) {
-              erudaConsole = window.eruda._devTools.get('console');
-            }
-            
-            if (erudaConsole?._logs && Array.isArray(erudaConsole._logs)) {
-              erudaConsole._logs.forEach(log => {
-                // Format: [timestamp] [type] message
-                const timestamp = log.time ? new Date(log.time).toISOString() : new Date().toISOString();
+            if (window.capturedLogs && Array.isArray(window.capturedLogs) && window.capturedLogs.length > 0) {
+              window.capturedLogs.forEach(log => {
+                const timestamp = new Date(log.time).toISOString();
                 const type = log.type || 'log';
                 const message = Array.isArray(log.args) 
                   ? log.args.map(arg => {
@@ -4046,20 +4025,15 @@ export default function VideoWatch() {
                       }
                       return String(arg);
                     }).join(' ')
-                  : String(log.args || log.message || '');
+                  : String(log.args || '');
                 
                 logs.push(`[${timestamp}] [${type.toUpperCase()}] ${message}`);
               });
             }
             
             if (logs.length === 0) {
-              // If still no logs, provide helpful instructions
-              toast.error('No logs found. Open Eruda console and manually copy logs from there.', { duration: 5000 });
-              console.error('❌ Could not access Eruda logs. Available methods tried:', {
-                method1: !!window.eruda?._$get?.('console'),
-                method2: !!window.eruda?.get?.('console'),
-                method3: !!window.eruda?._devTools?.get?.('console')
-              });
+              toast.error('No logs captured yet. Logs are captured after page loads.', { duration: 4000 });
+              console.error('❌ No captured logs available. window.capturedLogs:', window.capturedLogs);
               return;
             }
             
