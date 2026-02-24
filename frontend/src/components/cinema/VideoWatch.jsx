@@ -709,80 +709,73 @@ export default function VideoWatch() {
   useEffect(() => {
     if (!room) return;
     
-    console.log('📹 [VideoWatch] Video subscription effect running');
-    console.log('📹 [VideoWatch] Room state:', room.state);
+    // ✅ Track timing for debugging LiveKit Cloud delays
+    const subscriptionStartTime = Date.now();
+    console.log(`⏱️ [VideoWatch] Video subscription initialized at ${new Date().toISOString()}`);
 
     const handleTrackPublished = (publication, participant) => {
-      console.log('🎬 [VideoWatch MEMBER] RoomEvent.TrackPublished fired!', {
-        source: publication.source,
-        kind: publication.kind,
-        trackSid: publication.trackSid,
-        participant: participant.identity,
-        isSubscribed: publication.isSubscribed
-      });
+      const detectionTime = Date.now();
+      const delay = detectionTime - subscriptionStartTime;
       
-      // ✅ Subscribe to all video tracks (screen share, camera)
       if (publication.kind === 'video') {
-        console.log('📹 [VideoWatch MEMBER] Video track detected, subscribing:', publication.trackSid);
+        console.log(`🎬 [VideoWatch MEMBER] Video track detected via TrackPublished! (${delay}ms after init)`, {
+          trackSid: publication.trackSid,
+          source: publication.source,
+          participant: participant.identity,
+          timestamp: new Date().toISOString()
+        });
         publication.setSubscribed(true);
-        
-        // Force re-render to detect new track
         setRemoteParticipants(prev => [...prev]);
       }
     };
 
-    // ✅ Subscribe to any existing video tracks on mount
-    console.log('📹 [VideoWatch] Checking for existing video tracks...');
-    console.log('📹 [VideoWatch] Remote participants count:', room.remoteParticipants.size);
-    console.log('📹 [VideoWatch] Room.remoteParticipants:', Array.from(room.remoteParticipants.keys()));
+    // ✅ Check existing tracks (less verbose)
+    const hasExistingVideo = Array.from(room.remoteParticipants.values())
+      .some(p => p.videoTrackPublications.size > 0);
     
-    room.remoteParticipants.forEach((participant) => {
-      console.log('📹 [VideoWatch] Participant:', participant.identity, {
-        videoTrackPublications: participant.videoTrackPublications.size,
-        audioTrackPublications: participant.audioTrackPublications.size
-      });
-      
-      participant.videoTrackPublications.forEach((publication) => {
-        console.log('📹 [VideoWatch] Found existing video publication:', {
-          participant: participant.identity,
-          trackSid: publication.trackSid,
-          source: publication.source,
-          isSubscribed: publication.isSubscribed,
-          track: !!publication.track
-        });
-        
-        if (!publication.isSubscribed) {
-          console.log('📹 [VideoWatch MEMBER] Subscribing to existing video track:', {
-            participant: participant.identity,
-            trackSid: publication.trackSid,
-            source: publication.source
-          });
-          publication.setSubscribed(true);
-        } else {
-          console.log('📹 [VideoWatch] Track already subscribed');
-        }
-      });
-    });
-
-    // Listen for new track publications
-    room.on(RoomEvent.TrackPublished, handleTrackPublished);
-    console.log('✅ [VideoWatch] TrackPublished listener registered');
-
-    // ✅ POLLING: Check for new video tracks every 2 seconds (fallback if TrackPublished doesn't fire)
-    const pollInterval = setInterval(() => {
-      console.log('🔄 [VideoWatch] Polling for video tracks...');
+    if (hasExistingVideo) {
+      console.log('📹 [VideoWatch] Found existing video tracks on mount, subscribing...');
       room.remoteParticipants.forEach((participant) => {
         participant.videoTrackPublications.forEach((publication) => {
           if (!publication.isSubscribed && publication.kind === 'video') {
-            console.log('🔄 [VideoWatch] Found unsubscribed video track during poll:', {
-              participant: participant.identity,
+            console.log(`✅ Subscribing to ${publication.source} from ${participant.identity}`);
+            publication.setSubscribed(true);
+          }
+        });
+      });
+    }
+
+    // Listen for new track publications
+    room.on(RoomEvent.TrackPublished, handleTrackPublished);
+
+    // ✅ POLLING: Check for new video tracks every 2 seconds (fallback for LiveKit Cloud delays)
+    let lastPollLogTime = Date.now();
+    const pollInterval = setInterval(() => {
+      room.remoteParticipants.forEach((participant) => {
+        const videoTrackCount = participant.videoTrackPublications.size;
+        
+        participant.videoTrackPublications.forEach((publication) => {
+          if (!publication.isSubscribed && publication.kind === 'video') {
+            const detectionTime = Date.now();
+            const delay = detectionTime - subscriptionStartTime;
+            
+            console.log(`🔄 [VideoWatch POLL] Found unsubscribed video track! (${delay}ms delay)`, {
               trackSid: publication.trackSid,
-              source: publication.source
+              source: publication.source,
+              participant: participant.identity,
+              timestamp: new Date().toISOString()
             });
+            
             publication.setSubscribed(true);
             setRemoteParticipants(prev => [...prev]);
           }
         });
+        
+        // Log polling status every 10 seconds if no tracks found
+        if (videoTrackCount === 0 && Date.now() - lastPollLogTime > 10000) {
+          console.log(`🔍 [VideoWatch] Polling: No video tracks from ${participant.identity} (${Math.round((Date.now() - subscriptionStartTime) / 1000)}s elapsed)`);
+          lastPollLogTime = Date.now();
+        }
       });
     }, 2000);
 
@@ -1743,6 +1736,8 @@ export default function VideoWatch() {
           const LocalVideoTrack = (await import('livekit-client')).LocalVideoTrack;
           const localVideoTrack = new LocalVideoTrack(videoTrack);
           
+          const publishStartTime = Date.now();
+          
           const cameraPublication = await localParticipant.publishTrack(localVideoTrack, {
             source: Track.Source.ScreenShare, // ✅ ScreenShare routes correctly through LiveKit Cloud
             name: 'camera-share',
@@ -1757,15 +1752,14 @@ export default function VideoWatch() {
             priority: 'high' // High priority for faster delivery
           });
           
-          console.log('✅ [VideoWatch HOST] Camera track published as ScreenShare:', {
+          const publishDuration = Date.now() - publishStartTime;
+          
+          console.log(`✅ [VideoWatch HOST] Camera published (${publishDuration}ms)`, {
             trackSid: cameraPublication.trackSid,
             source: cameraPublication.source,
-            kind: cameraPublication.kind,
-            isPublished: true,
-            trackName: cameraPublication.trackName
+            remoteParticipants: room.remoteParticipants.size,
+            timestamp: new Date().toISOString()
           });
-          console.log('📡 [VideoWatch HOST] Track should now be visible to all remote participants');
-          console.log('📡 [VideoWatch HOST] Remote participants count:', room.remoteParticipants.size);
           
           setCameraShareTrackSid(cameraPublication.trackSid);
           
