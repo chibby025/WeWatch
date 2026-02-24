@@ -2169,6 +2169,8 @@ export default function VideoWatch() {
           }
           break;
         case "update_room_status":
+          // ✅ OPTIMIZE: Don't update currentMedia if we're already in LiveShare mode with same title
+          // This prevents unnecessary re-renders that interrupt video playback mid-stream
           if (message.data?.currently_playing && currentMedia?.type !== 'screen_share') {
             setCurrentMedia(prev => ({
               ...prev,
@@ -2176,6 +2178,7 @@ export default function VideoWatch() {
               type: message.data.is_screen_sharing ? 'screen_share' : 'upload',
             }));
           } else if (message.data?.currently_playing && currentMedia?.type === 'screen_share') {
+            // Only update if the title actually changed (avoid redundant state updates)
             if (currentMedia.original_name !== message.data.currently_playing) {
               setCurrentMedia(prev => ({ ...prev, original_name: message.data.currently_playing }));
             }

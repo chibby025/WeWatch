@@ -2222,15 +2222,25 @@ export default function CinemaScene3DDemo() {
       document.body.appendChild(screenVideo);
       liveShareVideoRef.current = screenVideo;
       
-      screenVideo.play()
-        .then(() => {
-          console.log('✅ [LIVESHARE MEMBER] Screen video playing:', {
-            videoWidth: screenVideo.videoWidth,
-            videoHeight: screenVideo.videoHeight,
-            readyState: screenVideo.readyState
-          });
-        })
-        .catch(err => console.error('❌ [LIVESHARE MEMBER] Screen video play failed:', err));
+      // ✅ Wait for video metadata before playing to prevent 2x2 pixel black screen
+      screenVideo.addEventListener('loadedmetadata', () => {
+        console.log('📊 [LIVESHARE MEMBER] Screen video metadata loaded:', {
+          videoWidth: screenVideo.videoWidth,
+          videoHeight: screenVideo.videoHeight,
+          readyState: screenVideo.readyState
+        });
+        
+        screenVideo.play()
+          .then(() => {
+            console.log('✅ [LIVESHARE MEMBER] Screen video playing:', {
+              videoWidth: screenVideo.videoWidth,
+              videoHeight: screenVideo.videoHeight,
+              currentTime: screenVideo.currentTime,
+              readyState: screenVideo.readyState
+            });
+          })
+          .catch(err => console.error('❌ [LIVESHARE MEMBER] Screen video play failed:', err));
+      }, { once: true });
     }
 
     // Create MediaStream and video element from remote camera track
@@ -2263,14 +2273,24 @@ export default function CinemaScene3DDemo() {
       document.body.appendChild(cameraVideo);
       liveShareCameraVideoRef.current = cameraVideo;
       
-      cameraVideo.play()
-        .then(() => {
-          console.log('✅ [LIVESHARE MEMBER] Camera video playing:', {
-            videoWidth: cameraVideo.videoWidth,
-            videoHeight: cameraVideo.videoHeight
-          });
-        })
-        .catch(err => console.error('❌ [LIVESHARE MEMBER] Camera video play failed:', err));
+      // ✅ Wait for video metadata before playing to prevent 2x2 pixel black screen
+      cameraVideo.addEventListener('loadedmetadata', () => {
+        console.log('📊 [LIVESHARE MEMBER] Camera video metadata loaded:', {
+          videoWidth: cameraVideo.videoWidth,
+          videoHeight: cameraVideo.videoHeight,
+          readyState: cameraVideo.readyState
+        });
+        
+        cameraVideo.play()
+          .then(() => {
+            console.log('✅ [LIVESHARE MEMBER] Camera video playing:', {
+              videoWidth: cameraVideo.videoWidth,
+              videoHeight: cameraVideo.videoHeight,
+              currentTime: cameraVideo.currentTime
+            });
+          })
+          .catch(err => console.error('❌ [LIVESHARE MEMBER] Camera video play failed:', err));
+      }, { once: true });
     }
 
     return () => {
