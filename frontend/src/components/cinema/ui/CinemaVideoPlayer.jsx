@@ -60,18 +60,33 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       video.srcObject = stream;
       video.muted = muted !== undefined ? muted : isHost;
       
-      video.play()
-        .then(() => {
-          console.log(`✅ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Video playing`, {
-            videoWidth: video.videoWidth,
-            videoHeight: video.videoHeight,
-            currentTime: video.currentTime
-          });
-        })
-        .catch((err) => {
-          console.error(`❌ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Play failed:`, err);
-          if (onError) onError(err);
+      // ✅ Wait for metadata before playing to avoid 2x2 pixel black screen
+      const handleMetadataLoaded = () => {
+        console.log(`📊 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Metadata loaded`, {
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight
         });
+        
+        video.play()
+          .then(() => {
+            console.log(`✅ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Video playing`, {
+              videoWidth: video.videoWidth,
+              videoHeight: video.videoHeight,
+              currentTime: video.currentTime
+            });
+          })
+          .catch((err) => {
+            console.error(`❌ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Play failed:`, err);
+            if (onError) onError(err);
+          });
+      };
+      
+      video.addEventListener('loadedmetadata', handleMetadataLoaded, { once: true });
+      
+      // Fallback: If metadata already loaded, play immediately
+      if (video.readyState >= 1) {
+        handleMetadataLoaded();
+      }
       
       return () => {
         console.log(`🧹 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Cleanup`);

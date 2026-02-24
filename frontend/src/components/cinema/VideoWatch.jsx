@@ -4014,35 +4014,52 @@ export default function VideoWatch() {
             // Get all console logs from Eruda
             const logs = [];
             
-            // Try to access Eruda console history
-            if (window.eruda && window.eruda._$get && window.eruda._$get('console')) {
-              const erudaConsole = window.eruda._$get('console');
-              if (erudaConsole._logs && Array.isArray(erudaConsole._logs)) {
-                erudaConsole._logs.forEach(log => {
-                  // Format: [timestamp] [type] message
-                  const timestamp = log.time ? new Date(log.time).toISOString() : new Date().toISOString();
-                  const type = log.type || 'log';
-                  const message = Array.isArray(log.args) 
-                    ? log.args.map(arg => {
-                        if (typeof arg === 'object') {
-                          try {
-                            return JSON.stringify(arg, null, 2);
-                          } catch (e) {
-                            return String(arg);
-                          }
+            // Try multiple methods to access Eruda console history
+            let erudaConsole = null;
+            
+            // Method 1: Original API
+            if (window.eruda?._$get?.('console')) {
+              erudaConsole = window.eruda._$get('console');
+            }
+            // Method 2: Alternative API (no underscore)
+            else if (window.eruda?.get?.('console')) {
+              erudaConsole = window.eruda.get('console');
+            }
+            // Method 3: Direct access
+            else if (window.eruda?._devTools?.get?.('console')) {
+              erudaConsole = window.eruda._devTools.get('console');
+            }
+            
+            if (erudaConsole?._logs && Array.isArray(erudaConsole._logs)) {
+              erudaConsole._logs.forEach(log => {
+                // Format: [timestamp] [type] message
+                const timestamp = log.time ? new Date(log.time).toISOString() : new Date().toISOString();
+                const type = log.type || 'log';
+                const message = Array.isArray(log.args) 
+                  ? log.args.map(arg => {
+                      if (typeof arg === 'object') {
+                        try {
+                          return JSON.stringify(arg, null, 2);
+                        } catch (e) {
+                          return String(arg);
                         }
-                        return String(arg);
-                      }).join(' ')
-                    : String(log.args || log.message || '');
-                  
-                  logs.push(`[${timestamp}] [${type.toUpperCase()}] ${message}`);
-                });
-              }
+                      }
+                      return String(arg);
+                    }).join(' ')
+                  : String(log.args || log.message || '');
+                
+                logs.push(`[${timestamp}] [${type.toUpperCase()}] ${message}`);
+              });
             }
             
             if (logs.length === 0) {
-              toast.error('No logs found. Make sure Eruda is loaded.');
-              console.error('❌ Could not access Eruda logs');
+              // If still no logs, provide helpful instructions
+              toast.error('No logs found. Open Eruda console and manually copy logs from there.', { duration: 5000 });
+              console.error('❌ Could not access Eruda logs. Available methods tried:', {
+                method1: !!window.eruda?._$get?.('console'),
+                method2: !!window.eruda?.get?.('console'),
+                method3: !!window.eruda?._devTools?.get?.('console')
+              });
               return;
             }
             
