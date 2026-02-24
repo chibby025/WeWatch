@@ -542,9 +542,6 @@ export default function VideoWatch() {
           trackName: publication.trackName,
           participant: participant.identity
         });
-        
-        // Trigger re-render to pick up new video track
-        setRemoteParticipants(prev => [...prev]);
       }
     };
 
@@ -569,15 +566,12 @@ export default function VideoWatch() {
         }
       }
       
-      // ✅ VIDEO CLEANUP: Trigger re-render when video track removed
+      // ✅ VIDEO CLEANUP: LiveKit handles UI updates automatically
       if (track.kind === 'video') {
         console.log('📹 [VideoWatch] Video track unsubscribed:', {
           source: publication.source,
           participant: participant.identity
         });
-        
-        // Trigger re-render to update UI
-        setRemoteParticipants(prev => [...prev]);
       }
     };
     
@@ -725,7 +719,6 @@ export default function VideoWatch() {
           timestamp: new Date().toISOString()
         });
         publication.setSubscribed(true);
-        setRemoteParticipants(prev => [...prev]);
       }
     };
 
@@ -767,7 +760,6 @@ export default function VideoWatch() {
             });
             
             publication.setSubscribed(true);
-            setRemoteParticipants(prev => [...prev]);
           }
         });
         
