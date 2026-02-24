@@ -597,11 +597,47 @@ export default function VideoWatch() {
           publication.setSubscribed(true);
         }
       });
+      
+      // ✅ CRITICAL: Listen for NEW tracks published by this participant
+      const handleParticipantTrackPublished = (publication) => {
+        console.log(`📢 [VideoWatch] ${participant.identity} published new track:`, {
+          kind: publication.kind,
+          source: publication.source,
+          trackSid: publication.trackSid
+        });
+        
+        if (publication.kind === 'video') {
+          console.log('📹 [VideoWatch] New video track published - auto-subscribing');
+          publication.setSubscribed(true);
+        }
+      };
+      
+      participant.on(ParticipantEvent.TrackPublished, handleParticipantTrackPublished);
     };
 
     room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
     room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
     room.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
+    
+    // ✅ CRITICAL: Also listen on ALREADY CONNECTED participants (member was already in room when host publishes)
+    room.remoteParticipants.forEach((participant) => {
+      console.log(`🔗 [VideoWatch] Registering TrackPublished listener for existing participant: ${participant.identity}`);
+      
+      const handleParticipantTrackPublished = (publication) => {
+        console.log(`📢 [VideoWatch] ${participant.identity} published new track (already connected):`, {
+          kind: publication.kind,
+          source: publication.source,
+          trackSid: publication.trackSid
+        });
+        
+        if (publication.kind === 'video') {
+          console.log('📹 [VideoWatch] New video track published - auto-subscribing');
+          publication.setSubscribed(true);
+        }
+      };
+      
+      participant.on(ParticipantEvent.TrackPublished, handleParticipantTrackPublished);
+    });
 
     return () => {
       room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
