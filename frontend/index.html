@@ -19,6 +19,22 @@
       }
     </script>
     <!-- ✅ END POLYFILL -->
+    <!-- 🐛 ERUDA MOBILE CONSOLE (activated with ?eruda=true) -->
+    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+    <script>
+      // Check for ?eruda=true in URL or localStorage
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('eruda') === 'true' || localStorage.getItem('active-eruda') === 'true') {
+        eruda.init();
+        localStorage.setItem('active-eruda', 'true'); // Remember preference
+        console.log('🐛 Eruda mobile console enabled');
+      }
+      // Allow disabling with ?eruda=false
+      if (urlParams.get('eruda') === 'false') {
+        localStorage.removeItem('active-eruda');
+      }
+    </script>
+    <!-- ✅ END ERUDA -->
   </head>
   <body>
     <div id="root"></div>
