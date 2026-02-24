@@ -2188,6 +2188,52 @@ export default function VideoWatch() {
               setCurrentMedia(prev => ({ ...prev, original_name: message.data.currently_playing }));
             }
           }
+          
+          // 🚨 BACKUP: If host started screen share, immediately search for tracks
+          // This provides instant fallback when LiveKit ParticipantEvent.TrackPublished is delayed by network issues
+          if (message.data?.is_screen_sharing && 
+              message.data?.screen_sharing_user_id !== currentUser?.id && 
+              room) {
+            console.log('🎬 [VideoWatch MEMBER] Host started screenshare - searching for tracks NOW (backup mechanism)');
+            
+            // Immediately check all remote participants for video tracks
+            let foundTrack = false;
+            room.remoteParticipants.forEach(participant => {
+              const participantUserId = participant.identity?.split('-')[1];
+              
+              console.log(`🔍 [VideoWatch BACKUP] Checking participant ${participant.identity}:`, {
+                videoTrackCount: participant.videoTrackPublications.size,
+                isHost: participantUserId === String(message.data.screen_sharing_user_id)
+              });
+              
+              if (participantUserId === String(message.data.screen_sharing_user_id)) {
+                // This is the host - check for screen share tracks
+                participant.videoTrackPublications.forEach(publication => {
+                  if (publication.source === Track.Source.ScreenShare || 
+                      publication.source === 'screen_share') {
+                    console.log('📹 [VideoWatch BACKUP] Found screen share track via WebSocket event!', {
+                      trackSid: publication.trackSid,
+                      source: publication.source,
+                      isSubscribed: publication.isSubscribed
+                    });
+                    
+                    if (!publication.isSubscribed) {
+                      console.log('📥 [VideoWatch BACKUP] Subscribing to track immediately');
+                      publication.setSubscribed(true);
+                      foundTrack = true;
+                    } else {
+                      console.log('✅ [VideoWatch BACKUP] Track already subscribed');
+                      foundTrack = true;
+                    }
+                  }
+                });
+              }
+            });
+            
+            if (!foundTrack) {
+              console.log('⏳ [VideoWatch BACKUP] No tracks found yet - LiveKit event will trigger subscription when available');
+            }
+          }
           break;
         case "screen_share_stopped":
           if (currentMedia?.type === 'screen_share') {
@@ -3960,6 +4006,48 @@ export default function VideoWatch() {
           quiz={currentQuizData}
         />
       )}
+
+      {/* 📋 FLOATING LOG EXPORT BUTTON */}
+      <button
+        onClick={() => {
+          if (window.downloadLogs) {
+            window.downloadLogs();
+            console.log('📥 [VideoWatch] Downloading console logs...');
+          } else {
+            console.error('❌ [VideoWatch] window.downloadLogs not available');
+          }
+        }}
+        style={{
+          position: 'fixed',
+          bottom: '80px',
+          right: '20px',
+          zIndex: 10000,
+          background: '#4CAF50',
+          color: 'white',
+          border: 'none',
+          borderRadius: '50%',
+          width: '60px',
+          height: '60px',
+          fontSize: '28px',
+          cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'all 0.2s ease',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'scale(1.1)';
+          e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.4)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'scale(1)';
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+        }}
+        title="Download Console Logs"
+      >
+        📋
+      </button>
     </div>
   );
 }
