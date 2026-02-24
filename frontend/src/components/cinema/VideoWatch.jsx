@@ -4009,12 +4009,57 @@ export default function VideoWatch() {
 
       {/* 📋 FLOATING LOG EXPORT BUTTON */}
       <button
-        onClick={() => {
-          if (window.downloadLogs) {
-            window.downloadLogs();
-            console.log('📥 [VideoWatch] Downloading console logs...');
-          } else {
-            console.error('❌ [VideoWatch] window.downloadLogs not available');
+        onClick={async () => {
+          try {
+            // Get all console logs from Eruda
+            const logs = [];
+            
+            // Try to access Eruda console history
+            if (window.eruda && window.eruda._$get && window.eruda._$get('console')) {
+              const erudaConsole = window.eruda._$get('console');
+              if (erudaConsole._logs && Array.isArray(erudaConsole._logs)) {
+                erudaConsole._logs.forEach(log => {
+                  // Format: [timestamp] [type] message
+                  const timestamp = log.time ? new Date(log.time).toISOString() : new Date().toISOString();
+                  const type = log.type || 'log';
+                  const message = Array.isArray(log.args) 
+                    ? log.args.map(arg => {
+                        if (typeof arg === 'object') {
+                          try {
+                            return JSON.stringify(arg, null, 2);
+                          } catch (e) {
+                            return String(arg);
+                          }
+                        }
+                        return String(arg);
+                      }).join(' ')
+                    : String(log.args || log.message || '');
+                  
+                  logs.push(`[${timestamp}] [${type.toUpperCase()}] ${message}`);
+                });
+              }
+            }
+            
+            if (logs.length === 0) {
+              toast.error('No logs found. Make sure Eruda is loaded.');
+              console.error('❌ Could not access Eruda logs');
+              return;
+            }
+            
+            const logText = logs.join('\n');
+            
+            // Copy to clipboard
+            await navigator.clipboard.writeText(logText);
+            
+            toast.success(`📋 Copied ${logs.length} log entries!`, {
+              duration: 3000,
+              icon: '✅'
+            });
+            
+            console.log(`✅ [VideoWatch] Copied ${logs.length} logs to clipboard`);
+          } catch (error) {
+            console.error('❌ [VideoWatch] Failed to copy logs:', error);
+            toast.error('Failed to copy logs. Check console for details.');
           }
         }}
         style={{
@@ -4044,7 +4089,7 @@ export default function VideoWatch() {
           e.currentTarget.style.transform = 'scale(1)';
           e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
         }}
-        title="Download Console Logs"
+        title="Copy All Logs to Clipboard"
       >
         📋
       </button>
