@@ -42,6 +42,51 @@ import QuizResultsModal from './modals/QuizResultsModal';
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
   
+  // 📋 EXPORT LOGS: Add window function to download console logs
+  useEffect(() => {
+    window.exportLogs = () => {
+      const logs = [];
+      const originalLog = console.log;
+      const originalWarn = console.warn;
+      const originalError = console.error;
+      
+      // Intercept console methods
+      console.log = (...args) => {
+        logs.push({ type: 'log', time: new Date().toISOString(), message: args });
+        originalLog(...args);
+      };
+      console.warn = (...args) => {
+        logs.push({ type: 'warn', time: new Date().toISOString(), message: args });
+        originalWarn(...args);
+      };
+      console.error = (...args) => {
+        logs.push({ type: 'error', time: new Date().toISOString(), message: args });
+        originalError(...args);
+      };
+      
+      // Download function
+      window.downloadLogs = () => {
+        const logText = logs.map(l => `[${l.time}] [${l.type.toUpperCase()}] ${JSON.stringify(l.message)}`).join('\n');
+        const blob = new Blob([logText], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `wewatch-logs-${Date.now()}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+        console.log(`✅ Downloaded ${logs.length} log entries`);
+      };
+      
+      console.log('📋 Log capture started. Call window.downloadLogs() to download.');
+      return { logs, download: window.downloadLogs };
+    };
+    
+    return () => {
+      delete window.exportLogs;
+      delete window.downloadLogs;
+    };
+  }, []);
+  
   // Move these to top before any useEffect that uses them
   const location = useLocation();
   const [roomHostId, setRoomHostId] = useState(null);
@@ -843,7 +888,7 @@ export default function VideoWatch() {
         
         // Log polling status every 10 seconds if no tracks found
         if (videoTrackCount === 0 && Date.now() - lastPollLogTime > 10000) {
-          console.log(`🔍 [VideoWatch] Polling #${pollCount}: No video tracks from ${participant.identity} (${Math.round((Date.now() - subscriptionStartTime) / 1000)}s elapsed)`);
+          console.log(`� [VideoWatch POLL #${pollCount}] No video tracks yet from ${participant.identity} (${Math.round((Date.now() - subscriptionStartTime) / 1000)}s elapsed, ${pollCount * 500}ms total polling time)`);
           lastPollLogTime = Date.now();
         }
       });
