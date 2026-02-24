@@ -3341,6 +3341,16 @@ export default function VideoWatch() {
   }, [showPrivateChat, privateChatUser, sendMessage, privateMessages]);
 
   // ✅ FIND SCREEN SHARE TRACK FROM LIVEKIT (MUST BE BEFORE EARLY RETURN)
+  // Force useMemo recalculation when track count changes
+  const remoteTrackCount = React.useMemo(() => {
+    if (!room) return 0;
+    let count = 0;
+    room.remoteParticipants.forEach(p => {
+      count += (p.videoTrackPublications?.size || 0);
+    });
+    return count;
+  }, [room, remoteParticipants]);
+
   const remoteScreenTrack = React.useMemo(() => {
     if (!room) {
       console.log('⚠️ [VideoWatch] No room connected');
@@ -3348,6 +3358,7 @@ export default function VideoWatch() {
     }
 
     console.log('🔍 [VideoWatch] Searching for remote screen share in room');
+    console.log('🔍 [VideoWatch] Remote track count:', remoteTrackCount);
     
     // Access participants directly from room for latest state
     const participants = Array.from(room.remoteParticipants.values());
@@ -3388,7 +3399,7 @@ export default function VideoWatch() {
     
     console.log('⚠️ [VideoWatch] No remote screen share track found');
     return null;
-  }, [room, remoteParticipants]); // Depend on both room and remoteParticipants
+  }, [room, remoteParticipants, remoteTrackCount]); // Add remoteTrackCount to force recalculation
 
   // 📹 Enrich participants with LiveKit camera tracks
   const participantsWithCamera = useMemo(() => {
