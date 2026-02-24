@@ -47,6 +47,13 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
 
     if ((isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && track?.mediaStreamTrack)) {
       const mediaStreamTrack = isHost ? localScreenTrack.mediaStreamTrack : track.mediaStreamTrack;
+      
+      // ✅ Skip if track is ended (prevents re-attachment with stale tracks)
+      if (mediaStreamTrack.readyState === 'ended') {
+        console.warn(`⚠️ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Track already ended, skipping attachment`);
+        return;
+      }
+      
       console.log(`🎬 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Attaching track`, {
         trackId: mediaStreamTrack.id,
         trackKind: mediaStreamTrack.kind,
