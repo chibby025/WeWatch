@@ -742,17 +742,35 @@ export default function VideoWatch() {
     // ✅ Track timing for debugging LiveKit Cloud delays
     const subscriptionStartTime = Date.now();
     console.log(`⏱️ [VideoWatch] Video subscription initialized at ${new Date().toISOString()}`);
+    
+    // 🔍 DEBUG: Track which tracks have been detected by which method
+    const detectedTracks = new Map(); // trackSid -> { method: string, timestamp: number }
 
     const handleTrackPublished = (publication, participant) => {
       const detectionTime = Date.now();
       const delay = detectionTime - subscriptionStartTime;
       
       if (publication.kind === 'video') {
-        console.log(`🎬 [VideoWatch MEMBER] Video track detected via TrackPublished! (${delay}ms after init)`, {
+        // 🔍 DEBUG: Record detection via RoomEvent
+        const trackKey = `${participant.identity}-${publication.trackSid}`;
+        if (detectedTracks.has(trackKey)) {
+          const previous = detectedTracks.get(trackKey);
+          console.warn(`⚠️ [DEBUG] Track ${publication.trackSid} detected AGAIN via RoomEvent.TrackPublished!`, {
+            previousMethod: previous.method,
+            previousDelay: previous.delay,
+            currentDelay: delay,
+            timeDiff: delay - previous.delay
+          });
+        } else {
+          detectedTracks.set(trackKey, { method: 'RoomEvent.TrackPublished', delay, timestamp: detectionTime });
+        }
+        
+        console.log(`🎬 [VideoWatch MEMBER] Video track detected via RoomEvent.TrackPublished! (${delay}ms after init)`, {
           trackSid: publication.trackSid,
           source: publication.source,
           participant: participant.identity,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          isFirstDetection: !detectedTracks.has(trackKey)
         });
         publication.setSubscribed(true);
       }
@@ -767,7 +785,13 @@ export default function VideoWatch() {
       room.remoteParticipants.forEach((participant) => {
         participant.videoTrackPublications.forEach((publication) => {
           if (!publication.isSubscribed && publication.kind === 'video') {
-            console.log(`✅ Subscribing to ${publication.source} from ${participant.identity}`);
+            const trackKey = `${participant.identity}-${publication.trackSid}`;
+            detectedTracks.set(trackKey, { 
+              method: 'Mount Check', 
+              delay: 0, 
+              timestamp: Date.now() 
+            });
+            console.log(`✅ Subscribing to ${publication.source} from ${participant.identity} (found on mount)`);
             publication.setSubscribed(true);
           }
         });
@@ -777,9 +801,12 @@ export default function VideoWatch() {
     // Listen for new track publications
     room.on(RoomEvent.TrackPublished, handleTrackPublished);
 
-    // ✅ POLLING: Check for new video tracks every 2 seconds (fallback for LiveKit Cloud delays)
+    // ✅ OPTIMIZED POLLING: Check every 500ms (4x faster than before)
     let lastPollLogTime = Date.now();
+    let pollCount = 0;
     const pollInterval = setInterval(() => {
+      pollCount++;
+      
       room.remoteParticipants.forEach((participant) => {
         const videoTrackCount = participant.videoTrackPublications.size;
         
@@ -787,13 +814,28 @@ export default function VideoWatch() {
           if (!publication.isSubscribed && publication.kind === 'video') {
             const detectionTime = Date.now();
             const delay = detectionTime - subscriptionStartTime;
+            const trackKey = `${participant.identity}-${publication.trackSid}`;
             
-            console.log(`🔄 [VideoWatch POLL] Found unsubscribed video track! (${delay}ms delay)`, {
-              trackSid: publication.trackSid,
-              source: publication.source,
-              participant: participant.identity,
-              timestamp: new Date().toISOString()
-            });
+            // 🔍 DEBUG: Check if this track was detected by events first
+            if (detectedTracks.has(trackKey)) {
+              const previous = detectedTracks.get(trackKey);
+              console.warn(`⚠️ [DEBUG] Track ${publication.trackSid} found UNSUBSCRIBED by polling after ${previous.method} detected it!`, {
+                eventMethod: previous.method,
+                eventDelay: previous.delay,
+                pollingDelay: delay,
+                timeSinceEvent: delay - previous.delay,
+                wasSubscribed: 'Event called setSubscribed(true) but track still unsubscribed!'
+              });
+            } else {
+              detectedTracks.set(trackKey, { method: 'Polling', delay, timestamp: detectionTime });
+              console.log(`🔄 [VideoWatch POLL #${pollCount}] Found unsubscribed video track! (${delay}ms delay)`, {
+                trackSid: publication.trackSid,
+                source: publication.source,
+                participant: participant.identity,
+                timestamp: new Date().toISOString(),
+                detectionMethod: 'POLLING_ONLY (no event fired)'
+              });
+            }
             
             publication.setSubscribed(true);
           }
@@ -801,15 +843,19 @@ export default function VideoWatch() {
         
         // Log polling status every 10 seconds if no tracks found
         if (videoTrackCount === 0 && Date.now() - lastPollLogTime > 10000) {
-          console.log(`🔍 [VideoWatch] Polling: No video tracks from ${participant.identity} (${Math.round((Date.now() - subscriptionStartTime) / 1000)}s elapsed)`);
+          console.log(`🔍 [VideoWatch] Polling #${pollCount}: No video tracks from ${participant.identity} (${Math.round((Date.now() - subscriptionStartTime) / 1000)}s elapsed)`);
           lastPollLogTime = Date.now();
         }
       });
-    }, 2000);
+    }, 500); // ✅ 500ms = 4x faster detection
 
     return () => {
       room.off(RoomEvent.TrackPublished, handleTrackPublished);
       clearInterval(pollInterval);
+      console.log(`🔍 [DEBUG] Video subscription cleanup - Detected ${detectedTracks.size} tracks total`);
+      detectedTracks.forEach((info, trackKey) => {
+        console.log(`  📊 ${trackKey}: ${info.method} at ${info.delay}ms`);
+      });
     };
   }, [room]);
 
