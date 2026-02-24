@@ -620,6 +620,23 @@ export default function VideoWatch() {
       }
     };
     
+    // ✅ Store participant-level listeners for cleanup
+    const participantListeners = new Map(); // participant.identity -> handler function
+    
+    // ✅ SHARED: Single TrackPublished handler for ALL participants
+    const handleParticipantTrackPublished = (participant) => (publication) => {
+      console.log(`📢 [VideoWatch] ${participant.identity} published new track:`, {
+        kind: publication.kind,
+        source: publication.source,
+        trackSid: publication.trackSid
+      });
+      
+      if (publication.kind === 'video') {
+        console.log('📹 [VideoWatch] New video track published - auto-subscribing');
+        publication.setSubscribed(true);
+      }
+    };
+    
     // ✅ Handle when remote participant connects (check for existing tracks)
     const handleParticipantConnected = (participant) => {
       console.log('👤 [VideoWatch] Participant connected:', participant.identity);
@@ -644,20 +661,9 @@ export default function VideoWatch() {
       });
       
       // ✅ CRITICAL: Listen for NEW tracks published by this participant
-      const handleParticipantTrackPublished = (publication) => {
-        console.log(`📢 [VideoWatch] ${participant.identity} published new track:`, {
-          kind: publication.kind,
-          source: publication.source,
-          trackSid: publication.trackSid
-        });
-        
-        if (publication.kind === 'video') {
-          console.log('📹 [VideoWatch] New video track published - auto-subscribing');
-          publication.setSubscribed(true);
-        }
-      };
-      
-      participant.on(ParticipantEvent.TrackPublished, handleParticipantTrackPublished);
+      const handler = handleParticipantTrackPublished(participant);
+      participantListeners.set(participant.identity, handler);
+      participant.on(ParticipantEvent.TrackPublished, handler);
     };
 
     room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
@@ -668,26 +674,25 @@ export default function VideoWatch() {
     room.remoteParticipants.forEach((participant) => {
       console.log(`🔗 [VideoWatch] Registering TrackPublished listener for existing participant: ${participant.identity}`);
       
-      const handleParticipantTrackPublished = (publication) => {
-        console.log(`📢 [VideoWatch] ${participant.identity} published new track (already connected):`, {
-          kind: publication.kind,
-          source: publication.source,
-          trackSid: publication.trackSid
-        });
-        
-        if (publication.kind === 'video') {
-          console.log('📹 [VideoWatch] New video track published - auto-subscribing');
-          publication.setSubscribed(true);
-        }
-      };
-      
-      participant.on(ParticipantEvent.TrackPublished, handleParticipantTrackPublished);
+      const handler = handleParticipantTrackPublished(participant);
+      participantListeners.set(participant.identity, handler);
+      participant.on(ParticipantEvent.TrackPublished, handler);
     });
 
     return () => {
       room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
       room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
       room.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
+      
+      // ✅ CLEANUP: Remove all participant-level TrackPublished listeners
+      room.remoteParticipants.forEach((participant) => {
+        const handler = participantListeners.get(participant.identity);
+        if (handler) {
+          participant.off(ParticipantEvent.TrackPublished, handler);
+          console.log(`🧹 [VideoWatch] Removed TrackPublished listener for ${participant.identity}`);
+        }
+      });
+      participantListeners.clear();
       
       // Cleanup all audio elements on unmount
       audioElements.forEach((audioElement, key) => {
