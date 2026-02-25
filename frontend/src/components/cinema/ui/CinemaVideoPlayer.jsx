@@ -18,6 +18,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
 }, ref) {
   const videoRef = useRef(null);
   const cameraVideoRef = useRef(null); // 📹 Separate ref for PIP camera
+  const previousTrackIdRef = useRef(null); // 🔑 Track previous track ID to avoid stopping same track
 
   // 🔑 Expose the actual <video> DOM element to parent
   useImperativeHandle(ref, () => videoRef.current, []);
@@ -47,6 +48,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
 
     if ((isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && track?.mediaStreamTrack)) {
       const mediaStreamTrack = isHost ? localScreenTrack.mediaStreamTrack : track.mediaStreamTrack;
+      const currentTrackId = mediaStreamTrack.id;
       
       // ✅ Skip if track is ended (prevents re-attachment with stale tracks)
       if (mediaStreamTrack.readyState === 'ended') {
@@ -61,11 +63,16 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         trackReadyState: mediaStreamTrack.readyState,
         trackMuted: mediaStreamTrack.muted,
         hasVideo: !!video,
-        videoReadyState: video?.readyState
+        videoReadyState: video?.readyState,
+        previousTrackId: previousTrackIdRef.current,
+        isSameTrack: previousTrackIdRef.current === currentTrackId
       });
       stream = new MediaStream([mediaStreamTrack]);
       video.srcObject = stream;
       video.muted = muted !== undefined ? muted : isHost;
+      
+      // Store current track ID for next cleanup
+      previousTrackIdRef.current = currentTrackId;
       
       // ✅ Wait for metadata before playing to avoid 2x2 pixel black screen
       const handleMetadataLoaded = () => {
@@ -96,10 +103,26 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       }
       
       return () => {
-        console.log(`🧹 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Cleanup`);
+        console.log(`🧹 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Cleanup`, {
+          currentTrackId,
+          nextTrackId: (isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && track?.mediaStreamTrack) ? (isHost ? localScreenTrack.mediaStreamTrack.id : track.mediaStreamTrack.id) : 'none'
+        });
+        
+        // ✅ Only stop track if it's changing to a different track or component is unmounting
+        // Don't stop if it's the same track (useMemo recalculation)
+        const nextTrack = (isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && track?.mediaStreamTrack);
+        const nextTrackId = nextTrack ? (isHost ? localScreenTrack.mediaStreamTrack.id : track.mediaStreamTrack.id) : null;
+        
         if (video.srcObject) {
-          video.srcObject.getTracks().forEach(t => t.stop());
-          video.srcObject = null;
+          if (nextTrackId && nextTrackId === currentTrackId) {
+            console.log(`♻️ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Same track, skipping stop (useMemo recalculation)`);
+            // Don't stop the track - it's the same one, just React re-rendering
+            video.srcObject = null;
+          } else {
+            console.log(`🛑 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Different track or unmount, stopping tracks`);
+            video.srcObject.getTracks().forEach(t => t.stop());
+            video.srcObject = null;
+          }
         }
       };
     }
