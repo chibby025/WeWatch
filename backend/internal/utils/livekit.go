@@ -30,12 +30,13 @@ func GenerateLiveKitToken(roomName string, identity string, isHost bool) (string
 	}
 
 	grant := &auth.VideoGrant{
-		Room:            roomName,
-		RoomJoin:        true,
-		CanPublish:      boolPtr(true), // ✅ Everyone can publish audio/video
-		CanSubscribe:    boolPtr(true),
-		CanPublishData:  boolPtr(true),
-		CanPublishSources: []string{"camera", "microphone", "screen_share"}, // ✅ Explicit video sources
+		Room:         roomName,
+		RoomJoin:     true,
+		CanPublish:   boolPtr(true),      // ✅ Everyone can publish audio/video/screen
+		CanSubscribe: boolPtr(true),      // ✅ Everyone can subscribe to tracks
+		CanPublishData: boolPtr(true),    // ✅ Can send data messages
+		// ✅ CRITICAL: Grant screen share permissions explicitly
+		CanPublishSources: []string{"camera", "microphone", "screen_share", "screen_share_audio"},
 	}
 
 	at := auth.NewAccessToken(apiKey, apiSecret).
