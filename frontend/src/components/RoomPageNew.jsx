@@ -2096,7 +2096,7 @@ const RoomPageNew = () => {
         <form onSubmit={handleSendMessage} className={`bg-gray-800 ${
           isMobile ? 'fixed bottom-0 left-0 right-0 z-40' : 'flex-none'
         } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
-        <div className="flex items-center gap-1 sm:gap-3">
+        <div className="flex items-center gap-0.5 sm:gap-3">
           {/* Left Icons Group - Attach & Voice Note */}
           <div className="flex items-center gap-0 sm:gap-0.5">
             {/* Attach Button */}
