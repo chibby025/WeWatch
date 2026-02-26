@@ -2096,7 +2096,7 @@ const RoomPageNew = () => {
         <form onSubmit={handleSendMessage} className={`bg-gray-800 ${
           isMobile ? 'fixed bottom-0 left-0 right-0 z-40' : 'flex-none'
         } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
-        <div className="flex items-center gap-1.5 sm:gap-3">
+        <div className="flex items-center gap-1 sm:gap-3">
           {/* ✅ Icon Group - Mobile-first with responsive scaling */}
           <div className="flex items-center flex-shrink-0 gap-0.5 sm:gap-3">
             {/* Attach Button */}
@@ -2176,7 +2176,7 @@ const RoomPageNew = () => {
           )}
 
           {/* ✅ Message Input + Send Button Group - Takes remaining space */}
-          <div className="flex items-center flex-1 min-w-0 gap-1.5 sm:gap-3">
+          <div className="flex items-center flex-1 min-w-0 gap-1 sm:gap-3">
             <input
               type="text"
               value={newMessage}
