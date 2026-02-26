@@ -2098,7 +2098,7 @@ const RoomPageNew = () => {
         } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
         <div className="flex items-center gap-1 sm:gap-3">
           {/* ✅ Icon Group - Mobile-first with responsive scaling */}
-          <div className="flex items-center flex-shrink-0 gap-0.5 sm:gap-3">
+          <div className="flex items-center flex-shrink-0 gap-[0.5px] sm:gap-3">
             {/* Attach Button */}
             <button
               type="button"
