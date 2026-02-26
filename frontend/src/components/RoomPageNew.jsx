@@ -2104,7 +2104,7 @@ const RoomPageNew = () => {
               type="button"
               onClick={() => isMember && setIsAttachModalOpen(true)}
               disabled={!isMember}
-              className="hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+              className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
               title={isMember ? "Attach files, images, or create poll" : "Join room to attach content"}
             >
               <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-5 w-5 sm:h-8 sm:w-8" />
@@ -2116,7 +2116,7 @@ const RoomPageNew = () => {
                 type="button"
                 onClick={() => isMember && setShowEmojiPicker(!showEmojiPicker)}
                 disabled={!isMember}
-                className="hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                 title={isMember ? "Emojis & Stickers" : "Join room to use emojis"}
               >
                 <img src="/icons/stickerIcon.svg" alt="Emojis & Stickers" className="h-5 w-5 sm:h-8 sm:w-8" />
@@ -2151,7 +2151,7 @@ const RoomPageNew = () => {
               type="button"
               onClick={handleVoiceNoteClick}
               disabled={!isMember}
-              className={`hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative ${
+              className={`p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative ${
                 isRecording ? 'animate-pulse' : ''
               }`}
               title={isMember ? (isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note") : "Join room to send voice notes"}
