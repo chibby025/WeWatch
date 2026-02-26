@@ -2108,10 +2108,10 @@ const RoomPageNew = () => {
             <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-5 w-5 sm:h-8 sm:w-8" />
           </button>
 
-          {/* ✅ Central Group: Emoji + Message Box + Voice */}
-          <div className="flex items-center flex-1 min-w-0 gap-0 sm:gap-2">
-            {/* Sticker/Emoji Button - Touches left of message box */}
-            <div className="relative inline-flex flex-shrink-0" ref={emojiPickerRef}>
+          {/* ✅ Message Box Container - Contains emoji, input, and voice (when not recording) */}
+          <div className="relative flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg">
+            {/* Emoji Button - Absolute positioned left inside box */}
+            <div className="absolute left-1 top-1/2 -translate-y-1/2 z-10" ref={emojiPickerRef}>
               <button
                 type="button"
                 onClick={() => isMember && setShowEmojiPicker(!showEmojiPicker)}
@@ -2146,43 +2146,56 @@ const RoomPageNew = () => {
               )}
             </div>
 
-            {/* Message Input - Expands in center */}
+            {/* Message Input - Centered with padding to avoid icons */}
             <input
               type="text"
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               placeholder="Message..."
               disabled={!isMember}
-              className="flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-white placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed px-2.5 py-1.5 text-sm sm:px-4 sm:py-2.5"
+              className="w-full bg-transparent border-0 focus:outline-none focus:ring-0 text-white placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed pl-9 pr-9 py-1.5 text-sm sm:pl-12 sm:pr-12 sm:py-2.5"
             />
 
-            {/* Voice Note Button - Touches right of message box */}
-            <button
-              type="button"
-              onClick={handleVoiceNoteClick}
-              disabled={!isMember}
-              className={`p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative flex-shrink-0 ${
-                isRecording ? 'animate-pulse' : ''
-              }`}
-              title={isMember ? (isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note") : "Join room to send voice notes"}
-            >
-              <img 
-                src="/icons/mic.svg" 
-                alt="Voice Note" 
-                className={`h-5 w-5 sm:h-8 sm:w-8 ${isRecording ? 'filter brightness-150' : ''}`}
-              />
-              {isRecording && (
-                <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-              )}
-            </button>
+            {/* Voice Note Button - Absolute positioned right inside box (only when NOT recording) */}
+            {!isRecording && (
+              <button
+                type="button"
+                onClick={handleVoiceNoteClick}
+                disabled={!isMember}
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                title={isMember ? "Record Voice Note" : "Join room to send voice notes"}
+              >
+                <img 
+                  src="/icons/mic.svg" 
+                  alt="Voice Note" 
+                  className="h-5 w-5 sm:h-8 sm:w-8"
+                />
+              </button>
+            )}
           </div>
 
-          {/* Recording Timer Display */}
+          {/* Recording State - Voice button moves outside with timer */}
           {isRecording && (
-            <div className="flex items-center gap-1 text-red-500 font-mono text-[10px] sm:text-xs animate-pulse flex-shrink-0">
-              <span className="w-1.5 h-1.5 bg-red-500 rounded-full" />
-              {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
-            </div>
+            <>
+              <div className="flex items-center gap-1 text-red-500 font-mono text-[10px] sm:text-xs animate-pulse flex-shrink-0">
+                <span className="w-1.5 h-1.5 bg-red-500 rounded-full" />
+                {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
+              </div>
+              <button
+                type="button"
+                onClick={handleVoiceNoteClick}
+                disabled={!isMember}
+                className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative flex-shrink-0 animate-pulse"
+                title="Stop Recording"
+              >
+                <img 
+                  src="/icons/mic.svg" 
+                  alt="Voice Note" 
+                  className="h-5 w-5 sm:h-8 sm:w-8 filter brightness-150"
+                />
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+              </button>
+            </>
           )}
 
           {/* Send Button - Standalone right */}
