@@ -2104,10 +2104,10 @@ const RoomPageNew = () => {
               type="button"
               onClick={() => isMember && setIsAttachModalOpen(true)}
               disabled={!isMember}
-              className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+              className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 min-w-0"
               title={isMember ? "Attach files, images, or create poll" : "Join room to attach content"}
             >
-              <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-5 w-5 sm:h-8 sm:w-8" />
+              <span className="text-lg sm:text-3xl leading-none">📎</span>
             </button>
 
             {/* Voice Note Button */}
@@ -2115,12 +2115,12 @@ const RoomPageNew = () => {
               type="button"
               onClick={handleVoiceNoteClick}
               disabled={!isMember}
-              className={`p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative flex-shrink-0 ${
+              className={`p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative flex-shrink-0 min-w-0 ${
                 isRecording ? 'animate-pulse' : ''
               }`}
               title={isMember ? (isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note") : "Join room to send voice notes"}
             >
-              <span className="text-xl sm:text-3xl leading-none">🎤</span>
+              <span className="text-lg sm:text-3xl leading-none">🎤</span>
               {isRecording && (
                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
               )}
