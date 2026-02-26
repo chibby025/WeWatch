@@ -2125,7 +2125,6 @@ const RoomPageNew = () => {
               >
                 <img src="/icons/stickerIcon.svg" alt="Emojis & Stickers" className={isMobile ? 'h-5 w-5' : 'h-8 w-8'} />
               </button>
-              </button>
               
               {/* Emoji Picker Popup */}
               {showEmojiPicker && isMember && (
