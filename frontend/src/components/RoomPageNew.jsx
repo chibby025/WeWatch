@@ -2098,7 +2098,7 @@ const RoomPageNew = () => {
         } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
         <div className="flex items-center gap-1 sm:gap-3">
           {/* Left Icons Group - Attach & Voice Note */}
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-center gap-0 sm:gap-0.5">
             {/* Attach Button */}
             <button
               type="button"
@@ -2120,7 +2120,7 @@ const RoomPageNew = () => {
               }`}
               title={isMember ? (isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note") : "Join room to send voice notes"}
             >
-              <span className="text-xl sm:text-3xl">🎤</span>
+              <span className="text-xl sm:text-3xl leading-none">🎤</span>
               {isRecording && (
                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
               )}
