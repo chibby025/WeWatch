@@ -267,6 +267,11 @@ export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true
         publishDefaults: {
           audioBitrate: 96000,
         },
+        // 🚀 OPTIMIZE: ICE configuration for faster connection
+        rtcConfig: {
+          iceTransportPolicy: 'all', // Use all available candidates (STUN + TURN)
+          iceCandidatePoolSize: 10, // Pre-gather ICE candidates for faster connection
+        },
       });
       const connectDuration = Date.now() - connectStartTime;
       

@@ -1455,6 +1455,12 @@ export default function CinemaScene3DDemo() {
     }
     
     console.log('🔗 [Cinema LiveKit] Initiating connection for room:', roomId);
+    
+    // Set loading status for voice connection
+    if (enableLoadingOverlay) {
+      setLoadingStatus('connecting_voice');
+    }
+    
     hasAttemptedLiveKitConnection.current = true;
     connectLiveKit();
     
@@ -1466,7 +1472,15 @@ export default function CinemaScene3DDemo() {
       }
       disconnectLiveKit();
     };
-  }, [roomId, currentUser?.id, connectLiveKit, disconnectLiveKit]);
+  }, [roomId, currentUser?.id, connectLiveKit, disconnectLiveKit, enableLoadingOverlay]);
+  
+  // 🎯 Clear loading overlay when LiveKit connects
+  useEffect(() => {
+    if (isLiveKitConnected && loadingStatus === 'connecting_voice') {
+      console.log('✅ [Cinema LiveKit] Voice connected, clearing loading overlay');
+      // Don't clear immediately - will be cleared by seat assignment
+    }
+  }, [isLiveKitConnected, loadingStatus]);
 
   // � Audio level tracking for pulsating speaking icons
   const [activeSpeakers, setActiveSpeakers] = useState(new Map()); // Map<participantIdentity, {isSpeaking: boolean, audioLevel: number}>
@@ -4160,7 +4174,7 @@ export default function CinemaScene3DDemo() {
       className="relative w-full h-screen bg-[#0a0a0a] overflow-hidden"
     >
       {/* 🎬 Loading Overlay - black screen with spinner until camera loads */}
-      {loadingStatus && <CinemaLoadingOverlay />}
+      {loadingStatus && <CinemaLoadingOverlay status={loadingStatus} />}
 
       {/* 🖥️ Exit Fullscreen Button - shown when in fullscreen */}
       {isFullscreen && (

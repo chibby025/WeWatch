@@ -1,7 +1,24 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { FilmIcon, CubeIcon } from '@heroicons/react/24/outline';
+import { useGLTF } from '@react-three/drei';
 
 const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch Experience", currentUser }) => {
+  // 🎯 Preload GLB models when modal opens for faster loading
+  useEffect(() => {
+    if (isOpen) {
+      console.log('🔄 [WatchTypeModal] Preloading 3D models...');
+      const startTime = Date.now();
+      
+      // Preload cinema GLB model
+      useGLTF.preload('/models/cinema.glb');
+      
+      // Preload lecture hall GLB model
+      useGLTF.preload('/models/lecture_hall.glb');
+      
+      console.log(`✅ [WatchTypeModal] Started preloading models (${Date.now() - startTime}ms)`);
+    }
+  }, [isOpen]);
+  
   if (!isOpen) return null;
 
   const watchTypes = [
