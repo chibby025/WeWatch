@@ -2162,7 +2162,7 @@ const RoomPageNew = () => {
                 type="button"
                 onClick={handleVoiceNoteClick}
                 disabled={!isMember}
-                className="absolute right-0 top-1/2 -translate-y-1/2 p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                 title={isMember ? "Record Voice Note" : "Join room to send voice notes"}
               >
                 <img 
