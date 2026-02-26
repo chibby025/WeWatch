@@ -150,6 +150,89 @@ export default function CinemaScene3DDemo() {
   const componentIdRef = useRef(`cinema-${Date.now()}-${Math.random()}`);
   const mountCountRef = useRef(0);
   
+  // 📋 LOG CAPTURE SYSTEM (like VideoWatch pattern)
+  useEffect(() => {
+    // Initialize captured logs array
+    if (!window._capturedLogs) {
+      window._capturedLogs = [];
+    }
+    
+    // Store original console methods
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    
+    // Intercept console.log
+    console.log = (...args) => {
+      window._capturedLogs.push({
+        type: 'log',
+        timestamp: Date.now(),
+        time: new Date().toISOString(),
+        args: args.map(arg => {
+          try {
+            return typeof arg === 'object' ? JSON.stringify(arg) : String(arg);
+          } catch {
+            return '[Circular or Complex Object]';
+          }
+        })
+      });
+      // Keep only last 500 logs to prevent memory issues
+      if (window._capturedLogs.length > 500) {
+        window._capturedLogs = window._capturedLogs.slice(-500);
+      }
+      originalLog.apply(console, args);
+    };
+    
+    // Intercept console.warn
+    console.warn = (...args) => {
+      window._capturedLogs.push({
+        type: 'warn',
+        timestamp: Date.now(),
+        time: new Date().toISOString(),
+        args: args.map(arg => {
+          try {
+            return typeof arg === 'object' ? JSON.stringify(arg) : String(arg);
+          } catch {
+            return '[Circular or Complex Object]';
+          }
+        })
+      });
+      if (window._capturedLogs.length > 500) {
+        window._capturedLogs = window._capturedLogs.slice(-500);
+      }
+      originalWarn.apply(console, args);
+    };
+    
+    // Intercept console.error
+    console.error = (...args) => {
+      window._capturedLogs.push({
+        type: 'error',
+        timestamp: Date.now(),
+        time: new Date().toISOString(),
+        args: args.map(arg => {
+          try {
+            return typeof arg === 'object' ? JSON.stringify(arg) : String(arg);
+          } catch {
+            return '[Circular or Complex Object]';
+          }
+        })
+      });
+      if (window._capturedLogs.length > 500) {
+        window._capturedLogs = window._capturedLogs.slice(-500);
+      }
+      originalError.apply(console, args);
+    };
+    
+    console.log('📋 [CinemaScene3DDemo] Log capture system initialized');
+    
+    // Restore original console methods on unmount
+    return () => {
+      console.log = originalLog;
+      console.warn = originalWarn;
+      console.error = originalError;
+    };
+  }, []);
+  
   useEffect(() => {
     mountCountRef.current++;
     console.log(`🎬 [CinemaScene3DDemo] MOUNT #${mountCountRef.current}`, {
@@ -183,7 +266,40 @@ export default function CinemaScene3DDemo() {
   const [currentCameraLookAt, setCurrentCameraLookAt] = useState([0, 0, 0]);
   const [viewLockedBeforeCalculator, setViewLockedBeforeCalculator] = useState(true);
   
-  // 📷 Camera view cycling state
+  // � Log Export Function
+  const handleExportLogs = useCallback(() => {
+    try {
+      const logs = window._capturedLogs || [];
+      if (logs.length === 0) {
+        toast.warn('No logs captured yet');
+        return;
+      }
+      
+      // Format logs as readable text
+      const logText = logs.map(log => {
+        const timestamp = new Date(log.timestamp).toISOString();
+        const type = log.type.toUpperCase();
+        const message = log.args.join(' ');
+        return `[${timestamp}] [${type}] ${message}`;
+      }).join('\n');
+      
+      // Copy to clipboard
+      navigator.clipboard.writeText(logText).then(() => {
+        toast.success(`✅ Copied ${logs.length} logs to clipboard!`, {
+          duration: 2000
+        });
+        console.log('📋 [LOG EXPORT] Exported', logs.length, 'logs');
+      }).catch(err => {
+        console.error('❌ [LOG EXPORT] Failed to copy:', err);
+        toast.error('Failed to copy logs');
+      });
+    } catch (err) {
+      console.error('❌ [LOG EXPORT] Error:', err);
+      toast.error('Error exporting logs');
+    }
+  }, []);
+  
+  // �📷 Camera view cycling state
   const [currentCameraView, setCurrentCameraView] = useState('center'); // 'left', 'center', 'right'
   const [showCameraArrows, setShowCameraArrows] = useState(true);
   const cameraArrowTimeoutRef = useRef(null);
@@ -557,6 +673,49 @@ export default function CinemaScene3DDemo() {
       }
     }
   }, [messages.length]);
+  
+  // 🐛 DEBUG: Log ALL WebSocket messages with detailed information
+  useEffect(() => {
+    if (messages.length === 0) return;
+    
+    const lastMsg = messages[messages.length - 1];
+    
+    // Log ALL messages with full details
+    console.log('📨 [WEBSOCKET MESSAGE] Received:', {
+      type: lastMsg.type,
+      data: lastMsg.data,
+      fullMessage: lastMsg,
+      timestamp: new Date().toISOString(),
+      messageNumber: messages.length
+    });
+    
+    // Highlight media-related messages
+    const mediaTypes = [
+      'media_added',
+      'media_removed',
+      'media_list',
+      'media_selected',
+      'play_media',
+      'pause_media',
+      'seek_media',
+      'playback_control',
+      'media_ended',
+      'request_playback_state',
+      'playback_state_sync'
+    ];
+    
+    if (mediaTypes.includes(lastMsg.type)) {
+      console.log('🎬 [MEDIA MESSAGE] ===>', {
+        type: lastMsg.type,
+        mediaId: lastMsg.data?.media_id || lastMsg.data?.media_item_id,
+        fileName: lastMsg.data?.original_name || lastMsg.data?.file_path,
+        command: lastMsg.data?.command,
+        seekTime: lastMsg.data?.seek_time,
+        isPlaying: lastMsg.data?.is_playing,
+        fullData: lastMsg.data
+      });
+    }
+  }, [messages.length]);
 
   // 🔄 Auto-request seat assignment when connecting to cinema
   useEffect(() => {
@@ -807,6 +966,19 @@ export default function CinemaScene3DDemo() {
   // 🔄 Restore media playback state on mount (REMOVED - now using Resume button instead)
   // Resume functionality will be handled via explicit user action in LeftSidebar
 
+  // 🐛 DEBUG: Track currentMedia state changes
+  useEffect(() => {
+    console.log('🎬 [CURRENT MEDIA STATE] Changed:', {
+      hasMedia: !!currentMedia,
+      mediaId: currentMedia?.ID || currentMedia?.id,
+      type: currentMedia?.type,
+      title: currentMedia?.original_name || currentMedia?.title,
+      mediaUrl: currentMedia?.mediaUrl || currentMedia?.file_url,
+      fullMedia: currentMedia,
+      timestamp: new Date().toISOString()
+    });
+  }, [currentMedia]);
+  
   // 🎬 Load uploaded media into video element when currentMedia changes
   useEffect(() => {
     // Don't interfere with LiveShare video elements
@@ -817,6 +989,7 @@ export default function CinemaScene3DDemo() {
 
     // Clear video if no media
     if (!currentMedia) {
+      console.log('🧹 [Media Loading] No currentMedia - clearing video element');
       if (videoRef.current) {
         videoRef.current.pause();
         videoRef.current.src = '';
@@ -1909,6 +2082,13 @@ export default function CinemaScene3DDemo() {
         return;
       }
       
+      // 📋 Export logs with L key
+      if (e.key.toLowerCase() === 'l' && e.ctrlKey) {
+        e.preventDefault();
+        handleExportLogs();
+        return;
+      }
+      
       // 🎯 Toggle Seat Position Markers with M key
       if (e.key.toLowerCase() === 'm') {
         e.preventDefault();
@@ -1969,26 +2149,63 @@ export default function CinemaScene3DDemo() {
 
   // Fetch media items - SESSION-SPECIFIC (not all room media)
   const fetchAndGeneratePosters = useCallback(async () => {
-    if (!roomId || !currentUser || !finalSessionId) return;
+    console.log('📥 [PLAYLIST FETCH] Starting fetch...', {
+      roomId,
+      currentUserId: currentUser?.id,
+      sessionId: finalSessionId,
+      hasAllParams: !!(roomId && currentUser && finalSessionId)
+    });
+    
+    if (!roomId || !currentUser || !finalSessionId) {
+      console.warn('⚠️ [PLAYLIST FETCH] Missing required parameters, skipping fetch');
+      return;
+    }
+    
     try {
       // ✅ Use session-specific endpoint to only fetch media for THIS session
+      console.log(`📡 [PLAYLIST FETCH] Calling getSessionTemporaryMedia for session ${finalSessionId}`);
       const mediaItems = await getSessionTemporaryMedia(finalSessionId);
+      console.log(`✅ [PLAYLIST FETCH] Received ${mediaItems.length} media items:`, mediaItems);
+      
       const normalized = mediaItems.map(item => ({
         ...item,
         ID: item.ID || item.id,
         poster_url: item.poster_url || '/icons/placeholder-poster.jpg'
       }));
+      
+      console.log(`🔄 [PLAYLIST FETCH] Setting playlist with ${normalized.length} normalized items`);
       setPlaylist(normalized);
+      console.log('✅ [PLAYLIST FETCH] Playlist state updated successfully');
     } catch (err) {
-      console.error("Failed to fetch media:", err);
+      console.error("❌ [PLAYLIST FETCH] Failed to fetch media:", err);
+      console.error("❌ [PLAYLIST FETCH] Error details:", {
+        message: err.message,
+        status: err.response?.status,
+        data: err.response?.data
+      });
       setPlaylist([]);
     }
   }, [roomId, currentUser, finalSessionId]);
 
   // Fetch on mount
   useEffect(() => {
+    console.log('🎬 [PLAYLIST] Fetching playlist on mount...');
     fetchAndGeneratePosters();
   }, [fetchAndGeneratePosters]);
+  
+  // 🐛 DEBUG: Track playlist state changes
+  useEffect(() => {
+    console.log('📝 [PLAYLIST STATE] Playlist changed:', {
+      count: playlist.length,
+      items: playlist.map(item => ({
+        ID: item.ID,
+        title: item.original_name || item.title,
+        type: item.type,
+        mediaUrl: item.mediaUrl || item.file_url
+      })),
+      timestamp: new Date().toISOString()
+    });
+  }, [playlist]);
 
   // ✅ Also fetch session status on mount (like VideoWatch)
   useEffect(() => {
@@ -4405,6 +4622,21 @@ export default function CinemaScene3DDemo() {
         onToggleChatBubbles={() => setShowChatBubbles(!showChatBubbles)} // 💬 Toggle handler
         unreadMessages={unreadMessages}
       />
+      )}
+      
+      {/* 📋 DEBUG: Log Export Button (bottom-right corner, outside fullscreen) */}
+      {!isImmersiveMode && (
+        <button
+          onClick={handleExportLogs}
+          className="fixed bottom-4 right-4 z-[100] bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-medium transition-all duration-200 flex items-center gap-2 group"
+          title="Export debug logs to clipboard (Ctrl+L)"
+        >
+          <svg className="w-4 h-4 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <span className="hidden sm:inline">Export Logs</span>
+          <span className="inline sm:hidden">Logs</span>
+        </button>
       )}
 
       {/* Left Sidebar */}
