@@ -2097,32 +2097,35 @@ const RoomPageNew = () => {
           isMobile ? 'fixed bottom-0 left-0 right-0 z-40' : 'flex-none'
         } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
         <div className="flex items-center gap-1 sm:gap-3">
-          {/* Attach Button - Standalone left */}
-          <button
-            type="button"
-            onClick={() => isMember && setIsAttachModalOpen(true)}
-            disabled={!isMember}
-            className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-            title={isMember ? "Attach files, images, or create poll" : "Join room to attach content"}
-          >
-            <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-5 w-5 sm:h-8 sm:w-8" />
-          </button>
+          {/* Left Icons Group - Attach & Voice Note */}
+          <div className="flex items-center gap-0.5">
+            {/* Attach Button */}
+            <button
+              type="button"
+              onClick={() => isMember && setIsAttachModalOpen(true)}
+              disabled={!isMember}
+              className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+              title={isMember ? "Attach files, images, or create poll" : "Join room to attach content"}
+            >
+              <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-5 w-5 sm:h-8 sm:w-8" />
+            </button>
 
-          {/* Voice Note Button - Next to attach on left */}
-          <button
-            type="button"
-            onClick={handleVoiceNoteClick}
-            disabled={!isMember}
-            className={`p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative flex-shrink-0 ${
-              isRecording ? 'animate-pulse' : ''
-            }`}
-            title={isMember ? (isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note") : "Join room to send voice notes"}
-          >
-            <span className="text-xl sm:text-3xl">🎤</span>
-            {isRecording && (
-              <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-            )}
-          </button>
+            {/* Voice Note Button */}
+            <button
+              type="button"
+              onClick={handleVoiceNoteClick}
+              disabled={!isMember}
+              className={`p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative flex-shrink-0 ${
+                isRecording ? 'animate-pulse' : ''
+              }`}
+              title={isMember ? (isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note") : "Join room to send voice notes"}
+            >
+              <span className="text-xl sm:text-3xl">🎤</span>
+              {isRecording && (
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+              )}
+            </button>
+          </div>
 
           {/* Recording Timer Display */}
           {isRecording && (
