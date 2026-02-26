@@ -2118,11 +2118,7 @@ const RoomPageNew = () => {
             }`}
             title={isMember ? (isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note") : "Join room to send voice notes"}
           >
-            <img 
-              src="/icons/mic.svg" 
-              alt="Voice Note" 
-              className={`h-5 w-5 sm:h-8 sm:w-8 ${isRecording ? 'filter brightness-150' : ''}`}
-            />
+            <span className="text-xl sm:text-3xl">🎤</span>
             {isRecording && (
               <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
             )}
