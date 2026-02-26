@@ -2107,7 +2107,7 @@ const RoomPageNew = () => {
               className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 min-w-0"
               title={isMember ? "Attach files, images, or create poll" : "Join room to attach content"}
             >
-              <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-[18px] w-[18px] sm:h-[30px] sm:w-[30px]" />
+              <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-[22px] w-[22px] sm:h-[30px] sm:w-[30px]" />
             </button>
 
             {/* Voice Note Button */}
@@ -2123,7 +2123,7 @@ const RoomPageNew = () => {
               <img 
                 src="/icons/mic.svg" 
                 alt="Voice Note" 
-                className={`h-[18px] w-[18px] sm:h-[30px] sm:w-[30px] ${isRecording ? 'filter brightness-150' : ''}`}
+                className={`h-[22px] w-[22px] sm:h-[30px] sm:w-[30px] ${isRecording ? 'filter brightness-150' : ''}`}
               />
               {isRecording && (
                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
@@ -2140,7 +2140,7 @@ const RoomPageNew = () => {
           )}
 
           {/* ✅ Message Box Container - Contains emoji and input */}
-          <div className="relative flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg">
+          <div className="relative flex-1 min-w-0 max-w-[60%] sm:max-w-none bg-gray-700 border border-gray-600 rounded-lg">
             {/* Emoji Button - Absolute positioned left inside box */}
             <div className="absolute left-1 top-1/2 -translate-y-1/2 z-10" ref={emojiPickerRef}>
               <button
@@ -2193,12 +2193,14 @@ const RoomPageNew = () => {
             type="button"
             onClick={isMember ? handleSendMessage : undefined}
             disabled={!isMember}
-            className={`p-0 transition-opacity flex-shrink-0 min-w-0 ${
+            className={`p-0 transition-all flex-shrink-0 min-w-0 ${
               isMember ? 'cursor-pointer hover:opacity-80' : 'opacity-40 cursor-not-allowed'
             }`}
             title={isMember ? "Send message" : "Join room to send messages"}
           >
-            <span className="text-lg sm:text-3xl leading-none">➤</span>
+            <span className={`text-xl sm:text-3xl leading-none transition-colors ${
+              newMessage.trim() ? 'text-white' : 'text-gray-500'
+            }`}>➤</span>
           </button>
         </div>
         </form>
