@@ -2111,7 +2111,7 @@ const RoomPageNew = () => {
             </button>
             
             {/* Sticker/Emoji Button */}
-            <div className="relative" ref={emojiPickerRef}>
+            <div className="relative inline-flex" ref={emojiPickerRef}>
               <button
                 type="button"
                 onClick={() => isMember && setShowEmojiPicker(!showEmojiPicker)}
