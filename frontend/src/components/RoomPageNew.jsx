@@ -2094,15 +2094,11 @@ const RoomPageNew = () => {
       {/* ✅ Message Input - Fixed bottom on mobile */}
       {isMember && (
         <form onSubmit={handleSendMessage} className={`bg-gray-800 ${
-          isMobile ? 'fixed bottom-0 left-0 right-0 z-40 px-2 py-2 shadow-lg' : 'flex-none px-4 py-3'
-        }`}>
-        <div className={`flex items-center ${
-          isMobile ? 'gap-1.5' : 'gap-3'
-        }`}>
-          {/* ✅ Icon Group - Compact for all mobile screens */}
-          <div className={`flex items-center flex-shrink-0 ${
-            isMobile ? 'gap-0.5' : 'gap-3'
-          }`}>
+          isMobile ? 'fixed bottom-0 left-0 right-0 z-40' : 'flex-none'
+        } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
+        <div className="flex items-center gap-1.5 sm:gap-3">
+          {/* ✅ Icon Group - Mobile-first with responsive scaling */}
+          <div className="flex items-center flex-shrink-0 gap-0.5 sm:gap-3">
             {/* Attach Button */}
             <button
               type="button"
@@ -2111,7 +2107,7 @@ const RoomPageNew = () => {
               className="hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
               title={isMember ? "Attach files, images, or create poll" : "Join room to attach content"}
             >
-              <img src="/icons/roomAttachIcon.svg" alt="Attach" className={isMobile ? 'h-5 w-5' : 'h-8 w-8'} />
+              <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-5 w-5 sm:h-8 sm:w-8" />
             </button>
             
             {/* Sticker/Emoji Button */}
@@ -2123,7 +2119,7 @@ const RoomPageNew = () => {
                 className="hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                 title={isMember ? "Emojis & Stickers" : "Join room to use emojis"}
               >
-                <img src="/icons/stickerIcon.svg" alt="Emojis & Stickers" className={isMobile ? 'h-5 w-5' : 'h-8 w-8'} />
+                <img src="/icons/stickerIcon.svg" alt="Emojis & Stickers" className="h-5 w-5 sm:h-8 sm:w-8" />
               </button>
               
               {/* Emoji Picker Popup */}
@@ -2132,7 +2128,7 @@ const RoomPageNew = () => {
                   <EmojiPicker
                     onEmojiClick={handleEmojiClick}
                     theme="dark"
-                    width={isMobile ? 280 : 350}
+                    width={280}
                     height={400}
                     searchPlaceholder="Search emoji..."
                     categories={[
@@ -2163,7 +2159,7 @@ const RoomPageNew = () => {
               <img 
                 src="/icons/mic.svg" 
                 alt="Voice Note" 
-                className={`${isMobile ? 'h-5 w-5' : 'h-8 w-8'} ${isRecording ? 'filter brightness-150' : ''}`}
+                className={`h-5 w-5 sm:h-8 sm:w-8 ${isRecording ? 'filter brightness-150' : ''}`}
               />
               {isRecording && (
                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
@@ -2173,33 +2169,29 @@ const RoomPageNew = () => {
           
           {/* Recording Timer Display */}
           {isRecording && (
-            <div className="flex items-center gap-1 text-red-500 font-mono text-[10px] animate-pulse flex-shrink-0">
+            <div className="flex items-center gap-1 text-red-500 font-mono text-[10px] sm:text-xs animate-pulse flex-shrink-0">
               <span className="w-1.5 h-1.5 bg-red-500 rounded-full" />
               {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
             </div>
           )}
 
           {/* ✅ Message Input + Send Button Group - Takes remaining space */}
-          <div className={`flex items-center flex-1 min-w-0 ${
-            isMobile ? 'gap-1.5' : 'gap-3'
-          }`}>
+          <div className="flex items-center flex-1 min-w-0 gap-1.5 sm:gap-3">
             <input
               type="text"
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
-              placeholder={isMobile ? "Message..." : (isMember ? "Type a message..." : "Join room to chat...")}
+              placeholder="Message..."
               disabled={!isMember}
-              className={`flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-white placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed ${
-                isMobile ? 'px-2.5 py-1.5 text-sm' : 'px-4 py-2.5'
-              }`}
+              className="flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-white placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed px-2.5 py-1.5 text-sm sm:px-4 sm:py-2.5"
             />
             <img 
               src="/icons/sendIcon.svg" 
               alt="Send" 
               onClick={isMember ? handleSendMessage : undefined}
-              className={`transition-opacity flex-shrink-0 ${
+              className={`transition-opacity flex-shrink-0 h-10 w-10 sm:h-20 sm:w-20 ${
                 isMember ? 'cursor-pointer hover:opacity-80' : 'opacity-40 cursor-not-allowed'
-              } ${isMobile ? 'h-10 w-10' : 'h-20 w-20'}`}
+              }`}
               title={isMember ? "Send message" : "Join room to send messages"}
             />
           </div>
