@@ -2107,7 +2107,7 @@ const RoomPageNew = () => {
               className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 min-w-0"
               title={isMember ? "Attach files, images, or create poll" : "Join room to attach content"}
             >
-              <span className="text-lg sm:text-3xl leading-none">📎</span>
+              <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-[18px] w-[18px] sm:h-[30px] sm:w-[30px]" />
             </button>
 
             {/* Voice Note Button */}
@@ -2120,7 +2120,11 @@ const RoomPageNew = () => {
               }`}
               title={isMember ? (isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note") : "Join room to send voice notes"}
             >
-              <span className="text-lg sm:text-3xl leading-none">🎤</span>
+              <img 
+                src="/icons/mic.svg" 
+                alt="Voice Note" 
+                className={`h-[18px] w-[18px] sm:h-[30px] sm:w-[30px] ${isRecording ? 'filter brightness-150' : ''}`}
+              />
               {isRecording && (
                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
               )}
@@ -2185,15 +2189,17 @@ const RoomPageNew = () => {
           </div>
 
           {/* Send Button - Standalone right */}
-          <img 
-            src="/icons/sendIcon.svg" 
-            alt="Send" 
+          <button
+            type="button"
             onClick={isMember ? handleSendMessage : undefined}
-            className={`transition-opacity flex-shrink-0 h-10 w-10 sm:h-20 sm:w-20 ${
+            disabled={!isMember}
+            className={`p-0 transition-opacity flex-shrink-0 min-w-0 ${
               isMember ? 'cursor-pointer hover:opacity-80' : 'opacity-40 cursor-not-allowed'
             }`}
             title={isMember ? "Send message" : "Join room to send messages"}
-          />
+          >
+            <span className="text-lg sm:text-3xl leading-none">➤</span>
+          </button>
         </div>
         </form>
       )}
