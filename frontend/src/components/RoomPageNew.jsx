@@ -2098,7 +2098,7 @@ const RoomPageNew = () => {
         } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
         <div className="flex items-center gap-0.5 sm:gap-3">
           {/* Left Icons Group - Attach & Voice Note */}
-          <div className="flex items-center gap-0 sm:gap-0.5 flex-[0.3] sm:flex-none">
+          <div className="flex items-center gap-0 sm:gap-0.5 flex-none">
             {/* Attach Button */}
             <button
               type="button"
@@ -2140,7 +2140,7 @@ const RoomPageNew = () => {
           )}
 
           {/* ✅ Message Box Container - Contains emoji and input */}
-          <div className="relative flex-[0.6] sm:flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg">
+          <div className="relative flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg">
             {/* Emoji Button - Absolute positioned left inside box */}
             <div className="absolute left-1 top-1/2 -translate-y-1/2 z-10" ref={emojiPickerRef}>
               <button
@@ -2193,7 +2193,7 @@ const RoomPageNew = () => {
             type="button"
             onClick={isMember ? handleSendMessage : undefined}
             disabled={!isMember}
-            className={`p-0 transition-all flex-[0.1] sm:flex-none min-w-0 ${
+            className={`p-0 transition-all flex-none min-w-0 ${
               isMember ? 'cursor-pointer hover:opacity-80' : 'opacity-40 cursor-not-allowed'
             }`}
             title={isMember ? "Send message" : "Join room to send messages"}
