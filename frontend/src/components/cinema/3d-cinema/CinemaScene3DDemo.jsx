@@ -354,16 +354,27 @@ export default function CinemaScene3DDemo() {
   useEffect(() => {
     const loadCinemaSeats = async () => {
       try {
+        // Set loading status while fetching seats
+        if (enableLoadingOverlay) {
+          setLoadingStatus('loading_scene');
+        }
+        
         const response = await fetch('/cinema/cinemaSeats.json');
         const data = await response.json();
         setCinemaSeats(data);
         console.log('✅ Loaded cinemaSeats.json:', data.seats.length, 'seats');
+        
+        // Clear loading status after seats loaded (WebSocket connection will trigger seat request)
+        if (enableLoadingOverlay && !isConnected) {
+          setLoadingStatus('connecting');
+        }
       } catch (err) {
         console.error('❌ Failed to load cinemaSeats.json:', err);
+        setLoadingStatus(null); // Clear loading on error
       }
     };
     loadCinemaSeats();
-  }, []);
+  }, [enableLoadingOverlay, isConnected]);
   
   // �🎁 Fetch wallet balance on mount
   useEffect(() => {
@@ -558,8 +569,10 @@ export default function CinemaScene3DDemo() {
   }, [messages.length]);
 
   // 🔄 Auto-request seat assignment when connecting to cinema
+  // ✅ CRITICAL: Wait for cinemaSeats.json to load before requesting seat assignment
+  // This prevents race condition where seat_assigned arrives before seat data is available
   useEffect(() => {
-    if (isConnected && sendMessage && finalSessionId && currentUser) {
+    if (isConnected && sendMessage && finalSessionId && currentUser && cinemaSeats.seats.length > 0) {
       console.log(`🪑 [SEAT REQUEST] ${currentUser.username} (ID:${currentUser.id}) requesting seat assignment...`);
       
       // Update loading status
@@ -571,7 +584,7 @@ export default function CinemaScene3DDemo() {
       sendMessage({ type: 'request_seat' });
       sendMessage({ type: 'request_seat_state' });
     }
-  }, [isConnected, sendMessage, finalSessionId, currentUser, enableLoadingOverlay]);
+  }, [isConnected, sendMessage, finalSessionId, currentUser, cinemaSeats.seats.length, enableLoadingOverlay]);
   // Load all friendships once on mount
   useEffect(() => {
     const loadFriendships = async () => {
