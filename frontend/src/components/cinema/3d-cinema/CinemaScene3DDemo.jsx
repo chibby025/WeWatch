@@ -354,27 +354,17 @@ export default function CinemaScene3DDemo() {
   useEffect(() => {
     const loadCinemaSeats = async () => {
       try {
-        // Set loading status while fetching seats
-        if (enableLoadingOverlay) {
-          setLoadingStatus('loading_scene');
-        }
-        
+        console.log('🔄 [CinemaSeats] Starting to load cinemaSeats.json...');
         const response = await fetch('/cinema/cinemaSeats.json');
         const data = await response.json();
         setCinemaSeats(data);
-        console.log('✅ Loaded cinemaSeats.json:', data.seats.length, 'seats');
-        
-        // Clear loading status after seats loaded (WebSocket connection will trigger seat request)
-        if (enableLoadingOverlay && !isConnected) {
-          setLoadingStatus('connecting');
-        }
+        console.log('✅ [CinemaSeats] Loaded cinemaSeats.json:', data.seats.length, 'seats');
       } catch (err) {
-        console.error('❌ Failed to load cinemaSeats.json:', err);
-        setLoadingStatus(null); // Clear loading on error
+        console.error('❌ [CinemaSeats] Failed to load cinemaSeats.json:', err);
       }
     };
     loadCinemaSeats();
-  }, [enableLoadingOverlay, isConnected]);
+  }, []);
   
   // �🎁 Fetch wallet balance on mount
   useEffect(() => {
@@ -569,10 +559,18 @@ export default function CinemaScene3DDemo() {
   }, [messages.length]);
 
   // 🔄 Auto-request seat assignment when connecting to cinema
-  // ✅ CRITICAL: Wait for cinemaSeats.json to load before requesting seat assignment
-  // This prevents race condition where seat_assigned arrives before seat data is available
   useEffect(() => {
-    if (isConnected && sendMessage && finalSessionId && currentUser && cinemaSeats.seats.length > 0) {
+    if (isConnected && sendMessage && finalSessionId && currentUser) {
+      console.log('🔍 [SEAT REQUEST DEBUG] Conditions met:', {
+        isConnected,
+        hasSendMessage: !!sendMessage,
+        finalSessionId,
+        currentUserId: currentUser?.id,
+        currentUsername: currentUser?.username,
+        cinemaSeatsLoaded: cinemaSeats.seats.length,
+        timestamp: new Date().toISOString()
+      });
+      
       console.log(`🪑 [SEAT REQUEST] ${currentUser.username} (ID:${currentUser.id}) requesting seat assignment...`);
       
       // Update loading status
@@ -583,8 +581,16 @@ export default function CinemaScene3DDemo() {
       // Immediate request (no delay)
       sendMessage({ type: 'request_seat' });
       sendMessage({ type: 'request_seat_state' });
+    } else {
+      console.log('⏸️ [SEAT REQUEST DEBUG] Waiting for conditions:', {
+        isConnected,
+        hasSendMessage: !!sendMessage,
+        hasFinalSessionId: !!finalSessionId,
+        hasCurrentUser: !!currentUser,
+        cinemaSeatsLoaded: cinemaSeats.seats.length
+      });
     }
-  }, [isConnected, sendMessage, finalSessionId, currentUser, cinemaSeats.seats.length, enableLoadingOverlay]);
+  }, [isConnected, sendMessage, finalSessionId, currentUser, enableLoadingOverlay]);
   // Load all friendships once on mount
   useEffect(() => {
     const loadFriendships = async () => {
