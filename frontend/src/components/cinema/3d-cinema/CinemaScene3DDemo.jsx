@@ -153,8 +153,8 @@ export default function CinemaScene3DDemo() {
   // 📋 LOG CAPTURE SYSTEM (like VideoWatch pattern)
   useEffect(() => {
     // Initialize captured logs array
-    if (!window._capturedLogs) {
-      window._capturedLogs = [];
+    if (!window.capturedLogs) {
+      window.capturedLogs = [];
     }
     
     // Store original console methods
@@ -164,7 +164,7 @@ export default function CinemaScene3DDemo() {
     
     // Intercept console.log
     console.log = (...args) => {
-      window._capturedLogs.push({
+      window.capturedLogs.push({
         type: 'log',
         timestamp: Date.now(),
         time: new Date().toISOString(),
@@ -177,15 +177,15 @@ export default function CinemaScene3DDemo() {
         })
       });
       // Keep only last 500 logs to prevent memory issues
-      if (window._capturedLogs.length > 500) {
-        window._capturedLogs = window._capturedLogs.slice(-500);
+      if (window.capturedLogs.length > 500) {
+        window.capturedLogs = window.capturedLogs.slice(-500);
       }
       originalLog.apply(console, args);
     };
     
     // Intercept console.warn
     console.warn = (...args) => {
-      window._capturedLogs.push({
+      window.capturedLogs.push({
         type: 'warn',
         timestamp: Date.now(),
         time: new Date().toISOString(),
@@ -197,15 +197,15 @@ export default function CinemaScene3DDemo() {
           }
         })
       });
-      if (window._capturedLogs.length > 500) {
-        window._capturedLogs = window._capturedLogs.slice(-500);
+      if (window.capturedLogs.length > 500) {
+        window.capturedLogs = window.capturedLogs.slice(-500);
       }
       originalWarn.apply(console, args);
     };
     
     // Intercept console.error
     console.error = (...args) => {
-      window._capturedLogs.push({
+      window.capturedLogs.push({
         type: 'error',
         timestamp: Date.now(),
         time: new Date().toISOString(),
@@ -217,8 +217,8 @@ export default function CinemaScene3DDemo() {
           }
         })
       });
-      if (window._capturedLogs.length > 500) {
-        window._capturedLogs = window._capturedLogs.slice(-500);
+      if (window.capturedLogs.length > 500) {
+        window.capturedLogs = window.capturedLogs.slice(-500);
       }
       originalError.apply(console, args);
     };
@@ -269,7 +269,7 @@ export default function CinemaScene3DDemo() {
   // � Log Export Function
   const handleExportLogs = useCallback(() => {
     try {
-      const logs = window._capturedLogs || [];
+      const logs = window.capturedLogs || [];
       if (logs.length === 0) {
         toast.warn('No logs captured yet');
         return;
@@ -4624,20 +4624,40 @@ export default function CinemaScene3DDemo() {
       />
       )}
       
-      {/* 📋 DEBUG: Log Export Button (bottom-right corner, outside fullscreen) */}
-      {!isImmersiveMode && (
-        <button
-          onClick={handleExportLogs}
-          className="fixed bottom-4 right-4 z-[100] bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-medium transition-all duration-200 flex items-center gap-2 group"
-          title="Export debug logs to clipboard (Ctrl+L)"
-        >
-          <svg className="w-4 h-4 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <span className="hidden sm:inline">Export Logs</span>
-          <span className="inline sm:hidden">Logs</span>
-        </button>
-      )}
+      {/* 📋 DEBUG: Log Export Button (matches VideoWatch style) */}
+      <button
+        onClick={handleExportLogs}
+        style={{
+          position: 'fixed',
+          bottom: '80px',
+          right: '20px',
+          zIndex: 10000,
+          background: '#4CAF50',
+          color: 'white',
+          border: 'none',
+          borderRadius: '50%',
+          width: '60px',
+          height: '60px',
+          fontSize: '28px',
+          cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'all 0.2s ease',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'scale(1.1)';
+          e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.4)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'scale(1)';
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+        }}
+        title="Copy All Logs to Clipboard (Ctrl+L)"
+      >
+        📋
+      </button>
 
       {/* Left Sidebar */}
       {isLeftSidebarOpen && (
