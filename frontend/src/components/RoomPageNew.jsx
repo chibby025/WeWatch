@@ -1652,16 +1652,17 @@ const RoomPageNew = () => {
                     
                     {/* Host/Member Info below room name (only when no session) */}
                     {!activeSession && (
-                      <div className="flex items-center gap-2 text-[10px] text-gray-300 mt-0.5">
+                      <div className="flex items-center gap-1.5 text-[10px] text-gray-300 mt-0.5">
                         {room.show_host !== false && (
                           <span className="flex items-center gap-0.5">
                             <img src="/icons/hostIcon.svg" alt="" className="h-2.5 w-2.5" />
-                            Host: {room.host_username || `User ${room.host_id}`}
+                            {room.host_username || `User ${room.host_id}`} (Host)
                           </span>
                         )}
+                        <span className="text-gray-500">|</span>
                         <span onClick={() => setIsMembersModalOpen(true)} className="cursor-pointer hover:opacity-80 flex items-center gap-0.5">
                           <img src="/icons/roomMembersIcon.svg" alt="" className="h-2.5 w-2.5" />
-                          {membersInRoom} in room{membersInSessionCount > 0 && `, ${membersInSessionCount} watching`}
+                          {membersInRoom}{membersInSessionCount > 0 && `, ${membersInSessionCount} watching`}
                         </span>
                       </div>
                     )}
@@ -2356,6 +2357,7 @@ const RoomPageNew = () => {
         }}
         onShare={() => setIsShareModalOpen(true)}
         isHost={isHost}
+        membersInRoom={membersInRoom}
       />
 
       {/* ✅ Room Members Modal */}

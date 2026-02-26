@@ -5,7 +5,7 @@ import { XMarkIcon, FilmIcon, PhotoIcon, TrashIcon } from '@heroicons/react/24/o
 import apiClient from '../services/api';
 import toast from 'react-hot-toast';
 
-const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = true }) => {
+const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = true, membersInRoom = 0 }) => {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -198,6 +198,32 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {/* Room Info Section */}
+          <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-2">
+            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Room Info</h3>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-600 dark:text-gray-400 flex items-center gap-2">
+                <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4" />
+                Host
+              </span>
+              <span className="text-gray-900 dark:text-white font-medium">
+                {room?.host_username || `User ${room?.host_id}`}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-600 dark:text-gray-400 flex items-center gap-2">
+                <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4" />
+                Members
+              </span>
+              <span className="text-gray-900 dark:text-white font-medium">
+                {membersInRoom}
+              </span>
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-gray-200 dark:border-gray-700"></div>
+
           {/* Room Image Upload - WhatsApp/Telegram Style Circular Avatar */}
           <div className="flex flex-col items-center space-y-3">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
