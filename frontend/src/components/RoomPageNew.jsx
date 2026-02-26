@@ -2153,7 +2153,7 @@ const RoomPageNew = () => {
               onChange={(e) => setNewMessage(e.target.value)}
               placeholder="Message..."
               disabled={!isMember}
-              className="w-full bg-transparent border-0 focus:outline-none focus:ring-0 text-white placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed pl-9 pr-9 py-1.5 text-sm sm:pl-12 sm:pr-12 sm:py-2.5"
+              className="w-full bg-transparent border-0 focus:outline-none focus:ring-0 text-white placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed pl-9 pr-7 py-1.5 text-sm sm:pl-12 sm:pr-10 sm:py-2.5"
             />
 
             {/* Voice Note Button - Absolute positioned right inside box (only when NOT recording) */}
@@ -2162,7 +2162,7 @@ const RoomPageNew = () => {
                 type="button"
                 onClick={handleVoiceNoteClick}
                 disabled={!isMember}
-                className="absolute right-1 top-1/2 -translate-y-1/2 p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                className="absolute right-0 top-1/2 -translate-y-1/2 p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                 title={isMember ? "Record Voice Note" : "Join room to send voice notes"}
               >
                 <img 
