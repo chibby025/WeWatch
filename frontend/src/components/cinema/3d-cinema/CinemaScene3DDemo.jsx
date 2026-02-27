@@ -1152,15 +1152,15 @@ export default function CinemaScene3DDemo() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // ⏰ Adaptive seek time sync - 5s normal, 2s when drift detected (improved from 30s)
+  // ⏰ Adaptive seek time sync - 8s normal, 4s when drift detected (optimized for smooth playback)
   useEffect(() => {
     if (!isHost || !currentMedia || currentMedia.type !== 'upload' || !isPlaying) {
       return;
     }
 
-    const NORMAL_SYNC_INTERVAL = 5000;  // 5 seconds (6x better than 30s)
-    const FAST_SYNC_INTERVAL = 2000;    // 2 seconds when drift detected
-    const DRIFT_THRESHOLD = 2;          // 2 seconds tolerance
+    const NORMAL_SYNC_INTERVAL = 8000;  // 8 seconds (reduced sync frequency for smoother playback)
+    const FAST_SYNC_INTERVAL = 4000;    // 4 seconds when drift detected (still responsive but not aggressive)
+    const DRIFT_THRESHOLD = 3;          // 3 seconds tolerance before increasing frequency
     let currentInterval = NORMAL_SYNC_INTERVAL;
     let lastKnownTime = 0;
     let lastSyncTimestamp = Date.now();
@@ -3083,11 +3083,13 @@ export default function CinemaScene3DDemo() {
               console.log('⏩ [3D Cinema] Same media - applying seek without re-render');
               if (videoRef.current) {
                 const video = videoRef.current;
-                // Only seek if drift is significant (>0.5s) to avoid micro-adjustments
+                // Only seek if drift is significant (>2s) to avoid micro-adjustments that cause stuttering
                 const drift = Math.abs(video.currentTime - adjustedTime);
-                if (drift > 0.5) {
-                  console.log(`🎯 [Sync] Drift detected: ${drift.toFixed(2)}s - seeking to ${adjustedTime.toFixed(2)}s`);
+                if (drift > 2.0) {
+                  console.log(`🎯 [Sync] Significant drift detected: ${drift.toFixed(2)}s - seeking to ${adjustedTime.toFixed(2)}s`);
                   video.currentTime = adjustedTime;
+                } else {
+                  console.log(`✅ [Sync] In sync (drift: ${drift.toFixed(2)}s) - no seek needed`);
                 }
               }
               break; // Skip setCurrentMedia() to avoid re-render
