@@ -534,12 +534,7 @@ export default function CinemaScene3DDemo() {
   const fullscreenUploadContainerRef = useRef(null); // 📹 Container for moved upload video in fullscreen
   const loadStartTimeRef = useRef(Date.now()); // ⏱️ Track video loading start time for sync compensation
   
-  // 🚀 PHASE 2: Preload 5MB cinema.glb model on component mount for instant loading
-  useEffect(() => {
-    const { useGLTF } = require('@react-three/drei');
-    useGLTF.preload('/models/cinema.glb');
-    console.log('🚀 [Phase 2] Cinema GLB model preloading started');
-  }, []);
+  // 🚀 PHASE 2: Model preload handled in CinemaScene3D.jsx (module-level import)
   
   // Add this ref to store the update function
   const videoTextureUpdateRef = useRef(null);
