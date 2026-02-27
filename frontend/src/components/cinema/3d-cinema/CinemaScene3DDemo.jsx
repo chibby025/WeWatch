@@ -3083,13 +3083,26 @@ export default function CinemaScene3DDemo() {
               console.log('⏩ [3D Cinema] Same media - applying seek without re-render');
               if (videoRef.current) {
                 const video = videoRef.current;
-                // Only seek if drift is significant (>2s) to avoid micro-adjustments that cause stuttering
-                const drift = Math.abs(video.currentTime - adjustedTime);
-                if (drift > 2.0) {
-                  console.log(`🎯 [Sync] Significant drift detected: ${drift.toFixed(2)}s - seeking to ${adjustedTime.toFixed(2)}s`);
+                const drift = video.currentTime - adjustedTime; // Positive = member ahead, negative = member behind
+                const absDrift = Math.abs(drift);
+                
+                if (absDrift > 5.0) {
+                  // 🚨 Large drift (>5s) - hard seek (rare, but necessary)
+                  console.log(`🚨 [Sync] Large drift: ${drift.toFixed(2)}s - hard seeking to ${adjustedTime.toFixed(2)}s`);
                   video.currentTime = adjustedTime;
+                  video.playbackRate = 1.0; // Reset to normal speed
+                } else if (absDrift > 0.8) {
+                  // 🎵 Medium drift (0.8-5s) - smooth correction via playback rate
+                  // Catch up/slow down by adjusting speed (1-15% variation)
+                  const correction = Math.min(drift * 0.08, 0.15); // Max 15% speed change
+                  video.playbackRate = 1.0 - correction; // Behind = speed up, ahead = slow down
+                  console.log(`🎵 [Sync] Smooth correction - drift: ${drift.toFixed(2)}s, playbackRate: ${video.playbackRate.toFixed(3)}x`);
                 } else {
-                  console.log(`✅ [Sync] In sync (drift: ${drift.toFixed(2)}s) - no seek needed`);
+                  // ✅ Small drift (<0.8s) - in sync, normal speed
+                  if (video.playbackRate !== 1.0) {
+                    video.playbackRate = 1.0;
+                    console.log(`✅ [Sync] In sync (drift: ${drift.toFixed(2)}s) - normal speed`);
+                  }
                 }
               }
               break; // Skip setCurrentMedia() to avoid re-render
