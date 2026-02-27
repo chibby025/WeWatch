@@ -62,11 +62,13 @@ export default function CinemaTheaterGLB({
     };
   }, [cameraVideoElement]);
 
-  // Update textures each frame
+  // 🚀 PHASE 2: Update textures only when video is actually playing
   const frameCountRef = useRef(0);
   const lastFpsLogRef = useRef(Date.now());
   
-  useFrame(() => {
+  useFrame(({ invalidate }) => {
+    let needsUpdate = false;
+    
     // Update main video texture
     if (
       videoTextureRef.current &&
@@ -75,16 +77,17 @@ export default function CinemaTheaterGLB({
       videoElement.readyState >= 2
     ) {
       videoTextureRef.current.needsUpdate = true;
+      needsUpdate = true;
       frameCountRef.current++;
       
-      // 🎬 DEBUG: Log 3D screen FPS every 5 seconds (reduced verbosity)
-      const now = Date.now();
-      if (now - lastFpsLogRef.current >= 5000) {
-        const fps = frameCountRef.current / 5;
-        console.log(`🎬 [3D SCREEN FPS] ${fps.toFixed(1)} fps | Video: ${videoElement.videoWidth}x${videoElement.videoHeight} | readyState: ${videoElement.readyState}`);
-        frameCountRef.current = 0;
-        lastFpsLogRef.current = now;
-      }
+      // ⚠️ PERFORMANCE: FPS logging commented out to reduce overhead
+      // const now = Date.now();
+      // if (now - lastFpsLogRef.current >= 5000) {
+      //   const fps = frameCountRef.current / 5;
+      //   console.log(`🎬 [3D SCREEN FPS] ${fps.toFixed(1)} fps | Video: ${videoElement.videoWidth}x${videoElement.videoHeight} | readyState: ${videoElement.readyState}`);
+      //   frameCountRef.current = 0;
+      //   lastFpsLogRef.current = now;
+      // }
     }
     
     // Update camera texture
@@ -95,6 +98,12 @@ export default function CinemaTheaterGLB({
       cameraVideoElement.readyState >= 2
     ) {
       cameraTextureRef.current.needsUpdate = true;
+      needsUpdate = true;
+    }
+    
+    // 🚀 PHASE 2: Only trigger re-render when video textures need updating
+    if (needsUpdate) {
+      invalidate();
     }
   });
 

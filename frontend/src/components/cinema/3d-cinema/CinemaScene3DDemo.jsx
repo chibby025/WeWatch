@@ -530,8 +530,17 @@ export default function CinemaScene3DDemo() {
   const [showPositionDebug, setShowPositionDebug] = useState(false);
   const [showFullscreenControls, setShowFullscreenControls] = useState(true); // Auto-hide close button
   const fullscreenInactivityTimerRef = useRef(null);
+  const fullscreenContainerRef = useRef(null); // 🎬 Stable ref for fullscreen container (prevents re-renders)
   const fullscreenUploadContainerRef = useRef(null); // 📹 Container for moved upload video in fullscreen
   const loadStartTimeRef = useRef(Date.now()); // ⏱️ Track video loading start time for sync compensation
+  
+  // 🚀 PHASE 2: Preload 5MB cinema.glb model on component mount for instant loading
+  useEffect(() => {
+    const { useGLTF } = require('@react-three/drei');
+    useGLTF.preload('/models/cinema.glb');
+    console.log('🚀 [Phase 2] Cinema GLB model preloading started');
+  }, []);
+  
   // Add this ref to store the update function
   const videoTextureUpdateRef = useRef(null);
   // 1:1 Chat state
@@ -675,47 +684,49 @@ export default function CinemaScene3DDemo() {
   }, [messages.length]);
   
   // 🐛 DEBUG: Log ALL WebSocket messages with detailed information
-  useEffect(() => {
-    if (messages.length === 0) return;
-    
-    const lastMsg = messages[messages.length - 1];
-    
-    // Log ALL messages with full details
-    console.log('📨 [WEBSOCKET MESSAGE] Received:', {
-      type: lastMsg.type,
-      data: lastMsg.data,
-      fullMessage: lastMsg,
-      timestamp: new Date().toISOString(),
-      messageNumber: messages.length
-    });
-    
-    // Highlight media-related messages
-    const mediaTypes = [
-      'media_added',
-      'media_removed',
-      'media_list',
-      'media_selected',
-      'play_media',
-      'pause_media',
-      'seek_media',
-      'playback_control',
-      'media_ended',
-      'request_playback_state',
-      'playback_state_sync'
-    ];
-    
-    if (mediaTypes.includes(lastMsg.type)) {
-      console.log('🎬 [MEDIA MESSAGE] ===>', {
-        type: lastMsg.type,
-        mediaId: lastMsg.data?.media_id || lastMsg.data?.media_item_id,
-        fileName: lastMsg.data?.original_name || lastMsg.data?.file_path,
-        command: lastMsg.data?.command,
-        seekTime: lastMsg.data?.seek_time,
-        isPlaying: lastMsg.data?.is_playing,
-        fullData: lastMsg.data
-      });
-    }
-  }, [messages.length]);
+  // ⚠️ PERFORMANCE: Commented out to reduce logging overhead (runs on EVERY message)
+  // Uncomment for debugging specific issues
+  // useEffect(() => {
+  //   if (messages.length === 0) return;
+  //   
+  //   const lastMsg = messages[messages.length - 1];
+  //   
+  //   // Log ALL messages with full details
+  //   console.log('📨 [WEBSOCKET MESSAGE] Received:', {
+  //     type: lastMsg.type,
+  //     data: lastMsg.data,
+  //     fullMessage: lastMsg,
+  //     timestamp: new Date().toISOString(),
+  //     messageNumber: messages.length
+  //   });
+  //   
+  //   // Highlight media-related messages
+  //   const mediaTypes = [
+  //     'media_added',
+  //     'media_removed',
+  //     'media_list',
+  //     'media_selected',
+  //     'play_media',
+  //     'pause_media',
+  //     'seek_media',
+  //     'playback_control',
+  //     'media_ended',
+  //     'request_playback_state',
+  //     'playback_state_sync'
+  //   ];
+  //   
+  //   if (mediaTypes.includes(lastMsg.type)) {
+  //     console.log('🎬 [MEDIA MESSAGE] ===>', {
+  //       type: lastMsg.type,
+  //       mediaId: lastMsg.data?.media_id || lastMsg.data?.media_item_id,
+  //       fileName: lastMsg.data?.original_name || lastMsg.data?.file_path,
+  //       command: lastMsg.data?.command,
+  //       seekTime: lastMsg.data?.seek_time,
+  //       isPlaying: lastMsg.data?.is_playing,
+  //       fullData: lastMsg.data
+  //     });
+  //   }
+  // }, [messages.length]);
 
   // 🔄 Auto-request seat assignment when connecting to cinema
   useEffect(() => {
@@ -1146,16 +1157,38 @@ export default function CinemaScene3DDemo() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // ⏰ Periodic seek time update for preview generation (every 30 seconds)
+  // ⏰ Adaptive seek time sync - 5s normal, 2s when drift detected (improved from 30s)
   useEffect(() => {
     if (!isHost || !currentMedia || currentMedia.type !== 'upload' || !isPlaying) {
       return;
     }
 
-    const updateInterval = setInterval(() => {
+    const NORMAL_SYNC_INTERVAL = 5000;  // 5 seconds (6x better than 30s)
+    const FAST_SYNC_INTERVAL = 2000;    // 2 seconds when drift detected
+    const DRIFT_THRESHOLD = 2;          // 2 seconds tolerance
+    let currentInterval = NORMAL_SYNC_INTERVAL;
+    let lastKnownTime = 0;
+    let lastSyncTimestamp = Date.now();
+
+    const syncPlayback = () => {
       if (videoRef.current && currentMedia) {
         const currentSeekTime = Math.floor(videoRef.current.currentTime);
-        console.log(`⏰ [3D Cinema] Periodic seek time update: ${currentSeekTime}s`);
+        
+        // Adaptive logic: detect drift
+        const now = Date.now();
+        const timeSinceLastSync = (now - lastSyncTimestamp) / 1000;
+        const expectedTime = lastKnownTime + timeSinceLastSync;
+        const drift = Math.abs(currentSeekTime - expectedTime);
+        
+        // Adjust interval based on drift
+        if (drift > DRIFT_THRESHOLD) {
+          currentInterval = FAST_SYNC_INTERVAL;
+          // console.log(`⚡ [Sync] High drift (${drift.toFixed(1)}s) - increasing frequency`);
+        } else {
+          currentInterval = NORMAL_SYNC_INTERVAL;
+        }
+        
+        // console.log(`⏰ [Sync] ${currentSeekTime}s (drift: ${drift.toFixed(1)}s, interval: ${currentInterval}ms)`);
         
         sendMessage({
           type: "playback_control",
@@ -1168,10 +1201,24 @@ export default function CinemaScene3DDemo() {
           timestamp: Date.now(),
           sender_id: currentUser?.id,
         });
+        
+        lastKnownTime = currentSeekTime;
+        lastSyncTimestamp = now;
       }
-    }, 30000); // Update every 30 seconds
+    };
 
-    return () => clearInterval(updateInterval);
+    // Initial sync
+    syncPlayback();
+    
+    // Dynamic interval that adapts
+    let intervalId = setInterval(() => {
+      syncPlayback();
+      // Restart interval with new timing if changed
+      clearInterval(intervalId);
+      intervalId = setInterval(syncPlayback, currentInterval);
+    }, currentInterval);
+
+    return () => clearInterval(intervalId);
   }, [isHost, currentMedia, isPlaying, sendMessage, currentUser?.id]);
 
   // 📱 Mobile orientation detection and force landscape
@@ -4959,9 +5006,7 @@ export default function CinemaScene3DDemo() {
       />
       {/* ✅ Fullscreen Mode - Shared video element is already visible (toggled via CSS) */}
       {isImmersiveMode && (
-        <div className="fixed inset-0 z-[9999] bg-black" ref={(el) => {
-          if (el) console.log('🖼️ [FULLSCREEN CONTAINER] Rendered! isImmersiveMode:', isImmersiveMode);
-        }}>
+        <div className="fixed inset-0 z-[9999] bg-black" ref={fullscreenContainerRef}>
           {/* ✅ Close button to exit fullscreen (top-left) - auto-hides after 2s of inactivity */}
           <button
             onClick={() => {

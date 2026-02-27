@@ -140,7 +140,8 @@ export default function FlatUserIcon({
         position: seatPosition
       });
     } else {
-      console.log(`💬 [FlatUserIcon ${username}] Chat bubble INACTIVE, showLabel:`, showLabel);
+      // ⚠️ PERFORMANCE: Commented out to reduce logging overhead
+      // console.log(`💬 [FlatUserIcon ${username}] Chat bubble INACTIVE, showLabel:`, showLabel);
     }
   }, [recentMessage, showLabel, username, seatPosition]);
 

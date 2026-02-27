@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useState, useEffect, forwardRef, useImperativeHandle, useMemo } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { PerspectiveCamera, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -11,6 +11,9 @@ import FirstPersonAvatar from './avatars/FirstPersonAvatar';
 import { useGLTF } from '@react-three/drei';
 import LocalEmoteNotification from './ui/LocalEmoteNotification';
 import useEmoteSounds from '../../../hooks/useEmoteSounds';
+
+// 🚀 PHASE 2: Preload cinema model for instant loading
+useGLTF.preload('/models/cinema.glb');
 
 /**
  * CinemaCamera - Handles camera movement and controls
@@ -295,8 +298,11 @@ function CinemaCamera({
     }
   }, [isViewLocked, camera, seatViewPosition]);
 
-  // Track camera position and direction in real-time
-  useFrame(() => {
+  // 🚀 PHASE 2: Track camera position and trigger re-render only when position changes
+  const lastPositionRef = useRef(new THREE.Vector3());
+  const lastRotationRef = useRef(new THREE.Euler());
+  
+  useFrame(({ invalidate }) => {
     if (camera && onPositionUpdate) {
       const pos = camera.position;
       
@@ -304,24 +310,36 @@ function CinemaCamera({
       if (isViewLocked) {
         if (pos.distanceTo(seatViewPosition) > 0.01) {
           camera.position.copy(seatViewPosition);
+          invalidate(); // 🚀 Trigger re-render when camera moved
         }
       }
       
       const rot = camera.rotation;
       
-      // Calculate what direction camera is looking
-      const direction = new THREE.Vector3(0, 0, -1);
-      direction.applyQuaternion(camera.quaternion);
+      // 🚀 Only update if position or rotation changed significantly
+      const posChanged = pos.distanceTo(lastPositionRef.current) > 0.01;
+      const rotChanged = Math.abs(rot.x - lastRotationRef.current.x) > 0.01 || 
+                         Math.abs(rot.y - lastRotationRef.current.y) > 0.01;
       
-      onPositionUpdate({
-        position: [pos.x.toFixed(2), pos.y.toFixed(2), pos.z.toFixed(2)],
-        rotation: [
-          (rot.x * 180 / Math.PI).toFixed(1), 
-          (rot.y * 180 / Math.PI).toFixed(1), 
-          (rot.z * 180 / Math.PI).toFixed(1)
-        ],
-        lookingAt: [direction.x.toFixed(2), direction.y.toFixed(2), direction.z.toFixed(2)]
-      });
+      if (posChanged || rotChanged) {
+        lastPositionRef.current.copy(pos);
+        lastRotationRef.current.copy(rot);
+        invalidate(); // 🚀 Trigger re-render when camera moved
+        
+        // Calculate what direction camera is looking
+        const direction = new THREE.Vector3(0, 0, -1);
+        direction.applyQuaternion(camera.quaternion);
+        
+        onPositionUpdate({
+          position: [pos.x.toFixed(2), pos.y.toFixed(2), pos.z.toFixed(2)],
+          rotation: [
+            (rot.x * 180 / Math.PI).toFixed(1), 
+            (rot.y * 180 / Math.PI).toFixed(1), 
+            (rot.z * 180 / Math.PI).toFixed(1)
+          ],
+          lookingAt: [direction.x.toFixed(2), direction.y.toFixed(2), direction.z.toFixed(2)]
+        });
+      }
     }
     
     // 🎯 Continuously update Position Calculator with camera position + lookAt target
@@ -400,26 +418,33 @@ function DynamicLighting({ screenRef, intensity = 1, lightsOn = false }) {
 
   console.log('💡 [DynamicLighting] Rendering with lightsOn:', lightsOn);
 
-  useFrame(() => {
+  // 🚀 PHASE 2: Only trigger re-render when lights actually change
+  useFrame(({ invalidate }) => {
+    let needsUpdate = false;
+    
     if (screenLightRef.current) {
       // Position light at the screen
       screenLightRef.current.position.set(0, 4, -17);
       
       // Pulse effect for immersion
       const pulse = Math.sin(Date.now() * 0.001) * 0.2 + 0.8;
-      screenLightRef.current.intensity = intensity * pulse;
+      const newIntensity = intensity * pulse;
+      if (Math.abs(screenLightRef.current.intensity - newIntensity) > 0.01) {
+        screenLightRef.current.intensity = newIntensity;
+        needsUpdate = true;
+      }
     }
 
     // Smooth transition for room lights
-    ceilingLightsRef.current.forEach((light, index) => {
+    ceilingLightsRef.current.forEach((light) => {
       if (light) {
         const targetIntensity = lightsOn ? 4.0 : 0.1;
         const oldIntensity = light.intensity;
-        light.intensity += (targetIntensity - light.intensity) * 0.05;
+        const newIntensity = light.intensity + (targetIntensity - light.intensity) * 0.05;
         
-        // Log only when changing significantly
-        if (Math.abs(light.intensity - oldIntensity) > 0.01 && index === 0) {
-          //console.log('🔆 [DynamicLighting] Ceiling light intensity:', light.intensity.toFixed(2), 'Target:', targetIntensity);
+        if (Math.abs(newIntensity - oldIntensity) > 0.01) {
+          light.intensity = newIntensity;
+          needsUpdate = true;
         }
       }
     });
@@ -427,9 +452,19 @@ function DynamicLighting({ screenRef, intensity = 1, lightsOn = false }) {
     wallLightsRef.current.forEach(light => {
       if (light) {
         const targetIntensity = lightsOn ? 2.5 : 0.05;
-        light.intensity += (targetIntensity - light.intensity) * 0.05;
+        const oldIntensity = light.intensity;
+        const newIntensity = light.intensity + (targetIntensity - light.intensity) * 0.05;
+        
+        if (Math.abs(newIntensity - oldIntensity) > 0.01) {
+          light.intensity = newIntensity;
+          needsUpdate = true;
+        }
       }
     });
+    
+    if (needsUpdate) {
+      invalidate(); // 🚀 Only trigger re-render when lights changed
+    }
   });
 
   return (
@@ -785,11 +820,13 @@ const CinemaScene3D = forwardRef(({
       <div className="absolute inset-0">
         <Canvas
           shadows={false}
+          frameloop="demand" // 🚀 PHASE 2: Only render when scene changes (static GLB model)
           gl={{ 
             antialias: true, 
             alpha: false,
-            powerPreference: 'high-performance'
+            powerPreference: 'high-performance',
           }}
+          flat // 🚀 PHASE 2: Flat shading for better performance
         >
           {/* Camera positioned INSIDE the cinema box */}
           <CinemaCamera 
