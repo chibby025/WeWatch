@@ -707,12 +707,21 @@ export const endWatchSession = async (roomId, sessionId) => {
 };
 
 export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false, sessionId = null) => {
+  const uploadStartTime = Date.now();
+  let lastProgressTime = uploadStartTime;
+  let lastProgressPercent = 0;
+  
   try {
-    console.log(`📤 API: Uploading media file to room ${roomId} (Temporary: ${isTemporary}, SessionID: ${sessionId})`, file.name);
+    // 🔍 DEBUG: File details
+    console.log(`📤 [UPLOAD START] Room: ${roomId}, File: ${file.name}`);
+    console.log(`📊 [FILE INFO] Size: ${(file.size / 1024 / 1024).toFixed(2)}MB, Type: ${file.type}`);
+    console.log(`⚙️ [UPLOAD CONFIG] Temporary: ${isTemporary}, Session: ${sessionId}`);
+    console.log(`🌐 [NETWORK] Online: ${navigator.onLine}, Connection: ${navigator.connection?.effectiveType || 'unknown'}`);
 
     // --- CRUCIAL: Use FormData for file uploads ---
     const formData = new FormData();
     formData.append('mediaFile', file); // Key must match c.FormFile("mediaFile") in Go
+    console.log(`📦 [FORMDATA] Created with mediaFile field`);
 
     // --- OPTION: Configure the request ---
     const config = {
@@ -733,10 +742,24 @@ export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, 
       config.onUploadProgress = (progressEvent) => { // ← ADD PROPERTY TO EXISTING 'config'
         // Check if the progress event is computable
         if (progressEvent && progressEvent.lengthComputable) {
-          // Calculate the percentage completed
+          const now = Date.now();
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          // Log the progress (for debugging)
-          console.log(`uploadMediaToRoom: Upload progress: ${percentCompleted}%`);
+          const elapsedSeconds = ((now - uploadStartTime) / 1000).toFixed(1);
+          const timeSinceLastProgress = now - lastProgressTime;
+          const uploadSpeed = (progressEvent.loaded / 1024 / 1024 / (elapsedSeconds || 1)).toFixed(2);
+          
+          // 🔍 DEBUG: Enhanced progress logging
+          console.log(`📊 [PROGRESS ${percentCompleted}%] Loaded: ${(progressEvent.loaded / 1024 / 1024).toFixed(2)}MB / ${(progressEvent.total / 1024 / 1024).toFixed(2)}MB`);
+          console.log(`⏱️ [TIMING] Elapsed: ${elapsedSeconds}s, Speed: ${uploadSpeed}MB/s, Since last: ${timeSinceLastProgress}ms`);
+          
+          // Detect stalls (no progress for 30+ seconds)
+          if (percentCompleted === lastProgressPercent && timeSinceLastProgress > 30000) {
+            console.warn(`⚠️ [STALL DETECTED] No progress for ${(timeSinceLastProgress / 1000).toFixed(1)}s at ${percentCompleted}%`);
+          }
+          
+          lastProgressTime = now;
+          lastProgressPercent = percentCompleted;
+          
           // Call the provided callback function with the progress percentage
           onUploadProgressCallback(percentCompleted); // ← TRIGGER THE CALLBACK
         }
@@ -751,30 +774,50 @@ export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, 
     
     if (isTemporary) {
       queryParams.push('temporary=true');
-      console.log(`uploadMediaToRoom: Uploading as TEMPORARY media`);
+      console.log(`🏷️ [MODE] Uploading as TEMPORARY media`);
       
       // ✅ Add session_id for temporary uploads
       if (sessionId) {
         queryParams.push(`session_id=${encodeURIComponent(sessionId)}`);
-        console.log(`uploadMediaToRoom: Linking to session ${sessionId}`);
+        console.log(`🔗 [SESSION] Linking to session ${sessionId}`);
       }
     } else {
-      console.log(`uploadMediaToRoom: Uploading as PERMANENT media`);
+      console.log(`🏷️ [MODE] Uploading as PERMANENT media`);
     }
     
     if (queryParams.length > 0) {
       uploadUrl += '?' + queryParams.join('&');
     }
-    console.log(`uploadMediaToRoom: Upload URL: ${uploadUrl}`);
+    console.log(`🎯 [URL] ${API_BASE_URL}${uploadUrl}`);
     // --- --- ---
 
-    console.log(`uploadMediaToRoom: About to send POST request to ${uploadUrl}`);
+    console.log(`🚀 [REQUEST START] Sending POST request at ${new Date().toISOString()}`);
     const response = await apiClient.post(uploadUrl, formData, config); // ✅ PASS UPDATED CONFIG
-    console.log("uploadMediaToRoom: Request sent. Response received:", response.status, response.statusText);
+    
+    const uploadDuration = ((Date.now() - uploadStartTime) / 1000).toFixed(1);
+    console.log(`✅ [SUCCESS] Upload completed in ${uploadDuration}s`);
+    console.log(`📥 [RESPONSE] Status: ${response.status}, Data:`, response.data);
 
     return response.data;
   } catch (error) {
-    console.error('API Error (uploadMediaToRoom):', error);
+    const uploadDuration = ((Date.now() - uploadStartTime) / 1000).toFixed(1);
+    
+    // 🔍 DEBUG: Detailed error logging
+    console.error(`❌ [UPLOAD FAILED] After ${uploadDuration}s at ${lastProgressPercent}%`);
+    console.error(`🔍 [ERROR TYPE] ${error.name}: ${error.message}`);
+    console.error(`📡 [ERROR CODE] ${error.code}`);
+    console.error(`🌐 [NETWORK STATE] Online: ${navigator.onLine}`);
+    
+    if (error.response) {
+      console.error(`📥 [SERVER RESPONSE] Status: ${error.response.status}, Data:`, error.response.data);
+    } else if (error.request) {
+      console.error(`📤 [NO RESPONSE] Request sent but no response received`);
+      console.error(`🔍 [REQUEST STATE] ReadyState: ${error.request.readyState}, Status: ${error.request.status}`);
+    } else {
+      console.error(`⚙️ [CONFIG ERROR] Failed to setup request:`, error.message);
+    }
+    
+    console.error('📋 [FULL ERROR]', error);
     throw error;
   }
 };
