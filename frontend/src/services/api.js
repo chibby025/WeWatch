@@ -720,7 +720,7 @@ export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, 
         'Content-Type': 'multipart/form-data', // Force Axios to auto-set correct Content-Type
       },
       // --- ✅ INCREASE TIMEOUT FOR LARGE FILES ---
-      timeout: 60000, // 60 seconds (or more if needed)
+      timeout: 600000, // 10 minutes (600 seconds) - for 500MB uploads on slow connections
 
       // Add onUploadProgress to THIS EXISTING config object
       // onUploadProgress: (progressEvent) => { ... } // ← WILL BE ADDED BELOW
