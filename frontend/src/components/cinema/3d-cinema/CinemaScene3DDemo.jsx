@@ -3073,7 +3073,28 @@ export default function CinemaScene3DDemo() {
             const fileUrl = msg.file_url || msg.file_path;
             const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
             
-            // 🎯 FIX: Store pending seek time, will be applied after video loads
+            // 🎯 OPTIMIZATION: Skip setCurrentMedia if same media is already loaded (prevents unnecessary re-renders)
+            const isSameMedia = currentMedia && 
+                                currentMedia.ID === msg.media_item_id && 
+                                currentMedia.mediaUrl === mediaUrl;
+            
+            if (isSameMedia && msg.command === "seek") {
+              // ✅ Same media, just apply seek directly without triggering React re-render
+              console.log('⏩ [3D Cinema] Same media - applying seek without re-render');
+              if (videoRef.current) {
+                const video = videoRef.current;
+                // Only seek if drift is significant (>0.5s) to avoid micro-adjustments
+                const drift = Math.abs(video.currentTime - adjustedTime);
+                if (drift > 0.5) {
+                  console.log(`🎯 [Sync] Drift detected: ${drift.toFixed(2)}s - seeking to ${adjustedTime.toFixed(2)}s`);
+                  video.currentTime = adjustedTime;
+                }
+              }
+              break; // Skip setCurrentMedia() to avoid re-render
+            }
+            
+            // 🎯 Different media or play/pause command - update state
+            console.log('🔄 [3D Cinema] New media or play/pause - updating state');
             loadStartTimeRef.current = Date.now(); // ⏱️ Track loading start for compensation
             setPendingSeekTime(adjustedTime);
             
