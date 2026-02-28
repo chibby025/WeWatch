@@ -1148,6 +1148,10 @@ const PositionCalculatorPage = () => {
   const [totalLectureHalls, setTotalLectureHalls] = useState(1); // Total active halls
   const [viewingHallNumber, setViewingHallNumber] = useState(1); // Hall user is currently viewing (host can switch)
   
+  // 📱 Orientation detection for mobile
+  const [showOrientationModal, setShowOrientationModal] = useState(false);
+  const [isPortraitMode, setIsPortraitMode] = useState(false);
+  
   // ⭐ Marked seats for review (stored in localStorage)
   const [markedSeats, setMarkedSeats] = useState(() => {
     try {
@@ -1547,6 +1551,41 @@ const PositionCalculatorPage = () => {
       }
     };
   }, [isHost]);
+  
+  // 📱 Orientation detection for mobile devices
+  useEffect(() => {
+    // Check if already dismissed (remember user's choice)
+    const hasDismissedOrientation = sessionStorage.getItem('wewatch_orientation_dismissed');
+    if (hasDismissedOrientation) return;
+    
+    // Detect mobile device
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (!isMobile) return;
+    
+    const checkOrientation = () => {
+      const isPortrait = window.innerHeight > window.innerWidth;
+      setIsPortraitMode(isPortrait);
+      
+      // Show modal only if in portrait mode on mobile and not dismissed
+      if (isPortrait && !sessionStorage.getItem('wewatch_orientation_dismissed')) {
+        setShowOrientationModal(true);
+      } else {
+        setShowOrientationModal(false);
+      }
+    };
+    
+    // Check on mount
+    checkOrientation();
+    
+    // Listen for orientation changes
+    window.addEventListener('resize', checkOrientation);
+    window.addEventListener('orientationchange', checkOrientation);
+    
+    return () => {
+      window.removeEventListener('resize', checkOrientation);
+      window.removeEventListener('orientationchange', checkOrientation);
+    };
+  }, []);
   
   // 🎮 View icons show/hide on mouse movement (3 second auto-hide)
   useEffect(() => {
@@ -7539,6 +7578,54 @@ const PositionCalculatorPage = () => {
       {loadingStatus && (
         <div className="fixed inset-0 bg-black z-50 flex items-center justify-center">
           <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-white"></div>
+        </div>
+      )}
+
+      {/* 📱 Orientation Modal - Suggest landscape mode for better experience */}
+      {showOrientationModal && isPortraitMode && (
+        <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center p-4">
+          <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 max-w-sm w-full border-2 border-blue-500/50 shadow-2xl">
+            {/* Rotating phone icon animation */}
+            <div className="flex justify-center mb-6">
+              <div className="relative">
+                <div className="absolute inset-0 bg-blue-500/20 rounded-full blur-xl animate-pulse"></div>
+                <div className="relative bg-gradient-to-br from-blue-500 to-purple-600 rounded-full p-6 animate-bounce">
+                  <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                  <div className="absolute -right-2 -top-2">
+                    <svg className="w-8 h-8 text-yellow-400 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Message */}
+            <h3 className="text-white text-xl font-bold text-center mb-3">
+              Best Experience in Landscape
+            </h3>
+            <p className="text-gray-300 text-center text-sm mb-6 leading-relaxed">
+              For the best 3D lecture hall experience, we recommend rotating your device to <span className="text-blue-400 font-semibold">landscape mode</span>. This gives you a wider view and better controls!
+            </p>
+
+            {/* Button */}
+            <button
+              onClick={() => {
+                setShowOrientationModal(false);
+                sessionStorage.setItem('wewatch_orientation_dismissed', 'true');
+              }}
+              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 rounded-xl transition-all transform hover:scale-105 shadow-lg"
+            >
+              Got it! 👍
+            </button>
+            
+            {/* Helpful hint */}
+            <p className="text-gray-500 text-xs text-center mt-4">
+              You can still use portrait mode if you prefer
+            </p>
+          </div>
         </div>
       )}
 

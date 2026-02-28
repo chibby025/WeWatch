@@ -402,8 +402,9 @@ const Taskbar = ({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        className="taskbar-container"
       >
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 flex-shrink-0">
           <TaskbarButton
             icon={LeaveCallIcon}
             label="Leave Call"
@@ -424,7 +425,12 @@ const Taskbar = ({
           />
         </div>
 
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-4 overflow-x-auto portrait:space-x-2 scrollbar-hide flex-nowrap"
+          style={{
+            scrollbarWidth: 'none', /* Firefox */
+            msOverflowStyle: 'none',  /* IE and Edge */
+          }}
+        >
           <TaskbarButton 
             icon={ChatIcon} 
             label="Chat" 
@@ -780,6 +786,27 @@ const Taskbar = ({
         onRaiseHand={onRaiseHand}
         onLowerHand={onLowerHand}
       />
+      
+      {/* CSS for scrollbar hiding and portrait mode optimization */}
+      <style jsx>{`
+        /* Hide scrollbar for Chrome, Safari and Opera */
+        .scrollbar-hide::-webkit-scrollbar {
+          display: none;
+        }
+        
+        /* Hide scrollbar for IE, Edge and Firefox */
+        .scrollbar-hide {
+          -ms-overflow-style: none;  /* IE and Edge */
+          scrollbar-width: none;  /* Firefox */
+        }
+        
+        /* Portrait mode adjustments */
+        @media (orientation: portrait) {
+          .taskbar-container {
+            padding: 0 8px !important;
+          }
+        }
+      `}</style>
     </>
   );
 };
