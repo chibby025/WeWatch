@@ -2054,6 +2054,8 @@ const PositionCalculatorPage = () => {
             console.log('👤 [PositionCalculator] User has seat:', userCurrentSeatId);
             setActiveSeatIndex(userCurrentSeatId - 1);
           }
+          // ⚠️ DON'T auto-show seat cycling modal for members
+          // setShowSeatCycling(true); // Removed - only for dev/testing
           return;
         } catch (err) {
           console.warn('⚠️ [PositionCalculator] Failed to parse cached seats, fetching fresh:', err);
@@ -2093,7 +2095,8 @@ const PositionCalculatorPage = () => {
           const userSeatIndex = seats.findIndex(s => s.id === userCurrentSeatId);
           console.log('🎓 [K] User seat:', userCurrentSeatId, 'Index:', userSeatIndex);
           setCurrentSeatIndex(userSeatIndex >= 0 ? userSeatIndex : 0);
-          setShowSeatCycling(true);
+          // ⚠️ DON'T auto-show seat cycling modal for members
+          // setShowSeatCycling(true); // Removed - only for dev/testing
         })
         .catch(err => {
           console.error('❌ [PositionCalculator] Failed to load seats JSON, using fallback generation:', err);
@@ -2169,7 +2172,8 @@ const PositionCalculatorPage = () => {
       generatedSeats.push({ id: 145, position: [7.121, 18.737, -229.244], isHost: true });
       
       setPreviewSeats(generatedSeats);
-      setShowSeatCycling(true);
+      // ⚠️ DON'T auto-show seat cycling modal for members
+      // setShowSeatCycling(true); // Removed - only for dev/testing
       // ✅ Start at user's current seat, not seat 0
       const userCurrentSeatId = userSeats[currentUser?.id];
       const userSeatIndex = generatedSeats.findIndex(s => s.id === userCurrentSeatId);
