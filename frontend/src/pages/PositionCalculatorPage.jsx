@@ -1552,39 +1552,20 @@ const PositionCalculatorPage = () => {
     };
   }, [isHost]);
   
-  // 📱 Orientation detection for mobile devices
+  // 📱 Orientation detection for mobile devices (show once on join if portrait)
   useEffect(() => {
-    // Check if already dismissed (remember user's choice)
-    const hasDismissedOrientation = sessionStorage.getItem('wewatch_orientation_dismissed');
-    if (hasDismissedOrientation) return;
-    
     // Detect mobile device
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     if (!isMobile) return;
     
-    const checkOrientation = () => {
-      const isPortrait = window.innerHeight > window.innerWidth;
-      setIsPortraitMode(isPortrait);
-      
-      // Show modal only if in portrait mode on mobile and not dismissed
-      if (isPortrait && !sessionStorage.getItem('wewatch_orientation_dismissed')) {
-        setShowOrientationModal(true);
-      } else {
-        setShowOrientationModal(false);
-      }
-    };
+    // Check orientation only once on mount
+    const isPortrait = window.innerHeight > window.innerWidth;
+    setIsPortraitMode(isPortrait);
     
-    // Check on mount
-    checkOrientation();
-    
-    // Listen for orientation changes
-    window.addEventListener('resize', checkOrientation);
-    window.addEventListener('orientationchange', checkOrientation);
-    
-    return () => {
-      window.removeEventListener('resize', checkOrientation);
-      window.removeEventListener('orientationchange', checkOrientation);
-    };
+    // Show modal if in portrait mode on initial join
+    if (isPortrait) {
+      setShowOrientationModal(true);
+    }
   }, []);
   
   // 🎮 View icons show/hide on mouse movement (3 second auto-hide)
@@ -7612,10 +7593,7 @@ const PositionCalculatorPage = () => {
 
             {/* Button */}
             <button
-              onClick={() => {
-                setShowOrientationModal(false);
-                sessionStorage.setItem('wewatch_orientation_dismissed', 'true');
-              }}
+              onClick={() => setShowOrientationModal(false)}
               className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 rounded-xl transition-all transform hover:scale-105 shadow-lg"
             >
               Got it! 👍
