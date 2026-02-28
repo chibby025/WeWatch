@@ -843,59 +843,59 @@ const CinemaScene3D = forwardRef(({
           />
 
           {/* Dynamic lighting - toggle between bright and dark */}
-          <ambientLight intensity={lightsOn ? 3 : 0.5} />
+          <ambientLight intensity={lightsOn ? 1.0 : 0.02} />
           
           {/* Ceiling lights - white when on, blue when off */}
           <pointLight 
             position={[0, 10, -5]} 
-            intensity={lightsOn ? 4 : 8} 
+            intensity={lightsOn ? 5.5 : 0.03} 
             distance={30} 
             color={lightsOn ? "#ffffff" : "#1e90ff"}
             castShadow={false}
           />
           <pointLight 
             position={[0, 10, 5]} 
-            intensity={lightsOn ? 4 : 8} 
+            intensity={lightsOn ? 5.5 : 0.03} 
             distance={30} 
             color={lightsOn ? "#ffffff" : "#1e90ff"}
             castShadow={false}
           />
           <pointLight 
             position={[0, 10, 12]} 
-            intensity={lightsOn ? 4 : 8} 
+            intensity={lightsOn ? 5.5 : 0.03} 
             distance={30} 
             color={lightsOn ? "#ffffff" : "#1e90ff"}
             castShadow={false}
           />
           
           {/* Additional directional lighting */}
-          <directionalLight position={[0, 10, 0]} intensity={lightsOn ? 3 : 0.5} castShadow={false} color={lightsOn ? "#ffffff" : "#4169e1"} />
-          <directionalLight position={[0, -10, 0]} intensity={lightsOn ? 2 : 0.3} castShadow={false} />
+          <directionalLight position={[0, 10, 0]} intensity={lightsOn ? 1.0 : 0.02} castShadow={false} color={lightsOn ? "#ffffff" : "#4169e1"} />
+          <directionalLight position={[0, -10, 0]} intensity={lightsOn ? 1.0 : 0.02} castShadow={false} />
           
           {/* Corner fill lights */}
-          <pointLight position={[10, 5, 10]} intensity={lightsOn ? 3 : 1} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
-          <pointLight position={[-10, 5, 10]} intensity={lightsOn ? 3 : 1} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
-          <pointLight position={[10, 5, -10]} intensity={lightsOn ? 3 : 1} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
-          <pointLight position={[-10, 5, -10]} intensity={lightsOn ? 3 : 1} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
-          <pointLight position={[0, 5, 0]} intensity={lightsOn ? 4 : 1.5} distance={100} color={lightsOn ? "#ffffff" : "#5a9fd4"} />
+          <pointLight position={[10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[-10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[-10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[0, 5, 0]} intensity={lightsOn ? 3.2 : 1.5} distance={100} color={lightsOn ? "#ffffff" : "#5a9fd4"} />
 
           {/* Blue ambient wall lights - always on, more visible when main lights off */}
           {/* Left wall blue lights */}
           <pointLight 
             position={[-14, 4, -10]} 
-            intensity={lightsOn ? 0.5 : 1.5} 
+            intensity={lightsOn ? 3.2 : 0.02} 
             distance={20} 
             color="#4a90e2"
           />
           <pointLight 
             position={[-14, 4, 0]} 
-            intensity={lightsOn ? 0.5 : 1.5} 
+            intensity={lightsOn ? 3.2 : 0.02} 
             distance={20} 
             color="#4a90e2"
           />
           <pointLight 
             position={[-14, 4, 10]} 
-            intensity={lightsOn ? 0.5 : 1.5} 
+            intensity={lightsOn ? 3.2 : 0.02} 
             distance={20} 
             color="#4a90e2"
           />
@@ -903,19 +903,19 @@ const CinemaScene3D = forwardRef(({
           {/* Right wall blue lights */}
           <pointLight 
             position={[14, 4, -10]} 
-            intensity={lightsOn ? 0.5 : 1.5} 
+            intensity={lightsOn ? 3.2 : 0.02} 
             distance={20} 
             color="#4a90e2"
           />
           <pointLight 
             position={[14, 4, 0]} 
-            intensity={lightsOn ? 0.5 : 1.5} 
+            intensity={lightsOn ? 3.2 : 0.02} 
             distance={20} 
             color="#4a90e2"
           />
           <pointLight 
             position={[14, 4, 10]} 
-            intensity={lightsOn ? 0.5 : 1.5} 
+            intensity={lightsOn ? 3.2 : 0.02} 
             distance={20} 
             color="#4a90e2"
           />
@@ -923,19 +923,19 @@ const CinemaScene3D = forwardRef(({
           {/* Back wall blue lights */}
           <pointLight 
             position={[-10, 4, 15]} 
-            intensity={lightsOn ? 0.5 : 1.2} 
+            intensity={lightsOn ? 1.3 : 0.03} 
             distance={18} 
             color="#5a9fd4"
           />
           <pointLight 
             position={[0, 4, 15]} 
-            intensity={lightsOn ? 0.5 : 1.2} 
+            intensity={lightsOn ? 1.3 : 0.03} 
             distance={18} 
             color="#5a9fd4"
           />
           <pointLight 
             position={[10, 4, 15]} 
-            intensity={lightsOn ? 0.5 : 1.2} 
+            intensity={lightsOn ? 1.3 : 0.03} 
             distance={18} 
             color="#5a9fd4"
           />

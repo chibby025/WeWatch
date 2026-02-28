@@ -438,36 +438,6 @@ const Taskbar = ({
             }} 
           />
 
-          {/* Speaker button - only show for host when audio is unmuted */}
-          {isHost && isAudioActive && onHostBroadcastToggle && (() => {
-            // Get host's seat ID
-            const hostSeatId = userSeats?.[authenticatedUserID];
-            if (!hostSeatId) return null;
-            
-            // Detect format: Cinema uses "row-col", Lecture Hall uses integers
-            const seatIdStr = String(hostSeatId);
-            let rowLabel = "Row Audio";
-            
-            if (seatIdStr.includes('-')) {
-              // Cinema format: extract row number
-              const rowNumber = seatIdStr.split('-')[0];
-              rowLabel = `Row ${rowNumber}`;
-            } else {
-              // Lecture hall format: seat 145 is host podium
-              const seatNumber = parseInt(hostSeatId);
-              rowLabel = seatNumber === 145 ? "Host" : "Row Audio";
-            }
-            
-            return (
-              <TaskbarButton
-                icon={SpeakerIcon}
-                label={isHostBroadcasting ? "Whole Room" : rowLabel}
-                onClick={onHostBroadcastToggle}
-                shouldPulse={isHostBroadcasting}
-              />
-            );
-          })()}
-
           {/* Seats Button - Only show for 3D Cinema & Lecture Hall (not regular VideoWatch) */}
           {watchType !== 'video' && (
             <div className="relative">
