@@ -396,18 +396,22 @@ const LobbyPage = () => {
 
   // ✅ Fetch friends list for chat
   const fetchFriendsList = async () => {
+    console.log('👥 [Lobby] Fetching friends list...');
     setChatsLoading(true);
     try {
       // Fetch accepted friends from friendship system
       const response = await apiClient.get('/api/friendships/list');
+      console.log('✅ [Lobby] Friends list response:', response.data);
       // Normalize IDs to lowercase
       const normalizedFriends = (response.data.friends || []).map(friend => ({
         ...friend,
         id: friend.id || friend.ID
       }));
       setFriendsList(normalizedFriends);
+      console.log(`👥 [Lobby] Loaded ${normalizedFriends.length} friends`);
     } catch (err) {
-      console.error('Failed to fetch friends list:', err);
+      console.error('❌ [Lobby] Failed to fetch friends list:', err);
+      console.error('❌ [Lobby] Error details:', err.response?.data || err.message);
     } finally {
       setChatsLoading(false);
     }
@@ -415,11 +419,13 @@ const LobbyPage = () => {
   
   // ✅ Fetch pending friend requests (received)
   const fetchPendingRequests = async () => {
+    console.log('📬 [Lobby] Fetching pending requests...');
     try {
       const response = await apiClient.get('/api/friendships/requests/pending');
       setPendingRequests(response.data.requests || []);
+      console.log(`📬 [Lobby] Loaded ${response.data.requests?.length || 0} pending requests`);
     } catch (err) {
-      console.error('Failed to fetch pending requests:', err);
+      console.error('❌ [Lobby] Failed to fetch pending requests:', err);
     }
   };
   
@@ -548,11 +554,13 @@ const LobbyPage = () => {
   
   // ✅ Fetch sent friend requests (outgoing)
   const fetchSentRequests = async () => {
+    console.log('📤 [Lobby] Fetching sent requests...');
     try {
       const response = await getSentFriendRequests();
       setSentRequests(response.data.requests || []);
+      console.log(`📤 [Lobby] Loaded ${response.data.requests?.length || 0} sent requests`);
     } catch (err) {
-      console.error('Failed to fetch sent requests:', err);
+      console.error('❌ [Lobby] Failed to fetch sent requests:', err);
     }
   };
   
