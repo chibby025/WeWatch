@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"wewatch/internal/models"
+	"wewatch-backend/internal/models"
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go"
 )
