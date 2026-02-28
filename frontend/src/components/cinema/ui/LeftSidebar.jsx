@@ -415,7 +415,7 @@ export default function LeftSidebar({
   return (
     <div
       ref={sidebarRef}
-      className="fixed left-0 top-0 h-full w-full sm:w-80 md:w-96 z-40 overflow-y-auto hide-scrollbar left-sidebar"
+      className="fixed left-0 top-0 h-full w-full sm:w-[350px] md:w-96 z-40 overflow-y-auto hide-scrollbar left-sidebar"
       onClick={(e) => e.stopPropagation()}
     >
       {/* ✅ Host Verification Loading Overlay */}

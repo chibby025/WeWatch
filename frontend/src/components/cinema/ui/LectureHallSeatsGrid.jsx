@@ -318,7 +318,7 @@ export default function LectureHallSeatsGrid({
     <>
       <style>{scrollbarStyles}</style>
       <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-2 sm:p-4">
-      <div className="bg-gray-900 rounded-xl shadow-2xl max-w-5xl w-full max-h-[95vh] sm:max-h-[90vh] overflow-auto sleek-scrollbar">
+      <div className="bg-gray-900 rounded-xl shadow-2xl w-full mx-2 sm:mx-4 max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-auto sleek-scrollbar">
         {/* Header */}
         <div className="sticky top-0 bg-gray-900 border-b border-gray-700 p-3 sm:p-6 flex justify-between items-center z-20">
           <div>

@@ -6815,14 +6815,6 @@ const PositionCalculatorPage = () => {
           </div>
         )}
         
-        {/* Back Button */}
-        <button
-          onClick={() => navigate(-1)}
-          className="absolute top-4 right-4 bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg font-medium"
-        >
-          ← Back
-        </button>
-        
         {/* Seat Cycling Control Panel */}
         {showSeatCycling && previewSeats.length > 0 && (
           <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 bg-black/80 backdrop-blur-sm rounded-lg p-4 border border-gray-600 space-y-3">

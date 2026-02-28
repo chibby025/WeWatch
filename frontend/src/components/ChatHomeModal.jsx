@@ -45,16 +45,16 @@ export default function ChatHomeModal({
   });
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-gradient-to-br from-gray-900 via-black to-purple-900/30 rounded-2xl w-full max-w-md shadow-2xl border border-purple-500/20">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+      <div className="bg-gradient-to-br from-gray-900 via-black to-purple-900/30 rounded-2xl w-full mx-2 sm:mx-4 max-w-md shadow-2xl border border-purple-500/20">
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-600 to-purple-800 p-5 rounded-t-2xl flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
-              <img src="/icons/chathome.svg" alt="Chats" className="w-6 h-6" />
+        <div className="bg-gradient-to-r from-purple-600 to-purple-800 p-4 sm:p-5 rounded-t-2xl flex justify-between items-center">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
+              <img src="/icons/chathome.svg" alt="Chats" className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <h2 className="text-white font-bold text-xl">Chats</h2>
+              <h2 className="text-white font-bold text-lg sm:text-xl">Chats</h2>
               <p className="text-purple-200 text-xs">
                 {recentChats.length} conversation{recentChats.length !== 1 ? 's' : ''}
               </p>
@@ -73,14 +73,14 @@ export default function ChatHomeModal({
           {/* Room Chat */}
           <button
             onClick={onOpenRoomChat}
-            className="w-full text-left px-4 py-3 rounded-xl bg-gradient-to-r from-blue-600/20 to-blue-800/20 hover:from-blue-600/30 hover:to-blue-800/30 border border-blue-500/30 flex items-center gap-4 text-white transition-all group"
+            className="w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-xl bg-gradient-to-r from-blue-600/20 to-blue-800/20 hover:from-blue-600/30 hover:to-blue-800/30 border border-blue-500/30 flex items-center gap-3 sm:gap-4 text-white transition-all group"
           >
-            <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
-              <img src="/icons/chathome.svg" alt="Room Chat" className="w-6 h-6" />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg flex-shrink-0">
+              <img src="/icons/chathome.svg" alt="Room Chat" className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div className="flex-1">
-              <div className="font-semibold text-white">{getChatLabel()}</div>
-              <div className="text-sm text-blue-300">Everyone in this session</div>
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-white text-sm sm:text-base">{getChatLabel()}</div>
+              <div className="text-xs sm:text-sm text-blue-300">Everyone in this session</div>
             </div>
             <div className="text-blue-400">→</div>
           </button>
@@ -112,7 +112,7 @@ export default function ChatHomeModal({
                 <button
                   key={user.id}
                   onClick={() => onOpenPrivateChat(user)}
-                  className="w-full text-left px-4 py-3 rounded-xl bg-purple-900/20 hover:bg-purple-900/40 border border-purple-500/20 hover:border-purple-500/40 flex items-center gap-4 transition-all group"
+                  className="w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-xl bg-purple-900/20 hover:bg-purple-900/40 border border-purple-500/20 hover:border-purple-500/40 flex items-center gap-3 sm:gap-4 transition-all group"
                 >
                   {/* Avatar */}
                   <div className="relative flex-shrink-0">
@@ -120,16 +120,16 @@ export default function ChatHomeModal({
                       <img 
                         src={user.avatar_url.startsWith('http') ? user.avatar_url : `http://localhost:8080${user.avatar_url}`}
                         alt={user.username}
-                        className="w-12 h-12 rounded-full object-cover ring-2 ring-purple-500/50 group-hover:ring-purple-400 transition-all"
+                        className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover ring-2 ring-purple-500/50 group-hover:ring-purple-400 transition-all"
                       />
                     ) : (
-                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-600 to-purple-800 flex items-center justify-center text-white font-bold text-lg ring-2 ring-purple-500/50 group-hover:ring-purple-400 transition-all">
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-purple-600 to-purple-800 flex items-center justify-center text-white font-bold text-base sm:text-lg ring-2 ring-purple-500/50 group-hover:ring-purple-400 transition-all">
                         {user.username?.[0]?.toUpperCase() || 'U'}
                       </div>
                     )}
                     {/* Unread Badge */}
                     {user.unreadCount > 0 && (
-                      <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-[20px] flex items-center justify-center px-1 shadow-lg ring-2 ring-black animate-pulse">
+                      <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] sm:text-xs font-bold rounded-full min-w-[18px] h-[18px] sm:min-w-[20px] sm:h-[20px] flex items-center justify-center px-1 shadow-lg ring-2 ring-black animate-pulse">
                         {user.unreadCount > 99 ? '99+' : user.unreadCount}
                       </div>
                     )}
@@ -138,10 +138,10 @@ export default function ChatHomeModal({
                   {/* User Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-1">
-                      <span className="font-semibold text-white truncate">{user.username}</span>
-                      <span className="text-xs text-purple-400">{user.messageCount} msgs</span>
+                      <span className="font-semibold text-white truncate text-sm sm:text-base">{user.username}</span>
+                      <span className="text-[10px] sm:text-xs text-purple-400 flex-shrink-0">{user.messageCount} msgs</span>
                     </div>
-                    <div className="text-sm text-gray-400 truncate">
+                    <div className="text-xs sm:text-sm text-gray-400 truncate">
                       {user.lastMessage}
                     </div>
                   </div>
