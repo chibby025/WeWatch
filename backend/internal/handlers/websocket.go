@@ -894,6 +894,11 @@ func (h *Hub) Run() {
 					
 					log.Printf("Hub: Client %p (User %d) unregistered from room %d", client, client.userID, client.roomID)
 
+					// ✅ Cleanup user from any active calls (lobby clients only)
+					if client.roomID == 0 {
+						CleanupUserCalls(client.userID)
+					}
+
 					// Check if this client was the stream host
 					h.streamStateMutex.Lock()
 					if hostID, isStreaming := h.roomStreamHost[client.roomID]; isStreaming && hostID == client.userID {
@@ -2012,6 +2017,15 @@ func (client *Client) handleMessage(message []byte) {
     }
 
     log.Printf("[handleMessage] 📋 Message type: '%s' from user %d", msg.Type, client.userID)
+
+    // ✅ Handle call-related messages (lobby only, roomID = 0)
+    if client.roomID == 0 {
+        switch msg.Type {
+        case "call_initiate", "call_accept", "call_decline", "call_cancel", "call_end":
+            HandleCallMessage(client, msg)
+            return
+        }
+    }
 
     // ✅ Handle client_ready: send session_status
     if msg.Type == "client_ready" {

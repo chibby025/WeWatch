@@ -25,6 +25,10 @@ import LobbyPollCreator from './lobby/LobbyPollCreator';
 import CalendarDropdown from './CalendarDropdown';
 import CalendarModal from './CalendarModal';
 import TicketPurchaseModal from './payment/TicketPurchaseModal';
+import OutgoingCallModal from './lobby/OutgoingCallModal';
+import IncomingCallModal from './lobby/IncomingCallModal';
+import ActiveCallInterface from './lobby/ActiveCallInterface';
+import { Room, RoomEvent } from 'livekit-client';
 
 const LobbyPage = () => {
   // ✅ Tab State
@@ -68,6 +72,13 @@ const LobbyPage = () => {
   const mediaRecorderRef = React.useRef(null);
   const audioChunksRef = React.useRef([]);
   const recordingTimerRef = React.useRef(null);
+  
+  // ✅ Call State
+  const [outgoingCall, setOutgoingCall] = useState(null); // { user, status: 'calling'|'declined'|'busy'|'no_answer' }
+  const [incomingCall, setIncomingCall] = useState(null); // { user, callId }
+  const [activeCall, setActiveCall] = useState(null); // { user, room, roomName }
+  const [callRoom, setCallRoom] = useState(null); // LiveKit Room instance
+  const callTimeoutRef = React.useRef(null);
   
   // ✅ Friend Request State
   const [pendingRequests, setPendingRequests] = useState([]); // Friend requests received
@@ -923,6 +934,215 @@ const LobbyPage = () => {
     }
   };
 
+  // ✅ Call Functions
+  const initiateCall = async (user) => {
+    if (!user || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      toast.error('Cannot initiate call - not connected');
+      return;
+    }
+
+    // Check if already in a call
+    if (activeCall || outgoingCall || incomingCall) {
+      toast.error('Already in a call');
+      return;
+    }
+
+    console.log('📞 [Call] Initiating call to:', user.username);
+    
+    // Show outgoing call modal
+    setOutgoingCall({ user, status: 'calling' });
+
+    // Send call initiate message
+    wsRef.current.send(JSON.stringify({
+      type: 'call_initiate',
+      to_user_id: user.id,
+    }));
+
+    // Set 30-second timeout
+    callTimeoutRef.current = setTimeout(() => {
+      console.log('📞 [Call] Timeout - no answer');
+      setOutgoingCall(prev => ({ ...prev, status: 'no_answer' }));
+      
+      // Send cancel message to backend
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'call_cancel',
+          to_user_id: user.id,
+        }));
+      }
+
+      setTimeout(() => {
+        setOutgoingCall(null);
+      }, 2000);
+    }, 30000);
+  };
+
+  const handleIncomingCall = (message) => {
+    // Check priority: lower user ID wins
+    if (outgoingCall) {
+      const myId = authenticatedUserID;
+      const otherId = message.from_user_id;
+      
+      if (myId < otherId) {
+        // My call has priority, auto-decline incoming
+        console.log('📞 [Call] Priority conflict - declining incoming call (my priority)');
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: 'call_decline',
+            to_user_id: otherId,
+          }));
+        }
+        return;
+      } else {
+        // Incoming call has priority, cancel my outgoing call
+        console.log('📞 [Call] Priority conflict - canceling my outgoing call (their priority)');
+        if (callTimeoutRef.current) {
+          clearTimeout(callTimeoutRef.current);
+        }
+        setOutgoingCall(null);
+        
+        // Send cancel to my outgoing call recipient
+        if (outgoingCall && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: 'call_cancel',
+            to_user_id: outgoingCall.user.id,
+          }));
+        }
+      }
+    }
+
+    // Show incoming call modal
+    setIncomingCall({
+      user: message.from_user,
+      callId: message.call_id,
+    });
+  };
+
+  const acceptCall = async () => {
+    if (!incomingCall || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    console.log('📞 [Call] Accepting call from:', incomingCall.user.username);
+
+    // Send accept message
+    wsRef.current.send(JSON.stringify({
+      type: 'call_accept',
+      to_user_id: incomingCall.user.id,
+      call_id: incomingCall.callId,
+    }));
+
+    // Backend will respond with call_accepted including LiveKit token
+  };
+
+  const declineCall = () => {
+    if (!incomingCall || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    console.log('📞 [Call] Declining call from:', incomingCall.user.username);
+
+    wsRef.current.send(JSON.stringify({
+      type: 'call_decline',
+      to_user_id: incomingCall.user.id,
+      call_id: incomingCall.callId,
+    }));
+
+    setIncomingCall(null);
+  };
+
+  const handleCallAccepted = async (message) => {
+    console.log('📞 [Call] Call accepted, joining LiveKit room:', message.room_name);
+
+    // Clear outgoing call modal
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+    }
+    setOutgoingCall(null);
+    setIncomingCall(null);
+
+    // Create LiveKit room and join
+    try {
+      const room = new Room();
+      
+      await room.connect(message.livekit_url, message.token, {
+        audio: true,
+        video: false,
+      });
+
+      console.log('📞 [Call] Connected to LiveKit room');
+
+      // Enable local audio
+      await room.localParticipant.setMicrophoneEnabled(true);
+
+      setCallRoom(room);
+      setActiveCall({
+        user: outgoingCall?.user || incomingCall?.user || message.other_user,
+        room,
+        roomName: message.room_name,
+      });
+
+      // Listen for disconnections
+      room.on(RoomEvent.Disconnected, () => {
+        console.log('📞 [Call] Disconnected from LiveKit');
+        handleEndCall();
+      });
+
+      room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+        console.log('📞 [Call] Participant left:', participant.identity);
+        toast('Call ended');
+        handleEndCall();
+      });
+
+    } catch (error) {
+      console.error('❌ [Call] Failed to join LiveKit room:', error);
+      toast.error('Failed to join call');
+      handleEndCall();
+    }
+  };
+
+  const handleEndCall = () => {
+    console.log('📞 [Call] Ending call');
+
+    // Disconnect from LiveKit
+    if (callRoom) {
+      callRoom.disconnect();
+      setCallRoom(null);
+    }
+
+    // Notify backend
+    if (activeCall && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'call_end',
+        to_user_id: activeCall.user.id,
+      }));
+    }
+
+    // Clear all call states
+    setActiveCall(null);
+    setOutgoingCall(null);
+    setIncomingCall(null);
+
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+    }
+  };
+
+  const cancelOutgoingCall = () => {
+    if (!outgoingCall) return;
+
+    console.log('📞 [Call] Canceling outgoing call');
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'call_cancel',
+        to_user_id: outgoingCall.user.id,
+      }));
+    }
+
+    setOutgoingCall(null);
+
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+    }
+  };
+
   // Initial fetch on mount
   useEffect(() => {
     fetchRoomsData();
@@ -1026,6 +1246,52 @@ const LobbyPage = () => {
                 // Refresh friends list when request accepted
                 fetchFriendsList();
                 toast.success(`${message.from_username} accepted your friend request!`);
+                break;
+                
+              case 'call_incoming':
+                // Incoming call from another user
+                console.log('📞 [Call] Incoming call from:', message.from_user);
+                handleIncomingCall(message);
+                break;
+                
+              case 'call_accepted':
+                // Call was accepted, join LiveKit room
+                console.log('📞 [Call] Call accepted:', message);
+                handleCallAccepted(message);
+                break;
+                
+              case 'call_declined':
+                // Call was declined
+                console.log('📞 [Call] Call declined');
+                if (outgoingCall) {
+                  setOutgoingCall(prev => ({ ...prev, status: 'declined' }));
+                  if (callTimeoutRef.current) {
+                    clearTimeout(callTimeoutRef.current);
+                  }
+                  setTimeout(() => {
+                    setOutgoingCall(null);
+                  }, 2000);
+                }
+                break;
+                
+              case 'call_busy':
+                // User is already in a call
+                console.log('📞 [Call] User is busy');
+                if (outgoingCall) {
+                  setOutgoingCall(prev => ({ ...prev, status: 'busy' }));
+                  if (callTimeoutRef.current) {
+                    clearTimeout(callTimeoutRef.current);
+                  }
+                  setTimeout(() => {
+                    setOutgoingCall(null);
+                  }, 2000);
+                }
+                break;
+                
+              case 'call_ended':
+                // Call ended by other user
+                console.log('📞 [Call] Call ended by remote user');
+                handleEndCall();
                 break;
                 
               case 'session_preview_updated':
@@ -2608,6 +2874,13 @@ const LobbyPage = () => {
                         <h3 className="text-white font-semibold text-sm sm:text-base truncate">{selectedChatUser.username}</h3>
                       </div>
                       <button
+                        onClick={() => initiateCall(selectedChatUser)}
+                        className="text-white hover:bg-white/20 rounded p-1 transition-colors flex-shrink-0"
+                        title="Call"
+                      >
+                        <span className="text-xl">📞</span>
+                      </button>
+                      <button
                         onClick={() => setExpandedView(expandedView === 'chat' ? null : 'chat')}
                         className="text-white hover:bg-white/20 rounded p-1 transition-colors flex-shrink-0"
                         title={expandedView === 'chat' ? 'Exit fullscreen' : 'Expand fullscreen'}
@@ -2825,6 +3098,30 @@ const LobbyPage = () => {
           roomUrl={`${window.location.origin}/rooms/${selectedEventForCalendar.room_id}`}
         />
       )}
+
+      {/* ✅ Call Modals */}
+      <OutgoingCallModal
+        isOpen={!!outgoingCall}
+        friend={outgoingCall?.user}
+        callStatus={outgoingCall?.status}
+        onCancel={cancelOutgoingCall}
+      />
+
+      <IncomingCallModal
+        isOpen={!!incomingCall}
+        caller={incomingCall?.user}
+        onAccept={acceptCall}
+        onDecline={declineCall}
+      />
+
+      <ActiveCallInterface
+        isOpen={!!activeCall}
+        friend={activeCall?.user}
+        room={activeCall?.room}
+        onEndCall={handleEndCall}
+        localParticipant={callRoom?.localParticipant}
+        remoteParticipant={callRoom?.participants ? Array.from(callRoom.participants.values())[0] : null}
+      />
     </div>
   );
 };
