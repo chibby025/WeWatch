@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
 	"wewatch-backend/internal/models"
-	"github.com/livekit/protocol/livekit"
-	lksdk "github.com/livekit/server-sdk-go"
+	"wewatch-backend/internal/utils"
 )
 
 // CallState tracks active 1-on-1 calls
@@ -48,7 +48,13 @@ func HandleCallMessage(client *Client, msg WebSocketMessage) {
 }
 
 func handleCallInitiate(client *Client, msg WebSocketMessage) {
-	toUserID, ok := msg.Data["to_user_id"].(float64)
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		log.Printf("❌ [Call] Invalid data format in call_initiate")
+		return
+	}
+
+	toUserID, ok := data["to_user_id"].(float64)
 	if !ok {
 		log.Printf("❌ [Call] Invalid to_user_id in call_initiate")
 		return
@@ -174,7 +180,13 @@ func handleCallInitiate(client *Client, msg WebSocketMessage) {
 }
 
 func handleCallAccept(client *Client, msg WebSocketMessage) {
-	toUserID, ok := msg.Data["to_user_id"].(float64)
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		log.Printf("❌ [Call] Invalid data format in call_accept")
+		return
+	}
+
+	toUserID, ok := data["to_user_id"].(float64)
 	if !ok {
 		log.Printf("❌ [Call] Invalid to_user_id in call_accept")
 		return
@@ -219,7 +231,7 @@ func handleCallAccept(client *Client, msg WebSocketMessage) {
 		return
 	}
 
-	livekitURL := GetLiveKitURL()
+	livekitURL := getLiveKitURL()
 
 	// Get recipient info for caller
 	var recipient models.User
@@ -264,7 +276,13 @@ func handleCallAccept(client *Client, msg WebSocketMessage) {
 }
 
 func handleCallDecline(client *Client, msg WebSocketMessage) {
-	toUserID, ok := msg.Data["to_user_id"].(float64)
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		log.Printf("❌ [Call] Invalid data format in call_decline")
+		return
+	}
+
+	toUserID, ok := data["to_user_id"].(float64)
 	if !ok {
 		log.Printf("❌ [Call] Invalid to_user_id in call_decline")
 		return
@@ -281,7 +299,7 @@ func handleCallDecline(client *Client, msg WebSocketMessage) {
 		return
 	}
 
-	call, ok := activeCalls[callID]
+	_, ok = activeCalls[callID]
 	if !ok {
 		log.Printf("❌ [Call] Call %s not found", callID)
 		return
@@ -301,7 +319,13 @@ func handleCallDecline(client *Client, msg WebSocketMessage) {
 }
 
 func handleCallCancel(client *Client, msg WebSocketMessage) {
-	toUserID, ok := msg.Data["to_user_id"].(float64)
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		log.Printf("❌ [Call] Invalid data format in call_cancel")
+		return
+	}
+
+	toUserID, ok := data["to_user_id"].(float64)
 	if !ok {
 		log.Printf("❌ [Call] Invalid to_user_id in call_cancel")
 		return
@@ -318,7 +342,7 @@ func handleCallCancel(client *Client, msg WebSocketMessage) {
 		return
 	}
 
-	call, ok := activeCalls[callID]
+	_, ok = activeCalls[callID]
 	if !ok {
 		log.Printf("❌ [Call] Call %s not found", callID)
 		return
@@ -445,26 +469,22 @@ func generateLiveKitToken(userID uint, roomName string) (string, error) {
 		return "", fmt.Errorf("failed to fetch user: %v", err)
 	}
 
-	apiKey := GetLiveKitAPIKey()
-	apiSecret := GetLiveKitAPISecret()
-
-	at := lksdk.NewAccessToken(apiKey, apiSecret)
-	grant := &lksdk.VideoGrant{
-		RoomJoin: true,
-		Room:     roomName,
-	}
-	at.AddGrant(grant).
-		SetIdentity(user.Username).
-		SetName(user.Username).
-		SetValidFor(24 * time.Hour).
-		SetMetadata(fmt.Sprintf(`{"user_id":%d}`, userID))
-
-	token, err := at.ToJWT()
+	// Use existing utility function (avoids SDK version conflict)
+	token, err := utils.GenerateLiveKitToken(roomName, user.Username, false)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate token: %v", err)
 	}
 
 	return token, nil
+}
+
+// getLiveKitURL returns the LiveKit server URL from environment
+func getLiveKitURL() string {
+	url := os.Getenv("LIVEKIT_URL")
+	if url == "" {
+		url = "ws://localhost:7880"
+	}
+	return url
 }
 
 // CleanupUserCalls removes a user from any active calls when they disconnect
