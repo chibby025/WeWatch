@@ -915,27 +915,36 @@ const handlePlayMedia = (mediaItemId) => {
       </div>
 
       {/* --- Room Info Grid (Enhanced with Icons) --- */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600 mb-6">
-        <div className="flex items-center">
-          <UserIcon className="h-4 w-4 mr-2 text-gray-500" /> {/* Heroicon */}
-          <span><span className="font-semibold">Host:</span> User {room.host_id}</span>
-        </div>
-        <div className="flex items-center">
-          <CalendarIcon className="h-4 w-4 mr-2 text-gray-500" /> {/* Heroicon */}
-          <span><span className="font-semibold">Created:</span> {new Date(room.created_at).toLocaleString()}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <ServerIcon className="h-4 w-4 mr-2 text-gray-500" /> {/* Heroicon */}
-            <span><span className="font-semibold">Status:</span> {room.media_file_name ? 'Media Loaded' : 'No Media'}</span>
+      <div className="space-y-3 text-sm text-gray-600 mb-6">
+        {/* Host and Members - Horizontal */}
+        <div className="flex items-center gap-6">
+          {/* Host Info */}
+          <div className="flex items-center gap-2">
+            <UserIcon className="h-4 w-4 text-gray-500" />
+            <span className="text-gray-500 font-semibold">(host)</span>
+            <span className="text-gray-800">User {room.host_id}</span>
           </div>
+          
+          {/* Member Count */}
           <button
             onClick={() => setIsMembersPanelOpen(!isMembersPanelOpen)}
-            className="flex items-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded-full text-xs transition-colors duration-150"
+            className="flex items-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full text-xs transition-colors duration-150 gap-1"
           >
-            <UserIcon className="h-3 w-3 mr-1" />
+            <UserIcon className="h-3 w-3" />
             <span>{roomMembers.length || 0} {roomMembers.length === 1 ? 'member' : 'members'}</span>
           </button>
+        </div>
+        
+        {/* Created and Status - Horizontal */}
+        <div className="flex items-center gap-6">
+          <div className="flex items-center">
+            <CalendarIcon className="h-4 w-4 mr-2 text-gray-500" />
+            <span><span className="font-semibold">Created:</span> {new Date(room.created_at).toLocaleString()}</span>
+          </div>
+          <div className="flex items-center">
+            <ServerIcon className="h-4 w-4 mr-2 text-gray-500" />
+            <span><span className="font-semibold">Status:</span> {room.media_file_name ? 'Media Loaded' : 'No Media'}</span>
+          </div>
         </div>
       </div>
 

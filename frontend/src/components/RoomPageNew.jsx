@@ -1656,10 +1656,10 @@ const RoomPageNew = () => {
                         {room.show_host !== false && (
                           <span className="flex items-center gap-0.5">
                             <img src="/icons/hostIcon.svg" alt="" className="h-2.5 w-2.5" />
-                            {room.host_username || `User ${room.host_id}`} (Host)
+                            <span>(host)</span>
+                            <span>{room.host_username || `User ${room.host_id}`}</span>
                           </span>
                         )}
-                        <span className="text-gray-500">|</span>
                         <span onClick={() => setIsMembersModalOpen(true)} className="cursor-pointer hover:opacity-80 flex items-center gap-0.5">
                           <img src="/icons/roomMembersIcon.svg" alt="" className="h-2.5 w-2.5" />
                           {membersInRoom}{membersInSessionCount > 0 && `, ${membersInSessionCount} watching`}
