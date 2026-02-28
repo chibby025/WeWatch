@@ -32,6 +32,8 @@ export default function LeftSidebar({
   onTakeQuiz, // Handler for student to take quiz
   watchType, // 'video', '3d_cinema', or 'classroom'
   classType, // 'classroom' or 'lecture_hall'
+  darknessLevel, // ✅ NEW: 'regular' | 'extreme'
+  onDarknessLevelChange, // ✅ NEW: Handler for darkness level changes
 }) {
   // ✅ Host verification state
   const [isHost, setIsHost] = useState(isHostProp);
@@ -445,6 +447,42 @@ export default function LeftSidebar({
               </p>
             </div>
           </label>
+        </div>
+      )}
+
+      {/* 🌙 Host Settings - Darkness Level Control (3D Cinema Only) */}
+      {isHost && watchType === '3d_cinema' && darknessLevel && onDarknessLevelChange && (
+        <div className="mb-3 p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
+          <div className="mb-2">
+            <span className="text-sm sm:text-base font-medium text-white">
+              Darkness Level (Lights Off)
+            </span>
+            <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 leading-relaxed">
+              Adjust cinema darkness when lights are off
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => onDarknessLevelChange('regular')}
+              className={`flex-1 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+                darknessLevel === 'regular'
+                  ? 'bg-blue-600 text-white shadow-lg'
+                  : 'bg-gray-700/50 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              🌙 Regular
+            </button>
+            <button
+              onClick={() => onDarknessLevelChange('extreme')}
+              className={`flex-1 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+                darknessLevel === 'extreme'
+                  ? 'bg-purple-600 text-white shadow-lg'
+                  : 'bg-gray-700/50 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              🌑 Extreme
+            </button>
+          </div>
         </div>
       )}
 

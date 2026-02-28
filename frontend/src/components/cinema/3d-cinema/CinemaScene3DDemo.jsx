@@ -337,6 +337,7 @@ export default function CinemaScene3DDemo() {
   const processedMessageCountRef = useRef(0);
   const [isViewLocked, setIsViewLocked] = useState(true);   // ✅ ADD THIS
   const [lightsOn, setLightsOn] = useState(true);          // ✅ ADD THIS
+  const [darknessLevel, setDarknessLevel] = useState('regular'); // 'regular' | 'extreme'
   const [isSeatGridModalOpen, setIsSeatGridModalOpen] = useState(false);
   const [outgoingSwapRequest, setOutgoingSwapRequest] = useState(null); // { targetUserId, targetSeatId }
   const [showChatHome, setShowChatHome] = useState(false);
@@ -1440,6 +1441,26 @@ export default function CinemaScene3DDemo() {
       sendMessage({
         type: 'update_lights',
         data: { lightsOn: newLightsState }
+      });
+    }
+  };
+
+  // ✅ Darkness level change handler
+  const handleDarknessLevelChange = (newLevel) => {
+    setDarknessLevel(newLevel);
+    
+    // ✅ Persist to sessionStorage for refresh survival
+    try {
+      sessionStorage.setItem(`cinema_darkness_level_${roomId}`, JSON.stringify(newLevel));
+    } catch (err) {
+      console.warn('Failed to save darkness level:', err);
+    }
+    
+    // ✅ Broadcast to all connected users
+    if (sendMessage) {
+      sendMessage({
+        type: 'darkness_level_changed',
+        data: { darknessLevel: newLevel }
       });
     }
   };
@@ -2971,6 +2992,18 @@ export default function CinemaScene3DDemo() {
               sessionStorage.setItem(`cinema_lights_${roomId}`, JSON.stringify(msg.data.lightsOn));
             } catch (err) {
               console.warn('Failed to save lights state:', err);
+            }
+          }
+          break;
+        
+        case 'darkness_level_changed':
+          if (msg.data?.darknessLevel) {
+            setDarknessLevel(msg.data.darknessLevel);
+            // ✅ Update sessionStorage when receiving broadcast
+            try {
+              sessionStorage.setItem(`cinema_darkness_level_${roomId}`, JSON.stringify(msg.data.darknessLevel));
+            } catch (err) {
+              console.warn('Failed to save darkness level:', err);
             }
           }
           break;
@@ -4588,6 +4621,7 @@ export default function CinemaScene3DDemo() {
         showPositionDebug={showPositionDebug} 
         debugMode={true}
         lightsOn={lightsOn}
+        darknessLevel={darknessLevel}
         roomMembers={roomMembers}
         userSeats={userSeats} // ✅ Pass seat assignments for avatar filtering
         remoteParticipants={remoteParticipantsMap}
@@ -4747,6 +4781,8 @@ export default function CinemaScene3DDemo() {
             isLeftSidebarOpen={true}
             watchType="3d_cinema"
             classType={null}
+            darknessLevel={darknessLevel}
+            onDarknessLevelChange={handleDarknessLevelChange}
             isScreenSharingActive={!!(liveShareMode)}
             sharingSource={sharingSource}
             isLiveKitConnected={isLiveKitConnected}

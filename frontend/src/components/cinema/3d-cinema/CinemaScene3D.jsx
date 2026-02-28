@@ -410,13 +410,13 @@ function CinemaCamera({
 /**
  * DynamicLighting - Screen light and room lights that illuminate the theater
  */
-function DynamicLighting({ screenRef, intensity = 1, lightsOn = false }) {
+function DynamicLighting({ screenRef, intensity = 1, lightsOn = false, darknessLevel = 'regular' }) {
   const screenLightRef = useRef();
   const ceilingLightsRef = useRef([]);
   const wallLightsRef = useRef([]);
   const [color, setColor] = useState('#ffffff');
 
-  console.log('💡 [DynamicLighting] Rendering with lightsOn:', lightsOn);
+  console.log('💡 [DynamicLighting] Rendering with lightsOn:', lightsOn, 'darknessLevel:', darknessLevel);
 
   // 🚀 PHASE 2: Only trigger re-render when lights actually change
   useFrame(({ invalidate }) => {
@@ -596,6 +596,7 @@ const CinemaScene3D = forwardRef(({
   isViewLocked = true,     // View lock state (controlled by parent)
   setIsViewLocked,         // Function to update lock state
   lightsOn = true,         // Lights state (controlled by parent)
+  darknessLevel = 'regular', // ✅ Darkness level: 'regular' | 'extreme'
   setLightsOn,             // Function to update lights state
   roomMembers = [],        // Array of users in the room
   userSeats = {},          // ✅ Map of userId -> seatId for filtering avatars
@@ -843,30 +844,43 @@ const CinemaScene3D = forwardRef(({
           />
 
           {/* Dynamic lighting - toggle between bright and dark */}
-          <ambientLight intensity={lightsOn ? 1.0 : 0.02} />
-          
-          {/* Ceiling lights - white when on, blue when off */}
-          <pointLight 
-            position={[0, 10, -5]} 
-            intensity={lightsOn ? 5.5 : 0.03} 
-            distance={30} 
-            color={lightsOn ? "#ffffff" : "#1e90ff"}
-            castShadow={false}
-          />
-          <pointLight 
-            position={[0, 10, 5]} 
-            intensity={lightsOn ? 5.5 : 0.03} 
-            distance={30} 
-            color={lightsOn ? "#ffffff" : "#1e90ff"}
-            castShadow={false}
-          />
-          <pointLight 
-            position={[0, 10, 12]} 
-            intensity={lightsOn ? 5.5 : 0.03} 
-            distance={30} 
-            color={lightsOn ? "#ffffff" : "#1e90ff"}
-            castShadow={false}
-          />
+          {/* Helper to get darkness intensity: regular (original values) vs extreme (new values) */}
+          {(() => {
+            const getDarkIntensity = (regular, extreme) => {
+              if (lightsOn) return null; // Not used when lights are on
+              return darknessLevel === 'extreme' ? extreme : regular;
+            };
+            const ambientDark = getDarkIntensity(0.5, 0.02);
+            const ceilingDark = getDarkIntensity(8, 0.03);
+            const wallDark = getDarkIntensity(1.5, 0.02);
+            const pathwayDark = getDarkIntensity(1.2, 0.03);
+            
+            return (
+              <>
+                <ambientLight intensity={lightsOn ? 1.0 : ambientDark} />
+                
+                {/* Ceiling lights - white when on, blue when off */}
+                <pointLight 
+                  position={[0, 10, -5]} 
+                  intensity={lightsOn ? 5.5 : ceilingDark} 
+                  distance={30} 
+                  color={lightsOn ? "#ffffff" : "#1e90ff"}
+                  castShadow={false}
+                />
+                <pointLight 
+                  position={[0, 10, 5]} 
+                  intensity={lightsOn ? 5.5 : ceilingDark} 
+                  distance={30} 
+                  color={lightsOn ? "#ffffff" : "#1e90ff"}
+                  castShadow={false}
+                />
+                <pointLight 
+                  position={[0, 10, 12]} 
+                  intensity={lightsOn ? 5.5 : ceilingDark} 
+                  distance={30} 
+                  color={lightsOn ? "#ffffff" : "#1e90ff"}
+                  castShadow={false}
+                />
           
           {/* Additional directional lighting */}
           <directionalLight position={[0, 10, 0]} intensity={lightsOn ? 1.0 : 0.02} castShadow={false} color={lightsOn ? "#ffffff" : "#4169e1"} />
@@ -879,66 +893,69 @@ const CinemaScene3D = forwardRef(({
           <pointLight position={[-10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
           <pointLight position={[0, 5, 0]} intensity={lightsOn ? 3.2 : 1.5} distance={100} color={lightsOn ? "#ffffff" : "#5a9fd4"} />
 
-          {/* Blue ambient wall lights - always on, more visible when main lights off */}
-          {/* Left wall blue lights */}
-          <pointLight 
-            position={[-14, 4, -10]} 
-            intensity={lightsOn ? 3.2 : 0.02} 
-            distance={20} 
-            color="#4a90e2"
-          />
-          <pointLight 
-            position={[-14, 4, 0]} 
-            intensity={lightsOn ? 3.2 : 0.02} 
-            distance={20} 
-            color="#4a90e2"
-          />
-          <pointLight 
-            position={[-14, 4, 10]} 
-            intensity={lightsOn ? 3.2 : 0.02} 
-            distance={20} 
-            color="#4a90e2"
-          />
-          
-          {/* Right wall blue lights */}
-          <pointLight 
-            position={[14, 4, -10]} 
-            intensity={lightsOn ? 3.2 : 0.02} 
-            distance={20} 
-            color="#4a90e2"
-          />
-          <pointLight 
-            position={[14, 4, 0]} 
-            intensity={lightsOn ? 3.2 : 0.02} 
-            distance={20} 
-            color="#4a90e2"
-          />
-          <pointLight 
-            position={[14, 4, 10]} 
-            intensity={lightsOn ? 3.2 : 0.02} 
-            distance={20} 
-            color="#4a90e2"
-          />
+                {/* Blue ambient wall lights - always on, more visible when main lights off */}
+                {/* Left wall blue lights */}
+                <pointLight 
+                  position={[-14, 4, -10]} 
+                  intensity={lightsOn ? 3.2 : wallDark} 
+                  distance={20} 
+                  color="#4a90e2"
+                />
+                <pointLight 
+                  position={[-14, 4, 0]} 
+                  intensity={lightsOn ? 3.2 : wallDark} 
+                  distance={20} 
+                  color="#4a90e2"
+                />
+                <pointLight 
+                  position={[-14, 4, 10]} 
+                  intensity={lightsOn ? 3.2 : wallDark} 
+                  distance={20} 
+                  color="#4a90e2"
+                />
+                
+                {/* Right wall blue lights */}
+                <pointLight 
+                  position={[14, 4, -10]} 
+                  intensity={lightsOn ? 3.2 : wallDark} 
+                  distance={20} 
+                  color="#4a90e2"
+                />
+                <pointLight 
+                  position={[14, 4, 0]} 
+                  intensity={lightsOn ? 3.2 : wallDark} 
+                  distance={20} 
+                  color="#4a90e2"
+                />
+                <pointLight 
+                  position={[14, 4, 10]} 
+                  intensity={lightsOn ? 3.2 : wallDark} 
+                  distance={20} 
+                  color="#4a90e2"
+                />
 
-          {/* Back wall blue lights */}
-          <pointLight 
-            position={[-10, 4, 15]} 
-            intensity={lightsOn ? 1.3 : 0.03} 
-            distance={18} 
-            color="#5a9fd4"
-          />
-          <pointLight 
-            position={[0, 4, 15]} 
-            intensity={lightsOn ? 1.3 : 0.03} 
-            distance={18} 
-            color="#5a9fd4"
-          />
-          <pointLight 
-            position={[10, 4, 15]} 
-            intensity={lightsOn ? 1.3 : 0.03} 
-            distance={18} 
-            color="#5a9fd4"
-          />
+                {/* Back wall blue lights */}
+                <pointLight 
+                  position={[-10, 4, 15]} 
+                  intensity={lightsOn ? 1.3 : pathwayDark} 
+                  distance={18} 
+                  color="#5a9fd4"
+                />
+                <pointLight 
+                  position={[0, 4, 15]} 
+                  intensity={lightsOn ? 1.3 : pathwayDark} 
+                  distance={18} 
+                  color="#5a9fd4"
+                />
+                <pointLight 
+                  position={[10, 4, 15]} 
+                  intensity={lightsOn ? 1.3 : pathwayDark} 
+                  distance={18} 
+                  color="#5a9fd4"
+                />
+              </>
+            );
+          })()}
 
           {/* GLB Cinema Model */}
           <CinemaTheaterGLB 
