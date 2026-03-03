@@ -18,7 +18,6 @@ import LobbyPage from './components/LobbyPage';
 import VideoWatch from './components/cinema/VideoWatch';
 import CinemaScene3DDemo from './components/cinema/3d-cinema/CinemaScene3DDemo';
 import LectureHallPage from './pages/LectureHallPage';
-import PositionCalculatorPage from './pages/PositionCalculatorPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider } from './contexts/AuthContext';
 import { PaymentProvider } from './contexts/PaymentContext';
@@ -153,16 +152,12 @@ function App() {
             <ProtectedRoute><CinemaScene3DDemo /></ProtectedRoute>
           } />
 
-          <Route path="/lecture-hall/:roomId" element={
+          <Route path="/classroom/classroom/:roomId" element={
             <ProtectedRoute><LectureHallPage /></ProtectedRoute>
           } />
 
-          <Route path="/position-calculator/classroom" element={
-            <ProtectedRoute><PositionCalculatorPage /></ProtectedRoute>
-          } />
-
-          <Route path="/position-calculator/lecture-hall" element={
-            <ProtectedRoute><PositionCalculatorPage /></ProtectedRoute>
+          <Route path="/classroom/lecture-hall/:roomId" element={
+            <ProtectedRoute><LectureHallPage /></ProtectedRoute>
           } />
 
           {/* 🎨 DEV TOOLS */}

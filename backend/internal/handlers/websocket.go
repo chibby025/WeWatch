@@ -18,6 +18,7 @@ import (
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
 	"wewatch-backend/internal/services"
+    "wewatch-backend/internal/handlers/games"
 )
 
 // - Define Message Types -
@@ -67,6 +68,7 @@ type Client struct {
 // - WebSocket Hub -
 var hub *Hub
 var mediaSwitchHandler *services.MediaSwitchHandler // ✅ Global handler for media type switching
+var gameWebSocketHandler *games.GameWebSocketHandler
 
 // GetWebSocketManager returns the global Hub instance for broadcasting
 func GetWebSocketManager() *Hub {
@@ -897,6 +899,11 @@ func (h *Hub) Run() {
 					// ✅ Cleanup user from any active calls (lobby clients only)
 					if client.roomID == 0 {
 						CleanupUserCalls(client.userID)
+					}
+
+					// ✅ Cleanup game state on disconnect
+					if gameWebSocketHandler != nil {
+						gameWebSocketHandler.CleanupPlayerDisconnect(client.roomID, client.userID)
 					}
 
 					// Check if this client was the stream host
@@ -1874,6 +1881,8 @@ func WebSocketHandler(c *gin.Context) {
 func InitializeHub() {
     if hub == nil {
         hub = NewHub()
+        gameWebSocketHandler = games.NewGameWebSocketHandler(DB, hub)
+        log.Println("✅ Game WebSocket handler initialized")
         go hub.Run()
         hub.startBroadcastWorkers()
         
@@ -2026,9 +2035,15 @@ func (client *Client) handleMessage(message []byte) {
             return
         }
     }
-
-    // ✅ Handle client_ready: send session_status
-    if msg.Type == "client_ready" {
+    // ✅ Handle game-related messages
+    if msg.Type == "game" {
+        // Convert msg.Data to map
+        if dataMap, ok := msg.Data.(map[string]interface{}); ok {
+			gameWebSocketHandler.HandleGameMessage(interface{}(client), dataMap)
+			return
+		}
+		log.Printf("⚠️ [handleMessage] Invalid game message data")
+		return
         log.Printf("Client %d sent client_ready for room %d", client.userID, client.roomID)
 
         // Fetch active session

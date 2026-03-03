@@ -170,85 +170,123 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-            Room Settings
-          </h2>
-          <div className="flex items-center gap-3">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4">
+      <div className="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 rounded-2xl shadow-2xl w-full max-w-lg max-h-[95vh] sm:max-h-[90vh] flex flex-col border border-gray-700/50">
+        {/* Header with Host Avatar */}
+        <div className="flex items-center gap-4 p-4 sm:p-6 border-b border-gray-700/50">
+          {/* Host Avatar */}
+          <div className="relative flex-shrink-0">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full overflow-hidden bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center ring-2 ring-purple-500/30">
+              {room?.host_avatar_url ? (
+                <img 
+                  src={room.host_avatar_url} 
+                  alt={room?.host_username || 'Host'}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = '/icons/user1avatar.svg';
+                  }}
+                />
+              ) : (
+                <span className="text-2xl text-white font-bold">
+                  {(room?.host_username || 'H')[0].toUpperCase()}
+                </span>
+              )}
+            </div>
+            {/* Online indicator */}
+            <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 rounded-full border-2 border-gray-900"></div>
+          </div>
+
+          {/* Title */}
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg sm:text-xl font-bold text-white truncate">
+              Room Settings
+            </h2>
+            <p className="text-xs sm:text-sm text-gray-400 truncate">
+              Host: {room?.host_username || 'Unknown'}
+            </p>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-2 flex-shrink-0">
             {onShare && (
               <button
                 onClick={onShare}
-                className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
+                className="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 transition-colors"
                 title="Share room"
               >
-                <img src="/icons/shareIcon.svg" alt="Share" className="h-6 w-6" />
+                <img src="/icons/shareIcon.svg" alt="Share" className="h-5 w-5 sm:h-6 sm:w-6" />
               </button>
             )}
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              className="p-2 rounded-lg bg-gray-700/50 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
             >
-              <XMarkIcon className="h-6 w-6" />
+              <XMarkIcon className="h-5 w-5 sm:h-6 sm:w-6" />
             </button>
           </div>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
-          {/* Room Info Section */}
-          <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-2">
-            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Room Info</h3>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600 dark:text-gray-400 flex items-center gap-2">
-                <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4" />
-                Host
-              </span>
-              <span className="text-gray-900 dark:text-white font-medium">
-                {room?.host_username || `User ${room?.host_id}`}
-              </span>
+        {/* Scrollable Form Content */}
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-hide">
+          <div className="p-4 sm:p-6 space-y-6">
+            {/* Room Info Section */}
+            <div className="bg-gradient-to-br from-purple-900/20 to-blue-900/20 rounded-xl p-4 space-y-3 border border-purple-500/10">
+              <h3 className="text-sm font-semibold text-purple-300 mb-2 flex items-center gap-2">
+                <span className="w-1 h-4 bg-purple-500 rounded-full"></span>
+                Room Info
+              </h3>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-400 flex items-center gap-2">
+                  <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4 opacity-70" />
+                  Host
+                </span>
+                <span className="text-white font-medium">
+                  {room?.host_username || `User ${room?.host_id}`}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-400 flex items-center gap-2">
+                  <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4 opacity-70" />
+                  Members
+                </span>
+                <span className="text-white font-medium bg-purple-600/30 px-3 py-1 rounded-full">
+                  {membersInRoom}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600 dark:text-gray-400 flex items-center gap-2">
-                <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4" />
-                Members
-              </span>
-              <span className="text-gray-900 dark:text-white font-medium">
-                {membersInRoom}
-              </span>
-            </div>
-          </div>
 
-          {/* Divider */}
-          <div className="border-t border-gray-200 dark:border-gray-700"></div>
+            {/* Divider */}
+            <div className="border-t border-gray-700/50"></div>
 
-          {/* Room Image Upload - WhatsApp/Telegram Style Circular Avatar */}
-          <div className="flex flex-col items-center space-y-3">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {/* Room Image Upload - Modern Style */}
+          <div className="flex flex-col items-center space-y-4">
+            <label className="text-sm font-medium text-gray-300 flex items-center gap-2">
+              <span className="w-1 h-4 bg-blue-500 rounded-full"></span>
               Room Image
             </label>
             
-            {/* Circular Image Preview */}
-            <div className="relative">
-              <div className="w-32 h-32 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-4 ring-gray-300 dark:ring-gray-600">
-                {imagePreview ? (
-                  <img 
-                    src={imagePreview} 
-                    alt="Room preview"
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <FilmIcon className="w-16 h-16 text-white opacity-80" />
-                )}
+            {/* Circular Image Preview with Gradient Border */}
+            <div className="relative group">
+              <div className="w-32 h-32 sm:w-36 sm:h-36 rounded-full overflow-hidden bg-gradient-to-br from-purple-600 via-blue-600 to-purple-600 p-[3px]">
+                <div className="w-full h-full rounded-full overflow-hidden bg-gray-900 flex items-center justify-center">
+                  {imagePreview ? (
+                    <img 
+                      src={imagePreview} 
+                      alt="Room preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <FilmIcon className="w-16 h-16 text-purple-400 opacity-70" />
+                  )}
+                </div>
               </div>
               
               {/* Camera/Upload Button Overlay (Host only) */}
               {isHost && (
                 <label 
                   htmlFor="room-image-input"
-                  className="absolute bottom-0 right-0 bg-blue-600 hover:bg-blue-700 rounded-full p-2 cursor-pointer shadow-lg transition-colors"
+                  className="absolute bottom-1 right-1 bg-gradient-to-br from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-full p-2.5 cursor-pointer shadow-xl transition-all transform hover:scale-110"
                   title="Change image"
                 >
                   <PhotoIcon className="w-5 h-5 text-white" />
@@ -261,7 +299,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   type="button"
                   onClick={handleImageDelete}
                   disabled={uploadingImage}
-                  className="absolute top-0 right-0 bg-red-500 hover:bg-red-600 rounded-full p-2 shadow-lg transition-colors disabled:opacity-50"
+                  className="absolute top-1 right-1 bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 rounded-full p-2.5 shadow-xl transition-all transform hover:scale-110 disabled:opacity-50"
                   title="Remove image"
                 >
                   <TrashIcon className="w-5 h-5 text-white" />
@@ -284,23 +322,32 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 type="button"
                 onClick={handleImageUpload}
                 disabled={uploadingImage}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                className="px-5 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white text-sm font-medium rounded-lg transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {uploadingImage ? 'Uploading...' : 'Upload Image'}
+                {uploadingImage ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Uploading...
+                  </span>
+                ) : 'Upload Image'}
               </button>
             )}
             
-            <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
+            <p className="text-xs text-gray-500 text-center">
               JPG, PNG, GIF or WebP • Max 5MB
             </p>
           </div>
 
           {/* Divider */}
-          <div className="border-t border-gray-200 dark:border-gray-700"></div>
+          <div className="border-t border-gray-700/50"></div>
 
           {/* Room Name */}
           <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label htmlFor="name" className="block text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
+              <span className="w-1 h-4 bg-blue-500 rounded-full"></span>
               Room Name
             </label>
             <input
@@ -310,7 +357,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               value={formData.name}
               onChange={handleChange}
               disabled={!isHost}
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full px-4 py-3 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-gray-800/50 text-white placeholder-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               placeholder="Enter room name"
               required
             />
@@ -319,24 +366,25 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
           {/* Room Description with Display Toggle */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label htmlFor="description" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              <label htmlFor="description" className="text-sm font-medium text-gray-300 flex items-center gap-2">
+                <span className="w-1 h-4 bg-blue-500 rounded-full"></span>
                 Room Description
               </label>
               {/* Display Toggle - Host only */}
               {isHost && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 dark:text-gray-400">Display</span>
+                  <span className="text-xs text-gray-400">Display</span>
                   <button
                     type="button"
                     role="switch"
                     aria-checked={formData.show_description}
                     onClick={() => handleChange({ target: { name: 'show_description', type: 'checkbox', checked: !formData.show_description } })}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-                      formData.show_description ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-purple-500 ${
+                      formData.show_description ? 'bg-gradient-to-r from-purple-600 to-blue-600' : 'bg-gray-700'
                     }`}
                   >
                     <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-lg ${
                         formData.show_description ? 'translate-x-6' : 'translate-x-1'
                       }`}
                     />
@@ -351,45 +399,70 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               onChange={handleChange}
               disabled={!isHost}
               rows={3}
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full px-4 py-3 border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-gray-800/50 text-white placeholder-gray-500 resize-none disabled:opacity-50 disabled:cursor-not-allowed transition-all scrollbar-hide"
               placeholder="Enter room description (optional)"
             />
           </div>
 
           {/* Toggle Options */}
-          <div className="space-y-4">
+          <div className="space-y-3">
             {/* Show Host (Host only) */}
             {isHost && (
-              <div className="flex items-center justify-between">
-                <label htmlFor="show_host" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <div className="flex items-center justify-between p-3 bg-gray-800/30 rounded-xl border border-gray-700/50">
+                <label htmlFor="show_host" className="text-sm font-medium text-gray-300">
                   Show Host Info
                 </label>
-                <input
-                  type="checkbox"
-                  id="show_host"
-                  name="show_host"
-                  checked={formData.show_host}
-                  onChange={handleChange}
-                  className="h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
-                />
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={formData.show_host}
+                  onClick={() => handleChange({ target: { name: 'show_host', type: 'checkbox', checked: !formData.show_host } })}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-purple-500 ${
+                    formData.show_host ? 'bg-gradient-to-r from-purple-600 to-blue-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-lg ${
+                      formData.show_host ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
               </div>
             )}
           </div>
-
-          {/* Action Buttons */}
-          {isHost && (
-            <div className="flex gap-4 pt-4 justify-center">
-              <button
-                type="submit"
-                disabled={loading}
-                title={loading ? 'Saving...' : 'Save Changes'}
-                className="hover:opacity-70 disabled:opacity-40 transition-opacity"
-              >
-                <img src="/icons/saveIcon.svg" alt="Save" className="w-10 h-10" />
-              </button>
-            </div>
-          )}
+          </div>
         </form>
+
+        {/* Fixed Footer with Action Buttons */}
+        {isHost && (
+          <div className="border-t border-gray-700/50 p-4 sm:p-6 bg-gray-900/50">
+            <button
+              type="submit"
+              onClick={(e) => {
+                e.preventDefault();
+                const form = e.target.closest('.fixed').querySelector('form');
+                if (form) form.requestSubmit();
+              }}
+              disabled={loading}
+              className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-medium rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {loading ? (
+                <>
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <>
+                  <img src="/icons/saveIcon.svg" alt="Save" className="w-5 h-5" />
+                  <span>Save Changes</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -706,10 +706,11 @@ export const endWatchSession = async (roomId, sessionId) => {
   }
 };
 
-export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false, sessionId = null) => {
+export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false, sessionId = null, abortSignal = null) => {
   const uploadStartTime = Date.now();
   let lastProgressTime = uploadStartTime;
   let lastProgressPercent = 0;
+  let lastLoadedBytes = 0;
   
   try {
     // 🔍 DEBUG: File details
@@ -730,6 +731,9 @@ export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, 
       },
       // --- ✅ INCREASE TIMEOUT FOR LARGE FILES ---
       timeout: 600000, // 10 minutes (600 seconds) - for 500MB uploads on slow connections
+      
+      // ✅ Add cancel support
+      signal: abortSignal,
 
       // Add onUploadProgress to THIS EXISTING config object
       // onUploadProgress: (progressEvent) => { ... } // ← WILL BE ADDED BELOW
@@ -744,13 +748,23 @@ export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, 
         if (progressEvent && progressEvent.lengthComputable) {
           const now = Date.now();
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          const elapsedSeconds = ((now - uploadStartTime) / 1000).toFixed(1);
+          const elapsedSeconds = (now - uploadStartTime) / 1000;
           const timeSinceLastProgress = now - lastProgressTime;
-          const uploadSpeed = (progressEvent.loaded / 1024 / 1024 / (elapsedSeconds || 1)).toFixed(2);
+          
+          // Calculate instantaneous speed (bytes since last update / time elapsed)
+          const bytesSinceLastUpdate = progressEvent.loaded - lastLoadedBytes;
+          const instantSpeed = bytesSinceLastUpdate / (timeSinceLastProgress / 1000) / 1024 / 1024; // MB/s
+          
+          // Calculate average speed
+          const avgSpeed = progressEvent.loaded / 1024 / 1024 / (elapsedSeconds || 1); // MB/s
+          
+          // Calculate ETA based on average speed
+          const remainingBytes = progressEvent.total - progressEvent.loaded;
+          const etaSeconds = remainingBytes / (avgSpeed * 1024 * 1024);
           
           // 🔍 DEBUG: Enhanced progress logging
           console.log(`📊 [PROGRESS ${percentCompleted}%] Loaded: ${(progressEvent.loaded / 1024 / 1024).toFixed(2)}MB / ${(progressEvent.total / 1024 / 1024).toFixed(2)}MB`);
-          console.log(`⏱️ [TIMING] Elapsed: ${elapsedSeconds}s, Speed: ${uploadSpeed}MB/s, Since last: ${timeSinceLastProgress}ms`);
+          console.log(`⏱️ [TIMING] Elapsed: ${elapsedSeconds.toFixed(1)}s, Speed: ${avgSpeed.toFixed(2)}MB/s, ETA: ${etaSeconds.toFixed(0)}s`);
           
           // Detect stalls (no progress for 30+ seconds)
           if (percentCompleted === lastProgressPercent && timeSinceLastProgress > 30000) {
@@ -759,9 +773,16 @@ export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, 
           
           lastProgressTime = now;
           lastProgressPercent = percentCompleted;
+          lastLoadedBytes = progressEvent.loaded;
           
-          // Call the provided callback function with the progress percentage
-          onUploadProgressCallback(percentCompleted); // ← TRIGGER THE CALLBACK
+          // Call the provided callback function with enhanced data
+          onUploadProgressCallback({
+            percent: percentCompleted,
+            loaded: progressEvent.loaded,
+            total: progressEvent.total,
+            speed: avgSpeed,
+            eta: etaSeconds
+          });
         }
       };
     }

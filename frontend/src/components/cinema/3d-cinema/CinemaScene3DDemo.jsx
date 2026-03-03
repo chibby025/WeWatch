@@ -39,6 +39,10 @@ import TouchViewControls from './TouchViewControls';
 import MobileCinemaTutorial from './MobileCinemaTutorial';
 import RotateDevicePrompt from './RotateDevicePrompt';
 import CinemaLoadingOverlay from './CinemaLoadingOverlay';
+// Game system components
+import GameLobbyModal from '../../Games/GameLobbyModal';
+import GameOverlay from '../../Games/GameOverlay';
+import VolumeControl from '../../VolumeControl';
 
 // LiveShare Fullscreen Component - Uses MediaStream objects (same pattern as PositionCalculatorPage)
 function LiveShareFullscreenCinema({ stream, cameraStream, liveShareMode }) {
@@ -408,6 +412,10 @@ export default function CinemaScene3DDemo() {
   // �🎁 Wallet balance for gifting
   const [tokenBalance, setTokenBalance] = useState(0);
   
+  // 🎮 GAME SYSTEM: State
+  const [isGameLobbyOpen, setIsGameLobbyOpen] = useState(false);
+  const [activeGame, setActiveGame] = useState(null); // Currently active game session
+  
   // 🔊 Broadcast permissions (userId -> boolean)
   const [broadcastPermissions, setBroadcastPermissions] = useState({});
   const [remoteAudioStates, setRemoteAudioStates] = useState({});
@@ -534,6 +542,7 @@ export default function CinemaScene3DDemo() {
   const fullscreenContainerRef = useRef(null); // 🎬 Stable ref for fullscreen container (prevents re-renders)
   const fullscreenUploadContainerRef = useRef(null); // 📹 Container for moved upload video in fullscreen
   const loadStartTimeRef = useRef(Date.now()); // ⏱️ Track video loading start time for sync compensation
+  const [isFullscreenHovering, setIsFullscreenHovering] = useState(false);
   
   // 🚀 PHASE 2: Model preload handled in CinemaScene3D.jsx (module-level import)
   
@@ -2065,7 +2074,7 @@ export default function CinemaScene3DDemo() {
   useEffect(() => {
     if (currentSeat) {
       setViewGuidanceMode('initial');
-      setViewGuidanceExpiresAt(Date.now() + 300_000);
+      setViewGuidanceExpiresAt(Date.now() + 3_000); // 3 seconds
     }
   }, [currentSeat]);
 
@@ -2085,9 +2094,9 @@ export default function CinemaScene3DDemo() {
 
       if (key === 'c' || key === 'r') {
         setViewGuidanceMode('post-key');
-        setViewGuidanceExpiresAt(Date.now() + 300_000);
+        setViewGuidanceExpiresAt(Date.now() + 3_000); // 3 seconds
       } else if (key === 'l' || key === 'f') {
-        setViewGuidanceExpiresAt(Date.now() + 300_000);
+        setViewGuidanceExpiresAt(Date.now() + 3_000); // 3 seconds
       }
     };
 
@@ -2123,6 +2132,9 @@ export default function CinemaScene3DDemo() {
     const handleKeyDown = (e) => {
       // Ignore if typing in input/textarea
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      // 🚫 Don't trigger camera controls when chat is open (except ESC to close modals)
+      if ((isChatOpen || showChatHome) && e.key !== 'Escape') return;
       
       // 🎯 Toggle Position Calculator with P key
       if (e.key.toLowerCase() === 'p') {
@@ -2197,7 +2209,7 @@ export default function CinemaScene3DDemo() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isImmersiveMode, isViewLocked, viewLockedBeforeCalculator]);
+  }, [isImmersiveMode, isViewLocked, viewLockedBeforeCalculator, isChatOpen, showChatHome]);
 
   // Keyboard binding for full screen
   useEffect(() => {
@@ -3716,12 +3728,110 @@ export default function CinemaScene3DDemo() {
           }, 1000);
           break;
         
+        // 🎮 Handle game_started
+        case 'game_started':
+          console.log('🎮 [CinemaScene3D] Game started:', msg.data);
+          setActiveGame(msg.data);
+          toast.success(`${msg.data.game_type.replace('_', ' ').toUpperCase()} started!`, {
+            duration: 3000,
+            icon: '🎮'
+          });
+          break;
+
+        // 🎮 Handle game_state_update
+        case 'game_state_update':
+          console.log('🎮 [CinemaScene3D] Game state updated:', msg.data);
+          setActiveGame(msg.data);
+          break;
+
+        // 🎮 Handle game_ended
+        case 'game_ended':
+          console.log('🎮 [CinemaScene3D] Game ended:', msg.data);
+          const winner = msg.data.players?.find(p => p.score > 0);
+          if (winner) {
+            toast.success(`${winner.username} wins!`, {
+              duration: 4000,
+              icon: '🏆'
+            });
+          } else {
+            toast.success("It's a draw!", {
+              duration: 3000,
+              icon: '🤝'
+            });
+          }
+          setActiveGame(null);
+          break;
+
+        // 🎮 Handle game_forfeited
+        case 'game_forfeited':
+          console.log('🎮 [CinemaScene3D] Game forfeited:', msg.data);
+          toast.info(`${msg.data.username} forfeited. ${msg.data.winner_username} wins!`, {
+            duration: 4000,
+            icon: '🏆'
+          });
+          setActiveGame(null);
+          break;
+
+        // 🎮 Handle game_error
+        case 'game_error':
+          console.error('❌ [CinemaScene3D] Game error:', msg.data);
+          toast.error(msg.data.message || 'Game error occurred');
+          break;
+        
         default:
           break;
       }
     });
     processedMessageCountRef.current = messages.length;
   }, [messages, sessionStatus?.id, currentUser?.id, handleSeatSwapMessage]); // ✅ add hook to deps
+  
+  // 🎮 GAME SYSTEM: Handler Functions
+  const handleGameClick = useCallback(() => {
+    if (isHost) {
+      setIsGameLobbyOpen(true);
+    } else {
+      toast.info('Only the host can start games');
+    }
+  }, [isHost]);
+
+  const handleStartGame = useCallback((gameType, playersData) => {
+    if (!sendMessage) {
+      console.error('❌ [CinemaScene3D] sendMessage not available');
+      return;
+    }
+    
+    console.log('🎮 [CinemaScene3D] Starting game:', gameType, playersData);
+    
+    sendMessage({
+      type: 'start_game',
+      data: {
+        game_type: gameType,
+        players: playersData
+      }
+    });
+    
+    setIsGameLobbyOpen(false);
+  }, [sendMessage]);
+
+  const handleGameMove = useCallback((moveData) => {
+    if (!sendMessage) {
+      console.error('❌ [CinemaScene3D] sendMessage not available');
+      return;
+    }
+    
+    console.log('🎮 [CinemaScene3D] Making move:', moveData);
+    
+    sendMessage({
+      type: 'make_move',
+      data: moveData
+    });
+  }, [sendMessage]);
+
+  const handleGameClose = useCallback(() => {
+    console.log('🎮 [CinemaScene3D] Closing game');
+    setActiveGame(null);
+  }, []);
+  
   // === Handlers ===
   const handleSendSessionMessage = () => {
     if (!newSessionMessage.trim() || !sessionStatus?.id || !sendMessage) return;
@@ -4626,6 +4736,7 @@ export default function CinemaScene3DDemo() {
         userSeats={userSeats} // ✅ Pass seat assignments for avatar filtering
         remoteParticipants={remoteParticipantsMap}
         showChatBubbles={showChatBubbles} // 💬 User preference for chat bubble visibility
+        isChatActive={isChatOpen || showChatHome} // 🚫 Disable keyboard bindings when chat is open
         onEmoteReceived={() => {}}
         onChatMessageReceived={(callback) => {
           triggerChatBubbleRef.current = callback;
@@ -4779,6 +4890,7 @@ export default function CinemaScene3DDemo() {
           <LeftSidebar
             roomId={roomId}
             isLeftSidebarOpen={true}
+            onGameClick={handleGameClick}
             watchType="3d_cinema"
             classType={null}
             darknessLevel={darknessLevel}
@@ -5051,6 +5163,33 @@ export default function CinemaScene3DDemo() {
         />
       )}
 
+      {/* 🎮 GAME SYSTEM MODALS */}
+      {isGameLobbyOpen && isHost && (
+        <GameLobbyModal
+          isOpen={isGameLobbyOpen}
+          onClose={() => setIsGameLobbyOpen(false)}
+          roomMembers={[
+            { id: currentUser?.id, username: currentUser?.username },
+            ...roomMembers.map(m => ({
+              id: m.id,
+              username: m.username || m.name
+            }))
+          ].filter(m => m.id)}
+          currentUserId={currentUser?.id}
+          onStartGame={handleStartGame}
+        />
+      )}
+
+      {activeGame && (
+        <GameOverlay
+          activeGame={activeGame}
+          currentUserId={currentUser?.id}
+          onMove={handleGameMove}
+          onClose={handleGameClose}
+          webSocketService={{ on: () => {}, off: () => {} }} // Handled via messages array
+        />
+      )}
+
       {/* ✅ Seat Grid Modal — NOW INSIDE THE ROOT DIV */}
       <CinemaSeatGridModal
         key={currentUser?.id ? userSeats[currentUser.id] : 'default'}
@@ -5128,7 +5267,14 @@ export default function CinemaScene3DDemo() {
             <div 
               ref={fullscreenUploadContainerRef}
               className="w-full h-full flex items-center justify-center"
-            />
+              onMouseEnter={() => setIsFullscreenHovering(true)}
+              onMouseLeave={() => setIsFullscreenHovering(false)}
+            >
+              {/* Volume Control - shows on hover */}
+              {isFullscreenHovering && (
+                <VolumeControl videoRef={videoRef} />
+              )}
+            </div>
           )}
         </div>
       )}

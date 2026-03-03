@@ -279,6 +279,16 @@ func GetTemporaryMediaItemsForSessionHandler(c *gin.Context) {
 	for i := range temporaryMediaItems {
 		item := &temporaryMediaItems[i]
 		
+		// ✅ Skip poster generation for stream URLs (they're remote, not local files)
+		if item.IsStream {
+			log.Printf("⏭️ Skipping poster generation for stream URL: %s", item.OriginalStreamURL)
+			if item.PosterURL == "" {
+				item.PosterURL = "/icons/placeholder-poster.jpg"
+				DB.Model(item).Update("poster_url", item.PosterURL)
+			}
+			continue
+		}
+		
 		// Skip if poster already exists and is not placeholder
 		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 			continue

@@ -29,6 +29,7 @@ function CinemaCamera({
   onControlsReady, // ✅ ADD THIS - callback to expose controls ref
   onCameraMove, // 🎯 NEW: Callback for Position Calculator
   cameraLookAt, // ✅ NEW: LookAt target from cinemaSeats.json center view
+  isChatActive, // 🚫 Disable keyboard bindings when chat is open
 }) {
   const cameraRef = useRef();
   const { camera } = useThree();
@@ -49,6 +50,9 @@ function CinemaCamera({
     if (!controlsRef.current) return;
 
     const handleKeyDown = (event) => {
+      // 🚫 Don't trigger camera controls when chat is open
+      if (isChatActive) return;
+      
       const key = event.key.toLowerCase();
       const controls = controlsRef.current;
       
@@ -234,13 +238,16 @@ function CinemaCamera({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isViewLocked, camera, onCameraMove]);
+  }, [isViewLocked, camera, onCameraMove, isChatActive]);
 
   // "L" key - Look left, "C" key - Look at screen, "R" key - Look right
   useEffect(() => {
     if (!controlsRef.current) return;
 
     const handleLookDirection = (event) => {
+      // 🚫 Don't trigger camera controls when chat is open
+      if (isChatActive) return;
+      
       const key = event.key.toLowerCase();
       if (!['l', 'r', 'c'].includes(key)) return;
 
@@ -284,7 +291,7 @@ function CinemaCamera({
 
     window.addEventListener('keydown', handleLookDirection);
     return () => window.removeEventListener('keydown', handleLookDirection);
-  }, [seatData, camera]);
+  }, [seatData, camera, isChatActive]);
 
   // Reset camera position when view is locked (but preserve orientation)
   useEffect(() => {
@@ -605,6 +612,7 @@ const CinemaScene3D = forwardRef(({
   onEmoteSend,             // Function to send emote via WebSocket
   triggerLocalEmoteRef,    // Ref to expose function for triggering local emotes
   isMobile = false,        // 📱 Mobile device flag
+  isChatActive = false,    // 🚫 Disable keyboard bindings when chat is open
   onCameraMove,            // 🎯 Position Calculator callback
   onScreenClick,           // 🎬 Click handler for 3D screen to trigger fullscreen
   showChatBubbles = true,  // 💬 User preference for chat bubble visibility
@@ -731,6 +739,9 @@ const CinemaScene3D = forwardRef(({
         // console.log('⚠️ [CinemaScene3D] Ignoring key in input/textarea');
         return;
       }
+      
+      // 🚫 Don't trigger emotes when chat is open
+      if (isChatActive) return;
 
       // Map keys to emotes
       const emoteMap = {
@@ -781,7 +792,7 @@ const CinemaScene3D = forwardRef(({
       // console.log('🗑️ [CinemaScene3D] Removing emote keyboard listener');
       window.removeEventListener('keydown', handleEmoteKey);
     };
-  }, [authenticatedUserID, assignedSeat.id, onEmoteSend, localEmoteNotifications, playEmoteSound]);
+  }, [authenticatedUserID, assignedSeat.id, onEmoteSend, localEmoteNotifications, playEmoteSound, isChatActive]);
 
   // Handle camera position updates
   const handlePositionUpdate = (posData) => {
@@ -841,6 +852,7 @@ const CinemaScene3D = forwardRef(({
             cameraLookAt={assignedSeat.cameraLookAt} // ✅ Pass lookAt target from JSON
             onControlsReady={(ref) => { controlsRef.current = ref.current; }}
             onCameraMove={onCameraMove} // 🎯 Pass callback for Position Calculator
+            isChatActive={isChatActive} // 🚫 Pass chat state to disable keyboard controls
           />
 
           {/* Dynamic lighting - toggle between bright and dark */}

@@ -38,6 +38,9 @@ import QuizManagementModal from './modals/QuizManagementModal';
 import MakeQuizModal from './modals/MakeQuizModal';
 import TakeQuizModal from './modals/TakeQuizModal';
 import QuizResultsModal from './modals/QuizResultsModal';
+// Game system components
+import GameLobbyModal from '../Games/GameLobbyModal';
+import GameOverlay from '../Games/GameOverlay';
 
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
@@ -365,6 +368,10 @@ export default function VideoWatch() {
   const [isMakeQuizOpen, setIsMakeQuizOpen] = useState(false);
   const [isTakeQuizOpen, setIsTakeQuizOpen] = useState(false);
   const [isQuizResultsOpen, setIsQuizResultsOpen] = useState(false);
+  
+  // 🎮 GAME SYSTEM: State
+  const [isGameLobbyOpen, setIsGameLobbyOpen] = useState(false);
+  const [activeGame, setActiveGame] = useState(null); // Currently active game session
   
   // 🎤 Audio device management
   const [audioDevices, setAudioDevices] = useState([]);
@@ -1006,6 +1013,56 @@ export default function VideoWatch() {
         toast.error(messageData.data.message || 'Quiz error occurred');
       }
 
+      // 🎮 Handle game_started
+      if (messageData.type === 'game_started') {
+        console.log('🎮 [VideoWatch] Game started:', messageData.data);
+        setActiveGame(messageData.data);
+        toast.success(`${messageData.data.game_type.replace('_', ' ').toUpperCase()} started!`, {
+          duration: 3000,
+          icon: '🎮'
+        });
+      }
+
+      // 🎮 Handle game_state_update
+      if (messageData.type === 'game_state_update') {
+        console.log('🎮 [VideoWatch] Game state updated:', messageData.data);
+        setActiveGame(messageData.data);
+      }
+
+      // 🎮 Handle game_ended
+      if (messageData.type === 'game_ended') {
+        console.log('🎮 [VideoWatch] Game ended:', messageData.data);
+        const winner = messageData.data.players?.find(p => p.score > 0);
+        if (winner) {
+          toast.success(`${winner.username} wins!`, {
+            duration: 4000,
+            icon: '🏆'
+          });
+        } else {
+          toast.success("It's a draw!", {
+            duration: 3000,
+            icon: '🤝'
+          });
+        }
+        setActiveGame(null);
+      }
+
+      // 🎮 Handle game_forfeited
+      if (messageData.type === 'game_forfeited') {
+        console.log('🎮 [VideoWatch] Game forfeited:', messageData.data);
+        toast.info(`${messageData.data.username} forfeited. ${messageData.data.winner_username} wins!`, {
+          duration: 4000,
+          icon: '🏆'
+        });
+        setActiveGame(null);
+      }
+
+      // 🎮 Handle game_error
+      if (messageData.type === 'game_error') {
+        console.error('❌ [VideoWatch] Game error:', messageData.data);
+        toast.error(messageData.data.message || 'Game error occurred');
+      }
+
     } catch (error) {
       console.error('❌ [VideoWatch] Error processing quiz message:', error);
     }
@@ -1319,6 +1376,53 @@ export default function VideoWatch() {
     // TODO: Fetch quiz results from backend
     console.log('📊 View results for quiz:', quizId);
     toast.info('Results view coming soon!');
+  }, []);
+
+  // 🎮 GAME SYSTEM: Handler Functions
+  const handleGameClick = useCallback(() => {
+    if (isHost) {
+      setIsGameLobbyOpen(true);
+    } else {
+      toast.info('Only the host can start games');
+    }
+  }, [isHost]);
+
+  const handleStartGame = useCallback((gameType, playersData) => {
+    if (!sendMessage) {
+      console.error('❌ [VideoWatch] sendMessage not available');
+      return;
+    }
+    
+    console.log('🎮 [VideoWatch] Starting game:', gameType, playersData);
+    
+    sendMessage({
+      type: 'start_game',
+      data: {
+        game_type: gameType,
+        players: playersData
+      }
+    });
+    
+    setIsGameLobbyOpen(false);
+  }, [sendMessage]);
+
+  const handleGameMove = useCallback((moveData) => {
+    if (!sendMessage) {
+      console.error('❌ [VideoWatch] sendMessage not available');
+      return;
+    }
+    
+    console.log('🎮 [VideoWatch] Making move:', moveData);
+    
+    sendMessage({
+      type: 'make_move',
+      data: moveData
+    });
+  }, [sendMessage]);
+
+  const handleGameClose = useCallback(() => {
+    console.log('🎮 [VideoWatch] Closing game');
+    setActiveGame(null);
   }, []);
 
   // Define stable callbacks
@@ -3682,6 +3786,7 @@ export default function VideoWatch() {
             mousePosition={mousePosition}
             isLeftSidebarOpen={isLeftSidebarOpen}
             onQuizClick={handleQuizClick}
+            onGameClick={handleGameClick}
             watchType={watchType}
             classType={classType}
             isScreenSharingActive={isScreenSharingActive}
@@ -4011,6 +4116,33 @@ export default function VideoWatch() {
           onClose={() => setIsQuizResultsOpen(false)}
           results={quizResults}
           quiz={currentQuizData}
+        />
+      )}
+
+      {/* 🎮 GAME SYSTEM MODALS */}
+      {isGameLobbyOpen && isHost && (
+        <GameLobbyModal
+          isOpen={isGameLobbyOpen}
+          onClose={() => setIsGameLobbyOpen(false)}
+          roomMembers={[
+            { id: currentUser?.id, username: currentUser?.username },
+            ...participants.map(p => ({
+              id: p.id,
+              username: p.username || p.name
+            }))
+          ].filter(m => m.id)}
+          currentUserId={currentUser?.id}
+          onStartGame={handleStartGame}
+        />
+      )}
+
+      {activeGame && (
+        <GameOverlay
+          activeGame={activeGame}
+          currentUserId={currentUser?.id}
+          onMove={handleGameMove}
+          onClose={handleGameClose}
+          webSocketService={{ on: () => {}, off: () => {} }} // Handled via messages array
         />
       )}
 

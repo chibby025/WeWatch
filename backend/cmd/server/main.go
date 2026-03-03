@@ -301,6 +301,7 @@ func main() {
 		// --- Media Item Routes (Permanent) ---
 		roomGroup.GET("/:id/media", handlers.GetMediaItemsForRoomHandler) // GET /api/rooms/:id/media (Get media items for a room)
 		roomGroup.POST("/:id/upload", handlers.UploadMediaHandler)        // POST /api/rooms/:id/upload (Upload media to a room)
+		roomGroup.POST("/:id/media/stream", handlers.HandleStreamURL)     // POST /api/rooms/:id/media/stream (Add stream URL to playlist)
 		roomGroup.GET("/:id/temporary-media", handlers.GetTemporaryMediaItemsForRoomHandler) // GET /api/rooms/:id/temporary-media (Get list of temporary media items)
 		roomGroup.DELETE("/:id/temporary-media", handlers.DeleteTemporaryMediaItemsForRoomHandler) // DELETE /api/rooms/:id/temporary-media (Delete all temporary media items - Host only)
 		// --- Instant Watch (Temporary Rooms) ---

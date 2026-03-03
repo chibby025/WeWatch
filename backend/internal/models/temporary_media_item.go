@@ -26,6 +26,10 @@ type TemporaryMediaItem struct {
 	PreviewURL   string    `gorm:"type:text" json:"preview_url,omitempty"` // Animated preview GIF
 	PreviewGeneratedAt *time.Time `json:"preview_generated_at,omitempty"` // When preview was last generated
 
+	// --- Stream URL Support ---
+	IsStream          bool   `gorm:"type:boolean;default:false" json:"is_stream"` // True if this is a stream URL (not uploaded file)
+	OriginalStreamURL string `gorm:"type:text" json:"original_stream_url,omitempty"` // Original cloud storage link before conversion
+
 	// --- Foreign Keys for Relationships ---
 	RoomID       uint      `gorm:"not null;index" json:"room_id"` // Link to the room this media belongs to
 	UploaderID   uint      `gorm:"not null;index" json:"uploader_id"` // Link to the user who uploaded this media

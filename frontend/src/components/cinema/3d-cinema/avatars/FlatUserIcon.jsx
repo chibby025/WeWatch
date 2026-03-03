@@ -42,6 +42,8 @@ export default function FlatUserIcon({
   const [isLoading, setIsLoading] = useState(false);
   const orbRef = useRef();
   const [isPulsing, setIsPulsing] = useState(false);
+  const ripple1Ref = useRef();
+  const ripple2Ref = useRef();
 
   // 🔍 DEBUG: Log when component mounts and updates - DISABLED FOR PERFORMANCE
   // useEffect(() => {
@@ -150,27 +152,45 @@ export default function FlatUserIcon({
     setIsPulsing(!!isSpeaking);
   }, [isSpeaking]);
 
-  // 🎶 Animate orb with audio levels - size, pulse, and intensity
-  useFrame(() => {
-    if (orbRef.current && isSpeaking) {
-      const time = Date.now() * 0.005;
-      
-      // Base audio level (0.0 to 1.0)
-      const level = audioLevel || 0.3; // Fallback if audioLevel not provided
-      
-      // 💡 Subtle emissive glow - 0.2 for visibility without color washout
+  // 🎶 Animate orb and ripples with audio levels
+  useFrame(({ camera }) => {
+    if (orbRef.current) {
+      // 💡 Orb stays constant size, subtle emissive glow
       orbRef.current.material.emissiveIntensity = 0.2;
+      orbRef.current.scale.set(1, 1, 1); // ✅ Constant size
+    }
+
+    // 🌊 Ripple animations (only when speaking)
+    if (isSpeaking && ripple1Ref.current && ripple2Ref.current) {
+      const time = Date.now() * 0.001; // Time in seconds
+      const level = audioLevel || 0.3; // Base audio level (0.0 to 1.0)
       
-      // 🔊 Dynamic scale (bigger = louder) - Halved again
-      // Range: 1.0 (base) to 1.034 (loud) - extremely subtle size change
-      const scaleMultiplier = 1.0 + (level * 0.03375); // 1.0 → 1.03375 (halved)
-      const scalePulse = 1.0 + Math.sin(time * 10) * 0.01125; // Micro pulse oscillation (halved)
-      const finalScale = scaleMultiplier * scalePulse;
-      orbRef.current.scale.set(finalScale, finalScale, finalScale);
-    } else if (orbRef.current) {
-      // Reset to base state when not speaking - keep subtle glow
-      orbRef.current.material.emissiveIntensity = 0.2;
-      orbRef.current.scale.set(1, 1, 1);
+      // 🎵 Speed increases with audio intensity
+      const speedMultiplier = 1.0 + (level * 2.0); // 1.0x to 3.0x speed
+      
+      // 🌊 Ripple 1 animation (first wave)
+      const ripple1Phase = (time * speedMultiplier) % 2; // 0 to 2 seconds loop
+      const ripple1Scale = 1.0 + (ripple1Phase * level * 3.0); // Expands based on audio
+      const ripple1Opacity = Math.max(0, 1.0 - (ripple1Phase / 2)); // Fade out as it expands
+      
+      ripple1Ref.current.scale.set(ripple1Scale, ripple1Scale, 1);
+      ripple1Ref.current.material.opacity = ripple1Opacity * 0.6; // Max 60% opacity
+      
+      // 🌊 Ripple 2 animation (second wave, delayed by 0.5s)
+      const ripple2Phase = ((time * speedMultiplier) + 1.0) % 2; // Offset by 1 second
+      const ripple2Scale = 1.0 + (ripple2Phase * level * 3.0);
+      const ripple2Opacity = Math.max(0, 1.0 - (ripple2Phase / 2));
+      
+      ripple2Ref.current.scale.set(ripple2Scale, ripple2Scale, 1);
+      ripple2Ref.current.material.opacity = ripple2Opacity * 0.5; // Max 50% opacity (slightly dimmer)
+      
+      // 📐 Billboard ripples toward camera
+      ripple1Ref.current.lookAt(camera.position);
+      ripple2Ref.current.lookAt(camera.position);
+    } else if (ripple1Ref.current && ripple2Ref.current) {
+      // Hide ripples when not speaking
+      ripple1Ref.current.material.opacity = 0;
+      ripple2Ref.current.material.opacity = 0;
     }
   });
 
@@ -209,6 +229,28 @@ export default function FlatUserIcon({
         emissiveIntensity={0.9}
         roughness={0.1}
         metalness={0}
+      />
+    </mesh>
+
+    {/* 🌊 RIPPLE 1 - First expanding ring (only visible when speaking) */}
+    <mesh ref={ripple1Ref} position={[0, 0.08, 0.01]}>
+      <ringGeometry args={[0.025, 0.035, 32]} />
+      <meshBasicMaterial
+        color={userColor}
+        transparent
+        opacity={0}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+
+    {/* 🌊 RIPPLE 2 - Second expanding ring (delayed, only visible when speaking) */}
+    <mesh ref={ripple2Ref} position={[0, 0.08, 0.01]}>
+      <ringGeometry args={[0.025, 0.035, 32]} />
+      <meshBasicMaterial
+        color={userColor}
+        transparent
+        opacity={0}
+        side={THREE.DoubleSide}
       />
     </mesh>
 

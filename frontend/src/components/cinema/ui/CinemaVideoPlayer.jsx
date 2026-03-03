@@ -1,5 +1,6 @@
 // src/components/cinema/ui/CinemaVideoPlayer.jsx
-import { forwardRef, useRef, useImperativeHandle, useEffect } from 'react';
+import { forwardRef, useRef, useImperativeHandle, useEffect, useState } from 'react';
+import VolumeControl from '../../VolumeControl';
 
 // Wrap your existing function with forwardRef
 const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
@@ -19,6 +20,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   const videoRef = useRef(null);
   const cameraVideoRef = useRef(null); // 📹 Separate ref for PIP camera
   const previousTrackIdRef = useRef(null); // 🔑 Track previous track ID to avoid stopping same track
+  const [isHovering, setIsHovering] = useState(false);
 
   // 🔑 Expose the actual <video> DOM element to parent
   useImperativeHandle(ref, () => videoRef.current, []);
@@ -290,9 +292,16 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
 
   // Determine if we're in 'both' mode (showing PIP camera)
   const showCameraPIP = mediaItem?.stream && mediaItem?.cameraStream;
+  
+  // Show volume control only for uploaded media (not LiveShare/screen share)
+  const showVolumeControl = mediaItem?.mediaUrl && !muted;
 
   return (
-    <div className="w-full h-full relative bg-black">
+    <div 
+      className="w-full h-full relative bg-black"
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
+    >
       {/* Main video (screen share or single stream) */}
       <video
         ref={(el) => {
@@ -336,6 +345,11 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
             className="w-full h-full object-contain"
           />
         </div>
+      )}
+      
+      {/* Volume Control - shows on hover for uploaded media */}
+      {showVolumeControl && isHovering && (
+        <VolumeControl videoRef={videoRef} />
       )}
     </div>
   );

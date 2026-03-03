@@ -2,6 +2,7 @@
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect } from 'react';
 import { uploadMediaToRoom, apiClient } from '../../../services/api';
+import { Gamepad2 } from 'lucide-react'; // Game icon
 
 export default function LeftSidebar({
   roomId,
@@ -27,6 +28,7 @@ export default function LeftSidebar({
   sessionId,
   finalSessionId, // For resume state detection
   onQuizClick, // Quiz management button handler
+  onGameClick, // Game lobby button handler
   activeQuiz, // Currently active quiz (for students)
   quizHistory, // Quiz history with active_quizzes array (for late joiners)
   onTakeQuiz, // Handler for student to take quiz
@@ -96,6 +98,11 @@ export default function LeftSidebar({
   const fileInputRef = useRef(null);
   const [selectedCamera, setSelectedCamera] = useState('none');
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // 🔗 URL Streaming State
+  const [streamUrl, setStreamUrl] = useState('');
+  const [isValidatingUrl, setIsValidatingUrl] = useState(false);
+  const [urlError, setUrlError] = useState(null);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const sidebarRef = useRef(null);
   const [cameraDevices, setCameraDevices] = useState([]);
@@ -103,6 +110,12 @@ export default function LeftSidebar({
   const currentPreviewStreamRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadSpeed, setUploadSpeed] = useState(0); // MB/s
+  const [uploadETA, setUploadETA] = useState(''); // Estimated time remaining
+  const [uploadedBytes, setUploadedBytes] = useState(0);
+  const [totalBytes, setTotalBytes] = useState(0);
+  const uploadAbortControllerRef = useRef(null);
+  const uploadStartTimeRef = useRef(null);
   const [showWatchFromInstructions, setShowWatchFromInstructions] = useState(false);
   const [showLiveShareMenu, setShowLiveShareMenu] = useState(false);
   const [showUploadDisclaimer, setShowUploadDisclaimer] = useState(false);
@@ -192,30 +205,54 @@ export default function LeftSidebar({
   const handleFileUpload = async (files) => {
     if (!files?.length || !roomId) return;
     
+    const file = files[0];
+    
     // Check if user has accepted terms
     if (!hasAcceptedTerms) {
       setShowUploadDisclaimer(true);
       return;
     }
-    
-    const file = files[0];
-    
-    // 500MB limit (discourages full movies, allows clips/personal videos)
-    if (file.size > 500 * 1024 * 1024) {
-      alert("File must be less than 500MB. For longer content, use Watch From tab to screen share.");
-      return;
-    }
 
     setUploading(true);
     setUploadProgress(0);
+    setUploadSpeed(0);
+    setUploadETA('Calculating...');
+    setUploadedBytes(0);
+    setTotalBytes(file.size);
+    uploadStartTimeRef.current = Date.now();
+    
+    // Create abort controller for cancel functionality
+    const abortController = new AbortController();
+    uploadAbortControllerRef.current = abortController;
 
     try {
       await uploadMediaToRoom(
         roomId,
         file,
-        (percent) => setUploadProgress(percent),
+        (progressData) => {
+          if (typeof progressData === 'object') {
+            // New format with enhanced data
+            setUploadProgress(progressData.percent);
+            setUploadedBytes(progressData.loaded);
+            setTotalBytes(progressData.total);
+            setUploadSpeed(progressData.speed);
+            
+            // Format ETA
+            if (progressData.eta < 60) {
+              setUploadETA(`${Math.round(progressData.eta)}s`);
+            } else if (progressData.eta < 3600) {
+              setUploadETA(`${Math.round(progressData.eta / 60)}m`);
+            } else {
+              setUploadETA(`${Math.round(progressData.eta / 3600)}h`);
+            }
+          } else {
+            // Legacy format (just percent)
+            setUploadProgress(progressData);
+          }
+        },
         true,
-        sessionId
+        sessionId,
+        abortController.signal
       );
 
       if (onUploadComplete) {
@@ -223,17 +260,152 @@ export default function LeftSidebar({
         onUploadComplete();
       }
     } catch (err) {
-      console.error("Upload failed:", err);
-      alert("Upload failed. Please try again.");
+      if (err.name === 'CanceledError' || err.message?.includes('cancel')) {
+        console.log('🚫 [LeftSidebar] Upload cancelled by user');
+        alert("Upload cancelled.");
+      } else {
+        console.error("Upload failed:", err);
+        alert("Upload failed. Please check your connection and try again.");
+      }
     } finally {
       setUploading(false);
       setUploadProgress(0);
+      setUploadSpeed(0);
+      setUploadETA('');
+      setUploadedBytes(0);
+      setTotalBytes(0);
+      uploadAbortControllerRef.current = null;
     }
+  };
+  
+  const handleCancelUpload = () => {
+    if (uploadAbortControllerRef.current) {
+      uploadAbortControllerRef.current.abort();
+      console.log('🚫 [LeftSidebar] Upload cancel requested');
+    }
+  };
+  
+  const formatFileSize = (bytes) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
   };
 
   const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
   const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
   const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); handleFileUpload(e.dataTransfer.files); };
+
+  // 🔗 Validate and stream from URL
+  const validateStreamUrl = (url) => {
+    console.log('🔗 [validateStreamUrl] Validating URL:', url);
+    
+    if (!url) {
+      console.log('❌ [validateStreamUrl] Empty URL');
+      return { valid: false, error: 'Please enter a URL' };
+    }
+    
+    // Check if it's a valid URL
+    try {
+      new URL(url);
+    } catch (e) {
+      console.log('❌ [validateStreamUrl] Invalid URL format:', e.message);
+      return { valid: false, error: 'Invalid URL format' };
+    }
+    
+    const urlLower = url.toLowerCase();
+    
+    // ❌ Reject cloud storage providers (CORS/403 issues - use "Watch From" tab instead)
+    const cloudProviders = [
+      { domain: 'drive.google.com', name: 'Google Drive' },
+      { domain: 'dropbox.com', name: 'Dropbox' },
+      { domain: 'onedrive.live.com', name: 'OneDrive' },
+      { domain: '1drv.ms', name: 'OneDrive' }
+    ];
+    
+    for (const provider of cloudProviders) {
+      if (urlLower.includes(provider.domain)) {
+        console.log('❌ [validateStreamUrl] Cloud storage URL rejected:', provider.name);
+        return { 
+          valid: false, 
+          error: `${provider.name} links can't be streamed due to CORS restrictions. Use "Watch From" tab to screen share instead!` 
+        };
+      }
+    }
+    
+    // For direct URLs, check for video file extensions
+    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.m3u8', '.avi', '.mkv', '.flv', '.wmv', '.m4v'];
+    const hasVideoExtension = videoExtensions.some(ext => urlLower.includes(ext));
+    
+    if (!hasVideoExtension) {
+      console.log('❌ [validateStreamUrl] No video extension found in URL');
+      return { valid: false, error: 'URL must point to a direct video file (.mp4, .webm, .m3u8, etc.)' };
+    }
+    
+    console.log('✅ [validateStreamUrl] Valid video URL');
+    return { valid: true };
+  };
+
+  const handleStreamFromUrl = async () => {
+    if (!streamUrl.trim()) {
+      setUrlError('Please enter a video URL');
+      return;
+    }
+    
+    // Check if user has accepted terms
+    if (!hasAcceptedTerms) {
+      setShowUploadDisclaimer(true);
+      return;
+    }
+    
+    const validation = validateStreamUrl(streamUrl);
+    if (!validation.valid) {
+      setUrlError(validation.error);
+      return;
+    }
+    
+    setIsValidatingUrl(true);
+    setUrlError(null);
+    
+    try {
+      // Add stream URL to playlist via API
+      const response = await apiClient.post(`/api/rooms/${roomId}/media/stream`, {
+        stream_url: streamUrl.trim(),
+        session_id: sessionId
+      });
+      
+      console.log('🔗 [LeftSidebar] Stream URL added:', response.data);
+      
+      // Clear input
+      setStreamUrl('');
+      
+      // Refresh playlist
+      if (onUploadComplete) {
+        onUploadComplete();
+      }
+      
+      alert('Stream URL added to playlist!');
+    } catch (err) {
+      console.error('❌ [LeftSidebar] Stream URL failed:', err);
+      
+      if (err.response?.status === 400) {
+        setUrlError(err.response.data.error || 'Invalid stream URL');
+      } else if (err.response?.status === 403) {
+        setUrlError('URL is not accessible or requires authentication');
+      } else {
+        setUrlError('Failed to add stream URL. Would you like to upload the file instead?');
+        
+        // Offer fallback after 3 seconds
+        setTimeout(() => {
+          if (confirm('Stream URL failed. Upload the file from your device instead?')) {
+            fileInputRef.current?.click();
+          }
+        }, 2000);
+      }
+    } finally {
+      setIsValidatingUrl(false);
+    }
+  };
 
   // 🎓 Educational platforms for Lecture Halls
   const educationalPlatforms = [
@@ -528,24 +700,108 @@ export default function LeftSidebar({
                   <img src="/icons/FilesIcon.svg" alt="Files" className="h-3 w-3 sm:h-4 sm:w-4 mr-2" />
                   <span className="text-[10px] sm:text-xs text-gray-500">Choose a file or drag & drop</span>
                 </div>
-                <button
-                  onClick={() => {
-                    if (!hasAcceptedTerms) {
-                      setShowUploadDisclaimer(true);
-                    } else {
-                      fileInputRef.current?.click();
-                    }
-                  }}
-                  disabled={uploading}
-                  className="w-full max-w-[163px] mx-auto px-3 sm:px-4 py-2 bg-[#444AF7]/20 text-white rounded-full font-medium text-sm sm:text-[15px] hover:bg-[#444AF7]/30 disabled:opacity-50"
-                >
-                  {uploading ? 'Uploading...' : 'Browse Files'}
-                  {uploading && (
-                    <div className="w-full mt-3 bg-gray-700 rounded-full h-2">
-                      <div className="bg-blue-500 h-2 rounded-full" style={{ width: `${uploadProgress}%` }} />
-                    </div>
+                <div className="flex gap-2 mb-3">
+                  <button
+                    onClick={() => {
+                      if (!hasAcceptedTerms) {
+                        setShowUploadDisclaimer(true);
+                      } else {
+                        fileInputRef.current?.click();
+                      }
+                    }}
+                    disabled={uploading}
+                    className="flex-1 px-3 sm:px-4 py-2 bg-[#444AF7]/20 text-white rounded-full font-medium text-sm sm:text-[15px] hover:bg-[#444AF7]/30 disabled:opacity-50 transition-colors"
+                  >
+                    {uploading ? 'Uploading...' : 'Browse Files'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Toggle URL input visibility
+                      const urlInput = document.getElementById('stream-url-input');
+                      if (urlInput) {
+                        urlInput.style.display = urlInput.style.display === 'none' ? 'block' : 'none';
+                        if (urlInput.style.display === 'block') {
+                          urlInput.focus();
+                        }
+                      }
+                    }}
+                    disabled={uploading || isValidatingUrl}
+                    className="flex-1 px-3 sm:px-4 py-2 bg-purple-600/20 text-white rounded-full font-medium text-sm sm:text-[15px] hover:bg-purple-600/30 disabled:opacity-50 transition-colors"
+                    title="Stream from URL"
+                  >
+                    🔗 URL
+                  </button>
+                </div>
+                
+                {/* URL Input (hidden by default) */}
+                <div id="stream-url-input" style={{ display: 'none' }} className="mb-3 space-y-2">
+                  <input
+                    type="url"
+                    value={streamUrl}
+                    onChange={(e) => {
+                      setStreamUrl(e.target.value);
+                      setUrlError(null);
+                    }}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && !isValidatingUrl) {
+                        handleStreamFromUrl();
+                      }
+                    }}
+                    placeholder="Paste video URL (mp4, webm, m3u8...)"
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white text-xs placeholder-gray-400 focus:outline-none focus:border-purple-500 transition-colors"
+                  />
+                  {urlError && (
+                    <p className="text-red-400 text-[10px]">{urlError}</p>
                   )}
-                </button>
+                  <button
+                    onClick={handleStreamFromUrl}
+                    disabled={isValidatingUrl || !streamUrl.trim()}
+                    className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium text-xs disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isValidatingUrl ? 'Validating...' : 'Add to Playlist'}
+                  </button>
+                  <p className="text-gray-400 text-[9px] leading-tight">
+                    💡 Direct video URLs only (.mp4, .webm, .m3u8)
+                  </p>
+                  <p className="text-blue-400 text-[9px] leading-tight mt-1">
+                    📺 For Google Drive/Dropbox: Use "Watch From" tab to screen share
+                  </p>
+                </div>
+                
+                {uploading && (
+                  <div className="w-full mt-3">
+                    {/* Progress bar */}
+                    <div className="bg-gray-700 rounded-full h-2 mb-2">
+                      <div className="bg-blue-500 h-2 rounded-full transition-all" style={{ width: `${uploadProgress}%` }} />
+                    </div>
+                    
+                    {/* Progress details */}
+                    <div className="flex justify-between items-center text-xs text-gray-300">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{uploadProgress}%</span>
+                        <span className="text-gray-400">•</span>
+                        <span>{formatFileSize(uploadedBytes)} / {formatFileSize(totalBytes)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {uploadSpeed > 0 && (
+                          <>
+                            <span className="text-green-400">{uploadSpeed.toFixed(1)} MB/s</span>
+                            <span className="text-gray-400">•</span>
+                          </>
+                        )}
+                        <span className="text-blue-400">{uploadETA}</span>
+                      </div>
+                    </div>
+                    
+                    {/* Cancel button */}
+                    <button
+                      onClick={handleCancelUpload}
+                      className="w-full mt-2 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg font-medium text-xs transition-colors"
+                    >
+                      Cancel Upload
+                    </button>
+                  </div>
+                )}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -562,6 +818,17 @@ export default function LeftSidebar({
 
           <div className="flex-1 overflow-y-auto min-h-0">
             <div className="h-full flex flex-col p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
+              {/* GAME BUTTON (Host Only - All Watch Types) */}
+              {isHost && onGameClick && (
+                <button
+                  onClick={onGameClick}
+                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-semibold text-xs sm:text-sm transition-all mb-3 sm:mb-4 shadow-lg flex items-center justify-center gap-2"
+                >
+                  <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                  Start Game
+                </button>
+              )}
+
               {/* QUIZ BUTTON (Lecture Hall Only - Host) */}
               {isHost && watchType === 'classroom' && classType === 'lecture_hall' && onQuizClick && (
                 <button

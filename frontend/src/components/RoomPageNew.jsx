@@ -1355,12 +1355,12 @@ const RoomPageNew = () => {
         // Route based on class type (classroom or lecture_hall)
         const classType = finalSessionData.class_type || 'lecture_hall';
         if (classType === 'lecture_hall') {
-          navigate(`/position-calculator/classroom?room_id=${roomId}&session_id=${session_id}`, {
+          navigate(`/classroom/lecture-hall/${roomId}?session_id=${session_id}`, {
             state: { isHost: true, sessionId: session_id, classType: 'lecture_hall' }
           });
         } else {
           // For now, route small classroom to position-calculator too (until ClassroomScene3D is built)
-          navigate(`/position-calculator/classroom?room_id=${roomId}&session_id=${session_id}`, {
+          navigate(`/classroom/classroom/${roomId}?session_id=${session_id}`, {
             state: { isHost: true, sessionId: session_id, classType: 'classroom' }
           });
         }
@@ -1447,7 +1447,7 @@ const RoomPageNew = () => {
     } else if (watch_type === 'classroom') {
       // Route based on class_type (classroom = 25 seats, lecture_hall = 145 seats)
       const route = class_type === 'classroom' ? 'classroom' : 'lecture-hall';
-      navigate(`/position-calculator/${route}?room_id=${roomId}&session_id=${session_id}`, {
+      navigate(`/classroom/${route}/${roomId}?session_id=${session_id}`, {
         state: { 
           sessionId: session_id, 
           classType: class_type || 'lecture_hall',
@@ -1848,8 +1848,8 @@ const RoomPageNew = () => {
               </div>
 
               {/* Room Description - Desktop only */}
-              {room.show_description && room.description && (
-                <div className="mt-1 text-sm text-gray-300">
+              {(room.show_description === true || room.ShowDescription === true) && room.description && room.description.trim() !== '' && (
+                <div className="mt-1 text-xs sm:text-sm text-gray-300 max-w-3xl">
                   {room.description}
                 </div>
               )}
@@ -2324,7 +2324,7 @@ const RoomPageNew = () => {
             });
           } else if (watch_type === 'classroom') {
             const route = class_type === 'classroom' ? 'classroom' : 'lecture-hall';
-            navigate(`/position-calculator/${route}?room_id=${roomId}&session_id=${session_id}`, {
+            navigate(`/classroom/${route}/${roomId}?session_id=${session_id}`, {
               state: { sessionId: session_id, classType: class_type || 'lecture_hall' }
             });
           } else {

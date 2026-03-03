@@ -36,6 +36,7 @@ import LiveKitAudioDebugPanel from '../components/LiveKitAudioDebugPanel';
 import logger from '../utils/logger';
 import FloatingGiftIcon from '../components/FloatingGiftIcon';
 import DonationNotification from '../components/DonationNotification';
+import VolumeControl from '../components/VolumeControl';
 
 
 // ✅ Constant empty array - prevents recreation on every render
@@ -973,14 +974,15 @@ const PositionCalculatorPage = () => {
   // TEMPORARY: Hardcode to 'lecture-hall' until routing is set up
   const modelType = routeModelType || 'lecture-hall';
   
+  // Get room ID from URL path param
+  const { roomId } = useParams();
+  
   // Get session info from URL or state
   const { isHost: isHostFromState = false, sessionId: sessionIdFromState } = location.state || {};
   const urlParams = new URLSearchParams(window.location.search);
-  const roomIdFromUrl = urlParams.get('room_id');
   const sessionIdFromUrl = urlParams.get('session_id');
   const isInstantWatch = urlParams.get('instant') === 'true'; // ✅ Detect instant watch from URL
   const finalSessionId = sessionIdFromState || sessionIdFromUrl;
-  const roomId = roomIdFromUrl;
   
   const { currentUser, loading: authLoading } = useAuth();
   
@@ -1041,6 +1043,7 @@ const PositionCalculatorPage = () => {
   // Blackboard media state
   const [blackboardMedia, setBlackboardMedia] = useState(null);
   const [isMediaFullscreen, setIsMediaFullscreen] = useState(false);
+  const [isFullscreenHovering, setIsFullscreenHovering] = useState(false);
   const sharedVideoRef = useRef(null); // ✅ Shared video element for both 3D board and fullscreen (uploaded media only)
   const videoInitializedRef = useRef(false);
   const boardVideoRef = useRef(null); // ✅ Legacy ref (kept for compatibility)
@@ -5750,6 +5753,7 @@ const PositionCalculatorPage = () => {
       if (mode === 'screen' || mode === 'both') {
         // Enable screen share with high-quality settings (NO SIMULCAST - single quality only)
         await livekitRoom.localParticipant.setScreenShareEnabled(true, {
+          audio: true, // ✅ Capture system audio (tab audio from YouTube, Netflix, etc.)
           // High quality for screen content and videos
           resolution: {
             width: 1920,
@@ -7488,7 +7492,11 @@ const PositionCalculatorPage = () => {
           
           {/* Uploaded Media Fullscreen - Shared video with CSS toggle (no duplicate element) */}
           {blackboardMedia.type !== 'liveshare' && blackboardMedia.type !== 'watchfrom' && (
-            <div className="fixed inset-0 z-[9999]">
+            <div 
+              className="fixed inset-0 z-[9999]"
+              onMouseEnter={() => setIsFullscreenHovering(true)}
+              onMouseLeave={() => setIsFullscreenHovering(false)}
+            >
               {/* Close button with auto-hide */}
               <button
                 onClick={() => setIsMediaFullscreen(false)}
@@ -7501,6 +7509,11 @@ const PositionCalculatorPage = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+              
+              {/* Volume Control - shows on hover */}
+              {isFullscreenHovering && (
+                <VolumeControl videoRef={sharedVideoRef} />
+              )}
             </div>
           )}
         </>

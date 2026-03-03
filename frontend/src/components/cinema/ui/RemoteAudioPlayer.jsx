@@ -94,12 +94,12 @@ export default function RemoteAudioPlayer({ room, silenceMode = false }) {
         audioElement.volume = 1.0;
         audioElement.muted = false;
         
-        // ✅ Boost audio using Web Audio API (allows > 1.0 gain)
+        // ✅ Audio gain control using Web Audio API
         try {
           const audioContext = new (window.AudioContext || window.webkitAudioContext)();
           const source = audioContext.createMediaElementSource(audioElement);
           const gainNode = audioContext.createGain();
-          gainNode.gain.value = 1.5; // Boost by 50%
+          gainNode.gain.value = 1.0; // Natural volume (balanced with media playback)
           source.connect(gainNode);
           gainNode.connect(audioContext.destination);
         } catch (err) {

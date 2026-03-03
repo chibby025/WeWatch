@@ -250,7 +250,7 @@ const LobbyPage = () => {
         });
       } else if (watch_type === 'classroom') {
         const route = class_type === 'lecture_hall' ? 'lecture-hall' : 'classroom';
-        navigate(`/position-calculator/${route}?room_id=${room_id}&session_id=${session_id}&instant=true`, {
+        navigate(`/classroom/${route}/${room_id}?session_id=${session_id}&instant=true`, {
           state: { isHost: true, sessionId: session_id, classType: class_type }
         });
       } else {
@@ -1979,7 +1979,7 @@ const LobbyPage = () => {
           <img 
             src="/icons/LetsWatchOut Logo.svg" 
             alt="LetsWatchOut" 
-            className="h-48 sm:h-60 w-auto"
+            className="h-[173px] sm:h-[151px] w-auto"
           />
         </div>
       <p className="text-center mb-6 text-gray-700 dark:text-gray-300">Welcome! Find or create a room to start watching together.</p>
@@ -2170,7 +2170,15 @@ const LobbyPage = () => {
                         <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 truncate mb-1">
                           Host: {room.host_username || `User ${room.host_id}`}
                         </p>
-                        {/* ✅ Member Count - Below host name */}
+                        
+                        {/* ✅ Room Description - Only if enabled and exists */}
+                        {(room.show_description === true || room.ShowDescription === true) && room.description && room.description.trim() !== '' && (
+                          <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-1.5 sm:mb-2 pr-10 sm:pr-12 leading-relaxed">
+                            {room.description}
+                          </p>
+                        )}
+                        
+                        {/* ✅ Member Count - Below description/host */}
                         <div className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-500 dark:text-gray-400">
                           <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="currentColor" viewBox="0 0 20 20">
                             <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
