@@ -1231,12 +1231,31 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 
 	log.Printf("🔑 [LiveKit] User %d requesting token for room %d", userID, roomID)
 
-	// Verify user is a member of the room
+	// Verify user has access: either permanent room member OR active session participant
 	var userRoom models.UserRoom
-	if err := DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&userRoom).Error; err != nil {
+	isPermanentMember := DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&userRoom).Error == nil
+	
+	// Check if user is in an active session for this room
+	var activeSession models.WatchSession
+	var sessionMember models.WatchSessionMember
+	isSessionParticipant := false
+	
+	if err := DB.Where("room_id = ? AND ended_at IS NULL", roomID).First(&activeSession).Error; err == nil {
+		// Found active session, check if user is a member
+		if err := DB.Where("watch_session_id = ? AND user_id = ? AND is_active = ?", 
+			activeSession.ID, userID, true).First(&sessionMember).Error; err == nil {
+			isSessionParticipant = true
+			log.Printf("✅ [LiveKit] User %d is active session participant (session: %s)", userID, activeSession.SessionID)
+		}
+	}
+	
+	if !isPermanentMember && !isSessionParticipant {
+		log.Printf("❌ [LiveKit] User %d denied: not a room member and not in active session", userID)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Not a member of this room"})
 		return
 	}
+	
+	log.Printf("✅ [LiveKit] User %d authorized: permanent=%v, session=%v", userID, isPermanentMember, isSessionParticipant)
 
 	// Get room to check if user is host
 	var room models.Room
