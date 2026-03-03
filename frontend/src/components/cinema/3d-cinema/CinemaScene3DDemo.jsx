@@ -1678,8 +1678,8 @@ export default function CinemaScene3DDemo() {
     isHostBroadcasting, // ✅ Pass host broadcast state
   });
 
-  // 🎵 LiveKit setup - conditional autoSubscribe based on audio mode
-  const shouldAutoSubscribe = audioMode === 'party';
+  // 🎵 LiveKit setup - always auto-subscribe, then selectively unsubscribe in seat mode
+  const shouldAutoSubscribe = true;
   
   const {
     room,
@@ -1765,29 +1765,25 @@ export default function CinemaScene3DDemo() {
     };
   }, [room]);
 
-  // �🎯 Selective subscription effect for Seat Mode (row-based audio)
+  // 🎯 Dynamic subscription management - runs on mode change or seat updates
   useEffect(() => {
-    if (!room || audioMode !== 'seat') {
-      console.log('🎯 [Selective Subscription] Skipped:', { hasRoom: !!room, audioMode });
+    if (!room) {
+      console.log('🎯 [Dynamic Subscription] Skipped - no room');
       return;
     }
 
-    console.log('🎯 [Selective Subscription] Active - Seat Mode (row-based filtering)');
+    console.log('🎯 [Dynamic Subscription] Evaluating subscriptions - Mode:', audioMode);
 
     /**
      * Determine if current user should subscribe to a speaker's audio
      */
     const shouldSubscribeToSpeaker = (speakerUserId) => {
-      // ✅ Check if speaker is host and broadcasting
-      const speakerUserIdNum = parseInt(speakerUserId);
-      const member = roomMembers.find(m => m.id === speakerUserIdNum);
-      const speakerIsHost = member && room.metadata?.host_id === member.id;
-      
-      if (speakerIsHost && isHostBroadcasting) {
-        console.log(`🎯 [Sub Check] Host (${speakerUserId}) is broadcasting - ALWAYS SUBSCRIBE`);
+      // Party mode: subscribe to everyone
+      if (audioMode === 'party') {
         return true;
       }
 
+      // Seat mode: check row proximity
       const myUserId = currentUser?.id;
       const mySeat = userSeats[myUserId];
       const speakerSeat = userSeats[speakerUserId];
@@ -1800,9 +1796,20 @@ export default function CinemaScene3DDemo() {
       const myRow = getRowFromSeat(mySeat);
       const speakerRow = getRowFromSeat(speakerSeat);
 
+      // Check if speaker is host and broadcasting
+      const speakerUserIdNum = parseInt(speakerUserId);
+      const member = roomMembers.find(m => m.id === speakerUserIdNum);
+      const speakerIsHost = member && room.metadata?.host_id === member.id;
+      
+      if (speakerIsHost && isHostBroadcasting) {
+        console.log(`🎯 [Sub Check] Host (${speakerUserId}) is broadcasting - SUBSCRIBE`);
+        return true;
+      }
+
       const shouldSubscribe = myRow === speakerRow;
       
       console.log(`🎯 [Sub Check] ${speakerUserId}:`, {
+        mode: audioMode,
         mySeat,
         myRow,
         speakerSeat,
@@ -1814,81 +1821,61 @@ export default function CinemaScene3DDemo() {
     };
 
     /**
-     * Handle new audio track publications
+     * Process a track publication and set subscription state
      */
-    const handleTrackPublished = (publication, participant) => {
+    const processTrackPublication = (publication, participant) => {
       // ✅ ALWAYS subscribe to video tracks (screen share, camera)
       if (publication.kind === 'video') {
-        console.log(`📹 [Selective Sub] Video track detected - SUBSCRIBING:`, {
-          source: publication.source,
-          participant: participant.identity
-        });
-        publication.setSubscribed(true);
+        if (!publication.isSubscribed) {
+          console.log(`📹 [Dynamic Sub] Video track - SUBSCRIBING: ${participant.identity}`);
+          publication.setSubscribed(true);
+        }
         return;
       }
 
-      // ✅ ALWAYS subscribe to screen share audio (tab audio from screen share)
+      // ✅ ALWAYS subscribe to screen share audio
       if (publication.source === Track.Source.ScreenShareAudio) {
-        console.log(`🔊 [Screen Share Audio] SUBSCRIBING to ${participant.identity} track ${publication.trackSid}`);
-        publication.setSubscribed(true);
+        if (!publication.isSubscribed) {
+          console.log(`🔊 [Dynamic Sub] Screen share audio - SUBSCRIBING: ${participant.identity}`);
+          publication.setSubscribed(true);
+        }
         return;
       }
 
-      // Only filter participant microphone audio tracks (not screen share audio)
-      if (publication.kind !== 'audio') {
-        return;
-      }
+      // Filter microphone audio based on mode and proximity
+      if (publication.kind === 'audio') {
+        const speakerUserId = parseInt(participant.identity.split('-')[1]);
+        const shouldSubscribe = shouldSubscribeToSpeaker(speakerUserId);
 
-      const speakerUserId = parseInt(participant.identity.split('-')[1]);
-      const shouldSubscribe = shouldSubscribeToSpeaker(speakerUserId);
-
-      if (shouldSubscribe) {
-        console.log(`📢 [Mic Audio] SUBSCRIBING to ${participant.identity} (same row/party mode)`);
+        if (publication.isSubscribed !== shouldSubscribe) {
+          console.log(`🔄 [Dynamic Sub] ${participant.identity} → setSubscribed(${shouldSubscribe})`);
+          publication.setSubscribed(shouldSubscribe);
+        }
       }
-      
-      publication.setSubscribed(shouldSubscribe);
     };
 
-    // Subscribe to existing tracks
+    // ✅ STEP 1: Process ALL existing tracks (catch already-published tracks)
+    let existingTrackCount = 0;
     room.remoteParticipants.forEach((participant) => {
-      const speakerUserId = parseInt(participant.identity.split('-')[1]);
-      const shouldSubscribe = shouldSubscribeToSpeaker(speakerUserId);
-
       participant.trackPublications.forEach((publication) => {
-        // ✅ ALWAYS subscribe to video tracks
-        if (publication.kind === 'video') {
-          if (!publication.isSubscribed) {
-            console.log(`📹 [Existing Video] ${participant.identity} → SUBSCRIBING`);
-            publication.setSubscribed(true);
-          }
-          return;
-        }
-
-        // ✅ ALWAYS subscribe to screen share audio
-        if (publication.source === Track.Source.ScreenShareAudio) {
-          if (!publication.isSubscribed) {
-            console.log(`🔊 [Existing Screen Share Audio] ${participant.identity} → SUBSCRIBING`);
-            publication.setSubscribed(true);
-          }
-          return;
-        }
-
-        // Filter microphone audio tracks based on seat proximity
-        if (publication.kind === 'audio') {
-          if (publication.isSubscribed !== shouldSubscribe) {
-            console.log(`🔄 [Existing Track] ${participant.identity} → setSubscribed(${shouldSubscribe})`);
-            publication.setSubscribed(shouldSubscribe);
-          }
-        }
+        processTrackPublication(publication, participant);
+        existingTrackCount++;
       });
     });
+    
+    console.log(`✅ [Dynamic Sub] Processed ${existingTrackCount} existing tracks`);
 
-    // Listen for new tracks
+    // ✅ STEP 2: Listen for future track publications
+    const handleTrackPublished = (publication, participant) => {
+      console.log(`🆕 [Dynamic Sub] New track published: ${participant.identity} (${publication.kind})`);
+      processTrackPublication(publication, participant);
+    };
+
     room.on(RoomEvent.TrackPublished, handleTrackPublished);
 
     return () => {
       room.off(RoomEvent.TrackPublished, handleTrackPublished);
-      console.log('🧹 [Selective Subscription] Cleaned up');
+      console.log('🧹 [Dynamic Subscription] Cleaned up');
     };
   }, [room, audioMode, userSeats, currentUser?.id, getRowFromSeat, isHostBroadcasting, roomMembers]);
 
