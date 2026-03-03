@@ -170,7 +170,7 @@ export default function FlatUserIcon({
       
       // 🌊 Ripple 1 animation (first wave)
       const ripple1Phase = (time * speedMultiplier) % 2; // 0 to 2 seconds loop
-      const ripple1Scale = 1.0 + (ripple1Phase * level * 1.0); // Expands 1x to 3x based on audio (max 3x orb size = 0.06)
+      const ripple1Scale = 1.0 + (ripple1Phase * level * 4.0); // Expands 1x to 5x based on audio (max 5x orb size = 0.10)
       const ripple1Opacity = Math.max(0, 1.0 - (ripple1Phase / 2)); // Fade out as it expands
       
       ripple1Ref.current.scale.set(ripple1Scale, ripple1Scale, 1);
@@ -178,7 +178,7 @@ export default function FlatUserIcon({
       
       // 🌊 Ripple 2 animation (second wave, delayed by 0.5s)
       const ripple2Phase = ((time * speedMultiplier) + 1.0) % 2; // Offset by 1 second
-      const ripple2Scale = 1.0 + (ripple2Phase * level * 1.0); // Expands 1x to 3x based on audio
+      const ripple2Scale = 1.0 + (ripple2Phase * level * 4.0); // Expands 1x to 5x based on audio
       const ripple2Opacity = Math.max(0, 1.0 - (ripple2Phase / 2));
       
       ripple2Ref.current.scale.set(ripple2Scale, ripple2Scale, 1);
@@ -234,7 +234,7 @@ export default function FlatUserIcon({
 
     {/* 🌊 RIPPLE 1 - First expanding ring (only visible when speaking) */}
     <mesh ref={ripple1Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.01, 0.011, 32]} />
+      <ringGeometry args={[0.02, 0.0205, 32]} />
       <meshBasicMaterial
         color={userColor}
         transparent
@@ -245,7 +245,7 @@ export default function FlatUserIcon({
 
     {/* 🌊 RIPPLE 2 - Second expanding ring (delayed, only visible when speaking) */}
     <mesh ref={ripple2Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.01, 0.011, 32]} />
+      <ringGeometry args={[0.02, 0.0205, 32]} />
       <meshBasicMaterial
         color={userColor}
         transparent
