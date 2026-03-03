@@ -1827,8 +1827,17 @@ export default function CinemaScene3DDemo() {
         return;
       }
 
-      // Only filter audio tracks (not screen share audio)
-      if (publication.kind !== 'audio' || publication.source === Track.Source.ScreenShare) {
+      // ✅ ALWAYS subscribe to screen share audio (tab audio from screen share)
+      if (publication.source === Track.Source.ScreenShareAudio) {
+        console.log(`🔊 [Selective Sub] Screen share audio detected - SUBSCRIBING:`, {
+          participant: participant.identity
+        });
+        publication.setSubscribed(true);
+        return;
+      }
+
+      // Only filter participant microphone audio tracks (not screen share audio)
+      if (publication.kind !== 'audio') {
         return;
       }
 
@@ -1855,8 +1864,17 @@ export default function CinemaScene3DDemo() {
           return;
         }
 
-        // Filter audio tracks based on seat proximity
-        if (publication.kind === 'audio' && publication.source !== Track.Source.ScreenShare) {
+        // ✅ ALWAYS subscribe to screen share audio
+        if (publication.source === Track.Source.ScreenShareAudio) {
+          if (!publication.isSubscribed) {
+            console.log(`🔊 [Existing Screen Share Audio] ${participant.identity} → SUBSCRIBING`);
+            publication.setSubscribed(true);
+          }
+          return;
+        }
+
+        // Filter microphone audio tracks based on seat proximity
+        if (publication.kind === 'audio') {
           if (publication.isSubscribed !== shouldSubscribe) {
             console.log(`🔄 [Existing Track] ${participant.identity} → setSubscribed(${shouldSubscribe})`);
             publication.setSubscribed(shouldSubscribe);
@@ -1890,7 +1908,8 @@ export default function CinemaScene3DDemo() {
         console.log(`🎙️ [Host Broadcast] Found host participant: ${participant.identity}`);
         
         participant.audioTrackPublications.forEach(pub => {
-          if (pub.kind === 'audio' && pub.source !== Track.Source.ScreenShare) {
+          // Filter only microphone audio (not screen share audio - that's always subscribed)
+          if (pub.kind === 'audio' && pub.source !== Track.Source.ScreenShareAudio) {
             const shouldSubscribe = isHostBroadcasting || shouldSubscribeToSpeaker(userId);
             
             if (pub.isSubscribed !== shouldSubscribe) {
@@ -4217,6 +4236,15 @@ export default function CinemaScene3DDemo() {
           setScreenShareTrackSid(screenTrackPub.trackSid);
           setLocalScreenTrack(screenTrackPub);
           console.log('✅ [LiveShare] Screen track acquired:', screenTrackPub.trackSid);
+          
+          // 🔊 CRITICAL: Check if screen share has audio track and publish it separately
+          const screenShareAudioPub = localParticipant.getTrackPublication(Track.Source.ScreenShareAudio);
+          if (screenShareAudioPub && screenShareAudioPub.track) {
+            console.log('🔊 [LiveShare] Screen share audio track auto-published:', screenShareAudioPub.trackSid);
+            screenStream.addTrack(screenShareAudioPub.track.mediaStreamTrack);
+          } else {
+            console.warn('⚠️ [LiveShare] No screen share audio track found - tab audio may not be shared');
+          }
           
           // ✅ CREATE FRESH VIDEO ELEMENT for screen share (like PositionCalculatorPage)
           const screenVideo = document.createElement('video');
