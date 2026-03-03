@@ -234,7 +234,7 @@ export default function FlatUserIcon({
 
     {/* 🌊 RIPPLE 1 - First expanding ring (only visible when speaking) */}
     <mesh ref={ripple1Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.02, 0.022, 32]} />
+      <ringGeometry args={[0.01, 0.011, 32]} />
       <meshBasicMaterial
         color={userColor}
         transparent
@@ -245,7 +245,7 @@ export default function FlatUserIcon({
 
     {/* 🌊 RIPPLE 2 - Second expanding ring (delayed, only visible when speaking) */}
     <mesh ref={ripple2Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.02, 0.022, 32]} />
+      <ringGeometry args={[0.01, 0.011, 32]} />
       <meshBasicMaterial
         color={userColor}
         transparent

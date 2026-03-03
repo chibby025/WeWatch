@@ -17,6 +17,7 @@ export default function CinemaAvatarManager({
   onAvatarClick,
   cinemaSeats = { seats: [] }, // ✅ NEW: cinemaSeats.json data
   showChatBubbles = true, // 🎯 User preference for chat bubble visibility
+  activeSpeakers = new Map(), // 🎤 Active speakers with audio levels
 }) {
   const [userEmotes, setUserEmotes] = useState({});
   const [userMessages, setUserMessages] = useState({});
@@ -205,8 +206,15 @@ export default function CinemaAvatarManager({
           }
         }
         
-        const isSpeaking = !!remoteParticipant?.isSpeaking;
-        const audioLevel = remoteParticipant?.audioLevel || 0; // 🎵 Get audio level for pulsation
+        // 🎤 Get audio state from activeSpeakers Map (LiveKit's activeSpeakersChanged event)
+        let participantIdentity = participantPrefix;
+        if (remoteParticipant) {
+          // Use the actual identity (might be tab-specific like user-10-fac895b3)
+          participantIdentity = remoteParticipant.identity;
+        }
+        const audioData = activeSpeakers.get(participantIdentity) || { isSpeaking: false, audioLevel: 0 };
+        const isSpeaking = audioData.isSpeaking;
+        const audioLevel = audioData.audioLevel; // 🎵 Get audio level for pulsation (0.0 to 1.0)
 
         // 🎨 Get pre-computed color for this member
         const uniqueColor = memberColors[member.id];

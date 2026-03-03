@@ -996,6 +996,7 @@ const CinemaScene3D = forwardRef(({
                 hideLabelsForLocalViewer={hideLabelsForLocalViewer}
                 cinemaSeats={cinemaSeats} // ✅ Pass cinemaSeats.json for accurate positioning
                 showChatBubbles={showChatBubbles} // 💬 User preference for chat bubble visibility
+                activeSpeakers={activeSpeakers} // 🎤 Pass active speakers for ripple animation
               />
             );
           })()}

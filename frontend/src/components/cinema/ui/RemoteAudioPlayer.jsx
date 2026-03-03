@@ -112,9 +112,19 @@ export default function RemoteAudioPlayer({ room, silenceMode = false }) {
           gainNode.gain.value = 1.0; // Natural volume (balanced with media playback)
           source.connect(gainNode);
           gainNode.connect(audioContext.destination);
+          console.log(`🔊 [RemoteAudioPlayer] Audio routing configured - Gain: ${gainNode.gain.value}, Context state: ${audioContext.state}`);
         } catch (err) {
           console.warn('⚠️ [RemoteAudioPlayer] Could not apply audio gain:', err);
         }
+        
+        console.log(`🔊 [RemoteAudioPlayer] Audio element created:`, {
+          autoplay: audioElement.autoplay,
+          volume: audioElement.volume,
+          muted: audioElement.muted,
+          paused: audioElement.paused,
+          participant: participant.identity,
+          source: publication.source
+        });
         
         if (audioContainerRef.current) {
           audioContainerRef.current.appendChild(audioElement);
@@ -125,6 +135,13 @@ export default function RemoteAudioPlayer({ room, silenceMode = false }) {
         // Play it (in case autoplay doesn't work)
         audioElement.play().then(() => {
           console.log(`✅ [RemoteAudioPlayer] Audio playing from ${participant.identity} (source: ${publication.source})`);
+          console.log(`🔊 [RemoteAudioPlayer] Audio playback state:`, {
+            paused: audioElement.paused,
+            ended: audioElement.ended,
+            currentTime: audioElement.currentTime,
+            volume: audioElement.volume,
+            muted: audioElement.muted
+          });
         }).catch(err => {
           console.error(`❌ [RemoteAudioPlayer] Audio play failed for ${participant.identity}:`, err);
         });
