@@ -43,10 +43,9 @@ export default function FlatUserIcon({
   const orbRef = useRef();
   const [isPulsing, setIsPulsing] = useState(false);
   
-  // 🌊 Cascading ripple ring pool (3 brighter rings for better visibility)
+  // 🌊 Cascading ripple ring pool (2 bright white rings for cinema visibility)
   const ripple1Ref = useRef();
   const ripple2Ref = useRef();
-  const ripple3Ref = useRef();
 
   // 🔍 DEBUG: Log when component mounts and updates - DISABLED FOR PERFORMANCE
   // useEffect(() => {
@@ -164,22 +163,21 @@ export default function FlatUserIcon({
     }
 
     // 🌊 Cascading ripple animations (only when speaking)
-    if (isSpeaking && ripple1Ref.current && ripple2Ref.current && ripple3Ref.current) {
+    if (isSpeaking && ripple1Ref.current && ripple2Ref.current) {
       const time = Date.now() * 0.001; // Time in seconds
       const level = audioLevel || 0.5; // Base audio level (0.0 to 1.0)
       
       // 🎵 Speed increases with audio intensity
       const speedMultiplier = 0.8 + (level * 0.4); // 0.8x to 1.2x speed (slower for calmer effect)
       
-      // 🌊 Ripple pool configuration (3 brighter cascading rings)
+      // 🌊 Ripple pool configuration (2 bright WHITE rings for cinema darkness)
       const ripples = [
-        { ref: ripple1Ref, startRadius: 0.02, endRadius: 0.05, delay: 0.0, opacity: 0.9 },  // ✨ Brighter
-        { ref: ripple2Ref, startRadius: 0.05, endRadius: 0.08, delay: 0.4, opacity: 0.85 }, // ✨ Brighter
-        { ref: ripple3Ref, startRadius: 0.08, endRadius: 0.11, delay: 0.8, opacity: 0.8 },  // ✨ Brighter
+        { ref: ripple1Ref, startRadius: 0.02, endRadius: 0.07, delay: 0.0, opacity: 1.0 },  // ✨ FULL BRIGHTNESS
+        { ref: ripple2Ref, startRadius: 0.07, endRadius: 0.12, delay: 0.5, opacity: 1.0 }, // ✨ FULL BRIGHTNESS
       ];
       
       const cycleDuration = 1.5; // Each ring takes 1.5 seconds to expand fully
-      const thickness = 0.002; // Thicker lines for better visibility (300% increase)
+      const thickness = 0.002; // Thicker lines for better visibility
       
       ripples.forEach((ripple) => {
         const phase = ((time * speedMultiplier) + ripple.delay) % cycleDuration;
@@ -199,19 +197,18 @@ export default function FlatUserIcon({
         );
         
         // Gentler fade-out to keep rings visible longer
-        const fadeStart = 0.7; // Start fading at 70% of animation
+        const fadeStart = 0.8; // Start fading at 80% of animation
         const fadeFactor = progress < fadeStart ? 1.0 : (1.0 - (progress - fadeStart) / (1.0 - fadeStart));
-        ripple.ref.current.material.opacity = fadeFactor * ripple.opacity * Math.max(level, 0.7);
+        ripple.ref.current.material.opacity = fadeFactor * ripple.opacity * Math.max(level, 0.8);
         
         // Billboard toward camera
         ripple.ref.current.lookAt(camera.position);
       });
       
-    } else if (ripple1Ref.current && ripple2Ref.current && ripple3Ref.current) {
+    } else if (ripple1Ref.current && ripple2Ref.current) {
       // Hide all ripples when not speaking
       ripple1Ref.current.material.opacity = 0;
       ripple2Ref.current.material.opacity = 0;
-      ripple3Ref.current.material.opacity = 0;
     }
   });
 
@@ -253,33 +250,22 @@ export default function FlatUserIcon({
       />
     </mesh>
 
-    {/* 🌊 RIPPLE 1 - Innermost ring (0.02 → 0.05) ✨ BRIGHTER */}
+    {/* 🌊 RIPPLE 1 - Inner ring (0.02 → 0.07) ⚪ WHITE FOR VISIBILITY */}
     <mesh ref={ripple1Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.02, 0.0205, 32]} />
+      <ringGeometry args={[0.02, 0.022, 32]} />
       <meshBasicMaterial
-        color={userColor}
+        color="#ffffff"
         transparent
         opacity={0}
         side={THREE.DoubleSide}
       />
     </mesh>
 
-    {/* 🌊 RIPPLE 2 - Middle ring (0.05 → 0.08) ✨ BRIGHTER */}
+    {/* 🌊 RIPPLE 2 - Outer ring (0.07 → 0.12) ⚪ WHITE FOR VISIBILITY */}
     <mesh ref={ripple2Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.05, 0.0505, 32]} />
+      <ringGeometry args={[0.07, 0.072, 32]} />
       <meshBasicMaterial
-        color={userColor}
-        transparent
-        opacity={0}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
-
-    {/* 🌊 RIPPLE 3 - Outermost ring (0.08 → 0.11) ✨ BRIGHTER */}
-    <mesh ref={ripple3Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.08, 0.0805, 32]} />
-      <meshBasicMaterial
-        color={userColor}
+        color="#ffffff"
         transparent
         opacity={0}
         side={THREE.DoubleSide}

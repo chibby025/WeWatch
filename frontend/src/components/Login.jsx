@@ -82,7 +82,7 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-black flex relative overflow-hidden">
+    <div className="min-h-screen max-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-black flex relative overflow-hidden">
       {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-pulse"></div>
@@ -93,32 +93,32 @@ const Login = () => {
       {/* Split Screen Layout */}
       <div className="relative z-10 w-full flex flex-col lg:flex-row">
         {/* Left Side - Logo & Branding */}
-        <div className="lg:w-1/2 flex items-center justify-center p-8 md:p-12 lg:p-16 animate-fade-in bg-black">
+        <div className="lg:w-1/2 flex items-center justify-center p-6 md:p-8 lg:p-12 animate-fade-in bg-black">
           <div className="text-center max-w-2xl">
             <img 
               src="/icons/LetsWatchOutLogo.png" 
               alt="WeWatch Logo" 
-              className="w-80 h-80 md:w-[420px] md:h-[420px] lg:w-[512px] lg:h-[512px] mx-auto mb-0 drop-shadow-2xl hover:scale-105 transition-transform duration-300"
+              className="w-64 h-64 md:w-80 md:h-80 lg:w-96 lg:h-96 mx-auto mb-0 drop-shadow-2xl hover:scale-105 transition-transform duration-300"
             />
-            <p className="text-xl md:text-2xl lg:text-2xl text-gray-300 mb-2">Watch together, anywhere</p>
-            <p className="text-sm md:text-base lg:text-base text-gray-400">Join millions creating unforgettable watch party experiences</p>
+            <p className="text-lg md:text-xl lg:text-xl text-gray-300 mb-1">Watch together, anywhere</p>
+            <p className="text-xs md:text-sm lg:text-sm text-gray-400">Join millions creating unforgettable watch party experiences</p>
           </div>
         </div>
 
         {/* Right Side - Login Form */}
-        <div className="lg:w-1/2 flex items-center justify-center p-8 md:p-12 lg:p-16 animate-slide-right">
+        <div className="lg:w-1/2 flex items-center justify-center p-6 md:p-8 lg:p-12 animate-slide-right">
           <div className="w-full max-w-md">
             {/* Welcome Header */}
-            <div className="mb-8">
-              <h2 className="text-3xl md:text-4xl font-bold text-white mb-2">Welcome Back</h2>
-              <p className="text-gray-400 md:text-base">Sign in to continue your watch party</p>
+            <div className="mb-6">
+              <h2 className="text-2xl md:text-3xl font-bold text-white mb-1">Welcome Back</h2>
+              <p className="text-sm text-gray-400">Sign in to continue your watch party</p>
             </div>
 
             {/* Glass Card */}
-            <div className="bg-white/10 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 p-8 md:p-10">
+            <div className="bg-white/10 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 p-6 md:p-8">
               {/* Error Message */}
               {error && (
-                <div className="mb-6 p-4 bg-red-500/20 backdrop-blur-sm border border-red-500/50 text-red-200 rounded-lg animate-shake">
+                <div className="mb-4 p-3 bg-red-500/20 backdrop-blur-sm border border-red-500/50 text-red-200 rounded-lg animate-shake">
                   <div className="flex items-center gap-2">
                     <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
@@ -128,10 +128,10 @@ const Login = () => {
                 </div>
               )}
 
-              <form onSubmit={handleSubmit} className="space-y-5">
+              <form onSubmit={handleSubmit} className="space-y-4">
                 {/* Email Input */}
                 <div>
-                  <label htmlFor="email" className="block text-sm font-semibold text-white mb-2">
+                  <label htmlFor="email" className="block text-sm font-semibold text-white mb-1.5">
                     Email Address
                   </label>
                   <input
@@ -148,7 +148,7 @@ const Login = () => {
 
                 {/* Password Input */}
                 <div>
-                  <label htmlFor="password" className="block text-sm font-semibold text-white mb-2">
+                  <label htmlFor="password" className="block text-sm font-semibold text-white mb-1.5">
                     Password
                   </label>
                   <input
@@ -204,7 +204,7 @@ const Login = () => {
               </form>
 
               {/* Divider */}
-              <div className="relative my-6">
+              <div className="relative my-4">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-white/20"></div>
                 </div>
@@ -214,12 +214,12 @@ const Login = () => {
               </div>
 
               {/* Social Login Buttons */}
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {/* Google */}
                 <button
                   type="button"
                   disabled
-                  className="w-full py-3 px-4 bg-white/5 backdrop-blur-sm border border-white/20 rounded-lg text-white font-medium hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3 group opacity-50 cursor-not-allowed"
+                  className="w-full py-2.5 px-4 bg-white/5 backdrop-blur-sm border border-white/20 rounded-lg text-white text-sm font-medium hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3 group opacity-50 cursor-not-allowed">
                   title="Coming soon"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -236,7 +236,7 @@ const Login = () => {
                 <button
                   type="button"
                   disabled
-                  className="w-full py-3 px-4 bg-white/5 backdrop-blur-sm border border-white/20 rounded-lg text-white font-medium hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3 group opacity-50 cursor-not-allowed"
+                  className="w-full py-2.5 px-4 bg-white/5 backdrop-blur-sm border border-white/20 rounded-lg text-white text-sm font-medium hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3 group opacity-50 cursor-not-allowed">
                   title="Coming soon"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
@@ -248,7 +248,7 @@ const Login = () => {
               </div>
 
               {/* Register Link */}
-              <p className="mt-6 text-center text-sm text-gray-400">
+              <p className="mt-4 text-center text-sm text-gray-400">
                 Don't have an account?{' '}
                 <Link 
                   to="/register" 
@@ -260,7 +260,7 @@ const Login = () => {
             </div>
 
             {/* Footer */}
-            <div className="text-center mt-6 text-gray-500 text-xs">
+            <div className="text-center mt-4 text-gray-500 text-xs">
               <p>© 2026 WeWatch. Watch together, anywhere.</p>
             </div>
           </div>
