@@ -4193,9 +4193,13 @@ export default function CinemaScene3DDemo() {
     
     // Add current user's local audio state
     if (currentUser?.id) {
+      // Check if local participant is in activeSpeakers (includes own voice)
+      const localIdentity = `user-${currentUser.id}`;
+      const localAudioData = activeSpeakers.get(localIdentity);
+      
       states[currentUser.id] = {
-        isSpeaking: cinemaAudioActive && localAudioLevel > 10, // Speaking if unmuted and audio detected
-        audioLevel: cinemaAudioActive ? (localAudioLevel / 255) : 0, // Normalize 0-255 to 0-1
+        isSpeaking: cinemaAudioActive && (localAudioData?.isSpeaking || false),
+        audioLevel: cinemaAudioActive ? (localAudioData?.audioLevel || 0) : 0,
         isMuted: !cinemaAudioActive
       };
     }
@@ -4217,7 +4221,7 @@ export default function CinemaScene3DDemo() {
     });
     
     return states;
-  }, [currentUser, cinemaAudioActive, localAudioLevel, remoteParticipants, activeSpeakers]);
+  }, [currentUser, cinemaAudioActive, remoteParticipants, activeSpeakers]);
 
   // === Render ===
   if (authLoading) {
