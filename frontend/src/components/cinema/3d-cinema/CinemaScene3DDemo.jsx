@@ -4187,6 +4187,38 @@ export default function CinemaScene3DDemo() {
     return map;
   }, [remoteParticipants, activeSpeakers]);
 
+  // 🎤 Compute audioStates for MembersModal from activeSpeakers + local audio
+  const audioStates = React.useMemo(() => {
+    const states = {};
+    
+    // Add current user's local audio state
+    if (currentUser?.id) {
+      states[currentUser.id] = {
+        isSpeaking: cinemaAudioActive && localAudioLevel > 10, // Speaking if unmuted and audio detected
+        audioLevel: cinemaAudioActive ? (localAudioLevel / 255) : 0, // Normalize 0-255 to 0-1
+        isMuted: !cinemaAudioActive
+      };
+    }
+    
+    // Add remote participants' audio states from activeSpeakers
+    remoteParticipants.forEach(participant => {
+      // Extract user ID from LiveKit identity (format: "user-{id}" or "user-{id}-{tabId}")
+      const match = participant.identity.match(/^user-(\d+)/);
+      if (match) {
+        const userId = parseInt(match[1]);
+        const audioData = activeSpeakers.get(participant.identity) || { isSpeaking: false, audioLevel: 0 };
+        
+        states[userId] = {
+          isSpeaking: audioData.isSpeaking,
+          audioLevel: audioData.audioLevel,
+          isMuted: !audioData.isSpeaking && audioData.audioLevel === 0 // Muted if not speaking and no audio
+        };
+      }
+    });
+    
+    return states;
+  }, [currentUser, cinemaAudioActive, localAudioLevel, remoteParticipants, activeSpeakers]);
+
   // === Render ===
   if (authLoading) {
     return (
@@ -5172,7 +5204,7 @@ export default function CinemaScene3DDemo() {
           onMemberClick={openProfile}
           isHost={isHost}
           currentUserId={currentUser?.id}
-          audioStates={remoteAudioStates}
+          audioStates={audioStates}
           broadcastPermissions={broadcastPermissions}
           onToggleBroadcast={handleToggleBroadcast}
           userSeats={userSeats}

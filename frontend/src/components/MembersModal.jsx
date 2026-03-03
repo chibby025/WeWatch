@@ -188,15 +188,6 @@ export default function MembersModal({
             const theaterInfo = userTheaters[member.id];
             const hasBroadcastRequest = broadcastRequests.includes(member.id);
             
-            // 🔍 Debug: Log audio state for EVERY member (unconditional)
-            console.log(`🎵 [MembersModal RENDER] User ${member.id} (${member.username}):`, {
-              audioLevel,
-              isSpeaking,
-              isMuted,
-              audioState,
-              rawAudioStates: audioStates[member.id]
-            });
-            
             return (
               <div 
                 key={member.id} 
