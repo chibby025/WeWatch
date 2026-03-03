@@ -93,29 +93,29 @@ const Login = () => {
       {/* Split Screen Layout */}
       <div className="relative z-10 w-full flex flex-col lg:flex-row">
         {/* Left Side - Logo & Branding */}
-        <div className="lg:w-1/2 flex items-center justify-center p-8 lg:p-16 animate-fade-in bg-black">
+        <div className="lg:w-1/2 flex items-center justify-center p-8 md:p-12 lg:p-16 animate-fade-in bg-black">
           <div className="text-center max-w-2xl">
             <img 
               src="/icons/LetsWatchOutLogo.png" 
               alt="WeWatch Logo" 
-              className="w-96 h-96 lg:w-[512px] lg:h-[512px] mx-auto mb-0 drop-shadow-2xl hover:scale-105 transition-transform duration-300"
+              className="w-80 h-80 md:w-[420px] md:h-[420px] lg:w-[512px] lg:h-[512px] mx-auto mb-0 drop-shadow-2xl hover:scale-105 transition-transform duration-300"
             />
-            <p className="text-xl lg:text-2xl text-gray-300 mb-2">Watch together, anywhere</p>
-            <p className="text-sm lg:text-base text-gray-400">Join millions creating unforgettable watch party experiences</p>
+            <p className="text-xl md:text-2xl lg:text-2xl text-gray-300 mb-2">Watch together, anywhere</p>
+            <p className="text-sm md:text-base lg:text-base text-gray-400">Join millions creating unforgettable watch party experiences</p>
           </div>
         </div>
 
         {/* Right Side - Login Form */}
-        <div className="lg:w-1/2 flex items-center justify-center p-8 lg:p-16 animate-slide-right">
+        <div className="lg:w-1/2 flex items-center justify-center p-8 md:p-12 lg:p-16 animate-slide-right">
           <div className="w-full max-w-md">
             {/* Welcome Header */}
             <div className="mb-8">
-              <h2 className="text-3xl font-bold text-white mb-2">Welcome Back</h2>
-              <p className="text-gray-400">Sign in to continue your watch party</p>
+              <h2 className="text-3xl md:text-4xl font-bold text-white mb-2">Welcome Back</h2>
+              <p className="text-gray-400 md:text-base">Sign in to continue your watch party</p>
             </div>
 
             {/* Glass Card */}
-            <div className="bg-white/10 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 p-8">
+            <div className="bg-white/10 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 p-8 md:p-10">
               {/* Error Message */}
               {error && (
                 <div className="mb-6 p-4 bg-red-500/20 backdrop-blur-sm border border-red-500/50 text-red-200 rounded-lg animate-shake">
@@ -187,7 +187,7 @@ const Login = () => {
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-bold rounded-lg shadow-lg hover:shadow-purple-500/50 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                  className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-bold text-base md:text-lg rounded-lg shadow-lg hover:shadow-purple-500/50 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                 >
                   {isLoading ? (
                     <span className="flex items-center justify-center gap-2">

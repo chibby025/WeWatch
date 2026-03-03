@@ -1226,13 +1226,15 @@ export default function CinemaScene3DDemo() {
     return () => clearInterval(intervalId);
   }, [isHost, currentMedia, isPlaying, sendMessage, currentUser?.id]);
 
-  // 📱 Mobile orientation detection and force landscape
+  // 📱 Mobile orientation detection and force landscape (phones only, not tablets)
   useEffect(() => {
     if (!isMobile) return;
 
     const checkOrientation = () => {
+      // Only show orientation prompt for phones (width < 768px), not tablets
+      const isPhone = window.innerWidth < 768;
       const isPortraitMode = window.innerHeight > window.innerWidth;
-      setIsPortrait(isPortraitMode);
+      setIsPortrait(isPhone && isPortraitMode);
     };
 
     // Initial check
@@ -1240,6 +1242,9 @@ export default function CinemaScene3DDemo() {
 
     // Try to lock to landscape (may fail without user gesture)
     const lockOrientation = async () => {
+      // Only attempt lock for phones, not tablets
+      if (window.innerWidth >= 768) return;
+      
       try {
         if (screen.orientation && screen.orientation.lock) {
           await screen.orientation.lock('landscape');

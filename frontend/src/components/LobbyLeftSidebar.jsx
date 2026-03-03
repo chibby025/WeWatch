@@ -10,9 +10,11 @@ import {
   Cog6ToothIcon,
   QuestionMarkCircleIcon,
   XMarkIcon,
-  ChartBarIcon
+  ChartBarIcon,
+  ArrowRightOnRectangleIcon
 } from '@heroicons/react/24/outline';
 import HelpSupportModal from './HelpSupportModal';
+import { useNavigate } from 'react-router-dom';
 
 const LobbyLeftSidebar = ({ 
   isOpen, 
@@ -22,11 +24,26 @@ const LobbyLeftSidebar = ({
   onSettingsClick
 }) => {
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
+  const navigate = useNavigate();
 
   if (!isOpen) return null;
 
   // Check if user is super admin
   const isSuperAdmin = currentUser?.role === 'super_admin';
+
+  // Handle logout
+  const handleLogout = () => {
+    // Clear all auth data
+    localStorage.removeItem('user');
+    localStorage.removeItem('token');
+    localStorage.clear();
+    
+    // Close sidebar
+    onClose();
+    
+    // Redirect to login
+    navigate('/login');
+  };
 
   const menuItems = [
     {
@@ -100,6 +117,14 @@ const LobbyLeftSidebar = ({
       icon: Cog6ToothIcon,
       onClick: onSettingsClick,
       enabled: true
+    },
+    {
+      id: 'logout',
+      label: 'Log Out',
+      icon: ArrowRightOnRectangleIcon,
+      onClick: handleLogout,
+      enabled: true,
+      danger: true
     }
   ];
 
@@ -171,9 +196,11 @@ const LobbyLeftSidebar = ({
                       transition-all duration-200 text-left
                       ${item.highlight 
                         ? 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold shadow-lg' 
-                        : item.enabled 
-                          ? 'text-white hover:bg-gray-700/50 active:bg-gray-700 cursor-pointer' 
-                          : 'text-gray-500 cursor-not-allowed opacity-60'
+                        : item.danger
+                          ? 'text-red-400 hover:bg-red-500/10 active:bg-red-500/20 cursor-pointer'
+                          : item.enabled 
+                            ? 'text-white hover:bg-gray-700/50 active:bg-gray-700 cursor-pointer' 
+                            : 'text-gray-500 cursor-not-allowed opacity-60'
                       }
                     `}
                   >

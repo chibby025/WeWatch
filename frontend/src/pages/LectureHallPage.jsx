@@ -1560,11 +1560,13 @@ const PositionCalculatorPage = () => {
     if (!isMobile) return;
     
     // Check orientation only once on mount
+    // Only show prompt for phones (width < 768px), not tablets (iPads, etc.)
+    const isPhone = window.innerWidth < 768;
     const isPortrait = window.innerHeight > window.innerWidth;
-    setIsPortraitMode(isPortrait);
+    setIsPortraitMode(isPhone && isPortrait);
     
-    // Show modal if in portrait mode on initial join
-    if (isPortrait) {
+    // Show modal if in portrait mode on initial join (phones only)
+    if (isPhone && isPortrait) {
       setShowOrientationModal(true);
     }
   }, []);
