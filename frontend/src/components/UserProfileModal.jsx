@@ -90,10 +90,10 @@ export default function UserProfileModal({
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-      <div className="bg-gray-800 rounded-xl w-96 max-w-[90vw] overflow-hidden">
+      <div className="bg-gray-800 rounded-xl w-full max-w-md md:max-w-lg lg:max-w-xl max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-700 flex justify-between items-center">
-          <h3 className="text-white font-semibold text-lg">
+        <div className="px-4 md:px-6 py-3 md:py-4 border-b border-gray-700 flex justify-between items-center sticky top-0 bg-gray-800 z-10">
+          <h3 className="text-white font-semibold text-base md:text-lg">
             {isOwnProfile ? 'Your Profile' : `${user.username}'s Profile`}
           </h3>
           <button 
@@ -105,9 +105,9 @@ export default function UserProfileModal({
         </div>
 
         {/* Content */}
-        <div className="p-6">
+        <div className="p-4 md:p-6">
           {/* Avatar */}
-          <div className="relative mx-auto w-24 h-24 mb-4">
+          <div className="relative mx-auto w-20 h-20 md:w-24 md:h-24 mb-3 md:mb-4">
             <img 
               src={currentAvatar} 
               alt={user.username}
@@ -116,7 +116,7 @@ export default function UserProfileModal({
                 e.target.src = '/avatars/default.png';
               }}
               onClick={() => setIsAvatarExpanded(true)}
-              className="w-24 h-24 rounded-full mx-auto object-cover border-4 border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
+              className="w-20 h-20 md:w-24 md:h-24 rounded-full mx-auto object-cover border-4 border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
               title="Click to view full size"
             />
             {isEditing && (
@@ -141,31 +141,31 @@ export default function UserProfileModal({
           </div>
 
           {/* Username */}
-          <div className="mb-4">
+          <div className="mb-3 md:mb-4">
             <label className="text-xs text-gray-400 block mb-1">Username</label>
             {isEditing ? (
               <input
                 type="text"
                 value={editedUsername}
                 onChange={(e) => setEditedUsername(e.target.value)}
-                className="w-full bg-gray-900 text-white px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none"
+                className="w-full bg-gray-900 text-white px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none text-sm md:text-base"
                 maxLength={50}
               />
             ) : (
-              <p className="text-white text-lg font-semibold">{user.username}</p>
+              <p className="text-white text-base md:text-lg font-semibold">{user.username}</p>
             )}
           </div>
 
           {/* Bio - Only show if bio exists or editing */}
           {(isEditing || user.bio) && (
-            <div className="mb-6">
+            <div className="mb-4 md:mb-6">
               <label className="text-xs text-gray-400 block mb-1">Bio</label>
               {isEditing ? (
                 <textarea
                   value={editedBio}
                   onChange={(e) => setEditedBio(e.target.value)}
-                  className="w-full bg-gray-900 text-white px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none resize-none"
-                  rows={3}
+                  className="w-full bg-gray-900 text-white px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none resize-none text-sm md:text-base"
+                  rows={2}
                   maxLength={200}
                   placeholder="Tell us about yourself..."
                 />
@@ -179,7 +179,7 @@ export default function UserProfileModal({
 
           {/* User Stats (Optional) */}
           {!isEditing && (
-            <div className="mb-6 p-3 bg-gray-900 rounded-lg">
+            <div className="mb-4 md:mb-6 p-2 md:p-3 bg-gray-900 rounded-lg">
               <div className="text-xs text-gray-400">Member since</div>
               <div className="text-white text-sm">
                 {new Date(user.created_at || Date.now()).toLocaleDateString()}

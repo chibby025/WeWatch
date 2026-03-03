@@ -42,8 +42,12 @@ export default function FlatUserIcon({
   const [isLoading, setIsLoading] = useState(false);
   const orbRef = useRef();
   const [isPulsing, setIsPulsing] = useState(false);
+  
+  // 🌊 Cascading ripple ring pool (4 rings for smooth cascade effect)
   const ripple1Ref = useRef();
   const ripple2Ref = useRef();
+  const ripple3Ref = useRef();
+  const ripple4Ref = useRef();
 
   // 🔍 DEBUG: Log when component mounts and updates - DISABLED FOR PERFORMANCE
   // useEffect(() => {
@@ -152,7 +156,7 @@ export default function FlatUserIcon({
     setIsPulsing(!!isSpeaking);
   }, [isSpeaking]);
 
-  // 🎶 Animate orb and ripples with audio levels
+  // 🎶 Animate orb and cascading ripples with audio levels
   useFrame(({ camera }) => {
     if (orbRef.current) {
       // 💡 Orb stays constant size, subtle emissive glow
@@ -160,37 +164,56 @@ export default function FlatUserIcon({
       orbRef.current.scale.set(1, 1, 1); // ✅ Constant size
     }
 
-    // 🌊 Ripple animations (only when speaking)
-    if (isSpeaking && ripple1Ref.current && ripple2Ref.current) {
+    // 🌊 Cascading ripple animations (only when speaking)
+    if (isSpeaking && ripple1Ref.current && ripple2Ref.current && ripple3Ref.current && ripple4Ref.current) {
       const time = Date.now() * 0.001; // Time in seconds
-      const level = audioLevel || 0.3; // Base audio level (0.0 to 1.0)
+      const level = audioLevel || 0.5; // Base audio level (0.0 to 1.0)
       
       // 🎵 Speed increases with audio intensity
-      const speedMultiplier = 1.0 + (level * 2.0); // 1.0x to 3.0x speed
+      const speedMultiplier = 0.8 + (level * 0.4); // 0.8x to 1.2x speed (slower for calmer effect)
       
-      // 🌊 Ripple 1 animation (first wave)
-      const ripple1Phase = (time * speedMultiplier) % 2; // 0 to 2 seconds loop
-      const ripple1Scale = 1.0 + (ripple1Phase * level * 4.0); // Expands 1x to 5x based on audio (max 5x orb size = 0.10)
-      const ripple1Opacity = Math.max(0, 1.0 - (ripple1Phase / 2)); // Fade out as it expands
+      // 🌊 Ripple pool configuration (4 cascading rings)
+      const ripples = [
+        { ref: ripple1Ref, startRadius: 0.02, endRadius: 0.04, delay: 0.0, opacity: 0.7 },
+        { ref: ripple2Ref, startRadius: 0.04, endRadius: 0.06, delay: 0.3, opacity: 0.6 },
+        { ref: ripple3Ref, startRadius: 0.06, endRadius: 0.08, delay: 0.6, opacity: 0.5 },
+        { ref: ripple4Ref, startRadius: 0.08, endRadius: 0.10, delay: 0.9, opacity: 0.4 },
+      ];
       
-      ripple1Ref.current.scale.set(ripple1Scale, ripple1Scale, 1);
-      ripple1Ref.current.material.opacity = ripple1Opacity * 0.6; // Max 60% opacity
+      const cycleDuration = 1.5; // Each ring takes 1.5 seconds to expand fully
+      const thickness = 0.0003; // Ultra-thin constant line thickness
       
-      // 🌊 Ripple 2 animation (second wave, delayed by 0.5s)
-      const ripple2Phase = ((time * speedMultiplier) + 1.0) % 2; // Offset by 1 second
-      const ripple2Scale = 1.0 + (ripple2Phase * level * 4.0); // Expands 1x to 5x based on audio
-      const ripple2Opacity = Math.max(0, 1.0 - (ripple2Phase / 2));
+      ripples.forEach((ripple) => {
+        const phase = ((time * speedMultiplier) + ripple.delay) % cycleDuration;
+        const progress = phase / cycleDuration; // 0 to 1
+        
+        // Interpolate radius based on progress (no scaling, just geometry update)
+        const currentRadius = ripple.startRadius + (progress * (ripple.endRadius - ripple.startRadius));
+        
+        // Dispose old geometry and create new one with updated radius
+        if (ripple.ref.current.geometry) {
+          ripple.ref.current.geometry.dispose();
+        }
+        ripple.ref.current.geometry = new THREE.RingGeometry(
+          currentRadius,
+          currentRadius + thickness,
+          32
+        );
+        
+        // Fade out as it expands (calming, peaceful effect)
+        const fadeOut = 1.0 - progress;
+        ripple.ref.current.material.opacity = fadeOut * ripple.opacity * level;
+        
+        // Billboard toward camera
+        ripple.ref.current.lookAt(camera.position);
+      });
       
-      ripple2Ref.current.scale.set(ripple2Scale, ripple2Scale, 1);
-      ripple2Ref.current.material.opacity = ripple2Opacity * 0.5; // Max 50% opacity (slightly dimmer)
-      
-      // 📐 Billboard ripples toward camera
-      ripple1Ref.current.lookAt(camera.position);
-      ripple2Ref.current.lookAt(camera.position);
-    } else if (ripple1Ref.current && ripple2Ref.current) {
-      // Hide ripples when not speaking
+    } else if (ripple1Ref.current && ripple2Ref.current && ripple3Ref.current && ripple4Ref.current) {
+      // Hide all ripples when not speaking
       ripple1Ref.current.material.opacity = 0;
       ripple2Ref.current.material.opacity = 0;
+      ripple3Ref.current.material.opacity = 0;
+      ripple4Ref.current.material.opacity = 0;
     }
   });
 
@@ -232,9 +255,9 @@ export default function FlatUserIcon({
       />
     </mesh>
 
-    {/* 🌊 RIPPLE 1 - First expanding ring (only visible when speaking) */}
+    {/* 🌊 RIPPLE 1 - Innermost ring (0.02 → 0.04) */}
     <mesh ref={ripple1Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.02, 0.0205, 32]} />
+      <ringGeometry args={[0.02, 0.0203, 32]} />
       <meshBasicMaterial
         color={userColor}
         transparent
@@ -243,9 +266,31 @@ export default function FlatUserIcon({
       />
     </mesh>
 
-    {/* 🌊 RIPPLE 2 - Second expanding ring (delayed, only visible when speaking) */}
+    {/* 🌊 RIPPLE 2 - Second ring (0.04 → 0.06) */}
     <mesh ref={ripple2Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.02, 0.0205, 32]} />
+      <ringGeometry args={[0.04, 0.0403, 32]} />
+      <meshBasicMaterial
+        color={userColor}
+        transparent
+        opacity={0}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+
+    {/* 🌊 RIPPLE 3 - Third ring (0.06 → 0.08) */}
+    <mesh ref={ripple3Ref} position={[0, 0.08, 0.01]}>
+      <ringGeometry args={[0.06, 0.0603, 32]} />
+      <meshBasicMaterial
+        color={userColor}
+        transparent
+        opacity={0}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+
+    {/* 🌊 RIPPLE 4 - Outermost ring (0.08 → 0.10) */}
+    <mesh ref={ripple4Ref} position={[0, 0.08, 0.01]}>
+      <ringGeometry args={[0.08, 0.0803, 32]} />
       <meshBasicMaterial
         color={userColor}
         transparent
