@@ -616,6 +616,7 @@ const CinemaScene3D = forwardRef(({
   onCameraMove,            // 🎯 Position Calculator callback
   onScreenClick,           // 🎬 Click handler for 3D screen to trigger fullscreen
   showChatBubbles = true,  // 💬 User preference for chat bubble visibility
+  activeSpeakers = new Map(), // 🎤 Active speakers for ripple animation
 }, ref) => {
   const screenRef = useRef();
   const theaterRef = useRef();

@@ -4765,6 +4765,7 @@ export default function CinemaScene3DDemo() {
         roomMembers={roomMembers}
         userSeats={userSeats} // ✅ Pass seat assignments for avatar filtering
         remoteParticipants={remoteParticipantsMap}
+        activeSpeakers={activeSpeakers} // 🎤 Pass active speakers for ripple animation
         showChatBubbles={showChatBubbles} // 💬 User preference for chat bubble visibility
         isChatActive={isChatOpen || showChatHome} // 🚫 Disable keyboard bindings when chat is open
         onEmoteReceived={() => {}}
