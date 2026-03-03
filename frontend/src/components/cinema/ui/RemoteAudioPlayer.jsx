@@ -1,6 +1,6 @@
 // Remote audio player component that automatically plays audio from remote participants
 import { useEffect, useRef } from 'react';
-import { RoomEvent } from 'livekit-client';
+import { RoomEvent, Track } from 'livekit-client';
 
 export default function RemoteAudioPlayer({ room, silenceMode = false }) {
   // Removed verbose render logging for cleaner console
@@ -19,7 +19,8 @@ export default function RemoteAudioPlayer({ room, silenceMode = false }) {
     if (silenceMode) {
       room.remoteParticipants.forEach(participant => {
         participant.audioTrackPublications.forEach(publication => {
-          if (publication.track && publication.source !== 'screen_share_audio') {
+          if (publication.track && publication.source !== Track.Source.ScreenShareAudio) {
+            console.log(`🔇 [RemoteAudioPlayer] Silence mode: Detaching mic from ${participant.identity}`);
             publication.track.detach().forEach(el => el.remove());
           }
         });
@@ -83,8 +84,17 @@ export default function RemoteAudioPlayer({ room, silenceMode = false }) {
 
     const handleTrackSubscribed = (track, publication, participant) => {
       if (track.kind === 'audio') {
+        console.log(`🔊 [RemoteAudioPlayer] Audio track subscribed:`, {
+          participant: participant.identity,
+          source: publication.source,
+          trackSid: publication.trackSid,
+          silenceMode,
+          isScreenShareAudio: publication.source === Track.Source.ScreenShareAudio
+        });
+        
         // ✅ SILENCE MODE: Only allow screen share audio, block participant mics
-        if (silenceMode && publication.source !== 'screen_share_audio') {
+        if (silenceMode && publication.source !== Track.Source.ScreenShareAudio) {
+          console.log(`🔇 [RemoteAudioPlayer] Silence mode: Blocking mic audio from ${participant.identity}`);
           return; // Don't attach participant microphone audio
         }
 
@@ -114,9 +124,9 @@ export default function RemoteAudioPlayer({ room, silenceMode = false }) {
 
         // Play it (in case autoplay doesn't work)
         audioElement.play().then(() => {
-          // Audio playing successfully
+          console.log(`✅ [RemoteAudioPlayer] Audio playing from ${participant.identity} (source: ${publication.source})`);
         }).catch(err => {
-          console.error('❌ [RemoteAudioPlayer] Audio play failed:', err);
+          console.error(`❌ [RemoteAudioPlayer] Audio play failed for ${participant.identity}:`, err);
         });
       }
     };

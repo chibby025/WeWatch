@@ -98,11 +98,12 @@ const useCinemaAudio = ({
     const mySeat = userSeats[authenticatedUserID];
     const myRow = getRowFromSeat(mySeat);
 
-    console.log(`[useCinemaAudio] Broadcasting audio state:`, {
+    console.log(`🎤 [Audio State Broadcast]`, {
       isEnabled,
       mode: audioMode,
       row: myRow,
-      recipientCount: recipients.length
+      recipientCount: recipients.length,
+      userSeats
     });
 
     // Notify others about speaking state

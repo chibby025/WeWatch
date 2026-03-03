@@ -1829,9 +1829,7 @@ export default function CinemaScene3DDemo() {
 
       // ✅ ALWAYS subscribe to screen share audio (tab audio from screen share)
       if (publication.source === Track.Source.ScreenShareAudio) {
-        console.log(`🔊 [Selective Sub] Screen share audio detected - SUBSCRIBING:`, {
-          participant: participant.identity
-        });
+        console.log(`🔊 [Screen Share Audio] SUBSCRIBING to ${participant.identity} track ${publication.trackSid}`);
         publication.setSubscribed(true);
         return;
       }
@@ -1844,7 +1842,9 @@ export default function CinemaScene3DDemo() {
       const speakerUserId = parseInt(participant.identity.split('-')[1]);
       const shouldSubscribe = shouldSubscribeToSpeaker(speakerUserId);
 
-      console.log(`📢 [Track Published] ${participant.identity} → ${shouldSubscribe ? 'Subscribe' : 'Skip'}`);
+      if (shouldSubscribe) {
+        console.log(`📢 [Mic Audio] SUBSCRIBING to ${participant.identity} (same row/party mode)`);
+      }
       
       publication.setSubscribed(shouldSubscribe);
     };
@@ -1944,11 +1944,8 @@ export default function CinemaScene3DDemo() {
 
     // ✅ Only publish when user has explicitly unmuted (isAudioActive === true)
     if (cinemaAudioActive && !publishedAudioTrackRef.current) {
-      console.log('🟢 [LiveKit Audio Publish] Publishing audio track to LiveKit');
-      console.log('  Track ID:', audioTrack.id);
-      console.log('  Track enabled:', audioTrack.enabled);
-      console.log('  Audio mode:', audioMode);
-      console.log('  Audio active:', cinemaAudioActive);
+      console.log('🟢 [LiveKit Mic Publish] Publishing microphone track');
+      console.log('  Audio mode:', audioMode, '| Row:', Object.keys(userSeats).map(uid => userSeats[uid])[0]);
 
       localParticipant.publishTrack(audioTrack, {
         source: 'microphone',
