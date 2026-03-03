@@ -11,6 +11,8 @@ export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true
   const [error, setError] = useState(null);
   const roomRef = useRef(null);
   const isConnectingRef = useRef(false); // Prevent duplicate connection attempts
+  const retryCountRef = useRef(0); // Track retry attempts for 403 errors
+  const retryTimeoutRef = useRef(null); // Cleanup retry timeouts
 
   const connect = useCallback(async () => {
     // Guard: Already connected or connecting
@@ -82,6 +84,23 @@ export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true
       if (!res.ok) {
         const text = await res.text();
         logger.error('❌ [LiveKit] Token fetch failed:', res.status, text.substring(0, 200));
+        
+        // 🔄 RETRY LOGIC: Handle 403 errors (session membership not ready yet)
+        if (res.status === 403 && retryCountRef.current < 3) {
+          retryCountRef.current += 1;
+          const retryDelay = Math.min(1000 * Math.pow(2, retryCountRef.current - 1), 4000); // 1s, 2s, 4s
+          console.log(`🔄 [LiveKit] 403 error - session membership not ready. Retry ${retryCountRef.current}/3 in ${retryDelay}ms...`);
+          console.log('   This can happen if LiveKit token is requested before WebSocket completes session handshake');
+          
+          retryTimeoutRef.current = setTimeout(() => {
+            console.log(`🔄 [LiveKit] Retrying connection attempt ${retryCountRef.current}/3...`);
+            isConnectingRef.current = false; // Reset flag to allow retry
+            connect(); // Recursive retry
+          }, retryDelay);
+          
+          return; // Exit early, retry will happen after delay
+        }
+        
         throw new Error(`HTTP ${res.status}: ${text.substring(0, 100)}`);
       }
 
@@ -280,6 +299,9 @@ export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true
       console.log('📱 [LiveKit MOBILE DEBUG] Peer connection state:', newRoom.engine?.pcManager?.publisher?.pc?.connectionState || 'unknown');
       console.log('📱 [LiveKit MOBILE DEBUG] ICE connection state:', newRoom.engine?.pcManager?.publisher?.pc?.iceConnectionState || 'unknown');
       
+      // ✅ Reset retry counter on successful connection
+      retryCountRef.current = 0;
+      
     } catch (err) {
       console.error('❌ [LiveKit] Connection failed:', err);
       console.error('📱 [LiveKit MOBILE DEBUG] ========== CONNECTION FAILED ==========');
@@ -322,12 +344,20 @@ export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true
 
   const disconnect = useCallback(() => {
     console.log('🔌 [LiveKit] Disconnect called');
+    
+    // Clear any pending retry timeouts
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+    
     if (roomRef.current) {
       console.log('🔌 [LiveKit] Disconnecting from room...');
       roomRef.current.disconnect();
       roomRef.current = null;
     }
     isConnectingRef.current = false;
+    retryCountRef.current = 0; // Reset retry counter
     setIsConnected(false);
   }, []);
 

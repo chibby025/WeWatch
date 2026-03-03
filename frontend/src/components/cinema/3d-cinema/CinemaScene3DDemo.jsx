@@ -371,7 +371,10 @@ export default function CinemaScene3DDemo() {
     return saved || 'seat'; // Default: seat mode
   });
   
-  // 🎫 Ticket enforcement - check on mount for paid sessions
+  // � Session membership confirmation (prevents LiveKit 403 race condition)
+  const [isSessionMemberConfirmed, setIsSessionMemberConfirmed] = useState(false);
+  
+  // �🎫 Ticket enforcement - check on mount for paid sessions
   useEffect(() => {
     const checkTicket = async () => {
       if (!finalSessionId || !currentUser) return;
@@ -1690,7 +1693,7 @@ export default function CinemaScene3DDemo() {
     disconnect: disconnectLiveKit
   } = useLiveKitRoom(roomId, currentUser, shouldAutoSubscribe);
 
-  // ✅ Connect to LiveKit when room and user are ready (run once)
+  // ✅ Connect to LiveKit when room, user, AND session membership are ready
   const hasAttemptedLiveKitConnection = useRef(false);
   
   useEffect(() => {
@@ -1699,12 +1702,19 @@ export default function CinemaScene3DDemo() {
       return;
     }
     
+    // 🎯 CRITICAL: Wait for session membership confirmation to prevent 403 race condition
+    if (!isSessionMemberConfirmed) {
+      console.log('⏳ [Cinema LiveKit] Waiting for session membership confirmation...');
+      console.log('   This prevents 403 errors when LiveKit token is requested before session member is created');
+      return;
+    }
+    
     if (hasAttemptedLiveKitConnection.current) {
       console.log('⏭️ [Cinema LiveKit] Connection already attempted, skipping');
       return;
     }
     
-    console.log('🔗 [Cinema LiveKit] Initiating connection for room:', roomId);
+    console.log('🔗 [Cinema LiveKit] Session confirmed! Initiating connection for room:', roomId);
     
     // Set loading status for voice connection
     if (enableLoadingOverlay) {
@@ -1722,7 +1732,7 @@ export default function CinemaScene3DDemo() {
       }
       disconnectLiveKit();
     };
-  }, [roomId, currentUser?.id, connectLiveKit, disconnectLiveKit, enableLoadingOverlay]);
+  }, [roomId, currentUser?.id, isSessionMemberConfirmed, connectLiveKit, disconnectLiveKit, enableLoadingOverlay]);
   
   // 🎯 Clear loading overlay when LiveKit connects
   useEffect(() => {
@@ -3267,6 +3277,12 @@ export default function CinemaScene3DDemo() {
           }
           break;
         case 'session_status':
+          // ✅ Confirm session membership (allows LiveKit connection)
+          if (!isSessionMemberConfirmed) {
+            console.log('✅ [SESSION_STATUS] Session membership confirmed - LiveKit can now connect');
+            setIsSessionMemberConfirmed(true);
+          }
+          
           console.log('� [SESSION_STATUS] Received:', {
             memberCount: msg.data.member_count,
             membersArrayLength: msg.data.members?.length || 0,
