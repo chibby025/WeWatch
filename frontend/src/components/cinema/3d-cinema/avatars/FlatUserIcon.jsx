@@ -43,11 +43,10 @@ export default function FlatUserIcon({
   const orbRef = useRef();
   const [isPulsing, setIsPulsing] = useState(false);
   
-  // 🌊 Cascading ripple ring pool (4 rings for smooth cascade effect)
+  // 🌊 Cascading ripple ring pool (3 brighter rings for better visibility)
   const ripple1Ref = useRef();
   const ripple2Ref = useRef();
   const ripple3Ref = useRef();
-  const ripple4Ref = useRef();
 
   // 🔍 DEBUG: Log when component mounts and updates - DISABLED FOR PERFORMANCE
   // useEffect(() => {
@@ -165,23 +164,22 @@ export default function FlatUserIcon({
     }
 
     // 🌊 Cascading ripple animations (only when speaking)
-    if (isSpeaking && ripple1Ref.current && ripple2Ref.current && ripple3Ref.current && ripple4Ref.current) {
+    if (isSpeaking && ripple1Ref.current && ripple2Ref.current && ripple3Ref.current) {
       const time = Date.now() * 0.001; // Time in seconds
       const level = audioLevel || 0.5; // Base audio level (0.0 to 1.0)
       
       // 🎵 Speed increases with audio intensity
       const speedMultiplier = 0.8 + (level * 0.4); // 0.8x to 1.2x speed (slower for calmer effect)
       
-      // 🌊 Ripple pool configuration (4 cascading rings)
+      // 🌊 Ripple pool configuration (3 brighter cascading rings)
       const ripples = [
-        { ref: ripple1Ref, startRadius: 0.02, endRadius: 0.04, delay: 0.0, opacity: 0.7 },
-        { ref: ripple2Ref, startRadius: 0.04, endRadius: 0.06, delay: 0.3, opacity: 0.6 },
-        { ref: ripple3Ref, startRadius: 0.06, endRadius: 0.08, delay: 0.6, opacity: 0.5 },
-        { ref: ripple4Ref, startRadius: 0.08, endRadius: 0.10, delay: 0.9, opacity: 0.4 },
+        { ref: ripple1Ref, startRadius: 0.02, endRadius: 0.05, delay: 0.0, opacity: 0.9 },  // ✨ Brighter
+        { ref: ripple2Ref, startRadius: 0.05, endRadius: 0.08, delay: 0.4, opacity: 0.85 }, // ✨ Brighter
+        { ref: ripple3Ref, startRadius: 0.08, endRadius: 0.11, delay: 0.8, opacity: 0.8 },  // ✨ Brighter
       ];
       
       const cycleDuration = 1.5; // Each ring takes 1.5 seconds to expand fully
-      const thickness = 0.0003; // Ultra-thin constant line thickness
+      const thickness = 0.0005; // Slightly thicker for better visibility
       
       ripples.forEach((ripple) => {
         const phase = ((time * speedMultiplier) + ripple.delay) % cycleDuration;
@@ -200,20 +198,20 @@ export default function FlatUserIcon({
           32
         );
         
-        // Fade out as it expands (calming, peaceful effect)
-        const fadeOut = 1.0 - progress;
-        ripple.ref.current.material.opacity = fadeOut * ripple.opacity * level;
+        // Gentler fade-out to keep rings visible longer
+        const fadeStart = 0.7; // Start fading at 70% of animation
+        const fadeFactor = progress < fadeStart ? 1.0 : (1.0 - (progress - fadeStart) / (1.0 - fadeStart));
+        ripple.ref.current.material.opacity = fadeFactor * ripple.opacity * Math.max(level, 0.7);
         
         // Billboard toward camera
         ripple.ref.current.lookAt(camera.position);
       });
       
-    } else if (ripple1Ref.current && ripple2Ref.current && ripple3Ref.current && ripple4Ref.current) {
+    } else if (ripple1Ref.current && ripple2Ref.current && ripple3Ref.current) {
       // Hide all ripples when not speaking
       ripple1Ref.current.material.opacity = 0;
       ripple2Ref.current.material.opacity = 0;
       ripple3Ref.current.material.opacity = 0;
-      ripple4Ref.current.material.opacity = 0;
     }
   });
 
@@ -255,9 +253,9 @@ export default function FlatUserIcon({
       />
     </mesh>
 
-    {/* 🌊 RIPPLE 1 - Innermost ring (0.02 → 0.04) */}
+    {/* 🌊 RIPPLE 1 - Innermost ring (0.02 → 0.05) ✨ BRIGHTER */}
     <mesh ref={ripple1Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.02, 0.0203, 32]} />
+      <ringGeometry args={[0.02, 0.0205, 32]} />
       <meshBasicMaterial
         color={userColor}
         transparent
@@ -266,9 +264,9 @@ export default function FlatUserIcon({
       />
     </mesh>
 
-    {/* 🌊 RIPPLE 2 - Second ring (0.04 → 0.06) */}
+    {/* 🌊 RIPPLE 2 - Middle ring (0.05 → 0.08) ✨ BRIGHTER */}
     <mesh ref={ripple2Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.04, 0.0403, 32]} />
+      <ringGeometry args={[0.05, 0.0505, 32]} />
       <meshBasicMaterial
         color={userColor}
         transparent
@@ -277,20 +275,9 @@ export default function FlatUserIcon({
       />
     </mesh>
 
-    {/* 🌊 RIPPLE 3 - Third ring (0.06 → 0.08) */}
+    {/* 🌊 RIPPLE 3 - Outermost ring (0.08 → 0.11) ✨ BRIGHTER */}
     <mesh ref={ripple3Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.06, 0.0603, 32]} />
-      <meshBasicMaterial
-        color={userColor}
-        transparent
-        opacity={0}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
-
-    {/* 🌊 RIPPLE 4 - Outermost ring (0.08 → 0.10) */}
-    <mesh ref={ripple4Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.08, 0.0803, 32]} />
+      <ringGeometry args={[0.08, 0.0805, 32]} />
       <meshBasicMaterial
         color={userColor}
         transparent
