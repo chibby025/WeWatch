@@ -179,7 +179,7 @@ export default function FlatUserIcon({
       ];
       
       const cycleDuration = 1.5; // Each ring takes 1.5 seconds to expand fully
-      const thickness = 0.0005; // Slightly thicker for better visibility
+      const thickness = 0.002; // Thicker lines for better visibility (300% increase)
       
       ripples.forEach((ripple) => {
         const phase = ((time * speedMultiplier) + ripple.delay) % cycleDuration;
