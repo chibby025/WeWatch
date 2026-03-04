@@ -42,6 +42,7 @@ import CinemaLoadingOverlay from './CinemaLoadingOverlay';
 // Game system components
 import GameLobbyModal from '../../Games/GameLobbyModal';
 import GameOverlay from '../../Games/GameOverlay';
+import GameScreenRenderer from '../../Games/GameScreenRenderer'; // ✅ NEW
 import VolumeControl from '../../VolumeControl';
 
 // LiveShare Fullscreen Component - Uses MediaStream objects (same pattern as PositionCalculatorPage)
@@ -466,6 +467,10 @@ export default function CinemaScene3DDemo() {
   
   // 📡 REST API session data (reliable fallback for host detection)
   const [restApiSession, setRestApiSession] = useState(null);
+
+  // 🎮 Game canvas ref for texture rendering
+  const gameCanvasRendererRef = useRef(null);
+  const [gameCanvas, setGameCanvas] = useState(null);
   
   useEffect(() => {
     joinSoundRef.current = new Audio('/sounds/userjoin.mp3');
@@ -3855,6 +3860,18 @@ export default function CinemaScene3DDemo() {
     console.log('🎮 [CinemaScene3D] Closing game');
     setActiveGame(null);
   }, []);
+
+  // 🎮 Update game canvas when activeGame changes
+  useEffect(() => {
+    if (activeGame && gameCanvasRendererRef.current) {
+      const canvas = gameCanvasRendererRef.current.getCanvas();
+      setGameCanvas(canvas);
+      console.log('🎮 [CinemaScene3D] Game canvas updated:', canvas);
+    } else {
+      setGameCanvas(null);
+      console.log('🎮 [CinemaScene3D] Game canvas cleared');
+    }
+  }, [activeGame]);
   
   // === Handlers ===
   const handleSendSessionMessage = () => {
@@ -4787,6 +4804,7 @@ export default function CinemaScene3DDemo() {
         authenticatedUserID={currentUser?.id}
         videoElement={liveShareVideoRef.current || videoRef.current} // ✅ Use LiveShare video if active
         cameraVideoElement={liveShareCameraVideoRef.current || cameraVideoRef.current} // ✅ Use LiveShare camera if active
+        gameCanvas={gameCanvas} // 🎮 NEW: Game canvas for screen texture
         liveShareMode={liveShareMode}
         onAvatarClick={openProfile}
         onVideoTextureUpdate={(fn) => {
@@ -5257,6 +5275,16 @@ export default function CinemaScene3DDemo() {
           onMove={handleGameMove}
           onClose={handleGameClose}
           webSocketService={{ on: () => {}, off: () => {} }} // Handled via messages array
+        />
+      )}
+
+      {/* 🎮 Hidden Game Canvas Renderer - renders game to canvas for 3D texture */}
+      {activeGame && (
+        <GameScreenRenderer
+          ref={gameCanvasRendererRef}
+          activeGame={activeGame}
+          currentUserId={currentUser?.id}
+          onMove={handleGameMove}
         />
       )}
 

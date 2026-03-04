@@ -587,6 +587,7 @@ function DynamicLighting({ screenRef, intensity = 1, lightsOn = false, darknessL
 const CinemaScene3D = forwardRef(({ 
   videoElement, 
   cameraVideoElement,
+  gameCanvas, // ✅ NEW: Game canvas for texture
   liveShareMode,
   authenticatedUserID,
   onVideoTextureUpdate,
@@ -975,6 +976,7 @@ const CinemaScene3D = forwardRef(({
             position={glbModelPosition} 
             videoElement={videoElement}
             cameraVideoElement={cameraVideoElement}
+            gameCanvas={gameCanvas} // ✅ NEW: Game canvas for texture
             liveShareMode={liveShareMode}
             onVideoTextureUpdate={onVideoTextureUpdate}
             onScreenClick={onScreenClick}

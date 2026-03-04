@@ -8,14 +8,17 @@ export default function CinemaTheaterGLB({
   position = [0, 0, 0], 
   videoElement, 
   cameraVideoElement,
+  gameCanvas, // ✅ NEW: Canvas element for games
   liveShareMode,
   onScreenClick 
 }) {
   const { scene } = useGLTF('/models/cinema.glb');
   const videoTextureRef = useRef();
   const cameraTextureRef = useRef();
+  const gameTextureRef = useRef(); // ✅ NEW
   const [videoTexture, setVideoTexture] = useState(null);
   const [cameraTexture, setCameraTexture] = useState(null);
+  const [gameTexture, setGameTexture] = useState(null); // ✅ NEW
 
   if (!scene) return null;
 
@@ -62,6 +65,32 @@ export default function CinemaTheaterGLB({
     };
   }, [cameraVideoElement]);
 
+  // ✅ NEW: Create game canvas texture
+  useEffect(() => {
+    if (!gameCanvas) {
+      setGameTexture(null);
+      if (gameTextureRef.current) {
+        gameTextureRef.current.dispose();
+        gameTextureRef.current = null;
+      }
+      return;
+    }
+
+    const texture = new THREE.CanvasTexture(gameCanvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.encoding = THREE.sRGBEncoding;
+    
+    gameTextureRef.current = texture;
+    setGameTexture(texture);
+
+    return () => {
+      if (gameTextureRef.current) {
+        gameTextureRef.current.dispose();
+      }
+    };
+  }, [gameCanvas]);
+
   // 🚀 PHASE 2: Update textures only when video is actually playing
   const frameCountRef = useRef(0);
   const lastFpsLogRef = useRef(Date.now());
@@ -79,15 +108,6 @@ export default function CinemaTheaterGLB({
       videoTextureRef.current.needsUpdate = true;
       needsUpdate = true;
       frameCountRef.current++;
-      
-      // ⚠️ PERFORMANCE: FPS logging commented out to reduce overhead
-      // const now = Date.now();
-      // if (now - lastFpsLogRef.current >= 5000) {
-      //   const fps = frameCountRef.current / 5;
-      //   console.log(`🎬 [3D SCREEN FPS] ${fps.toFixed(1)} fps | Video: ${videoElement.videoWidth}x${videoElement.videoHeight} | readyState: ${videoElement.readyState}`);
-      //   frameCountRef.current = 0;
-      //   lastFpsLogRef.current = now;
-      // }
     }
     
     // Update camera texture
@@ -100,8 +120,14 @@ export default function CinemaTheaterGLB({
       cameraTextureRef.current.needsUpdate = true;
       needsUpdate = true;
     }
+
+    // ✅ NEW: Update game canvas texture
+    if (gameTextureRef.current && gameCanvas) {
+      gameTextureRef.current.needsUpdate = true;
+      needsUpdate = true;
+    }
     
-    // 🚀 PHASE 2: Only trigger re-render when video textures need updating
+    // 🚀 PHASE 2: Only trigger re-render when textures need updating
     if (needsUpdate) {
       invalidate();
     }
@@ -129,8 +155,10 @@ export default function CinemaTheaterGLB({
   // ✅ Camera PIP only shows in 'both' mode (screen + camera)
   const showCameraPIP = cameraTexture && liveShareMode === 'both';
   
-  // ✅ In camera-only mode, use camera texture for main screen
-  const mainScreenTexture = liveShareMode === 'camera' ? cameraTexture : videoTexture;
+  // ✅ Priority: Game > Camera-only > Video
+  // Game texture takes precedence when active
+  // In camera-only mode, use camera texture for main screen
+  const mainScreenTexture = gameTexture || (liveShareMode === 'camera' ? cameraTexture : videoTexture);
 
   return (
     <group position={position}>
