@@ -89,16 +89,22 @@ export default function UserProfileModal({
   const currentAvatar = previewImage || user.avatar_url || '/icons/user1avatar.svg';
 
   return (
-    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-      <div className="bg-gray-800 rounded-xl w-full max-w-md md:max-w-lg lg:max-w-xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      {/* Animated background elements */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
+      </div>
+      
+      <div className="relative bg-gradient-to-br from-gray-900/95 via-gray-800/95 to-gray-900/95 backdrop-blur-xl rounded-2xl w-full max-w-md md:max-w-lg lg:max-w-xl max-h-[90vh] overflow-y-auto border border-white/10 shadow-2xl">
         {/* Header */}
-        <div className="px-4 md:px-6 py-3 md:py-4 border-b border-gray-700 flex justify-between items-center sticky top-0 bg-gray-800 z-10">
-          <h3 className="text-white font-semibold text-base md:text-lg">
+        <div className="px-4 md:px-6 py-3 md:py-4 border-b border-white/10 flex justify-between items-center sticky top-0 bg-gradient-to-r from-purple-900/50 via-blue-900/50 to-purple-900/50 backdrop-blur-xl z-10">
+          <h3 className="text-white font-bold text-base md:text-lg">
             {isOwnProfile ? 'Your Profile' : `${user.username}'s Profile`}
           </h3>
           <button 
             onClick={onClose}
-            className="text-gray-400 hover:text-white text-2xl leading-none"
+            className="text-gray-400 hover:text-white hover:bg-white/10 rounded-full w-8 h-8 flex items-center justify-center transition-all text-2xl leading-none"
           >
             ×
           </button>
@@ -108,6 +114,7 @@ export default function UserProfileModal({
         <div className="p-4 md:p-6">
           {/* Avatar */}
           <div className="relative mx-auto w-20 h-20 md:w-24 md:h-24 mb-3 md:mb-4">
+            <div className="absolute inset-0 bg-gradient-to-br from-purple-500/30 to-blue-500/30 rounded-full blur-xl"></div>
             <img 
               src={currentAvatar} 
               alt={user.username}
@@ -116,13 +123,13 @@ export default function UserProfileModal({
                 e.target.src = '/avatars/default.png';
               }}
               onClick={() => setIsAvatarExpanded(true)}
-              className="w-20 h-20 md:w-24 md:h-24 rounded-full mx-auto object-cover border-4 border-gray-700 cursor-pointer hover:border-blue-500 transition-colors"
+              className="relative w-20 h-20 md:w-24 md:h-24 rounded-full mx-auto object-cover border-4 border-purple-500/50 cursor-pointer hover:border-purple-400 hover:shadow-lg hover:shadow-purple-500/50 transition-all transform hover:scale-105"
               title="Click to view full size"
             />
             {isEditing && (
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="absolute bottom-0 right-0 bg-blue-600 hover:bg-blue-700 rounded-full p-2 text-white"
+                className="absolute bottom-0 right-0 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-full p-2 text-white shadow-lg transform hover:scale-110 transition-all"
                 title="Change avatar"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -142,29 +149,29 @@ export default function UserProfileModal({
 
           {/* Username */}
           <div className="mb-3 md:mb-4">
-            <label className="text-xs text-gray-400 block mb-1">Username</label>
+            <label className="text-sm font-bold text-purple-400 block mb-1">Username</label>
             {isEditing ? (
               <input
                 type="text"
                 value={editedUsername}
                 onChange={(e) => setEditedUsername(e.target.value)}
-                className="w-full bg-gray-900 text-white px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none text-sm md:text-base"
+                className="w-full bg-white/5 backdrop-blur-sm border border-white/20 text-white px-3 py-2 rounded-lg focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all text-sm md:text-base"
                 maxLength={50}
               />
             ) : (
-              <p className="text-white text-base md:text-lg font-semibold">{user.username}</p>
+              <p className="text-gray-300 text-sm">{user.username}</p>
             )}
           </div>
 
           {/* Bio - Only show if bio exists or editing */}
           {(isEditing || user.bio) && (
             <div className="mb-4 md:mb-6">
-              <label className="text-xs text-gray-400 block mb-1">Bio</label>
+              <label className="text-sm font-bold text-purple-400 block mb-1">Bio</label>
               {isEditing ? (
                 <textarea
                   value={editedBio}
                   onChange={(e) => setEditedBio(e.target.value)}
-                  className="w-full bg-gray-900 text-white px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none resize-none text-sm md:text-base"
+                  className="w-full bg-white/5 backdrop-blur-sm border border-white/20 text-white px-3 py-2 rounded-lg focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 resize-none transition-all text-sm md:text-base"
                   rows={2}
                   maxLength={200}
                   placeholder="Tell us about yourself..."
@@ -179,11 +186,11 @@ export default function UserProfileModal({
 
           {/* User Stats (Optional) */}
           {!isEditing && (
-            <div className="mb-4 md:mb-6 p-2 md:p-3 bg-gray-900 rounded-lg">
-              <div className="text-xs text-gray-400">Member since</div>
-              <div className="text-white text-sm">
+            <div className="mb-4 md:mb-6">
+              <label className="text-sm font-bold text-purple-400 block mb-1">Member since</label>
+              <p className="text-gray-300 text-sm">
                 {new Date(user.created_at || Date.now()).toLocaleDateString()}
-              </div>
+              </p>
             </div>
           )}
 
@@ -194,13 +201,13 @@ export default function UserProfileModal({
                 <>
                   <button 
                     onClick={handleCancel}
-                    className="flex-1 bg-gray-700 hover:bg-gray-600 py-2 rounded text-white font-medium transition-colors"
+                    className="flex-1 bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20 py-2 rounded-lg text-white font-medium transition-all"
                   >
                     Cancel
                   </button>
                   <button 
                     onClick={handleSave}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded text-white font-medium transition-colors"
+                    className="flex-1 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 py-2 rounded-lg text-white font-medium transition-all shadow-lg hover:shadow-purple-500/50 transform hover:scale-105"
                   >
                     Save Changes
                   </button>
@@ -209,13 +216,13 @@ export default function UserProfileModal({
                 <>
                   <button 
                     onClick={onClose}
-                    className="flex-1 bg-gray-700 hover:bg-gray-600 py-2 rounded text-white font-medium transition-colors"
+                    className="flex-1 bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20 py-2 rounded-lg text-white font-medium transition-all"
                   >
                     Close
                   </button>
                   <button 
                     onClick={() => setIsEditing(true)}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded text-white font-medium transition-colors"
+                    className="flex-1 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 py-2 rounded-lg text-white font-medium transition-all shadow-lg hover:shadow-purple-500/50 transform hover:scale-105"
                   >
                     Edit Profile
                   </button>
@@ -229,10 +236,10 @@ export default function UserProfileModal({
                     {onAddFriend && (
                       <button 
                         onClick={onAddFriend}
-                        className={`flex-1 py-3 rounded text-white font-medium transition-colors flex items-center justify-center gap-2 ${
+                        className={`flex-1 py-3 rounded-lg text-white font-medium transition-all flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 ${
                           friendshipStatus === 'pending' && isRequester
-                            ? 'bg-gray-500 hover:bg-gray-600'
-                            : 'bg-green-600 hover:bg-green-700'
+                            ? 'bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20'
+                            : 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 hover:shadow-green-500/50'
                         }`}
                         title={
                           friendshipStatus === 'pending' && isRequester
