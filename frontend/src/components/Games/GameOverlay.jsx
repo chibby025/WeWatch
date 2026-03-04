@@ -49,7 +49,36 @@ export default function GameOverlay({ activeGame, currentUserId, onMove, onClose
 
   const gameType = gameState.game_type;
 
-  // Route to correct game component
+  // Arcade games - minimal overlay (game renders on screen)
+  if (gameType === 'space_impact' || gameType === 'snake' || gameType === 'tetris') {
+    return (
+      <div className="fixed top-4 right-4 z-50 bg-black/80 backdrop-blur-sm rounded-lg p-4 border border-purple-500">
+        <div className="flex items-center gap-3">
+          <div className="text-2xl">
+            {gameType === 'space_impact' && '🚀'}
+            {gameType === 'snake' && '🐍'}
+            {gameType === 'tetris' && '🟦'}
+          </div>
+          <div>
+            <div className="text-white font-semibold">
+              {gameType === 'space_impact' && 'Space Impact'}
+              {gameType === 'snake' && 'Snake'}
+              {gameType === 'tetris' && 'Tetris'}
+            </div>
+            <div className="text-xs text-gray-400">Everyone watching on screen</div>
+          </div>
+          <button
+            onClick={onClose}
+            className="ml-4 text-gray-400 hover:text-white transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Multiplayer games - full overlay
   switch (gameType) {
     case 'tic_tac_toe':
       return (

@@ -10,7 +10,8 @@ const games = [
     minPlayers: 2,
     maxPlayers: 2,
     icon: '⭕❌',
-    disabled: false
+    disabled: false,
+    type: 'multiplayer'
   },
   {
     id: 'rock_paper_scissors',
@@ -19,16 +20,48 @@ const games = [
     minPlayers: 2,
     maxPlayers: 2,
     icon: '🪨📄✂️',
-    disabled: false
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'space_impact',
+    name: 'Space Impact',
+    description: 'Classic arcade shooter - Everyone watches!',
+    minPlayers: 1,
+    maxPlayers: 1,
+    icon: '🚀👾',
+    disabled: false,
+    type: 'arcade'
+  },
+  {
+    id: 'snake',
+    name: 'Snake',
+    description: 'Eat apples, grow longer - Don\'t hit walls!',
+    minPlayers: 1,
+    maxPlayers: 1,
+    icon: '🐍🍎',
+    disabled: false,
+    type: 'arcade'
+  },
+  {
+    id: 'tetris',
+    name: 'Tetris',
+    description: 'Stack blocks, clear lines - Classic puzzle!',
+    minPlayers: 1,
+    maxPlayers: 1,
+    icon: '🟦🟨',
+    disabled: false,
+    type: 'arcade'
   },
   {
     id: 'ludo',
     name: 'Ludo',
-    description: 'Classic board game (Coming in Phase 4)',
+    description: 'Classic board game (Coming Soon)',
     minPlayers: 2,
     maxPlayers: 4,
     icon: '🎲',
-    disabled: true
+    disabled: true,
+    type: 'multiplayer'
   }
 ];
 
@@ -66,6 +99,19 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
   };
 
   const handleStartGame = () => {
+    // Arcade games only need host
+    if (selectedGameData.type === 'arcade') {
+      const playersData = [{
+        user_id: currentUserId,
+        username: roomMembers.find(m => m.id === currentUserId)?.username || 'Player 1',
+        color: playerColors[0]
+      }];
+      onStartGame(selectedGame, playersData);
+      onClose();
+      return;
+    }
+
+    // Multiplayer games need player selection
     if (selectedPlayers.length < selectedGameData.minPlayers) {
       alert(`Please select at least ${selectedGameData.minPlayers} players`);
       return;
@@ -132,19 +178,39 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
 
         {/* Player Selection */}
         <div className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-              <Users className="w-5 h-5" />
-              Select Players ({selectedPlayers.length}/{selectedGameData.maxPlayers})
-            </h3>
-            <span className="text-sm text-gray-400">
-              Min: {selectedGameData.minPlayers} | Max: {selectedGameData.maxPlayers}
-            </span>
-          </div>
+          {selectedGameData.type === 'arcade' ? (
+            /* Arcade games - single player info */
+            <div className="text-center py-6">
+              <div className="text-6xl mb-4">🎮</div>
+              <h3 className="text-xl font-bold text-white mb-2">Arcade Mode</h3>
+              <p className="text-gray-400 mb-4">
+                You play, everyone watches on the big screen!
+              </p>
+              <div className="bg-purple-500/20 border border-purple-500/50 rounded-lg p-4 max-w-md mx-auto">
+                <p className="text-sm text-purple-300">
+                  <span className="font-semibold">Player:</span> {currentUser?.username || 'You'}
+                </p>
+                <p className="text-xs text-gray-400 mt-2">
+                  All room members will see your gameplay on the cinema screen
+                </p>
+              </div>
+            </div>
+          ) : (
+            /* Multiplayer games - player selection */
+            <>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <Users className="w-5 h-5" />
+                  Select Players ({selectedPlayers.length}/{selectedGameData.maxPlayers})
+                </h3>
+                <span className="text-sm text-gray-400">
+                  Min: {selectedGameData.minPlayers} | Max: {selectedGameData.maxPlayers}
+                </span>
+              </div>
 
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {roomMembers.map((member, index) => {
-              const isSelected = selectedPlayers.includes(member.id);
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {roomMembers.map((member, index) => {
+                  const isSelected = selectedPlayers.includes(member.id);
               const isHost = member.id === currentUserId;
               const playerColorIndex = selectedPlayers.indexOf(member.id);
 
@@ -188,12 +254,14 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
             })}
           </div>
 
-          {roomMembers.length < selectedGameData.minPlayers && (
+          {roomMembers.length < selectedGameData.minPlayers && selectedGameData.type === 'multiplayer' && (
             <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
               <p className="text-yellow-400 text-sm">
                 ⚠️ Not enough players in the room. Need at least {selectedGameData.minPlayers} players.
               </p>
             </div>
+          )}
+            </>
           )}
         </div>
 
