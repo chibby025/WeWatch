@@ -11,13 +11,16 @@ import (
 type TransactionType string
 
 const (
-	TransactionTypePurchase     TransactionType = "purchase"
-	TransactionTypeTicket       TransactionType = "ticket"
-	TransactionTypeDonation     TransactionType = "donation"
-	TransactionTypeRefund       TransactionType = "refund"
-	TransactionTypePayout       TransactionType = "payout"
-	TransactionTypeGiftSent     TransactionType = "gift_sent"
-	TransactionTypeGiftReceived TransactionType = "gift_received"
+	TransactionTypePurchase          TransactionType = "purchase"
+	TransactionTypeTicket            TransactionType = "ticket"
+	TransactionTypeTicketPurchase    TransactionType = "ticket_purchase"
+	TransactionTypeDonation          TransactionType = "donation"
+	TransactionTypeRefund            TransactionType = "refund"
+	TransactionTypePayout            TransactionType = "payout"
+	TransactionTypeGiftSent          TransactionType = "gift_sent"
+	TransactionTypeGiftReceived      TransactionType = "gift_received"
+	TransactionTypeTicketTransferFee TransactionType = "ticket_transfer_fee" // 5% platform fee on ticket transfers
+	TransactionTypeEarlyBirdSavings  TransactionType = "early_bird_savings"  // Informational: savings from early bird pricing
 )
 
 // Scan implements the sql.Scanner interface

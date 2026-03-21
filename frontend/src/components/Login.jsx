@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 // Import the API service functions
 import { loginUser, getCurrentUser } from '../services/api'; // Adjust path if needed
+import { cacheUserData } from '../utils/cinemaCache';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -31,9 +32,14 @@ const Login = () => {
         try {
           const currentUser = await getCurrentUser();
           localStorage.setItem('user', JSON.stringify(currentUser));
+          
+          // 💾 Cache user data for instant cinema loading
+          cacheUserData(currentUser);
+          console.log('💾 [Cache] User data cached on login');
         } catch (err) {
           console.warn("Failed to fetch current user after login:", err);
-          // Still proceed — cookie is valid
+          // Still proceed — cookie is valid, cache what we have
+          cacheUserData(user);
         }
 
         console.log("User stored in localStorage");
@@ -101,7 +107,7 @@ const Login = () => {
               className="w-64 h-64 md:w-80 md:h-80 lg:w-96 lg:h-96 mx-auto mb-0 drop-shadow-2xl hover:scale-105 transition-transform duration-300"
             />
             <p className="text-lg md:text-xl lg:text-xl text-gray-300 mb-1">Watch together, anywhere</p>
-            <p className="text-xs md:text-sm lg:text-sm text-gray-400">Join millions creating unforgettable watch party experiences</p>
+            <p className="text-xs md:text-sm lg:text-sm text-gray-400">You define the space. We bring your people together.</p>
           </div>
         </div>
 
@@ -219,8 +225,8 @@ const Login = () => {
                 <button
                   type="button"
                   disabled
-                  className="w-full py-2.5 px-4 bg-white/5 backdrop-blur-sm border border-white/20 rounded-lg text-white text-sm font-medium hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3 group opacity-50 cursor-not-allowed">
                   title="Coming soon"
+                  className="w-full py-2.5 px-4 bg-white/5 backdrop-blur-sm border border-white/20 rounded-lg text-white text-sm font-medium hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3 group opacity-50 cursor-not-allowed"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24">
                     <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -236,8 +242,8 @@ const Login = () => {
                 <button
                   type="button"
                   disabled
-                  className="w-full py-2.5 px-4 bg-white/5 backdrop-blur-sm border border-white/20 rounded-lg text-white text-sm font-medium hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3 group opacity-50 cursor-not-allowed">
                   title="Coming soon"
+                  className="w-full py-2.5 px-4 bg-white/5 backdrop-blur-sm border border-white/20 rounded-lg text-white text-sm font-medium hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3 group opacity-50 cursor-not-allowed"
                 >
                   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>

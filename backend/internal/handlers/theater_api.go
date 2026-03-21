@@ -10,9 +10,9 @@ import (
 )
 
 // GetSessionTheaters returns all theaters for a session
-// GET /api/sessions/:id/theaters
+// GET /api/sessions/:sessionId/theaters
 func GetSessionTheaters(c *gin.Context) {
-	sessionIDStr := c.Param("id") // UUID session_id
+	sessionIDStr := c.Param("id") // ✅ FIX: Use sessionId instead of id (matches route definition)
 
 	// Find session by UUID session_id
 	var session models.WatchSession

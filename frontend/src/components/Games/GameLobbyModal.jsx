@@ -78,6 +78,17 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
     }
   }, [currentUserId]);
 
+  useEffect(() => {
+    if (isOpen) {
+      console.log('🎮 [GameLobbyModal] Modal opened!', {
+        roomMembers: roomMembers?.length,
+        currentUserId,
+        selectedGame,
+        selectedPlayers
+      });
+    }
+  }, [isOpen, roomMembers, currentUserId, selectedGame, selectedPlayers]);
+
   const selectedGameData = games.find(g => g.id === selectedGame);
 
   const togglePlayerSelection = (playerId) => {
@@ -99,6 +110,14 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
   };
 
   const handleStartGame = () => {
+    console.log('🎮 [GameLobbyModal] Start Game button clicked!', {
+      selectedGame,
+      selectedGameData: selectedGameData?.name,
+      type: selectedGameData?.type,
+      selectedPlayers,
+      currentUserId
+    });
+
     // Arcade games only need host
     if (selectedGameData.type === 'arcade') {
       const playersData = [{
@@ -106,6 +125,10 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
         username: roomMembers.find(m => m.id === currentUserId)?.username || 'Player 1',
         color: playerColors[0]
       }];
+      console.log('🎮 [GameLobbyModal] Arcade game - calling onStartGame with:', {
+        game: selectedGame,
+        players: playersData
+      });
       onStartGame(selectedGame, playersData);
       onClose();
       return;
@@ -157,7 +180,13 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
             {games.map(game => (
               <button
                 key={game.id}
-                onClick={() => !game.disabled && setSelectedGame(game.id)}
+                onClick={() => {
+                  console.log('🎮 [GameLobbyModal] Game card clicked:', game.id, 'disabled:', game.disabled);
+                  if (!game.disabled) {
+                    setSelectedGame(game.id);
+                    console.log('🎮 [GameLobbyModal] Game selected:', game.id);
+                  }
+                }}
                 disabled={game.disabled}
                 className={`
                   p-4 rounded-lg border-2 transition-all
@@ -188,7 +217,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
               </p>
               <div className="bg-purple-500/20 border border-purple-500/50 rounded-lg p-4 max-w-md mx-auto">
                 <p className="text-sm text-purple-300">
-                  <span className="font-semibold">Player:</span> {currentUser?.username || 'You'}
+                  <span className="font-semibold">Player:</span> {roomMembers.find(m => m.id === currentUserId)?.username || 'You'}
                 </p>
                 <p className="text-xs text-gray-400 mt-2">
                   All room members will see your gameplay on the cinema screen

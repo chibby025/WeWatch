@@ -34,7 +34,7 @@ type GenerateSessionPreviewRequest struct {
 	MediaItemID *uint  `json:"media_item_id"`                   // For upload source
 }
 
-// GenerateSessionPreviewHandler handles POST /api/sessions/:id/generate-preview
+// GenerateSessionPreviewHandler handles POST /api/sessions/:sessionId/generate-preview
 func GenerateSessionPreviewHandler(c *gin.Context) {
 	log.Println("🎬 [GenerateSessionPreview] Request received")
 
@@ -65,6 +65,17 @@ func GenerateSessionPreviewHandler(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// ✅ Check if preview generation is enabled for this session
+	if !session.PreviewEnabled {
+		log.Printf("⏸️ [GenerateSessionPreview] Preview generation disabled for session %s, skipping", sessionID)
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Preview generation is disabled for this session",
+			"poster_url": "",
+			"preview_url": "",
+		})
 		return
 	}
 
@@ -186,7 +197,7 @@ func GenerateSessionPreviewHandler(c *gin.Context) {
 	})
 }
 
-// UploadSessionFramesHandler handles POST /api/sessions/:session_id/upload-frames
+// UploadSessionFramesHandler handles POST /api/sessions/:sessionId/upload-frames
 // Receives canvas-captured frames from WebRTC streams and generates GIF
 func UploadSessionFramesHandler(c *gin.Context) {
 	log.Println("📸 [UploadSessionFrames] Request received")
@@ -391,6 +402,15 @@ func RequestFrameCaptureHandler(c *gin.Context) {
 	if result.Error != nil {
 		log.Printf("❌ [RequestFrameCapture] Session not found: %s", sessionID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found or ended"})
+		return
+	}
+
+	// ✅ Check if preview generation is enabled for this session
+	if !session.PreviewEnabled {
+		log.Printf("⏸️ [RequestFrameCapture] Preview generation disabled for session %s, skipping", sessionID)
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Preview generation is disabled for this session",
+		})
 		return
 	}
 

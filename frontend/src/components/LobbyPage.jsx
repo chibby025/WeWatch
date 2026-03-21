@@ -89,6 +89,11 @@ const LobbyPage = () => {
   // ✅ Expanded View State (null, 'friends', or 'chat')
   const [expandedView, setExpandedView] = useState(null);
   
+  // ✅ Fullscreen Watching Now State
+  const [isWatchingNowFullscreen, setIsWatchingNowFullscreen] = useState(false);
+  const [fullscreenSessionIndex, setFullscreenSessionIndex] = useState(0);
+  const fullscreenScrollRef = React.useRef(null);
+  
   // ✅ Left Sidebar & Modals State
   const [isLobbyLeftSidebarOpen, setIsLobbyLeftSidebarOpen] = useState(false);
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
@@ -472,12 +477,18 @@ const LobbyPage = () => {
       const { getActiveSessions: getActiveSessionsPaginated } = await import('../services/api');
       const data = await getActiveSessionsPaginated(10, sessionsPage.offset);
       
-      setSessionsPage(prev => ({
-        data: [...prev.data, ...(data.sessions || [])],
-        offset: prev.offset + 10,
-        hasMore: data.has_more || false,
-        loading: false
-      }));
+      setSessionsPage(prev => {
+        // ✅ Deduplicate sessions by session_id
+        const existingIds = new Set(prev.data.map(s => s.session_id));
+        const newSessions = (data.sessions || []).filter(s => !existingIds.has(s.session_id));
+        
+        return {
+          data: [...prev.data, ...newSessions],
+          offset: prev.offset + 10,
+          hasMore: data.has_more || false,
+          loading: false
+        };
+      });
       
       console.log(`📥 [Lobby] Loaded next 10 sessions (total: ${sessionsPage.data.length + (data.sessions?.length || 0)})`);
     } catch (err) {
@@ -1151,6 +1162,35 @@ const LobbyPage = () => {
     }
   };
 
+  // ✅ Fullscreen Watching Now Handlers
+  const handleOpenFullscreen = (index) => {
+    setFullscreenSessionIndex(index);
+    setIsWatchingNowFullscreen(true);
+    document.body.style.overflow = 'hidden'; // Prevent body scroll
+  };
+
+  const handleCloseFullscreen = () => {
+    setIsWatchingNowFullscreen(false);
+    document.body.style.overflow = 'auto'; // Restore body scroll
+  };
+
+  // ✅ ESC key listener for fullscreen exit
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isWatchingNowFullscreen) {
+        handleCloseFullscreen();
+      }
+    };
+
+    if (isWatchingNowFullscreen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isWatchingNowFullscreen]);
+
   // Initial fetch on mount
   useEffect(() => {
     fetchRoomsData();
@@ -1339,11 +1379,29 @@ const LobbyPage = () => {
                 console.log(`📺 [LobbyPage] Media state changed: ${message.session_id}`);
                 console.log(`📺 [LobbyPage] Media data:`, message.data);
                 
-                // ✅ Refresh sessions list to show the active session with updated media state
-                setTimeout(() => {
-                  console.log(`🔄 [LobbyPage] Fetching updated sessions after media state change`);
-                  fetchSessionsData();
-                }, 100); // Small delay to ensure backend DB update completes
+                // ✅ Update sessionsPage with new media state (avoid duplicates)
+                setSessionsPage(prev => {
+                  const exists = prev.data.some(s => s.session_id === message.session_id);
+                  
+                  if (exists) {
+                    // Update existing session
+                    return {
+                      ...prev,
+                      data: prev.data.map(s => 
+                        s.session_id === message.session_id
+                          ? { ...s, ...message.data }
+                          : s
+                      )
+                    };
+                  } else {
+                    // Add new session if not present (fetch full data)
+                    setTimeout(() => {
+                      console.log(`🔄 [LobbyPage] Fetching updated sessions after media state change`);
+                      fetchSessionsData();
+                    }, 100);
+                    return prev;
+                  }
+                });
                 
                 // ✅ Backend automatically generates preview and broadcasts session_preview_updated
                 // No need to manually trigger - just wait for the WebSocket event
@@ -1686,9 +1744,17 @@ const LobbyPage = () => {
     try {
       console.log(`🎬 [LobbyPage] Generating preview: ${sessionId}`);
       
-      // Find the session to get its media state
-      const session = sessions.find(s => s.session_id === sessionId);
+      // Find the session in BOTH states (sessions and sessionsPage)
+      const session = sessions.find(s => s.session_id === sessionId) || 
+                      sessionsPage.data.find(s => s.session_id === sessionId);
       if (!session) {
+        console.log(`⏸️ [LobbyPage] Session ${sessionId} not found, skipping preview`);
+        return;
+      }
+      
+      // ✅ Check if preview generation is disabled (content moderation)
+      if (session.preview_enabled === false) {
+        console.log(`⏸️ [LobbyPage] Preview generation disabled for session ${sessionId}, skipping`);
         return;
       }
       
@@ -1837,9 +1903,15 @@ const LobbyPage = () => {
 
   // ✅ Setup preview generation for all active sessions
   useEffect(() => {
-    // Setup preview generation for each session
-    sessions.forEach(session => {
+    // Setup preview generation for each session from sessionsPage (the actual rendered data)
+    sessionsPage.data.forEach(session => {
       const hasInterval = !!previewIntervalsRef.current[session.session_id];
+      
+      // Skip if preview generation is disabled for this session
+      if (session.preview_enabled === false) {
+        console.log(`⏸️ [LobbyPage] Skipping preview setup for ${session.session_id} (disabled)`);
+        return;
+      }
       
       if (!hasInterval) {
         setupPreviewGeneration(session.session_id);
@@ -1856,7 +1928,7 @@ const LobbyPage = () => {
 
     // Cleanup ONLY sessions that no longer exist
     return () => {
-      const activeSessionIds = new Set(sessions.map(s => s.session_id));
+      const activeSessionIds = new Set(sessionsPage.data.map(s => s.session_id));
       Object.keys(previewIntervalsRef.current).forEach(sessionId => {
         if (!activeSessionIds.has(sessionId)) {
           const { interval, timeout } = previewIntervalsRef.current[sessionId];
@@ -1866,7 +1938,7 @@ const LobbyPage = () => {
         }
       });
     };
-  }, [sessions]);
+  }, [sessionsPage.data, sessionPreviews]);
 
   return (
     <div className="relative min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-white transition-colors duration-200">
@@ -2349,10 +2421,11 @@ const LobbyPage = () => {
           {/* ✅ Trailers Section (auto-play loops) */}
           {trailersPage.data.length > 0 && (
             <div className="mb-8">
-              <div className="space-y-6">{trailersPage.data.map((trailer) => (
+              <div className="space-y-6">{trailersPage.data.map((trailer, index) => (
                   <div 
                     key={trailer.ID}
-                    className="relative w-full max-w-4xl mx-auto rounded-2xl overflow-hidden shadow-2xl hover:shadow-3xl transition-all duration-300"
+                    onClick={() => handleOpenFullscreen(index)}
+                    className="relative w-full max-w-4xl mx-auto rounded-2xl overflow-hidden shadow-2xl hover:shadow-3xl transition-all duration-300 cursor-pointer"
                     style={{ minHeight: '400px' }}
                   >
                     {/* Trailer Video */}
@@ -2420,7 +2493,7 @@ const LobbyPage = () => {
                 🔴 Live Now
               </h3>
               <div className="space-y-6">
-                {sessionsPage.data.map((session) => {
+                {sessionsPage.data.map((session, index) => {
                   const preview = sessionPreviews[session.session_id] || {};
                   
                   // Determine watch type display
@@ -2431,13 +2504,15 @@ const LobbyPage = () => {
                   };
                   const watchType = watchTypeConfig[session.watch_type] || watchTypeConfig['video'];
                   
+                  // Calculate index for fullscreen (trailers.length + session index)
+                  const fullscreenIndex = trailersPage.data.length + index;
+                  
                   return (
                   <div 
                     key={session.session_id}
+                    onClick={() => handleOpenFullscreen(fullscreenIndex)}
                     className="relative w-full max-w-4xl mx-auto rounded-2xl overflow-hidden shadow-2xl hover:shadow-3xl transition-all duration-300 transform hover:scale-[1.02] cursor-pointer group"
                     style={{ minHeight: '500px' }}
-                    onMouseEnter={() => setHoveredSession(session.session_id)}
-                    onMouseLeave={() => setHoveredSession(null)}
                   >
                     {/* Preview Background */}
                     <div className="absolute inset-0">
@@ -2451,57 +2526,6 @@ const LobbyPage = () => {
                     
                     {/* Dark Gradient Overlay */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none"></div>
-                    
-                    {/* ✅ Join Now Overlay (shows on hover) */}
-                    <div 
-                      className={`absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center transition-opacity duration-300 ${
-                        hoveredSession === session.session_id ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                      }`}
-                    >
-                      <div className="flex flex-col items-center gap-4 z-20">
-                        {/* Primary Join Button */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleJoinSessionDirect(session);
-                          }}
-                          className="px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-bold text-xl hover:from-blue-500 hover:to-purple-500 transform hover:scale-105 transition-all shadow-2xl flex items-center gap-3"
-                        >
-                          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
-                          </svg>
-                          {session.ticketing_enabled && session.ticket_price_tokens > 0 ? 'Purchase & Join' : 'Join Now'}
-                        </button>
-                        
-                        {/* Show price if paid session */}
-                        {session.ticketing_enabled && session.ticket_price_tokens > 0 && (
-                          <div className="flex items-center gap-2 bg-yellow-500/20 backdrop-blur-sm px-4 py-2 rounded-full border border-yellow-400">
-                            <img src="/icons/coins.svg" alt="Tokens" className="w-5 h-5" />
-                            <span className="text-yellow-300 font-bold text-lg">
-                              {session.early_bird_active && session.early_bird_enabled 
-                                ? session.early_bird_price_tokens 
-                                : session.ticket_price_tokens} tokens
-                            </span>
-                            {session.early_bird_active && session.early_bird_enabled && (
-                              <span className="text-green-300 text-xs font-semibold bg-green-600/30 px-2 py-0.5 rounded-full">
-                                🎉 EARLY BIRD
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* Secondary: View Room Details */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/rooms/${session.room_id}`);
-                          }}
-                          className="px-6 py-2 bg-white/10 text-white rounded-lg font-medium hover:bg-white/20 transition-all border border-white/30 text-sm"
-                        >
-                          View Room Details
-                        </button>
-                      </div>
-                    </div>
                     
                     {/* ✅ Rating Badge Overlay (Top Right) */}
                     {session.average_rating > 0 && (
@@ -3138,6 +3162,206 @@ const LobbyPage = () => {
         localParticipant={callRoom?.localParticipant}
         remoteParticipant={callRoom?.participants ? Array.from(callRoom.participants.values())[0] : null}
       />
+
+      {/* ✅ Fullscreen Watching Now Modal */}
+      {isWatchingNowFullscreen && (
+        <div 
+          className="fixed inset-0 z-[9999] bg-black fullscreen-scroll"
+          style={{
+            scrollSnapType: 'y mandatory',
+            overflowY: 'scroll',
+            height: '100vh',
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none'
+          }}
+          ref={fullscreenScrollRef}
+        >
+          {/* Hide scrollbar */}
+          <style>{`
+            .fullscreen-scroll::-webkit-scrollbar {
+              display: none;
+            }
+          `}</style>
+
+          {/* Close Button */}
+          <button
+            onClick={handleCloseFullscreen}
+            className="fixed top-6 right-6 z-[10000] bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors backdrop-blur-sm"
+            title="Exit fullscreen (ESC)"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+
+          {/* Trailers */}
+          {trailersPage.data.map((trailer, index) => (
+            <div 
+              key={`fullscreen-trailer-${trailer.ID}`}
+              className="relative w-screen h-screen flex-shrink-0"
+              style={{ 
+                scrollSnapAlign: 'start',
+                scrollSnapStop: 'always'
+              }}
+            >
+              {/* Trailer Video */}
+              <video 
+                src={`${import.meta.env.VITE_API_BASE_URL}/${trailer.trailer_url}`}
+                autoPlay 
+                loop 
+                muted 
+                playsInline
+                className="w-full h-full object-cover"
+              />
+              
+              {/* Gradient overlays */}
+              <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/90 pointer-events-none"></div>
+              
+              {/* Top Left: Coming Soon Stamp + Room Name */}
+              <div className="absolute top-6 left-6 z-10">
+                <div className="relative mb-3">
+                  <div className="bg-red-600/30 backdrop-blur-sm border-4 border-red-500/50 text-red-100 px-6 py-3 transform -rotate-12 shadow-2xl">
+                    <div className="text-2xl font-black tracking-wider" style={{ fontFamily: 'Impact, Arial Black, sans-serif', textShadow: '2px 2px 4px rgba(0,0,0,0.5)' }}>
+                      COMING SOON
+                    </div>
+                  </div>
+                </div>
+                <h3 className="text-2xl font-bold text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                  {trailer.Room?.name || 'Event Room'}
+                </h3>
+              </div>
+              
+              {/* Bottom: Event Details + Add to Calendar Button */}
+              <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
+                <h4 className="text-2xl font-bold mb-2 drop-shadow-lg">{trailer.trailer_title || trailer.title}</h4>
+                <p className="text-sm text-gray-200 mb-3 drop-shadow-md">{trailer.description}</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm drop-shadow-md">
+                    <span className="text-gray-300">Starts:</span> <span className="font-semibold">{new Date(trailer.start_time).toLocaleString()}</span>
+                  </p>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedEventForCalendar(trailer);
+                      setIsCalendarModalOpen(true);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg font-medium transition-colors shadow-lg"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Add to Calendar
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* Live Sessions */}
+          {sessionsPage.data.map((session, index) => {
+            const preview = sessionPreviews[session.session_id] || {};
+            
+            const watchTypeConfig = {
+              'classroom': { emoji: '🎓', name: 'Classroom', color: 'green' },
+              '3d_cinema': { emoji: '🎭', name: '3D Cinema', color: 'blue' },
+              'video': { emoji: '🎬', name: 'Video Watch', color: 'purple' }
+            };
+            const watchType = watchTypeConfig[session.watch_type] || watchTypeConfig['video'];
+
+            return (
+              <div 
+                key={`fullscreen-session-${session.session_id}`}
+                className="relative w-screen h-screen flex-shrink-0"
+                style={{ 
+                  scrollSnapAlign: 'start',
+                  scrollSnapStop: 'always'
+                }}
+              >
+                {/* Preview Background */}
+                <div className="absolute inset-0">
+                  <SessionPreview
+                    session={session}
+                    previewUrl={preview.previewUrl}
+                    posterUrl={preview.posterUrl}
+                    isGenerating={preview.isGenerating}
+                  />
+                </div>
+                
+                {/* Dark Gradient Overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none"></div>
+                
+                {/* Rating Badge (Top Right) */}
+                {session.average_rating > 0 && (
+                  <div className="absolute top-6 right-20 bg-black/80 backdrop-blur-sm px-3 py-2 rounded-lg flex items-center gap-2 shadow-xl z-10">
+                    <svg className="w-5 h-5 fill-yellow-400" viewBox="0 0 24 24">
+                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                    </svg>
+                    <span className="text-white font-bold text-lg">{session.average_rating.toFixed(1)}</span>
+                    <span className="text-gray-300 text-sm">({session.total_ratings})</span>
+                  </div>
+                )}
+                
+                {/* Session Details Overlay (Always Visible) */}
+                <div className="absolute bottom-24 left-0 right-0 p-6 text-white">
+                  {/* Badges Row */}
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <span className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-semibold bg-${watchType.color}-500/90 backdrop-blur-sm rounded-full`}>
+                      <span>{watchType.emoji}</span>
+                      <span>{watchType.name}</span>
+                    </span>
+                    
+                    {session.ticketing_enabled && (
+                      <span className="inline-flex items-center gap-1 px-3 py-1 text-sm font-semibold bg-yellow-500/90 backdrop-blur-sm rounded-full">
+                        <span>🪙</span>
+                        <span>Paid</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="text-3xl font-bold mb-3 drop-shadow-lg line-clamp-2">
+                    {session.room_name}
+                  </h3>
+
+                  <div className="flex items-center gap-4 text-base mb-2">
+                    <span className="font-medium">👤 {session.host_username}</span>
+                    <span>👥 {session.member_count} viewers</span>
+                  </div>
+                </div>
+                
+                {/* Join Now Button (Fixed at Bottom - Always Visible) */}
+                <div className="absolute bottom-0 left-0 right-0 p-6 flex flex-col items-center gap-3 bg-gradient-to-t from-black/90 via-black/70 to-transparent">
+                  <button
+                    onClick={() => handleJoinSessionDirect(session)}
+                    className="w-full max-w-md px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-bold text-xl hover:from-blue-500 hover:to-purple-500 transform hover:scale-105 transition-all shadow-2xl flex items-center justify-center gap-3"
+                  >
+                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
+                    </svg>
+                    {session.ticketing_enabled && session.ticket_price_tokens > 0 ? 'Purchase & Join' : 'Join Now'}
+                  </button>
+                  
+                  {/* Show price if paid session */}
+                  {session.ticketing_enabled && session.ticket_price_tokens > 0 && (
+                    <div className="flex items-center gap-2 bg-yellow-500/20 backdrop-blur-sm px-4 py-2 rounded-full border border-yellow-400">
+                      <img src="/icons/coins.svg" alt="Tokens" className="w-5 h-5" />
+                      <span className="text-yellow-300 font-bold text-lg">
+                        {session.early_bird_active && session.early_bird_enabled 
+                          ? session.early_bird_price_tokens 
+                          : session.ticket_price_tokens} tokens
+                      </span>
+                      {session.early_bird_active && session.early_bird_enabled && (
+                        <span className="text-green-300 text-xs font-semibold bg-green-600/30 px-2 py-0.5 rounded-full">
+                          🎉 EARLY BIRD
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

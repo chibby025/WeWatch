@@ -57,7 +57,7 @@ const getDefaultHeaders = () => {
 
 export const apiClient = axios.create({
     baseURL: API_BASE_URL,
-    timeout: 10000,
+    timeout: 30000, // 30 seconds for preview generation (FFmpeg takes 10-15s)
     withCredentials: true,
     headers: getDefaultHeaders(),
 });
@@ -533,6 +533,40 @@ export const downloadICal = async (eventId) => {
   try {
     const response = await apiClient.get(`/api/scheduled-events/${eventId}/ical`, {
       responseType: 'blob', // Important for file download
+    });
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
+// ✅ RSVP & Ticketing APIs
+export const createFreeRSVP = async (eventId) => {
+  try {
+    const response = await apiClient.post(`/api/scheduled-events/${eventId}/rsvp`, {
+      scheduled_event_id: eventId
+    });
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const cancelRSVP = async (eventId) => {
+  try {
+    const response = await apiClient.delete(`/api/scheduled-events/${eventId}/rsvp`);
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const purchaseEventTicket = async (eventId, isGift = false, recipientUserId = null) => {
+  try {
+    const response = await apiClient.post(`/api/scheduled-events/${eventId}/purchase-ticket`, {
+      scheduled_event_id: eventId,
+      is_gift: isGift,
+      recipient_user_id: recipientUserId
     });
     return response.data;
   } catch (error) {

@@ -1,0 +1,40 @@
+                                              Table "public.event_tickets"
+        Column         |            Type             | Collation | Nullable |                  Default                  
+-----------------------+-----------------------------+-----------+----------+-------------------------------------------
+ id                    | integer                     |           | not null | nextval('event_tickets_id_seq'::regclass)
+ scheduled_event_id    | integer                     |           | not null | 
+ user_id               | integer                     |           | not null | 
+ host_id               | integer                     |           | not null | 
+ payment_method        | character varying(20)       |           | not null | 
+ ticket_price_tokens   | integer                     |           |          | 0
+ ticket_price_currency | character varying(10)       |           |          | 
+ ticket_price_amount   | numeric(10,2)               |           |          | 0
+ is_early_bird         | boolean                     |           |          | false
+ transaction_id        | integer                     |           |          | 
+ gateway_earning_id    | integer                     |           |          | 
+ is_gift               | boolean                     |           |          | false
+ gifted_by_user_id     | integer                     |           |          | 
+ is_refunded           | boolean                     |           |          | false
+ refunded_at           | timestamp without time zone |           |          | 
+ is_cancelled          | boolean                     |           |          | false
+ cancelled_at          | timestamp without time zone |           |          | 
+ did_attend            | boolean                     |           |          | 
+ attended_at           | timestamp without time zone |           |          | 
+ created_at            | timestamp without time zone |           | not null | CURRENT_TIMESTAMP
+ updated_at            | timestamp without time zone |           | not null | CURRENT_TIMESTAMP
+Indexes:
+    "event_tickets_pkey" PRIMARY KEY, btree (id)
+    "event_tickets_scheduled_event_id_idx" UNIQUE CONSTRAINT, btree (scheduled_event_id, user_id)
+    "idx_event_tickets_created_at" btree (created_at)
+    "idx_event_tickets_host_id" btree (host_id)
+    "idx_event_tickets_is_refunded" btree (is_refunded)
+    "idx_event_tickets_scheduled_event_id" btree (scheduled_event_id)
+    "idx_event_tickets_transaction_id" btree (transaction_id)
+    "idx_event_tickets_user_id" btree (user_id)
+Foreign-key constraints:
+    "event_tickets_gifted_by_user_id_fkey" FOREIGN KEY (gifted_by_user_id) REFERENCES users(id)
+    "event_tickets_host_id_fkey" FOREIGN KEY (host_id) REFERENCES users(id)
+    "event_tickets_scheduled_event_id_fkey" FOREIGN KEY (scheduled_event_id) REFERENCES scheduled_events(id) ON DELETE CASCADE
+    "event_tickets_transaction_id_fkey" FOREIGN KEY (transaction_id) REFERENCES token_transactions(id)
+    "event_tickets_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+

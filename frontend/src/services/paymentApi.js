@@ -218,6 +218,35 @@ export const verifyTicket = async (data) => {
   }
 };
 
+/**
+ * Get user's event tickets and RSVPs
+ * GET /api/users/me/event-tickets
+ */
+export const getMyEventTickets = async () => {
+  try {
+    const response = await apiClient.get('/api/users/me/event-tickets');
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getMyEventTickets):', error);
+    throw error;
+  }
+};
+
+/**
+ * Cancel RSVP for a scheduled event
+ * DELETE /api/scheduled-events/:eventId/rsvp
+ */
+export const cancelRSVP = async (eventId) => {
+  try {
+    const response = await apiClient.delete(`/api/scheduled-events/${eventId}/rsvp`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (cancelRSVP):', error);
+    throw error;
+  }
+};
+
+
 // ============================================================================
 // DONATIONS (3 endpoints)
 // ============================================================================

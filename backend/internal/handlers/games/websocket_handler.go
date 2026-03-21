@@ -25,7 +25,16 @@ func NewGameWebSocketHandler(db *gorm.DB, hub MessageHub) *GameWebSocketHandler 
 }
 
 func (h *GameWebSocketHandler) HandleGameMessage(client interface{}, messageData map[string]interface{}) {
-    action, ok := messageData["action"].(string)
+	// ✅ Panic recovery to prevent server crashes
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("🚨 [HandleGameMessage] PANIC RECOVERED: %v", r)
+			log.Printf("📊 [HandleGameMessage] Message data: %+v", messageData)
+			h.sendError(client, "internal error processing game message")
+		}
+	}()
+	
+	action, ok := messageData["action"].(string)
     if !ok {
         h.sendError(client, "missing action")
         return
@@ -75,8 +84,12 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
         })
     }
 
-    if len(players) < 2 {
-        h.sendError(client, "at least 2 players required")
+    // ✅ Arcade games (single-player) allow 1 player, multiplayer games require 2+
+    
+	minPlayers := 2
+
+    if len(players) < minPlayers {
+        h.sendError(client, fmt.Sprintf("at least %d player(s) required", minPlayers))
         return
     }
 
@@ -105,34 +118,71 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
         },
     }
 
-    messageBytes, _ := json.Marshal(message)
-    if hub, ok := h.hub.(interface{ BroadcastToRoomBinary(uint, []byte, uint) }); ok {
-        hub.BroadcastToRoomBinary(roomID, messageBytes, 0)
+    if hub, ok := h.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+        hub.BroadcastJSON(roomID, message)
     }
 
     log.Printf("🎮 [GameWebSocketHandler] Game started: %d (type: %s, room: %d)", gameSession.ID, gameType, roomID)
 }
 
 func (h *GameWebSocketHandler) handleGameMove(client interface{}, data map[string]interface{}) {
-    gameSessionID := uint(data["game_session_id"].(float64))
-    moveType, _ := data["move_type"].(string)
-    moveData, _ := data["move_data"].(map[string]interface{})
+	// ✅ Safely extract game_session_id with nil check
+	gameSessionIDRaw, ok := data["game_session_id"]
+	if !ok || gameSessionIDRaw == nil {
+		log.Printf("❌ [handleGameMove] Missing or nil game_session_id in data: %+v", data)
+		h.sendError(client, "game_session_id is required")
+		return
+	}
+	
+	gameSessionIDFloat, ok := gameSessionIDRaw.(float64)
+	if !ok {
+		log.Printf("❌ [handleGameMove] game_session_id is not a number: %T %+v", gameSessionIDRaw, gameSessionIDRaw)
+		h.sendError(client, "game_session_id must be a number")
+		return
+	}
+	
+	gameSessionID := uint(gameSessionIDFloat)
+	moveType, _ := data["move_type"].(string)
+	moveData, _ := data["move_data"].(map[string]interface{})
 
-    type ClientFields interface {
-        GetRoomID() uint
-        GetUserID() uint
-    }
-    cf := client.(ClientFields)
-    playerID := cf.GetUserID()
+	type ClientFields interface {
+		GetRoomID() uint
+		GetUserID() uint
+	}
+	cf := client.(ClientFields)
+	playerID := cf.GetUserID()
 
-    err := h.gameManager.ProcessMove(gameSessionID, playerID, moveType, moveData)
-    if err != nil {
-        h.sendError(client, fmt.Sprintf("move failed: %v", err))
-        return
-    }
+	err := h.gameManager.ProcessMove(gameSessionID, playerID, moveType, moveData)
+	if err != nil {
+		log.Printf("❌ [handleGameMove] ProcessMove failed for player %d, game %d: %v", playerID, gameSessionID, err)
+		h.sendError(client, fmt.Sprintf("move failed: %v", err))
+		return
+	}
 
-    roomID := cf.GetRoomID()
-    h.gameManager.BroadcastGameState(roomID)
+	roomID := cf.GetRoomID()
+	
+	// Always broadcast state first (even if game ended)
+	h.gameManager.BroadcastGameState(roomID)
+	
+	// Check if game ended and send game_ended message
+	gameState, exists := h.gameManager.GetActiveGame(roomID)
+	if exists && gameState.GameSession.Status == "completed" {
+		winnerMessage := map[string]interface{}{
+			"type":   "game",
+			"action": "game_ended",
+			"data": map[string]interface{}{
+				"game_session_id": gameSessionID,
+				"winner_id":       gameState.GameSession.WinnerID,
+				"reason":          "game_completed",
+			},
+		}
+		if hub, ok := h.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+			hub.BroadcastJSON(roomID, winnerMessage)
+		}
+		
+		// Now remove from active games
+// 		h.gameManager.RemoveActiveGame(gameSessionID, roomID)
+	}
 }
 
 func (h *GameWebSocketHandler) handleGameEnd(client interface{}, data map[string]interface{}) {
@@ -172,9 +222,8 @@ func (h *GameWebSocketHandler) handleGameEnd(client interface{}, data map[string
         },
     }
 
-    messageBytes, _ := json.Marshal(message)
-    if hub, ok := h.hub.(interface{ BroadcastToRoomBinary(uint, []byte, uint) }); ok {
-        hub.BroadcastToRoomBinary(roomID, messageBytes, 0)
+    if hub, ok := h.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+        hub.BroadcastJSON(roomID, message)
     }
 }
 

@@ -22,12 +22,19 @@ func init() {
 	// --- LOAD .env FILE HERE AS WELL ---
 	// This ensures env vars are available even if main.go hasn't run its load yet.
 	// It's safe to call multiple times, subsequent calls have no effect if already loaded.
-	err := godotenv.Load() // Add this line
+	// Try loading from current directory first, then try parent directories
+	err := godotenv.Load()
 	if err != nil {
-		log.Printf("Info/Warning: jwt.go init: Error loading .env file: %v. Proceeding, vars might come from system env.", err)
-		// Don't fail here, env vars might be set system-wide.
+		// Try loading from backend directory (for tests running in subdirectories)
+		err = godotenv.Load("../../.env")
+		if err != nil {
+			log.Printf("Info/Warning: jwt.go init: Error loading .env file: %v. Proceeding, vars might come from system env.", err)
+			// Don't fail here, env vars might be set system-wide.
+		} else {
+			log.Println("DEBUG: jwt.go init: .env file loaded from ../../.env")
+		}
 	} else {
-		log.Println("DEBUG: jwt.go init: .env file loaded (if it existed).")
+		log.Println("DEBUG: jwt.go init: .env file loaded from current directory")
 	}
 
 	// --- Check and Load Variables ---

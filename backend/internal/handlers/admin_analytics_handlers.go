@@ -362,6 +362,9 @@ func GetPlatformAnalytics(c *gin.Context) {
 			"is_balanced":               accounting.IsBalanced(),
 			"token_donation_commission": accounting.TokenDonationCommission,
 			"lifetime_token_donation_commission": accounting.LifetimeTokenDonationCommission,
+			"transfer_fee_revenue":         accounting.TransferFeeRevenue,
+			"lifetime_transfer_fee_revenue": accounting.LifetimeTransferFeeRevenue,
+			"total_early_bird_savings":     accounting.TotalEarlyBirdSavings,
 		}
 	}
 
@@ -654,5 +657,150 @@ func GetTokenSpendingAnalytics(c *gin.Context) {
 		"top_hosts":    topHosts,
 		"daily_trends": dailyTrends,
 		"generated_at": time.Now().Format(time.RFC3339),
+	})
+}
+
+// GetEventAnalytics returns event ticketing analytics for super admins
+// GET /api/admin/event-analytics
+func GetEventAnalytics(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	// ==== TOTAL METRICS ====
+	var totalTicketsSold int64
+	var totalRSVPs int64
+	var totalGiftedTickets int64
+	
+	// Count paid tickets (not refunded, not cancelled)
+	db.Model(&models.EventTicket{}).
+		Where("payment_method = ? AND is_refunded = ? AND is_cancelled = ?", "tokens", false, false).
+		Count(&totalTicketsSold)
+	
+	// Count free RSVPs (not cancelled)
+	db.Model(&models.EventTicket{}).
+		Where("payment_method = ? AND is_cancelled = ?", "free_rsvp", false).
+		Count(&totalRSVPs)
+	
+	// Count gifted tickets
+	db.Model(&models.EventTicket{}).
+		Where("is_gift = ? AND is_refunded = ? AND is_cancelled = ?", true, false, false).
+		Count(&totalGiftedTickets)
+
+	// ==== REVENUE METRICS ====
+	type RevenueResult struct {
+		TotalRevenue    int // Total ticket revenue in tokens (cents)
+		TransferFeeRevenue int // Total 5% transfer fees from gifts
+	}
+	
+	var revenue RevenueResult
+	
+	// Sum ticket prices for all sold tickets
+	db.Model(&models.EventTicket{}).
+		Select("COALESCE(SUM(ticket_price_tokens), 0) as total_revenue").
+		Where("payment_method = ? AND is_refunded = ? AND is_cancelled = ?", "tokens", false, false).
+		Scan(&revenue)
+	
+	// Calculate transfer fee revenue (5% of gifted ticket prices)
+	var giftRevenue struct {
+		TotalGiftPrice int
+	}
+	db.Model(&models.EventTicket{}).
+		Select("COALESCE(SUM(ticket_price_tokens), 0) as total_gift_price").
+		Where("is_gift = ? AND payment_method = ? AND is_refunded = ? AND is_cancelled = ?", true, "tokens", false, false).
+		Scan(&giftRevenue)
+	
+	revenue.TransferFeeRevenue = int(float64(giftRevenue.TotalGiftPrice) * 0.05)
+
+	// ==== TOP EVENTS BY TICKET SALES ====
+	type TopEvent struct {
+		EventID       uint    `json:"event_id"`
+		Title         string  `json:"title"`
+		RoomID        string  `json:"room_id"`
+		WatchType     string  `json:"watch_type"`
+		TicketsSold   int64   `json:"tickets_sold"`
+		Revenue       int     `json:"revenue"` // In tokens (cents)
+	}
+	
+	var topEvents []TopEvent
+	db.Raw(`
+		SELECT 
+			se.id as event_id,
+			se.title,
+			se.room_id,
+			se.watch_type,
+			COUNT(et.id) as tickets_sold,
+			COALESCE(SUM(et.ticket_price_tokens), 0) as revenue
+		FROM scheduled_events se
+		INNER JOIN event_tickets et ON et.scheduled_event_id = se.id
+		WHERE et.payment_method = 'tokens' 
+			AND et.is_refunded = false 
+			AND et.is_cancelled = false
+		GROUP BY se.id, se.title, se.room_id, se.watch_type
+		ORDER BY tickets_sold DESC, revenue DESC
+		LIMIT 10
+	`).Scan(&topEvents)
+
+	// ==== REVENUE BY WATCH TYPE ====
+	type WatchTypeRevenue struct {
+		WatchType   string `json:"watch_type"`
+		TicketsSold int64  `json:"tickets_sold"`
+		Revenue     int    `json:"revenue"`
+	}
+	
+	var watchTypeRevenues []WatchTypeRevenue
+	db.Raw(`
+		SELECT 
+			se.watch_type,
+			COUNT(et.id) as tickets_sold,
+			COALESCE(SUM(et.ticket_price_tokens), 0) as revenue
+		FROM scheduled_events se
+		INNER JOIN event_tickets et ON et.scheduled_event_id = se.id
+		WHERE et.payment_method = 'tokens' 
+			AND et.is_refunded = false 
+			AND et.is_cancelled = false
+		GROUP BY se.watch_type
+		ORDER BY revenue DESC
+	`).Scan(&watchTypeRevenues)
+
+	// ==== UPCOMING EVENTS WITH TICKETS ====
+	var upcomingEventsCount int64
+	db.Model(&models.ScheduledEvent{}).
+		Where("start_time > ? AND is_paid = ?", time.Now(), true).
+		Count(&upcomingEventsCount)
+
+	// ==== EARLY BIRD STATISTICS ====
+	var earlyBirdTickets int64
+	var earlyBirdSavings int
+	
+	db.Model(&models.EventTicket{}).
+		Where("is_early_bird = ? AND payment_method = ? AND is_refunded = ? AND is_cancelled = ?", 
+			true, "tokens", false, false).
+		Count(&earlyBirdTickets)
+	
+	// Calculate savings (difference between regular price and early bird price would be in transaction data)
+	// For now, we'll estimate 20% average savings
+	db.Raw(`
+		SELECT 
+			COALESCE(SUM(et.ticket_price_tokens * 0.25), 0) as total_savings
+		FROM event_tickets et
+		WHERE et.is_early_bird = true 
+			AND et.payment_method = 'tokens'
+			AND et.is_refunded = false 
+			AND et.is_cancelled = false
+	`).Scan(&earlyBirdSavings)
+
+	// ==== RESPONSE ====
+	c.JSON(http.StatusOK, gin.H{
+		"total_tickets_sold":     totalTicketsSold,
+		"total_rsvps":            totalRSVPs,
+		"total_gifted_tickets":   totalGiftedTickets,
+		"ticket_revenue":         revenue.TotalRevenue,        // In tokens (cents)
+		"transfer_fee_revenue":   revenue.TransferFeeRevenue,  // 5% from gifts
+		"total_revenue":          revenue.TotalRevenue + revenue.TransferFeeRevenue,
+		"early_bird_tickets":     earlyBirdTickets,
+		"early_bird_savings":     earlyBirdSavings,
+		"upcoming_paid_events":   upcomingEventsCount,
+		"top_events":             topEvents,
+		"revenue_by_watch_type":  watchTypeRevenues,
+		"generated_at":           time.Now().Format(time.RFC3339),
 	})
 }

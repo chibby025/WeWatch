@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import path from 'path'
 
 // Debug plugin to log all incoming requests
 // const debugPlugin = () => ({
@@ -23,6 +24,7 @@ export default defineConfig({
   },
    resolve: {
     alias: {
+      '@': path.resolve(__dirname, './src'),
       // ✅ Force simple-peer to use the browser build
       'simple-peer': 'simple-peer/simplepeer.min.js',
     },

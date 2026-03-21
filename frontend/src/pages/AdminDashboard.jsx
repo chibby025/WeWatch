@@ -23,6 +23,8 @@ import {
   ClockIcon
 } from '@heroicons/react/24/outline';
 import toast, { Toaster } from 'react-hot-toast';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 const AdminDashboard = () => {
   const { currentUser } = useAuth();
@@ -30,6 +32,7 @@ const AdminDashboard = () => {
   const [analytics, setAnalytics] = useState(null);
   const [tokenSpendingData, setTokenSpendingData] = useState(null);
   const [topDonorsData, setTopDonorsData] = useState(null);
+  const [eventAnalytics, setEventAnalytics] = useState(null);
   const [pendingPayouts, setPendingPayouts] = useState([]);
   const [processingPayouts, setProcessingPayouts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -54,10 +57,11 @@ const AdminDashboard = () => {
   // Fetch analytics data
   const fetchAnalytics = async () => {
     try {
-      const [analyticsRes, tokenSpendingRes, topDonorsRes, pendingPayoutsRes, processingPayoutsRes] = await Promise.all([
+      const [analyticsRes, tokenSpendingRes, topDonorsRes, eventAnalyticsRes, pendingPayoutsRes, processingPayoutsRes] = await Promise.all([
         apiClient.get('/api/admin/analytics'),
         apiClient.get('/api/admin/token-spending-analytics'),
         apiClient.get('/api/donations/top-donors?limit=20'),
+        apiClient.get('/api/admin/event-analytics'),
         getAdminPendingPayouts(),
         getAdminProcessingPayouts()
       ]);
@@ -65,6 +69,7 @@ const AdminDashboard = () => {
       setAnalytics(analyticsRes.data);
       setTokenSpendingData(tokenSpendingRes.data);
       setTopDonorsData(topDonorsRes.data);
+      setEventAnalytics(eventAnalyticsRes.data);
       setPendingPayouts(pendingPayoutsRes.payouts || []);
       setProcessingPayouts(processingPayoutsRes.payouts || []);
       setLastUpdated(new Date());
@@ -484,6 +489,77 @@ const AdminDashboard = () => {
                 <Tooltip formatter={(value) => `₦${value.toLocaleString()}`} />
               </PieChart>
             </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Fee Revenue Breakdown Section */}
+        <div className="bg-gradient-to-r from-green-600/20 to-emerald-600/20 backdrop-blur-lg rounded-xl p-6 border border-green-500/30 mb-6">
+          <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+            💰 Platform Fee Revenue Breakdown
+          </h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <Card className="bg-white/5 border-green-500/20 hover:bg-white/10 transition-colors">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs text-gray-400 uppercase">Ticket Transfer Fees (5%)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-400">
+                  {formatCurrency(analytics.platform_accounting.lifetime_transfer_fee_revenue || 0)}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  From gifted tickets • Additional revenue stream
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white/5 border-blue-500/20 hover:bg-white/10 transition-colors">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs text-gray-400 uppercase">Wallet Gift Commission (5%)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-blue-400">
+                  {formatCurrency(analytics.platform_accounting.lifetime_token_donation_commission || 0)}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  From wallet-to-wallet token gifts
+                </p>
+                {analytics.platform_accounting.token_donation_commission > 0 && (
+                  <button
+                    onClick={handleTransferCommission}
+                    disabled={transferringCommission}
+                    className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs font-semibold disabled:opacity-50 w-full"
+                  >
+                    {transferringCommission ? 'Transferring...' : `Transfer ₦${analytics.platform_accounting.token_donation_commission.toLocaleString()}`}
+                  </button>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white/5 border-purple-500/20 hover:bg-white/10 transition-colors">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs text-gray-400 uppercase">Early Bird Savings (Informational)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-purple-400">
+                  {formatCurrency(analytics.platform_accounting.total_early_bird_savings || 0)}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  Total discounts given to early buyers
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="bg-blue-900/20 border border-blue-500/20 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-blue-300 mb-2">📊 Revenue Model Summary:</h3>
+            <ul className="text-xs text-gray-300 space-y-1">
+              <li>• <strong>Token Spread Profit:</strong> ₦43 per token (Buy ₦165 - Sell ₦122 = 26% margin)</li>
+              <li>• <strong>Transfer Fees:</strong> 5% charged when users gift tickets to others</li>
+              <li>• <strong>Gift Commission:</strong> 5% from wallet-to-wallet token gifts</li>
+              <li>• <strong>Host Revenue:</strong> 100% of ticket sales (no commission) - hosts keep all tokens spent</li>
+              <li>• <strong>Early Bird:</strong> Promotional savings to incentivize early purchases (tracked for analytics)</li>
+            </ul>
           </div>
         </div>
 
@@ -997,48 +1073,64 @@ const AdminDashboard = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 {/* Total Gifts */}
-                <div className="bg-white/10 rounded-lg p-4">
-                  <div className="text-sm text-gray-300 mb-1">Total Gifts Sent (Wallet-to-Wallet)</div>
-                  <div className="text-2xl font-bold text-yellow-400">
-                    {analytics.token_donations?.total_gifts_count?.toLocaleString() || '0'}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1">
-                    {formatTokens(analytics.token_donations?.total_value_tokens || 0)} tokens gifted
-                  </div>
-                </div>
+                <Card className="bg-white/10 border-yellow-500/30 hover:bg-white/15 transition-colors">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-gray-300">Total Gifts Sent (Wallet-to-Wallet)</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-yellow-400">
+                      {analytics.token_donations?.total_gifts_count?.toLocaleString() || '0'}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {formatTokens(analytics.token_donations?.total_value_tokens || 0)} tokens gifted
+                    </p>
+                  </CardContent>
+                </Card>
 
                 {/* Total Value */}
-                <div className="bg-white/10 rounded-lg p-4">
-                  <div className="text-sm text-gray-300 mb-1">Total Gift Value</div>
-                  <div className="text-2xl font-bold text-orange-400">
-                    {formatCurrency(analytics.token_donations?.total_value_ngn || 0)}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1">
-                    ₦140.25 per token (85% backing)
-                  </div>
-                </div>
+                <Card className="bg-white/10 border-orange-500/30 hover:bg-white/15 transition-colors">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-gray-300">Total Gift Value</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-orange-400">
+                      {formatCurrency(analytics.token_donations?.total_value_ngn || 0)}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      ₦140.25 per token (85% backing)
+                    </p>
+                  </CardContent>
+                </Card>
 
                 {/* Lifetime Commission */}
-                <div className="bg-white/10 rounded-lg p-4">
-                  <div className="text-sm text-gray-300 mb-1">Lifetime Commission (5%)</div>
-                  <div className="text-2xl font-bold text-green-400">
-                    {formatCurrency(analytics.token_donations?.commission_earned_ngn || 0)}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1">
-                    All-time earnings from gifts
-                  </div>
-                </div>
+                <Card className="bg-white/10 border-green-500/30 hover:bg-white/15 transition-colors">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-gray-300">Lifetime Commission (5%)</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-green-400">
+                      {formatCurrency(analytics.token_donations?.commission_earned_ngn || 0)}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      All-time earnings from gifts
+                    </p>
+                  </CardContent>
+                </Card>
 
                 {/* Available to Transfer */}
-                <div className="bg-gradient-to-br from-green-600/30 to-emerald-600/30 rounded-lg p-4 border-2 border-green-500/50">
-                  <div className="text-sm text-gray-300 mb-1">💰 Available to Transfer</div>
-                  <div className="text-2xl font-bold text-green-300">
-                    {formatCurrency(analytics.token_donations?.available_to_transfer || 0)}
-                  </div>
-                  <div className="text-xs text-green-200 mt-1">
-                    Ready for Reserve → Revenue
-                  </div>
-                </div>
+                <Card className="bg-gradient-to-br from-green-600/30 to-emerald-600/30 border-2 border-green-500/50 hover:from-green-600/40 hover:to-emerald-600/40 transition-all">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-gray-300">💰 Available to Transfer</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-green-300">
+                      {formatCurrency(analytics.token_donations?.available_to_transfer || 0)}
+                    </div>
+                    <p className="text-xs text-green-200 mt-1">
+                      Ready for Reserve → Revenue
+                    </p>
+                  </CardContent>
+                </Card>
               </div>
 
               {/* Transfer Button */}
@@ -1100,6 +1192,210 @@ const AdminDashboard = () => {
                 </div>
             </div>
 
+            {/* Event Analytics Section - Ticket Sales & RSVPs */}
+            {eventAnalytics && (
+              <div className="bg-gradient-to-br from-purple-600/20 to-indigo-600/20 backdrop-blur-lg rounded-xl p-6 border border-purple-500/30">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold flex items-center gap-2">
+                      🎟️ Event Ticketing Analytics
+                    </h2>
+                    <p className="text-sm text-gray-400 mt-1">Scheduled events, ticket sales, and RSVPs</p>
+                  </div>
+                </div>
+
+                {/* Statistics Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  {/* Total Tickets Sold */}
+                  <Card className="bg-gradient-to-br from-purple-500 to-purple-700 border-purple-400 hover:from-purple-600 hover:to-purple-800 transition-all shadow-lg">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-white">Tickets Sold</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">
+                        {eventAnalytics.total_tickets_sold?.toLocaleString() || '0'}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">Paid event tickets</p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Total RSVPs */}
+                  <Card className="bg-gradient-to-br from-green-500 to-emerald-700 border-green-400 hover:from-green-600 hover:to-emerald-800 transition-all shadow-lg">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-white">Free RSVPs</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">
+                        {eventAnalytics.total_rsvps?.toLocaleString() || '0'}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">Free event bookings</p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Total Revenue */}
+                  <Card className="bg-gradient-to-br from-yellow-500 to-orange-600 border-yellow-400 hover:from-yellow-600 hover:to-orange-700 transition-all shadow-lg">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-white">Ticket Revenue</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">
+                        {formatTokens(eventAnalytics.ticket_revenue || 0)}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">
+                        ≈ {formatCurrency((eventAnalytics.ticket_revenue || 0) * 1.65)}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Transfer Fee Revenue */}
+                  <Card className="bg-gradient-to-br from-pink-500 to-rose-700 border-pink-400 hover:from-pink-600 hover:to-rose-800 transition-all shadow-lg">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-white">Gift Transfer Fees (5%)</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">
+                        {formatTokens(eventAnalytics.transfer_fee_revenue || 0)}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">From gifted tickets</p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Gifted Tickets */}
+                  <Card className="bg-gradient-to-br from-pink-500 to-fuchsia-700 border-pink-400 hover:from-pink-600 hover:to-fuchsia-800 transition-all shadow-lg">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-white flex items-center gap-1">
+                        <span>🎁</span> Gifted Tickets
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">
+                        {eventAnalytics.total_gifted_tickets?.toLocaleString() || '0'}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">Tickets sent as gifts</p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Early Bird Tickets */}
+                  <Card className="bg-gradient-to-br from-orange-500 to-red-600 border-orange-400 hover:from-orange-600 hover:to-red-700 transition-all shadow-lg">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-white flex items-center gap-1">
+                        <span>🎉</span> Early Bird Sales
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">
+                        {eventAnalytics.early_bird_tickets?.toLocaleString() || '0'}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Saved: {formatTokens(eventAnalytics.early_bird_savings || 0)}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Upcoming Paid Events */}
+                  <Card className="bg-gradient-to-br from-blue-500 to-indigo-700 border-blue-400 hover:from-blue-600 hover:to-indigo-800 transition-all shadow-lg">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-white flex items-center gap-1">
+                        <span>📅</span> Upcoming Paid Events
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">
+                        {eventAnalytics.upcoming_paid_events?.toLocaleString() || '0'}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">Future scheduled events</p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Total Revenue (Ticket + Fees) */}
+                  <Card className="bg-gradient-to-br from-emerald-500 to-green-700 border-2 border-emerald-400 hover:from-emerald-600 hover:to-green-800 transition-all shadow-xl">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-white flex items-center gap-1">
+                        <span>💰</span> Total Revenue
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">
+                        {formatTokens(eventAnalytics.total_revenue || 0)}
+                      </div>
+                      <p className="text-xs text-green-200 mt-1">Tickets + transfer fees</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Revenue by Watch Type */}
+                {eventAnalytics.revenue_by_watch_type && eventAnalytics.revenue_by_watch_type.length > 0 && (
+                  <Card className="bg-white/5 border-purple-500/20 mb-4">
+                    <CardHeader>
+                      <CardTitle className="text-lg font-bold text-white">Revenue by Watch Type</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {eventAnalytics.revenue_by_watch_type.map((type) => (
+                          <Card key={type.watch_type} className="bg-white/5 border-purple-500/10 hover:bg-white/10 transition-colors">
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-sm font-medium text-gray-300">
+                                {type.watch_type === '3d_cinema' ? '🎬 3D Cinema' : 
+                                 type.watch_type === 'classroom' ? '🎓 Classroom' : '📺 Video Watch'}
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="text-xl font-bold text-purple-400">
+                                {formatTokens(type.revenue)}
+                              </div>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {type.ticket_count} tickets sold
+                              </p>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Top Events */}
+                {eventAnalytics.top_events && eventAnalytics.top_events.length > 0 && (
+                  <Card className="bg-white/5 border-yellow-500/20">
+                    <CardHeader>
+                      <CardTitle className="text-lg font-bold text-white">🏆 Top Selling Events</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {eventAnalytics.top_events.slice(0, 5).map((event, index) => (
+                          <Card key={event.event_id} className="bg-white/5 border-yellow-500/10 hover:bg-white/10 transition-colors">
+                            <CardContent className="pt-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <Badge variant="outline" className="text-lg font-bold text-purple-400 border-purple-500/30">
+                                    #{index + 1}
+                                  </Badge>
+                                  <div>
+                                    <div className="font-medium text-white">{event.title}</div>
+                                    <div className="text-xs text-gray-400">
+                                      Room ID: {event.room_id} • {event.watch_type === '3d_cinema' ? '🎬 Cinema' : event.watch_type === 'classroom' ? '🎓 Classroom' : '📺 Video'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-lg font-bold text-yellow-400">
+                                    {event.tickets_sold} tickets
+                                  </div>
+                                  <div className="text-xs text-gray-400">
+                                    {formatTokens(event.revenue)} revenue
+                                  </div>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
+
             {/* Top Donors Section - In-Session Tips */}
             <div className="bg-gradient-to-br from-pink-600/20 to-purple-600/20 backdrop-blur-lg rounded-xl p-6 border border-pink-500/30">
               <div className="flex items-center justify-between mb-6">
@@ -1115,29 +1411,41 @@ const AdminDashboard = () => {
                 <div>
                   {/* Statistics Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                    <div className="bg-white/10 rounded-lg p-4">
-                      <div className="text-sm text-gray-300 mb-1">Total Tips (In-Session)</div>
-                      <div className="text-2xl font-bold text-yellow-400">
-                        {formatTokens(topDonorsData.statistics.total_donated_tokens)} 🪙
-                      </div>
-                      <div className="text-xs text-gray-400 mt-1">
-                        ≈ {formatCurrency(topDonorsData.statistics.total_donated_tokens * 1.65)}
-                      </div>
-                    </div>
-                    <div className="bg-white/10 rounded-lg p-4">
-                      <div className="text-sm text-gray-300 mb-1">Total Tippers</div>
-                      <div className="text-2xl font-bold text-pink-400">
-                        {topDonorsData.statistics.total_donors}
-                      </div>
-                      <div className="text-xs text-gray-400 mt-1">Users who tip hosts</div>
-                    </div>
-                    <div className="bg-white/10 rounded-lg p-4">
-                      <div className="text-sm text-gray-300 mb-1">Sessions with Tips</div>
-                      <div className="text-2xl font-bold text-purple-400">
-                        {topDonorsData.statistics.total_sessions}
-                      </div>
-                      <div className="text-xs text-gray-400 mt-1">Watch parties tipped</div>
-                    </div>
+                    <Card className="bg-white/10 border-yellow-500/30 hover:bg-white/15 transition-colors">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium text-gray-300">Total Tips (In-Session)</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold text-yellow-400">
+                          {formatTokens(topDonorsData.statistics.total_donated_tokens)} 🪙
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">
+                          ≈ {formatCurrency(topDonorsData.statistics.total_donated_tokens * 1.65)}
+                        </p>
+                      </CardContent>
+                    </Card>
+                    <Card className="bg-white/10 border-pink-500/30 hover:bg-white/15 transition-colors">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium text-gray-300">Total Tippers</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold text-pink-400">
+                          {topDonorsData.statistics.total_donors}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">Users who tip hosts</p>
+                      </CardContent>
+                    </Card>
+                    <Card className="bg-white/10 border-purple-500/30 hover:bg-white/15 transition-colors">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium text-gray-300">Sessions with Tips</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-2xl font-bold text-purple-400">
+                          {topDonorsData.statistics.total_sessions}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">Watch parties tipped</p>
+                      </CardContent>
+                    </Card>
                   </div>
 
                   {/* Top Donors Table */}
@@ -1214,6 +1522,152 @@ const AdminDashboard = () => {
           </>
         )}
 
+        {/* Event Analytics Section */}
+        {eventAnalytics && (
+          <div className="bg-gradient-to-r from-blue-600/20 to-indigo-600/20 backdrop-blur-lg rounded-xl p-6 border-2 border-blue-500/50">
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+              🎫 Event Ticketing Analytics
+            </h2>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <MetricCard
+                title="Total Tickets Sold"
+                value={eventAnalytics.total_tickets_sold?.toLocaleString() || '0'}
+                subtitle="Paid event tickets"
+                color="bg-blue-600"
+              />
+              <MetricCard
+                title="Free RSVPs"
+                value={eventAnalytics.total_rsvps?.toLocaleString() || '0'}
+                subtitle="Free event bookings"
+                color="bg-green-600"
+              />
+              <MetricCard
+                title="Ticket Revenue"
+                value={`${formatTokens(eventAnalytics.ticket_revenue || 0)} 🪙`}
+                subtitle="From paid tickets"
+                color="bg-purple-600"
+              />
+              <MetricCard
+                title="Gifted Tickets"
+                value={eventAnalytics.total_gifted_tickets?.toLocaleString() || '0'}
+                subtitle={`${formatTokens(eventAnalytics.transfer_fee_revenue || 0)} 🪙 fees (5%)`}
+                color="bg-pink-600"
+              />
+            </div>
+
+            {/* Top Events Table */}
+            {eventAnalytics.top_events && eventAnalytics.top_events.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-lg font-semibold mb-3">🔥 Top 10 Events by Tickets</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/20">
+                        <th className="text-left py-3 px-4">Event</th>
+                        <th className="text-left py-3 px-4">Room</th>
+                        <th className="text-right py-3 px-4">Tickets</th>
+                        <th className="text-right py-3 px-4">RSVPs</th>
+                        <th className="text-right py-3 px-4">Revenue</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {eventAnalytics.top_events.map((event, index) => (
+                        <tr key={event.event_id} className="border-b border-white/10 hover:bg-white/5">
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">
+                                {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : ''}
+                              </span>
+                              <div>
+                                <div className="font-semibold">{event.event_name || 'Untitled Event'}</div>
+                                <div className="text-xs text-gray-400">
+                                  {new Date(event.scheduled_time).toLocaleDateString('en-US', { 
+                                    month: 'short', 
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              {event.watch_type === 'movie' && '🎬'}
+                              {event.watch_type === 'tv' && '📺'}
+                              {event.watch_type === 'lecture' && '🎓'}
+                              {event.watch_type === '3dcinema' && '🎪'}
+                              <span className="text-gray-300">{event.room_name || 'Unknown Room'}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <span className="font-semibold text-blue-400">{event.ticket_count || 0}</span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <span className="font-semibold text-green-400">{event.rsvp_count || 0}</span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <span className="font-semibold text-purple-400">
+                              {formatTokens(event.total_revenue || 0)} 🪙
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Revenue by Watch Type */}
+            {eventAnalytics.revenue_by_watch_type && eventAnalytics.revenue_by_watch_type.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-lg font-semibold mb-3">📊 Revenue by Watch Type</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {eventAnalytics.revenue_by_watch_type.map((item) => (
+                    <div key={item.watch_type} className="bg-white/10 rounded-lg p-4 border border-white/20">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-2xl">
+                          {item.watch_type === 'movie' && '🎬'}
+                          {item.watch_type === 'tv' && '📺'}
+                          {item.watch_type === 'lecture' && '🎓'}
+                          {item.watch_type === '3dcinema' && '🎪'}
+                        </span>
+                        <span className="font-semibold capitalize">{item.watch_type}</span>
+                      </div>
+                      <div className="text-2xl font-bold text-purple-400 mb-1">
+                        {formatTokens(item.total_revenue)} 🪙
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {item.ticket_count} tickets • {item.rsvp_count} RSVPs
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Early Bird Stats */}
+            {eventAnalytics.early_bird_tickets > 0 && (
+              <div className="mt-6 bg-yellow-600/20 rounded-lg p-4 border border-yellow-500/30">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-2xl">🐦</span>
+                  <span className="font-semibold text-yellow-300">Early Bird Tickets</span>
+                </div>
+                <div className="text-sm text-gray-300">
+                  {eventAnalytics.early_bird_tickets} tickets sold at early bird pricing 
+                  {eventAnalytics.early_bird_revenue > 0 && (
+                    <span className="ml-2">
+                      • {formatTokens(eventAnalytics.early_bird_revenue)} 🪙 revenue
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Top Hosts Leaderboard */}
         <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
           <h2 className="text-2xl font-bold mb-4">🏆 Top Hosts Leaderboard (All Revenue)</h2>
@@ -1279,11 +1733,15 @@ const AdminDashboard = () => {
 
 // Helper Components
 const MetricCard = ({ title, value, subtitle, color }) => (
-  <div className={`${color} rounded-xl p-6 shadow-lg`}>
-    <h3 className="text-sm font-semibold mb-2 opacity-90">{title}</h3>
-    <p className="text-3xl font-bold mb-1">{value}</p>
-    <p className="text-sm opacity-75">{subtitle}</p>
-  </div>
+  <Card className={`${color} border-white/20 shadow-lg`}>
+    <CardHeader className="pb-2">
+      <CardTitle className="text-sm font-semibold opacity-90">{title}</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <p className="text-3xl font-bold mb-1">{value}</p>
+      <p className="text-sm opacity-75">{subtitle}</p>
+    </CardContent>
+  </Card>
 );
 
 const TodayMetric = ({ label, value }) => (
@@ -1294,25 +1752,33 @@ const TodayMetric = ({ label, value }) => (
 );
 
 const AccountingCard = ({ title, value, subtitle, bgColor }) => (
-  <div className={`${bgColor} rounded-lg p-4 border border-white/20`}>
-    <h3 className="text-sm font-semibold mb-2 opacity-90">{title}</h3>
-    <p className="text-2xl font-bold mb-1">{value}</p>
-    <p className="text-xs opacity-75">{subtitle}</p>
-  </div>
+  <Card className={`${bgColor} border-white/20`}>
+    <CardHeader className="pb-2">
+      <CardTitle className="text-sm font-semibold opacity-90">{title}</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <p className="text-2xl font-bold mb-1">{value}</p>
+      <p className="text-xs opacity-75">{subtitle}</p>
+    </CardContent>
+  </Card>
 );
 
 const StatsCard = ({ title, stats }) => (
-  <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
-    <h3 className="text-xl font-bold mb-4">{title}</h3>
-    <div className="space-y-3">
-      {stats.map((stat, index) => (
-        <div key={index} className="flex justify-between items-center">
-          <span className="text-gray-300">{stat.label}</span>
-          <span className="font-semibold text-lg">{stat.value}</span>
-        </div>
-      ))}
-    </div>
-  </div>
+  <Card className="bg-white/10 backdrop-blur-lg border-white/20">
+    <CardHeader>
+      <CardTitle className="text-xl font-bold">{title}</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <div className="space-y-3">
+        {stats.map((stat, index) => (
+          <div key={index} className="flex justify-between items-center">
+            <span className="text-gray-300">{stat.label}</span>
+            <span className="font-semibold text-lg">{stat.value}</span>
+          </div>
+        ))}
+      </div>
+    </CardContent>
+  </Card>
 );
 
 export default AdminDashboard;

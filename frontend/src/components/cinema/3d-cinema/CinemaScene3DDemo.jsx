@@ -15,9 +15,7 @@ import TheaterOverviewModal from '../../TheaterOverviewModal';
 import CinemaSeatGridModal from './ui/CinemaSeatGridModal';
 import AudioModeBar from './ui/AudioModeBar'; // 🎤 Audio mode toggle bar
 import CinemaVideoPlayer from '../ui/CinemaVideoPlayer';
-import { useFrame } from '@react-three/fiber';
-// In CinemaScene3DDemo.jsx
-import useLiveKitRoom from "../../../hooks/useLiveKitRoom"; // 3 dots!
+import useLiveKitRoom from "../../../hooks/useLiveKitRoom"; // LiveKit room hook
 import useCinemaAudio from "../../../hooks/useCinemaAudio"; // 🎤 Cinema audio hook
 import { Track, ParticipantEvent, RoomEvent, LocalVideoTrack } from 'livekit-client';
 import { getTemporaryMediaItemsForRoom, getSessionTemporaryMedia, getFriendshipStatus, sendFriendRequest, getFriendsList, getPendingFriendRequests, getSentFriendRequests } from '../../../services/api';
@@ -44,17 +42,29 @@ import GameLobbyModal from '../../Games/GameLobbyModal';
 import GameOverlay from '../../Games/GameOverlay';
 import GameScreenRenderer from '../../Games/GameScreenRenderer'; // ✅ NEW
 import VolumeControl from '../../VolumeControl';
+// LocalStorage cache utilities
+import { 
+  getCachedUser, 
+  cacheUserData, 
+  getCachedCinemaSeats, 
+  cacheCinemaSeats,
+  cacheLastSession 
+} from '../../../utils/cinemaCache';
 
 // LiveShare Fullscreen Component - Uses MediaStream objects (same pattern as PositionCalculatorPage)
-function LiveShareFullscreenCinema({ stream, cameraStream, liveShareMode }) {
+function LiveShareFullscreenCinema({ stream, cameraStream, liveShareMode, podcastConfig }) {
   const videoRef = useRef();
   const cameraVideoRef = useRef();
   
   console.log('🎬 [LiveShareFullscreen] Component rendered:', {
     hasStream: !!stream,
     hasCameraStream: !!cameraStream,
-    liveShareMode
+    liveShareMode,
+    podcastConfig
   });
+  
+  // 🎙️ Podcast mode uses HTML overlays for fullscreen (lighter weight)
+  const isPodcastMode = podcastConfig?.mode === 'podcast';
   
   // Attach screen share stream to video element
   useEffect(() => {
@@ -97,7 +107,7 @@ function LiveShareFullscreenCinema({ stream, cameraStream, liveShareMode }) {
   return (
     <>
       {/* Main screen share video (hidden in camera-only mode) */}
-      {stream && liveShareMode !== 'camera' && (
+      {stream && liveShareMode !== 'camera' && !isPodcastMode && (
         <video
           ref={videoRef}
           className="w-full h-full object-contain"
@@ -106,8 +116,120 @@ function LiveShareFullscreenCinema({ stream, cameraStream, liveShareMode }) {
         />
       )}
       
-      {/* Camera video - fullscreen in camera mode, PiP in both mode */}
-      {cameraStream && (
+      {/* 🎙️ PODCAST MODE: Show video with HTML overlays */}
+      {isPodcastMode && cameraStream && (
+        <div className="w-full h-full flex items-center justify-center bg-black relative">
+          {/* Host Camera - Full screen */}
+          <video
+            ref={cameraVideoRef}
+            className="w-full h-full object-cover"
+            autoPlay
+            playsInline
+          />
+          
+          {/* Host Name Label (top left) */}
+          <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-lg flex items-center gap-2">
+            <span className="text-white font-medium">{podcastConfig.hostUsername || 'Host'} (Host)</span>
+          </div>
+          
+          {/* Podcast Logo (bottom left above title) - load position and size from localStorage */}
+          {podcastConfig.logoUrl && (() => {
+            // Load custom logo styles from localStorage
+            let logoSize = 100; // Default size
+            let logoX = 10; // Default X position
+            let logoY = 80; // Default Y position (from bottom)
+            
+            try {
+              const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${podcastConfig.sessionId || sessionId}`);
+              if (savedLogoStyles) {
+                const styles = JSON.parse(savedLogoStyles);
+                logoSize = styles.size || 100;
+                logoX = styles.x || 10;
+                logoY = styles.y || 80;
+              }
+            } catch (err) {
+              console.warn('Failed to load logo styles:', err);
+            }
+            
+            return (
+              <img 
+                src={podcastConfig.logoUrl} 
+                alt="Podcast Logo" 
+                className="absolute object-contain"
+                style={{
+                  width: `${logoSize}px`,
+                  height: `${logoSize}px`,
+                  left: `${logoX}px`,
+                  bottom: `${logoY}px`
+                }}
+              />
+            );
+          })()}
+          
+          {/* LIVE Indicator (top center) */}
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600 px-4 py-2 rounded-full flex items-center gap-2 shadow-xl">
+            <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+            <span className="text-white font-bold text-sm uppercase">LIVE</span>
+          </div>
+          
+          {/* Podcast Title (bottom left with custom styling) */}
+          {podcastConfig.title && (() => {
+            // Load custom styles from localStorage
+            let titleColor = '#FFFFFF';
+            let titleSize = 24;
+            let titleWeight = 700;
+            let titleCase = 'none';
+            
+            try {
+              const savedStyles = localStorage.getItem(`podcast_title_style_${podcastConfig.sessionId || sessionId}`);
+              if (savedStyles) {
+                const styles = JSON.parse(savedStyles);
+                titleColor = styles.color || '#FFFFFF';
+                titleSize = styles.size || 24;
+                titleWeight = styles.weight || 700;
+                titleCase = styles.case || 'none';
+              }
+            } catch (err) {
+              console.warn('Failed to load title styles:', err);
+            }
+            
+            // Apply text case transformation
+            const applyTextCase = (text, caseType) => {
+              if (!text) return text;
+              
+              switch (caseType) {
+                case 'title':
+                  return text.toLowerCase().replace(/\b\w/g, char => char.toUpperCase());
+                case 'upper':
+                  return text.toUpperCase();
+                case 'lower':
+                  return text.toLowerCase();
+                case 'sentence':
+                  return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+                case 'none':
+                default:
+                  return text;
+              }
+            };
+            
+            return (
+              <div 
+                className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-lg shadow-xl"
+                style={{
+                  color: titleColor,
+                  fontSize: `${titleSize}px`,
+                  fontWeight: titleWeight
+                }}
+              >
+                <h2>{applyTextCase(podcastConfig.title, titleCase)}</h2>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+      
+      {/* Camera video - fullscreen in camera mode, PiP in both mode (non-podcast) */}
+      {!isPodcastMode && cameraStream && (
         <div className={cameraContainerClass}>
           <video
             ref={cameraVideoRef}
@@ -271,7 +393,7 @@ export default function CinemaScene3DDemo() {
   const [currentCameraLookAt, setCurrentCameraLookAt] = useState([0, 0, 0]);
   const [viewLockedBeforeCalculator, setViewLockedBeforeCalculator] = useState(true);
   
-  // � Log Export Function
+  // 📋 Log Export Function
   const handleExportLogs = useCallback(() => {
     try {
       const logs = window.capturedLogs || [];
@@ -304,7 +426,7 @@ export default function CinemaScene3DDemo() {
     }
   }, []);
   
-  // �📷 Camera view cycling state
+  // 📷 Camera view cycling state
   const [currentCameraView, setCurrentCameraView] = useState('center'); // 'left', 'center', 'right'
   const [showCameraArrows, setShowCameraArrows] = useState(true);
   const cameraArrowTimeoutRef = useRef(null);
@@ -350,6 +472,7 @@ export default function CinemaScene3DDemo() {
   // 🎬 Loading overlay state
   const [loadingStatus, setLoadingStatus] = useState(enableLoadingOverlay ? 'connecting' : null); // 'connecting' | 'finding_seat' | 'loading_scene' | null
   const [hasSeatAssigned, setHasSeatAssigned] = useState(false);
+  const [isInitialSeatRequest, setIsInitialSeatRequest] = useState(true); // Track if this is first seat request (show spinner) vs seat change (no spinner)
   
   
   // 🔇 Silence mode state
@@ -372,10 +495,16 @@ export default function CinemaScene3DDemo() {
     return saved || 'seat'; // Default: seat mode
   });
   
-  // � Session membership confirmation (prevents LiveKit 403 race condition)
+  // ✅ Session membership confirmation (prevents LiveKit 403 race condition)
   const [isSessionMemberConfirmed, setIsSessionMemberConfirmed] = useState(false);
+
+  // LiveShare state
+  //const [liveShareMode, setLiveShareMode] = useState('regular');
+  const [liveShareGuest, setLiveShareGuest] = useState(null);
+  const [hasLiveSharePermission, setHasLiveSharePermission] = useState(false);
+  const [watchSessionMembers, setWatchSessionMembers] = useState([]);
   
-  // �🎫 Ticket enforcement - check on mount for paid sessions
+  // 🎫 Ticket enforcement - check on mount for paid sessions
   useEffect(() => {
     const checkTicket = async () => {
       if (!finalSessionId || !currentUser) return;
@@ -413,7 +542,7 @@ export default function CinemaScene3DDemo() {
     checkTicket();
   }, [finalSessionId, currentUser, roomId, navigate]);
   
-  // �🎁 Wallet balance for gifting
+  // 🎁 Wallet balance for gifting
   const [tokenBalance, setTokenBalance] = useState(0);
   
   // 🎮 GAME SYSTEM: State
@@ -449,6 +578,8 @@ export default function CinemaScene3DDemo() {
   const screenMeshRef = useRef(null);
   const liveShareVideoRef = useRef(null); // ✅ Separate ref for LiveShare main video
   const liveShareCameraVideoRef = useRef(null); // ✅ Separate ref for LiveShare PIP camera
+  const podcastCanvasRef = useRef(null); // 🎙️ Canvas for compositing podcast overlays
+  const podcastLogoImageRef = useRef(null); // 🎙️ Preloaded logo image
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
   // Ref to trigger local emote notification in CinemaScene3D
   const triggerLocalEmoteRef = useRef(null);
@@ -472,6 +603,10 @@ export default function CinemaScene3DDemo() {
   const gameCanvasRendererRef = useRef(null);
   const [gameCanvas, setGameCanvas] = useState(null);
   
+  // 🎮 Game state
+  const [currentGame, setCurrentGame] = useState(null); // { sessionId, type, players, gameState }
+  const [showGameOverlay, setShowGameOverlay] = useState(false);
+  
   useEffect(() => {
     joinSoundRef.current = new Audio('/sounds/userjoin.mp3');
     joinSoundRef.current.volume = 0.5; // 50% volume
@@ -483,7 +618,7 @@ export default function CinemaScene3DDemo() {
     };
   }, []);
   
-  // � Load cinemaSeats.json on mount
+  // 📍 Load cinemaSeats.json on mount
   useEffect(() => {
     const loadCinemaSeats = async () => {
       try {
@@ -499,7 +634,7 @@ export default function CinemaScene3DDemo() {
     loadCinemaSeats();
   }, []);
   
-  // �🎁 Fetch wallet balance on mount
+  // 🎁 Fetch wallet balance on mount
   useEffect(() => {
     const fetchWallet = async () => {
       try {
@@ -532,6 +667,10 @@ export default function CinemaScene3DDemo() {
   // 📹 LiveShare state (screen + camera)
   const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both'
   const [sharingSource, setSharingSource] = useState(null); // 'liveshare' | 'watchfrom' | null
+  
+  // 🎙️ Podcast config (for overlay display)
+  const [podcastConfig, setPodcastConfig] = useState(null); // { title, logoUrl, guestUserId, guestUsername, mode }
+  const [cameraVideoReady, setCameraVideoReady] = useState(false); // Track when camera video element is ready for canvas compositor
   
   // ✅ MediaStream objects for LiveShare (for fullscreen rendering)
   const [remoteScreenStream, setRemoteScreenStream] = useState(null);
@@ -741,8 +880,48 @@ export default function CinemaScene3DDemo() {
   //   }
   // }, [messages.length]);
 
-  // 🔄 Auto-request seat assignment when connecting to cinema
+  // � CACHE OPTIMIZATION: Load user data from localStorage on mount
   useEffect(() => {
+    // Try loading cached user data if not already loaded via props
+    if (!passedCurrentUser && !hookCurrentUser) {
+      const cachedUser = getCachedUser();
+      if (cachedUser) {
+        console.log('⚡ [Cache] Using cached user data for instant UI:', cachedUser.username);
+        // Note: We don't setState here since hookCurrentUser will load fresh data
+        // The cached data is just for logging/debugging - the useAuth hook handles state
+      }
+    }
+    
+    // Try loading cached cinema seats
+    const cachedSeats = getCachedCinemaSeats();
+    if (cachedSeats) {
+      console.log(`⚡ [Cache] Loaded ${cachedSeats.length} cinema seats from cache`);
+      setCinemaSeats({ seats: cachedSeats });
+    }
+  }, []); // Run once on mount
+
+  // 🔄 Cache fresh user data when it loads
+  useEffect(() => {
+    if (currentUser && currentUser.id) {
+      cacheUserData(currentUser);
+    }
+  }, [currentUser]);
+
+  // 🔄 Cache cinema seats when they're generated/loaded
+  useEffect(() => {
+    if (cinemaSeats.seats && cinemaSeats.seats.length > 0) {
+      cacheCinemaSeats(cinemaSeats.seats);
+    }
+  }, [cinemaSeats.seats.length]); // Only cache when seat count changes
+
+  // �🔄 Auto-request seat assignment when connecting to cinema
+  useEffect(() => {
+    // ✅ Don't request seat if already assigned (prevents duplicate requests on re-render)
+    if (hasSeatAssigned) {
+      console.log('⏭️ [SEAT REQUEST] Already seated - skipping request');
+      return;
+    }
+    
     if (isConnected && sendMessage && finalSessionId && currentUser) {
       console.log('🔍 [SEAT REQUEST DEBUG] Conditions met:', {
         isConnected,
@@ -756,14 +935,21 @@ export default function CinemaScene3DDemo() {
       
       console.log(`🪑 [SEAT REQUEST] ${currentUser.username} (ID:${currentUser.id}) requesting seat assignment...`);
       
-      // Update loading status
-      if (enableLoadingOverlay) {
+      // Update loading status - only on initial request (not on seat swaps/changes)
+      if (enableLoadingOverlay && isInitialSeatRequest) {
         setLoadingStatus('finding_seat');
+        console.log('⏳ [Spinner] Showing for initial seat request');
+      } else if (!isInitialSeatRequest) {
+        console.log('⚡ [Spinner] Skipping for seat change/swap (user already connected)');
       }
       
-      // Immediate request (no delay)
-      sendMessage({ type: 'request_seat' });
-      sendMessage({ type: 'request_seat_state' });
+      // ✅ Small delay to ensure component is fully mounted and stable before requesting seat
+      // This prevents race condition where backend response arrives during component remount
+      setTimeout(() => {
+        console.log(`🪑 [SEAT REQUEST] Sending request after stability delay...`);
+        sendMessage({ type: 'request_seat' });
+        sendMessage({ type: 'request_seat_state' });
+      }, 100); // 100ms delay
     } else {
       console.log('⏸️ [SEAT REQUEST DEBUG] Waiting for conditions:', {
         isConnected,
@@ -773,7 +959,7 @@ export default function CinemaScene3DDemo() {
         cinemaSeatsLoaded: cinemaSeats.seats.length
       });
     }
-  }, [isConnected, sendMessage, finalSessionId, currentUser, enableLoadingOverlay]);
+  }, [isConnected, sendMessage, finalSessionId, currentUser, enableLoadingOverlay, hasSeatAssigned]);
   // Load all friendships once on mount
   useEffect(() => {
     const loadFriendships = async () => {
@@ -896,17 +1082,7 @@ export default function CinemaScene3DDemo() {
   // Must be AFTER useWebSocket since we need sessionStatus
   const isHostFromSession = currentUser?.id === sessionStatus?.hostId;
   const isHostFromMembers = currentUser?.id === roomMembers.find(m => m.user_role === 'host')?.id;
-  const isHost = isHostFromState ?? isHostFromSession ?? isHostFromMembers;
-  
-  // 🔍 Debug host detection (disabled for UX)
-  // console.log('🎭 [CinemaScene3D] Host detection:', {
-  //   currentUserId: currentUser?.id,
-  //   sessionHostId: sessionStatus?.hostId,
-  //   isHostFromState,
-  //   isHostFromSession,
-  //   isHostFromMembers,
-  //   finalIsHost: isHost
-  // });
+  const isHost = isHostFromState || isHostFromSession || isHostFromMembers; // Use || not ?? (false is falsy but not null)
 
   // 📡 Fetch active session from REST API on mount (reliable source for host_id)
   useEffect(() => {
@@ -1487,7 +1663,7 @@ export default function CinemaScene3DDemo() {
     }
   };
 
-  // � Position Calculator handlers
+  // 🎯 Position Calculator handlers
   const handleSavePosition = useCallback(() => {
     const updatedSeats = { ...cinemaSeats };
     const seatIndex = updatedSeats.seats.findIndex(s => s.id === selectedSeatId);
@@ -1642,7 +1818,7 @@ export default function CinemaScene3DDemo() {
     toast.success('cinemaSeats.json exported!');
   }, [cinemaSeats]);
 
-  // �🎤 Audio mode toggle handler (host only)
+  // 🎤 Audio mode toggle handler (host only)
   const handleAudioModeToggle = useCallback((newMode) => {
     if (!isHost) {
       console.warn('[Cinema] Only host can change audio mode');
@@ -1739,15 +1915,36 @@ export default function CinemaScene3DDemo() {
     };
   }, [roomId, currentUser?.id, isSessionMemberConfirmed, connectLiveKit, disconnectLiveKit, enableLoadingOverlay]);
   
-  // 🎯 Clear loading overlay when LiveKit connects
+  // 🎯 Move from voice connection to seat finding when LiveKit connects
   useEffect(() => {
     if (isLiveKitConnected && loadingStatus === 'connecting_voice') {
-      console.log('✅ [Cinema LiveKit] Voice connected, clearing loading overlay');
-      // Don't clear immediately - will be cleared by seat assignment
+      console.log('✅ [Cinema LiveKit] Voice connected, transitioning to finding_seat');
+      setLoadingStatus('finding_seat');
     }
   }, [isLiveKitConnected, loadingStatus]);
+  
+  // ✅ Clear loading overlay only when user is BOTH a member AND has a seat
+  useEffect(() => {
+    if (loadingStatus === 'finding_seat' && currentUser?.id) {
+      const isMember = roomMembers.some(m => m.user_id === currentUser.id);
+      const hasSeat = !!userSeats[currentUser.id];
+      
+      console.log('🔍 [Loading Check]', {
+        isMember,
+        hasSeat,
+        memberCount: roomMembers.length,
+        seatCount: Object.keys(userSeats).length
+      });
+      
+      if (isMember && hasSeat) {
+        console.log('✅ [Loading] User is member with seat - clearing overlay');
+        setLoadingStatus(null);
+        setHasSeatAssigned(true);
+      }
+    }
+  }, [loadingStatus, currentUser?.id, roomMembers, userSeats]);
 
-  // � Audio level tracking for pulsating speaking icons
+  // 🎤 Audio level tracking for pulsating speaking icons
   const [activeSpeakers, setActiveSpeakers] = useState(new Map()); // Map<participantIdentity, {isSpeaking: boolean, audioLevel: number}>
   
   useEffect(() => {
@@ -2061,15 +2258,23 @@ export default function CinemaScene3DDemo() {
 
   // 🎬 Handle clicking 3D screen to trigger fullscreen video player
   const handleScreenClick = () => {
-    // Only trigger if media is actually playing
-    const hasMedia = currentMedia || remoteScreenTrack || remoteCameraTrack || localScreenTrack;
-    const isMediaActive = isPlaying || remoteScreenTrack || remoteCameraTrack || localScreenTrack;
+    // Only trigger if media OR game is active
+    const hasMedia = currentMedia || remoteScreenTrack || remoteCameraTrack || localScreenTrack || currentGame;
+    const isMediaActive = isPlaying || remoteScreenTrack || remoteCameraTrack || localScreenTrack || currentGame;
     
     if (hasMedia && isMediaActive) {
-      console.log('🖱️ [CinemaScene3D] Screen clicked - entering immersive mode');
+      console.log('🖱️ [CinemaScene3D] Screen clicked - entering immersive mode', {
+        hasCurrentMedia: !!currentMedia,
+        hasGame: !!currentGame,
+        hasVideoTracks: !!(remoteScreenTrack || remoteCameraTrack || localScreenTrack)
+      });
       setIsImmersiveMode(true);
     } else {
-      console.log('⚠️ [CinemaScene3D] Screen clicked but no media playing');
+      console.log('⚠️ [CinemaScene3D] Screen clicked but no media/game active', {
+        currentMedia: !!currentMedia,
+        currentGame: !!currentGame,
+        isPlaying
+      });
     }
   };
 
@@ -2153,8 +2358,14 @@ export default function CinemaScene3DDemo() {
   // Update keyboard handler
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Ignore if typing in input/textarea
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      // Ignore if typing in input/textarea/select or contenteditable
+      const activeElement = document.activeElement;
+      if (
+        activeElement.tagName === 'INPUT' || 
+        activeElement.tagName === 'TEXTAREA' ||
+        activeElement.tagName === 'SELECT' ||
+        activeElement.isContentEditable
+      ) return;
       
       // 🚫 Don't trigger camera controls when chat is open (except ESC to close modals)
       if ((isChatOpen || showChatHome) && e.key !== 'Escape') return;
@@ -2636,6 +2847,8 @@ export default function CinemaScene3DDemo() {
               videoHeight: cameraVideo.videoHeight,
               currentTime: cameraVideo.currentTime
             });
+            // Trigger canvas compositor for podcast mode
+            setCameraVideoReady(true);
           })
           .catch(err => console.error('❌ [LIVESHARE MEMBER] Camera video play failed:', err));
       }, { once: true });
@@ -2661,6 +2874,240 @@ export default function CinemaScene3DDemo() {
       }
     };
   }, [remoteScreenTrack, remoteCameraTrack]);
+
+  // 🎙️ Podcast Canvas Compositor - Draws video + overlays for 3D screen
+  useEffect(() => {
+    const isPodcastMode = podcastConfig?.mode === 'podcast';
+    const cameraVideo = liveShareCameraVideoRef.current;
+    
+    console.log('🎨 [PODCAST] Canvas effect triggered:', { isPodcastMode, hasCameraVideo: !!cameraVideo, cameraVideoReady });
+    
+    if (!isPodcastMode || !cameraVideo || !cameraVideoReady) {
+      // Clear canvas when not in podcast mode
+      if (podcastCanvasRef.current && !isPodcastMode) {
+        const canvas = podcastCanvasRef.current;
+        if (document.body.contains(canvas)) {
+          document.body.removeChild(canvas);
+        }
+        podcastCanvasRef.current = null;
+        console.log('🗑️ [PODCAST] Canvas cleared');
+      }
+      return;
+    }
+    
+    console.log('🎨 [PODCAST] Starting canvas compositor');
+    
+    // Create canvas if it doesn't exist
+    if (!podcastCanvasRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1920;
+      canvas.height = 1080;
+      canvas.style.cssText = 'position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;';
+      document.body.appendChild(canvas);
+      podcastCanvasRef.current = canvas;
+      console.log('✅ [PODCAST] Canvas created');
+    }
+    
+    // Preload logo image
+    if (podcastConfig.logoUrl && !podcastLogoImageRef.current) {
+      console.log('📦 [PODCAST] Loading logo:', podcastConfig.logoUrl);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = podcastConfig.logoUrl;
+      img.onload = () => {
+        console.log('✅ [PODCAST] Logo loaded:', img.width, 'x', img.height);
+        podcastLogoImageRef.current = img;
+      };
+      img.onerror = (err) => {
+        console.error('❌ [PODCAST] Logo load failed:', err, podcastConfig.logoUrl);
+      };
+    }
+    
+    const canvas = podcastCanvasRef.current;
+    const ctx = canvas.getContext('2d');
+    let animationFrameId;
+    let frameCount = 0;
+    
+    const drawFrame = () => {
+      if (cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA) {
+        // Match canvas size to video
+        if (canvas.width !== cameraVideo.videoWidth || canvas.height !== cameraVideo.videoHeight) {
+          canvas.width = cameraVideo.videoWidth || 1920;
+          canvas.height = cameraVideo.videoHeight || 1080;
+          console.log('📐 [PODCAST] Canvas resized:', canvas.width, 'x', canvas.height);
+        }
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw video frame
+        ctx.drawImage(cameraVideo, 0, 0, canvas.width, canvas.height);
+        
+        // Draw overlays on top
+        const scale = canvas.width / 1920; // Scale overlays to video resolution
+        
+        // LIVE indicator (top center)
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.9)';
+        ctx.beginPath();
+        const liveWidth = 120 * scale;
+        const liveHeight = 40 * scale;
+        const liveX = canvas.width / 2 - liveWidth / 2;
+        const liveY = 20 * scale;
+        ctx.roundRect(liveX, liveY, liveWidth, liveHeight, 20 * scale);
+        ctx.fill();
+        
+        // LIVE text
+        ctx.fillStyle = 'white';
+        ctx.font = `bold ${16 * scale}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🔴 LIVE', canvas.width / 2, liveY + liveHeight / 2);
+        
+        // Host label (top left)
+        const hostText = `${podcastConfig.hostUsername || 'Host'} (Host)`;
+        ctx.font = `${16 * scale}px sans-serif`;
+        ctx.textAlign = 'left';
+        const hostTextWidth = ctx.measureText(hostText).width;
+        const hostBoxWidth = hostTextWidth + 40 * scale;
+        const hostBoxHeight = 40 * scale;
+        const hostX = 20 * scale;
+        const hostY = 20 * scale;
+        
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.beginPath();
+        ctx.roundRect(hostX, hostY, hostBoxWidth, hostBoxHeight, 10 * scale);
+        ctx.fill();
+        
+        ctx.fillStyle = 'white';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(hostText, hostX + 20 * scale, hostY + hostBoxHeight / 2);
+        
+        // Logo (bottom left above title) - load position and size from localStorage
+        if (podcastLogoImageRef.current) {
+          // Load custom logo styles from localStorage
+          let logoSize = 100; // Default size
+          let logoX = 10; // Default X position
+          let logoY = 80; // Default Y position (from bottom)
+          
+          try {
+            const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${podcastConfig.sessionId || sessionId}`);
+            if (savedLogoStyles) {
+              const styles = JSON.parse(savedLogoStyles);
+              logoSize = styles.size || 100;
+              logoX = styles.x || 10;
+              logoY = styles.y || 80;
+            }
+          } catch (err) {
+            console.warn('Failed to load logo styles:', err);
+          }
+          
+          const scaledLogoSize = logoSize * scale;
+          const scaledLogoX = logoX * scale;
+          const scaledLogoY = canvas.height - (logoY * scale) - scaledLogoSize; // Convert from bottom to top
+          
+          // Draw logo image
+          ctx.drawImage(podcastLogoImageRef.current, scaledLogoX, scaledLogoY, scaledLogoSize, scaledLogoSize);
+        }
+        
+        // Title (bottom left with custom styling)
+        if (podcastConfig.title) {
+          // Load custom styles from localStorage
+          let titleColor = 'white';
+          let titleSize = 24;
+          let titleWeight = 700;
+          let titleCase = 'none';
+          
+          try {
+            const savedStyles = localStorage.getItem(`podcast_title_style_${podcastConfig.sessionId || sessionId}`);
+            if (savedStyles) {
+              const styles = JSON.parse(savedStyles);
+              titleColor = styles.color || 'white';
+              titleSize = styles.size || 24;
+              titleWeight = styles.weight || 700;
+              titleCase = styles.case || 'none';
+            }
+          } catch (err) {
+            console.warn('Failed to load title styles:', err);
+          }
+          
+          // Apply text case transformation
+          const applyTextCase = (text, caseType) => {
+            if (!text) return text;
+            
+            switch (caseType) {
+              case 'title':
+                return text.toLowerCase().replace(/\b\w/g, char => char.toUpperCase());
+              case 'upper':
+                return text.toUpperCase();
+              case 'lower':
+                return text.toLowerCase();
+              case 'sentence':
+                return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+              case 'none':
+              default:
+                return text;
+            }
+          };
+          
+          // Map weight to CSS font-weight keyword
+          const fontWeightMap = {
+            300: 'lighter',
+            400: 'normal',
+            500: '500',
+            700: 'bold',
+            800: 'bolder'
+          };
+          const fontWeightKeyword = fontWeightMap[titleWeight] || 'bold';
+          
+          ctx.font = `${fontWeightKeyword} ${titleSize * scale}px sans-serif`;
+          ctx.textAlign = 'left';
+          const titleText = applyTextCase(podcastConfig.title, titleCase);
+          const titleTextWidth = ctx.measureText(titleText).width;
+          const titleBoxWidth = titleTextWidth + 40 * scale;
+          const titleBoxHeight = (titleSize + 20) * scale;
+          const titleX = 10 * scale; // 10px from left
+          const titleY = canvas.height - titleBoxHeight - 10 * scale; // 10px from bottom
+          
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          ctx.beginPath();
+          ctx.roundRect(titleX, titleY, titleBoxWidth, titleBoxHeight, 10 * scale);
+          ctx.fill();
+          
+          ctx.fillStyle = titleColor;
+          ctx.textBaseline = 'middle';
+          ctx.fillText(titleText, titleX + 20 * scale, titleY + titleBoxHeight / 2);
+        }
+        
+        // Log every 60 frames (once per second at 60fps)
+        frameCount++;
+        if (frameCount % 60 === 0) {
+          console.log('🎞️ [PODCAST] Drawing frame', frameCount, 'Logo loaded:', !!podcastLogoImageRef.current);
+        }
+      }
+      
+      animationFrameId = requestAnimationFrame(drawFrame);
+    };
+    
+    // Start drawing loop
+    drawFrame();
+    
+    // Update video texture to use canvas instead of video element
+    if (videoTextureUpdateRef.current) {
+      console.log('🔄 [PODCAST] Switching 3D screen texture to canvas');
+      videoTextureUpdateRef.current(canvas);
+    } else {
+      console.warn('⚠️ [PODCAST] videoTextureUpdateRef not available');
+    }
+    
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        console.log('🛑 [PODCAST] Canvas compositor stopped');
+      }
+      // Reset camera video ready flag
+      setCameraVideoReady(false);
+    };
+  }, [podcastConfig, cameraVideoReady]);
 
   // ✅ Attach uploaded media to hidden <video> for 3D screen texture
   // (LiveShare video elements are created directly in handleStartLiveShare)
@@ -2805,6 +3252,12 @@ export default function CinemaScene3DDemo() {
   // === Process WebSocket messages ===
   useEffect(() => {
     const newMessages = messages.slice(processedMessageCountRef.current);
+    
+    // 🎮 [DEBUG] Log ALL incoming WebSocket messages
+    newMessages.forEach((msg) => {
+      console.log('📨 [WebSocket] Incoming message:', msg.type, msg.action || '', msg);
+    });
+    
     const memberMessages = newMessages.filter(m => 
       ['participant_join', 'participant_leave', 'session_member_joined', 'session_status'].includes(m.type)
     );
@@ -2815,6 +3268,85 @@ export default function CinemaScene3DDemo() {
       // ✅ Let the hook handle seat swap messages FIRST
       if (handleSeatSwapMessage(msg)) {
         return; // Hook handled it — skip rest
+      }
+
+      // 🎮 Handle game messages
+      if (msg.type === 'game') {
+        console.log('🎮 [Game Handler 1] Processing game message:', msg.action, { hasCurrentGame: !!currentGame, hasActiveGame: !!activeGame });
+        switch (msg.action) {
+          case 'game_started':
+            console.log('🎮 [game_started] Received game_started message:', msg.data);
+            if (msg.data) {
+              const gameData = {
+                sessionId: msg.data.game_session_id,
+                game_type: msg.data.game_type, // ✅ Use game_type for consistency with GameScreenRenderer
+                players: msg.data.players,
+                game_state: msg.data.game_state, // ✅ Use snake_case to match GameScreenRenderer expectations
+                status: 'active', // ✅ Add status for game lifecycle tracking
+              };
+              console.log('🎮 [game_started] Setting game state:', gameData);
+              setCurrentGame(gameData);
+              setActiveGame(gameData); // Also update activeGame
+              // ✅ Don't show overlay in cinema mode - game shows on 3D screen instead
+              // setShowGameOverlay(true); 
+              toast.success(`${msg.data.game_type.replace('_', ' ').toUpperCase()} started!`, {
+                icon: '🎮',
+                duration: 3000,
+              });
+            }
+            break;
+            
+          case 'game_state_update':
+            console.log('🎮 [Game Handler 1] game_state_update:', { 
+              hasGameState: !!msg.game_state,
+              board: msg.game_state?.board,
+              currentTurn: msg.current_turn,
+              status: msg.status,
+              currentGame, 
+              activeGame 
+            });
+            // Backend sends data at root level, not in msg.data
+            // Update BOTH currentGame and activeGame
+            if (msg.game_state) {
+              if (currentGame) {
+                setCurrentGame(prev => ({
+                  ...prev,
+                  game_state: msg.game_state, // ✅ Use snake_case to match GameScreenRenderer
+                  currentTurn: msg.current_turn,
+                  status: msg.status, // ✅ Capture status (active/completed)
+                  winner_id: msg.winner_id, // ✅ Capture winner if present
+                }));
+              }
+              if (activeGame) {
+                setActiveGame(prev => ({
+                  ...prev,
+                  game_state: msg.game_state, // ✅ Use snake_case to match GameScreenRenderer
+                  currentTurn: msg.current_turn,
+                  status: msg.status, // ✅ Capture status (active/completed)
+                  winner_id: msg.winner_id, // ✅ Capture winner if present
+                }));
+              }
+            }
+            break;
+            
+          case 'game_ended':
+            // Don't clear the game - keep it visible with winner info
+            const winnerData = msg.data;
+            setCurrentGame(prev => prev ? {
+              ...prev,
+              isGameOver: true,
+              winnerId: winnerData?.winner_id,
+              reason: winnerData?.reason
+            } : null);
+            setActiveGame(prev => prev ? {
+              ...prev,
+              isGameOver: true,
+              winnerId: winnerData?.winner_id,
+              reason: winnerData?.reason
+            } : null);
+            break;
+        }
+        return; // Game message handled
       }
 
       // ⚠️ All other messages
@@ -2839,19 +3371,34 @@ export default function CinemaScene3DDemo() {
             
             // If this is the current user, jump camera to their seat
             if (user_id === currentUser?.id && jumpToSeat) {
-              // Update loading status before camera jump
-              if (enableLoadingOverlay) {
+              // Only show loading_scene spinner on initial assignment, not on seat swaps
+              if (enableLoadingOverlay && isInitialSeatRequest) {
                 setLoadingStatus('loading_scene');
+                console.log('⏳ [Spinner] Showing scene load for initial assignment');
+              } else if (!isInitialSeatRequest) {
+                console.log('⚡ [Spinner] Skipping scene load for seat change (instant jump)');
               }
               
               jumpToSeat(seat_id);
               setHasSeatAssigned(true);
               
-              // Hide loading overlay after brief scene load delay
-              setTimeout(() => {
-                setLoadingStatus(null);
-                console.log('🎬 [Loading] Scene ready - hiding overlay');
-              }, 300); // 0.3 second for scene to render
+              // Mark initial seat request as complete (subsequent requests are seat changes)
+              if (isInitialSeatRequest) {
+                setIsInitialSeatRequest(false);
+                console.log('✅ [Seat] Initial assignment complete - future requests won\'t show spinner');
+              }
+              
+              // 💾 Cache seat assignment (for display only, not re-assignment)
+              cacheLastSession(finalSessionId, roomId, seat_id);
+              console.log('💾 [Cache] Saved seat assignment to localStorage');
+              
+              // Hide loading overlay after brief scene load delay (only if shown)
+              if (enableLoadingOverlay && isInitialSeatRequest) {
+                setTimeout(() => {
+                  setLoadingStatus(null);
+                  console.log('🎬 [Loading] Scene ready - hiding overlay');
+                }, 300); // 0.3 second for scene to render
+              }
             }
           }
           break;
@@ -3682,6 +4229,15 @@ export default function CinemaScene3DDemo() {
           // Session ended - either manually by host or auto-ended after grace period
           console.log('🔚 [CinemaScene3D] Session ended:', msg.data);
           
+          // ✅ Clear podcast title styles from localStorage
+          try {
+            const storageKey = `podcast_title_style_${sessionId}`;
+            localStorage.removeItem(storageKey);
+            console.log('🗑️ Cleared podcast title styles from localStorage');
+          } catch (err) {
+            console.warn('Failed to clear podcast title styles:', err);
+          }
+          
           // ✅ Clear private messages and unread counts
           setPrivateMessages({});
           setUnreadMessages({});
@@ -3769,26 +4325,23 @@ export default function CinemaScene3DDemo() {
 
         // 🎮 Handle game_state_update
         case 'game_state_update':
-          console.log('🎮 [CinemaScene3D] Game state updated:', msg.data);
-          setActiveGame(msg.data);
+          console.log('🎮 [CinemaScene3D] Game state updated:', msg);
+          // Backend sends data at root level
+          if (msg.game_state) {
+            setActiveGame(prev => prev ? {
+              ...prev,
+              game_state: msg.game_state, // ✅ Use snake_case to match GameScreenRenderer
+              currentTurn: msg.current_turn
+            } : null);
+          }
           break;
 
         // 🎮 Handle game_ended
         case 'game_ended':
           console.log('🎮 [CinemaScene3D] Game ended:', msg.data);
-          const winner = msg.data.players?.find(p => p.score > 0);
-          if (winner) {
-            toast.success(`${winner.username} wins!`, {
-              duration: 4000,
-              icon: '🏆'
-            });
-          } else {
-            toast.success("It's a draw!", {
-              duration: 3000,
-              icon: '🤝'
-            });
-          }
-          setActiveGame(null);
+          // ✅ Don't clear game immediately - keep it displayed to show results
+          // User can see winner, picks, and click "Play Again" button
+          // Game will be cleared when user restarts or manually closes
           break;
 
         // 🎮 Handle game_forfeited
@@ -3816,29 +4369,37 @@ export default function CinemaScene3DDemo() {
   
   // 🎮 GAME SYSTEM: Handler Functions
   const handleGameClick = useCallback(() => {
+    console.log('🎮 [handleGameClick] Button clicked! isHost:', isHost);
     if (isHost) {
+      console.log('🎮 [handleGameClick] Opening game lobby...');
       setIsGameLobbyOpen(true);
     } else {
-      toast.info('Only the host can start games');
+      console.log('🎮 [handleGameClick] Not host, showing toast');
+      toast('Only the host can start games', { icon: 'ℹ️' });
     }
   }, [isHost]);
 
   const handleStartGame = useCallback((gameType, playersData) => {
+    console.log('🎮 [handleStartGame] Called with:', { gameType, playersData });
+    console.log('🎮 [handleStartGame] Full player data:', JSON.stringify(playersData, null, 2));
+    
     if (!sendMessage) {
       console.error('❌ [CinemaScene3D] sendMessage not available');
       return;
     }
     
-    console.log('🎮 [CinemaScene3D] Starting game:', gameType, playersData);
-    
-    sendMessage({
+    const message = {
       type: 'start_game',
       data: {
         game_type: gameType,
         players: playersData
       }
-    });
+    };
     
+    console.log('🎮 [handleStartGame] Sending WebSocket message:', JSON.stringify(message, null, 2));
+    sendMessage(message);
+    
+    console.log('🎮 [handleStartGame] Message sent, closing lobby');
     setIsGameLobbyOpen(false);
   }, [sendMessage]);
 
@@ -3848,30 +4409,77 @@ export default function CinemaScene3DDemo() {
       return;
     }
     
-    console.log('🎮 [CinemaScene3D] Making move:', moveData);
+    // Check if this is a restart action
+    if (moveData.action === 'restart_game') {
+      console.log('🎮 [CinemaScene3D] Restarting game');
+      const game = activeGame || currentGame;
+      if (game && game.game_type) {
+        // Restart the same game with the same players
+        console.log('🎮 [CinemaScene3D] Sending start_game:', {
+          game_type: game.game_type,
+          players: game.players
+        });
+        sendMessage({
+          type: 'start_game',
+          data: {
+            game_type: game.game_type,
+            players: game.players
+          }
+        });
+        // Clear the game states so new game can replace it
+        setActiveGame(null);
+        setCurrentGame(null);
+      } else {
+        console.error('❌ [CinemaScene3D] Cannot restart - missing game data:', game);
+      }
+      return;
+    }
+    
+    // Get active game session ID
+    const game = activeGame || currentGame;
+    if (!game || !game.sessionId) {
+      console.error('❌ [CinemaScene3D] No active game session');
+      return;
+    }
+    
+    console.log('🎮 [CinemaScene3D] Making move:', { move_type: 'pick', move_data: moveData, game_session_id: game.sessionId });
     
     sendMessage({
       type: 'make_move',
-      data: moveData
+      data: {
+        game_session_id: game.sessionId,
+        move_type: 'pick',
+        move_data: moveData
+      }
     });
-  }, [sendMessage]);
+  }, [sendMessage, activeGame, currentGame, setActiveGame, setCurrentGame]);
 
   const handleGameClose = useCallback(() => {
     console.log('🎮 [CinemaScene3D] Closing game');
     setActiveGame(null);
+    setCurrentGame(null);
   }, []);
 
-  // 🎮 Update game canvas when activeGame changes
+  // 🎮 Update game canvas when activeGame OR currentGame changes
   useEffect(() => {
-    if (activeGame && gameCanvasRendererRef.current) {
+    const game = activeGame || currentGame;
+    console.log('🎮 [Game Canvas Effect] Game state changed:', {
+      hasGame: !!game,
+      gameType: game?.game_type,
+      hasRenderer: !!gameCanvasRendererRef.current,
+      activeGame,
+      currentGame
+    });
+    
+    if (game && gameCanvasRendererRef.current) {
       const canvas = gameCanvasRendererRef.current.getCanvas();
+      console.log('🎮 [Game Canvas Effect] Got canvas from renderer:', canvas);
       setGameCanvas(canvas);
-      console.log('🎮 [CinemaScene3D] Game canvas updated:', canvas);
     } else {
+      console.log('🎮 [Game Canvas Effect] Clearing game canvas');
       setGameCanvas(null);
-      console.log('🎮 [CinemaScene3D] Game canvas cleared');
     }
-  }, [activeGame]);
+  }, [activeGame, currentGame]);
   
   // === Handlers ===
   const handleSendSessionMessage = () => {
@@ -4253,7 +4861,7 @@ export default function CinemaScene3DDemo() {
   }
 
   // 📹 Complete LiveShare handler (screen, camera, or both)
-  const handleStartLiveShare = async (mode = 'screen', source = 'liveshare') => {
+  const handleStartLiveShare = async (mode = 'screen', source = 'liveshare', config = null) => {
     if (!isLiveKitConnected || !localParticipant) {
       toast.error('LiveKit not connected. Please wait...');
       console.error('❌ [LiveShare] Cannot start - LiveKit not ready', {
@@ -4264,7 +4872,7 @@ export default function CinemaScene3DDemo() {
     }
     
     try {
-      console.log(`🎥 [LiveShare] Starting mode: ${mode}, source: ${source}`);
+      console.log(`🎥 [LiveShare] Starting mode: ${mode}, source: ${source}`, config);
       
       let screenStream = null;
       let cameraStream = null;
@@ -4414,9 +5022,14 @@ export default function CinemaScene3DDemo() {
             // because CinemaTheaterGLB expects cameraVideoElement for camera-only mode
             liveShareCameraVideoRef.current = video;
             
-            video.play().catch(err => {
-              console.warn('⚠️ [LiveShare] Play failed:', err.message);
-            });
+            video.play()
+              .then(() => {
+                console.log('✅ [LiveShare] Camera video playing - triggering canvas compositor');
+                setCameraVideoReady(true); // 🎨 Trigger canvas compositor for podcast overlays
+              })
+              .catch(err => {
+                console.warn('⚠️ [LiveShare] Play failed:', err.message);
+              });
             
             console.log('✅ [LiveShare] Fresh video element created for CAMERA (main screen)');
           } else if (mode === 'both') {
@@ -4437,7 +5050,12 @@ export default function CinemaScene3DDemo() {
               cameraVideoRef.current = video;
             }
             
-            video.play().catch(e => console.warn('⚠️ [LiveShare] PIP play failed:', e));
+            video.play()
+              .then(() => {
+                console.log('✅ [LiveShare] Camera video (both mode) playing - triggering canvas compositor');
+                setCameraVideoReady(true); // 🎨 Trigger canvas compositor for podcast overlays
+              })
+              .catch(e => console.warn('⚠️ [LiveShare] PIP play failed:', e));
             
             console.log('✅ [LiveShare] Fresh video element created for PIP');
           }
@@ -4446,12 +5064,17 @@ export default function CinemaScene3DDemo() {
       
       setLiveShareMode(mode);
       setSharingSource(source);
-      // ✅ Include streams in currentMedia so fullscreen can access them
+      
+      // Determine title based on podcast config or mode
+      const mediaTitle = config?.title ? config.title : `LiveShare (${mode})`;
+      
+      // ✅ Include streams and podcast config in currentMedia
       setCurrentMedia({ 
         type: 'liveshare', 
-        title: `LiveShare (${mode})`,
+        title: mediaTitle,
         stream: screenStream,      // Screen share MediaStream
-        cameraStream: cameraStream // Camera MediaStream
+        cameraStream: cameraStream, // Camera MediaStream
+        podcastConfig: config       // Podcast metadata for overlay
       });
       setIsPlaying(true);
       
@@ -4556,6 +5179,78 @@ export default function CinemaScene3DDemo() {
   // 📹 Legacy end screen share handler
   const handleEndScreenShare = () => {
     handleEndLiveShare();
+  };
+  
+  // ✅ LiveShare Mode Selection Handler
+  const handleLiveShareModeSelect = (mode, config = null) => {
+    console.log('🎬 [LiveShare] Mode selected:', mode, config);
+    
+    // ✅ If mode is null, end the LiveShare session
+    if (mode === null) {
+      handleEndLiveShare();
+      return;
+    }
+    
+    // Store podcast config for overlay rendering
+    if (mode === 'podcast' && config) {
+      setPodcastConfig({
+        ...config,
+        mode: 'podcast',
+        hostUsername: currentUser?.username || 'Host' // Add host username
+      });
+    }
+    
+    const messageData = { mode };
+    
+    // Add podcast config if provided
+    if (mode === 'podcast' && config) {
+      messageData.podcastTitle = config.title;
+      messageData.podcastLogoURL = config.logoUrl;
+      messageData.guestUserId = config.guestUserId;
+    }
+    
+    sendMessage({
+      type: 'liveshare_mode_selected',
+      data: messageData
+    });
+  };
+  
+  // ✅ LiveShare Type Selection Handler (screen/camera)
+  const handleLiveShareTypeSelect = (type) => {
+    console.log('🎬 [LiveShare] Type selected:', type);
+    sendMessage({
+      type: 'liveshare-type-selected',
+      data: { type }
+    });
+    // Start the actual screen/camera share (pass podcast config if available)
+    handleStartLiveShare(type, 'liveshare', podcastConfig);
+  };
+  
+  // ✅ Grant LiveShare Permission Handler
+  const handleGrantLiveSharePermission = (userId) => {
+    console.log('🎬 [LiveShare] Granting permission to user:', userId);
+    sendMessage({
+      type: 'liveshare-grant-permission',
+      data: { user_id: userId }
+    });
+  };
+  
+  // ✅ Revoke LiveShare Permission Handler
+  const handleRevokeLiveSharePermission = (userId) => {
+    console.log('🎬 [LiveShare] Revoking permission from user:', userId);
+    sendMessage({
+      type: 'liveshare-revoke-permission',
+      data: { user_id: userId }
+    });
+  };
+  
+  // ✅ Kick LiveShare Guest Handler
+  const handleKickLiveShareGuest = (userId) => {
+    console.log('🎬 [LiveShare] Kicking guest:', userId);
+    sendMessage({
+      type: 'liveshare-kick-guest',
+      data: { user_id: userId }
+    });
   };
   
   // 📹 Handle camera preview from LeftSidebar
@@ -4805,6 +5500,7 @@ export default function CinemaScene3DDemo() {
         videoElement={liveShareVideoRef.current || videoRef.current} // ✅ Use LiveShare video if active
         cameraVideoElement={liveShareCameraVideoRef.current || cameraVideoRef.current} // ✅ Use LiveShare camera if active
         gameCanvas={gameCanvas} // 🎮 NEW: Game canvas for screen texture
+        podcastCanvas={podcastCanvasRef.current} // 🎙️ Podcast canvas with overlays
         liveShareMode={liveShareMode}
         onAvatarClick={openProfile}
         onVideoTextureUpdate={(fn) => {
@@ -4932,6 +5628,9 @@ export default function CinemaScene3DDemo() {
         showChatBubbles={showChatBubbles} // 💬 Chat bubble visibility preference
         onToggleChatBubbles={() => setShowChatBubbles(!showChatBubbles)} // 💬 Toggle handler
         unreadMessages={unreadMessages}
+        // 🎮 Game props for cinema mode
+        currentGame={currentGame || activeGame}
+        onGameClose={handleGameClose}
       />
       )}
       
@@ -4978,7 +5677,10 @@ export default function CinemaScene3DDemo() {
           <LeftSidebar
             roomId={roomId}
             isLeftSidebarOpen={true}
+            isHost={isHost}
             onGameClick={handleGameClick}
+            onGameClose={handleGameClose}
+            activeGame={activeGame || currentGame}
             watchType="3d_cinema"
             classType={null}
             darknessLevel={darknessLevel}
@@ -5102,11 +5804,19 @@ export default function CinemaScene3DDemo() {
                 handleStartScreenShare();
               }
             }}
-            isHost={isHost}
             onClose={() => setIsLeftSidebarOpen(false)}
             onUploadComplete={fetchAndGeneratePosters} // ✅ Refresh after upload
             mousePosition={{ x: 0, y: 0 }}
             sessionId={sessionStatus?.id}
+            watchSessionMembers={roomMembers}
+            liveShareMode={liveShareMode}
+            liveShareGuest={liveShareGuest}
+            hasLiveSharePermission={hasLiveSharePermission}
+            onLiveShareModeSelect={handleLiveShareModeSelect}
+            onLiveShareTypeSelect={handleLiveShareTypeSelect}
+            onGrantLiveSharePermission={handleGrantLiveSharePermission}
+            onRevokeLiveSharePermission={handleRevokeLiveSharePermission}
+            onKickLiveShareGuest={handleKickLiveShareGuest}
           />
         </div>
       )}
@@ -5258,35 +5968,45 @@ export default function CinemaScene3DDemo() {
           onClose={() => setIsGameLobbyOpen(false)}
           roomMembers={[
             { id: currentUser?.id, username: currentUser?.username },
-            ...roomMembers.map(m => ({
-              id: m.id,
-              username: m.username || m.name
-            }))
+            ...roomMembers
+              .filter(m => m.id !== currentUser?.id) // ✅ Deduplicate: exclude current user
+              .map(m => ({
+                id: m.id,
+                username: m.username || m.name
+              }))
           ].filter(m => m.id)}
           currentUserId={currentUser?.id}
           onStartGame={handleStartGame}
         />
       )}
-
-      {activeGame && (
+// 🎮 Game Overlay is rendered when a game is active, and receives move updates via WebSocket messages
+      {/* ❌ GameOverlay DISABLED for cinema mode - game shows on 3D screen instead */}
+      {/* Game interactions happen via clicking the 3D screen (immersive mode) */}
+      {/* 
+      {(activeGame || currentGame) && (
         <GameOverlay
-          activeGame={activeGame}
+          activeGame={activeGame || currentGame}
           currentUserId={currentUser?.id}
           onMove={handleGameMove}
           onClose={handleGameClose}
-          webSocketService={{ on: () => {}, off: () => {} }} // Handled via messages array
-        />
-      )}
+            webSocketService={{ on: () => {}, off: () => {} }}
+          />
+        );
+      })()}
+      */}
 
       {/* 🎮 Hidden Game Canvas Renderer - renders game to canvas for 3D texture */}
-      {activeGame && (
-        <GameScreenRenderer
-          ref={gameCanvasRendererRef}
-          activeGame={activeGame}
-          currentUserId={currentUser?.id}
-          onMove={handleGameMove}
-        />
-      )}
+      {(activeGame || currentGame) && (() => {
+        console.log('🎮 [CinemaScene3D] Rendering GameScreenRenderer with game:', activeGame || currentGame);
+        return (
+          <GameScreenRenderer
+            ref={gameCanvasRendererRef}
+            activeGame={activeGame || currentGame}
+            currentUserId={currentUser?.id}
+            onMove={handleGameMove}
+          />
+        );
+      })()}
 
       {/* ✅ Seat Grid Modal — NOW INSIDE THE ROOT DIV */}
       <CinemaSeatGridModal
@@ -5338,8 +6058,52 @@ export default function CinemaScene3DDemo() {
             </svg>
           </button>
           
+          {/* 🎮 Game fullscreen - render game canvas */}
+          {currentGame && gameCanvas && (
+            <div 
+              className="w-full h-full flex items-center justify-center"
+              onClick={(e) => {
+                // Calculate click position relative to canvas
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                // Convert to canvas coordinates (0-1 normalized)
+                const normalizedX = x / rect.width;
+                const normalizedY = y / rect.height;
+                
+                console.log('🎮 [Fullscreen Game] Canvas clicked:', { x, y, normalizedX, normalizedY });
+                
+                // Dispatch click event to canvas
+                if (gameCanvasRendererRef.current) {
+                  gameCanvasRendererRef.current.handleCanvasClick(normalizedX, normalizedY);
+                }
+              }}
+            >
+              <canvas
+                ref={(canvas) => {
+                  if (canvas && gameCanvas) {
+                    // Copy game canvas content to fullscreen canvas
+                    canvas.width = gameCanvas.width;
+                    canvas.height = gameCanvas.height;
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Continuously update (animation loop)
+                    const updateCanvas = () => {
+                      ctx.drawImage(gameCanvas, 0, 0);
+                      requestAnimationFrame(updateCanvas);
+                    };
+                    updateCanvas();
+                  }
+                }}
+                className="max-w-full max-h-full object-contain"
+                style={{ cursor: 'pointer' }}
+              />
+            </div>
+          )}
+          
           {/* ✅ LiveShare fullscreen - use MediaStream objects (same pattern as PositionCalculatorPage) */}
-          {(currentMedia?.type === 'liveshare' || remoteScreenTrack || remoteCameraTrack) && (() => {
+          {!currentGame && (currentMedia?.type === 'liveshare' || remoteScreenTrack || remoteCameraTrack) && (() => {
             // For HOST: use streams from currentMedia
             // For MEMBERS: use MediaStream objects created from LiveKit tracks
             const screenStream = currentMedia?.stream || remoteScreenStream;
@@ -5356,6 +6120,7 @@ export default function CinemaScene3DDemo() {
                 stream={screenStream}
                 cameraStream={cameraStream}
                 liveShareMode={liveShareMode}
+                podcastConfig={currentMedia?.podcastConfig || podcastConfig}
               />
             );
           })()}

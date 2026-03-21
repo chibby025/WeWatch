@@ -104,7 +104,8 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
       const poolEntry = activeConnections.get(connectionKey);
       const existingWs = poolEntry.ws;
       
-      if (existingWs.readyState === WebSocket.OPEN || existingWs.readyState === WebSocket.CONNECTING) {
+      // ✅ ONLY reuse OPEN connections, NOT CONNECTING (might be stale/zombie)
+      if (existingWs.readyState === WebSocket.OPEN) {
         console.log(`♻️ [useWebSocket] REUSING existing connection for ${connectionKey} (refCount: ${poolEntry.refCount} → ${poolEntry.refCount + 1})`);
         poolEntry.refCount++;
         

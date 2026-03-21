@@ -449,3 +449,36 @@ func AuthMiddleware() gin.HandlerFunc {
         c.Next()
     }
 }
+
+// GetUserByUsernameHandler looks up a user by username (for ticket gifting)
+// GET /api/users/by-username/:username
+func GetUserByUsernameHandler(c *gin.Context) {
+    username := c.Param("username")
+    
+    if username == "" {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Username required"})
+        return
+    }
+    
+    db := c.MustGet("db").(*gorm.DB)
+    
+    var user models.User
+    if err := db.Where("LOWER(username) = LOWER(?)", username).First(&user).Error; err != nil {
+        if err == gorm.ErrRecordNotFound {
+            c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+        } else {
+            log.Printf("Error looking up user: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+        }
+        return
+    }
+    
+    // Return minimal user info (no sensitive data)
+    c.JSON(http.StatusOK, gin.H{
+        "user": gin.H{
+            "id":       user.ID,
+            "username": user.Username,
+            "avatar_url": user.AvatarURL,
+        },
+    })
+}

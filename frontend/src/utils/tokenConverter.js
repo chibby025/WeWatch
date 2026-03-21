@@ -10,12 +10,13 @@ const BASE_TOKEN_RATE_USD = 0.10; // $0.10 per token
 
 /**
  * Exchange rates (approximate - can be fetched from backend in production)
- * For NGN: Platform rate is 1 token = ₦122
+ * For NGN: Platform rate is 1 token = ₦122 (withdrawal rate for hosts)
+ * Note: Users buy tokens at ₦165, but ticket prices use withdrawal rate
  * All rates are relative to USD base ($0.10 per token)
  */
 export const EXCHANGE_RATES = {
   USD: 1.00,
-  NGN: 122.00,   // ₦122 = 1 token (platform rate)
+  NGN: 122.00,   // ₦122 = 1 token (withdrawal/ticket rate)
   GHS: 12.50,    // ₵12.50 = $1
   KES: 150.00,   // KSh150 = $1
   ZAR: 18.50,    // R18.50 = $1

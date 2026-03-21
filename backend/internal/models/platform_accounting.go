@@ -29,6 +29,13 @@ type PlatformAccounting struct {
 	TokenDonationCommission         float64 `gorm:"type:decimal(15,2);not null;default:0" json:"token_donation_commission"`          // Current balance of 5% gift commissions
 	LifetimeTokenDonationCommission float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_token_donation_commission"` // All gift commissions ever earned
 	
+	// Ticket Transfer Fee Revenue (5% fee on ticket gifts/transfers)
+	TransferFeeRevenue         float64 `gorm:"type:decimal(15,2);not null;default:0" json:"transfer_fee_revenue"`          // Current balance of 5% transfer fees
+	LifetimeTransferFeeRevenue float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_transfer_fee_revenue"` // All transfer fees ever earned
+	
+	// Early Bird Analytics (informational - not revenue)
+	TotalEarlyBirdSavings float64 `gorm:"type:decimal(15,2);not null;default:0" json:"total_early_bird_savings"` // Total savings given to users via early bird pricing
+	
 	// Pending amounts
 	PendingPayouts float64 `gorm:"type:decimal(15,2);not null;default:0" json:"pending_payouts"` // Withdrawal requests pending
 	

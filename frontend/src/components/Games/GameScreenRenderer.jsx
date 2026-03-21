@@ -27,6 +27,78 @@ const GameScreenRenderer = forwardRef(({
         return arcadeCanvasRef.current;
       }
       return canvasRef.current;
+    },
+    handleCanvasClick: (normalizedX, normalizedY) => {
+      // Handle click on canvas (normalized coordinates 0-1)
+      console.log('🎮 [GameScreenRenderer] Canvas click received:', { normalizedX, normalizedY });
+      
+      if (!activeGame || !canvasRef.current) return;
+      
+      const canvas = canvasRef.current;
+      const clickX = normalizedX * canvas.width;
+      const clickY = normalizedY * canvas.height;
+      
+      // Check if game is over and restart button was clicked
+      if (activeGame.isGameOver) {
+        const restartButtonData = canvas.dataset.restartButton;
+        if (restartButtonData) {
+          const button = JSON.parse(restartButtonData);
+          if (clickX >= button.x && clickX <= button.x + button.width &&
+              clickY >= button.y && clickY <= button.y + button.height) {
+            console.log('🎮 [GameScreenRenderer] Restart button clicked');
+            // Send restart signal
+            if (onMove) {
+              onMove({ action: 'restart_game' });
+            }
+            return;
+          }
+        }
+        console.log('🎮 [GameScreenRenderer] Game is over, ignoring click');
+        return;
+      }
+      
+      const gameType = activeGame.game_type;
+      
+      if (gameType === 'tic_tac_toe') {
+        // Calculate which cell was clicked
+        const gridSize = Math.min(canvas.width, canvas.height) * 0.5;
+        const cellSize = gridSize / 3;
+        const offsetX = (canvas.width - gridSize) / 2;
+        const offsetY = (canvas.height - gridSize) / 2 + canvas.height * 0.05;
+        
+        // Check if click is within grid
+        if (clickX >= offsetX && clickX <= offsetX + gridSize &&
+            clickY >= offsetY && clickY <= offsetY + gridSize) {
+          const col = Math.floor((clickX - offsetX) / cellSize);
+          const row = Math.floor((clickY - offsetY) / cellSize);
+          const cellIndex = row * 3 + col;
+          
+          console.log('🎮 [TicTacToe] Cell clicked:', { row, col, cellIndex });
+          
+          // Send move
+          if (onMove) {
+            onMove({ position: cellIndex });
+          }
+        }
+      } else if (gameType === 'rock_paper_scissors') {
+        // Handle RPS button clicks
+        const buttons = JSON.parse(canvas.dataset.rpsButtons || '[]');
+        console.log('🎮 [RPS] Checking buttons:', buttons);
+        
+        buttons.forEach(button => {
+          const distance = Math.sqrt(
+            Math.pow(clickX - button.x, 2) + 
+            Math.pow(clickY - button.y, 2)
+          );
+          
+          if (distance <= button.radius) {
+            console.log('🎮 [RPS] Button clicked:', button.value);
+            if (onMove) {
+              onMove({ pick: button.value });
+            }
+          }
+        });
+      }
     }
   }));
 
@@ -40,6 +112,7 @@ const GameScreenRenderer = forwardRef(({
 
     // Arcade games render themselves
     if (gameType === 'space_impact' || gameType === 'snake' || gameType === 'tetris') {
+      console.log('🎮 [GameScreenRenderer] Activating arcade game:', gameType, 'Canvas ref:', arcadeCanvasRef.current);
       setIsArcadeActive(true);
       return;
     }
@@ -60,6 +133,7 @@ const GameScreenRenderer = forwardRef(({
       renderTicTacToe(ctx, canvas, activeGame, currentUserId, onMove);
     } else if (gameType === 'rock_paper_scissors') {
       renderRockPaperScissors(ctx, canvas, activeGame, currentUserId, onMove);
+      console.log('🎮 [GameScreenRenderer] Initial rock_paper_scissors render complete');
     }
 
     // Set up animation loop for dynamic updates (RPS countdown, etc.)
@@ -242,21 +316,56 @@ function renderTicTacToe(ctx, canvas, gameState, currentUserId, onMove) {
   });
 
   // Winner overlay
-  if (gameState.status === 'finished' || gameState.status === 'completed') {
-    const winner = players.find(p => gameState.winner_id === p.user_id);
+  if (gameState.isGameOver || gameState.status === 'finished' || gameState.status === 'completed') {
+    const winner = players.find(p => (gameState.winnerId || gameState.winner_id) === p.user_id);
     
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    // Semi-transparent dark overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
     ctx.fillRect(0, 0, width, height);
 
+    // Winner text
     ctx.fillStyle = '#FFD700';
     ctx.font = `bold ${Math.floor(height * 0.08)}px Arial`;
     ctx.textAlign = 'center';
     
     if (winner) {
-      ctx.fillText(`🏆 ${winner.username} WINS! 🏆`, width / 2, height / 2);
+      ctx.fillText(`🏆 ${winner.username} WINS! 🏆`, width / 2, height / 2 - height * 0.15);
     } else {
-      ctx.fillText("🤝 DRAW! 🤝", width / 2, height / 2);
+      ctx.fillText("🤝 DRAW! 🤝", width / 2, height / 2 - height * 0.15);
     }
+
+    // Restart button
+    const buttonWidth = width * 0.3;
+    const buttonHeight = height * 0.08;
+    const buttonX = (width - buttonWidth) / 2;
+    const buttonY = height / 2 + height * 0.02;
+    
+    // Button background with gradient
+    const buttonGradient = ctx.createLinearGradient(buttonX, buttonY, buttonX, buttonY + buttonHeight);
+    buttonGradient.addColorStop(0, '#10B981');
+    buttonGradient.addColorStop(1, '#059669');
+    ctx.fillStyle = buttonGradient;
+    ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+    
+    // Button border
+    ctx.strokeStyle = '#34D399';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+    
+    // Button text
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `bold ${Math.floor(height * 0.045)}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('PLAY AGAIN', width / 2, buttonY + buttonHeight / 2);
+    
+    // Store button coordinates for click detection
+    canvas.dataset.restartButton = JSON.stringify({
+      x: buttonX,
+      y: buttonY,
+      width: buttonWidth,
+      height: buttonHeight
+    });
   }
 }
 
@@ -307,6 +416,15 @@ function renderRockPaperScissors(ctx, canvas, gameState, currentUserId, onMove) 
 
     const buttonSize = Math.min(width, height) * 0.12;
     const buttonY = height * 0.65;
+    
+    // Store button data for click detection
+    const buttonData = choices.map(choice => ({
+      x: choice.x,
+      y: buttonY,
+      radius: buttonSize / 2,
+      value: choice.value
+    }));
+    canvas.dataset.rpsButtons = JSON.stringify(buttonData);
 
     choices.forEach(choice => {
       // Button circle
@@ -330,11 +448,17 @@ function renderRockPaperScissors(ctx, canvas, gameState, currentUserId, onMove) 
       ctx.textBaseline = 'alphabetic';
       ctx.fillText(choice.label, choice.x, buttonY + buttonSize / 2 + 30);
     });
+  } else {
+    // Clear button data if already picked
+    canvas.dataset.rpsButtons = '[]';
   }
 
-  // Results
-  if (gameState.status === 'finished' || gameState.status === 'completed') {
-    const winner = players.find(p => gameState.winner_id === p.user_id);
+  // Results (check status or isGameOver flag)
+  const isGameFinished = gameState.status === 'finished' || gameState.status === 'completed' || gameState.isGameOver;
+  if (isGameFinished) {
+    const winner = players.find(p => (gameState.winner_id || gameState.winnerId) === p.user_id);
+    // Use final_picks if available (set when game completes), otherwise use regular picks
+    const finalPicks = gameState.game_state?.final_picks || picks;
     
     ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
     ctx.fillRect(0, 0, width, height);
@@ -343,7 +467,7 @@ function renderRockPaperScissors(ctx, canvas, gameState, currentUserId, onMove) 
     ctx.font = `${Math.floor(height * 0.1)}px Arial`;
     players.forEach((player, index) => {
       const xPos = index === 0 ? width * 0.3 : width * 0.7;
-      const pick = picks[player.user_id];
+      const pick = finalPicks[player.user_id];
       const emojiMap = { rock: '🪨', paper: '📄', scissors: '✂️' };
       
       ctx.fillStyle = '#ffffff';
@@ -355,268 +479,43 @@ function renderRockPaperScissors(ctx, canvas, gameState, currentUserId, onMove) 
     ctx.fillStyle = '#FFD700';
     ctx.font = `bold ${Math.floor(height * 0.07)}px Arial`;
     if (winner) {
-      ctx.fillText(`🏆 ${winner.username} WINS! 🏆`, width / 2, height * 0.75);
-    } else {
-      ctx.fillText("🤝 IT'S A DRAW! 🤝", width / 2, height * 0.75);
-    }
-  }
-}
-
-// === TIC TAC TOE RENDERER ===
-function renderTicTacToe(ctx, canvas, gameState, currentUserId, onMove) {
-  const { width, height } = canvas;
-  const board = gameState.game_state?.board || Array(9).fill('');
-  const currentTurn = gameState.game_state?.current_turn || 0;
-  const players = gameState.players || [];
-  const myPlayerIndex = players.findIndex(p => p.user_id === currentUserId);
-  const currentPlayer = players[currentTurn];
-  const isMyTurn = currentPlayer?.user_id === currentUserId;
-
-  // Clear canvas
-  ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(0, 0, width, height);
-
-  // Calculate grid dimensions (centered, responsive)
-  const gridSize = Math.min(width, height) * 0.6;
-  const cellSize = gridSize / 3;
-  const offsetX = (width - gridSize) / 2;
-  const offsetY = (height - gridSize) / 2 + 50; // Leave space for header
-
-  // Draw header
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `bold ${Math.floor(height * 0.05)}px Arial`;
-  ctx.textAlign = 'center';
-  ctx.fillText('TIC TAC TOE', width / 2, height * 0.08);
-
-  // Draw player indicators
-  const player1 = players[0];
-  const player2 = players[1];
-  
-  ctx.font = `${Math.floor(height * 0.03)}px Arial`;
-  
-  // Player 1 (X)
-  ctx.fillStyle = currentTurn === 0 ? '#FF6B6B' : '#666666';
-  ctx.textAlign = 'left';
-  ctx.fillText(`${player1?.username || 'Player 1'} (X)`, width * 0.1, height * 0.15);
-  if (currentTurn === 0) {
-    ctx.fillStyle = '#FFD700';
-    ctx.fillText('← YOUR TURN', width * 0.1, height * 0.19);
-  }
-
-  // Player 2 (O)
-  ctx.fillStyle = currentTurn === 1 ? '#4ECDC4' : '#666666';
-  ctx.textAlign = 'right';
-  ctx.fillText(`${player2?.username || 'Player 2'} (O)`, width * 0.9, height * 0.15);
-  if (currentTurn === 1) {
-    ctx.fillStyle = '#FFD700';
-    ctx.fillText('YOUR TURN →', width * 0.9, height * 0.19);
-  }
-
-  // Draw grid lines
-  ctx.strokeStyle = '#444466';
-  ctx.lineWidth = 4;
-  for (let i = 1; i < 3; i++) {
-    // Vertical lines
-    ctx.beginPath();
-    ctx.moveTo(offsetX + i * cellSize, offsetY);
-    ctx.lineTo(offsetX + i * cellSize, offsetY + gridSize);
-    ctx.stroke();
-
-    // Horizontal lines
-    ctx.beginPath();
-    ctx.moveTo(offsetX, offsetY + i * cellSize);
-    ctx.lineTo(offsetX + gridSize, offsetY + i * cellSize);
-    ctx.stroke();
-  }
-
-  // Draw X's and O's
-  ctx.lineWidth = 8;
-  ctx.lineCap = 'round';
-  
-  board.forEach((cell, index) => {
-    if (!cell) return;
-
-    const row = Math.floor(index / 3);
-    const col = index % 3;
-    const x = offsetX + col * cellSize + cellSize / 2;
-    const y = offsetY + row * cellSize + cellSize / 2;
-    const padding = cellSize * 0.2;
-
-    if (cell === 'X') {
-      // Draw X
-      ctx.strokeStyle = '#FF6B6B';
-      ctx.beginPath();
-      ctx.moveTo(x - padding, y - padding);
-      ctx.lineTo(x + padding, y + padding);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(x + padding, y - padding);
-      ctx.lineTo(x - padding, y + padding);
-      ctx.stroke();
-    } else if (cell === 'O') {
-      // Draw O
-      ctx.strokeStyle = '#4ECDC4';
-      ctx.beginPath();
-      ctx.arc(x, y, padding, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  });
-
-  // Draw hover effect on empty cells (only if it's your turn)
-  if (isMyTurn && gameState.status === 'active') {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-    // Hover effect will be handled by click event
-  }
-
-  // Draw winner message
-  if (gameState.status === 'finished' || gameState.status === 'completed') {
-    const winner = players.find(p => gameState.winner_id === p.user_id);
-    
-    // Semi-transparent overlay
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(0, 0, width, height);
-
-    // Winner text
-    ctx.fillStyle = '#FFD700';
-    ctx.font = `bold ${Math.floor(height * 0.08)}px Arial`;
-    ctx.textAlign = 'center';
-    
-    if (winner) {
-      ctx.fillText(`🏆 ${winner.username} WINS! 🏆`, width / 2, height / 2);
-    } else {
-      ctx.fillText("🤝 IT'S A DRAW! 🤝", width / 2, height / 2);
-    }
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `${Math.floor(height * 0.03)}px Arial`;
-    ctx.fillText('Game will close automatically...', width / 2, height / 2 + 60);
-  }
-
-  // Store grid info for click detection
-  canvas.dataset.gridInfo = JSON.stringify({
-    offsetX,
-    offsetY,
-    cellSize,
-    isMyTurn,
-    status: gameState.status
-  });
-}
-
-// === ROCK PAPER SCISSORS RENDERER ===
-function renderRockPaperScissors(ctx, canvas, gameState, currentUserId, onMove) {
-  const { width, height } = canvas;
-  const players = gameState.players || [];
-  const picks = gameState.game_state?.picks || {};
-  const countdown = gameState.game_state?.countdown || 5;
-  const myPick = picks[currentUserId];
-  const allPicked = Object.keys(picks).length === players.length;
-
-  // Clear canvas
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, '#1a1a2e');
-  gradient.addColorStop(1, '#16213e');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, width, height);
-
-  // Title
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `bold ${Math.floor(height * 0.06)}px Arial`;
-  ctx.textAlign = 'center';
-  ctx.fillText('ROCK PAPER SCISSORS', width / 2, height * 0.12);
-
-  // Countdown timer
-  if (!allPicked) {
-    ctx.fillStyle = '#FFD700';
-    ctx.font = `bold ${Math.floor(height * 0.15)}px Arial`;
-    ctx.fillText(countdown, width / 2, height * 0.35);
-    
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `${Math.floor(height * 0.03)}px Arial`;
-    ctx.fillText('Make your pick!', width / 2, height * 0.43);
-  }
-
-  // Choice buttons (if haven't picked yet)
-  if (!myPick && gameState.status === 'active') {
-    const choices = [
-      { emoji: '🪨', label: 'ROCK', value: 'rock', x: width * 0.25 },
-      { emoji: '📄', label: 'PAPER', value: 'paper', x: width * 0.5 },
-      { emoji: '✂️', label: 'SCISSORS', value: 'scissors', x: width * 0.75 }
-    ];
-
-    const buttonSize = Math.min(width, height) * 0.15;
-    const buttonY = height * 0.55;
-
-    choices.forEach(choice => {
-      // Button background
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(choice.x, buttonY, buttonSize / 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-
-      // Emoji
-      ctx.font = `${Math.floor(buttonSize * 0.5)}px Arial`;
-      ctx.fillStyle = '#ffffff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(choice.emoji, choice.x, buttonY);
-
-      // Label
-      ctx.font = `bold ${Math.floor(height * 0.025)}px Arial`;
-      ctx.fillText(choice.label, choice.x, buttonY + buttonSize / 2 + 25);
-    });
-
-    // Store button info for clicks
-    canvas.dataset.rpsButtons = JSON.stringify(choices.map(c => ({
-      ...c,
-      y: buttonY,
-      radius: buttonSize / 2
-    })));
-  } else if (myPick) {
-    // Show "Waiting for other player..."
-    ctx.fillStyle = '#4ECDC4';
-    ctx.font = `${Math.floor(height * 0.04)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.fillText('✓ You picked ' + myPick.toUpperCase(), width / 2, height * 0.5);
-    
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `${Math.floor(height * 0.03)}px Arial`;
-    ctx.fillText('Waiting for opponent...', width / 2, height * 0.56);
-  }
-
-  // Show results if game finished
-  if (gameState.status === 'finished' || gameState.status === 'completed') {
-    const winner = players.find(p => gameState.winner_id === p.user_id);
-    
-    // Semi-transparent overlay
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-    ctx.fillRect(0, 0, width, height);
-
-    // Show both picks
-    ctx.font = `${Math.floor(height * 0.08)}px Arial`;
-    ctx.textAlign = 'center';
-    
-    players.forEach((player, index) => {
-      const xPos = index === 0 ? width * 0.3 : width * 0.7;
-      const pick = picks[player.user_id];
-      const emojiMap = { rock: '🪨', paper: '📄', scissors: '✂️' };
-      
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(player.username, xPos, height * 0.3);
-      ctx.fillText(emojiMap[pick] || '?', xPos, height * 0.45);
-    });
-
-    // Winner announcement
-    ctx.fillStyle = '#FFD700';
-    ctx.font = `bold ${Math.floor(height * 0.06)}px Arial`;
-    
-    if (winner) {
       ctx.fillText(`🏆 ${winner.username} WINS! 🏆`, width / 2, height * 0.7);
     } else {
       ctx.fillText("🤝 IT'S A DRAW! 🤝", width / 2, height * 0.7);
     }
+    
+    // Play Again button
+    const buttonWidth = width * 0.3;
+    const buttonHeight = height * 0.08;
+    const buttonX = (width - buttonWidth) / 2;
+    const buttonY = height * 0.8;
+    
+    // Button background with gradient
+    const buttonGradient = ctx.createLinearGradient(buttonX, buttonY, buttonX, buttonY + buttonHeight);
+    buttonGradient.addColorStop(0, '#10B981');
+    buttonGradient.addColorStop(1, '#059669');
+    ctx.fillStyle = buttonGradient;
+    ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+    
+    // Button border
+    ctx.strokeStyle = '#34D399';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+    
+    // Button text
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `bold ${Math.floor(height * 0.045)}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('PLAY AGAIN', width / 2, buttonY + buttonHeight / 2);
+    
+    // Store button coordinates for click detection
+    canvas.dataset.restartButton = JSON.stringify({
+      x: buttonX,
+      y: buttonY,
+      width: buttonWidth,
+      height: buttonHeight
+    });
   }
 }
 

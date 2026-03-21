@@ -77,6 +77,8 @@ func PurchaseSessionTicketHandler(db *gorm.DB) gin.HandlerFunc {
 		// Determine ticket recipient
 		recipientUserID := buyer.ID
 		isGift := req.GiftToUserID != nil
+		var transferFeeTokens int = 0 // 5% transfer fee for gifts
+		
 		if isGift {
 			recipientUserID = *req.GiftToUserID
 
@@ -105,11 +107,21 @@ func PurchaseSessionTicketHandler(db *gorm.DB) gin.HandlerFunc {
 		ticketPriceCurrency := session.TicketPriceCurrency
 		ticketPriceAmount := session.TicketPriceAmount
 		isEarlyBird := false
+		earlyBirdSavings := 0 // Track savings for analytics
 
 		if session.EarlyBirdEnabled && session.EarlyBirdActive {
+			earlyBirdSavings = session.TicketPriceTokens - session.EarlyBirdPriceTokens
 			ticketPriceTokens = session.EarlyBirdPriceTokens
 			ticketPriceAmount = session.EarlyBirdPriceAmount
 			isEarlyBird = true
+		}
+
+		// Calculate 5% transfer fee for gifts
+		if isGift {
+			transferFeeTokens = int(float64(ticketPriceTokens) * 0.05)
+			if transferFeeTokens < 1 {
+				transferFeeTokens = 1 // Minimum 1 token fee
+			}
 		}
 
 		// Validate ticket price exists for payment method
@@ -135,7 +147,9 @@ func PurchaseSessionTicketHandler(db *gorm.DB) gin.HandlerFunc {
 
 		// Process payment based on method
 		if req.PaymentMethod == "tokens" {
-			// Deduct tokens from buyer's wallet
+			// Deduct tokens from buyer's wallet (ticket price + transfer fee if gifting)
+			totalCostTokens := ticketPriceTokens + transferFeeTokens
+			
 			var buyerWallet models.UserWallet
 			if err := tx.Where("user_id = ?", buyer.ID).First(&buyerWallet).Error; err != nil {
 				tx.Rollback()
@@ -143,7 +157,7 @@ func PurchaseSessionTicketHandler(db *gorm.DB) gin.HandlerFunc {
 				return
 			}
 
-			if err := buyerWallet.DeductTokens(ticketPriceTokens); err != nil {
+			if err := buyerWallet.DeductTokens(totalCostTokens); err != nil {
 				tx.Rollback()
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
@@ -198,11 +212,71 @@ func PurchaseSessionTicketHandler(db *gorm.DB) gin.HandlerFunc {
 				return
 			}
 
-			// 📊 No platform accounting change: profit already captured on token purchase
+			// Record 5% transfer fee as platform revenue (if gifting)
+			if isGift && transferFeeTokens > 0 {
+				usdValue := float64(transferFeeTokens) * 0.10
+				transferFeeTransaction := models.TokenTransaction{
+					UserID:          buyer.ID,
+					SessionID:       &session.ID,
+					TransactionType: models.TransactionTypeTicketTransferFee,
+					Amount:          transferFeeTokens,
+					USDValue:        &usdValue,
+					Status:          models.TransactionStatusCompleted,
+				}
+				if err := tx.Create(&transferFeeTransaction).Error; err != nil {
+					tx.Rollback()
+					log.Printf("❌ Error recording transfer fee: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record transfer fee"})
+					return
+				}
+
+				// Update platform accounting with transfer fee revenue
+				accounting, accErr := models.GetPlatformAccounting(tx)
+				if accErr != nil {
+					log.Printf("⚠️ Could not fetch platform accounting: %v", accErr)
+				} else {
+					// Transfer fees go 100% to platform (additional revenue stream)
+					transferFeeNaira := float64(transferFeeTokens) * 1.65 // ₦165 per token in cents
+					accounting.TransferFeeRevenue += transferFeeNaira
+					accounting.LifetimeTransferFeeRevenue += transferFeeNaira
+					accounting.LifetimePlatformProfit += transferFeeNaira
+					if saveErr := tx.Save(accounting).Error; saveErr != nil {
+						log.Printf("⚠️ Could not update platform accounting: %v", saveErr)
+					}
+				}
+
+				log.Printf("💰 Transfer fee collected: %d tokens (₦%.2f) from user %d", transferFeeTokens, float64(transferFeeTokens)*1.65, buyer.ID)
+			}
+
+			// Record early bird savings for analytics (informational)
+			if isEarlyBird && earlyBirdSavings > 0 {
+				usdValue := float64(earlyBirdSavings) * 0.10
+				savingsTransaction := models.TokenTransaction{
+					UserID:          buyer.ID,
+					SessionID:       &session.ID,
+					TransactionType: models.TransactionTypeEarlyBirdSavings,
+					Amount:          earlyBirdSavings,
+					USDValue:        &usdValue,
+					Status:          models.TransactionStatusCompleted,
+				}
+				if err := tx.Create(&savingsTransaction).Error; err != nil {
+					log.Printf("⚠️ Could not record early bird savings (non-critical): %v", err)
+				} else {
+					// Update platform accounting with early bird savings (informational)
+					accounting, accErr := models.GetPlatformAccounting(tx)
+					if accErr == nil {
+						savingsNaira := float64(earlyBirdSavings) * 1.65
+						accounting.TotalEarlyBirdSavings += savingsNaira
+						tx.Save(accounting)
+					}
+				}
+			}
+
+			// 📊 No platform accounting change for ticket sales: profit already captured on token purchase
 			// Token economics: Buy ₦165 → Host earns tokens → Withdraw ₦122 → Platform profit = ₦43/token
 
-			log.Printf("✅ Token ticket: %d cents from user %d → Host gets %d cents (100%%), Platform profit from token purchase spread", 
-				ticketPriceTokens, buyer.ID, hostEarning)
+			log.Printf("✅ Token ticket: %d cents from user %d → Host gets %d cents (100%%), Transfer fee: %d cents, Platform profit from spread", 
+				ticketPriceTokens, buyer.ID, hostEarning, transferFeeTokens)
 
 		} else {
 			// Gateway payment (Stripe/Paystack)

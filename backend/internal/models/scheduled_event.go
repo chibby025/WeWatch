@@ -29,6 +29,15 @@ type ScheduledEvent struct {
 	EarlyBirdPriceAmount  float64 `gorm:"type:decimal(10,2);default:0" json:"early_bird_price_amount"` // Discounted price in fiat
 	EarlyBirdActive       bool    `gorm:"default:true" json:"early_bird_active"`             // Whether early bird is currently active
 	
+	// Booking/RSVP tracking
+	RSVPCount       int  `gorm:"default:0" json:"rsvp_count"`        // Count of free RSVPs
+	TicketsSold     int  `gorm:"default:0" json:"tickets_sold"`      // Count of paid tickets sold
+	SessionCreated  bool `gorm:"default:false;index" json:"session_created"` // Whether auto-session was created
+	WatchSessionID  *uint `gorm:"index" json:"watch_session_id,omitempty"` // Link to created session
+	
+	// Host attendance tracking (for report validation)
+	HostJoinedSession bool `gorm:"default:false" json:"host_joined_session"` // Whether host joined the auto-created session
+	
 	// Trailer fields (auto-delete at start_time for legal protection & cost savings)
 	TrailerURL            string     `gorm:"type:text" json:"trailer_url"`                      // S3/local path to trailer video
 	TrailerTitle          string     `gorm:"type:varchar(255)" json:"trailer_title"`            // Custom trailer title (optional, defaults to event title)

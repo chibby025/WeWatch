@@ -9,6 +9,7 @@ export default function CinemaTheaterGLB({
   videoElement, 
   cameraVideoElement,
   gameCanvas, // ✅ NEW: Canvas element for games
+  podcastCanvas, // 🎙️ Canvas element for podcast with overlays
   liveShareMode,
   onScreenClick 
 }) {
@@ -16,9 +17,11 @@ export default function CinemaTheaterGLB({
   const videoTextureRef = useRef();
   const cameraTextureRef = useRef();
   const gameTextureRef = useRef(); // ✅ NEW
+  const podcastTextureRef = useRef(); // 🎙️ NEW
   const [videoTexture, setVideoTexture] = useState(null);
   const [cameraTexture, setCameraTexture] = useState(null);
   const [gameTexture, setGameTexture] = useState(null); // ✅ NEW
+  const [podcastTexture, setPodcastTexture] = useState(null); // 🎙️ NEW
 
   if (!scene) return null;
 
@@ -80,6 +83,7 @@ export default function CinemaTheaterGLB({
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
     texture.encoding = THREE.sRGBEncoding;
+    texture.needsUpdate = true; // ✅ Force immediate update
     
     gameTextureRef.current = texture;
     setGameTexture(texture);
@@ -90,6 +94,35 @@ export default function CinemaTheaterGLB({
       }
     };
   }, [gameCanvas]);
+
+  // 🎙️ NEW: Create podcast canvas texture (with overlays)
+  useEffect(() => {
+    if (!podcastCanvas) {
+      setPodcastTexture(null);
+      if (podcastTextureRef.current) {
+        podcastTextureRef.current.dispose();
+        podcastTextureRef.current = null;
+      }
+      return;
+    }
+
+    console.log('🎙️ [CinemaTheaterGLB] Creating podcast canvas texture');
+    const texture = new THREE.CanvasTexture(podcastCanvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.encoding = THREE.sRGBEncoding;
+    texture.needsUpdate = true;
+    
+    podcastTextureRef.current = texture;
+    setPodcastTexture(texture);
+
+    return () => {
+      if (podcastTextureRef.current) {
+        console.log('🎙️ [CinemaTheaterGLB] Disposing podcast canvas texture');
+        podcastTextureRef.current.dispose();
+      }
+    };
+  }, [podcastCanvas]);
 
   // 🚀 PHASE 2: Update textures only when video is actually playing
   const frameCountRef = useRef(0);
@@ -126,6 +159,12 @@ export default function CinemaTheaterGLB({
       gameTextureRef.current.needsUpdate = true;
       needsUpdate = true;
     }
+
+    // 🎙️ NEW: Update podcast canvas texture
+    if (podcastTextureRef.current && podcastCanvas) {
+      podcastTextureRef.current.needsUpdate = true;
+      needsUpdate = true;
+    }
     
     // 🚀 PHASE 2: Only trigger re-render when textures need updating
     if (needsUpdate) {
@@ -155,10 +194,11 @@ export default function CinemaTheaterGLB({
   // ✅ Camera PIP only shows in 'both' mode (screen + camera)
   const showCameraPIP = cameraTexture && liveShareMode === 'both';
   
-  // ✅ Priority: Game > Camera-only > Video
-  // Game texture takes precedence when active
+  // ✅ Priority: Podcast > Game > Camera-only > Video
+  // Podcast canvas has overlays (logo, title, LIVE indicator)
+  // Game texture takes precedence when no podcast active
   // In camera-only mode, use camera texture for main screen
-  const mainScreenTexture = gameTexture || (liveShareMode === 'camera' ? cameraTexture : videoTexture);
+  const mainScreenTexture = podcastTexture || gameTexture || (liveShareMode === 'camera' ? cameraTexture : videoTexture);
 
   return (
     <group position={position}>

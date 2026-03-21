@@ -17,6 +17,7 @@ type WatchSession struct {
 	ClassType string    `gorm:"type:varchar(50)" json:"class_type,omitempty"` // "classroom" or "lecture_hall" (only for watch_type="classroom")
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
+	IsActive  bool      `gorm:"default:true;index:idx_watch_sessions_is_active" json:"is_active"` // Explicit active flag
 	Members   []WatchSessionMember `json:"members"` // Active session participants
 	
 	// Ticketing fields (added via migration 003)
@@ -46,10 +47,25 @@ type WatchSession struct {
 	// Privacy control (hidden from lobby unless user is member)
 	IsPrivate             bool    `gorm:"default:false" json:"is_private"`                        // If true, session hidden from lobby "Watching Now" tab
 	
+	// Preview generation control (content moderation)
+	PreviewEnabled        bool    `gorm:"default:true" json:"preview_enabled"`                    // If false, no preview thumbnails generated for lobby
+	
 	// Preview generation state
 	CurrentPlaybackTime   int     `gorm:"default:0" json:"current_playback_time"`                // Current video timestamp in seconds
 	CurrentMediaID        int     `gorm:"default:0" json:"current_media_id"`                      // ID of currently playing media item
 	CurrentMediaPath      string  `gorm:"type:text" json:"current_media_path,omitempty"`          // File path of currently playing media
+	
+	// LiveShare mode (collaborative broadcasting)
+	LiveshareMode         string  `gorm:"type:varchar(50);default:'regular'" json:"liveshare_mode"` // regular, podcast, interview, news, standup
+	
+	// Podcast mode configuration (only for liveshare_mode='podcast')
+	PodcastTitle          string  `gorm:"type:varchar(500)" json:"podcast_title,omitempty"`           // Podcast episode title
+	PodcastLogoURL        string  `gorm:"type:text" json:"podcast_logo_url,omitempty"`                // URL to podcast logo (optional)
+	PodcastGuestUserID    *uint   `json:"podcast_guest_user_id,omitempty"`                            // Guest user ID (1 guest only for MVP)
+	
+	// Scheduled event integration
+	ScheduledEventID      *uint   `gorm:"index" json:"scheduled_event_id,omitempty"`                  // Link to scheduled event (if auto-created)
+	HostRequired          bool    `gorm:"default:true" json:"host_required"`                          // If false, session runs without host (for scheduled events)
 }
 
 // WatchSessionMember represents an active participant in a watch session

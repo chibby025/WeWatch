@@ -29,6 +29,7 @@ func CreateWatchSessionWithType(roomID uint, hostID uint, watchType string) (*mo
 		HostID:    hostID,
 		WatchType: watchType,
 		StartedAt: time.Now(),
+		IsActive:  true, // ✅ Explicitly set active flag
 	}
 
 	if err := DB.Create(&session).Error; err != nil {
@@ -50,6 +51,7 @@ func CreateWatchSessionWithTypeAndTicketing(roomID uint, hostID uint, watchType 
 		HostID:    hostID,
 		WatchType: watchType,
 		StartedAt: time.Now(),
+		IsActive:  true, // ✅ Explicitly set active flag
 	}
 
 	// Extract ticketing configuration using type assertion
@@ -414,7 +416,7 @@ func CreateWatchSession(c *gin.Context) {
 
 	// Check if there's already an active session
 	var existingSession models.WatchSession
-	if err := DB.Where("room_id = ? AND ended_at IS NULL", uint(roomID)).First(&existingSession).Error; err == nil {
+	if err := DB.Where("room_id = ? AND ended_at IS NULL AND is_active = ?", uint(roomID), true).First(&existingSession).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{
 			"error":      "Active session already exists",
 			"session_id": existingSession.SessionID,

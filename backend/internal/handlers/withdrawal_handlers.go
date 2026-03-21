@@ -378,7 +378,7 @@ Email: %s
 Amount: %.2f %s
 Source: %s
 Payment Account: %s
-Bank: %s - %s
+Bank: %s
 Account Number: %s
 Status: PENDING MANUAL APPROVAL
 
@@ -407,13 +407,13 @@ curl -X POST http://localhost:8080/api/payouts/%d/complete \
 			user.Username, userID, user.Email,
 			req.Amount, req.Currency,
 			req.SourceType,
-			paymentAccount.AccountName,
-			paymentAccount.BankName,
-			paymentAccount.AccountNumber,
+			*paymentAccount.AccountName,
+			*paymentAccount.BankName,
+			*paymentAccount.AccountNumber,
 			req.Amount, req.Currency,
-			paymentAccount.BankName,
-			paymentAccount.AccountNumber,
-			paymentAccount.AccountName,
+			*paymentAccount.BankName,
+			*paymentAccount.AccountNumber,
+			*paymentAccount.AccountName,
 			payout.ID,
 			payout.ID,
 		)
@@ -437,7 +437,7 @@ curl -X POST http://localhost:8080/api/payouts/%d/complete \
 	// go processWithdrawal(DB, payout.ID, paymentAccount)
 	
 	fmt.Printf("⏸️  MANUAL WITHDRAWAL: Payout #%d is pending admin approval\n", payout.ID)
-	fmt.Printf("   Admin will manually transfer %.2f %s to %s\n", req.Amount, req.Currency, paymentAccount.AccountName)
+	fmt.Printf("   Admin will manually transfer %.2f %s to %s\n", req.Amount, req.Currency, *paymentAccount.AccountName)
 	
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Withdrawal request submitted! Our team will process it within 24 hours.",

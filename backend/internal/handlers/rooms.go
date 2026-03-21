@@ -468,13 +468,14 @@ func EndWatchSessionHandler(c *gin.Context) {
 	// ✅ For instant watch: We'll delete the session later (skip marking as ended)
 	if !isInstantWatch {
 		session.EndedAt = &now
+		session.IsActive = false // ✅ Set active flag to false
 		if err := tx.Save(&session).Error; err != nil {
 			tx.Rollback()
 			log.Printf("EndWatchSessionHandler: Failed to update session: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to end session"})
 			return
 		}
-		log.Printf("✅ Marked regular room session %s as ended", sessionID)
+		log.Printf("✅ Marked regular room session %s as ended (is_active=false, ended_at=%v)", sessionID, now)
 	} else {
 		log.Printf("🔄 Instant watch session %s will be fully deleted", sessionID)
 	}
@@ -2163,7 +2164,7 @@ func GetActiveSessionHandler(c *gin.Context) {
 
 	var session models.WatchSession
 	// Find active (not ended) session for this room
-	err = DB.Where("room_id = ? AND ended_at IS NULL", roomID).
+	err = DB.Where("room_id = ? AND ended_at IS NULL AND is_active = ?", roomID, true).
 		Order("started_at DESC").
 		First(&session).Error
 
@@ -2278,7 +2279,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 
 	// ✅ Check for existing active session before creating new one
 	var existingSession models.WatchSession
-	result := DB.Where("room_id = ? AND ended_at IS NULL", roomID).First(&existingSession)
+	result := DB.Where("room_id = ? AND ended_at IS NULL AND is_active = ?", roomID, true).First(&existingSession)
 	if result.Error == nil {
 		// Active session already exists - return it
 		log.Printf("✅ Found existing active session for room %d: %s (type: %s)", roomID, existingSession.SessionID, existingSession.WatchType)

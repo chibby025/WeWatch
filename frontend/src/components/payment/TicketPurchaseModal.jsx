@@ -142,23 +142,28 @@ const TicketPurchaseModal = ({ isOpen, onClose, session, onSuccess }) => {
     return 'CINEMA';
   };
 
-  // Get ticket SVG based on watch type and class type
-  const getTicketSVG = () => {
+  // Get ticket PNG based on watch type and class type
+  const getTicketImage = () => {
     const type = session.watch_type?.toLowerCase() || 'cinema';
     const classType = session.class_type?.toLowerCase() || '';
     
     // Lecture Hall: watch_type='classroom' + class_type='lecture_hall'
     if (type === 'classroom' && classType === 'lecture_hall') {
-      return '/icons/lecturehallticket.svg';
+      return '/icons/LectureTicket.png';
+    }
+    
+    // Regular Classroom
+    if (type === 'classroom') {
+      return '/icons/LectureTicket.png';
     }
     
     // Video Watch
     if (type.includes('video')) {
-      return '/icons/videowatchticket.svg';
+      return '/icons/TheaterTicket.png';
     }
     
     // Cinema (default for 3d_cinema, cinema, or anything else)
-    return '/icons/blankticketinfo.svg';
+    return '/icons/CinemaTicket.png';
   };
 
   return (
@@ -170,12 +175,12 @@ const TicketPurchaseModal = ({ isOpen, onClose, session, onSuccess }) => {
           animation: isOpen ? 'ticketTear 0.6s ease-out' : 'none'
         }}
       >
-        {/* TOP SECTION - Dynamic Ticket SVG based on Watch Type */}
-        <div className="relative w-full">
+        {/* TOP SECTION - Dynamic Ticket PNG based on Watch Type */}
+        <div className="relative w-full group">
           <img 
-            src={getTicketSVG()} 
+            src={getTicketImage()} 
             alt="Ticket Info"
-            className="w-full h-auto"
+            className="w-full h-auto scale-110 transition-transform duration-300 hover:scale-[1.15] hover:drop-shadow-2xl"
           />
           
           {/* Close Button - Top Right */}
@@ -190,61 +195,33 @@ const TicketPurchaseModal = ({ isOpen, onClose, session, onSuccess }) => {
           </button>
 
           {/* Text Overlays for Session Info */}
-          <div className="absolute inset-0 pointer-events-none font-['Inter'] font-medium">
-            {/* RED SECTION - Bottom Left Info (Side-by-side layout) */}
-            <div className={`absolute space-y-1.5 ${
+          <div className="absolute inset-0 pointer-events-none font-['Inter'] font-medium z-10">
+            {/* RED SECTION - Bottom Left Info */}
+            <div className={`absolute ${
               session.watch_type?.toLowerCase().includes('video') 
-                ? 'left-[15%] bottom-[19%]' 
-                : 'left-[35%] bottom-[9%]'
+                ? 'left-[18%] bottom-[40.5%]' 
+                : 'left-[18%] bottom-[38%]'
             }`}>
-              {/* DATE Label + Value */}
+              {/* DATE/TIME Value Only */}
               <div className="flex items-center gap-2">
-                <span className={`text-sm font-bold tracking-wider ${
-                  session.watch_type?.toLowerCase().includes('video') ? 'text-white' : 'text-blue-600'
-                }`}>DATE:</span>
                 {session.started_at && (
-                  <span className="text-sm font-medium text-black uppercase">
-                    {new Date(session.started_at).toLocaleDateString()}
-                  </span>
-                )}
-              </div>
-              
-              {/* TIME Label + Value */}
-              <div className="flex items-center gap-2">
-                <span className={`text-sm font-bold tracking-wider ${
-                  session.watch_type?.toLowerCase().includes('video') ? 'text-white' : 'text-blue-600'
-                }`}>TIME:</span>
-                {session.started_at && (
-                  <span className="text-sm font-medium text-black uppercase">
-                    {new Date(session.started_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                  <span className="text-xs font-medium text-white uppercase transition-transform duration-300 group-hover:scale-110">
+                    {new Date(session.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {new Date(session.started_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false})}
                   </span>
                 )}
               </div>
             </div>
             
-            {/* RED SECTION - Bottom Right Info (Side-by-side layout) */}
-            <div className={`absolute space-y-1.5 ${
+            {/* RED SECTION - Bottom Right Info */}
+            <div className={`absolute ${
               session.watch_type?.toLowerCase().includes('video') 
-                ? 'left-[42%] bottom-[19%]' 
-                : 'left-[62%] bottom-[9%]'
+                ? 'left-[50%] bottom-[40.5%]' 
+                : 'left-[49%] bottom-[38%]'
             }`}>
-              {/* SCREEN Label + Value */}
+              {/* SCREEN Value Only */}
               <div className="flex items-center gap-2">
-                <span className={`text-sm font-bold tracking-wider ${
-                  session.watch_type?.toLowerCase().includes('video') ? 'text-white' : 'text-blue-600'
-                }`}>SCREEN:</span>
-                <span className="text-sm font-medium text-black uppercase">
-                  {session.watch_type?.replace('_', ' ')}
-                </span>
-              </div>
-              
-              {/* HOST Label + Value */}
-              <div className="flex items-center gap-2">
-                <span className={`text-sm font-bold tracking-wider ${
-                  session.watch_type?.toLowerCase().includes('video') ? 'text-white' : 'text-blue-600'
-                }`}>HOST:</span>
-                <span className="text-sm font-medium text-black uppercase">
-                  {session.host_username || session.host_name || 'N/A'}
+                <span className="text-xs font-medium text-white uppercase transition-transform duration-300 group-hover:scale-110">
+                  {session.watch_type?.toLowerCase() === 'classroom' ? 'CLASS' : session.watch_type?.replace('_', ' ')}
                 </span>
               </div>
             </div>
@@ -254,7 +231,7 @@ const TicketPurchaseModal = ({ isOpen, onClose, session, onSuccess }) => {
         </div>
 
         {/* BOTTOM SECTION - ticket-bottom.svg (Interactive Form) */}
-        <div className="relative w-full -mt-1">
+        <div className="relative w-full -mt-32">
           <img 
             src="/icons/ticket-bottom.svg" 
             alt="Ticket Form"
@@ -409,6 +386,10 @@ const TicketPurchaseModal = ({ isOpen, onClose, session, onSuccess }) => {
             <div className="bg-white/50 rounded-lg p-3 border border-gray-300 mb-3">
               <div className="text-gray-800 font-semibold mb-2 text-sm">Purchase Summary</div>
               <div className="space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Host:</span>
+                  <span className="text-gray-900 font-medium">{session.host_username || session.host_name || 'N/A'}</span>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Ticket Price:</span>
                   <span className="text-gray-900 font-medium">{formatTokens(ticketPrice)}</span>

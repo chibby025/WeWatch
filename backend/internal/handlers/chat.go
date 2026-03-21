@@ -301,7 +301,7 @@ func GetPrivateMessagesHandler(c *gin.Context) {
 // DeleteSessionPrivateMessagesHandler handles DELETE /api/sessions/:sessionId/private-messages
 // Deletes all private messages for a specific session (called when session ends)
 func DeleteSessionPrivateMessagesHandler(c *gin.Context) {
-	sessionID := c.Param("sessionId")
+	sessionID := c.Param("id")
 	
 	if sessionID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Session ID required"})

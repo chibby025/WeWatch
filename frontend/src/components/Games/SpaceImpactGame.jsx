@@ -331,10 +331,17 @@ export default function SpaceImpactGame({ canvasRef: externalCanvasRef, onGameOv
     if (!isActive) return;
 
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) {
+      console.log('🎮 [SpaceImpact] Canvas not found!');
+      return;
+    }
+
+    console.log('🎮 [SpaceImpact] Starting game on canvas:', canvas.width, 'x', canvas.height);
 
     canvas.width = CANVAS_WIDTH;
     canvas.height = CANVAS_HEIGHT;
+
+    console.log('🎮 [SpaceImpact] Canvas initialized:', canvas.width, 'x', canvas.height);
 
     // Reset game state
     gameStateRef.current = {
@@ -357,6 +364,11 @@ export default function SpaceImpactGame({ canvasRef: externalCanvasRef, onGameOv
       }
     };
   }, [isActive, gameLoop]);
+
+  // Only render canvas if no external ref provided (standalone mode)
+  if (externalCanvasRef) {
+    return null; // Parent manages canvas
+  }
 
   return (
     <canvas 

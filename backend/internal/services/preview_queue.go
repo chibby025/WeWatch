@@ -89,6 +89,18 @@ func (pq *PreviewQueue) start() {
 
 // QueuePreview adds a preview request to the queue
 func (pq *PreviewQueue) QueuePreview(req PreviewRequest) {
+	// Check if preview generation is enabled for this session
+	var session models.WatchSession
+	if err := pq.db.Where("session_id = ?", req.SessionID).First(&session).Error; err != nil {
+		log.Printf("⚠️ [PreviewQueue] Failed to fetch session %s: %v", req.SessionID, err)
+		return
+	}
+	
+	if !session.PreviewEnabled {
+		log.Printf("⏸️ [PreviewQueue] Preview generation disabled for session %s, skipping", req.SessionID)
+		return
+	}
+	
 	// Check if already in queue
 	if pq.active[req.SessionID] {
 		log.Printf("⏭️ [PreviewQueue] Session %s already has pending preview, skipping", req.SessionID)

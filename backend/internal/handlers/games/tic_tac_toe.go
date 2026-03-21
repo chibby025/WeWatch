@@ -19,28 +19,51 @@ gameState.GameData["board"] = [9]string{"", "", "", "", "", "", "", "", ""}
 boardInterface = gameState.GameData["board"]
 }
 
-board, ok := boardInterface.([9]string)
-if !ok {
-return false, nil, fmt.Errorf("invalid board state")
-}
+	// Handle both array [9]string and slices []interface{} or []string (from JSON unmarshaling)
+	var board [9]string
+	switch v := boardInterface.(type) {
+	case [9]string:
+		board = v
+	case []interface{}:
+		if len(v) != 9 {
+			return false, nil, fmt.Errorf("invalid board length: %d", len(v))
+		}
+		for i, cell := range v {
+			if cellStr, ok := cell.(string); ok {
+				board[i] = cellStr
+			} else {
+				return false, nil, fmt.Errorf("invalid cell type at position %d", i)
+			}
+		}
+	case []string:
+		if len(v) != 9 {
+			return false, nil, fmt.Errorf("invalid board length: %d", len(v))
+		}
+		copy(board[:], v)
+	default:
+		return false, nil, fmt.Errorf("invalid board state type: %T", boardInterface)
+	}
 
-if board[pos] != "" {
-return false, nil, fmt.Errorf("position already occupied")
-}
+	if board[pos] != "" {
+		return false, nil, fmt.Errorf("position already occupied")
+	}
 
-currentPlayer := gameState.Players[gameState.CurrentTurn]
-symbol := "X"
-if gameState.CurrentTurn == 1 {
-symbol = "O"
-}
+	currentPlayer := gameState.Players[gameState.CurrentTurn]
+	symbol := "X"
+	if gameState.CurrentTurn == 1 {
+		symbol = "O"
+	}
 
-board[pos] = symbol
-gameState.GameData["board"] = board
+	board[pos] = symbol
+	
+	// Convert array to slice for JSON compatibility
+	boardSlice := board[:]
+	gameState.GameData["board"] = boardSlice
 
-if winner := checkTicTacToeWinner(board); winner != "" {
-winnerID = &currentPlayer.UserID
-return true, winnerID, nil
-}
+	if winner := checkTicTacToeWinner(board); winner != "" {
+		winnerID = &currentPlayer.UserID
+		return true, winnerID, nil
+	}
 
 full := true
 for _, cell := range board {

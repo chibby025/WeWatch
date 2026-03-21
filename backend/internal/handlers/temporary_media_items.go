@@ -244,7 +244,7 @@ func GetTemporaryMediaItemsForSessionHandler(c *gin.Context) {
 		return
 	}
 
-	// Get session_id from URL parameter (note: parameter name is "id" in route)
+	// Get session_id from URL parameter
 	sessionID := c.Param("id")
 	if sessionID == "" {
 		log.Println("GetTemporaryMediaItemsForSessionHandler: Missing session ID parameter")

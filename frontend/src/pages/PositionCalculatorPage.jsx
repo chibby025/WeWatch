@@ -13,7 +13,7 @@ import lectureHallCameraPositions from '../data/lectureHallCameraPositions';
 import { lectureHallLeftRightViews } from '../data/lectureHallLeftRightViews';
 import useAuth from '../hooks/useAuth';
 import useWebSocket from '../hooks/useWebSocket';
-import useLectureHallAudio, { isInSameRowGroup } from '../hooks/useLectureHallAudio';
+import useLectureHallAudio, { isInSameRowGroup, DiscussionModeBar } from '../hooks/useLectureHallAudio';
 import useLiveKitRoom from '../hooks/useLiveKitRoom';
 import { RoomEvent, Track, LocalVideoTrack } from 'livekit-client'; // For selective subscription and screen share
 import { useSeatSwap } from '../hooks/useSeatSwap';
@@ -1067,10 +1067,6 @@ const PositionCalculatorPage = () => {
   // Temporary playlist state (for session uploads)
   const [temporaryPlaylist, setTemporaryPlaylist] = useState([]);
   
-  // Discussion mode button visibility (auto-hide after 1 second of no mouse movement)
-  const [showDiscussionModeButton, setShowDiscussionModeButton] = useState(true);
-  const discussionModeHideTimeoutRef = useRef(null);
-  
   // View direction state (center, left, right)
   const [currentViewDirection, setCurrentViewDirection] = useState('center');
   const [selectedSeatId, setSelectedSeatId] = useState(null);
@@ -1526,34 +1522,6 @@ const PositionCalculatorPage = () => {
       });
     };
   }, [isConnected, actualSessionId, finalSessionId, roomId, currentUser?.id, sessionStatus, sendMessage]);
-  
-  // Discussion mode button show/hide on mouse movement (for host only)
-  useEffect(() => {
-    if (!isHost) return;
-    
-    const handleMouseMove = () => {
-      setShowDiscussionModeButton(true);
-      
-      // Clear existing timeout
-      if (discussionModeHideTimeoutRef.current) {
-        clearTimeout(discussionModeHideTimeoutRef.current);
-      }
-      
-      // Hide button after 1 second of no movement
-      discussionModeHideTimeoutRef.current = setTimeout(() => {
-        setShowDiscussionModeButton(false);
-      }, 1000);
-    };
-    
-    window.addEventListener('mousemove', handleMouseMove);
-    
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      if (discussionModeHideTimeoutRef.current) {
-        clearTimeout(discussionModeHideTimeoutRef.current);
-      }
-    };
-  }, [isHost]);
   
   // 📱 Orientation detection for mobile devices (show once on join if portrait)
   useEffect(() => {
@@ -6646,22 +6614,12 @@ const PositionCalculatorPage = () => {
           <axesHelper args={[5]} />
         </Canvas>
         
-        {/* Discussion Mode Button - Host Only (Pill-shaped, auto-hides) */}
-        {isHost && showDiscussionModeButton && (
-          <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 z-40">
-            <button
-              onClick={toggleDiscussionMode}
-              className={`px-6 py-3 rounded-full font-semibold text-white transition-all duration-300 transform hover:scale-110 ${
-                discussionMode
-                  ? 'bg-gradient-to-r from-red-600 to-red-500 shadow-lg shadow-red-500/50'
-                  : 'bg-gradient-to-r from-purple-600 to-blue-600 shadow-lg shadow-purple-500/50'
-              }`}
-              title={discussionMode ? 'Exit Discussion Mode' : 'Enter Discussion Mode'}
-            >
-              {discussionMode ? '🎤 Discussion Mode: ON' : '🎤 Enable Discussion Mode'}
-            </button>
-          </div>
-        )}
+        {/* Discussion Mode Bar - Top of screen (auto-hides like cinema AudioModeBar) */}
+        <DiscussionModeBar
+          discussionMode={discussionMode}
+          isHost={isHost}
+          onToggleMode={toggleDiscussionMode}
+        />
         
         {/* 🎮 View Control Icons (Left/Center/Right + Turnaround for Host) */}
         {showViewIcons && (

@@ -591,6 +591,7 @@ const CinemaScene3D = forwardRef(({
   liveShareMode,
   authenticatedUserID,
   onVideoTextureUpdate,
+  podcastCanvas, // 🎙️ Canvas with podcast overlays
   hideLabelsForLocalViewer = false,
   onZoomComplete,
   debugMode = false,
@@ -977,6 +978,7 @@ const CinemaScene3D = forwardRef(({
             videoElement={videoElement}
             cameraVideoElement={cameraVideoElement}
             gameCanvas={gameCanvas} // ✅ NEW: Game canvas for texture
+            podcastCanvas={podcastCanvas} // 🎙️ Podcast canvas with overlays
             liveShareMode={liveShareMode}
             onVideoTextureUpdate={onVideoTextureUpdate}
             onScreenClick={onScreenClick}

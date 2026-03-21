@@ -189,6 +189,9 @@ const Taskbar = ({
   onToggleChatBubbles,
   // Unread Messages
   unreadMessages = {}, // {userId: unreadCount}
+  // 🎮 Game props (for cinema mode)
+  currentGame,
+  onGameClose,
 }) => {
   // 🎯 Derive feature flags from watch type
   const isClassroom = watchType === 'classroom';
@@ -443,6 +446,23 @@ const Taskbar = ({
               }
             }} 
           />
+
+          {/* 🎮 Game Close Button - Only show when game is active in cinema mode */}
+          {currentGame && watchType === '3d_cinema' && (
+            <TaskbarButton
+              icon="✖️"
+              isEmoji={true}
+              label="End Game"
+              onClick={() => {
+                if (onGameClose) {
+                  onGameClose();
+                  toast.success('Game ended', { icon: '🎮' });
+                } else {
+                  console.warn('[Taskbar] Game close handler not provided');
+                }
+              }}
+            />
+          )}
 
           {/* Seats Button - Only show for 3D Cinema & Lecture Hall (not regular VideoWatch) */}
           {watchType !== 'video' && (

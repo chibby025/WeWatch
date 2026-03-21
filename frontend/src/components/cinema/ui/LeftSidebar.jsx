@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { uploadMediaToRoom, apiClient } from '../../../services/api';
 import { Gamepad2 } from 'lucide-react'; // Game icon
+import toast from 'react-hot-toast';
+import LiveShareManager from './LiveShareManager';
 
 export default function LeftSidebar({
   roomId,
@@ -29,6 +31,8 @@ export default function LeftSidebar({
   finalSessionId, // For resume state detection
   onQuizClick, // Quiz management button handler
   onGameClick, // Game lobby button handler
+  onGameClose, // Game close handler (for End Game button)
+  activeGame, // Currently active game (for Start/End Game button)
   activeQuiz, // Currently active quiz (for students)
   quizHistory, // Quiz history with active_quizzes array (for late joiners)
   onTakeQuiz, // Handler for student to take quiz
@@ -36,6 +40,16 @@ export default function LeftSidebar({
   classType, // 'classroom' or 'lecture_hall'
   darknessLevel, // ✅ NEW: 'regular' | 'extreme'
   onDarknessLevelChange, // ✅ NEW: Handler for darkness level changes
+  // ✅ LiveShare props
+  watchSessionMembers = [], // Array of members in watch session
+  liveShareMode = 'regular', // Current LiveShare mode
+  liveShareGuest = null, // Active guest object or null
+  hasLiveSharePermission = false, // Boolean for members (is LiveShare tab visible?)
+  onLiveShareModeSelect, // Handler for mode selection
+  onLiveShareTypeSelect, // Handler for share type selection
+  onGrantLiveSharePermission, // Handler for granting permission
+  onRevokeLiveSharePermission, // Handler for revoking permission
+  onKickLiveShareGuest, // Handler for kicking guest
 }) {
   // ✅ Host verification state
   const [isHost, setIsHost] = useState(isHostProp);
@@ -74,8 +88,12 @@ export default function LeftSidebar({
   }, [isLeftSidebarOpen, roomId, currentUser?.id, isHostProp]);
   
   // Dynamically determine available tabs
-  // ✅ Members see 'upload' tab (view playlist, quizzes) but not 'liveshare'/'watchfrom' (host-only)
-  const availableTabs = isHost ? ['upload', 'liveshare', 'watchfrom'] : ['upload'];
+  // ✅ Host sees all tabs; Members see 'upload' + 'liveshare' (if permission granted)
+  const availableTabs = isHost 
+    ? ['upload', 'liveshare', 'watchfrom'] 
+    : hasLiveSharePermission 
+      ? ['upload', 'liveshare'] 
+      : ['upload'];
   
   // ✅ Persist active tab in sessionStorage (clears on session end)
   const getInitialTab = () => {
@@ -612,10 +630,10 @@ export default function LeftSidebar({
             />
             <div className="flex-1 min-w-0">
               <span className="text-sm sm:text-base font-medium text-white group-hover:text-blue-400 transition-colors">
-                Hide Preview Thumbnails
+                Hide Preview from lobby
               </span>
               <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 leading-relaxed">
-                Content moderation - prevents preview frames from showing in room preview
+                content moderation - hide preview from public, use if not suitable for public to view.
               </p>
             </div>
           </label>
@@ -819,14 +837,47 @@ export default function LeftSidebar({
           <div className="flex-1 overflow-y-auto min-h-0">
             <div className="h-full flex flex-col p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
               {/* GAME BUTTON (Host Only - All Watch Types) */}
-              {isHost && onGameClick && (
+              {isHost && (onGameClick || onGameClose) && (
                 <button
-                  onClick={onGameClick}
-                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-semibold text-xs sm:text-sm transition-all mb-3 sm:mb-4 shadow-lg flex items-center justify-center gap-2"
+                  onClick={() => {
+                    if (activeGame) {
+                      console.log('🎮 [LeftSidebar] End Game button clicked!');
+                      if (onGameClose) {
+                        onGameClose();
+                        toast.success('Game ended', { icon: '🎮' });
+                      }
+                    } else {
+                      console.log('🎮 [LeftSidebar] Start Game button clicked!');
+                      if (onGameClick) {
+                        onGameClick();
+                      }
+                    }
+                  }}
+                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg font-semibold text-xs sm:text-sm transition-all mb-3 sm:mb-4 shadow-lg flex items-center justify-center gap-2 ${
+                    activeGame
+                      ? 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white'
+                      : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
+                  }`}
                 >
-                  <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Start Game
+                  {activeGame ? (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      End Game
+                    </>
+                  ) : (
+                    <>
+                      <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                      Start Game
+                    </>
+                  )}
                 </button>
+              )}
+              {!isHost && onGameClick && (
+                <div className="mb-3 text-xs text-gray-400">
+                  (Game button hidden - not host. isHost: {String(isHost)})
+                </div>
               )}
 
               {/* QUIZ BUTTON (Lecture Hall Only - Host) */}
@@ -1018,134 +1069,26 @@ export default function LeftSidebar({
         </div>
       )}
 
-      {/* LIVESHARE TAB — host only */}
-      {activeTab === 'liveshare' && isHost && (
+      {/* LIVESHARE TAB */}
+      {activeTab === 'liveshare' && (
         <div className="p-4 space-y-4">
-          <div className="bg-[#D9D9D9]/20 rounded-xl p-4">
-            <div className="flex items-center gap-3 mb-3">
-              <img src="/icons/LiveIcon.svg" alt="Live" className="h-10 w-10" />
-              <h3 className="text-white font-medium text-base">Go Live and Share Screen</h3>
-            </div>
-            <div className="bg-black rounded-lg p-4 mb-4 flex flex-col items-center relative">
-              <p className="text-[#D9D9D9] opacity-25 text-[13px] text-center mb-4">
-                Share your screen with others using LiveKit
-              </p>
-              
-              {isScreenSharingActive ? (
-                <button
-                  onClick={onEndScreenShare}
-                  className="w-32 py-2 px-4 rounded-full font-medium text-sm transition-colors bg-red-500/25 hover:bg-red-500/30 text-white"
-                >
-                  End LiveShare
-                </button>
-              ) : (
-                <div className="relative">
-                  <button
-                    onClick={() => isLiveKitConnected && setShowLiveShareMenu(!showLiveShareMenu)}
-                    disabled={!isLiveKitConnected}
-                    className={`w-32 py-2 px-4 rounded-full font-medium text-sm transition-colors ${
-                      isLiveKitConnected 
-                        ? 'bg-[#444AF7]/25 hover:bg-[#444AF7]/30 text-white cursor-pointer' 
-                        : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'
-                    }`}
-                    title={!isLiveKitConnected ? 'Connecting to LiveKit...' : 'Start LiveShare'}
-                  >
-                    {isLiveKitConnected ? 'LiveShare ▼' : 'Connecting...'}
-                  </button>
-                  
-                  {showLiveShareMenu && (
-                    <div className="absolute top-full mt-2 left-0 w-48 bg-gray-800 border border-gray-600 rounded-lg shadow-xl overflow-hidden z-50">
-                      <button
-                        onClick={() => {
-                          onStartScreenShare('screen');
-                          setShowLiveShareMenu(false);
-                        }}
-                        className="w-full px-4 py-3 text-left text-white hover:bg-gray-700 transition-colors text-sm"
-                      >
-                        🖥️ Screen Share Only
-                      </button>
-                      <button
-                        onClick={() => {
-                          // ✅ Cleanup preview stream before starting camera LiveShare
-                          if (currentPreviewStreamRef.current) {
-                            console.log('🧹 [LeftSidebar] Cleaning up preview stream before camera LiveShare');
-                            currentPreviewStreamRef.current.getTracks().forEach(track => track.stop());
-                            currentPreviewStreamRef.current = null;
-                          }
-                          onStartScreenShare('camera', 'liveshare');
-                          setShowLiveShareMenu(false);
-                        }}
-                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 text-left text-white hover:bg-gray-700 transition-colors text-xs sm:text-sm border-t border-gray-700"
-                      >
-                        📹 Camera Only
-                      </button>
-                      <button
-                        onClick={() => {
-                          // ✅ Cleanup preview stream before starting screen + camera LiveShare
-                          if (currentPreviewStreamRef.current) {
-                            console.log('🧹 [LeftSidebar] Cleaning up preview stream before screen+camera LiveShare');
-                            currentPreviewStreamRef.current.getTracks().forEach(track => track.stop());
-                            currentPreviewStreamRef.current = null;
-                          }
-                          onStartScreenShare('both', 'liveshare');
-                          setShowLiveShareMenu(false);
-                        }}
-                        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 text-left text-white hover:bg-gray-700 transition-colors text-xs sm:text-sm border-t border-gray-700"
-                      >
-                        🎬 Screen + Camera
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ✅ Session Title Editor */}
-          <div className="bg-[#D9D9D9]/20 rounded-xl p-3 sm:p-4 mt-3 sm:mt-4">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-white text-xs sm:text-sm font-medium">Session Title</span>
-            </div>
-            <div className="flex items-center gap-2">
-              {isEditingTitle ? (
-                <>
-                  <input
-                    type="text"
-                    value={tempTitle}
-                    onChange={(e) => setTempTitle(e.target.value)}
-                    onKeyDown={handleTitleKeyPress}
-                    placeholder="Enter session title..."
-                    className="flex-1 px-3 py-2 bg-gray-800 text-white rounded-lg text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    autoFocus
-                  />
-                  <button
-                    onClick={handleSaveTitle}
-                    className="p-2 bg-green-500 hover:bg-green-600 rounded-lg transition-colors"
-                    title="Save title"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="flex-1 px-3 py-2 bg-gray-800 text-white rounded-lg text-xs sm:text-sm min-h-[34px] sm:min-h-[38px] flex items-center">
-                    {sessionTitle || <span className="text-gray-500">Live sharing screen</span>}
-                  </div>
-                  <button
-                    onClick={handleEditTitle}
-                    className="p-2 bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
-                    title="Edit title"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                    </svg>
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+          <LiveShareManager
+            sessionId={sessionId}
+            watchSessionMembers={watchSessionMembers}
+            currentUser={currentUser}
+            isHost={isHost}
+            watchType={watchType}
+            liveShareMode={liveShareMode}
+            liveShareGuest={liveShareGuest}
+            hasLiveSharePermission={hasLiveSharePermission}
+            onLiveShareModeSelect={onLiveShareModeSelect}
+            onLiveShareTypeSelect={onLiveShareTypeSelect}
+            onGrantLiveSharePermission={onGrantLiveSharePermission}
+            onRevokeLiveSharePermission={onRevokeLiveSharePermission}
+            onKickLiveShareGuest={onKickLiveShareGuest}
+            onStartScreenShare={onStartScreenShare}
+            onCameraPreview={onCameraPreview}
+          />
         </div>
       )}
 
@@ -1360,6 +1303,8 @@ export default function LeftSidebar({
           </div>
         </div>
       )}
+
+      {/* End of modals */}
     </div>
   );
 }

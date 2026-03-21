@@ -375,30 +375,41 @@ func main() {
 		// Get all active sessions for lobby
 		sessionGroup.GET("/active", handlers.GetAllActiveSessionsHandler)        // GET /api/sessions/active
 		
+		// ✅ NEW: Get LiveShare state for a specific session
+		sessionGroup.GET("/:id/liveshare-state", handlers.GetLiveShareStateHandler) // GET /api/sessions/:id/liveshare-state
+		
+		// ✅ Podcast logo upload
+		sessionGroup.POST("/:id/podcast-logo", handlers.UploadPodcastLogoHandler) // POST /api/sessions/:id/podcast-logo
+		
 		// ✅ NEW: Get temporary media items for a specific session
-		sessionGroup.GET("/:id/temporary-media", handlers.GetTemporaryMediaItemsForSessionHandler) // GET /api/sessions/:id/temporary-media
-		
-		// ✅ NEW: Session preview generation
-		sessionGroup.POST("/:id/generate-preview", handlers.GenerateSessionPreviewHandler) // POST /api/sessions/:id/generate-preview
-		sessionGroup.POST("/:id/upload-frames", handlers.UploadSessionFramesHandler)       // POST /api/sessions/:id/upload-frames
-		sessionGroup.POST("/:id/request-frame-capture", handlers.RequestFrameCaptureHandler) // POST /api/sessions/:id/request-frame-capture
-		
-		// ✅ Session ratings
-		sessionGroup.POST("/:id/ratings", handlers.SubmitSessionRatingHandler)   // POST /api/sessions/:id/ratings (Submit rating after session)
-		
-		// ✅ Session private messages cleanup (ephemeral messaging)
-		sessionGroup.DELETE("/:id/private-messages", handlers.DeleteSessionPrivateMessagesHandler) // DELETE /api/sessions/:id/private-messages (Delete all private messages when session ends)
-		
-		// Theater management
-		sessionGroup.GET("/:id/theaters", handlers.GetSessionTheaters)           // GET /api/sessions/:id/theaters
-		
-		// Broadcast permissions
-		sessionGroup.POST("/:id/broadcast/request", handlers.RequestBroadcast)   // POST /api/sessions/:id/broadcast/request
-		sessionGroup.POST("/:id/broadcast/grant", handlers.GrantBroadcast)       // POST /api/sessions/:id/broadcast/grant
-		sessionGroup.POST("/:id/broadcast/revoke", handlers.RevokeBroadcast)     // POST /api/sessions/:id/broadcast/revoke
-		sessionGroup.GET("/:id/broadcast/active", handlers.GetActiveBroadcasters) // GET /api/sessions/:id/broadcast/active
-		sessionGroup.GET("/:id/broadcast/requests", handlers.GetPendingBroadcastRequests) // GET /api/sessions/:id/broadcast/requests
-	}
+	sessionGroup.GET("/:id/temporary-media", handlers.GetTemporaryMediaItemsForSessionHandler) // GET /api/sessions/:id/temporary-media
+	
+	// ✅ NEW: Session preview generation
+	sessionGroup.POST("/:id/generate-preview", handlers.GenerateSessionPreviewHandler) // POST /api/sessions/:id/generate-preview
+	sessionGroup.POST("/:id/upload-frames", handlers.UploadSessionFramesHandler)       // POST /api/sessions/:id/upload-frames
+	sessionGroup.POST("/:id/request-frame-capture", handlers.RequestFrameCaptureHandler) // POST /api/sessions/:id/request-frame-capture
+	
+	// ✅ Session ratings
+	sessionGroup.POST("/:id/ratings", handlers.SubmitSessionRatingHandler)   // POST /api/sessions/:id/ratings (Submit rating after session)
+	
+	// ✅ LiveShare Graphics routes
+	sessionGroup.POST("/:id/logo-bug", handlers.UploadLogoBug)        // POST /api/sessions/:id/logo-bug (Upload logo bug)
+	sessionGroup.POST("/:id/media-queue", handlers.UploadMediaQueue)  // POST /api/sessions/:id/media-queue (Upload media to queue)
+	sessionGroup.POST("/:id/graphics", handlers.UpdateGraphics)       // POST /api/sessions/:id/graphics (Update graphics state)
+	sessionGroup.GET("/:id/graphics", handlers.GetGraphics)           // GET /api/sessions/:id/graphics (Get all graphics)
+	sessionGroup.GET("/:id/media-queue", handlers.GetMediaQueue)      // GET /api/sessions/:id/media-queue (Get media queue)
+	sessionGroup.DELETE("/media-queue/:itemId", handlers.DeleteMediaQueueItem) // DELETE /api/sessions/media-queue/:itemId (Delete queue item)
+	
+	// Theater management
+	sessionGroup.GET("/:id/theaters", handlers.GetSessionTheaters)           // GET /api/sessions/:id/theaters
+	
+	// Broadcast permissions
+	sessionGroup.POST("/:id/broadcast/request", handlers.RequestBroadcast)   // POST /api/sessions/:id/broadcast/request
+	sessionGroup.POST("/:id/broadcast/grant", handlers.GrantBroadcast)       // POST /api/sessions/:id/broadcast/grant
+	sessionGroup.POST("/:id/broadcast/revoke", handlers.RevokeBroadcast)     // POST /api/sessions/:id/broadcast/revoke
+	sessionGroup.GET("/:id/broadcast/active", handlers.GetActiveBroadcasters) // GET /api/sessions/:id/broadcast/active
+	sessionGroup.GET("/:id/broadcast/requests", handlers.GetPendingBroadcastRequests) // GET /api/sessions/:id/broadcast/requests
+}
 
 	theaterGroup := r.Group("/api/theaters")
 	theaterGroup.Use(handlers.AuthMiddleware())
@@ -422,8 +433,15 @@ func main() {
 		protected.GET("/scheduled-events/with-trailers", handlers.GetScheduledEventsWithTrailersHandler) // ✅ Get events with trailers (paginated)
 		protected.POST("/scheduled-events/upload-trailer", handlers.UploadTrailerHandler) // ✅ Upload trailer video for event
 		
+		// ✅ RSVP & Ticketing routes
+		protected.POST("/scheduled-events/:id/rsvp", handlers.CreateFreeRSVPHandler)           // POST /api/scheduled-events/:id/rsvp (RSVP to free event)
+		protected.DELETE("/scheduled-events/:id/rsvp", handlers.CancelRSVPHandler)              // DELETE /api/scheduled-events/:id/rsvp (Cancel RSVP)
+		protected.POST("/scheduled-events/:id/purchase-ticket", handlers.PurchaseEventTicketHandler) // POST /api/scheduled-events/:id/purchase-ticket (Buy ticket)
+		protected.GET("/users/me/event-tickets", handlers.GetUserEventTicketsHandler)           // GET /api/users/me/event-tickets (Get user's tickets & RSVPs)
+		
 		// --- USER PROFILE ROUTES ---
 		protected.PUT("/users/profile", handlers.UpdateProfileHandler) // Update current user's profile
+		protected.GET("/users/by-username/:username", handlers.GetUserByUsernameHandler) // GET /api/users/by-username/:username (Lookup user for gifting)
 		
 		// --- SUPPORT ROUTES ---
 		protected.POST("/support/send", handlers.SendSupportEmail) // POST /api/support/send (Send help/support email)
@@ -659,6 +677,7 @@ func main() {
 	{
 		superAdminGroup.GET("/analytics", handlers.GetPlatformAnalytics)                       // GET /api/admin/analytics (Platform metrics: revenue, users, sessions)
 		superAdminGroup.GET("/token-spending-analytics", handlers.GetTokenSpendingAnalytics)   // GET /api/admin/token-spending-analytics (Token spending by rooms/hosts)
+		superAdminGroup.GET("/event-analytics", handlers.GetEventAnalytics)                    // GET /api/admin/event-analytics (Event ticketing metrics)
 		superAdminGroup.POST("/transfer-donation-commission", handlers.TransferTokenDonationCommission) // POST /api/admin/transfer-donation-commission (Transfer 5% token gift commissions)
 		
 		// Legacy pending payouts (for manually flagged accounts)

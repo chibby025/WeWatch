@@ -1,13 +1,18 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 	"wewatch-backend/internal/models"
 	"gorm.io/gorm"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // GetSessionMembers fetches all active members for a given watch session.
@@ -236,5 +241,190 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		"limit":    limit,
 		"offset":   offset,
 		"has_more": int64(offset + limit) < totalCount,
+	})
+}
+
+// GetLiveShareStateHandler handles GET /api/sessions/:sessionId/liveshare-state
+// Returns current LiveShare mode and guest status for a watch session
+func GetLiveShareStateHandler(c *gin.Context) {
+	sessionID := c.Param("id")
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing session_id"})
+		return
+	}
+
+	log.Printf("🎬 [GetLiveShareStateHandler] Fetching LiveShare state for session: %s", sessionID)
+
+	// Get mode from watch_sessions
+	var mode string
+	err := DB.Raw(`
+		SELECT liveshare_mode FROM watch_sessions WHERE session_id = ?
+	`, sessionID).Scan(&mode).Error
+
+	if err != nil {
+		log.Printf("❌ [GetLiveShareStateHandler] Session not found: %s", sessionID)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+		return
+	}
+
+	// Get active or granted guest
+	type GuestInfo struct {
+		UserID    uint       `json:"userId"`
+		Username  string     `json:"username"`
+		Status    string     `json:"status"`
+		ShareType *string    `json:"shareType"`
+		Position  int        `json:"position"`
+		GrantedAt time.Time  `json:"grantedAt"`
+		JoinedAt  *time.Time `json:"joinedAt"`
+	}
+
+	var guest *GuestInfo
+	err = DB.Raw(`
+		SELECT 
+			lp.user_id,
+			u.username,
+			lp.status,
+			lp.share_type,
+			lp.position,
+			lp.granted_at,
+			lp.joined_at
+		FROM liveshare_participants lp
+		JOIN users u ON u.id = lp.user_id
+		WHERE lp.session_id = ? AND lp.status IN ('granted', 'active')
+		ORDER BY lp.granted_at DESC
+		LIMIT 1
+	`, sessionID).Scan(&guest).Error
+
+	if err != nil && err.Error() != "record not found" {
+		log.Printf("❌ [GetLiveShareStateHandler] Error querying guest: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// Build response
+	response := gin.H{
+		"mode":  mode,
+		"guest": guest,
+	}
+
+	if guest != nil {
+		log.Printf("✅ [GetLiveShareStateHandler] Found guest: %s (status: %s)", guest.Username, guest.Status)
+	} else {
+		log.Printf("✅ [GetLiveShareStateHandler] No active guest")
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// UploadPodcastLogoHandler handles POST /api/sessions/:id/podcast-logo
+// Uploads podcast logo for a session (2MB max)
+func UploadPodcastLogoHandler(c *gin.Context) {
+	log.Println("🎙️ [UploadPodcastLogoHandler] Podcast logo upload started")
+
+	// Get authenticated user
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		log.Println("❌ [UploadPodcastLogoHandler] Unauthorized - user_id not found")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	authenticatedUserID, ok := userIDValue.(uint)
+	if !ok {
+		log.Println("❌ [UploadPodcastLogoHandler] Invalid user ID type")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Get session ID from URL
+	sessionID := c.Param("id")
+	if sessionID == "" {
+		log.Println("❌ [UploadPodcastLogoHandler] Missing session ID")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Session ID is required"})
+		return
+	}
+
+	// Verify session exists and user is the host
+	var session models.WatchSession
+	result := DB.Where("session_id = ? AND is_active = ?", sessionID, true).First(&session)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			log.Printf("❌ [UploadPodcastLogoHandler] Session %s not found", sessionID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+			return
+		}
+		log.Printf("❌ [UploadPodcastLogoHandler] Database error: %v", result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// Verify user is the host
+	if session.HostID != authenticatedUserID {
+		log.Printf("❌ [UploadPodcastLogoHandler] User %d is not host of session %s", authenticatedUserID, sessionID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the host can upload podcast logo"})
+		return
+	}
+
+	// Parse multipart form (2MB max)
+	const maxLogoSize int64 = 2 << 20 // 2 MB
+	if err := c.Request.ParseMultipartForm(maxLogoSize); err != nil {
+		log.Printf("❌ [UploadPodcastLogoHandler] Error parsing form: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Error parsing upload data"})
+		return
+	}
+
+	// Get logo file
+	formFile, err := c.FormFile("logo")
+	if err != nil {
+		log.Printf("❌ [UploadPodcastLogoHandler] No logo file provided: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No logo file provided"})
+		return
+	}
+
+	// Validate file size
+	if formFile.Size > maxLogoSize {
+		log.Printf("❌ [UploadPodcastLogoHandler] File too large: %d bytes (max 2MB)", formFile.Size)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Logo file too large. Maximum size is 2 MB."})
+		return
+	}
+
+	// Validate file type (images only)
+	allowedExtensions := map[string]bool{
+		".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true,
+	}
+	ext := strings.ToLower(filepath.Ext(formFile.Filename))
+	if !allowedExtensions[ext] {
+		log.Printf("❌ [UploadPodcastLogoHandler] Invalid file type: %s", ext)
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid file type '%s'. Allowed: jpg, jpeg, png, webp, gif", ext)})
+		return
+	}
+
+	// Create podcast-logos directory if not exists
+	logoDir := filepath.Join(UploadDir, "podcast-logos")
+	if err := os.MkdirAll(logoDir, os.ModePerm); err != nil {
+		log.Printf("❌ [UploadPodcastLogoHandler] Failed to create logo directory: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare storage"})
+		return
+	}
+
+	// Generate unique filename
+	uniqueID := uuid.New()
+	uniqueFilename := fmt.Sprintf("%s%s", uniqueID.String(), ext)
+	filePath := filepath.Join(logoDir, uniqueFilename)
+
+	// Save file
+	if err := c.SaveUploadedFile(formFile, filePath); err != nil {
+		log.Printf("❌ [UploadPodcastLogoHandler] Failed to save file: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save logo"})
+		return
+	}
+
+	// Generate URL (relative path for client)
+	logoURL := fmt.Sprintf("/uploads/podcast-logos/%s", uniqueFilename)
+	log.Printf("✅ [UploadPodcastLogoHandler] Logo saved: %s", logoURL)
+
+	// Return logo URL
+	c.JSON(http.StatusOK, gin.H{
+		"logo_url": logoURL,
+		"message":  "Podcast logo uploaded successfully",
 	})
 }

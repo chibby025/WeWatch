@@ -27,6 +27,7 @@ import {
   purchaseTokens,
   exportPaymentHistory,
 } from '../services/api';
+import { getMyEventTickets, cancelRSVP } from '../services/paymentApi';
 import DonateTokenToMember from '../components/payment/DonateTokenToMember';
 
 const PaymentPage = () => {
@@ -43,6 +44,12 @@ const PaymentPage = () => {
   const [showPurchaseTokensModal, setShowPurchaseTokensModal] = useState(false);
   const [showDonateModal, setShowDonateModal] = useState(false);
   const [accountType, setAccountType] = useState('paystack'); // 'paystack' or 'stripe'
+  
+  // State for event tickets & RSVPs
+  const [eventTickets, setEventTickets] = useState([]);
+  const [eventRSVPs, setEventRSVPs] = useState([]);
+  const [pastEvents, setPastEvents] = useState([]);
+  const [ticketsLoading, setTicketsLoading] = useState(true);
   
   // Token purchase state
   const [tokenAmount, setTokenAmount] = useState('');
@@ -174,6 +181,23 @@ const PaymentPage = () => {
       } catch (err) {
         // Payouts history not implemented yet
         setPayouts([]);
+      }
+      
+      // Load event tickets and RSVPs
+      try {
+        setTicketsLoading(true);
+        const ticketsData = await getMyEventTickets();
+        console.log('🎟️ [PaymentPage] Loaded event tickets:', ticketsData);
+        setEventTickets(ticketsData.upcoming_tickets || []);
+        setEventRSVPs(ticketsData.upcoming_rsvps || []);
+        setPastEvents(ticketsData.past_events || []);
+      } catch (err) {
+        console.error('❌ Failed to load event tickets:', err);
+        setEventTickets([]);
+        setEventRSVPs([]);
+        setPastEvents([]);
+      } finally {
+        setTicketsLoading(false);
       }
       
     } catch (err) {
@@ -435,6 +459,28 @@ const PaymentPage = () => {
     }
   };
 
+  const handleCancelRSVP = async (eventId, ticketId) => {
+    if (!window.confirm('Are you sure you want to cancel this RSVP?')) {
+      return;
+    }
+
+    try {
+      await cancelRSVP(eventId);
+      setSuccessMessage('RSVP cancelled successfully!');
+      
+      // Remove from local state
+      setEventRSVPs(prev => prev.filter(rsvp => rsvp.id !== ticketId));
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      console.error('Error cancelling RSVP:', err);
+      setError(err.response?.data?.error || 'Failed to cancel RSVP');
+      setTimeout(() => setError(''), 5000);
+    }
+  };
+
+
   const handlePurchaseTokens = async () => {
     console.log('🔵 [Purchase] Button clicked, tokenAmount:', tokenAmount);
     
@@ -645,6 +691,168 @@ const PaymentPage = () => {
             >
               {(((wallet?.token_balance || 0) === 0) && (totalEarnings === 0)) ? 'No Funds Available' : 'Withdraw Funds'}
             </button>
+          </div>
+        </div>
+
+        {/* My Tickets Section */}
+        <div className="bg-white rounded-lg shadow mb-8">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h2 className="text-xl font-bold text-gray-900">🎟️ My Tickets</h2>
+            <p className="text-sm text-gray-600 mt-1">Paid tickets for upcoming events</p>
+          </div>
+          <div className="p-6">
+            {ticketsLoading ? (
+              <div className="text-center py-8">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
+                <p className="text-gray-600 mt-4">Loading tickets...</p>
+              </div>
+            ) : eventTickets.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-lg">
+                <p className="text-gray-500">No tickets purchased yet</p>
+                <p className="text-sm text-gray-400 mt-2">Browse rooms to find paid events</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {eventTickets.map((ticket) => (
+                  <div key={ticket.id} className="border rounded-lg overflow-hidden hover:shadow-lg transition-shadow">
+                    {/* Ticket Image */}
+                    <div className="relative h-48 bg-gradient-to-br from-purple-500 to-blue-600">
+                      <img 
+                        src={ticket.ticket_image} 
+                        alt="Ticket" 
+                        className="w-full h-full object-cover opacity-90"
+                      />
+                      {ticket.is_early_bird && (
+                        <div className="absolute top-2 right-2 bg-yellow-400 text-yellow-900 px-2 py-1 rounded-full text-xs font-bold">
+                          🎉 Early Bird
+                        </div>
+                      )}
+                      {ticket.is_gift && ticket.gifted_by && (
+                        <div className="absolute top-2 left-2 bg-pink-500 text-white px-2 py-1 rounded-full text-xs font-bold">
+                          🎁 Gift from @{ticket.gifted_by.username}
+                        </div>
+                      )}
+                      {ticket.is_starting_soon && (
+                        <div className="absolute bottom-2 left-2 bg-red-500 text-white px-3 py-1 rounded-full text-xs font-bold animate-pulse">
+                          ⏰ Starting Soon!
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Ticket Details */}
+                    <div className="p-4">
+                      <h3 className="font-bold text-lg text-gray-900 mb-1">{ticket.event.title}</h3>
+                      <p className="text-sm text-gray-600 mb-2">{ticket.event.room_name || `Room #${ticket.event.room_id}`}</p>
+                      
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center text-gray-700">
+                          <ClockIcon className="h-4 w-4 mr-2" />
+                          {new Date(ticket.event.start_time).toLocaleString()}
+                        </div>
+                        
+                        <div className="flex items-center text-green-600 font-medium">
+                          <span className="mr-2">💰</span>
+                          {ticket.ticket_price_tokens / 100} tokens
+                          {ticket.is_early_bird && (
+                            <span className="ml-2 text-xs text-yellow-600">(Early Bird Savings!)</span>
+                          )}
+                        </div>
+                        
+                        <div className="flex items-center text-gray-600">
+                          <span className="mr-2">📅</span>
+                          Purchased {new Date(ticket.created_at).toLocaleDateString()}
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => navigate(`/rooms/${ticket.event.room_id}`)}
+                        className="mt-4 w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg font-medium transition-colors"
+                      >
+                        View Event
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* My RSVPs Section */}
+        <div className="bg-white rounded-lg shadow mb-8">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h2 className="text-xl font-bold text-gray-900">✅ My RSVPs</h2>
+            <p className="text-sm text-gray-600 mt-1">Free event reservations</p>
+          </div>
+          <div className="p-6">
+            {ticketsLoading ? (
+              <div className="text-center py-8">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                <p className="text-gray-600 mt-4">Loading RSVPs...</p>
+              </div>
+            ) : eventRSVPs.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-lg">
+                <p className="text-gray-500">No RSVPs yet</p>
+                <p className="text-sm text-gray-400 mt-2">RSVP to free events in rooms you join</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {eventRSVPs.map((rsvp) => (
+                  <div key={rsvp.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className="font-bold text-lg text-gray-900">{rsvp.event.title}</h3>
+                        <p className="text-sm text-gray-600">{rsvp.event.room_name || `Room #${rsvp.event.room_id}`}</p>
+                        
+                        <div className="mt-3 space-y-2 text-sm">
+                          <div className="flex items-center text-gray-700">
+                            <ClockIcon className="h-4 w-4 mr-2" />
+                            {new Date(rsvp.event.start_time).toLocaleString()}
+                          </div>
+                          
+                          <div className="flex items-center text-green-600 font-medium">
+                            <CheckCircleIcon className="h-4 w-4 mr-2" />
+                            Free Event
+                          </div>
+                          
+                          <div className="flex items-center text-gray-600">
+                            <span className="mr-2">📅</span>
+                            RSVP'd {new Date(rsvp.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Ticket Preview Image */}
+                      <div className="ml-4">
+                        <img 
+                          src={rsvp.ticket_image} 
+                          alt="Event Type" 
+                          className="w-20 h-20 object-cover rounded-lg"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex gap-3">
+                      <button
+                        onClick={() => navigate(`/rooms/${rsvp.event.room_id}`)}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-medium transition-colors"
+                      >
+                        View Event
+                      </button>
+                      
+                      {rsvp.can_cancel && (
+                        <button
+                          onClick={() => handleCancelRSVP(rsvp.scheduled_event_id, rsvp.id)}
+                          className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium transition-colors"
+                        >
+                          Cancel RSVP
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

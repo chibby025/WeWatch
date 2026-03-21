@@ -27,6 +27,20 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
   const [hasAcceptedDeclaration, setHasAcceptedDeclaration] = useState(false);
   const requiresDeclaration = watchType === 'video' || watchType === '3d_cinema';
 
+  // Get ticket image based on watch type
+  const getTicketImage = () => {
+    const type = watchType?.toLowerCase() || 'cinema';
+    
+    if (type === 'classroom' || type === 'lecture_hall') {
+      return '/icons/LectureTicket.png';
+    }
+    if (type.includes('video')) {
+      return '/icons/TheaterTicket.png';
+    }
+    // Cinema (default for 3d_cinema or anything else)
+    return '/icons/CinemaTicket.png';
+  };
+
   // Currency locked to NGN (Paystack Nigeria only)
   // Multi-currency support coming with Stripe integration
   useEffect(() => {
@@ -70,6 +84,13 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
     }
 
     const amount = parseFloat(priceAmount);
+    
+    // Minimum 1 token = ₦122 (withdrawal rate, tokens stored as cents)
+    const minPriceNaira = 122;
+    if (amount < minPriceNaira) {
+      setError(`Minimum ticket price is ₦${minPriceNaira} (1 token)`);
+      return;
+    }
     
     // Validate price
     const validation = validatePrice(amount, currency);
@@ -168,9 +189,9 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
             {/* Left Side - Ticket Image (40%) */}
             <div className="w-full md:w-2/5 bg-gradient-to-br from-yellow-400 to-amber-500 flex items-center justify-center p-4 sm:p-8 md:border-r-2 border-b-2 md:border-b-0 border-dashed border-amber-600">
               <img 
-                src="/icons/ticket.svg" 
+                src={getTicketImage()} 
                 alt="Ticket"
-                className="w-full h-auto max-w-xs drop-shadow-2xl"
+                className="w-full h-auto max-w-xs transition-transform duration-300 hover:scale-105 drop-shadow-2xl"
               />
             </div>
 

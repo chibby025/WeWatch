@@ -1,0 +1,14 @@
+ column_name |          data_type          
+-------------+-----------------------------
+ id          | integer
+ session_id  | character varying
+ user_id     | integer
+ role        | character varying
+ share_type  | character varying
+ status      | character varying
+ position    | integer
+ granted_at  | timestamp without time zone
+ joined_at   | timestamp without time zone
+ left_at     | timestamp without time zone
+(10 rows)
+

@@ -1,0 +1,14 @@
+ column_name |          data_type          | is_nullable |                   column_default                   
+-------------+-----------------------------+-------------+----------------------------------------------------
+ id          | integer                     | NO          | nextval('liveshare_participants_id_seq'::regclass)
+ session_id  | character varying           | NO          | 
+ user_id     | integer                     | NO          | 
+ role        | character varying           | NO          | 
+ share_type  | character varying           | YES         | 
+ status      | character varying           | NO          | 
+ position    | integer                     | NO          | 
+ granted_at  | timestamp without time zone | YES         | now()
+ joined_at   | timestamp without time zone | YES         | 
+ left_at     | timestamp without time zone | YES         | 
+(10 rows)
+

@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { ClockIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ClockIcon, TrashIcon, TicketIcon } from '@heroicons/react/24/outline';
 import apiClient from '../services/api';
 import CalendarDropdown from './CalendarDropdown';
 import toast from 'react-hot-toast';
+import { convertFiatToTokens, formatTokens, formatCurrency } from '../utils/tokenConverter';
+import { createFreeRSVP, cancelRSVP, purchaseEventTicket } from '../services/api';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
+import '../styles/customDatePicker.css';
 
 const ScheduleEventModal = ({
   isOpen,
@@ -19,7 +24,7 @@ const ScheduleEventModal = ({
   // State for form fields
   const [watchType, setWatchType] = useState('3d_cinema');
   const [mediaFile, setMediaFile] = useState(null);
-  const [startTime, setStartTime] = useState('');
+  const [startTime, setStartTime] = useState(null); // Changed to Date object for DatePicker
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   
@@ -28,9 +33,22 @@ const ScheduleEventModal = ({
   const [trailerTitle, setTrailerTitle] = useState('');
   const [trailerPreview, setTrailerPreview] = useState(null);
   
+  // ✅ Pricing/ticketing state
+  const [isPaid, setIsPaid] = useState(false);
+  const [ticketPriceNaira, setTicketPriceNaira] = useState('');
+  const [earlyBirdEnabled, setEarlyBirdEnabled] = useState(false);
+  const [earlyBirdPriceNaira, setEarlyBirdPriceNaira] = useState('');
+  
   // State for upcoming events
   const [events, setEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
+  const [userTickets, setUserTickets] = useState({}); // Track user's tickets/RSVPs by event ID
+  const [actionLoading, setActionLoading] = useState({}); // Track loading state for each event action
+  
+  // ✅ Gift ticket state
+  const [giftingEventId, setGiftingEventId] = useState(null); // Which event is being gifted
+  const [giftRecipientUsername, setGiftRecipientUsername] = useState('');
+  const [giftLoading, setGiftLoading] = useState(false);
 
   // Sync active tab prop
   useEffect(() => {
@@ -48,19 +66,23 @@ const ScheduleEventModal = ({
   useEffect(() => {
     if (eventToEdit) {
       setWatchType(eventToEdit.watch_type || '3d_cinema');
-      setStartTime(new Date(eventToEdit.start_time).toISOString().slice(0, 16));
+      setStartTime(eventToEdit.start_time ? new Date(eventToEdit.start_time) : null);
       setTitle(eventToEdit.title || '');
       setDescription(eventToEdit.description || '');
     } else {
       // Reset form for new event
       setWatchType('3d_cinema');
       setMediaFile(null);
-      setStartTime('');
+      setStartTime(null);
       setTitle('');
       setDescription('');
       setTrailerFile(null);
       setTrailerTitle('');
       setTrailerPreview(null);
+      setIsPaid(false);
+      setTicketPriceNaira('');
+      setEarlyBirdEnabled(false);
+      setEarlyBirdPriceNaira('');
     }
   }, [eventToEdit]);
   
@@ -84,9 +106,8 @@ const ScheduleEventModal = ({
     if (!watchType || !startTime || !title) return;
 
     try {
-      // Convert local time to UTC
-      const localTime = new Date(startTime);
-      const utcTime = localTime.toISOString();
+      // Convert Date object to UTC ISO string
+      const utcTime = startTime.toISOString();
 
       let trailerUploadedUrl = '';
       let trailerUploadedDuration = 0;
@@ -119,6 +140,13 @@ const ScheduleEventModal = ({
         trailer_url: trailerUploadedUrl,
         trailer_title: trailerTitle || title, // Default to event title
         trailer_duration: trailerUploadedDuration,
+        is_paid: isPaid,
+        ticket_price_tokens: isPaid ? convertFiatToTokens(parseFloat(ticketPriceNaira), 'NGN') : 0,
+        ticket_price_amount: isPaid ? parseFloat(ticketPriceNaira) : 0,
+        ticket_price_currency: isPaid ? 'NGN' : '',
+        early_bird_enabled: earlyBirdEnabled,
+        early_bird_price_tokens: earlyBirdEnabled ? convertFiatToTokens(parseFloat(earlyBirdPriceNaira), 'NGN') : 0,
+        early_bird_price_amount: earlyBirdEnabled ? parseFloat(earlyBirdPriceNaira) : 0,
       };
 
       await onCreate(eventData);
@@ -126,12 +154,16 @@ const ScheduleEventModal = ({
       // Reset form
       setWatchType('3d_cinema');
       setMediaFile(null);
-      setStartTime('');
+      setStartTime(null);
       setTitle('');
       setDescription('');
       setTrailerFile(null);
       setTrailerTitle('');
       setTrailerPreview(null);
+      setIsPaid(false);
+      setTicketPriceNaira('');
+      setEarlyBirdEnabled(false);
+      setEarlyBirdPriceNaira('');
       
       // Switch to upcoming events tab and refresh
       setCurrentTab('upcoming');
@@ -153,6 +185,85 @@ const ScheduleEventModal = ({
     } catch (err) {
       console.error('Failed to delete event:', err);
       toast.error('Failed to delete event');
+    }
+  };
+
+  // Handle RSVP to free event
+  const handleRSVP = async (eventId) => {
+    setActionLoading(prev => ({ ...prev, [eventId]: true }));
+    try {
+      await createFreeRSVP(eventId);
+      toast.success('✅ RSVP confirmed!');
+      setUserTickets(prev => ({ ...prev, [eventId]: { type: 'rsvp' } }));
+      await fetchEvents(); // Refresh to get updated counts
+    } catch (err) {
+      console.error('Failed to RSVP:', err);
+      toast.error(err.response?.data?.error || 'Failed to RSVP');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [eventId]: false }));
+    }
+  };
+
+  // Handle cancel RSVP
+  const handleCancelRSVP = async (eventId) => {
+    setActionLoading(prev => ({ ...prev, [eventId]: true }));
+    try {
+      await cancelRSVP(eventId);
+      toast.success('RSVP cancelled');
+      setUserTickets(prev => {
+        const updated = { ...prev };
+        delete updated[eventId];
+        return updated;
+      });
+      await fetchEvents(); // Refresh to get updated counts
+    } catch (err) {
+      console.error('Failed to cancel RSVP:', err);
+      toast.error(err.response?.data?.error || 'Failed to cancel RSVP');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [eventId]: false }));
+    }
+  };
+
+  // Handle ticket purchase
+  const handlePurchaseTicket = async (eventId, isGift = false) => {
+    setActionLoading(prev => ({ ...prev, [eventId]: true }));
+    try {
+      let recipientUserId = null;
+      
+      // If gifting, validate and get recipient user ID
+      if (isGift) {
+        if (!giftRecipientUsername.trim()) {
+          toast.error('Please enter a recipient username');
+          return;
+        }
+        
+        // Look up user by username
+        try {
+          const response = await apiClient.get(`/api/users/by-username/${giftRecipientUsername.trim()}`);
+          recipientUserId = response.data.user.id;
+        } catch (err) {
+          toast.error(err.response?.data?.error || 'User not found');
+          return;
+        }
+      }
+      
+      const result = await purchaseEventTicket(eventId, isGift, recipientUserId);
+      
+      if (isGift) {
+        toast.success(`🎁 Ticket gifted to @${giftRecipientUsername}! (${result.total_cost_tokens} tokens with 5% transfer fee)`);
+        setGiftingEventId(null);
+        setGiftRecipientUsername('');
+      } else {
+        toast.success(`🎟️ Ticket purchased! (${result.total_cost_tokens} tokens)`);
+      }
+      
+      setUserTickets(prev => ({ ...prev, [eventId]: { type: 'ticket', ...result.ticket } }));
+      await fetchEvents(); // Refresh to get updated counts
+    } catch (err) {
+      console.error('Failed to purchase ticket:', err);
+      toast.error(err.response?.data?.error || 'Failed to purchase ticket');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [eventId]: false }));
     }
   };
   
@@ -183,6 +294,12 @@ const ScheduleEventModal = ({
     return `${Math.floor(diffMins / 1440)}d`;
   };
   
+  // Calculate 5% transfer fee for gifting
+  const calculateTransferFee = (ticketPriceTokens) => {
+    const fee = Math.max(1, Math.ceil(ticketPriceTokens * 0.05)); // Minimum 1 token, 5% of price
+    return fee;
+  };
+  
   // Split events into upcoming and past
   const now = new Date();
   const futureEvents = events.filter(event => new Date(event.start_time) > now);
@@ -195,7 +312,7 @@ const ScheduleEventModal = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
-      <div className="bg-white dark:bg-gray-800 p-3 sm:p-6 rounded-lg w-full max-w-[95vw] sm:max-w-[85vw] md:max-w-2xl max-h-[95vh] overflow-y-auto custom-sleek-scrollbar">
+      <div className="bg-white dark:bg-gray-800 p-3 sm:p-6 rounded-lg w-full max-w-md max-h-[95vh] overflow-y-auto custom-sleek-scrollbar">
         <div className="flex justify-between items-center mb-3 sm:mb-4">
           <h2 className="text-base sm:text-lg md:text-xl font-bold text-gray-900 dark:text-white">
             Scheduled Events
@@ -246,7 +363,7 @@ const ScheduleEventModal = ({
         
         {/* Tab Content */}
         {currentTab === 'create' && isHost && (
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} className="max-w-md mx-auto">
             <div className="mb-3 sm:mb-4">
               <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">Title</label>
               <input
@@ -282,22 +399,151 @@ const ScheduleEventModal = ({
               />
             </div>
             
+            {/* ✅ Pricing Type Radio Buttons (Simplified) */}
+            <div className="mb-3 sm:mb-4">
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Pricing Type
+              </label>
+              <div className="flex gap-4">
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    name="pricingType"
+                    checked={!isPaid}
+                    onChange={() => setIsPaid(false)}
+                    className="w-4 h-4 text-green-600 border-gray-300 focus:ring-green-500"
+                  />
+                  <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">Free</span>
+                </label>
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="radio"
+                    name="pricingType"
+                    checked={isPaid}
+                    onChange={() => setIsPaid(true)}
+                    className="w-4 h-4 text-purple-600 border-gray-300 focus:ring-purple-500"
+                  />
+                  <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">Paid</span>
+                </label>
+              </div>
+            </div>
+            
+            {/* ✅ Ticket Image (Based on Watch Type) */}
+            <div className="mb-4 flex justify-center">
+              <img 
+                src={
+                  watchType === 'classroom' ? '/icons/LectureTicket.png' :
+                  watchType === 'video_watch' ? '/icons/TheaterTicket.png' :
+                  '/icons/CinemaTicket.png'
+                }
+                alt="Ticket"
+                className="w-72 h-auto drop-shadow-2xl transition-transform hover:scale-105"
+              />
+            </div>
+            
+            {/* ✅ Ticket Pricing (shown only if paid) */}
+            {isPaid && (
+              <div className="mb-4 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-300 dark:border-purple-600">
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Ticket Price (₦)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg font-bold text-gray-700 dark:text-gray-300">
+                      ₦
+                    </span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="0.01"
+                      value={ticketPriceNaira}
+                      onChange={(e) => setTicketPriceNaira(e.target.value)}
+                      className="block w-full pl-8 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      placeholder="e.g., 1000"
+                      required={isPaid}
+                    />
+                  </div>
+                  {ticketPriceNaira && (
+                    <div className="mt-2 p-2 bg-purple-100 dark:bg-purple-800/30 rounded text-xs">
+                      <span className="text-gray-700 dark:text-gray-300">
+                        ≈ {formatTokens(convertFiatToTokens(parseFloat(ticketPriceNaira), 'NGN'))}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Early Bird Toggle */}
+                <div className="flex items-center mb-2">
+                  <input
+                    type="checkbox"
+                    id="earlyBirdToggle"
+                    checked={earlyBirdEnabled}
+                    onChange={(e) => setEarlyBirdEnabled(e.target.checked)}
+                    className="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                  />
+                  <label htmlFor="earlyBirdToggle" className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Enable Early Bird Pricing
+                  </label>
+                </div>
+                
+                {earlyBirdEnabled && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Early Bird Price (₦)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg font-bold text-gray-700 dark:text-gray-300">
+                        ₦
+                      </span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="0.01"
+                        value={earlyBirdPriceNaira}
+                        onChange={(e) => setEarlyBirdPriceNaira(e.target.value)}
+                        className="block w-full pl-8 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        placeholder={ticketPriceNaira ? `Less than ${ticketPriceNaira}` : 'Early bird price'}
+                        required={earlyBirdEnabled}
+                      />
+                    </div>
+                    {earlyBirdPriceNaira && (
+                      <div className="mt-2 p-2 bg-green-100 dark:bg-green-800/30 rounded text-xs">
+                        <span className="text-gray-700 dark:text-gray-300">
+                          ≈ {formatTokens(convertFiatToTokens(parseFloat(earlyBirdPriceNaira), 'NGN'))}
+                        </span>
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Automatically ends 1 hour before event starts
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            
             <div className="mb-3 sm:mb-4">
               <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">Start Time</label>
               <div className="relative mt-1">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <img src="/icons/schedule.svg" alt="" className="h-5 w-5 text-gray-400 dark:text-gray-500" />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
+                  <img src="/icons/schedule.svg" alt="" className="h-8 w-8 text-gray-400 dark:text-gray-500" />
                 </div>
-                <input
-                  type="datetime-local"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className="block w-full pl-10 pr-2 py-1.5 sm:pr-3 sm:py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                <DatePicker
+                  selected={startTime}
+                  onChange={(date) => setStartTime(date)}
+                  showTimeSelect
+                  timeFormat="HH:mm"
+                  timeIntervals={15}
+                  dateFormat="MMMM d, yyyy h:mm aa"
+                  minDate={new Date()}
+                  placeholderText="Select date and time"
+                  className="block w-full pl-14 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white cursor-pointer"
+                  calendarClassName="custom-datepicker"
+                  wrapperClassName="w-full"
                   required
                 />
               </div>
               <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Times are saved in UTC. Your local time: {startTime ? new Date(startTime).toLocaleString() : 'Not set'}
+                Selected: {startTime ? startTime.toLocaleString() : 'Not set'}
               </p>
             </div>
             
@@ -310,23 +556,26 @@ const ScheduleEventModal = ({
                 Upload a trailer to promote your event! Max 60 seconds • Auto-deletes when event starts • Appears in lobby "Watching Now"
               </p>
               
-              <input
-                type="file"
-                onChange={(e) => {
-                  const file = e.target.files[0];
-                  if (file) {
-                    // Validate file size (max 50MB)
-                    if (file.size > 50 * 1024 * 1024) {
-                      toast.error('Trailer file must be less than 50MB');
-                      return;
+              <label className="flex items-center justify-center bg-black hover:bg-gray-900 text-white font-semibold py-3 px-4 rounded-lg cursor-pointer transition-colors">
+                <input
+                  type="file"
+                  onChange={(e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                      // Validate file size (max 50MB)
+                      if (file.size > 50 * 1024 * 1024) {
+                        toast.error('Trailer file must be less than 50MB');
+                        return;
+                      }
+                      setTrailerFile(file);
+                      setTrailerPreview(URL.createObjectURL(file));
                     }
-                    setTrailerFile(file);
-                    setTrailerPreview(URL.createObjectURL(file));
-                  }
-                }}
-                className="block w-full text-sm text-gray-900 dark:text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-purple-500 file:text-white hover:file:bg-purple-600 cursor-pointer"
-                accept="video/mp4,video/webm,video/quicktime"
-              />
+                  }}
+                  className="hidden"
+                  accept="video/mp4,video/webm,video/quicktime"
+                />
+                <span className="text-sm">📤 Upload Trailer</span>
+              </label>
               
               {trailerPreview && (
                 <div className="mt-3">
@@ -409,6 +658,10 @@ const ScheduleEventModal = ({
                   const eventStart = new Date(event.start_time);
                   const timeDiff = (eventStart - now) / 1000 / 60;
                   const isStartingSoon = timeDiff <= 15 && timeDiff >= 0;
+                  const hasUserTicket = userTickets[event.ID];
+                  const isEarlyBird = event.early_bird_enabled && event.early_bird_active;
+                  const ticketPrice = isEarlyBird ? event.early_bird_price_tokens : event.ticket_price_tokens;
+                  const ticketPriceNaira = isEarlyBird ? event.early_bird_price_amount : event.ticket_price_amount;
                   
                   return (
                     <div
@@ -426,11 +679,16 @@ const ScheduleEventModal = ({
                               <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
                             )}
                             <h4 className="font-bold text-sm sm:text-base text-gray-900 dark:text-white truncate">{event.title}</h4>
+                            {event.is_paid && (
+                              <span className="flex-shrink-0 px-2 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded">
+                                Paid
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 line-clamp-2">
                             {event.description || 'No description'}
                           </p>
-                          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[10px] sm:text-xs text-gray-500 dark:text-gray-400">
+                          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mb-3">
                             <span className="flex items-center gap-1">
                               <ClockIcon className="h-3 w-3 sm:h-4 sm:w-4" />
                               <span className="hidden sm:inline">{formatEventTime(event.start_time)}</span>
@@ -446,9 +704,125 @@ const ScheduleEventModal = ({
                               {getTimeUntilEvent(event.start_time)}
                             </span>
                             <span className="px-1.5 py-0.5 sm:px-2 sm:py-1 rounded text-[10px] sm:text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">
-                              {event.watch_type === '3d_cinema' ? '🎬' : '📺'}<span className="hidden sm:inline ml-1">{event.watch_type === '3d_cinema' ? '3D Cinema' : 'Video Watch'}</span>
+                              {event.watch_type === '3d_cinema' ? '🎬' : event.watch_type === 'classroom' ? '🎓' : '📺'}
+                              <span className="hidden sm:inline ml-1">
+                                {event.watch_type === '3d_cinema' ? '3D Cinema' : event.watch_type === 'classroom' ? 'Lecture Hall' : 'Video Watch'}
+                              </span>
                             </span>
+                            {event.is_paid ? (
+                              <span className="flex items-center gap-1 text-xs">
+                                <TicketIcon className="h-3 w-3" />
+                                {event.tickets_sold || 0} sold
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-xs">
+                                <TicketIcon className="h-3 w-3" />
+                                {event.rsvp_count || 0} RSVP'd
+                              </span>
+                            )}
                           </div>
+
+                          {/* Action Button */}
+                          <div className="flex items-center gap-2">
+                            {hasUserTicket ? (
+                              <div className="flex items-center gap-2">
+                                <span className="flex items-center gap-1 px-3 py-1.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded text-sm font-medium">
+                                  ✅ {event.is_paid ? 'Ticket Purchased' : 'RSVP\'d'}
+                                </span>
+                                {!event.is_paid && (
+                                  <button
+                                    onClick={() => handleCancelRSVP(event.ID)}
+                                    disabled={actionLoading[event.ID]}
+                                    className="px-3 py-1.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded text-sm hover:bg-red-200 dark:hover:bg-red-900/50 disabled:opacity-50"
+                                  >
+                                    {actionLoading[event.ID] ? 'Cancelling...' : 'Cancel RSVP'}
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <>
+                                {event.is_paid ? (
+                                  <div className="w-full">
+                                    {/* Buy Ticket / Gift Ticket Button */}
+                                    {giftingEventId === event.ID ? (
+                                      /* Gift Mode - Show input */
+                                      <div className="space-y-2">
+                                        <input
+                                          type="text"
+                                          value={giftRecipientUsername}
+                                          onChange={(e) => setGiftRecipientUsername(e.target.value)}
+                                          placeholder="Enter recipient's username"
+                                          className="w-full px-3 py-2 border rounded text-sm dark:bg-gray-700 dark:border-gray-600"
+                                        />
+                                        <div className="flex gap-2">
+                                          <button
+                                            onClick={() => handlePurchaseTicket(event.ID, true)}
+                                            disabled={actionLoading[event.ID] || !giftRecipientUsername.trim()}
+                                            className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 bg-pink-600 hover:bg-pink-700 text-white rounded text-sm font-medium disabled:opacity-50"
+                                          >
+                                            <span>🎁</span>
+                                            {actionLoading[event.ID] ? 'Gifting...' : 
+                                              `Gift (${formatTokens(ticketPrice + calculateTransferFee(ticketPrice))})`}
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              setGiftingEventId(null);
+                                              setGiftRecipientUsername('');
+                                            }}
+                                            className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 rounded text-sm"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                                          Ticket: {formatTokens(ticketPrice)} + Transfer fee (5%): {formatTokens(calculateTransferFee(ticketPrice))}
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      /* Normal Mode - Show buttons */
+                                      <div className="flex gap-2">
+                                        <button
+                                          onClick={() => handlePurchaseTicket(event.ID, false)}
+                                          disabled={actionLoading[event.ID]}
+                                          className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm font-medium disabled:opacity-50"
+                                        >
+                                          <TicketIcon className="h-4 w-4" />
+                                          {actionLoading[event.ID] ? 'Purchasing...' : 
+                                            isEarlyBird ? `Buy Early Bird (${formatTokens(ticketPrice)})` : 
+                                            `Buy Ticket (${formatTokens(ticketPrice)})`}
+                                        </button>
+                                        <button
+                                          onClick={() => setGiftingEventId(event.ID)}
+                                          disabled={actionLoading[event.ID]}
+                                          className="px-3 py-1.5 bg-pink-100 hover:bg-pink-200 dark:bg-pink-900/30 dark:hover:bg-pink-900/50 text-pink-700 dark:text-pink-400 rounded text-sm font-medium disabled:opacity-50"
+                                          title="Gift this ticket to someone"
+                                        >
+                                          🎁
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => handleRSVP(event.ID)}
+                                    disabled={actionLoading[event.ID]}
+                                    className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-sm font-medium disabled:opacity-50"
+                                  >
+                                    <TicketIcon className="h-4 w-4" />
+                                    {actionLoading[event.ID] ? 'Booking...' : 'Book Free Spot'}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+
+                          {/* Early Bird Notice */}
+                          {event.is_paid && isEarlyBird && !hasUserTicket && (
+                            <p className="mt-2 text-xs text-green-600 dark:text-green-400">
+                              🎉 Early bird pricing! Save {formatTokens(event.ticket_price_tokens - event.early_bird_price_tokens)} 
+                              (Regular: {formatTokens(event.ticket_price_tokens)})
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
                           <CalendarDropdown event={event} roomUrl={roomUrl} />

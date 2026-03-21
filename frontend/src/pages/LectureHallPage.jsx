@@ -13,7 +13,7 @@ import lectureHallCameraPositions from '../data/lectureHallCameraPositions';
 import { lectureHallLeftRightViews } from '../data/lectureHallLeftRightViews';
 import useAuth from '../hooks/useAuth';
 import useWebSocket from '../hooks/useWebSocket';
-import useLectureHallAudio, { isInSameRowGroup } from '../hooks/useLectureHallAudio';
+import useLectureHallAudio, { isInSameRowGroup, DiscussionModeBar } from '../hooks/useLectureHallAudio';
 import useLiveKitRoom from '../hooks/useLiveKitRoom';
 import { RoomEvent, Track, LocalVideoTrack } from 'livekit-client'; // For selective subscription and screen share
 import { useSeatSwap } from '../hooks/useSeatSwap';
@@ -1065,10 +1065,6 @@ const PositionCalculatorPage = () => {
   // Temporary playlist state (for session uploads)
   const [temporaryPlaylist, setTemporaryPlaylist] = useState([]);
   
-  // Discussion mode button visibility (auto-hide after 1 second of no mouse movement)
-  const [showDiscussionModeButton, setShowDiscussionModeButton] = useState(true);
-  const discussionModeHideTimeoutRef = useRef(null);
-  
   // View direction state (center, left, right)
   const [currentViewDirection, setCurrentViewDirection] = useState('center');
   const [selectedSeatId, setSelectedSeatId] = useState(null);
@@ -1083,6 +1079,8 @@ const PositionCalculatorPage = () => {
   
   // WebSocket and session state
   const [watchSessionMembers, setWatchSessionMembers] = useState([]); // Active watch session participants
+  const [liveShareGuest, setLiveShareGuest] = useState(null); // Active LiveShare guest object
+  const [hasLiveSharePermission, setHasLiveSharePermission] = useState(false); // Member permission for LiveShare
   const hasApiFetchedMembersRef = useRef(false); // Track if we've fetched members from API to prevent fallback overwrite
   const [userSeats, setUserSeats] = useState({}); // userId -> seatId
   const [currentSeat, setCurrentSeat] = useState(null);
@@ -1524,34 +1522,6 @@ const PositionCalculatorPage = () => {
       });
     };
   }, [isConnected, actualSessionId, finalSessionId, roomId, currentUser?.id, sessionStatus, sendMessage]);
-  
-  // Discussion mode button show/hide on mouse movement (for host only)
-  useEffect(() => {
-    if (!isHost) return;
-    
-    const handleMouseMove = () => {
-      setShowDiscussionModeButton(true);
-      
-      // Clear existing timeout
-      if (discussionModeHideTimeoutRef.current) {
-        clearTimeout(discussionModeHideTimeoutRef.current);
-      }
-      
-      // Hide button after 1 second of no movement
-      discussionModeHideTimeoutRef.current = setTimeout(() => {
-        setShowDiscussionModeButton(false);
-      }, 1000);
-    };
-    
-    window.addEventListener('mousemove', handleMouseMove);
-    
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      if (discussionModeHideTimeoutRef.current) {
-        clearTimeout(discussionModeHideTimeoutRef.current);
-      }
-    };
-  }, [isHost]);
   
   // 📱 Orientation detection for mobile devices (show once on join if portrait)
   useEffect(() => {
@@ -6153,6 +6123,96 @@ const PositionCalculatorPage = () => {
     toast.success('Camera removed');
   };
   
+  // ✅ LiveShare Mode Selection Handler
+  const handleLiveShareModeSelect = (mode) => {
+    console.log('🎬 [LiveShare] Mode selected:', mode);
+    
+    if (!sendMessage) {
+      console.error('❌ [LiveShare] sendMessage not available');
+      return;
+    }
+    
+    // If null, end LiveShare
+    if (!mode) {
+      handleEndScreenShare();
+      return;
+    }
+    
+    // Send mode selection to backend
+    sendMessage({
+      type: 'liveshare_mode_selected',
+      data: { mode }
+    });
+    
+    setLiveShareMode(mode);
+  };
+  
+  // ✅ LiveShare Type Selection Handler (screen/camera/both)
+  const handleLiveShareTypeSelect = async (type) => {
+    console.log('🎬 [LiveShare] Type selected:', type);
+    
+    if (sendMessage) {
+      sendMessage({
+        type: 'liveshare_type_selected',
+        data: { shareType: type }
+      });
+    }
+    
+    // Start screen share after type selection
+    await handleStartScreenShare(type, 'liveshare');
+  };
+  
+  // ✅ Grant LiveShare Permission Handler (host grants permission to member)
+  const handleGrantLiveSharePermission = (userId) => {
+    console.log('🎬 [LiveShare] Granting permission to user:', userId);
+    
+    if (!sendMessage) {
+      console.error('❌ [LiveShare] sendMessage not available');
+      return;
+    }
+    
+    sendMessage({
+      type: 'liveshare_grant_permission',
+      data: { userId }
+    });
+    
+    toast.success('Permission granted');
+  };
+  
+  // ✅ Revoke LiveShare Permission Handler
+  const handleRevokeLiveSharePermission = (userId) => {
+    console.log('🎬 [LiveShare] Revoking permission from user:', userId);
+    
+    if (!sendMessage) {
+      console.error('❌ [LiveShare] sendMessage not available');
+      return;
+    }
+    
+    sendMessage({
+      type: 'liveshare_revoke_permission',
+      data: { userId }
+    });
+    
+    toast.warning('Permission revoked');
+  };
+  
+  // ✅ Kick LiveShare Guest Handler
+  const handleKickLiveShareGuest = (userId) => {
+    console.log('🎬 [LiveShare] Kicking guest:', userId);
+    
+    if (!sendMessage) {
+      console.error('❌ [LiveShare] sendMessage not available');
+      return;
+    }
+    
+    sendMessage({
+      type: 'liveshare_kick_guest',
+      data: { userId }
+    });
+    
+    toast.warning('Guest removed from LiveShare');
+  };
+  
   // Handle exit/leave session
   const handleExit = async () => {
     console.log('🚨🚨🚨 [handleExit] ===== FUNCTION ENTRY =====');
@@ -6646,22 +6706,12 @@ const PositionCalculatorPage = () => {
           <axesHelper args={[5]} />
         </Canvas>
         
-        {/* Discussion Mode Button - Host Only (Pill-shaped, auto-hides) */}
-        {isHost && showDiscussionModeButton && (
-          <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 z-40">
-            <button
-              onClick={toggleDiscussionMode}
-              className={`px-6 py-3 rounded-full font-semibold text-white transition-all duration-300 transform hover:scale-110 ${
-                discussionMode
-                  ? 'bg-gradient-to-r from-red-600 to-red-500 shadow-lg shadow-red-500/50'
-                  : 'bg-gradient-to-r from-purple-600 to-blue-600 shadow-lg shadow-purple-500/50'
-              }`}
-              title={discussionMode ? 'Exit Discussion Mode' : 'Enter Discussion Mode'}
-            >
-              {discussionMode ? '🎤 Discussion Mode: ON' : '🎤 Enable Discussion Mode'}
-            </button>
-          </div>
-        )}
+        {/* Discussion Mode Bar - Top of screen (auto-hides like cinema AudioModeBar) */}
+        <DiscussionModeBar
+          discussionMode={discussionMode}
+          isHost={isHost}
+          onToggleMode={toggleDiscussionMode}
+        />
         
         {/* 🎮 View Control Icons (Left/Center/Right + Turnaround for Host) */}
         {showViewIcons && (
@@ -7370,6 +7420,16 @@ const PositionCalculatorPage = () => {
           onTakeQuiz={handleTakeQuiz}
           watchType="classroom"
           classType={modelType === 'lecture-hall' ? 'lecture_hall' : 'classroom'}
+          // ✅ LiveShare props
+          watchSessionMembers={watchSessionMembers}
+          liveShareMode={liveShareMode}
+          liveShareGuest={liveShareGuest}
+          hasLiveSharePermission={hasLiveSharePermission}
+          onLiveShareModeSelect={handleLiveShareModeSelect}
+          onLiveShareTypeSelect={handleLiveShareTypeSelect}
+          onGrantLiveSharePermission={handleGrantLiveSharePermission}
+          onRevokeLiveSharePermission={handleRevokeLiveSharePermission}
+          onKickLiveShareGuest={handleKickLiveShareGuest}
         />
       )}
       

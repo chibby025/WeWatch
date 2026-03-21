@@ -15,6 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import HelpSupportModal from './HelpSupportModal';
 import { useNavigate } from 'react-router-dom';
+import { clearAllCaches } from '../utils/cinemaCache';
 
 const LobbyLeftSidebar = ({ 
   isOpen, 
@@ -33,9 +34,17 @@ const LobbyLeftSidebar = ({
 
   // Handle logout
   const handleLogout = () => {
+    console.log('🚪 [Logout] Clearing auth data and cache...');
+    
     // Clear all auth data
     localStorage.removeItem('user');
     localStorage.removeItem('token');
+    
+    // Clear all cinema/user caches
+    clearAllCaches();
+    console.log('✅ [Logout] Cinema cache cleared');
+    
+    // Clear any remaining localStorage items
     localStorage.clear();
     
     // Close sidebar

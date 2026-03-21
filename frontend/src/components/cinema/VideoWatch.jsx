@@ -352,6 +352,7 @@ export default function VideoWatch() {
   // 📹 LiveShare state (screen + camera)
   const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both'
   const [sharingSource, setSharingSource] = useState(null); // 'liveshare' | 'watchfrom' | null
+  const [podcastConfig, setPodcastConfig] = useState(null); // { title, logoUrl, guestUserId, guestUsername, hostUsername, sessionId }
   const screenShareTrackRef = useRef(null);
   const cameraShareTrackRef = useRef(null);
   const liveShareVideoRef = useRef(null); // Separate ref for LiveShare main video
@@ -2113,6 +2114,35 @@ export default function VideoWatch() {
     toast.success('LiveShare ended');
   };
   
+  // 🎬 Handle LiveShare type selection (for Regular mode)
+  const handleLiveShareTypeSelect = (type) => {
+    console.log('🎬 [VideoWatch] LiveShare type selected:', type);
+    handleStartLiveShare(type, 'liveshare');
+  };
+  
+  // 🎙️ Handle LiveShare mode selection (for Podcast/News/Show modes)
+  const handleLiveShareModeSelect = (mode, config = null) => {
+    console.log('🎙️ [VideoWatch] LiveShare mode selected:', mode, config);
+    
+    if (mode === null) {
+      // End LiveShare
+      setPodcastConfig(null);
+      handleEndScreenShare();
+      return;
+    }
+    
+    // Store podcast config for overlay rendering
+    if (config) {
+      setPodcastConfig({
+        ...config,
+        mode: mode, // 'podcast', 'news', or 'show'
+        hostUsername: currentUser?.username || 'Host',
+        sessionId: activeSessionId
+      });
+      console.log('📦 [VideoWatch] Podcast config stored:', config);
+    }
+  };
+  
   // 📹 Handle WatchFrom platform screen share
   const handleStartPlatformScreenShare = async (platformId, platformName, platformUrl) => {
     console.log(`🌐 [VideoWatch] Starting WatchFrom: ${platformName}`);
@@ -3634,22 +3664,125 @@ export default function VideoWatch() {
       </div>
 
       {/* 📺 Main Video Player — PASS LIVEKIT TRACK */}
-      <CinemaVideoPlayer
-        ref={videoPlayerRef}
-        mediaItem={currentMedia}
-        isPlaying={isPlaying}
-        isHost={isHost}
-        track={remoteScreenTrack}
-        localScreenTrack={localScreenTrack}
-        playbackPositionRef={playbackPositionRef}
-        onPlay={handlePlay}
-        onPause={handlePause}
-        onEnded={handleVideoEnd}
-        onError={handleError}
-        onPauseBroadcast={handlePauseBroadcast}
-        onTimeUpdate={handleTimeUpdate}
-        // ❌ REMOVED: onBinaryHandlerReady, onScreenShareReady (not needed with LiveKit)
-      />
+      <div className="relative w-full h-full">
+        <CinemaVideoPlayer
+          ref={videoPlayerRef}
+          mediaItem={currentMedia}
+          isPlaying={isPlaying}
+          isHost={isHost}
+          track={remoteScreenTrack}
+          localScreenTrack={localScreenTrack}
+          playbackPositionRef={playbackPositionRef}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onEnded={handleVideoEnd}
+          onError={handleError}
+          onPauseBroadcast={handlePauseBroadcast}
+          onTimeUpdate={handleTimeUpdate}
+          // ❌ REMOVED: onBinaryHandlerReady, onScreenShareReady (not needed with LiveKit)
+        />
+        
+        {/* 🎙️ LiveShare Overlays (for Podcast/News/Show modes) */}
+        {podcastConfig && (liveShareMode === 'podcast' || liveShareMode === 'news' || liveShareMode === 'show') && (
+          <div className="absolute inset-0 pointer-events-none">
+            {/* Host Name Label (top left) */}
+            <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-lg flex items-center gap-2 pointer-events-auto">
+              <span className="text-white font-medium text-sm sm:text-base">{podcastConfig.hostUsername || 'Host'} (Host)</span>
+            </div>
+            
+            {/* Podcast Logo (bottom left above title) */}
+            {podcastConfig.logoUrl && (() => {
+              let logoSize = 100;
+              let logoX = 10;
+              let logoY = 80;
+              
+              try {
+                const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${activeSessionId}`);
+                if (savedLogoStyles) {
+                  const styles = JSON.parse(savedLogoStyles);
+                  logoSize = styles.size || 100;
+                  logoX = styles.x || 10;
+                  logoY = styles.y || 80;
+                }
+              } catch (err) {
+                console.warn('Failed to load logo styles:', err);
+              }
+              
+              return (
+                <img 
+                  src={podcastConfig.logoUrl} 
+                  alt="Logo" 
+                  className="absolute object-contain pointer-events-auto"
+                  style={{
+                    width: `${logoSize}px`,
+                    height: `${logoSize}px`,
+                    left: `${logoX}px`,
+                    bottom: `${logoY}px`
+                  }}
+                />
+              );
+            })()}
+            
+            {/* LIVE Indicator (top center) */}
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full flex items-center gap-2 shadow-xl pointer-events-auto">
+              <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+              <span className="text-white font-bold text-xs sm:text-sm uppercase">LIVE</span>
+            </div>
+            
+            {/* Podcast Title (bottom left with custom styling) */}
+            {podcastConfig.title && (() => {
+              let titleColor = '#FFFFFF';
+              let titleSize = 24;
+              let titleWeight = 700;
+              let titleCase = 'none';
+              
+              try {
+                const savedStyles = localStorage.getItem(`podcast_title_style_${activeSessionId}`);
+                if (savedStyles) {
+                  const styles = JSON.parse(savedStyles);
+                  titleColor = styles.color || '#FFFFFF';
+                  titleSize = styles.size || 24;
+                  titleWeight = styles.weight || 700;
+                  titleCase = styles.case || 'none';
+                }
+              } catch (err) {
+                console.warn('Failed to load title styles:', err);
+              }
+              
+              const applyTextCase = (text, caseType) => {
+                if (!text) return text;
+                
+                switch (caseType) {
+                  case 'title':
+                    return text.toLowerCase().replace(/\b\w/g, char => char.toUpperCase());
+                  case 'upper':
+                    return text.toUpperCase();
+                  case 'lower':
+                    return text.toLowerCase();
+                  case 'sentence':
+                    return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+                  case 'none':
+                  default:
+                    return text;
+                }
+              };
+              
+              return (
+                <div 
+                  className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-sm px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg shadow-xl pointer-events-auto"
+                  style={{
+                    color: titleColor,
+                    fontSize: `${titleSize}px`,
+                    fontWeight: titleWeight
+                  }}
+                >
+                  <h2 className="text-sm sm:text-base md:text-lg">{applyTextCase(podcastConfig.title, titleCase)}</h2>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </div>
       
       {/* 🔊 Remote Audio Player - Handles audio from screen share */}
       {room && <RemoteAudioPlayer room={room} silenceMode={isSilenceMode} />}
@@ -3806,7 +3939,17 @@ export default function VideoWatch() {
             isHost={isHost}
             onClose={() => setIsLeftSidebarOpen(false)}
             onUploadComplete={fetchAndGeneratePosters}
-            sessionId={activeSessionId} // ✅ Pass session ID for uploads
+            sessionId={activeSessionId}
+            // ✅ LiveShare props
+            watchSessionMembers={participants}
+            liveShareMode={liveShareMode}
+            liveShareGuest={null}
+            hasLiveSharePermission={false}
+            onLiveShareModeSelect={handleLiveShareModeSelect}
+            onLiveShareTypeSelect={handleLiveShareTypeSelect}
+            onGrantLiveSharePermission={() => {}}
+            onRevokeLiveSharePermission={() => {}}
+            onKickLiveShareGuest={() => {}}
           />
         </div>
       )}
