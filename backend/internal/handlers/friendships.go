@@ -432,3 +432,34 @@ func GetFriendshipStatusHandler(c *gin.Context) {
 		"friendship":   friendship,
 	})
 }
+
+// GetFriendCountHandler returns the total number of friends for a user
+func GetFriendCountHandler(c *gin.Context) {
+	userIDStr := c.Param("userId")
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	db := c.MustGet("db").(*gorm.DB)
+
+	var count int64
+	err = db.Model(&models.Friendship{}).
+		Where(
+			"(requester_id = ? OR recipient_id = ?) AND status = ?",
+			userID, userID, models.FriendshipStatusAccepted,
+		).
+		Count(&count).Error
+
+	if err != nil {
+		log.Printf("Error counting friends for user %d: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count friends"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user_id": userID,
+		"count":   count,
+	})
+}

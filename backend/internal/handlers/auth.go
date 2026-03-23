@@ -7,6 +7,7 @@ import (
     "net/http"
     "os"
     "path/filepath"
+    "strconv"
     "strings"
     "time"
     "wewatch-backend/internal/models"
@@ -480,5 +481,92 @@ func GetUserByUsernameHandler(c *gin.Context) {
             "username": user.Username,
             "avatar_url": user.AvatarURL,
         },
+    })
+}
+
+// GetUserAverageWatchersHandler calculates average watchers across all sessions hosted by a user
+// GET /api/users/:userId/average-watchers
+func GetUserAverageWatchersHandler(c *gin.Context) {
+    userIDParam := c.Param("userId")
+    
+    userID, err := strconv.ParseUint(userIDParam, 10, 32)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+        return
+    }
+    
+    db := c.MustGet("db").(*gorm.DB)
+    
+    // First verify user exists
+    var user models.User
+    if err := db.First(&user, userID).Error; err != nil {
+        if err == gorm.ErrRecordNotFound {
+            c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+        } else {
+            log.Printf("Error finding user: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+        }
+        return
+    }
+    
+    // Check if user is a host (has hosted any sessions)
+    var sessionCount int64
+    if err := db.Model(&models.WatchSession{}).
+        Where("host_id = ?", userID).
+        Count(&sessionCount).Error; err != nil {
+        log.Printf("Error counting sessions: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+        return
+    }
+    
+    // If no sessions hosted, return 0
+    if sessionCount == 0 {
+        c.JSON(http.StatusOK, gin.H{
+            "user_id": userID,
+            "is_host": false,
+            "average_watchers": 0,
+            "total_sessions": 0,
+        })
+        return
+    }
+    
+    // Calculate average watchers per session
+    // We need to count distinct members per session, then average across all sessions
+    type SessionWatcherCount struct {
+        SessionID     uint
+        WatcherCount  int64
+    }
+    
+    var sessionWatchers []SessionWatcherCount
+    
+    // Get count of members per session
+    if err := db.Table("watch_session_members").
+        Select("watch_session_id as session_id, COUNT(DISTINCT user_id) as watcher_count").
+        Joins("JOIN watch_sessions ON watch_sessions.id = watch_session_members.watch_session_id").
+        Where("watch_sessions.host_id = ?", userID).
+        Group("watch_session_id").
+        Scan(&sessionWatchers).Error; err != nil {
+        log.Printf("Error calculating session watchers: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+        return
+    }
+    
+    // Calculate average
+    var totalWatchers int64 = 0
+    for _, sw := range sessionWatchers {
+        totalWatchers += sw.WatcherCount
+    }
+    
+    var averageWatchers float64 = 0
+    if len(sessionWatchers) > 0 {
+        averageWatchers = float64(totalWatchers) / float64(len(sessionWatchers))
+    }
+    
+    c.JSON(http.StatusOK, gin.H{
+        "user_id": userID,
+        "is_host": true,
+        "average_watchers": averageWatchers,
+        "total_sessions": len(sessionWatchers),
+        "total_watchers": totalWatchers,
     })
 }

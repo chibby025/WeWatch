@@ -740,7 +740,17 @@ func EndWatchSessionHandler(c *gin.Context) {
 	hub.DisconnectRoomClients(session.RoomID)
 
 	log.Printf("✅✅✅ [EndWatchSessionHandler] Session %s ended successfully by host %d", sessionID, userID)
-	c.JSON(http.StatusOK, gin.H{"message": "Session ended"})
+	
+	// ✅ Return session data including earnings for SessionEarningsModal (frontend)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Session ended",
+		"session": gin.H{
+			"session_id":            session.SessionID,
+			"ticketing_enabled":     session.TicketingEnabled,
+			"total_tickets_sold":    session.TotalTicketsSold,
+			"total_ticket_revenue":  session.TotalTicketRevenue, // In cents (tokens × 100)
+		},
+	})
 }
 
 // ✅ AutoEndSession ends a session automatically (e.g., when host is gone > 10 minutes)

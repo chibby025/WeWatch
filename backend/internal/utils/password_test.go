@@ -1,8 +1,7 @@
-package utils_test
+package utils
 
 import (
 	"testing"
-	"wewatch-backend/internal/utils"
 )
 
 func TestHashPassword(t *testing.T) {
@@ -40,7 +39,7 @@ func TestHashPassword(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hash, err := utils.HashPassword(tt.password)
+			hash, err := HashPassword(tt.password)
 			
 			if (err != nil) != tt.wantErr {
 				t.Errorf("HashPassword() error = %v, wantErr %v", err, tt.wantErr)
@@ -70,7 +69,7 @@ func TestHashPassword(t *testing.T) {
 func TestCheckPasswordHash(t *testing.T) {
 	// First, create a known password and its hash
 	password := "MySecurePassword123!"
-	hash, err := utils.HashPassword(password)
+	hash, err := HashPassword(password)
 	if err != nil {
 		t.Fatalf("Failed to hash password for testing: %v", err)
 	}
@@ -127,7 +126,7 @@ func TestCheckPasswordHash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := utils.CheckPasswordHash(tt.password, tt.hash)
+			got := CheckPasswordHash(tt.password, tt.hash)
 			if got != tt.want {
 				t.Errorf("CheckPasswordHash() = %v, want %v", got, tt.want)
 			}
@@ -139,8 +138,8 @@ func TestHashPasswordConsistency(t *testing.T) {
 	password := "ConsistencyTest123"
 	
 	// Hash the same password twice
-	hash1, err1 := utils.HashPassword(password)
-	hash2, err2 := utils.HashPassword(password)
+	hash1, err1 := HashPassword(password)
+	hash2, err2 := HashPassword(password)
 
 	if err1 != nil || err2 != nil {
 		t.Fatalf("HashPassword() failed: err1=%v, err2=%v", err1, err2)
@@ -152,10 +151,10 @@ func TestHashPasswordConsistency(t *testing.T) {
 	}
 
 	// But both should validate against the original password
-	if !utils.CheckPasswordHash(password, hash1) {
+	if !CheckPasswordHash(password, hash1) {
 		t.Error("First hash failed to validate against original password")
 	}
-	if !utils.CheckPasswordHash(password, hash2) {
+	if !CheckPasswordHash(password, hash2) {
 		t.Error("Second hash failed to validate against original password")
 	}
 }

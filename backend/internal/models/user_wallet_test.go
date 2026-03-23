@@ -1,8 +1,7 @@
-package models_test
+package models
 
 import (
 	"testing"
-	"wewatch-backend/internal/models"
 )
 
 func TestUserWallet_AddTokens(t *testing.T) {
@@ -42,7 +41,7 @@ func TestUserWallet_AddTokens(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wallet := &models.UserWallet{
+			wallet := &UserWallet{
 				TokenBalance:   tt.initialBalance,
 				LifetimeEarned: tt.initialEarned,
 			}
@@ -109,7 +108,7 @@ func TestUserWallet_DeductTokens(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wallet := &models.UserWallet{
+			wallet := &UserWallet{
 				TokenBalance:  tt.initialBalance,
 				LifetimeSpent: tt.initialSpent,
 			}
@@ -129,7 +128,7 @@ func TestUserWallet_DeductTokens(t *testing.T) {
 			}
 
 			// Verify error type for insufficient balance
-			if tt.wantErr && err != models.ErrInsufficientBalance {
+			if tt.wantErr && err != ErrInsufficientBalance {
 				t.Errorf("Expected ErrInsufficientBalance, got %v", err)
 			}
 		})
@@ -171,7 +170,7 @@ func TestUserWallet_GetTokensAsFloat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wallet := &models.UserWallet{
+			wallet := &UserWallet{
 				TokenBalance: tt.tokenBalance,
 			}
 
@@ -218,7 +217,7 @@ func TestTokensToUnits(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := models.TokensToUnits(tt.tokens)
+			got := TokensToUnits(tt.tokens)
 			if got != tt.expected {
 				t.Errorf("TokensToUnits(%f) = %d, want %d", tt.tokens, got, tt.expected)
 			}
@@ -267,7 +266,7 @@ func TestUserWallet_CanWithdraw(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wallet := &models.UserWallet{
+			wallet := &UserWallet{
 				TokenBalance: tt.tokenBalance,
 			}
 
@@ -308,7 +307,7 @@ func TestUserWallet_BeforeCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wallet := &models.UserWallet{
+			wallet := &UserWallet{
 				TokenBalance: tt.tokenBalance,
 			}
 
@@ -323,7 +322,7 @@ func TestUserWallet_BeforeCreate(t *testing.T) {
 
 func TestUserWallet_Integration(t *testing.T) {
 	// Test a realistic workflow
-	wallet := &models.UserWallet{
+	wallet := &UserWallet{
 		UserID:         1,
 		TokenBalance:   0,
 		LifetimeEarned: 0,

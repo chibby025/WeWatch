@@ -1,5 +1,7 @@
 # WeWatch - Social Video Watching Platform
 
+[![Backend Tests](https://github.com/YOUR_USERNAME/WeWatch/actions/workflows/backend-tests.yml/badge.svg)](https://github.com/YOUR_USERNAME/WeWatch/actions/workflows/backend-tests.yml)
+
 A real-time social video watching experience with integrated payments, 3D cinema environments, and live interaction.
 
 ---
@@ -28,6 +30,7 @@ npm run dev
 
 ### ⚡ Quick Setup
 - **[QUICK_START_PAYSTACK.md](./QUICK_START_PAYSTACK.md)** - 5-minute setup for automated transfers (START HERE!)
+- **[TESTING.md](./TESTING.md)** - Testing documentation & QA coverage 🧪
 
 ### Essential Docs
 - **[INDEX.md](./documentation/INDEX.md)** - Complete documentation index
@@ -36,6 +39,18 @@ npm run dev
 - **[PLATFORM_PAYMENT_SETUP.md](./documentation/PLATFORM_PAYMENT_SETUP.md)** - Payment account setup
 - **[PAYMENT_API_REFERENCE.md](./documentation/PAYMENT_API_REFERENCE.md)** - API documentation
 - **[TOKEN_PRICING.md](./backend/TOKEN_PRICING.md)** - Token economics & pricing
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+This project includes **comprehensive automated testing**:
+- ✅ **Unit Tests** - JWT, Password hashing, Utils
+- ✅ **Integration Tests** - API endpoints, Database operations
+- ✅ **Security Tests** - Authentication, Authorization, Encryption
+- ✅ **CI/CD** - Automated testing on every push
+
+**[View full testing documentation →](./TESTING.md)**
 
 ---
 

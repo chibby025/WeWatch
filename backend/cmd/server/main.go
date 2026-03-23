@@ -657,6 +657,18 @@ func main() {
 		friendshipsGroup.GET("/list", handlers.GetFriendsListHandler)                     // GET /api/friendships/list (Get accepted friends)
 		friendshipsGroup.DELETE("/remove/:userId", handlers.RemoveFriendHandler)          // DELETE /api/friendships/remove/:userId (Remove friend)
 		friendshipsGroup.GET("/status/:userId", handlers.GetFriendshipStatusHandler)      // GET /api/friendships/status/:userId (Check friendship status)
+		friendshipsGroup.GET("/count/:userId", handlers.GetFriendCountHandler)            // GET /api/friendships/count/:userId (Get friend count)
+	}
+	
+	// --- USER STATS ROUTES (Protected) ---
+	userStatsGroup := r.Group("/api/users")
+	userStatsGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
+	userStatsGroup.Use(func(c *gin.Context) {
+		c.Set("db", DB)
+		c.Next()
+	})
+	{
+		userStatsGroup.GET("/:userId/average-watchers", handlers.GetUserAverageWatchersHandler) // GET /api/users/:userId/average-watchers (Get average session watchers)
 	}
 
 	// --- PRIVATE MESSAGES ROUTES (Protected) ---

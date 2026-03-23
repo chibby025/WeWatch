@@ -15,7 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
 import { useMobile } from '../hooks/useMobile';
-import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession } from '../services/api';
+import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers } from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
 import WatchTypeInfoModal from './WatchTypeInfoModal';
 import ClassTypeModal from './modals/ClassTypeModal';
@@ -32,6 +32,7 @@ import RoomAttachModal from './RoomAttachModal';
 import CreatePollModal from './CreatePollModal';
 import PollMessage from './PollMessage';
 import SessionRatingModal from './SessionRatingModal';
+import SessionEarningsModal from './SessionEarningsModal';
 // TODO: Review MediaBanner integration later - currently commented out for future use
 // import MediaBanner from './MediaBanner';
 
@@ -102,6 +103,10 @@ const RoomPageNew = () => {
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [sessionToRate, setSessionToRate] = useState(null);
   
+  // Session earnings state (for hosts)
+  const [showEarningsModal, setShowEarningsModal] = useState(false);
+  const [sessionEarnings, setSessionEarnings] = useState(null);
+  
   // Ticketing flow state
   const [selectedWatchType, setSelectedWatchType] = useState(null);
   const [selectedClassType, setSelectedClassType] = useState(null);
@@ -126,6 +131,10 @@ const RoomPageNew = () => {
 
   // RoomTV state
   const [hostContent, setHostContent] = useState(null);
+  
+  // Host stats state
+  const [hostAverageWatchers, setHostAverageWatchers] = useState(0);
+  const [loadingHostStats, setLoadingHostStats] = useState(false);
 
   // TODO: Review media state later - currently commented out for future use
   // const [mediaItems, setMediaItems] = useState([]);
@@ -354,6 +363,22 @@ const RoomPageNew = () => {
       if (userIsHost) {
         console.log('  Setting isMember=true for host');
         setIsMember(true);
+      }
+      
+      // ✅ Fetch host's average watchers
+      if (roomData.host_id) {
+        setLoadingHostStats(true);
+        console.log('📊 [RoomPageNew] Fetching average watchers for host:', roomData.host_id);
+        try {
+          const statsResponse = await getUserAverageWatchers(roomData.host_id);
+          console.log('📊 [RoomPageNew] Host stats response:', statsResponse.data);
+          // Just set the value - backend determines if they've hosted sessions
+          setHostAverageWatchers(statsResponse.data.average_watchers || 0);
+        } catch (err) {
+          console.error('❌ [RoomPageNew] Failed to fetch host stats:', err);
+        } finally {
+          setLoadingHostStats(false);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch room:', err);
@@ -1506,9 +1531,17 @@ const RoomPageNew = () => {
     
     try {
       console.log('📤 [RoomPageNew] Calling end API for session:', activeSession.session_id);
-      await endWatchSession(roomId, activeSession.session_id);
-      console.log('✅ [RoomPageNew] End API succeeded');
+      const response = await endWatchSession(roomId, activeSession.session_id);
+      console.log('✅ [RoomPageNew] End API succeeded:', response);
       toast.success('Watch session ended');
+      
+      // ✅ Check if this was a paid session with earnings (for host)
+      if (response?.data?.session && response.data.session.ticketing_enabled && 
+          response.data.session.total_ticket_revenue > 0) {
+        console.log('💰 [RoomPageNew] Session had earnings - showing earnings modal');
+        setSessionEarnings(response.data.session);
+        setShowEarningsModal(true);
+      }
       
       // ✅ Set flag to prevent re-fetching ended session
       sessionStorage.setItem(`session_ended_${roomId}`, 'true');
@@ -1652,18 +1685,27 @@ const RoomPageNew = () => {
                     
                     {/* Host/Member Info below room name (only when no session) */}
                     {!activeSession && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-gray-300 mt-0.5">
-                        {room.show_host !== false && (
-                          <span className="flex items-center gap-0.5">
-                            <img src="/icons/hostIcon.svg" alt="" className="h-2.5 w-2.5" />
-                            <span>(host)</span>
-                            <span>{room.host_username || `User ${room.host_id}`}</span>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center gap-1.5 text-[10px] text-gray-300">
+                          {room.show_host !== false && (
+                            <span className="flex items-center gap-0.5">
+                              <img src="/icons/hostIcon.svg" alt="" className="h-2.5 w-2.5" />
+                              <span>(host)</span>
+                              <span>{room.host_username || `User ${room.host_id}`}</span>
+                            </span>
+                          )}
+                          <span onClick={() => setIsMembersModalOpen(true)} className="cursor-pointer hover:opacity-80 flex items-center gap-0.5">
+                            <img src="/icons/roomMembersIcon.svg" alt="" className="h-2.5 w-2.5" />
+                            {membersInRoom}{membersInSessionCount > 0 && `, ${membersInSessionCount} watching`}
                           </span>
+                        </div>
+                        {/* Average Watchers - Show if host has stats */}
+                        {!loadingHostStats && hostAverageWatchers > 0 && (
+                          <div className="flex items-center gap-1 text-[10px] text-purple-400">
+                            <span className="text-xs">👥</span>
+                            <span>Avg. {hostAverageWatchers.toFixed(1)} watchers/session</span>
+                          </div>
                         )}
-                        <span onClick={() => setIsMembersModalOpen(true)} className="cursor-pointer hover:opacity-80 flex items-center gap-0.5">
-                          <img src="/icons/roomMembersIcon.svg" alt="" className="h-2.5 w-2.5" />
-                          {membersInRoom}{membersInSessionCount > 0 && `, ${membersInSessionCount} watching`}
-                        </span>
                       </div>
                     )}
                   </div>
@@ -1757,22 +1799,24 @@ const RoomPageNew = () => {
                     
                     {/* Host/Member Info below room name (only when no session) */}
                     {!activeSession && (
-                      <div className="flex items-center gap-4 text-sm text-gray-300 mt-1">
-                        {room.show_host !== false && (
-                          <span className="flex items-center gap-1">
-                            <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4" />
-                            Host: {room.host_username || `User ${room.host_id}`}
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-4 text-sm text-gray-300">
+                          {room.show_host !== false && (
+                            <span className="flex items-center gap-1">
+                              <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4" />
+                              Host: {room.host_username || `User ${room.host_id}`}
+                            </span>
+                          )}
+                          <span 
+                            className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
+                            onClick={() => setIsMembersModalOpen(true)}
+                            title="View members"
+                          >
+                            <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4" />
+                            {membersInRoom} in room
+                            {membersInSessionCount > 0 && `, ${membersInSessionCount} watching`}
                           </span>
-                        )}
-                        <span 
-                          className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
-                          onClick={() => setIsMembersModalOpen(true)}
-                          title="View members"
-                        >
-                          <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4" />
-                          {membersInRoom} in room
-                          {membersInSessionCount > 0 && `, ${membersInSessionCount} watching`}
-                        </span>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2350,7 +2394,7 @@ const RoomPageNew = () => {
       <RoomPageEditModal
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
-        room={room}
+        room={{ ...room, average_watchers: hostAverageWatchers }}
         onUpdate={(updatedRoom) => {
           setRoom(updatedRoom);
           toast.success('Room updated successfully');
@@ -2369,6 +2413,7 @@ const RoomPageNew = () => {
           setIsMembersModalOpen(false);
           setIsShareModalOpen(true);
         }}
+        onRequestReopen={() => setIsMembersModalOpen(true)}
       />
 
       {/* ✅ Share Modal */}
@@ -2401,6 +2446,18 @@ const RoomPageNew = () => {
         onClose={() => setIsCreatePollModalOpen(false)}
         onSubmit={handleCreatePoll}
       />
+
+      {/* ✅ Session Earnings Modal - Shows host earnings after ending paid sessions */}
+      {sessionEarnings && (
+        <SessionEarningsModal
+          isOpen={showEarningsModal}
+          onClose={() => {
+            setShowEarningsModal(false);
+            setSessionEarnings(null);
+          }}
+          sessionData={sessionEarnings}
+        />
+      )}
 
       {/* ✅ Session Rating Modal - Shows after paid sessions end */}
       {sessionToRate && (

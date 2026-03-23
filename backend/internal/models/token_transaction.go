@@ -71,6 +71,15 @@ type TokenTransaction struct {
 	ReserveTransferID  *string           `gorm:"type:varchar(255);index" json:"reserve_transfer_id,omitempty"` // 85% host reserve
 	Status             TransactionStatus `gorm:"type:varchar(20);not null;default:'pending';index" json:"status"`
 	Metadata           map[string]interface{} `gorm:"type:jsonb" json:"metadata,omitempty"`
+	
+	// Crypto payment fields
+	PaymentProvider    string  `gorm:"type:varchar(50)" json:"payment_provider,omitempty"`      // 'stripe', 'paystack', 'coinbase_commerce'
+	CryptoCurrency     string  `gorm:"type:varchar(10)" json:"crypto_currency,omitempty"`       // 'USDT', 'USDC', 'ETH', NULL for fiat
+	CryptoAmount       string  `gorm:"type:varchar(50)" json:"crypto_amount,omitempty"`         // Amount in crypto (stored as string for precision)
+	CryptoNetwork      string  `gorm:"type:varchar(50)" json:"crypto_network,omitempty"`        // 'ethereum', 'polygon', 'base', NULL for fiat
+	BlockchainTxHash   string  `gorm:"type:varchar(100);index" json:"blockchain_tx_hash,omitempty"` // Blockchain transaction hash
+	CoinbaseChargeID   string  `gorm:"type:varchar(100);index" json:"coinbase_charge_id,omitempty"` // Coinbase Commerce charge ID
+	
 	CreatedAt          time.Time         `gorm:"autoCreateTime;index" json:"created_at"`
 	UpdatedAt          time.Time         `gorm:"autoUpdateTime" json:"updated_at"`
 }

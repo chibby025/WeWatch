@@ -1061,6 +1061,16 @@ export const getFriendshipStatus = async (userId) => {
   return await apiClient.get(`/api/friendships/status/${userId}`);
 };
 
+// Get friend count for a user
+export const getFriendCount = async (userId) => {
+  return await apiClient.get(`/api/friendships/count/${userId}`);
+};
+
+// Get average watchers for a user (host stats)
+export const getUserAverageWatchers = async (userId) => {
+  return await apiClient.get(`/api/users/${userId}/average-watchers`);
+};
+
 // Batch fetch friendship statuses for multiple users
 export const getBatchFriendshipStatuses = async (userIds) => {
   const statuses = {};

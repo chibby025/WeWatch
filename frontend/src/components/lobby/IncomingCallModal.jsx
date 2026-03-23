@@ -16,10 +16,10 @@ const IncomingCallModal = ({
       setElapsed(prev => prev + 1);
     }, 1000);
 
-    // Auto-decline after 30 seconds
+    // Auto-decline after 60 seconds
     const timeout = setTimeout(() => {
       onDecline?.();
-    }, 30000);
+    }, 60000);
 
     return () => {
       clearInterval(interval);
@@ -73,7 +73,7 @@ const IncomingCallModal = ({
 
         {/* Timer */}
         <p className="text-gray-500 text-sm mt-2">
-          {elapsed}s / 30s
+          {elapsed}s / 60s
         </p>
 
         {/* Phone icon */}

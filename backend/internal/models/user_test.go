@@ -1,8 +1,7 @@
-package models_test
+package models
 
 import (
 	"testing"
-	"wewatch-backend/internal/models"
 )
 
 func TestUser_IsSuperAdmin(t *testing.T) {
@@ -13,17 +12,17 @@ func TestUser_IsSuperAdmin(t *testing.T) {
 	}{
 		{
 			name: "Super admin role",
-			role: models.RoleSuperAdmin,
+			role: RoleSuperAdmin,
 			want: true,
 		},
 		{
 			name: "Admin role",
-			role: models.RoleAdmin,
+			role: RoleAdmin,
 			want: false,
 		},
 		{
 			name: "Regular user role",
-			role: models.RoleUser,
+			role: RoleUser,
 			want: false,
 		},
 		{
@@ -40,7 +39,7 @@ func TestUser_IsSuperAdmin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user := &models.User{
+			user := &User{
 				Role: tt.role,
 			}
 			if got := user.IsSuperAdmin(); got != tt.want {
@@ -58,17 +57,17 @@ func TestUser_IsAdmin(t *testing.T) {
 	}{
 		{
 			name: "Super admin is admin",
-			role: models.RoleSuperAdmin,
+			role: RoleSuperAdmin,
 			want: true,
 		},
 		{
 			name: "Admin role",
-			role: models.RoleAdmin,
+			role: RoleAdmin,
 			want: true,
 		},
 		{
 			name: "Regular user is not admin",
-			role: models.RoleUser,
+			role: RoleUser,
 			want: false,
 		},
 		{
@@ -85,7 +84,7 @@ func TestUser_IsAdmin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user := &models.User{
+			user := &User{
 				Role: tt.role,
 			}
 			if got := user.IsAdmin(); got != tt.want {
@@ -97,19 +96,19 @@ func TestUser_IsAdmin(t *testing.T) {
 
 func TestUserRoleConstants(t *testing.T) {
 	// Verify role constants are set correctly
-	if models.RoleUser != "user" {
-		t.Errorf("RoleUser = %s, want 'user'", models.RoleUser)
+	if RoleUser != "user" {
+		t.Errorf("RoleUser = %s, want 'user'", RoleUser)
 	}
-	if models.RoleAdmin != "admin" {
-		t.Errorf("RoleAdmin = %s, want 'admin'", models.RoleAdmin)
+	if RoleAdmin != "admin" {
+		t.Errorf("RoleAdmin = %s, want 'admin'", RoleAdmin)
 	}
-	if models.RoleSuperAdmin != "super_admin" {
-		t.Errorf("RoleSuperAdmin = %s, want 'super_admin'", models.RoleSuperAdmin)
+	if RoleSuperAdmin != "super_admin" {
+		t.Errorf("RoleSuperAdmin = %s, want 'super_admin'", RoleSuperAdmin)
 	}
 }
 
 func TestUser_DefaultValues(t *testing.T) {
-	user := &models.User{
+	user := &User{
 		Username: "testuser",
 		Email:    "test@example.com",
 	}

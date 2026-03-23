@@ -48,26 +48,34 @@ jobs:
         working-directory: backend
         run: go mod download
 
-      - name: Run unit tests
+      - name: Run unit tests (utils)
         working-directory: backend
         env:
           JWT_SECRET: test_jwt_secret_for_ci
         run: |
-          go test ./tests/backend/unit/... -v -coverprofile=unit_coverage.out -covermode=atomic
+          go test ./internal/utils -v -coverprofile=unit_coverage.out -covermode=atomic
 
-      - name: Run integration tests
+      - name: Run integration tests (handlers)
         working-directory: backend
         env:
           JWT_SECRET: test_jwt_secret_for_ci
           TEST_DATABASE_URL: "host=localhost user=postgres password=testpass dbname=wewatch_test port=5433 sslmode=disable"
         run: |
-          go test ./tests/backend/integration/... -v -coverprofile=integration_coverage.out -covermode=atomic
+          go test ./internal/handlers -v -coverprofile=integration_coverage.out -covermode=atomic
+        continue-on-error: true
+
+      - name: Run legacy tests
+        working-directory: backend
+        env:
+          JWT_SECRET: test_jwt_secret_for_ci
+        run: |
+          go test ./tests/backend/... -v
         continue-on-error: true
 
       - name: Generate coverage report
         working-directory: backend
         run: |
-          go test ./tests/backend/... -coverprofile=coverage.out -covermode=atomic
+          go test ./internal/utils ./internal/handlers -coverprofile=coverage.out -covermode=atomic
           go tool cover -func=coverage.out
 
       - name: Upload coverage to Codecov

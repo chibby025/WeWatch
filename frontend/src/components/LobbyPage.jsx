@@ -1,8 +1,8 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests } from '../services/api';
-import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon } from '@heroicons/react/24/solid';
+import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon } from '@heroicons/react/24/solid';
 import jwtDecodeUtil from '../utils/jwt';
 import apiClient from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
@@ -29,6 +29,8 @@ import OutgoingCallModal from './lobby/OutgoingCallModal';
 import IncomingCallModal from './lobby/IncomingCallModal';
 import ActiveCallInterface from './lobby/ActiveCallInterface';
 import { Room, RoomEvent } from 'livekit-client';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 const LobbyPage = () => {
   // ✅ Tab State
@@ -43,6 +45,7 @@ const LobbyPage = () => {
   const [filteredRooms, setFilteredRooms] = useState([]);
   const [filteredSessions, setFilteredSessions] = useState([]); // ✅ Filtered sessions
   const navigate = useNavigate();
+  const location = useLocation();
   const [currentDisplay, setCurrentDisplay] = useState('current'); // 'current' or 'next'
   const [isAccessModalOpen, setIsAccessModalOpen] = useState(false);
   const [isInstantWatchInfoModalOpen, setIsInstantWatchInfoModalOpen] = useState(false);
@@ -149,6 +152,24 @@ const LobbyPage = () => {
   
   // Use currentUser.id for authenticated user ID
   const authenticatedUserID = currentUser?.id || null;
+  
+  // ✅ Handle navigation state from RoomMembersModal
+  useEffect(() => {
+    if (location.state?.openChatWith && location.state?.activeTab === 'chats') {
+      const userToChat = location.state.openChatWith;
+      
+      console.log('📨 [LobbyPage] Opening chat with user from navigation:', userToChat);
+      
+      // Set active tab to chats
+      setActiveTab('chats');
+      
+      // Open chat with the specified user
+      handleSelectChatUser(userToChat);
+      
+      // Clear navigation state to prevent reopening on refresh
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state]);
   
   // ✅ Chat message ref for auto-scroll
   const chatMessagesEndRef = React.useRef(null);
@@ -974,10 +995,12 @@ const LobbyPage = () => {
     // Send call initiate message
     wsRef.current.send(JSON.stringify({
       type: 'call_initiate',
-      to_user_id: user.id,
+      data: {
+        to_user_id: user.id,
+      }
     }));
 
-    // Set 30-second timeout
+    // Set 60-second timeout
     callTimeoutRef.current = setTimeout(() => {
       console.log('📞 [Call] Timeout - no answer');
       setOutgoingCall(prev => ({ ...prev, status: 'no_answer' }));
@@ -986,14 +1009,16 @@ const LobbyPage = () => {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'call_cancel',
-          to_user_id: user.id,
+          data: {
+            to_user_id: user.id,
+          }
         }));
       }
 
       setTimeout(() => {
         setOutgoingCall(null);
       }, 2000);
-    }, 30000);
+    }, 60000);
   };
 
   const handleIncomingCall = (message) => {
@@ -1008,7 +1033,9 @@ const LobbyPage = () => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({
             type: 'call_decline',
-            to_user_id: otherId,
+            data: {
+              to_user_id: otherId,
+            }
           }));
         }
         return;
@@ -1024,7 +1051,9 @@ const LobbyPage = () => {
         if (outgoingCall && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({
             type: 'call_cancel',
-            to_user_id: outgoingCall.user.id,
+            data: {
+              to_user_id: outgoingCall.user.id,
+            }
           }));
         }
       }
@@ -1045,8 +1074,10 @@ const LobbyPage = () => {
     // Send accept message
     wsRef.current.send(JSON.stringify({
       type: 'call_accept',
-      to_user_id: incomingCall.user.id,
-      call_id: incomingCall.callId,
+      data: {
+        to_user_id: incomingCall.user.id,
+        call_id: incomingCall.callId,
+      }
     }));
 
     // Backend will respond with call_accepted including LiveKit token
@@ -1059,8 +1090,10 @@ const LobbyPage = () => {
 
     wsRef.current.send(JSON.stringify({
       type: 'call_decline',
-      to_user_id: incomingCall.user.id,
-      call_id: incomingCall.callId,
+      data: {
+        to_user_id: incomingCall.user.id,
+        call_id: incomingCall.callId,
+      }
     }));
 
     setIncomingCall(null);
@@ -1129,7 +1162,9 @@ const LobbyPage = () => {
     if (activeCall && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'call_end',
-        to_user_id: activeCall.user.id,
+        data: {
+          to_user_id: activeCall.user.id,
+        }
       }));
     }
 
@@ -1151,7 +1186,9 @@ const LobbyPage = () => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'call_cancel',
-        to_user_id: outgoingCall.user.id,
+        data: {
+          to_user_id: outgoingCall.user.id,
+        }
       }));
     }
 
@@ -1298,14 +1335,16 @@ const LobbyPage = () => {
                 
               case 'call_incoming':
                 // Incoming call from another user
-                console.log('📞 [Call] Incoming call from:', message.from_user);
-                handleIncomingCall(message);
+                console.log('📞 [Call] Raw incoming call message:', message);
+                console.log('📞 [Call] Incoming call from:', message.data?.from_user);
+                console.log('📞 [Call] Call ID:', message.data?.call_id);
+                handleIncomingCall(message.data);
                 break;
                 
               case 'call_accepted':
                 // Call was accepted, join LiveKit room
                 console.log('📞 [Call] Call accepted:', message);
-                handleCallAccepted(message);
+                handleCallAccepted(message.data || message);
                 break;
                 
               case 'call_declined':
@@ -2913,28 +2952,24 @@ const LobbyPage = () => {
                       <div className="flex-1 min-w-0">
                         <h3 className="text-white font-semibold text-sm sm:text-base truncate">{selectedChatUser.username}</h3>
                       </div>
-                      <button
+                      <Button
                         onClick={() => initiateCall(selectedChatUser)}
-                        className="text-white hover:bg-white/20 rounded p-1 transition-colors flex-shrink-0"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-white hover:bg-white/20 hover:text-white flex-shrink-0"
                         title="Call"
                       >
-                        <span className="text-xl">📞</span>
-                      </button>
-                      <button
+                        <PhoneIcon className="h-5 w-5" />
+                      </Button>
+                      <Button
                         onClick={() => setExpandedView(expandedView === 'chat' ? null : 'chat')}
-                        className="text-white hover:bg-white/20 rounded p-1 transition-colors flex-shrink-0"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-white hover:bg-white/20 hover:text-white flex-shrink-0"
                         title={expandedView === 'chat' ? 'Exit fullscreen' : 'Expand fullscreen'}
                       >
-                        {expandedView === 'chat' ? (
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        ) : (
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                          </svg>
-                        )}
-                      </button>
+                        <ArrowsPointingOutIcon className="h-5 w-5" />
+                      </Button>
                     </div>
                     
                     {/* Messages */}
@@ -3001,60 +3036,68 @@ const LobbyPage = () => {
                       </div>
                     ) : (
                       /* Normal Message Input */
-                      <form onSubmit={handleSendChatMessage} className="p-2 sm:p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
+                      <form onSubmit={handleSendChatMessage} className="p-3 sm:p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
                         {/* Action Buttons Row */}
-                        <div className="flex gap-2 mb-2">
-                          <button
+                        <div className="flex gap-1 mb-3">
+                          <Button
                             type="button"
                             onClick={() => setIsAttachModalOpen(true)}
-                            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
                             title="Attach file"
                           >
-                            <PaperClipIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                          </button>
-                          <button
+                            <PaperClipIcon className="h-5 w-5" />
+                          </Button>
+                          <Button
                             type="button"
                             onClick={() => setIsStickerPickerOpen(true)}
-                            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
                             title="Send sticker"
                           >
-                            <FaceSmileIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                          </button>
-                          <button
+                            <FaceSmileIcon className="h-5 w-5" />
+                          </Button>
+                          <Button
                             type="button"
                             onClick={() => setIsPollCreatorOpen(true)}
-                            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
                             title="Create poll"
                           >
-                            <ChartBarSquareIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                          </button>
-                          <button
+                            <ChartBarSquareIcon className="h-5 w-5" />
+                          </Button>
+                          <Button
                             type="button"
                             onClick={startRecording}
-                            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
                             title="Record voice note"
                           >
-                            <MicrophoneIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                          </button>
+                            <MicrophoneIcon className="h-5 w-5" />
+                          </Button>
                         </div>
                         
                         {/* Text Input Row */}
-                        <div className="flex gap-1.5 sm:gap-2">
-                          <input
+                        <div className="flex gap-2">
+                          <Input
                             type="text"
                             value={newChatMessage}
                             onChange={(e) => setNewChatMessage(e.target.value)}
                             placeholder="Type a message..."
-                            className="flex-1 px-2 py-1.5 sm:px-4 sm:py-2 text-sm bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                            className="flex-1 h-11 bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 focus-visible:ring-green-500 focus-visible:ring-offset-0"
                           />
-                          <button
+                          <Button
                             type="submit"
                             disabled={!newChatMessage.trim()}
-                            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-bold p-2 sm:py-2 sm:px-6 text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-green-500"
+                            className="h-11 px-4 sm:px-6 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            <PaperAirplaneIcon className="w-5 h-5 sm:hidden" />
-                            <span className="hidden sm:inline">Send</span>
-                          </button>
+                            <PaperAirplaneIcon className="h-5 w-5 sm:hidden" />
+                            <span className="hidden sm:inline font-medium">Send</span>
+                          </Button>
                         </div>
                       </form>
                     )}

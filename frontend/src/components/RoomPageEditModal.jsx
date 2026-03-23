@@ -254,6 +254,17 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   {membersInRoom}
                 </span>
               </div>
+              {room?.average_watchers > 0 && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400 flex items-center gap-2">
+                    <span className="text-base">👥</span>
+                    Avg. Watchers
+                  </span>
+                  <span className="text-white font-medium">
+                    {typeof room.average_watchers === 'number' ? room.average_watchers.toFixed(1) : room.average_watchers}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Divider */}

@@ -86,7 +86,7 @@ func handleCallInitiate(client *Client, msg WebSocketMessage) {
 	// Check if users are friends
 	var friendship models.Friendship
 	err := DB.Where(
-		"((user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)) AND status = ?",
+		"((requester_id = ? AND recipient_id = ?) OR (requester_id = ? AND recipient_id = ?)) AND status = ?",
 		client.userID, recipientID, recipientID, client.userID, "accepted",
 	).First(&friendship).Error
 	
@@ -148,8 +148,10 @@ func handleCallInitiate(client *Client, msg WebSocketMessage) {
 		return
 	}
 
+	log.Printf("📞 [Call] Caller info: ID=%d, Username=%s, Avatar=%s", caller.ID, caller.Username, caller.AvatarURL)
+
 	// Send incoming call to recipient
-	sendCallMessageToUser(recipientID, "call_incoming", map[string]interface{}{
+	callData := map[string]interface{}{
 		"call_id":      callID,
 		"from_user_id": client.userID,
 		"from_user": map[string]interface{}{
@@ -157,11 +159,14 @@ func handleCallInitiate(client *Client, msg WebSocketMessage) {
 			"username":   caller.Username,
 			"avatar_url": caller.AvatarURL,
 		},
-	})
+	}
+	
+	log.Printf("📞 [Call] Sending call_incoming with data: %+v", callData)
+	sendCallMessageToUser(recipientID, "call_incoming", callData)
 
-	// Set timeout for call (30 seconds)
+	// Set timeout for call (60 seconds)
 	go func() {
-		time.Sleep(30 * time.Second)
+		time.Sleep(60 * time.Second)
 
 		activeCallsMutex.Lock()
 		defer activeCallsMutex.Unlock()
@@ -173,6 +178,9 @@ func handleCallInitiate(client *Client, msg WebSocketMessage) {
 			delete(activeCalls, callID)
 			delete(userCalls, client.userID)
 			delete(userCalls, recipientID)
+
+			// Log missed call in chat
+			logMissedCall(client.userID, recipientID)
 
 			// Notify caller of timeout (handled by frontend)
 		}
@@ -307,6 +315,9 @@ func handleCallDecline(client *Client, msg WebSocketMessage) {
 
 	log.Printf("📞 [Call] User %d declined call %s", client.userID, callID)
 
+	// Log declined call in chat
+	logDeclinedCall(callerID, client.userID)
+
 	// Clean up
 	delete(activeCalls, callID)
 	delete(userCalls, client.userID)
@@ -378,6 +389,11 @@ func handleCallEnd(client *Client, msg WebSocketMessage) {
 	}
 
 	log.Printf("📞 [Call] User %d ended call %s", client.userID, callID)
+
+	// Log completed call if it was active (not just ringing)
+	if call.Status == "active" {
+		logCompletedCall(call.CallerID, call.RecipientID)
+	}
 
 	// Determine other user
 	otherUserID := call.CallerID
@@ -521,4 +537,54 @@ func CleanupUserCalls(userID uint) {
 		"call_id": callID,
 		"reason":  "disconnected",
 	})
+}
+
+// logMissedCall creates a system message in chat for missed calls
+func logMissedCall(callerID, recipientID uint) {
+	chatMsg := models.LobbyChat{
+		SenderID:    callerID,
+		RecipientID: recipientID,
+		Message:     "� Missed call",
+		MessageType: "system_call",
+	}
+
+	if err := DB.Create(&chatMsg).Error; err != nil {
+		log.Printf("❌ [Call] Failed to log missed call: %v", err)
+		return
+	}
+
+	log.Printf("✅ [Call] Logged missed call from %d to %d", callerID, recipientID)
+}
+
+// logDeclinedCall creates a system message in chat for declined calls
+func logDeclinedCall(callerID, recipientID uint) {
+	chatMsg := models.LobbyChat{
+		SenderID:    callerID,
+		RecipientID: recipientID,
+		Message:     "� Call declined",
+		MessageType: "system_call",
+	}
+
+	if err := DB.Create(&chatMsg).Error; err != nil {
+		log.Printf("❌ [Call] Failed to log declined call: %v", err)
+		return
+	}
+
+	log.Printf("✅ [Call] Logged declined call from %d to %d", callerID, recipientID)
+}
+// logCompletedCall creates a system message in chat for completed calls
+func logCompletedCall(callerID, recipientID uint) {
+	chatMsg := models.LobbyChat{
+		SenderID:    callerID,
+		RecipientID: recipientID,
+		Message:     "📞 Call completed",
+		MessageType: "system_call",
+	}
+
+	if err := DB.Create(&chatMsg).Error; err != nil {
+		log.Printf("❌ [Call] Failed to log completed call: %v", err)
+		return
+	}
+
+	log.Printf("✅ [Call] Logged completed call between %d and %d", callerID, recipientID)
 }

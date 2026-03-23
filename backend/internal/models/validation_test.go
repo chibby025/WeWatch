@@ -1,12 +1,11 @@
-package models_test
+package models
 
 import (
 	"testing"
-	"wewatch-backend/internal/models"
 )
 
 func TestRoom_DefaultValues(t *testing.T) {
-	room := &models.Room{
+	room := &Room{
 		Name:   "Test Room",
 		HostID: 1,
 	}
@@ -23,13 +22,13 @@ func TestRoom_DefaultValues(t *testing.T) {
 func TestWatchSession_Validation(t *testing.T) {
 	tests := []struct {
 		name      string
-		session   *models.WatchSession
+		session   *WatchSession
 		field     string
 		expectSet bool
 	}{
 		{
 			name: "Active session",
-			session: &models.WatchSession{
+			session: &WatchSession{
 				SessionID: "test-session-123",
 				RoomID:    1,
 				HostID:    1,
@@ -40,7 +39,7 @@ func TestWatchSession_Validation(t *testing.T) {
 		},
 		{
 			name: "Session with ticketing",
-			session: &models.WatchSession{
+			session: &WatchSession{
 				SessionID:        "test-session-456",
 				RoomID:           1,
 				HostID:           1,
@@ -70,12 +69,12 @@ func TestWatchSession_Validation(t *testing.T) {
 func TestDonation_Validation(t *testing.T) {
 	tests := []struct {
 		name     string
-		donation *models.Donation
+		donation *Donation
 		valid    bool
 	}{
 		{
 			name: "Valid donation",
-			donation: &models.Donation{
+			donation: &Donation{
 				DonorID:    1,
 				ReceiverID: 2,
 				Amount:     100,
@@ -84,7 +83,7 @@ func TestDonation_Validation(t *testing.T) {
 		},
 		{
 			name: "Self donation",
-			donation: &models.Donation{
+			donation: &Donation{
 				DonorID:    1,
 				ReceiverID: 1,
 				Amount:     100,
@@ -111,7 +110,7 @@ func TestPayout_StatusValidation(t *testing.T) {
 	
 	for _, status := range validStatuses {
 		t.Run("Status: "+status, func(t *testing.T) {
-			payout := &models.Payout{
+			payout := &Payout{
 				UserID: 1,
 				Amount: 1000,
 				Status: status,
@@ -129,7 +128,7 @@ func TestTokenTransaction_Types(t *testing.T) {
 	
 	for _, txType := range validTypes {
 		t.Run("Type: "+txType, func(t *testing.T) {
-			tx := &models.TokenTransaction{
+			tx := &TokenTransaction{
 				UserID:          1,
 				Amount:          100,
 				TransactionType: txType,
