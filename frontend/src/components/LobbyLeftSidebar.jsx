@@ -66,7 +66,10 @@ const LobbyLeftSidebar = ({
       id: 'payment',
       label: 'Payment',
       icon: CreditCardIcon,
-      onClick: () => window.location.href = '/payment',
+      onClick: () => {
+        onClose();
+        navigate('/payment');
+      },
       enabled: true,
       badge: null
     },
@@ -75,7 +78,10 @@ const LobbyLeftSidebar = ({
       id: 'admin_dashboard',
       label: 'Admin Dashboard',
       icon: ChartBarIcon,
-      onClick: () => window.location.href = '/admin/dashboard',
+      onClick: () => {
+        onClose();
+        navigate('/admin/dashboard');
+      },
       enabled: true,
       badge: 'ADMIN',
       highlight: true
