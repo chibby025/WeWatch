@@ -50,6 +50,9 @@ type WatchSession struct {
 	// Preview generation control (content moderation)
 	PreviewEnabled        bool    `gorm:"default:true" json:"preview_enabled"`                    // If false, no preview thumbnails generated for lobby
 	
+	// Content moderation (age-based filtering)
+	ContentRating         string  `gorm:"type:varchar(10);default:'G';not null" json:"content_rating"` // 'G', 'PG', '13+', '16+', '18+', 'Mature'
+	
 	// Preview generation state
 	CurrentPlaybackTime   int     `gorm:"default:0" json:"current_playback_time"`                // Current video timestamp in seconds
 	CurrentMediaID        int     `gorm:"default:0" json:"current_media_id"`                      // ID of currently playing media item

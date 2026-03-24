@@ -19,9 +19,10 @@ import (
 
 // CreateRoomInput defines the expected structure for creating a room.
 type CreateRoomInput struct {
-	Name        string `json:"name" binding:"required,min=1,max=100"`
-	Description string `json:"description" binding:"max=500"`
-	IsPublic    *bool  `json:"is_public"` // Pointer to allow nil (defaults to true)
+	Name          string `json:"name" binding:"required,min=1,max=100"`
+	Description   string `json:"description" binding:"max=500"`
+	IsPublic      *bool  `json:"is_public"` // Pointer to allow nil (defaults to true)
+	ContentRating string `json:"content_rating"` // Optional: 'G', 'PG', '13+', '16+', '18+', 'Mature' (defaults to 'G')
 	// MediaFileName is set later when a file is uploaded not during the initial creation in this MVP step.
 	// HostID will be determined from the authenticated user (JWT)
 }
@@ -64,11 +65,32 @@ func CreateRoomHandler(c *gin.Context) {
         isPublic = *input.IsPublic
     }
     
+    // Validate and set content rating (default to 'G')
+    contentRating := "G"
+    if input.ContentRating != "" {
+        validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
+        isValid := false
+        for _, rating := range validRatings {
+            if input.ContentRating == rating {
+                isValid = true
+                contentRating = rating
+                break
+            }
+        }
+        if !isValid {
+            tx.Rollback()
+            log.Printf("CreateRoomHandler: Invalid content rating: %s", input.ContentRating)
+            c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content rating. Must be one of: G, PG, 13+, 16+, 18+, Mature"})
+            return
+        }
+    }
+    
     newRoom := models.Room{
-        Name:        input.Name,
-        Description: input.Description,
-        HostID:      id,
-        IsPublic:    isPublic,
+        Name:          input.Name,
+        Description:   input.Description,
+        HostID:        id,
+        IsPublic:      isPublic,
+        ContentRating: contentRating,
     }
 
     if err := tx.Create(&newRoom).Error; err != nil {
@@ -1333,10 +1355,11 @@ func CreateInstantWatchHandler(c *gin.Context) {
 
 	// Parse watch_type from request body
 	var input struct {
-		WatchType string  `json:"watch_type"` // "video", "3d_cinema", or "classroom"
-		ClassType *string `json:"class_type"` // "classroom" (25 seats) or "lecture_hall" (145 seats) - only for classroom watch_type
-		IsPublic  *bool   `json:"is_public"`  // Pointer to allow nil (defaults to true)
-		IsPrivate *bool   `json:"is_private"` // If true, session hidden from lobby unless user is member
+		WatchType     string  `json:"watch_type"` // "video", "3d_cinema", or "classroom"
+		ClassType     *string `json:"class_type"` // "classroom" (25 seats) or "lecture_hall" (145 seats) - only for classroom watch_type
+		IsPublic      *bool   `json:"is_public"`  // Pointer to allow nil (defaults to true)
+		IsPrivate     *bool   `json:"is_private"` // If true, session hidden from lobby unless user is member
+		ContentRating string  `json:"content_rating"` // Optional: 'G', 'PG', '13+', '16+', '18+', 'Mature' (defaults to 'G')
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		// Default to "video" if not specified
@@ -1381,12 +1404,26 @@ func CreateInstantWatchHandler(c *gin.Context) {
 
 	// Create temporary room with watch type indicator
 	roomName := fmt.Sprintf("Instant Watch – %s", time.Now().Format("15:04"))
+	
+	// Validate and set content rating (default to 'G')
+	contentRatingForRoom := "G"
+	if input.ContentRating != "" {
+		validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
+		for _, rating := range validRatings {
+			if input.ContentRating == rating {
+				contentRatingForRoom = rating
+				break
+			}
+		}
+	}
+	
 	newRoom := models.Room{
-		Name:        roomName,
-		Description: "Temporary session – auto-deleted after use",
-		HostID:      userID,
-		IsTemporary: true,
-		IsPublic:    isPublic,
+		Name:          roomName,
+		Description:   "Temporary session – auto-deleted after use",
+		HostID:        userID,
+		IsTemporary:   true,
+		IsPublic:      isPublic,
+		ContentRating: contentRatingForRoom,
 	}
 
 	if err := tx.Create(&newRoom).Error; err != nil {
@@ -1412,14 +1449,28 @@ func CreateInstantWatchHandler(c *gin.Context) {
 
 	// Create watch session with watch_type and optional class_type
 	sessionUUID := uuid.New().String()
+	
+	// Validate and set content rating (default to 'G')
+	contentRating := "G"
+	if input.ContentRating != "" {
+		validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
+		for _, rating := range validRatings {
+			if input.ContentRating == rating {
+				contentRating = rating
+				break
+			}
+		}
+	}
+	
 	watchSession := models.WatchSession{
-		SessionID: sessionUUID,
-		RoomID:    newRoom.ID,
-		HostID:    userID,
-		WatchType: input.WatchType,
-		ClassType: classType,  // ✅ Set class_type for classroom sessions
-		IsPrivate: isPrivate,  // ✅ Hide from lobby if private
-		StartedAt: time.Now(),
+		SessionID:     sessionUUID,
+		RoomID:        newRoom.ID,
+		HostID:        userID,
+		WatchType:     input.WatchType,
+		ClassType:     classType,  // ✅ Set class_type for classroom sessions
+		IsPrivate:     isPrivate,  // ✅ Hide from lobby if private
+		ContentRating: contentRating, // ✅ Set content rating
+		StartedAt:     time.Now(),
 	}
 
 	if err := tx.Create(&watchSession).Error; err != nil {

@@ -23,9 +23,10 @@ var DB *gorm.DB // This will be set from main.go
 
 // RegisterInput defines the expected structure of the request body for registration.
 type RegisterInput struct {
-    Username string `json:"username" binding:"required,min=3,max=50"`
-    Email    string `json:"email" binding:"required,email"`
-    Password string `json:"password" binding:"required,min=6"`
+    Username    string  `json:"username" binding:"required,min=3,max=50"`
+    Email       string  `json:"email" binding:"required,email"`
+    Password    string  `json:"password" binding:"required,min=6"`
+    DateOfBirth *string `json:"date_of_birth"` // Optional: "YYYY-MM-DD" format
 }
 
 // LoginInput defines the expected structure of the request body for login.
@@ -69,11 +70,39 @@ func RegisterHandler(c *gin.Context) {
         return
     }
 
+    // Parse and validate date of birth if provided
+    var dob *time.Time
+    if input.DateOfBirth != nil && *input.DateOfBirth != "" {
+        parsed, err := time.Parse("2006-01-02", *input.DateOfBirth)
+        if err != nil {
+            log.Printf("Invalid date format for date_of_birth: %v", err)
+            c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format. Use YYYY-MM-DD"})
+            return
+        }
+        
+        // Validate user is at least 13 years old (COPPA compliance)
+        now := time.Now()
+        age := now.Year() - parsed.Year()
+        if now.Month() < parsed.Month() || (now.Month() == parsed.Month() && now.Day() < parsed.Day()) {
+            age--
+        }
+        
+        if age < 13 {
+            log.Printf("Registration denied: User is under 13 years old")
+            c.JSON(http.StatusBadRequest, gin.H{"error": "You must be at least 13 years old to use WeWatch"})
+            return
+        }
+        
+        dob = &parsed
+        log.Printf("Date of birth provided for registration: %s (age: %d)", parsed.Format("2006-01-02"), age)
+    }
+
     // Create the new user instance
     newUser := models.User{
         Username:     input.Username,
         Email:        input.Email,
         PasswordHash: hashedPassword,
+        DateOfBirth:  dob,
     }
 
     // Save the user to the database
@@ -568,5 +597,115 @@ func GetUserAverageWatchersHandler(c *gin.Context) {
         "average_watchers": averageWatchers,
         "total_sessions": len(sessionWatchers),
         "total_watchers": totalWatchers,
+    })
+}
+
+// CheckDateOfBirthHandler checks if the authenticated user has provided their date of birth
+// GET /api/auth/check-dob
+func CheckDateOfBirthHandler(c *gin.Context) {
+    userIDValue, exists := c.Get("user_id")
+    if !exists {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+        return
+    }
+    userID, ok := userIDValue.(uint)
+    if !ok {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+        return
+    }
+    
+    var user models.User
+    if err := DB.First(&user, userID).Error; err != nil {
+        log.Printf("Error fetching user %d: %v", userID, err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+        return
+    }
+    
+    c.JSON(http.StatusOK, gin.H{
+        "has_dob": user.HasDateOfBirth(),
+        "user_id": userID,
+    })
+}
+
+// UpdateDateOfBirthInput defines the expected structure for updating date of birth
+type UpdateDateOfBirthInput struct {
+    DateOfBirth string `json:"date_of_birth" binding:"required"` // "YYYY-MM-DD" format
+}
+
+// UpdateDateOfBirthHandler updates the user's date of birth (can only be set once)
+// POST /api/auth/update-dob
+func UpdateDateOfBirthHandler(c *gin.Context) {
+    userIDValue, exists := c.Get("user_id")
+    if !exists {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+        return
+    }
+    userID, ok := userIDValue.(uint)
+    if !ok {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+        return
+    }
+    
+    var input UpdateDateOfBirthInput
+    if err := c.ShouldBindJSON(&input); err != nil {
+        log.Printf("Error binding update DOB input: %v", err)
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+    
+    // Fetch user
+    var user models.User
+    if err := DB.First(&user, userID).Error; err != nil {
+        log.Printf("Error fetching user %d: %v", userID, err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+        return
+    }
+    
+    // Check if DOB is already set (prevent changing after initial set)
+    if user.HasDateOfBirth() {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Date of birth has already been set and cannot be changed"})
+        return
+    }
+    
+    // Parse date of birth
+    parsed, err := time.Parse("2006-01-02", input.DateOfBirth)
+    if err != nil {
+        log.Printf("Invalid date format for date_of_birth: %v", err)
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format. Use YYYY-MM-DD"})
+        return
+    }
+    
+    // Validate user is at least 13 years old (COPPA compliance)
+    now := time.Now()
+    age := now.Year() - parsed.Year()
+    if now.Month() < parsed.Month() || (now.Month() == parsed.Month() && now.Day() < parsed.Day()) {
+        age--
+    }
+    
+    if age < 13 {
+        log.Printf("DOB update denied: User %d is under 13 years old", userID)
+        c.JSON(http.StatusBadRequest, gin.H{"error": "You must be at least 13 years old to use WeWatch"})
+        return
+    }
+    
+    // Validate date is not in the future
+    if parsed.After(now) {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Date of birth cannot be in the future"})
+        return
+    }
+    
+    // Update user's date of birth
+    user.DateOfBirth = &parsed
+    if err := DB.Save(&user).Error; err != nil {
+        log.Printf("Error updating DOB for user %d: %v", userID, err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update date of birth"})
+        return
+    }
+    
+    log.Printf("✅ Date of birth updated for user %d: age %d", userID, age)
+    
+    c.JSON(http.StatusOK, gin.H{
+        "message": "Date of birth updated successfully",
+        "has_dob": true,
     })
 }

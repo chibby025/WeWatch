@@ -1319,15 +1319,18 @@ const RoomPageNew = () => {
   };
 
   // Step 3: Pricing Selection (Free or Paid)
-  const handlePricingSelected = async (pricingType) => {
+  const handlePricingSelected = async (pricingType, contentRating) => {
     if (pricingType === 'free') {
-      // Create free session immediately
+      // Create free session immediately with content rating
       setIsPricingModalOpen(false);
       await createWatchSession({
         watch_type: selectedWatchType,
         ticketing_enabled: false,
+        content_rating: contentRating || 'G',
       });
     } else if (pricingType === 'paid') {
+      // Store content rating for later use with paid session
+      setTicketingConfig((prev) => ({ ...prev, content_rating: contentRating || 'G' }));
       // Open ticket price modal
       setIsPricingModalOpen(false);
       setIsSetTicketPriceModalOpen(true);
@@ -1339,11 +1342,12 @@ const RoomPageNew = () => {
     setTicketingConfig(config);
     setIsSetTicketPriceModalOpen(false);
     
-    // Create paid session with ticketing config
+    // Create paid session with ticketing config and content rating
     await createWatchSession({
       watch_type: selectedWatchType,
       ticketing_enabled: true,
       ...config,
+      content_rating: ticketingConfig.content_rating || 'G',
     });
   };
 

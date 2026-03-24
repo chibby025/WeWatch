@@ -280,6 +280,10 @@ func main() {
 	// Protected routes (auth required)
 	// Apply the AuthMiddleware to the /api/auth/me route
 	r.GET("/api/auth/me", handlers.AuthMiddleware(), handlers.GetCurrentUserHandler)
+	
+	// Date of birth management endpoints
+	r.GET("/api/auth/check-dob", handlers.AuthMiddleware(), handlers.CheckDateOfBirthHandler)
+	r.POST("/api/auth/update-dob", handlers.AuthMiddleware(), handlers.UpdateDateOfBirthHandler)
 
 	// --- Invite Routes (Semi-public - requires auth) ---
 	inviteGroup := r.Group("/api/invites")

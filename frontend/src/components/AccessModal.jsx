@@ -1,10 +1,12 @@
 // WeWatch/frontend/src/components/AccessModal.jsx
-// Modal to choose between Public or Private access for instant watch
+// Modal to choose between Public or Private access for instant watch + Content Rating
 import React, { useState } from 'react';
 import { GlobeAltIcon, LockClosedIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
+import ContentRatingSelector from './ContentRatingSelector';
 
 const AccessModal = ({ isOpen, onClose, onSelectAccess, title = "Choose Room Access" }) => {
   const [isSessionPrivate, setIsSessionPrivate] = useState(false);
+  const [contentRating, setContentRating] = useState('G'); // Default to General
 
   if (!isOpen) return null;
 
@@ -29,6 +31,11 @@ const AccessModal = ({ isOpen, onClose, onSelectAccess, title = "Choose Room Acc
     }
   ];
 
+  const handleSelectAccess = (isPublic) => {
+    // Pass access type, session privacy, and content rating to parent
+    onSelectAccess(isPublic, isSessionPrivate, contentRating);
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-3 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md sm:max-w-lg max-h-[95vh] overflow-y-auto animate-fade-in custom-sleek-scrollbar">
@@ -37,7 +44,7 @@ const AccessModal = ({ isOpen, onClose, onSelectAccess, title = "Choose Room Acc
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-lg sm:text-xl font-bold">{title}</h2>
-              <p className="text-purple-100 mt-1 text-xs sm:text-sm">Who can see and join this session?</p>
+              <p className="text-purple-100 mt-1 text-xs sm:text-sm">Configure session settings</p>
             </div>
             <button
               onClick={onClose}
@@ -51,46 +58,77 @@ const AccessModal = ({ isOpen, onClose, onSelectAccess, title = "Choose Room Acc
           </div>
         </div>
 
-        {/* Access Type Options - Compact Grid */}
-        <div className="p-4 sm:p-5">
-          <div className="grid grid-cols-2 gap-3">
-            {accessTypes.map((type) => {
-              const IconComponent = type.icon;
-              return (
-                <button
-                  key={type.id}
-                  onClick={() => onSelectAccess(type.id === 'public', isSessionPrivate)}
-                  className={`relative group bg-gradient-to-br ${type.gradient} hover:shadow-lg transform hover:scale-105 active:scale-95 transition-all duration-200 rounded-xl p-3 sm:p-4 text-center overflow-hidden`}
-                >
-                  {/* Content */}
-                  <div className="relative z-10">
-                    {/* Icon & Emoji */}
-                    <div className="flex flex-col items-center gap-2 mb-2">
-                      <div className="bg-white bg-opacity-20 rounded-full p-2">
-                        <IconComponent className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
-                      </div>
-                      <span className="text-xl sm:text-2xl">{type.emoji}</span>
+        <div className="p-4 sm:p-5 space-y-5">
+          {/* Access Type Options */}
+          <div>
+            <h3 className="text-sm sm:text-base font-semibold text-gray-900 mb-3">
+              🌐 Access Type
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              {accessTypes.map((type) => {
+                const IconComponent = type.icon;
+                return (
+                  <button
+                    key={type.id}
+                    onClick={() => handleSelectAccess(type.id === 'public')}
+                    className="relative group overflow-hidden rounded-xl transition-all duration-300 hover:shadow-2xl hover:scale-[1.03] active:scale-95"
+                  >
+                    {/* Background with gradient */}
+                    <div className={`absolute inset-0 bg-gradient-to-br ${type.gradient} transition-all duration-300 group-hover:scale-110`}></div>
+                    
+                    {/* Animated shine effect */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
+                    
+                    {/* Glow effect on hover */}
+                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <div className={`absolute inset-0 bg-gradient-to-br ${type.gradient} blur-xl`}></div>
                     </div>
+                    
+                    {/* Content */}
+                    <div className="relative z-10 p-4 sm:p-5 flex flex-col items-center">
+                      {/* Icon with animated background */}
+                      <div className="relative mb-3">
+                        <div className="absolute inset-0 bg-white/20 rounded-full blur-md scale-110"></div>
+                        <div className="relative bg-white/25 backdrop-blur-sm rounded-full p-3 group-hover:scale-110 transition-transform duration-300">
+                          <IconComponent className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
+                        </div>
+                      </div>
 
-                    {/* Title */}
-                    <h3 className="text-white text-base sm:text-lg font-bold mb-1">
-                      {type.name}
-                    </h3>
+                      {/* Title */}
+                      <h3 className="text-lg sm:text-xl font-black text-white mb-1.5 tracking-wide" style={{ fontFamily: '"Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif' }}>
+                        {type.name}
+                      </h3>
 
-                    {/* Description */}
-                    <p className="text-white text-opacity-90 text-xs leading-snug">
-                      {type.id === 'public' 
-                        ? 'Anyone can discover and join' 
-                        : 'Share invite link to add members'}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
+                      {/* Description */}
+                      <p className="text-white/90 font-medium text-xs sm:text-sm mb-3 text-center leading-snug">
+                        {type.id === 'public' 
+                          ? 'Anyone can discover and join' 
+                          : 'Share invite link to add members'}
+                      </p>
+                      
+                      {/* Action indicator */}
+                      <div className="flex items-center gap-1.5 text-white font-semibold text-xs sm:text-sm group-hover:gap-2.5 transition-all duration-300">
+                        <span>Select</span>
+                        <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div>
+                    </div>
+                    
+                    {/* Decorative elements */}
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -translate-y-12 translate-x-12 group-hover:scale-150 transition-transform duration-500"></div>
+                    <div className="absolute bottom-0 left-0 w-20 h-20 bg-black/10 rounded-full translate-y-10 -translate-x-10 group-hover:scale-150 transition-transform duration-500"></div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Session Privacy Checkbox - More Compact */}
-          <div className="mt-4">
+          {/* Session Privacy Checkbox */}
+          <div>
+            <h3 className="text-sm sm:text-base font-semibold text-gray-900 mb-3">
+              👁️ Lobby Visibility
+            </h3>
             <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-3">
               <label className="flex items-start cursor-pointer group">
                 <input
@@ -111,6 +149,23 @@ const AccessModal = ({ isOpen, onClose, onSelectAccess, title = "Choose Room Acc
                   </p>
                 </div>
               </label>
+            </div>
+          </div>
+
+          {/* Content Rating Section */}
+          <div>
+            <h3 className="text-sm sm:text-base font-semibold text-gray-900 mb-3">
+              🔞 Content Moderation
+            </h3>
+            <div className="bg-gray-50 border-2 border-gray-200 rounded-lg p-3">
+              <p className="text-xs sm:text-sm text-gray-700 mb-3">
+                Select appropriate age rating. Users under the minimum age won't see this session.
+              </p>
+              <ContentRatingSelector
+                value={contentRating}
+                onChange={setContentRating}
+                showLabel={false}
+              />
             </div>
           </div>
         </div>

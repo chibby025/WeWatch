@@ -244,6 +244,30 @@ export const registerUser = async (userData) => {
     }
 };
 
+// Check if user has provided date of birth
+export const checkDateOfBirth = async () => {
+    try {
+        const response = await apiClient.get('/api/auth/check-dob');
+        return response.data;
+    } catch (error) {
+        console.error('Error checking date of birth:', error);
+        throw error;
+    }
+};
+
+// Update user's date of birth (can only be set once)
+export const updateDateOfBirth = async (dateOfBirth) => {
+    try {
+        const response = await apiClient.post('/api/auth/update-dob', {
+            date_of_birth: dateOfBirth
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Error updating date of birth:', error);
+        throw error;
+    }
+};
+
 // Delete room
 export const deleteRoom = async (roomId) => {
   try {

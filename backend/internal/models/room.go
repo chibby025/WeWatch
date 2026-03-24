@@ -36,6 +36,9 @@ type Room struct {
 	AverageRating       float64 `gorm:"type:decimal(3,2);default:0.00" json:"average_rating"`
 	TotalRatings        int     `gorm:"default:0" json:"total_ratings"`
 	CumulativeRatingSum int     `gorm:"default:0" json:"cumulative_rating_sum"`
+	
+	// Content moderation (age-based filtering)
+	ContentRating string `gorm:"type:varchar(10);default:'G';not null" json:"content_rating"` // 'G', 'PG', '13+', '16+', '18+', 'Mature'
 	// Add more fields later like MaxViewers, Password, etc.
 }
 

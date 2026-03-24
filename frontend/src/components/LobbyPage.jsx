@@ -31,6 +31,8 @@ import ActiveCallInterface from './lobby/ActiveCallInterface';
 import { Room, RoomEvent } from 'livekit-client';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import DateOfBirthPromptModal from './DateOfBirthPromptModal';
+import { checkDateOfBirth, updateDateOfBirth } from '../services/api';
 
 const LobbyPage = () => {
   // ✅ Tab State
@@ -55,6 +57,7 @@ const LobbyPage = () => {
   const [selectedClassType, setSelectedClassType] = useState(null);
   const [selectedIsPublic, setSelectedIsPublic] = useState(true); // Store access choice
   const [selectedIsPrivate, setSelectedIsPrivate] = useState(false); // Store session privacy choice
+  const [selectedContentRating, setSelectedContentRating] = useState('G'); // Store content rating
   
   // ✅ Lobby Chat State
   const [friendsList, setFriendsList] = useState([]); // Users to chat with
@@ -119,6 +122,10 @@ const LobbyPage = () => {
   
   // ✅ Hover state for session cards
   const [hoveredSession, setHoveredSession] = useState(null);
+  
+  // ✅ Date of Birth Prompt Modal State
+  const [isDOBPromptOpen, setIsDOBPromptOpen] = useState(false);
+  const [isDOBSubmitting, setIsDOBSubmitting] = useState(false);
 
   // WebSocket state for lobby real-time updates
   const wsRef = React.useRef(null);
@@ -187,6 +194,51 @@ const LobbyPage = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [openMenuRoomId]);
+  
+  // ✅ Check if user has provided date of birth on component mount
+  useEffect(() => {
+    const checkUserDOB = async () => {
+      if (!authenticatedUserID) return;
+      
+      try {
+        const response = await checkDateOfBirth();
+        if (!response.has_dob) {
+          console.log('⚠️ [DOB Check] User has not provided date of birth, showing prompt');
+          setIsDOBPromptOpen(true);
+        } else {
+          console.log('✅ [DOB Check] User has provided date of birth');
+        }
+      } catch (error) {
+        console.error('Error checking date of birth:', error);
+        // Don't block user if check fails
+      }
+    };
+    
+    checkUserDOB();
+  }, [authenticatedUserID]);
+  
+  // ✅ Handle DOB submission
+  const handleDOBSubmit = async (dateOfBirth) => {
+    setIsDOBSubmitting(true);
+    
+    try {
+      await updateDateOfBirth(dateOfBirth);
+      console.log('✅ [DOB Update] Date of birth updated successfully');
+      toast.success('Date of birth saved! You can now access all features.');
+      setIsDOBPromptOpen(false);
+      
+      // Refresh user data
+      if (refreshUser) {
+        await refreshUser();
+      }
+    } catch (error) {
+      console.error('Error updating date of birth:', error);
+      const errorMessage = error.response?.data?.error || 'Failed to save date of birth. Please try again.';
+      toast.error(errorMessage);
+    } finally {
+      setIsDOBSubmitting(false);
+    }
+  };
 
   // handle instant watch room creation
   // Add this inside LobbyPage component, alongside other handlers
@@ -206,10 +258,11 @@ const LobbyPage = () => {
     setIsAccessModalOpen(true);
   };
 
-  // ✅ Handle access selection (public/private)
-  const handleAccessSelected = (isPublic, isPrivate) => {
+  // ✅ Handle access selection (public/private + content rating)
+  const handleAccessSelected = (isPublic, isPrivate, contentRating) => {
     setSelectedIsPublic(isPublic);
     setSelectedIsPrivate(isPrivate);
+    setSelectedContentRating(contentRating || 'G'); // Store content rating
     setIsAccessModalOpen(false);
     setIsWatchTypeModalOpen(true);
   };
@@ -245,7 +298,8 @@ const LobbyPage = () => {
       const requestBody = {
         watch_type: watchType,
         is_public: selectedIsPublic,
-        is_private: selectedIsPrivate
+        is_private: selectedIsPrivate,
+        content_rating: selectedContentRating || 'G' // Include content rating
       };
 
       // Add class_type if classroom
@@ -3405,6 +3459,13 @@ const LobbyPage = () => {
           })}
         </div>
       )}
+      
+      {/* ✅ Date of Birth Prompt Modal (Required for all users) */}
+      <DateOfBirthPromptModal
+        isOpen={isDOBPromptOpen}
+        onSubmit={handleDOBSubmit}
+        isSubmitting={isDOBSubmitting}
+      />
     </div>
   );
 };

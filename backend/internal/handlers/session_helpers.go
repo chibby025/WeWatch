@@ -102,6 +102,23 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 	for _, session := range sessions {
 		log.Printf("🔍 [GetAllActiveSessionsHandler] Processing session %s (room %d)", session.SessionID, session.RoomID)
 		
+		// ✅ AGE-BASED CONTENT FILTER: Skip restricted content if user can't view it
+		if session.ContentRating != "G" && session.ContentRating != "PG" && userID > 0 {
+			var user models.User
+			if err := DB.First(&user, userID).Error; err == nil {
+				if !user.CanViewContent(session.ContentRating) {
+					log.Printf("🔒 [ContentFilter] Hiding %s session %s from user %d (age: %d)", 
+						session.ContentRating, session.SessionID, userID, user.GetAge())
+					continue // Skip this session
+				}
+			}
+		} else if session.ContentRating != "G" && session.ContentRating != "PG" && userID == 0 {
+			// Not logged in or no DOB = hide restricted content
+			log.Printf("🔒 [ContentFilter] Hiding %s session %s from unauthenticated user", 
+				session.ContentRating, session.SessionID)
+			continue
+		}
+		
 		// ✅ PRIVACY FILTER: Skip private sessions unless user is a member
 		if session.IsPrivate && userID > 0 {
 			// Check if user is a member of this private session
