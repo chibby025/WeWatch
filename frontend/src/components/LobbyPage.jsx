@@ -2582,9 +2582,6 @@ const LobbyPage = () => {
           {/* ✅ Active Sessions Section */}
           {sessionsPage.data.length > 0 && (
             <div>
-              <h3 className="text-xl font-semibold mb-4 text-blue-600 dark:text-blue-400 text-center">
-                🔴 Live Now
-              </h3>
               <div className="space-y-6">
                 {sessionsPage.data.map((session, index) => {
                   const preview = sessionPreviews[session.session_id] || {};
@@ -2617,44 +2614,139 @@ const LobbyPage = () => {
                       />
                     </div>
                     
-                    {/* Dark Gradient Overlay */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none"></div>
+                    {/* Dark Gradient Overlay for readability */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none"></div>
                     
-                    {/* ✅ Rating Badge Overlay (Top Right) */}
-                    {session.average_rating > 0 && (
-                      <div className="absolute top-4 right-4 bg-black/80 backdrop-blur-sm px-3 py-2 rounded-lg flex items-center gap-2 shadow-xl z-10">
-                        <svg className="w-5 h-5 fill-yellow-400" viewBox="0 0 24 24">
-                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                        </svg>
-                        <span className="text-white font-bold text-lg">{session.average_rating.toFixed(1)}</span>
-                        <span className="text-gray-300 text-sm">({session.total_ratings})</span>
-                      </div>
-                    )}
-                    
-                    {/* Details Overlay */}
-                    <div className="absolute bottom-0 left-0 right-0 p-6 text-white pointer-events-none">
-                      {/* Badges Row */}
-                      <div className="flex flex-wrap gap-2 mb-3">
-                        <span className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-semibold bg-${watchType.color}-500/90 backdrop-blur-sm rounded-full`}>
-                          <span>{watchType.emoji}</span>
-                          <span>{watchType.name}</span>
+                    {/* TikTok-style Minimalist Info Overlay */}
+                    <div 
+                      className="absolute bottom-4 left-4 right-4 text-white pointer-events-auto"
+                      style={{ fontFamily: '"Outfit", -apple-system, "Segoe UI", sans-serif' }}
+                    >
+                      {/* Row 1: Room Avatar + Name + Star + Content Rating */}
+                      <div className="flex items-center gap-3 mb-3">
+                        {/* Room Avatar with Live Ring */}
+                        <div 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/rooms/${session.room_id}`);
+                          }}
+                          className="relative flex-shrink-0 cursor-pointer group"
+                        >
+                          {/* Live Ring */}
+                          <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-red-500 via-pink-500 to-red-500 p-[2px] animate-pulse">
+                            <div className="w-full h-full rounded-full bg-black"></div>
+                          </div>
+                          {/* Avatar */}
+                          <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold text-sm overflow-hidden group-hover:scale-110 transition-transform">
+                            {session.room_avatar_url ? (
+                              <img src={session.room_avatar_url} alt={session.room_name} className="w-full h-full object-cover" />
+                            ) : (
+                              session.room_name?.[0]?.toUpperCase() || 'R'
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Room Name */}
+                        <span 
+                          className="font-semibold text-white text-sm truncate flex-1"
+                          style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                        >
+                          {session.room_name}
                         </span>
                         
-                        {session.ticketing_enabled && (
-                          <span className="inline-flex items-center gap-1 px-3 py-1 text-sm font-semibold bg-yellow-500/90 backdrop-blur-sm rounded-full">
-                            <span>🪙</span>
-                            <span>Paid</span>
-                          </span>
+                        {/* Star Rating (Compact) */}
+                        {session.average_rating > 0 && (
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <svg className="w-4 h-4 fill-yellow-400" viewBox="0 0 24 24" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}>
+                              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                            </svg>
+                            <span className="text-white font-bold text-sm" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
+                              {session.average_rating.toFixed(1)}
+                            </span>
+                          </div>
+                        )}
+                        
+                        {/* Content Rating (Compact) */}
+                        {session.content_rating && (
+                          <img 
+                            src={
+                              session.content_rating === 'G' ? '/icons/G Rating Icon.png' :
+                              session.content_rating === 'PG' ? '/icons/PG Rating Icon.png' :
+                              session.content_rating === '13+' ? '/icons/13_ Rating Icon.png' :
+                              session.content_rating === '18+' ? '/icons/18_ Rating Icon.png' :
+                              session.content_rating === 'Mature' ? '/icons/Mature Rating Icon.png' :
+                              '/icons/G Rating Icon.png'
+                            }
+                            alt={`${session.content_rating} rating`}
+                            className="h-8 w-auto flex-shrink-0"
+                            style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}
+                          />
                         )}
                       </div>
-
-                      <h3 className="text-3xl font-bold mb-3 drop-shadow-lg line-clamp-2">
-                        {session.room_name}
-                      </h3>
-
-                      <div className="flex items-center gap-4 text-base mb-2">
-                        <span className="font-medium">👤 {session.host_username}</span>
-                        <span>👥 {session.member_count} viewers</span>
+                      
+                      {/* Row 2: Live Dot + Title + Viewers */}
+                      <div className="flex items-start gap-2 mb-2">
+                        {/* Pulsing Red Dot */}
+                        <div className="relative flex-shrink-0 mt-1.5">
+                          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                          <div className="absolute inset-0 w-2 h-2 bg-red-500 rounded-full animate-ping opacity-75"></div>
+                        </div>
+                        
+                        {/* Title */}
+                        <h3 
+                          className="text-lg font-bold leading-tight flex-1 line-clamp-2"
+                          style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}
+                        >
+                          {session.session_title || session.currently_playing || 'Live Session'}
+                        </h3>
+                        
+                        {/* Viewers Count */}
+                        <div 
+                          className="flex items-center gap-1 flex-shrink-0"
+                          style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                        >
+                          <span className="text-sm">👥</span>
+                          <span className="text-sm font-semibold">{session.member_count}</span>
+                        </div>
+                      </div>
+                      
+                      {/* Row 3: Expandable "... more" */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const target = e.currentTarget;
+                          const detailsDiv = target.nextElementSibling;
+                          const isExpanded = detailsDiv.style.display === 'block';
+                          detailsDiv.style.display = isExpanded ? 'none' : 'block';
+                          target.textContent = isExpanded ? '... more' : '... less';
+                        }}
+                        className="text-sm text-gray-300 hover:text-white transition-colors mb-1"
+                        style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                      >
+                        ... more
+                      </button>
+                      
+                      {/* Expanded Details */}
+                      <div 
+                        className="text-sm text-gray-200 space-y-1"
+                        style={{ display: 'none', textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                      >
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span>👤</span>
+                            <span className="font-medium">{session.host_username}</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span>{watchType.emoji}</span>
+                            <span>{watchType.name}</span>
+                          </span>
+                          {session.ticketing_enabled && (
+                            <span className="inline-flex items-center gap-1.5 text-yellow-300 font-semibold">
+                              <span>🪙</span>
+                              <span>Paid</span>
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     
@@ -3384,52 +3476,145 @@ const LobbyPage = () => {
                   />
                 </div>
                 
-                {/* Dark Gradient Overlay */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none"></div>
+                {/* Dark Gradient Overlay for readability */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none"></div>
                 
-                {/* Rating Badge (Top Right) */}
-                {session.average_rating > 0 && (
-                  <div className="absolute top-6 right-20 bg-black/80 backdrop-blur-sm px-3 py-2 rounded-lg flex items-center gap-2 shadow-xl z-10">
-                    <svg className="w-5 h-5 fill-yellow-400" viewBox="0 0 24 24">
-                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                    </svg>
-                    <span className="text-white font-bold text-lg">{session.average_rating.toFixed(1)}</span>
-                    <span className="text-gray-300 text-sm">({session.total_ratings})</span>
-                  </div>
-                )}
-                
-                {/* Session Details Overlay (Always Visible) */}
-                <div className="absolute bottom-24 left-0 right-0 p-6 text-white">
-                  {/* Badges Row */}
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    <span className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-semibold bg-${watchType.color}-500/90 backdrop-blur-sm rounded-full`}>
-                      <span>{watchType.emoji}</span>
-                      <span>{watchType.name}</span>
+                {/* TikTok-style Minimalist Info Overlay */}
+                <div 
+                  className="absolute bottom-24 left-6 right-6 text-white pointer-events-auto"
+                  style={{ fontFamily: '"Outfit", -apple-system, "Segoe UI", sans-serif' }}
+                >
+                  {/* Row 1: Room Avatar + Name + Star + Content Rating */}
+                  <div className="flex items-center gap-3 mb-3">
+                    {/* Room Avatar with Live Ring */}
+                    <div className="relative flex-shrink-0">
+                      {/* Live Ring */}
+                      <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-red-500 via-pink-500 to-red-500 p-[2px] animate-pulse">
+                        <div className="w-full h-full rounded-full bg-black"></div>
+                      </div>
+                      {/* Avatar */}
+                      <div className="relative w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold text-lg overflow-hidden">
+                        {session.room_avatar_url ? (
+                          <img src={session.room_avatar_url} alt={session.room_name} className="w-full h-full object-cover" />
+                        ) : (
+                          session.room_name?.[0]?.toUpperCase() || 'R'
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Room Name */}
+                    <span 
+                      className="font-bold text-white text-lg truncate flex-1"
+                      style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                    >
+                      {session.room_name}
                     </span>
                     
-                    {session.ticketing_enabled && (
-                      <span className="inline-flex items-center gap-1 px-3 py-1 text-sm font-semibold bg-yellow-500/90 backdrop-blur-sm rounded-full">
-                        <span>🪙</span>
-                        <span>Paid</span>
-                      </span>
+                    {/* Star Rating (Compact) */}
+                    {session.average_rating > 0 && (
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <svg className="w-5 h-5 fill-yellow-400" viewBox="0 0 24 24" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}>
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                        </svg>
+                        <span className="text-white font-bold text-base" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
+                          {session.average_rating.toFixed(1)}
+                        </span>
+                      </div>
+                    )}
+                    
+                    {/* Content Rating (Compact) */}
+                    {session.content_rating && (
+                      <img 
+                        src={
+                          session.content_rating === 'G' ? '/icons/G Rating Icon.png' :
+                          session.content_rating === 'PG' ? '/icons/PG Rating Icon.png' :
+                          session.content_rating === '13+' ? '/icons/13_ Rating Icon.png' :
+                          session.content_rating === '18+' ? '/icons/18_ Rating Icon.png' :
+                          session.content_rating === 'Mature' ? '/icons/Mature Rating Icon.png' :
+                          '/icons/G Rating Icon.png'
+                        }
+                        alt={`${session.content_rating} rating`}
+                        className="h-10 w-auto flex-shrink-0"
+                        style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}
+                      />
                     )}
                   </div>
-
-                  <h3 className="text-3xl font-bold mb-3 drop-shadow-lg line-clamp-2">
-                    {session.room_name}
-                  </h3>
-
-                  <div className="flex items-center gap-4 text-base mb-2">
-                    <span className="font-medium">👤 {session.host_username}</span>
-                    <span>👥 {session.member_count} viewers</span>
+                  
+                  {/* Row 2: Live Dot + Title + Viewers */}
+                  <div className="flex items-start gap-2 mb-2">
+                    {/* Pulsing Red Dot */}
+                    <div className="relative flex-shrink-0 mt-2">
+                      <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
+                      <div className="absolute inset-0 w-2.5 h-2.5 bg-red-500 rounded-full animate-ping opacity-75"></div>
+                    </div>
+                    
+                    {/* Title */}
+                    <h3 
+                      className="text-2xl font-bold leading-tight flex-1 line-clamp-2"
+                      style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}
+                    >
+                      {session.session_title || session.currently_playing || 'Live Session'}
+                    </h3>
+                    
+                    {/* Viewers Count */}
+                    <div 
+                      className="flex items-center gap-1 flex-shrink-0"
+                      style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                    >
+                      <span className="text-base">👥</span>
+                      <span className="text-base font-semibold">{session.member_count}</span>
+                    </div>
+                  </div>
+                  
+                  {/* Row 3: Expandable "... more" */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const target = e.currentTarget;
+                      const detailsDiv = target.nextElementSibling;
+                      const isExpanded = detailsDiv.style.display === 'block';
+                      detailsDiv.style.display = isExpanded ? 'none' : 'block';
+                      target.textContent = isExpanded ? '... more' : '... less';
+                    }}
+                    className="text-base text-gray-300 hover:text-white transition-colors mb-1"
+                    style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                  >
+                    ... more
+                  </button>
+                  
+                  {/* Expanded Details */}
+                  <div 
+                    className="text-base text-gray-200 space-y-1"
+                    style={{ display: 'none', textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                  >
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span>👤</span>
+                        <span className="font-medium">{session.host_username}</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span>{watchType.emoji}</span>
+                        <span>{watchType.name}</span>
+                      </span>
+                      {session.ticketing_enabled && (
+                        <span className="inline-flex items-center gap-1.5 text-yellow-300 font-semibold">
+                          <span>🪙</span>
+                          <span>Paid</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 
-                {/* Join Now Button (Fixed at Bottom - Always Visible) */}
-                <div className="absolute bottom-0 left-0 right-0 p-6 flex flex-col items-center gap-3 bg-gradient-to-t from-black/90 via-black/70 to-transparent">
+                {/* Sleek Join Now Button - Fixed Bottom Center */}
+                <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-3 pointer-events-auto">
                   <button
                     onClick={() => handleJoinSessionDirect(session)}
-                    className="w-full max-w-md px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-bold text-xl hover:from-blue-500 hover:to-purple-500 transform hover:scale-105 transition-all shadow-2xl flex items-center justify-center gap-3"
+                    className="px-10 py-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-full font-bold text-lg hover:from-purple-500 hover:to-blue-500 transform hover:scale-105 active:scale-95 transition-all shadow-2xl flex items-center justify-center gap-3"
+                    style={{ 
+                      fontFamily: '"Outfit", -apple-system, "Segoe UI", sans-serif',
+                      boxShadow: '0 8px 32px rgba(147, 51, 234, 0.5)'
+                    }}
                   >
                     <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
                       <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/>
@@ -3439,15 +3624,15 @@ const LobbyPage = () => {
                   
                   {/* Show price if paid session */}
                   {session.ticketing_enabled && session.ticket_price_tokens > 0 && (
-                    <div className="flex items-center gap-2 bg-yellow-500/20 backdrop-blur-sm px-4 py-2 rounded-full border border-yellow-400">
+                    <div className="flex items-center gap-2 bg-yellow-500/20 backdrop-blur-md px-5 py-2.5 rounded-full border border-yellow-400/50">
                       <img src="/icons/coins.svg" alt="Tokens" className="w-5 h-5" />
-                      <span className="text-yellow-300 font-bold text-lg">
+                      <span className="text-yellow-300 font-bold text-base">
                         {session.early_bird_active && session.early_bird_enabled 
                           ? session.early_bird_price_tokens 
                           : session.ticket_price_tokens} tokens
                       </span>
                       {session.early_bird_active && session.early_bird_enabled && (
-                        <span className="text-green-300 text-xs font-semibold bg-green-600/30 px-2 py-0.5 rounded-full">
+                        <span className="text-green-300 text-xs font-semibold bg-green-600/40 px-2.5 py-1 rounded-full">
                           🎉 EARLY BIRD
                         </span>
                       )}

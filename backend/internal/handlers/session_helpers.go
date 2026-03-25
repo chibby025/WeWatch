@@ -30,6 +30,7 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		SessionID             string  `json:"session_id"`
 		RoomID                uint    `json:"room_id"`
 		RoomName              string  `json:"room_name"`
+		RoomAvatarURL         string  `json:"room_avatar_url,omitempty"` // ✅ Room avatar image
 		HostID                uint    `json:"host_id"`
 		HostUsername          string  `json:"host_username"`
 		WatchType             string  `json:"watch_type"`
@@ -44,6 +45,7 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		CurrentMediaType      string  `json:"current_media_type,omitempty"`
 		IsScreenSharingActive bool    `json:"is_screen_sharing_active"`
 		SharingSource         string  `json:"sharing_source,omitempty"`
+		ContentRating         string  `json:"content_rating"`     // ✅ Age-based content rating
 		AverageRating         float64 `json:"average_rating"`     // ✅ Room's average rating
 		TotalRatings          int     `json:"total_ratings"`      // ✅ Number of ratings
 	}
@@ -228,6 +230,7 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			SessionID:             session.SessionID,
 			RoomID:                session.RoomID,
 			RoomName:              room.Name,
+			RoomAvatarURL:         room.ImageURL,           // ✅ Include room avatar (using ImageURL field)
 			HostID:                room.HostID,
 			HostUsername:          hostUsername,
 			WatchType:             session.WatchType,
@@ -242,8 +245,9 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			CurrentMediaType:      session.CurrentMediaType,
 			IsScreenSharingActive: session.IsScreenSharingActive,
 			SharingSource:         session.SharingSource,
-			AverageRating:         room.AverageRating,  // ✅ Include room rating
-			TotalRatings:          room.TotalRatings,   // ✅ Include rating count
+			ContentRating:         session.ContentRating,  // ✅ Include content rating
+			AverageRating:         room.AverageRating,     // ✅ Include room rating
+			TotalRatings:          room.TotalRatings,      // ✅ Include rating count
 		}
 		log.Printf("  └─ ✅ ADDING to response: %s (temp: %v, members: %d)", room.Name, room.IsTemporary, activeMemberCount)
 		response = append(response, sessionResp)
