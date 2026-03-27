@@ -620,7 +620,7 @@ export default function LeftSidebar({
       
       {/* 🖼️ Host Settings - Preview Thumbnails Toggle */}
       {isHost && (
-        <div className="mb-3 p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
+        <div className="mt-6 mb-3 p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
           <label className="flex items-start gap-3 cursor-pointer group">
             <input
               type="checkbox"
@@ -1088,6 +1088,7 @@ export default function LeftSidebar({
             onKickLiveShareGuest={onKickLiveShareGuest}
             onStartScreenShare={onStartScreenShare}
             onCameraPreview={onCameraPreview}
+            sendMessage={sendMessage}
           />
         </div>
       )}

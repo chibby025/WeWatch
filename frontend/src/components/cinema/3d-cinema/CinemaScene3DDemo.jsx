@@ -42,6 +42,8 @@ import GameLobbyModal from '../../Games/GameLobbyModal';
 import GameOverlay from '../../Games/GameOverlay';
 import GameScreenRenderer from '../../Games/GameScreenRenderer'; // ✅ NEW
 import VolumeControl from '../../VolumeControl';
+// Graphics renderer for LiveShare overlays
+import { GraphicsRenderer } from '../../../utils/GraphicsRenderer';
 // LocalStorage cache utilities
 import { 
   getCachedUser, 
@@ -678,6 +680,11 @@ export default function CinemaScene3DDemo() {
   const screenShareTrackRef = useRef(null);
   const cameraShareTrackRef = useRef(null);
   const [screenShareTrackSid, setScreenShareTrackSid] = useState(null);
+
+  // 🎨 Graphics Renderer for LiveShare overlays
+  const graphicsCanvasRef = useRef(null);
+  const graphicsRendererRef = useRef(null);
+  const renderLoopRef = useRef(null);
   const [cameraShareTrackSid, setCameraShareTrackSid] = useState(null);
   const [cameraStream, setCameraStream] = useState(null);
   const cameraVideoRef = useRef(null); // For camera video element
@@ -1914,6 +1921,61 @@ export default function CinemaScene3DDemo() {
       disconnectLiveKit();
     };
   }, [roomId, currentUser?.id, isSessionMemberConfirmed, connectLiveKit, disconnectLiveKit, enableLoadingOverlay]);
+
+  // 🎨 Initialize GraphicsRenderer for LiveShare overlays
+  useEffect(() => {
+    if (!graphicsCanvasRef.current || graphicsRendererRef.current) return;
+    
+    console.log('🎨 [CinemaScene3D] Initializing GraphicsRenderer');
+    
+    // Initialize renderer
+    const renderer = new GraphicsRenderer(graphicsCanvasRef.current);
+    renderer.init(1920, 1080); // Standard HD resolution
+    graphicsRendererRef.current = renderer;
+    
+    // Start render loop
+    const renderLoop = () => {
+      renderer.render();
+      renderLoopRef.current = requestAnimationFrame(renderLoop);
+    };
+    renderLoop();
+    
+    // Cleanup
+    return () => {
+      if (renderLoopRef.current) {
+        cancelAnimationFrame(renderLoopRef.current);
+        renderLoopRef.current = null;
+      }
+      graphicsRendererRef.current = null;
+    };
+  }, []);
+
+  // 🎨 Listen for graphics updates via WebSocket
+  useEffect(() => {
+    if (!messages || messages.length === 0) return;
+    
+    const lastMessage = messages[messages.length - 1];
+    
+    if (lastMessage.type === 'liveshare_graphics_update') {
+      const { graphic } = lastMessage.data;
+      console.log('🎨 [CinemaScene3D] Graphics update received:', graphic);
+      
+      if (graphicsRendererRef.current && graphic) {
+        if (graphic.active) {
+          // Add or update layer
+          graphicsRendererRef.current.addLayer(graphic.type, {
+            type: graphic.type,
+            content: graphic.content,
+            position: graphic.position,
+            zIndex: graphic.z_index || 1
+          });
+        } else {
+          // Remove layer
+          graphicsRendererRef.current.removeLayer(graphic.type);
+        }
+      }
+    }
+  }, [messages]);
   
   // 🎯 Move from voice connection to seat finding when LiveKit connects
   useEffect(() => {
@@ -6124,6 +6186,15 @@ export default function CinemaScene3DDemo() {
               />
             );
           })()}
+
+          {/* 🎨 Graphics Canvas Overlay for LiveShare */}
+          {!currentGame && (currentMedia?.type === 'liveshare' || remoteScreenTrack || remoteCameraTrack) && (liveShareMode && liveShareMode !== 'regular') && (
+            <canvas
+              ref={graphicsCanvasRef}
+              className="absolute inset-0 pointer-events-none"
+              style={{ zIndex: 15 }}
+            />
+          )}
           
           {/* 📹 Upload media container - video element will be moved here */}
           {currentMedia?.type === 'upload' && (

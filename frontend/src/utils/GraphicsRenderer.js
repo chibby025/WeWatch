@@ -85,6 +85,8 @@ export class GraphicsRenderer {
         this.renderTicker(layer);
       } else if (layer.type === 'banner') {
         this.renderBanner(layer);
+      } else if (layer.type === 'media_queue') {
+        this.renderMediaQueue(layer);
       }
     });
   }
@@ -215,6 +217,48 @@ export class GraphicsRenderer {
     };
     
     renderLoop();
+  }
+
+  /**
+   * Render media queue item (image/video overlay)
+   */
+  renderMediaQueue(layer) {
+    const { content } = layer;
+    const { mediaUrl, mediaType } = content;
+    
+    if (!mediaUrl) return;
+
+    const ctx = this.ctx;
+    
+    // Render images
+    if (mediaType && mediaType.startsWith('image')) {
+      const img = new Image();
+      img.onload = () => {
+        // Center the image, scale to fit
+        const maxWidth = this.canvas.width * 0.8;
+        const maxHeight = this.canvas.height * 0.8;
+        
+        let width = img.width;
+        let height = img.height;
+        
+        // Scale to fit
+        const scale = Math.min(maxWidth / width, maxHeight / height);
+        width *= scale;
+        height *= scale;
+        
+        const x = (this.canvas.width - width) / 2;
+        const y = (this.canvas.height - height) / 2;
+        
+        // Semi-transparent background
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Draw image
+        ctx.drawImage(img, x, y, width, height);
+      };
+      img.src = mediaUrl;
+    }
+    // TODO: Video playback would need a separate <video> element approach
   }
 
   /**

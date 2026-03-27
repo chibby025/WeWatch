@@ -41,6 +41,8 @@ import QuizResultsModal from './modals/QuizResultsModal';
 // Game system components
 import GameLobbyModal from '../Games/GameLobbyModal';
 import GameOverlay from '../Games/GameOverlay';
+// Graphics renderer for LiveShare overlays
+import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
 
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
@@ -360,6 +362,11 @@ export default function VideoWatch() {
   const [screenShareTrackSid, setScreenShareTrackSid] = useState(null);
   const [cameraShareTrackSid, setCameraShareTrackSid] = useState(null);
 
+  // 🎨 Graphics Renderer for LiveShare overlays
+  const graphicsCanvasRef = useRef(null);
+  const graphicsRendererRef = useRef(null);
+  const renderLoopRef = useRef(null);
+
   // 📝 QUIZ SYSTEM STATE
   const [quizzes, setQuizzes] = useState([]); // All quizzes in this session
   const [activeQuiz, setActiveQuiz] = useState(null); // Currently in-progress quiz
@@ -456,6 +463,85 @@ export default function VideoWatch() {
       hasAttemptedLiveKitConnection.current = false;
     };
   }, [roomId, currentUser?.id, connectLiveKit, disconnectLiveKit]);
+
+  // 🎨 Initialize GraphicsRenderer for LiveShare overlays
+  useEffect(() => {
+    if (!liveShareMode) {
+      // No LiveShare mode - cleanup if renderer exists
+      if (graphicsRendererRef.current) {
+        if (renderLoopRef.current) {
+          cancelAnimationFrame(renderLoopRef.current);
+          renderLoopRef.current = null;
+        }
+        graphicsRendererRef.current = null;
+      }
+      return;
+    }
+    
+    if (!graphicsCanvasRef.current || graphicsRendererRef.current) return;
+    
+    console.log('🎨 [VideoWatch] Initializing GraphicsRenderer for mode:', liveShareMode);
+    
+    // Initialize renderer
+    const renderer = new GraphicsRenderer(graphicsCanvasRef.current);
+    renderer.init(1920, 1080); // Standard HD resolution
+    graphicsRendererRef.current = renderer;
+    
+    // Start render loop
+    const renderLoop = () => {
+      renderer.render();
+      renderLoopRef.current = requestAnimationFrame(renderLoop);
+    };
+    renderLoop();
+    
+    console.log('🎨 [VideoWatch] GraphicsRenderer initialized and rendering');
+    
+    // Cleanup
+    return () => {
+      if (renderLoopRef.current) {
+        cancelAnimationFrame(renderLoopRef.current);
+        renderLoopRef.current = null;
+      }
+      graphicsRendererRef.current = null;
+    };
+  }, [liveShareMode]);
+
+  // 🎨 Listen for graphics updates via WebSocket
+  useEffect(() => {
+    if (!messages || messages.length === 0) return;
+    
+    const lastMessage = messages[messages.length - 1];
+    
+    if (lastMessage.type === 'liveshare_graphics_update') {
+      const { graphic } = lastMessage.data;
+      console.log('🎨 [VideoWatch] Graphics update received:', graphic);
+      console.log('🎨 [VideoWatch] graphicsRendererRef.current:', graphicsRendererRef.current);
+      console.log('🎨 [VideoWatch] liveShareMode:', liveShareMode);
+      
+      if (graphicsRendererRef.current && graphic) {
+        if (graphic.active) {
+          // Add or update layer
+          console.log('🎨 [VideoWatch] Adding layer:', graphic.type, graphic.content);
+          graphicsRendererRef.current.addLayer(graphic.type, {
+            type: graphic.type,
+            content: graphic.content,
+            position: graphic.position,
+            zIndex: graphic.z_index || 1
+          });
+          console.log('🎨 [VideoWatch] Layer added successfully');
+        } else {
+          // Remove layer
+          console.log('🎨 [VideoWatch] Removing layer:', graphic.type);
+          graphicsRendererRef.current.removeLayer(graphic.type);
+        }
+      } else {
+        console.warn('🎨 [VideoWatch] Cannot add layer - renderer or graphic is null:', {
+          hasRenderer: !!graphicsRendererRef.current,
+          hasGraphic: !!graphic
+        });
+      }
+    }
+  }, [messages, liveShareMode]);
   
   // 🔍 Debug: Log LiveKit connection status changes
   useEffect(() => {
@@ -3023,6 +3109,12 @@ export default function VideoWatch() {
           });
           break;
           
+        case "liveshare_graphics_update":
+          // Graphics updates are handled by separate useEffect (lines 495-520)
+          // Just acknowledge receipt here to avoid "unknown" warning
+          console.log('🎨 [VideoWatch] Graphics update acknowledged:', message.data?.graphic?.type);
+          break;
+          
         default:
           console.warn("[VideoWatch] Unknown WebSocket message type:", message.type, message);
       }
@@ -3652,7 +3744,7 @@ export default function VideoWatch() {
       <div className="absolute top-0 left-0 p-3 sm:p-4 z-50">
         <button
           onClick={() => setIsLeftSidebarOpen(prev => !prev)}
-          className="h-8 w-8 sm:h-6 sm:w-6 p-1 touch-manipulation"
+          className="h-10 w-10 sm:h-8 sm:w-8 p-1 touch-manipulation"
           aria-label={isLeftSidebarOpen ? "Close menu" : "Open menu"}
         >
           <img 
@@ -3682,19 +3774,36 @@ export default function VideoWatch() {
           // ❌ REMOVED: onBinaryHandlerReady, onScreenShareReady (not needed with LiveKit)
         />
         
-        {/* 🎙️ LiveShare Overlays (for Podcast/News/Show modes) */}
-        {podcastConfig && (liveShareMode === 'podcast' || liveShareMode === 'news' || liveShareMode === 'show') && (
+        {/* � Graphics Canvas Overlay for LiveShare */}
+        {liveShareMode && (
+          <canvas
+            ref={graphicsCanvasRef}
+            className="absolute inset-0 pointer-events-none"
+            style={{ 
+              zIndex: 15,
+              width: '100%',
+              height: '100%'
+            }}
+          />
+        )}
+        
+        {/* �🎙️ LiveShare Overlays (for Podcast/News/Show modes) */}
+        {podcastConfig && (podcastConfig.mode === 'podcast' || podcastConfig.mode === 'news' || podcastConfig.mode === 'show') && (
           <div className="absolute inset-0 pointer-events-none">
             {/* Host Name Label (top left) */}
             <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-lg flex items-center gap-2 pointer-events-auto">
               <span className="text-white font-medium text-sm sm:text-base">{podcastConfig.hostUsername || 'Host'} (Host)</span>
             </div>
             
-            {/* Podcast Logo (bottom left above title) */}
-            {podcastConfig.logoUrl && (() => {
+            {/* Podcast Logo & Title (bottom left, side by side) */}
+            {(podcastConfig.logoUrl || podcastConfig.title) && (() => {
               let logoSize = 100;
               let logoX = 10;
               let logoY = 80;
+              let titleColor = '#FFFFFF';
+              let titleSize = 24;
+              let titleWeight = 700;
+              let titleCase = 'none';
               
               try {
                 const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${activeSessionId}`);
@@ -3704,39 +3813,7 @@ export default function VideoWatch() {
                   logoX = styles.x || 10;
                   logoY = styles.y || 80;
                 }
-              } catch (err) {
-                console.warn('Failed to load logo styles:', err);
-              }
-              
-              return (
-                <img 
-                  src={podcastConfig.logoUrl} 
-                  alt="Logo" 
-                  className="absolute object-contain pointer-events-auto"
-                  style={{
-                    width: `${logoSize}px`,
-                    height: `${logoSize}px`,
-                    left: `${logoX}px`,
-                    bottom: `${logoY}px`
-                  }}
-                />
-              );
-            })()}
-            
-            {/* LIVE Indicator (top center) */}
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full flex items-center gap-2 shadow-xl pointer-events-auto">
-              <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-              <span className="text-white font-bold text-xs sm:text-sm uppercase">LIVE</span>
-            </div>
-            
-            {/* Podcast Title (bottom left with custom styling) */}
-            {podcastConfig.title && (() => {
-              let titleColor = '#FFFFFF';
-              let titleSize = 24;
-              let titleWeight = 700;
-              let titleCase = 'none';
-              
-              try {
+                
                 const savedStyles = localStorage.getItem(`podcast_title_style_${activeSessionId}`);
                 if (savedStyles) {
                   const styles = JSON.parse(savedStyles);
@@ -3746,7 +3823,7 @@ export default function VideoWatch() {
                   titleCase = styles.case || 'none';
                 }
               } catch (err) {
-                console.warn('Failed to load title styles:', err);
+                console.warn('Failed to load styles:', err);
               }
               
               const applyTextCase = (text, caseType) => {
@@ -3769,17 +3846,47 @@ export default function VideoWatch() {
               
               return (
                 <div 
-                  className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-sm px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg shadow-xl pointer-events-auto"
+                  className="absolute flex items-center gap-3 pointer-events-auto"
                   style={{
-                    color: titleColor,
-                    fontSize: `${titleSize}px`,
-                    fontWeight: titleWeight
+                    left: `${logoX}px`,
+                    bottom: `${logoY}px`
                   }}
                 >
-                  <h2 className="text-sm sm:text-base md:text-lg">{applyTextCase(podcastConfig.title, titleCase)}</h2>
+                  {/* Logo */}
+                  {podcastConfig.logoUrl && (
+                    <img 
+                      src={podcastConfig.logoUrl} 
+                      alt="Logo" 
+                      className="object-contain"
+                      style={{
+                        width: `${logoSize}px`,
+                        height: `${logoSize}px`
+                      }}
+                    />
+                  )}
+                  
+                  {/* Title */}
+                  {podcastConfig.title && (
+                    <div 
+                      className="bg-black/70 backdrop-blur-sm px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg shadow-xl"
+                      style={{
+                        color: titleColor,
+                        fontSize: `${titleSize}px`,
+                        fontWeight: titleWeight
+                      }}
+                    >
+                      <h2 className="text-sm sm:text-base md:text-lg">{applyTextCase(podcastConfig.title, titleCase)}</h2>
+                    </div>
+                  )}
                 </div>
               );
             })()}
+            
+            {/* LIVE Indicator (top center) */}
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full flex items-center gap-2 shadow-xl pointer-events-auto">
+              <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+              <span className="text-white font-bold text-xs sm:text-sm uppercase">LIVE</span>
+            </div>
           </div>
         )}
       </div>

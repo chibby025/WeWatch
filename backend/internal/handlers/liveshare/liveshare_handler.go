@@ -63,6 +63,8 @@ func (h *LiveShareHandler) HandleMessage(msgType string, data map[string]interfa
 		return h.handleLeave(data, client)
 	case "liveshare_kick_guest":
 		return h.handleKickGuest(data, client)
+	case "liveshare_graphics_update":
+		return h.handleGraphicsUpdate(data, client)
 	default:
 		return fmt.Errorf("unknown LiveShare message type: %s", msgType)
 	}
@@ -464,5 +466,43 @@ func (h *LiveShareHandler) handleKickGuest(data map[string]interface{}, client C
 	}, client)
 
 	log.Printf("✅ [LiveShare] User %d kicked successfully", targetUserID)
+	return nil
+}
+
+// handleGraphicsUpdate - Broadcast graphics updates (lower third, banner, ticker, etc.)
+func (h *LiveShareHandler) handleGraphicsUpdate(data map[string]interface{}, client Client) error {
+	log.Printf("🎨 [LiveShare] Graphics update from user %d", client.GetUserID())
+	
+	// Extract graphic data
+	graphic, ok := data["graphic"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("missing or invalid 'graphic' field")
+	}
+	
+	// Validate required fields
+	graphicType, ok := graphic["type"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid graphic 'type'")
+	}
+	
+	log.Printf("🎨 [LiveShare] Broadcasting %s graphic update to room %d", graphicType, client.GetRoomID())
+	
+	// Broadcast to all room members
+	broadcastMsg := map[string]interface{}{
+		"type": "liveshare_graphics_update",
+		"data": data,
+	}
+	
+	broadcastBytes, err := json.Marshal(broadcastMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal graphics update: %v", err)
+	}
+	
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     broadcastBytes,
+		IsBinary: false,
+	}, client)
+	
+	log.Printf("✅ [LiveShare] Graphics update broadcast successfully")
 	return nil
 }

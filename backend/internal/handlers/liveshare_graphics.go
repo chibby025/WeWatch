@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,17 +19,49 @@ import (
 	"wewatch-backend/internal/models"
 )
 
+// JSONB is a custom type that handles PostgreSQL JSONB scanning
+type JSONB map[string]interface{}
+
+// Scan implements sql.Scanner interface for reading from database
+func (j *JSONB) Scan(value interface{}) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+	
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("failed to unmarshal JSONB value: %v", value)
+	}
+	
+	result := make(map[string]interface{})
+	if err := json.Unmarshal(bytes, &result); err != nil {
+		return err
+	}
+	
+	*j = result
+	return nil
+}
+
+// Value implements driver.Valuer interface for writing to database
+func (j JSONB) Value() (driver.Value, error) {
+	if j == nil {
+		return nil, nil
+	}
+	return json.Marshal(j)
+}
+
 // LiveShareGraphic represents a graphics overlay
 type LiveShareGraphic struct {
-	ID        uint           `json:"id" gorm:"primaryKey"`
-	SessionID uint           `json:"session_id" gorm:"not null"`
-	Type      string         `json:"type" gorm:"not null"` // lower_third, logo_bug, ticker, banner
-	Content   map[string]any `json:"content" gorm:"type:jsonb"`
-	Position  string         `json:"position"`
-	Active    bool           `json:"active" gorm:"default:false"`
-	ZIndex    int            `json:"z_index" gorm:"default:1"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	SessionID uint      `json:"session_id" gorm:"not null"`
+	Type      string    `json:"type" gorm:"not null"` // lower_third, logo_bug, ticker, banner
+	Content   JSONB     `json:"content" gorm:"type:jsonb"`
+	Position  string    `json:"position"`
+	Active    bool      `json:"active" gorm:"default:false"`
+	ZIndex    int       `json:"z_index" gorm:"default:1"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // LiveShareMediaQueueItem represents a queued media item
@@ -273,10 +306,19 @@ func UploadMediaQueue(c *gin.Context) {
 // UpdateGraphics handles graphics state update
 func UpdateGraphics(c *gin.Context) {
 	sessionIDStr := c.Param("id")
-	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
-		return
+	
+	// Try parsing as integer first, then fallback to UUID lookup
+	var sessionID uint
+	if parsedID, err := strconv.ParseUint(sessionIDStr, 10, 32); err == nil {
+		sessionID = uint(parsedID)
+	} else {
+		// Assume UUID format, look up session
+		var session models.WatchSession
+		if err := DB.Where("session_id = ?", sessionIDStr).First(&session).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+			return
+		}
+		sessionID = session.ID
 	}
 
 	// Verify user is host
@@ -357,10 +399,20 @@ func UpdateGraphics(c *gin.Context) {
 // GetGraphics retrieves all graphics for a session
 func GetGraphics(c *gin.Context) {
 	sessionIDStr := c.Param("id")
-	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
-		return
+	
+	// Try parsing as integer first (watch_sessions.id)
+	var sessionID uint
+	if parsedID, err := strconv.ParseUint(sessionIDStr, 10, 32); err == nil {
+		// Successfully parsed as integer - use directly
+		sessionID = uint(parsedID)
+	} else {
+		// Assume it's a UUID (watch_sessions.session_id) - look up the integer ID
+		var session models.WatchSession
+		if err := DB.Where("session_id = ?", sessionIDStr).First(&session).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+			return
+		}
+		sessionID = session.ID
 	}
 
 	var graphics []LiveShareGraphic
@@ -375,10 +427,20 @@ func GetGraphics(c *gin.Context) {
 // GetMediaQueue retrieves media queue for a session
 func GetMediaQueue(c *gin.Context) {
 	sessionIDStr := c.Param("id")
-	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
-		return
+	
+	// Try parsing as integer first (watch_sessions.id)
+	var sessionID uint
+	if parsedID, err := strconv.ParseUint(sessionIDStr, 10, 32); err == nil {
+		// Successfully parsed as integer - use directly
+		sessionID = uint(parsedID)
+	} else {
+		// Assume it's a UUID (watch_sessions.session_id) - look up the integer ID
+		var session models.WatchSession
+		if err := DB.Where("session_id = ?", sessionIDStr).First(&session).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+			return
+		}
+		sessionID = session.ID
 	}
 
 	var queue []LiveShareMediaQueueItem

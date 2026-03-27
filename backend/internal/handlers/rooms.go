@@ -1539,19 +1539,34 @@ func GetRoomsHandler(c *gin.Context) {
 		userID, _ = userIDValue.(uint)
 	}
 
-	// Query the database for rooms with host username
+	// Query the database for rooms with host username and active session status
 	// Use LEFT JOIN to include username even if user is deleted
+	// Use LEFT JOIN to check if room has an active watch session
 	type RoomWithUsername struct {
 		models.Room
-		HostUsername string `gorm:"column:host_username"`
+		HostUsername    string `gorm:"column:host_username"`
+		IsActiveSession bool   `gorm:"column:is_active_session"`
 	}
 	
 	var roomsWithUsername []RoomWithUsername
 	
 	// Build query based on authentication
 	query := DB.Table("rooms").
-		Select("rooms.*, users.username as host_username").
+		Select(`
+			rooms.*, 
+			users.username as host_username,
+			CASE 
+				WHEN watch_sessions.id IS NOT NULL 
+					AND watch_sessions.ended_at IS NULL 
+					AND watch_sessions.is_active = true 
+				THEN true 
+				ELSE false 
+			END AS is_active_session
+		`).
 		Joins("LEFT JOIN users ON rooms.host_id = users.id").
+		Joins(`LEFT JOIN watch_sessions ON rooms.id = watch_sessions.room_id 
+			   AND watch_sessions.ended_at IS NULL 
+			   AND watch_sessions.is_active = true`).
 		Where("rooms.deleted_at IS NULL") // ✅ Exclude soft-deleted rooms
 	
 	if userExists && userID > 0 {
@@ -1617,6 +1632,7 @@ func GetRoomsHandler(c *gin.Context) {
 			"average_rating":      roomData.Room.AverageRating,      // ✅ Room rating
 			"total_ratings":       roomData.Room.TotalRatings,       // ✅ Number of ratings
 			"member_count":        memberCount,                      // ✅ Room member count
+			"is_active_session":   roomData.IsActiveSession,         // ✅ Active session flag
 		}
 	}
 

@@ -1703,13 +1703,6 @@ const RoomPageNew = () => {
                             {membersInRoom}{membersInSessionCount > 0 && `, ${membersInSessionCount} watching`}
                           </span>
                         </div>
-                        {/* Average Watchers - Show if host has stats */}
-                        {!loadingHostStats && hostAverageWatchers > 0 && (
-                          <div className="flex items-center gap-1 text-[10px] text-purple-400">
-                            <span className="text-xs">👥</span>
-                            <span>Avg. {hostAverageWatchers.toFixed(1)} watchers/session</span>
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>

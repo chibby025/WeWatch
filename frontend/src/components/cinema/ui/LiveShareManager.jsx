@@ -16,6 +16,7 @@ import {
   Newspaper,
   Clapperboard
 } from 'lucide-react';
+import LiveShareLayoutSelector from './LiveShareLayoutSelector';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
@@ -40,12 +41,15 @@ export default function LiveShareManager({
   onKickLiveShareGuest,
   onStartScreenShare,
   onCameraPreview,
+  sendMessage, // WebSocket message sender
 }) {
   // Modal state
   const [showModeSelector, setShowModeSelector] = useState(false);
   const [showTypeSelector, setShowTypeSelector] = useState(false);
+  const [showLayoutSelector, setShowLayoutSelector] = useState(false);
   const [showPodcastSetup, setShowPodcastSetup] = useState(false);
   const [selectedMode, setSelectedMode] = useState(null);
+  const [selectedShareType, setSelectedShareType] = useState(null);
   
   // Podcast state
   const [podcastTitle, setPodcastTitle] = useState('');
@@ -67,8 +71,8 @@ export default function LiveShareManager({
   const [logoX, setLogoX] = useState(10); // X position from left (0-200)
   const [logoY, setLogoY] = useState(80); // Y position from bottom (0-500)
   
-  // Graphics controls state (Phase 1)
-  const [showGraphicsControls, setShowGraphicsControls] = useState(false);
+  // Graphics controls state (Phase 1) - Always show when LiveShare is active
+  const [showGraphicsControls, setShowGraphicsControls] = useState(true);
   const [lowerThirdName, setLowerThirdName] = useState('');
   const [lowerThirdTitle, setLowerThirdTitle] = useState('');
   const [lowerThirdActive, setLowerThirdActive] = useState(false);
@@ -82,6 +86,15 @@ export default function LiveShareManager({
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const mediaQueueInputRef = useRef(null);
   const MAX_QUEUE_ITEMS = 5;
+  
+  // Ticker state (Phase 2)
+  const [tickerText, setTickerText] = useState('');
+  const [tickerActive, setTickerActive] = useState(false);
+  const [tickerItems, setTickerItems] = useState([]);
+  
+  // Banner state (Phase 2)
+  const [bannerText, setBannerText] = useState('');
+  const [bannerActive, setBannerActive] = useState(false);
   
   // Theme colors state (Phase 1)
   const [themeColors, setThemeColors] = useState({
@@ -151,9 +164,28 @@ export default function LiveShareManager({
 
   // Handle type selection (for screen/camera/both modes)
   const handleTypeSelect = (type) => {
-    onLiveShareTypeSelect(type);
+    console.log('📋 [LiveShareManager] Type selected:', type, 'Mode:', selectedMode);
+    
+    // Store selected type for layout selector
+    setSelectedShareType(type);
+    
+    // Show layout selector
     setShowTypeSelector(false);
-    setSelectedMode(null);
+    setShowLayoutSelector(true);
+  };
+  
+  const handleLayoutSelect = (layoutId) => {
+    console.log('📊 [LiveShareManager] Layout selected:', layoutId);
+    
+    setShowLayoutSelector(false);
+    
+    // Store layout choice in localStorage for later use
+    localStorage.setItem('liveshare_layout', layoutId);
+    
+    // Proceed with starting LiveShare
+    onLiveShareTypeSelect(selectedShareType);
+    
+    toast.success(`Layout applied`);
   };
 
   // Text case transformation helper
@@ -275,7 +307,7 @@ export default function LiveShareManager({
     }
     
     setShowPodcastSetup(false);
-    setShowGraphicsControls(true); // Show graphics controls after setup
+    setShowTypeSelector(true); // Show type selector to choose camera/screen/both
   };
   
   // ✅ Graphics Controls Handlers (Phase 1)
@@ -306,21 +338,33 @@ export default function LiveShareManager({
         const data = await response.json();
         toast.success('Logo uploaded successfully');
         
+        // Graphics data for both API and WebSocket
+        const graphicData = {
+          type: 'logo_bug',
+          content: { imageUrl: data.logo_url },
+          position: 'top-right',
+          active: true,
+          z_index: 5
+        };
+        
         // Update graphics state to show logo
         await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'logo_bug',
-            content: { imageUrl: data.logo_url },
-            position: 'top-right',
-            active: true,
-            z_index: 5
-          })
+          body: JSON.stringify(graphicData)
         });
         
+        // Broadcast to all viewers via WebSocket
+        if (sendMessage) {
+          sendMessage({
+            type: 'liveshare_graphics_update',
+            data: { graphic: graphicData }
+          });
+        }
+        
         setLogoBugActive(true);
+        console.log('🎨 [LiveShareManager] Logo bug update broadcast:', graphicData);
       } else {
         toast.error('Failed to upload logo');
       }
@@ -377,10 +421,143 @@ export default function LiveShareManager({
   };
   
   const handlePlayMedia = (itemId) => {
-    // TODO: Send WebSocket message to display media
+    const mediaItem = mediaQueue.find(item => item.id === itemId);
+    if (!mediaItem) return;
+    
+    // Graphics data for media queue display
+    const graphicData = {
+      type: 'media_queue',
+      content: { 
+        mediaUrl: mediaItem.media_url,
+        mediaType: mediaItem.media_type,
+        itemId: itemId
+      },
+      position: 'center',
+      active: true,
+      z_index: 8
+    };
+    
+    // Broadcast to all viewers via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'liveshare_graphics_update',
+        data: { graphic: graphicData }
+      });
+    }
+    
+    // Update local state
     setMediaQueue(prev => prev.map(item => 
       item.id === itemId ? { ...item, status: 'played' } : item
     ));
+    
+    console.log('🎨 [LiveShareManager] Media queue play broadcast:', graphicData);
+  };
+  
+  const handleAddTickerItem = () => {
+    if (!tickerText.trim()) {
+      toast.error('Please enter ticker text');
+      return;
+    }
+    
+    const newItems = [...tickerItems, tickerText];
+    setTickerItems(newItems);
+    setTickerText('');
+    
+    // Graphics data for ticker
+    const graphicData = {
+      type: 'ticker',
+      content: { items: newItems },
+      position: 'bottom',
+      active: true,
+      z_index: 9
+    };
+    
+    // Save to backend
+    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(graphicData)
+    }).catch(err => console.error('Ticker save error:', err));
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'liveshare_graphics_update',
+        data: { graphic: graphicData }
+      });
+    }
+    
+    toast.success('Ticker item added');
+    console.log('🎨 [LiveShareManager] Ticker update broadcast:', graphicData);
+  };
+  
+  const handleToggleTicker = () => {
+    const newActive = !tickerActive;
+    setTickerActive(newActive);
+    
+    const graphicData = {
+      type: 'ticker',
+      content: { items: tickerItems },
+      position: 'bottom',
+      active: newActive,
+      z_index: 9
+    };
+    
+    // Save to backend
+    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(graphicData)
+    }).catch(err => console.error('Ticker toggle error:', err));
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'liveshare_graphics_update',
+        data: { graphic: graphicData }
+      });
+    }
+    
+    console.log('🎨 [LiveShareManager] Ticker toggle broadcast:', graphicData);
+  };
+  
+  const handleToggleBanner = () => {
+    if (!bannerText.trim() && !bannerActive) {
+      toast.error('Please enter banner text');
+      return;
+    }
+    
+    const newActive = !bannerActive;
+    setBannerActive(newActive);
+    
+    const graphicData = {
+      type: 'banner',
+      content: { text: bannerText },
+      position: 'top',
+      active: newActive,
+      z_index: 11
+    };
+    
+    // Save to backend
+    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(graphicData)
+    }).catch(err => console.error('Banner toggle error:', err));
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'liveshare_graphics_update',
+        data: { graphic: graphicData }
+      });
+    }
+    
+    toast.success(newActive ? 'Banner activated' : 'Banner hidden');
+    console.log('🎨 [LiveShareManager] Banner toggle broadcast:', graphicData);
   };
   
   const handleDeleteMedia = async (itemId) => {
@@ -406,22 +583,35 @@ export default function LiveShareManager({
     const newActive = !lowerThirdActive;
     setLowerThirdActive(newActive);
     
+    const graphicData = {
+      type: 'lower_third',
+      content: {
+        name: lowerThirdName,
+        title: lowerThirdTitle
+      },
+      position: 'bottom-left',
+      active: newActive,
+      z_index: 10
+    };
+    
     try {
+      // Save to database via REST API
       await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'lower_third',
-          content: {
-            name: lowerThirdName,
-            title: lowerThirdTitle
-          },
-          position: 'bottom-left',
-          active: newActive,
-          z_index: 10
-        })
+        body: JSON.stringify(graphicData)
       });
+      
+      // Broadcast to all viewers via WebSocket
+      if (sendMessage) {
+        sendMessage({
+          type: 'liveshare_graphics_update',
+          data: { graphic: graphicData }
+        });
+      }
+      
+      console.log('🎨 [LiveShareManager] Lower third update broadcast:', graphicData);
     } catch (error) {
       console.error('Lower third update error:', error);
       toast.error('Failed to update lower third');
@@ -543,10 +733,91 @@ export default function LiveShareManager({
         );
       })()}
       
-      {/* ✅ Graphics Controls (Phase 1 - Podcast/News/Show modes only) */}
-      {showGraphicsControls && (liveShareMode === 'podcast' || liveShareMode === 'news' || liveShareMode === 'show') && isHost && (
+      {/* ✅ Studio Controls - Always show when ANY LiveShare mode is active */}
+      {showGraphicsControls && liveShareMode && isHost && (
         <div className="bg-[#D9D9D9]/10 rounded-xl p-4 space-y-4">
           <h3 className="text-sm font-bold text-gray-400 uppercase">Studio Controls</h3>
+          
+          {/* Guest Management */}
+          <details open className="bg-gray-800/50 rounded-lg">
+            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
+              👥 Guest Management
+            </summary>
+            <div className="px-3 pb-3 pt-2 space-y-3">
+              {/* Current Guest or Select Guest */}
+              {selectedGuest ? (
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Current Guest</label>
+                  <div className="flex items-center justify-between p-2 bg-gray-700/50 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      {selectedGuest.avatar_url && (
+                        <img 
+                          src={selectedGuest.avatar_url} 
+                          alt={selectedGuest.username}
+                          className="w-6 h-6 rounded-full"
+                        />
+                      )}
+                      <span className="text-sm text-white font-medium">{selectedGuest.username}</span>
+                      <span className="text-xs text-gray-400">(Guest)</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSelectedGuest(null);
+                        // TODO: Send WebSocket message to revoke guest permission
+                        if (sendMessage) {
+                          sendMessage({
+                            type: 'liveshare_kick_guest',
+                            data: { guestId: selectedGuest.id }
+                          });
+                        }
+                      }}
+                      className="px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => setSelectedGuest(null)}
+                    className="mt-2 w-full px-3 py-1.5 text-xs bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
+                  >
+                    Change Guest
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Select Guest</label>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const guestId = parseInt(e.target.value);
+                      const guest = eligibleGuests.find(g => g.id === guestId);
+                      if (guest) {
+                        setSelectedGuest(guest);
+                        // TODO: Send WebSocket message to grant permission
+                        if (sendMessage) {
+                          sendMessage({
+                            type: 'liveshare_grant_permission',
+                            data: { userId: guest.id }
+                          });
+                        }
+                      }
+                    }}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="">Choose a guest...</option>
+                    {eligibleGuests.map(member => (
+                      <option key={member.id} value={member.id}>
+                        {member.username || `User ${member.id}`}
+                      </option>
+                    ))}
+                  </select>
+                  {eligibleGuests.length === 0 && (
+                    <p className="mt-2 text-xs text-gray-500">No other members in session</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </details>
           
           {/* Theme Colors */}
           <details className="bg-gray-800/50 rounded-lg">
@@ -592,33 +863,35 @@ export default function LiveShareManager({
             <div className="px-3 pb-3 pt-2 space-y-3">
               {/* Lower Third */}
               <div className="bg-black/30 rounded-lg p-3">
-                <label className="flex items-center gap-2 mb-2">
+                <div className="space-y-2">
                   <input
-                    type="checkbox"
-                    checked={lowerThirdActive}
-                    onChange={handleToggleLowerThird}
-                    className="w-4 h-4 rounded accent-purple-500"
+                    type="text"
+                    placeholder="Name (e.g., John Doe)"
+                    value={lowerThirdName}
+                    onChange={(e) => setLowerThirdName(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
                   />
-                  <span className="text-sm font-medium text-white">Lower Third</span>
-                </label>
-                {lowerThirdActive && (
-                  <div className="space-y-2 mt-2">
-                    <input
-                      type="text"
-                      placeholder="Name (e.g., John Doe)"
-                      value={lowerThirdName}
-                      onChange={(e) => setLowerThirdName(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Title (e.g., Tech Expert)"
-                      value={lowerThirdTitle}
-                      onChange={(e) => setLowerThirdTitle(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    />
+                  <input
+                    type="text"
+                    placeholder="Title (e.g., Tech Expert)"
+                    value={lowerThirdTitle}
+                    onChange={(e) => setLowerThirdTitle(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleToggleLowerThird}
+                      disabled={!lowerThirdName.trim() || !lowerThirdTitle.trim()}
+                      className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
+                        lowerThirdActive
+                          ? 'bg-red-600 hover:bg-red-700 text-white'
+                          : 'bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed text-white'
+                      }`}
+                    >
+                      {lowerThirdActive ? 'Hide' : 'Show'}
+                    </button>
                   </div>
-                )}
+                </div>
               </div>
               
               {/* Logo Bug */}
@@ -729,6 +1002,102 @@ export default function LiveShareManager({
               {mediaQueue.length === 0 && (
                 <p className="text-xs text-gray-500 text-center py-2">No media queued</p>
               )}
+            </div>
+          </details>
+          
+          {/* Ticker/Headlines */}
+          <details className="bg-gray-800/50 rounded-lg">
+            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
+              📰 Ticker / Headlines
+            </summary>
+            <div className="px-3 pb-3 pt-2">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs text-gray-400">Scrolling news ticker</span>
+                <button
+                  onClick={handleToggleTicker}
+                  className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                    tickerActive
+                      ? 'bg-green-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  {tickerActive ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              
+              <div className="flex gap-2 mb-3">
+                <input
+                  type="text"
+                  value={tickerText}
+                  onChange={(e) => setTickerText(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleAddTickerItem()}
+                  placeholder="Enter headline..."
+                  className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
+                />
+                <button
+                  onClick={handleAddTickerItem}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm font-medium transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+              
+              {tickerItems.length > 0 && (
+                <div className="space-y-2">
+                  {tickerItems.map((item, index) => (
+                    <div key={index} className="flex items-center justify-between bg-black/30 rounded px-3 py-2">
+                      <span className="text-sm text-gray-300 truncate flex-1">{item}</span>
+                      <button
+                        onClick={() => {
+                          const newItems = tickerItems.filter((_, i) => i !== index);
+                          setTickerItems(newItems);
+                        }}
+                        className="text-red-400 hover:text-red-300 text-xs ml-2"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {tickerItems.length === 0 && (
+                <p className="text-xs text-gray-500 text-center py-2">No headlines added</p>
+              )}
+            </div>
+          </details>
+          
+          {/* Breaking News Banner */}
+          <details className="bg-gray-800/50 rounded-lg">
+            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
+              🚨 Breaking News Banner
+            </summary>
+            <div className="px-3 pb-3 pt-2">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs text-gray-400">Top screen banner</span>
+                <button
+                  onClick={handleToggleBanner}
+                  className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                    bannerActive
+                      ? 'bg-red-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  {bannerActive ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              
+              <input
+                type="text"
+                value={bannerText}
+                onChange={(e) => setBannerText(e.target.value)}
+                placeholder="BREAKING: Enter breaking news..."
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-red-500"
+              />
+              
+              <p className="text-xs text-gray-500 mt-2">
+                Banner will appear at the top of the screen
+              </p>
             </div>
           </details>
         </div>
@@ -1232,6 +1601,16 @@ export default function LiveShareManager({
           </div>
         );
       })()}
+      
+      {/* Layout Selector Modal */}
+      {showLayoutSelector && (
+        <LiveShareLayoutSelector
+          hasGuest={!!selectedGuest}
+          hasScreenShare={selectedShareType === 'screen' || selectedShareType === 'both'}
+          onSelectLayout={handleLayoutSelect}
+          onClose={() => setShowLayoutSelector(false)}
+        />
+      )}
     </div>
   );
 }

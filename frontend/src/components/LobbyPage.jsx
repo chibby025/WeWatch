@@ -2291,7 +2291,22 @@ const LobbyPage = () => {
                     <div className="flex items-center p-2 sm:p-4 gap-2 sm:gap-4">
                       {/* Left: Room Image - Circular like WhatsApp/Telegram */}
                       <div className="flex-shrink-0 relative">
-                        <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-2 ring-gray-300 dark:ring-gray-600">
+                        {/* TikTok-style Live Pulse for active sessions */}
+                        {room.is_active_session && (
+                          <>
+                            {/* Subtle expanding ring (background) */}
+                            <div className="absolute -inset-2 sm:-inset-2.5 rounded-full bg-red-500/30 animate-ping"></div>
+                            
+                            {/* Pulsing red ring overlay */}
+                            <div className="absolute inset-0 w-14 h-14 sm:w-20 sm:h-20 rounded-full ring-[3px] ring-red-500 animate-pulse pointer-events-none" style={{ animationDuration: '2s' }}></div>
+                          </>
+                        )}
+                        
+                        <div className={`relative w-14 h-14 sm:w-20 sm:h-20 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ${
+                          room.is_active_session 
+                            ? '' 
+                            : 'ring-2 ring-gray-300 dark:ring-gray-600'
+                        }`}>
                           {room.image_url ? (
                             <img 
                               src={room.image_url} 
@@ -2622,22 +2637,28 @@ const LobbyPage = () => {
                       className="absolute bottom-4 left-4 right-4 text-white pointer-events-auto"
                       style={{ fontFamily: '"Outfit", -apple-system, "Segoe UI", sans-serif' }}
                     >
-                      {/* Row 1: Room Avatar + Name + Star + Content Rating */}
+                      {/* Row 1: Room Avatar + Name & Star + Content Rating */}
                       <div className="flex items-center gap-3 mb-3">
                         {/* Room Avatar with Live Ring */}
                         <div 
-                          onClick={(e) => {
+                          onClick={!session.is_temporary ? (e) => {
                             e.stopPropagation();
                             navigate(`/rooms/${session.room_id}`);
-                          }}
-                          className="relative flex-shrink-0 cursor-pointer group"
+                          } : undefined}
+                          className={`relative flex-shrink-0 ${
+                            !session.is_temporary ? 'cursor-pointer group' : ''
+                          }`}
                         >
-                          {/* Live Ring */}
-                          <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-red-500 via-pink-500 to-red-500 p-[2px] animate-pulse">
-                            <div className="w-full h-full rounded-full bg-black"></div>
-                          </div>
-                          {/* Avatar */}
-                          <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold text-sm overflow-hidden group-hover:scale-110 transition-transform">
+                          {/* Subtle expanding ring (background) */}
+                          <div className="absolute -inset-1 rounded-full bg-red-500/30 animate-ping"></div>
+                          
+                          {/* Pulsing red ring overlay */}
+                          <div className="absolute inset-0 w-10 h-10 rounded-full ring-[3px] ring-red-500 animate-pulse pointer-events-none" style={{ animationDuration: '2s' }}></div>
+                          
+                          {/* Avatar (stable, no pulse) */}
+                          <div className={`relative w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold text-sm overflow-hidden transition-transform ${
+                            !session.is_temporary ? 'group-hover:scale-110' : ''
+                          }`}>
                             {session.room_avatar_url ? (
                               <img src={session.room_avatar_url} alt={session.room_name} className="w-full h-full object-cover" />
                             ) : (
@@ -2646,27 +2667,29 @@ const LobbyPage = () => {
                           </div>
                         </div>
                         
-                        {/* Room Name */}
-                        <span 
-                          className="font-semibold text-white text-sm truncate flex-1"
-                          style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
-                        >
-                          {session.room_name}
-                        </span>
+                        {/* Room Name + Star Rating */}
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <span 
+                            className="font-semibold text-white text-sm truncate"
+                            style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                          >
+                            {session.room_name}
+                          </span>
+                          
+                          {/* Star Rating (Inline with room name) */}
+                          {session.average_rating > 0 && (
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <svg className="w-3.5 h-3.5 fill-yellow-400" viewBox="0 0 24 24" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}>
+                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                              </svg>
+                              <span className="text-white font-bold text-xs" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
+                                {session.average_rating.toFixed(1)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                         
-                        {/* Star Rating (Compact) */}
-                        {session.average_rating > 0 && (
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            <svg className="w-4 h-4 fill-yellow-400" viewBox="0 0 24 24" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}>
-                              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                            </svg>
-                            <span className="text-white font-bold text-sm" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
-                              {session.average_rating.toFixed(1)}
-                            </span>
-                          </div>
-                        )}
-                        
-                        {/* Content Rating (Compact) */}
+                        {/* Content Rating */}
                         {session.content_rating && (
                           <img 
                             src={
@@ -2684,14 +2707,8 @@ const LobbyPage = () => {
                         )}
                       </div>
                       
-                      {/* Row 2: Live Dot + Title + Viewers */}
+                      {/* Row 2: Title + Viewers */}
                       <div className="flex items-start gap-2 mb-2">
-                        {/* Pulsing Red Dot */}
-                        <div className="relative flex-shrink-0 mt-1.5">
-                          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                          <div className="absolute inset-0 w-2 h-2 bg-red-500 rounded-full animate-ping opacity-75"></div>
-                        </div>
-                        
                         {/* Title */}
                         <h3 
                           className="text-lg font-bold leading-tight flex-1 line-clamp-2"
@@ -3484,16 +3501,28 @@ const LobbyPage = () => {
                   className="absolute bottom-24 left-6 right-6 text-white pointer-events-auto"
                   style={{ fontFamily: '"Outfit", -apple-system, "Segoe UI", sans-serif' }}
                 >
-                  {/* Row 1: Room Avatar + Name + Star + Content Rating */}
+                  {/* Row 1: Room Avatar + Name & Star + Content Rating */}
                   <div className="flex items-center gap-3 mb-3">
                     {/* Room Avatar with Live Ring */}
-                    <div className="relative flex-shrink-0">
-                      {/* Live Ring */}
-                      <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-red-500 via-pink-500 to-red-500 p-[2px] animate-pulse">
-                        <div className="w-full h-full rounded-full bg-black"></div>
-                      </div>
-                      {/* Avatar */}
-                      <div className="relative w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold text-lg overflow-hidden">
+                    <div 
+                      onClick={!session.is_temporary ? (e) => {
+                        e.stopPropagation();
+                        navigate(`/rooms/${session.room_id}`);
+                      } : undefined}
+                      className={`relative flex-shrink-0 ${
+                        !session.is_temporary ? 'cursor-pointer group' : ''
+                      }`}
+                    >
+                      {/* Subtle expanding ring (background) */}
+                      <div className="absolute -inset-1.5 rounded-full bg-red-500/30 animate-ping"></div>
+                      
+                      {/* Pulsing red ring overlay */}
+                      <div className="absolute inset-0 w-12 h-12 rounded-full ring-[3px] ring-red-500 animate-pulse pointer-events-none" style={{ animationDuration: '2s' }}></div>
+                      
+                      {/* Avatar (stable, no pulse) */}
+                      <div className={`relative w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold text-lg overflow-hidden transition-transform ${
+                        !session.is_temporary ? 'group-hover:scale-110' : ''
+                      }`}>
                         {session.room_avatar_url ? (
                           <img src={session.room_avatar_url} alt={session.room_name} className="w-full h-full object-cover" />
                         ) : (
@@ -3502,27 +3531,29 @@ const LobbyPage = () => {
                       </div>
                     </div>
                     
-                    {/* Room Name */}
-                    <span 
-                      className="font-bold text-white text-lg truncate flex-1"
-                      style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
-                    >
-                      {session.room_name}
-                    </span>
+                    {/* Room Name + Star Rating */}
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <span 
+                        className="font-bold text-white text-lg truncate"
+                        style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
+                      >
+                        {session.room_name}
+                      </span>
+                      
+                      {/* Star Rating (Inline with room name) */}
+                      {session.average_rating > 0 && (
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <svg className="w-4 h-4 fill-yellow-400" viewBox="0 0 24 24" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}>
+                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                          </svg>
+                          <span className="text-white font-bold text-sm" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
+                            {session.average_rating.toFixed(1)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                     
-                    {/* Star Rating (Compact) */}
-                    {session.average_rating > 0 && (
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <svg className="w-5 h-5 fill-yellow-400" viewBox="0 0 24 24" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}>
-                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                        </svg>
-                        <span className="text-white font-bold text-base" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
-                          {session.average_rating.toFixed(1)}
-                        </span>
-                      </div>
-                    )}
-                    
-                    {/* Content Rating (Compact) */}
+                    {/* Content Rating */}
                     {session.content_rating && (
                       <img 
                         src={
@@ -3540,14 +3571,8 @@ const LobbyPage = () => {
                     )}
                   </div>
                   
-                  {/* Row 2: Live Dot + Title + Viewers */}
+                  {/* Row 2: Title + Viewers */}
                   <div className="flex items-start gap-2 mb-2">
-                    {/* Pulsing Red Dot */}
-                    <div className="relative flex-shrink-0 mt-2">
-                      <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
-                      <div className="absolute inset-0 w-2.5 h-2.5 bg-red-500 rounded-full animate-ping opacity-75"></div>
-                    </div>
-                    
                     {/* Title */}
                     <h3 
                       className="text-2xl font-bold leading-tight flex-1 line-clamp-2"
