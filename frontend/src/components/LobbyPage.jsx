@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests } from '../services/api';
-import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon } from '@heroicons/react/24/solid';
+import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon } from '@heroicons/react/24/solid';
 import jwtDecodeUtil from '../utils/jwt';
 import apiClient from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
@@ -260,9 +260,11 @@ const LobbyPage = () => {
 
   // ✅ Handle access selection (public/private + content rating)
   const handleAccessSelected = (isPublic, isPrivate, contentRating) => {
+    console.log('🎬 [handleAccessSelected] Received:', { isPublic, isPrivate, contentRating });
     setSelectedIsPublic(isPublic);
     setSelectedIsPrivate(isPrivate);
     setSelectedContentRating(contentRating || 'G'); // Store content rating
+    console.log('🎬 [handleAccessSelected] State will be set to:', contentRating || 'G');
     setIsAccessModalOpen(false);
     setIsWatchTypeModalOpen(true);
   };
@@ -301,6 +303,9 @@ const LobbyPage = () => {
         is_private: selectedIsPrivate,
         content_rating: selectedContentRating || 'G' // Include content rating
       };
+      
+      console.log('🎬 [createInstantWatchSession] Sending request with content_rating:', requestBody.content_rating);
+      console.log('🎬 [createInstantWatchSession] Full request body:', requestBody);
 
       // Add class_type if classroom
       if (watchType === 'classroom' && classType) {
@@ -1437,9 +1442,9 @@ const LobbyPage = () => {
                 
               case 'session_preview_updated':
                 // Backend broadcasts when preview is ready (from frame upload)
-                console.log(`🖼️ [LobbyPage] Preview ready - Full message:`, message);
-                console.log(`🖼️ [LobbyPage] session_id: ${message.session_id}`);
-                console.log(`🖼️ [LobbyPage] preview_url: ${message.preview_url}`);
+                // console.log(`🖼️ [LobbyPage] Preview ready - Full message:`, message);
+                // console.log(`🖼️ [LobbyPage] session_id: ${message.session_id}`);
+                // console.log(`🖼️ [LobbyPage] preview_url: ${message.preview_url}`);
                 
                 if (message.session_id) {
                   // ✅ If preview_url is empty, it means preview was cleared (media type switched)
@@ -2701,7 +2706,7 @@ const LobbyPage = () => {
                               '/icons/G Rating Icon.png'
                             }
                             alt={`${session.content_rating} rating`}
-                            className="h-8 w-auto flex-shrink-0"
+                            className="h-12 w-auto flex-shrink-0"
                             style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}
                           />
                         )}
@@ -2722,7 +2727,7 @@ const LobbyPage = () => {
                           className="flex items-center gap-1 flex-shrink-0"
                           style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
                         >
-                          <span className="text-sm">👥</span>
+                          <UsersIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
                           <span className="text-sm font-semibold">{session.member_count}</span>
                         </div>
                       </div>
@@ -2750,11 +2755,17 @@ const LobbyPage = () => {
                       >
                         <div className="flex items-center gap-3 flex-wrap">
                           <span className="inline-flex items-center gap-1.5">
-                            <span>👤</span>
+                            <UserIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
                             <span className="font-medium">{session.host_username}</span>
                           </span>
                           <span className="inline-flex items-center gap-1.5">
-                            <span>{watchType.emoji}</span>
+                            {session.watch_type === 'classroom' ? (
+                              <AcademicCapIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
+                            ) : session.watch_type === '3d_cinema' ? (
+                              <VideoCameraIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
+                            ) : (
+                              <FilmIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
+                            )}
                             <span>{watchType.name}</span>
                           </span>
                           {session.ticketing_enabled && (
@@ -3565,7 +3576,7 @@ const LobbyPage = () => {
                           '/icons/G Rating Icon.png'
                         }
                         alt={`${session.content_rating} rating`}
-                        className="h-10 w-auto flex-shrink-0"
+                        className="h-14 w-auto flex-shrink-0"
                         style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}
                       />
                     )}
@@ -3586,7 +3597,7 @@ const LobbyPage = () => {
                       className="flex items-center gap-1 flex-shrink-0"
                       style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
                     >
-                      <span className="text-base">👥</span>
+                      <UsersIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
                       <span className="text-base font-semibold">{session.member_count}</span>
                     </div>
                   </div>
@@ -3614,11 +3625,17 @@ const LobbyPage = () => {
                   >
                     <div className="flex items-center gap-3 flex-wrap">
                       <span className="inline-flex items-center gap-1.5">
-                        <span>👤</span>
+                        <UserIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
                         <span className="font-medium">{session.host_username}</span>
                       </span>
                       <span className="inline-flex items-center gap-1.5">
-                        <span>{watchType.emoji}</span>
+                        {session.watch_type === 'classroom' ? (
+                          <AcademicCapIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
+                        ) : session.watch_type === '3d_cinema' ? (
+                          <VideoCameraIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
+                        ) : (
+                          <FilmIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
+                        )}
                         <span>{watchType.name}</span>
                       </span>
                       {session.ticketing_enabled && (

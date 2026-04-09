@@ -12,7 +12,7 @@ import Register from './components/Register';
 import ProtectedRoute from './components/ProtectedRoute';
 import CreateRoomPage  from './components/CreateRoomPage';
 import RoomsListPage from './components/RoomsListPage';
-import RoomPage from './components/RoomPage';
+// import RoomPage from './components/RoomPage'; // ⚠️ DEPRECATED: Legacy component not in routing table
 import RoomPageNew from './components/RoomPageNew'; // ✅ NEW: Room hub redesign
 import LobbyPage from './components/LobbyPage';
 import VideoWatch from './components/cinema/VideoWatch';
@@ -47,23 +47,44 @@ function App() {
       const originalError = console.error;
       const originalWarn = console.warn;
       
+      // Safe stringify that handles circular references
+      const safeStringify = (obj) => {
+        try {
+          return JSON.stringify(obj, (key, value) => {
+            // Skip circular references and DOM nodes
+            if (value instanceof HTMLElement || value instanceof Node) {
+              return '[DOM Element]';
+            }
+            if (typeof value === 'object' && value !== null) {
+              // Check for circular reference markers
+              if (value.__reactFiber$ || value._reactInternals) {
+                return '[React Element]';
+              }
+            }
+            return value;
+          }, 2);
+        } catch (e) {
+          return '[Unable to stringify: ' + e.message + ']';
+        }
+      };
+      
       console.log = (...args) => {
         logs.push({ type: 'log', time: new Date().toISOString(), args: args.map(a => 
-          typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
+          typeof a === 'object' ? safeStringify(a) : String(a)
         ).join(' ') });
         originalLog.apply(console, args);
       };
       
       console.error = (...args) => {
         logs.push({ type: 'error', time: new Date().toISOString(), args: args.map(a => 
-          typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
+          typeof a === 'object' ? safeStringify(a) : String(a)
         ).join(' ') });
         originalError.apply(console, args);
       };
       
       console.warn = (...args) => {
         logs.push({ type: 'warn', time: new Date().toISOString(), args: args.map(a => 
-          typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
+          typeof a === 'object' ? safeStringify(a) : String(a)
         ).join(' ') });
         originalWarn.apply(console, args);
       };

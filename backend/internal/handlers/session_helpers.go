@@ -101,8 +101,12 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 
 	// Build response with room and host details
 	var response []SessionResponse
+	log.Printf("\n🏛️ [GetAllActiveSessionsHandler] Building lobby response for %d sessions...", len(sessions))
 	for _, session := range sessions {
-		log.Printf("🔍 [GetAllActiveSessionsHandler] Processing session %s (room %d)", session.SessionID, session.RoomID)
+		log.Printf("\n🔍 [GetAllActiveSessionsHandler] Processing session %s (room %d)", session.SessionID, session.RoomID)
+		log.Printf("  ├─ Content Rating from DB: '%s'", session.ContentRating)
+		log.Printf("  ├─ Watch Type: '%s'", session.WatchType)
+		log.Printf("  ├─ Is Active: %v", session.IsActive)
 		
 		// ✅ AGE-BASED CONTENT FILTER: Skip restricted content if user can't view it
 		if session.ContentRating != "G" && session.ContentRating != "PG" && userID > 0 {
@@ -170,6 +174,9 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 				if err := tx.Where("session_id = ?", session.SessionID).Delete(&models.TemporaryMediaItem{}).Error; err != nil {
 					log.Printf("⚠️ Cleanup: Failed to delete temporary media for session %s: %v", session.SessionID, err)
 				}
+				
+				// Clean up LiveShare graphics and media queue
+				CleanupLiveShareAssetsInTransaction(tx, session.ID)
 
 				// Delete watch session members
 				if err := tx.Where("watch_session_id = ?", session.ID).Delete(&models.WatchSessionMember{}).Error; err != nil {
@@ -226,6 +233,8 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			session.CurrentMediaURL, session.CurrentMediaType,
 			session.IsScreenSharingActive, session.SharingSource)
 
+		log.Printf("📦 [GetAllActiveSessionsHandler] Building SessionResponse object:")
+		log.Printf("  ├─ Setting content_rating to: '%s'", session.ContentRating)
 		sessionResp := SessionResponse{
 			SessionID:             session.SessionID,
 			RoomID:                session.RoomID,
@@ -249,11 +258,12 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			AverageRating:         room.AverageRating,     // ✅ Include room rating
 			TotalRatings:          room.TotalRatings,      // ✅ Include rating count
 		}
-		log.Printf("  └─ ✅ ADDING to response: %s (temp: %v, members: %d)", room.Name, room.IsTemporary, activeMemberCount)
+		log.Printf("  ├─ ✅ ADDING to response: %s (temp: %v, members: %d)", room.Name, room.IsTemporary, activeMemberCount)
+		log.Printf("  └─ Response content_rating: '%s'\n", sessionResp.ContentRating)
 		response = append(response, sessionResp)
 	}
 
-	log.Printf("✅ [GetAllActiveSessionsHandler] Returning %d active sessions to client (total: %d, has_more: %v)", 
+	log.Printf("\n✅ [GetAllActiveSessionsHandler] Returning %d active sessions to client (total: %d, has_more: %v)", 
 		len(response), totalCount, int64(offset + limit) < totalCount)
 	c.JSON(http.StatusOK, gin.H{
 		"sessions": response,

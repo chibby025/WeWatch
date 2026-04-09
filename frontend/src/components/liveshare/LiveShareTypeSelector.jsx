@@ -1,23 +1,24 @@
 // frontend/src/components/liveshare/LiveShareTypeSelector.jsx
 import { useState, useEffect, useRef } from 'react';
+import { Camera, Monitor, MonitorPlay } from 'lucide-react';
 
 const SHARE_TYPES = [
   {
     id: 'camera',
     name: 'Camera Only',
-    icon: '📹',
+    icon: Camera,
     description: 'Share your webcam feed',
   },
   {
     id: 'screen',
     name: 'Screen Only',
-    icon: '🖥️',
+    icon: Monitor,
     description: 'Share your screen',
   },
   {
     id: 'both',
     name: 'Screen + Camera',
-    icon: '🎬',
+    icon: MonitorPlay,
     description: 'Share screen with camera overlay',
   },
 ];
@@ -27,7 +28,8 @@ export default function LiveShareTypeSelector({
   onClose, 
   mode, 
   isGuest,
-  showModeContext 
+  showModeContext,
+  embedded = false
 }) {
   const [selectedType, setSelectedType] = useState(null);
   const [cameraDevices, setCameraDevices] = useState([]);
@@ -92,6 +94,13 @@ export default function LiveShareTypeSelector({
 
   const handleTypeClick = (type) => {
     setSelectedType(type.id);
+    if (embedded) {
+      // In wizard mode, immediately proceed when type selected
+      if (previewStream) {
+        previewStream.getTracks().forEach(track => track.stop());
+      }
+      onTypeSelect(type.id, selectedDeviceId);
+    }
   };
 
   const handleContinue = () => {
@@ -104,6 +113,89 @@ export default function LiveShareTypeSelector({
     }
   };
 
+  // Embedded version (for wizard)
+  if (embedded) {
+    return (
+      <div className="w-full flex flex-col h-full">
+        <div className="space-y-2.5 mb-4">
+          {SHARE_TYPES.map((type) => {
+            const IconComponent = type.icon;
+            return (
+              <button
+                key={type.id}
+                onClick={() => handleTypeClick(type)}
+                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all ${
+                  selectedType === type.id
+                    ? 'border-blue-500 bg-blue-500/10'
+                    : 'border-gray-700 hover:border-gray-600 bg-gray-800'
+                }`}
+              >
+                {/* Icon */}
+                <div className={`w-11 h-11 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                  selectedType === type.id ? 'bg-blue-500/20' : 'bg-gray-700'
+                }`}>
+                  <IconComponent size={22} className={selectedType === type.id ? 'text-blue-400' : 'text-gray-400'} />
+                </div>
+                
+                {/* Label */}
+                <span className="text-base md:text-lg font-semibold text-white flex-1 text-left">
+                  {type.name}
+                </span>
+
+                {/* Selection Indicator */}
+                {selectedType === type.id && (
+                  <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Compact Camera Preview */}
+        {(selectedType === 'camera' || selectedType === 'both') && (
+          <div className="bg-gray-800 rounded-xl p-3 space-y-3">
+            {/* Device Selection */}
+            {cameraDevices.length > 1 && (
+              <select
+                value={selectedDeviceId}
+                onChange={(e) => setSelectedDeviceId(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {cameraDevices.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Camera ${cameraDevices.indexOf(device) + 1}`}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {/* Compact Video Preview */}
+            <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
+              {permissionError ? (
+                <div className="absolute inset-0 flex items-center justify-center p-2">
+                  <p className="text-red-400 text-xs text-center">{permissionError}</p>
+                </div>
+              ) : (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Standalone modal version (backwards compatibility)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="bg-gray-900 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto border border-gray-700 shadow-2xl">
@@ -138,22 +230,27 @@ export default function LiveShareTypeSelector({
         <div className="p-4 space-y-4">
           {/* Share Type Selection */}
           <div className="space-y-2">
-            {SHARE_TYPES.map((type) => (
-              <button
-                key={type.id}
-                onClick={() => handleTypeClick(type)}
-                className={`w-full p-3 rounded-lg border-2 transition-all ${
-                  selectedType === type.id
-                    ? 'border-blue-500 bg-blue-500/10'
-                    : 'border-gray-700 hover:border-gray-600 bg-gray-800'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="text-2xl">{type.icon}</div>
-                  <h3 className="text-white font-semibold text-sm">{type.name}</h3>
-                </div>
-              </button>
-            ))}
+            {SHARE_TYPES.map((type) => {
+              const IconComponent = type.icon;
+              return (
+                <button
+                  key={type.id}
+                  onClick={() => handleTypeClick(type)}
+                  className={`w-full p-3 rounded-lg border-2 transition-all ${
+                    selectedType === type.id
+                      ? 'border-blue-500 bg-blue-500/10'
+                      : 'border-gray-700 hover:border-gray-600 bg-gray-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-gray-700">
+                      <IconComponent size={20} className={selectedType === type.id ? 'text-blue-400' : 'text-gray-400'} />
+                    </div>
+                    <h3 className="text-white font-semibold text-sm">{type.name}</h3>
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
           {/* Camera Preview */}

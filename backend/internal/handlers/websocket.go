@@ -2123,6 +2123,9 @@ func CleanupStaleSessions() {
 			continue
 		}
 		
+		// Clean up LiveShare graphics and media queue for this session
+		CleanupLiveShareAssets(session.ID)
+		
 		// ✅ Fetch room to get is_temporary flag
 		var room models.Room
 		isTemporary := false

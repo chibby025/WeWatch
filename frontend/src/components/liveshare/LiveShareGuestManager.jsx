@@ -13,7 +13,7 @@ export default function LiveShareGuestManager({
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Solo modes don't support guests
-  const soloModes = ['news', 'standup'];
+  const soloModes = ['news'];
   const isSoloMode = soloModes.includes(mode);
 
   // Filter out current user (host) from member list

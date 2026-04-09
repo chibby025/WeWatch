@@ -144,6 +144,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
   };
 
   const handleSelectPricing = (pricingId) => {
+    console.log('🎬 [PricingModal] Calling onSelectPricing with:', { pricingId, contentRating });
     onSelectPricing(pricingId, contentRating);
   };
 

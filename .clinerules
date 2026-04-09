@@ -1,0 +1,586 @@
+# LetsWatchOut Project Rules
+
+## Project Identity
+- **Name**: LetsWatchOut (previously WeWatch in code)
+- **Domain**: letswatchout.com (available)
+- **Type**: Social streaming platform with 3D cinema rooms
+- **Stage**: Beta (8 users, ~1000 sessions, ₦2000 revenue, 100% positive feedback)
+
+## Tech Stack
+- **Frontend**: React + Vite + TailwindCSS
+- **Backend**: Go (Gin framework)
+- **Database**: PostgreSQL
+- **Real-time**: WebSocket + LiveKit (audio/video)
+- **Hosting**: Backend on localhost:8080, Frontend on localhost:5173
+- **Environment**: WSL Ubuntu 22.04
+
+## Directory Structure
+```
+WeWatch/
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── cinema/
+│   │   │   │   ├── VideoWatch.jsx (4800+ lines - main viewer)
+│   │   │   │   ├── ui/ (seats, video player, etc.)
+│   │   │   │   │   └── LeftSidebar.jsx (1800+ lines - upload UI)
+│   │   │   │   └── modals/ (quiz, games, etc.)
+│   │   │   └── LiveShareManager.jsx (studio controls)
+│   │   ├── utils/
+│   │   │   ├── GraphicsRenderer.js (canvas rendering)
+│   │   │   ├── uploadChunker.js (chunked upload utilities)
+│   │   │   └── videoCompression.js (FFmpeg.wasm compression)
+│   │   ├── hooks/
+│   │   │   └── useUploadServiceWorker.js (SW integration)
+│   │   └── services/
+│   │       └── api.js
+│   ├── public/
+│   │   └── upload-sw.js (Service Worker)
+│   └── index.html
+├── backend/
+│   ├── cmd/
+│   ├── internal/
+│   │   ├── handlers/
+│   │   │   ├── rooms.go (session management)
+│   │   │   ├── upload.go (media upload routing)
+│   │   │   └── chunk_upload.go (chunked upload handler)
+│   │   └── models/
+│   ├── migrations/
+│   └── uploads/
+│       ├── liveshare/ (temporary media storage)
+│       └── chunks/ (temporary chunk storage)
+└── documentation/
+```
+
+## Key File Locations
+
+### VideoWatch.jsx (Main Viewer Component)
+- **Lines 50-100**: CSS animations and setup
+- **Lines 280-330**: State declarations (banner, seats, camera, etc.)
+- **Lines 307-328**: Responsive detection and banner text cycling
+- **Lines 330-410**: Banner text measurement and line splitting logic
+- **Lines 4045-4200**: LiveShare overlays and breaking news banner rendering
+  - Lines 4095-4130: BN layout (Breaking News with BN.png logo)
+  - Lines 4145-4180: Breakin layout (Breaking with Breakin.png logo)
+
+### LiveShareManager.jsx (Studio Controls)
+- **Lines 118-120**: Media queue break mode state
+- **Lines 1010-1072**: Media queue validation and broadcast
+- **Lines 1370-1461**: Media selection UI
+
+### GraphicsRenderer.js (Canvas Rendering)
+- **Lines 8-14**: Constructor with video cache
+- **Lines 461-729**: Video playback implementation
+- **Lines 113-115**: Continuous rendering check
+
+### Backend Go Files
+- **rooms.go**: Session management, cleanup on session end (~line 700)
+- **liveshare_graphics.go**: Graphics API and CleanupLiveShareAssets (lines 525-559)
+
+## Coding Patterns
+
+### Responsive Design
+```javascript
+// Screen size detection
+const [screenSize, setScreenSize] = useState('desktop'); // 'mobile' | 'tablet' | 'desktop'
+
+// Breakpoints
+// Mobile: < 640px
+// Tablet: 640-1024px
+// Desktop: > 1024px
+
+// Scaling (when needed)
+const responsiveScale = screenSize === 'mobile' ? 0.5 : screenSize === 'tablet' ? 0.75 : 1;
+```
+
+### Font Sizing (Breaking News Banners)
+```javascript
+// Always use Math.max for minimum readable size
+fontSize: `${Math.max(14, bannerHeight * 0.7)}px`
+
+// Responsive fonts
+fontFamily: screenSize === 'mobile' 
+  ? "'Barlow Condensed', 'Barlow Semi Condensed', 'Roboto Condensed', 'Arial Narrow', sans-serif"
+  : "'Roboto Condensed', 'Arial Narrow', sans-serif"
+
+// Letter spacing on mobile for condensed text
+letterSpacing: screenSize === 'mobile' ? '-0.02em' : 'normal'
+```
+
+### State Persistence
+```javascript
+// Use sessionId for localStorage keys
+localStorage.setItem(`podcast_logo_style_${activeSessionId}`, JSON.stringify(styles));
+
+// Retrieve with fallbacks
+const savedStyles = localStorage.getItem(`podcast_logo_style_${activeSessionId}`);
+const styles = savedStyles ? JSON.parse(savedStyles) : defaultStyles;
+```
+
+### Text Measurement
+```javascript
+// Create temp element with exact rendering styles
+const measureEl = document.createElement('div');
+measureEl.style.position = 'absolute';
+measureEl.style.visibility = 'hidden';
+measureEl.style.fontSize = `${fontSize}px`;
+measureEl.style.fontFamily = /* match rendering font */;
+measureEl.style.letterSpacing = /* match rendering */;
+document.body.appendChild(measureEl);
+
+// Measure, then cleanup
+measureEl.textContent = testText;
+const width = measureEl.offsetWidth;
+document.body.removeChild(measureEl);
+```
+
+## LiveShare Graphics System
+
+### Banner Layouts
+1. **BN Layout**: Breaking News with BN.png logo extending beyond right edge
+   - Logo size: `bannerHeight * 3`
+   - Logo position: `right: -70px` (extends beyond screen)
+   - Logo scaling: 20% smaller on mobile (0.80x)
+   - Text: Full width, clips at edge
+
+2. **Breakin Layout**: Breaking with Breakin.png logo on left
+   - Logo size: `bannerHeight * 3.15`
+   - Logo position: Flush left with negative margin
+   - Logo adjustment: `-5%` horizontal, `-10%` vertical offset
+   - Text: Full width usage
+
+### Banner Height
+- Always matches podcast logo size (no responsive scaling)
+- Retrieved from `bannerState.podcastLogoSize` or default 100px
+- Text padding: `logoSize + 20px` left, no right padding
+
+### Text Splitting
+- Splits at word boundaries only (no mid-word cuts)
+- Re-measures on screen size change
+- Cycles every 5 seconds
+- Uses exact rendering font for measurement
+
+## Media Queue & Cleanup
+- Images: 10-second duration
+- Videos: Full playback with progress bar, auto-advance in "Play All" mode
+- Cleanup: Automatic on session end via `CleanupLiveShareAssets(sessionID)`
+- Storage: `backend/uploads/liveshare/`
+- Database: `liveshare_media_queue` table with CASCADE DELETE
+
+## Testing Checklist
+After any LiveShare graphics change:
+- [ ] Test on mobile (< 640px) - Use Chrome DevTools or real device
+- [ ] Test on tablet (640-1024px)
+- [ ] Test on desktop (> 1024px)
+- [ ] Verify text doesn't overflow or cut mid-word
+- [ ] Check logos scale/position correctly
+- [ ] Confirm minimum 14px font size maintained
+- [ ] Test with long text (100+ characters)
+- [ ] Verify localStorage persistence works
+
+## Database Schema (Relevant Tables)
+- `users`: User accounts with role (host/viewer)
+- `rooms`: Watch rooms (instant_watch, event_based)
+- `watch_sessions`: Active/ended sessions
+- `liveshare_graphics`: Graphics state (banner, ticker, etc.)
+- `liveshare_media_queue`: Media items with session_id
+- `donations`: User tips/donations (₦2000 revenue in beta)
+
+## Common Commands
+```bash
+# Start backend (Go)
+cd backend && go run cmd/main.go
+
+# Start frontend (Vite)
+cd frontend && npm run dev
+
+# Database access
+psql -h localhost -U postgres -d wewatch_db
+
+# Check uploads
+ls -lh backend/uploads/liveshare/
+du -sh backend/uploads/liveshare/
+```
+
+## Performance Notes
+- VideoWatch.jsx is 4800+ lines - consider splitting if adding major features
+- Graphics canvas renders at 60fps when video active
+- Text measurement happens on mount and screen size change only
+- WebSocket broadcasts graphics updates to all viewers in real-time
+
+## Known Issues / Technical Debt
+- None currently - recent cleanup removed 29 orphaned media items (6.91MB)
+- Session cleanup working properly
+- Responsive design implemented for all screen sizes
+
+## LiveShare Wizard Architecture (CRITICAL - READ FIRST)
+
+### How It Works
+The wizard is a **4-step sliding form** that configures LiveShare broadcasts:
+
+**Step Flow:**
+1. **Mode Selection** (Host only) - Choose content type:
+   - Regular (no overlays)
+   - Podcast (title + logo overlays)
+   - News (title + logo overlays)
+   - Show (title + logo overlays)
+
+2. **Setup Form** (Only for podcast/news/show modes):
+   - Title input (required)
+   - Logo upload (optional, max 500KB)
+   - Guest selection from session members (optional)
+   - Advanced styling (collapsible):
+     * Title: color, size (16-48px), weight (300-800), case (5 options)
+     * Logo: size (50-300px), X position (0-200px), Y position (0-500px)
+
+3. **Share Type** - Choose broadcast source:
+   - Camera only
+   - Screen share only
+   - Both (split layout)
+
+4. **Layout** - Choose display arrangement:
+   - Options change based on guest presence and screen share
+
+**State Management:**
+- Wizard state lifted to parent (LiveShareWizard component)
+- All 8 styling variables stored in wizard, passed to SetupForm as props
+- Data flows: SetupForm → handleSetupComplete → setSetupData → handleComplete → onComplete(wizardData)
+
+**Key Properties Passed to onComplete:**
+```javascript
+{
+  mode: 'podcast' | 'news' | 'show' | 'regular',
+  setup: {
+    title: string,
+    logoFile: File,
+    logoPreview: base64String,
+    guestId: number,
+    titleStyle: { color, size, weight, case },
+    logoStyle: { size, x, y }
+  },
+  shareType: 'camera' | 'screen' | 'both',
+  deviceId: string,
+  layout: string
+}
+```
+
+**CRITICAL: Graphics Rendering Architecture**
+- **Podcast/News/Show overlays** = DOM-based (VideoWatch.jsx lines 4348-4432)
+  - Title and logo render as HTML `<div>` elements
+  - Positioned with CSS absolute positioning
+  - Styled from localStorage (persists across sessions)
+  - NO WebSocket broadcasting needed (each viewer renders same HTML)
+  
+- **GraphicsRenderer** = Canvas-based studio graphics ONLY
+  - Handles: ticker, banner, lower_third, logo_bug, media_queue, break_screen
+  - Does NOT handle podcast title/logo
+  - WebSocket updates for these graphics types
+
+**Why This Matters:**
+We tried adding podcast rendering to GraphicsRenderer - this was WRONG.
+Comparing with GitHub showed the correct implementation is DOM-based.
+Never add podcast/news/show title/logo rendering to GraphicsRenderer.
+
+### Studio Controls Polish (Completed April 2026)
+
+**Unified Styling Applied:**
+✅ All summary labels use `text-sm` consistently
+✅ All buttons use `rounded-lg` instead of `rounded`
+✅ Responsive classes added (`sm:px-4`, `sm:py-2.5`, `sm:text-sm`)
+✅ ChevronDown icons on all collapsible sections
+✅ Chevron rotation animation (180° on open)
+✅ Consistent `pl-3` padding on all summaries
+✅ `list-none` to hide native disclosure triangles
+
+**Updated Components:**
+- Take a Break (Start/End buttons, checkboxes, image upload)
+- Guest Management (dropdown, guest selection)
+- User Details (Lower Third inputs/buttons)
+- Media Queue (play/delete buttons, clear button, upload)
+- Ticker (input, add button, show/hide toggle)
+- Banner (input, show/hide toggle, layout buttons)
+- Preset buttons (Professional/Vibrant/Minimal)
+
+**Button Patterns:**
+```jsx
+// Primary action buttons
+className="w-full px-4 py-2 sm:px-5 sm:py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-medium transition-colors"
+
+// Secondary buttons
+className="px-3 py-2 sm:px-4 sm:py-2.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-sm text-gray-300 transition-colors"
+
+// Small action buttons
+className="px-2 py-1 sm:px-3 sm:py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs sm:text-sm rounded-lg transition-colors"
+
+// Toggle buttons
+className={`flex-1 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg text-sm font-medium transition-colors ${active ? 'bg-purple-600' : 'bg-gray-700'}`}
+```
+
+## Upload Optimization System
+
+### Architecture (4 Phases - All Complete ✅)
+1. **Phase 1**: Client validation, network detection, progress persistence
+2. **Phase 2**: Chunked uploads (1-10MB chunks) with retry + resume
+3. **Phase 3**: FFmpeg.wasm compression (20-70% data savings)
+4. **Phase 4**: Service Worker notifications on tab close
+
+### Key Files
+- **uploadChunker.js**: Chunk splitting, retry logic, resume support
+- **videoCompression.js**: FFmpeg.wasm integration, 4 quality presets
+- **chunk_upload.go**: Backend chunk receiver and assembler
+- **upload-sw.js**: Service Worker for notifications
+- **useUploadServiceWorker.js**: React hook for SW integration
+
+### Network-Aware Behavior
+- **2G/3G**: Auto-compress (Low quality, 1MB chunks, ~70% savings)
+- **4G**: Show compression modal (Medium recommended, 5MB chunks)
+- **WiFi**: Optional compression (High quality, 10MB chunks)
+
+### Upload Flow
+```javascript
+1. File selection → Validation (type, size)
+2. Network detection → Compression strategy
+3. FFmpeg compression (if enabled)
+4. Split into chunks (network-aware size)
+5. Upload with 3-attempt retry per chunk
+6. Progress persistence (localStorage)
+7. Tab close → Service Worker notification
+8. Page reload → Resume modal
+9. Backend chunk assembly
+10. Success notification
+```
+
+### Important Patterns
+```javascript
+// Compression presets
+low: { resolution: '854x480', bitrate: '1M', fps: 24 }      // 2G/3G
+medium: { resolution: '1280x720', bitrate: '2M', fps: 30 }  // 4G
+high: { resolution: '1920x1080', bitrate: '4M', fps: 30 }   // WiFi
+
+// Chunk sizes
+getOptimalChunkSize(networkQuality)
+// Returns: 1MB (2G), 2MB (3G), 5MB (4G), 10MB (WiFi)
+
+// Progress throttling
+if (now - lastUpdate < 1000) return; // 1s intervals
+
+// State persistence
+saveChunkUploadState(uploadId, { uploadedChunks, totalChunks, ... });
+```
+
+### Vite Cache Issue
+```bash
+# After adding @ffmpeg/ffmpeg dependency
+rm -rf node_modules/.vite
+npm run dev  # Rebuilds dependencies
+```
+
+## Product Context
+- **Beta metrics**: 125 sessions/user average (exceptional engagement)
+- **Revenue proof**: ₦2000 pre-launch (validates monetization)
+- **User feedback**: 100% positive, users requesting launch
+- **Unique features**: 3D cinema, proximity audio, LiveShare graphics overlays, optimized uploads for African market
+- **Founder**: Solo developer, 9 months post-previous job
+- **Current focus**: Chasing job opportunities and startup funding (April 2026)
+- **Platform readiness**: Core features complete, polish phase ongoing
+
+## Code Style Preferences
+- Use `multi_replace_string_in_file` for multiple edits
+- Include 3-5 lines context in replacements
+- No markdown docs unless requested
+- Test on mobile first (primary use case)
+- Prefer responsive solutions over device-specific hacks
+- Always maintain minimum font sizes for accessibility
+- Read "LiveShare Wizard Architecture" section before making any wizard changes
+## Recent Updates (April 8, 2026)
+
+### Pricing Modal & Content Rating Flow ✅
+**Investigation confirmed**: PricingModal DOES send content_rating to backend correctly.
+
+**Data Flow:**
+1. **PricingModal.jsx** (lines 147-148): User selects pricing + content rating
+   - Calls `onSelectPricing(pricingId, contentRating)`
+2. **RoomPageNew.jsx** (lines 1322-1365): Parent handles callback
+   - Free sessions: `content_rating: contentRating || 'G'` → `createWatchSession()`
+   - Paid sessions: Stores in `ticketingConfig` → passes to `createWatchSession()` after price set
+3. **Backend API**: `POST /api/rooms/${roomId}/sessions` with `content_rating` in body
+
+**Content Rating Options:**
+- G (General Audiences)
+- PG (Parental Guidance)
+- 13+ (Teens)
+- 18+ (Adults Only)
+- Mature (Explicit Content)
+
+**Status:** Working as designed. If sessions show wrong rating, issue is in backend processing, not frontend transmission.
+
+### Log Verbosity Reduction ✅
+**Problem:** Console logs were extremely verbose, making debugging difficult.
+
+**Files Modified:**
+1. **UserProfileModal.jsx** (lines 18, 32)
+   - Commented out repeated render logs (50+ identical logs)
+   
+2. **LobbyPage.jsx** (lines 1445-1447)
+   - Commented out duplicate preview update logs
+   
+3. **VideoWatch.jsx** (cinema/VideoWatch.jsx)
+   - Commented out ~40 `fetchSessionMembers` debug logs (kept warnings/errors only)
+   - Commented out periodic seek time update logs (every 30s)
+   - Added filter for known WebSocket messages (`session_preview_updated`, `media_state_changed`) to prevent false "Unknown message type" warnings
+
+**Result:** ~90% reduction in console noise while preserving error/warning logs for debugging.
+
+**Pattern for Future:**
+```javascript
+// Keep only critical logs
+console.error('❌ [Component] Error:', error); // Always keep
+console.warn('⚠️ [Component] Warning:', issue); // Keep for issues
+// console.log('🔍 [Component] Debug:', data); // Comment out verbose debug logs
+```
+
+### Content Rating Bug Fix ✅ (April 2026)
+**Problem:** Content rating defaulting to 'G' instead of selected rating (e.g., '18+')
+
+**Root Cause:** `CreateWatchSession` handler in room_handlers.go was missing `ContentRating` field
+
+**Fix Applied:**
+- Added `ContentRating string` to input struct (line ~318)
+- Added validation logic with defaults to 'G' if invalid (lines ~340-360)
+- Updated `CreateWatchSessionWithTypeAndTicketing` signature to accept `contentRating` parameter
+- Set `ContentRating` in session model before DB save
+- Added comprehensive debug logging
+- Included `content_rating` in JSON response
+
+**Files Modified:**
+- backend/internal/handlers/room_handlers.go (lines 304-460)
+
+**Status:** ✅ Fixed and verified working
+
+## DEPRECATED Endpoints & Components (April 2026)
+
+### ⚠️ DO NOT USE - Marked for Removal
+
+#### Backend: `/api/rooms/:id/watch-session` Endpoint
+- **Handler:** `CreateWatchSessionForRoomHandler` in rooms.go (line 2327)
+- **Status:** COMMENTED OUT in main.go (line 360)
+- **Reason:** Replaced by `POST /api/rooms/:id/sessions` (CreateWatchSession handler)
+- **Usage:** Only used by legacy RoomPage.jsx (not in routing table)
+- **Action:** Will be removed after confirming no external API consumers
+
+#### Frontend: `RoomPage.jsx` Component
+- **Location:** frontend/src/components/RoomPage.jsx
+- **Status:** Import commented out in App.jsx
+- **Reason:** Fully replaced by RoomPageNew.jsx
+- **Usage:** No active routes use this component
+- **Dependencies:** Uses deprecated `createWatchSessionForRoom()` API helper
+
+#### Frontend: `createWatchSessionForRoom()` API Helper
+- **Location:** frontend/src/services/api.js (line 735)
+- **Status:** Function marked deprecated with console warning
+- **Reason:** Calls deprecated `/watch-session` endpoint
+- **Replacement:** Direct `apiClient.post('/api/rooms/:id/sessions')` call
+- **Action:** Will be removed with RoomPage.jsx
+
+### ✅ CURRENT Session Creation Endpoints
+
+| Endpoint | Handler | Component | Purpose |
+|----------|---------|-----------|---------|
+| `POST /api/rooms/instant-watch` | `CreateInstantWatchHandler` | LobbyPage | Instant watch (temporary rooms) |
+| `POST /api/rooms/:id/sessions` | `CreateWatchSession` | RoomPageNew | Persistent rooms (FIXED for content rating) |
+
+**Key Difference:**
+- **Instant watch**: Creates room + session atomically in one transaction
+- **Persistent rooms**: Creates session in existing room
+
+### Migration Notes
+If you need to create a session for a persistent room:
+```javascript
+// ❌ OLD (Deprecated)
+const response = await createWatchSessionForRoom(roomId, watchType);
+
+// ✅ NEW (Current)
+const response = await apiClient.post(`/api/rooms/${roomId}/sessions`, {
+  watch_type: watchType,
+  content_rating: contentRating || 'G',
+  // ... other session config
+});
+```
+
+### Removal Timeline
+1. ✅ Phase 1 (April 8, 2026): Endpoints commented out, imports removed
+2. ⏳ Phase 2 (May 2026): Monitor logs for any deprecated endpoint usage
+3. ⏳ Phase 3 (June 2026): Full removal if no usage detected
+
+### Content Rating Bug Fix ✅ (April 2026)
+**Problem:** Content rating defaulting to 'G' instead of selected rating (e.g., '18+')
+
+**Root Cause:** `CreateWatchSession` handler in room_handlers.go was missing `ContentRating` field
+
+**Fix Applied:**
+- Added `ContentRating string` to input struct (line ~318)
+- Added validation logic with defaults to 'G' if invalid (lines ~340-360)
+- Updated `CreateWatchSessionWithTypeAndTicketing` signature to accept `contentRating` parameter
+- Set `ContentRating` in session model before DB save
+- Added comprehensive debug logging
+- Included `content_rating` in JSON response
+
+**Files Modified:**
+- [backend/internal/handlers/room_handlers.go](backend/internal/handlers/room_handlers.go#L304-L460)
+
+**Status:** ✅ Fixed and verified working
+
+## DEPRECATED Endpoints & Components (April 2026)
+
+### ⚠️ DO NOT USE - Marked for Removal
+
+#### Backend: `/api/rooms/:id/watch-session` Endpoint
+- **Handler:** `CreateWatchSessionForRoomHandler` in rooms.go (line 2327)
+- **Status:** COMMENTED OUT in main.go (line 360)
+- **Reason:** Replaced by `POST /api/rooms/:id/sessions` (CreateWatchSession handler)
+- **Usage:** Only used by legacy RoomPage.jsx (not in routing table)
+- **Action:** Will be removed after confirming no external API consumers
+
+#### Frontend: `RoomPage.jsx` Component
+- **Location:** frontend/src/components/RoomPage.jsx
+- **Status:** Import commented out in App.jsx
+- **Reason:** Fully replaced by RoomPageNew.jsx
+- **Usage:** No active routes use this component
+- **Dependencies:** Uses deprecated `createWatchSessionForRoom()` API helper
+
+#### Frontend: `createWatchSessionForRoom()` API Helper
+- **Location:** frontend/src/services/api.js (line 735)
+- **Status:** Function marked deprecated with console warning
+- **Reason:** Calls deprecated `/watch-session` endpoint
+- **Replacement:** Direct `apiClient.post('/api/rooms/:id/sessions')` call
+- **Action:** Will be removed with RoomPage.jsx
+
+### ✅ CURRENT Session Creation Endpoints
+
+| Endpoint | Handler | Component | Purpose |
+|----------|---------|-----------|----------|
+| `POST /api/rooms/instant-watch` | `CreateInstantWatchHandler` | LobbyPage | Instant watch (temporary rooms) |
+| `POST /api/rooms/:id/sessions` | `CreateWatchSession` | RoomPageNew | Persistent rooms (FIXED for content rating) |
+
+**Key Difference:**
+- **Instant watch**: Creates room + session atomically in one transaction
+- **Persistent rooms**: Creates session in existing room
+
+### Migration Notes
+If you need to create a session for a persistent room:
+```javascript
+// ❌ OLD (Deprecated)
+const response = await createWatchSessionForRoom(roomId, watchType);
+
+// ✅ NEW (Current)
+const response = await apiClient.post(`/api/rooms/${roomId}/sessions`, {
+  watch_type: watchType,
+  content_rating: contentRating || 'G',
+  // ... other session config
+});
+```
+
+### Removal Timeline
+1. ✅ Phase 1 (April 8, 2026): Endpoints commented out, imports removed
+2. ⏳ Phase 2 (May 2026): Monitor logs for any deprecated endpoint usage
+3. ⏳ Phase 3 (June 2026): Full removal if no usage detected

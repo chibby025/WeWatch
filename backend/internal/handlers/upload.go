@@ -30,6 +30,14 @@ func init() {
 
 func UploadMediaHandler(c *gin.Context) {
 	log.Println("🚨🚨🚨 UploadMediaHandler CALLED 🚨🚨🚨")
+	
+	// ✅ CHECK IF CHUNKED UPLOAD
+	isChunked := c.Query("chunked") == "true"
+	if isChunked {
+		log.Println("🧩 [Router] Routing to ChunkUploadHandler")
+		ChunkUploadHandler(c)
+		return
+	}
 
 	userIDValue, exists := c.Get("user_id")
 	if !exists {

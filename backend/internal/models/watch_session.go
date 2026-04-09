@@ -25,10 +25,10 @@ type WatchSession struct {
 	TicketPriceTokens     int     `gorm:"default:0" json:"ticket_price_tokens"`
 	TicketPriceCurrency   string  `gorm:"type:varchar(10)" json:"ticket_price_currency,omitempty"`
 	TicketPriceAmount     float64 `gorm:"type:decimal(10,2);default:0" json:"ticket_price_amount"`
-	EarlyBirdEnabled      bool    `gorm:"default:false" json:"early_bird_enabled"`
-	EarlyBirdPriceTokens  int     `gorm:"default:0" json:"early_bird_price_tokens"`
-	EarlyBirdPriceAmount  float64 `gorm:"type:decimal(10,2);default:0" json:"early_bird_price_amount"`
-	EarlyBirdActive       bool    `gorm:"default:true" json:"early_bird_active"`
+	EarlyBirdEnabled      bool       `gorm:"default:false" json:"early_bird_enabled"`
+	EarlyBirdPriceTokens  int        `gorm:"default:0" json:"early_bird_price_tokens"`
+	EarlyBirdPriceAmount  float64    `gorm:"type:decimal(10,2);default:0" json:"early_bird_price_amount"`
+	EarlyBirdActive       bool       `gorm:"default:true" json:"early_bird_active"` // Managed by scheduler
 	
 	// Earnings tracking (for host session earnings display)
 	TotalTicketsSold      int     `gorm:"default:0" json:"total_tickets_sold"`
@@ -59,7 +59,7 @@ type WatchSession struct {
 	CurrentMediaPath      string  `gorm:"type:text" json:"current_media_path,omitempty"`          // File path of currently playing media
 	
 	// LiveShare mode (collaborative broadcasting)
-	LiveshareMode         string  `gorm:"type:varchar(50);default:'regular'" json:"liveshare_mode"` // regular, podcast, interview, news, standup
+	LiveshareMode         string  `gorm:"type:varchar(50);default:'regular'" json:"liveshare_mode"` // regular, podcast, interview, news, show (standup deprecated)
 	
 	// Podcast mode configuration (only for liveshare_mode='podcast')
 	PodcastTitle          string  `gorm:"type:varchar(500)" json:"podcast_title,omitempty"`           // Podcast episode title

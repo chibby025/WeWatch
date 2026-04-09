@@ -14,9 +14,14 @@ import {
   Image as ImageIcon,
   ChevronDown,
   Newspaper,
-  Clapperboard
+  Clapperboard,
+  UserCircle,
+  AlertCircle,
+  PauseCircle,
+  Radio
 } from 'lucide-react';
 import LiveShareLayoutSelector from './LiveShareLayoutSelector';
+import LiveShareWizard from '../../liveshare/LiveShareWizard';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
@@ -30,6 +35,8 @@ export default function LiveShareManager({
   
   // Current state
   liveShareMode,
+  liveShareContentMode, // 'regular', 'podcast', 'news', 'show'
+  podcastConfig,
   liveShareGuest,
   hasLiveSharePermission,
   
@@ -42,8 +49,20 @@ export default function LiveShareManager({
   onStartScreenShare,
   onCameraPreview,
   sendMessage, // WebSocket message sender
+  cameraShareTrackRef, // ✅ Ref to LiveKit camera track for mute/unmute during breaks
+  graphicsRendererRef, // ✅ Ref to GraphicsRenderer for break screen overlay
+  onWizardStateChange, // ✅ Callback to notify parent when wizard opens/closes
 }) {
-  // Modal state
+  // Modal state - now using unified wizard
+  const [showLiveShareWizard, setShowLiveShareWizard] = useState(false);
+  
+  // ✅ Pass modal state to parent to prevent taskbar from showing
+  useEffect(() => {
+    if (onWizardStateChange && typeof onWizardStateChange === 'function') {
+      onWizardStateChange(showLiveShareWizard);
+    }
+  }, [showLiveShareWizard, onWizardStateChange]);
+  // Legacy modal states (kept for backward compatibility with existing code)
   const [showModeSelector, setShowModeSelector] = useState(false);
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [showLayoutSelector, setShowLayoutSelector] = useState(false);
@@ -73,8 +92,12 @@ export default function LiveShareManager({
   
   // Graphics controls state (Phase 1) - Always show when LiveShare is active
   const [showGraphicsControls, setShowGraphicsControls] = useState(true);
-  const [lowerThirdName, setLowerThirdName] = useState('');
-  const [lowerThirdTitle, setLowerThirdTitle] = useState('');
+  const [lowerThirdName, setLowerThirdName] = useState(() => {
+    return localStorage.getItem(`liveshare_lower_third_name_${sessionId}`) || '';
+  });
+  const [lowerThirdTitle, setLowerThirdTitle] = useState(() => {
+    return localStorage.getItem(`liveshare_lower_third_title_${sessionId}`) || '';
+  });
   const [lowerThirdActive, setLowerThirdActive] = useState(false);
   const [logoBugFile, setLogoBugFile] = useState(null);
   const [logoBugPreview, setLogoBugPreview] = useState(null);
@@ -88,20 +111,68 @@ export default function LiveShareManager({
   const MAX_QUEUE_ITEMS = 5;
   
   // Ticker state (Phase 2)
-  const [tickerText, setTickerText] = useState('');
+  const [tickerText, setTickerText] = useState(() => {
+    return localStorage.getItem(`liveshare_ticker_text_${sessionId}`) || '';
+  });
   const [tickerActive, setTickerActive] = useState(false);
-  const [tickerItems, setTickerItems] = useState([]);
+  const [tickerItems, setTickerItems] = useState(() => {
+    const saved = localStorage.getItem(`liveshare_ticker_items_${sessionId}`);
+    return saved ? JSON.parse(saved) : [];
+  });
   
   // Banner state (Phase 2)
-  const [bannerText, setBannerText] = useState('');
-  const [bannerActive, setBannerActive] = useState(false);
-  
-  // Theme colors state (Phase 1)
-  const [themeColors, setThemeColors] = useState({
-    primary: '#DC2626',
-    secondary: '#991B1B',
-    accent: '#0052A5'
+  const [bannerText, setBannerText] = useState(() => {
+    // Load persisted banner text from localStorage
+    return localStorage.getItem(`liveshare_banner_text_${sessionId}`) || '';
   });
+  const [bannerActive, setBannerActive] = useState(false);
+  const [bannerLayout, setBannerLayout] = useState(() => {
+    // Load persisted layout choice: 'bn' (BN.png on right) or 'breakin' (Breakin.png on top-left)
+    return localStorage.getItem('liveshare_banner_layout') || 'bn';
+  });
+  
+  // Media queue break options
+  const [breakMediaMode, setBreakMediaMode] = useState('one'); // 'one' or 'all'
+  const [selectedBreakMedia, setSelectedBreakMedia] = useState([]);
+  
+  // Individual graphic colors
+  const [lowerThirdColors, setLowerThirdColors] = useState({
+    background: '#0052A5',
+    accent: '#DC2626'
+  });
+  const [tickerColor, setTickerColor] = useState('#DC2626');
+  const [timeBoxColor, setTimeBoxColor] = useState(() => {
+    return localStorage.getItem('liveshare_ticker_timebox_color') || '#1A1A2E';
+  });
+  const [bannerColor, setBannerColor] = useState('#DC2626');
+  const [bannerTextColor, setBannerTextColor] = useState('#FFFFFF'); // Default white text
+  
+  // Color picker popover states
+  const [showLowerThirdColorPicker, setShowLowerThirdColorPicker] = useState(false);
+  const [showTickerColorPicker, setShowTickerColorPicker] = useState(false);
+  const [showTimeBoxColorPicker, setShowTimeBoxColorPicker] = useState(false);
+  const [showBannerColorPicker, setShowBannerColorPicker] = useState(false);
+  const [showBannerTextColorPicker, setShowBannerTextColorPicker] = useState(false);
+  
+  // Break mode state
+  const [isOnBreak, setIsOnBreak] = useState(false);
+  const [breakScreenSource, setBreakScreenSource] = useState(() => {
+    return localStorage.getItem('liveshare_break_screen_source') || 'static'; // 'static', 'media', 'upload', 'animation'
+  });
+  const [breakDuration, setBreakDuration] = useState(() => {
+    return parseInt(localStorage.getItem('liveshare_break_duration') || '5', 10);
+  });
+  const [breakStartTime, setBreakStartTime] = useState(null);
+  const [breakTimeRemaining, setBreakTimeRemaining] = useState(0);
+  const [breakKeepAudio, setBreakKeepAudio] = useState(() => {
+    return localStorage.getItem('liveshare_break_keep_audio') === 'true';
+  });
+  const [breakTurnOffCamera, setBreakTurnOffCamera] = useState(() => {
+    return localStorage.getItem('liveshare_break_turn_off_camera') === 'true';
+  });
+  const [breakCustomImage, setBreakCustomImage] = useState(null);
+  const [breakCustomImagePreview, setBreakCustomImagePreview] = useState(null);
+  const breakImageInputRef = useRef(null);
   
   // Color presets
   const colorPresets = [
@@ -115,6 +186,66 @@ export default function LiveShareManager({
     { name: 'Cyan', value: '#06B6D4' },
     { name: 'Green', value: '#10B981' },
   ];
+
+  // Studio Controls visibility mapping per LiveShare mode
+  const modeControlsMap = {
+    regular: {
+      takeABreak: false,    // No breaks for basic streaming
+      graphics: true,
+      lowerThird: true,
+      logoBug: true,
+      mediaQueue: false,
+      ticker: false,
+      banner: false,
+    },
+    podcast: {
+      takeABreak: true,
+      graphics: true,
+      lowerThird: true,     // For guest names/titles
+      logoBug: true,        // For show branding
+      mediaQueue: true,     // For ads, promos, or visual aids
+      ticker: false,
+      banner: false,
+    },
+    news: {
+      takeABreak: true,
+      graphics: true,
+      lowerThird: true,     // For correspondent names
+      logoBug: true,        // For network branding
+      mediaQueue: true,     // For breaking footage, graphics
+      ticker: true,         // For headlines ticker
+      banner: true,         // For breaking news banners
+    },
+    show: {
+      takeABreak: true,
+      graphics: true,
+      lowerThird: true,
+      logoBug: true,
+      mediaQueue: true,     // Focus on visual media and graphics
+      ticker: false,        // Shows don't need news tickers
+      banner: false,        // Shows don't need breaking news
+    },
+    standup: {
+      takeABreak: true,
+      graphics: false,      // Minimal graphics for standup comedy
+      lowerThird: false,
+      logoBug: true,        // Just branding
+      mediaQueue: false,
+      ticker: false,
+      banner: false,
+    },
+  };
+
+  // Helper function to check if control should be visible
+  const shouldShowControl = (controlName) => {
+    if (!liveShareContentMode || !modeControlsMap[liveShareContentMode]) {
+      console.log(`🎛️ [StudioControls] ${controlName}: mode not set (${liveShareContentMode}), showing all`);
+      return true; // Show all if mode not set or unknown
+    }
+    const shouldShow = modeControlsMap[liveShareContentMode][controlName] === true;
+    console.log(`🎛️ [StudioControls] ${controlName}: mode=${liveShareContentMode}, show=${shouldShow}`);
+    return shouldShow;
+  };
 
   // Available modes
   const modes = [
@@ -181,6 +312,12 @@ export default function LiveShareManager({
     
     // Store layout choice in localStorage for later use
     localStorage.setItem('liveshare_layout', layoutId);
+    
+    // Set the content mode to 'regular' if not already set by podcast/news/show setup
+    if (selectedMode === 'regular' && onLiveShareModeSelect) {
+      console.log('🎯 [LiveShareManager] Setting content mode to regular');
+      onLiveShareModeSelect('regular', null);
+    }
     
     // Proceed with starting LiveShare
     onLiveShareTypeSelect(selectedShareType);
@@ -309,6 +446,101 @@ export default function LiveShareManager({
     setShowPodcastSetup(false);
     setShowTypeSelector(true); // Show type selector to choose camera/screen/both
   };
+
+  // ✅ Handle Wizard Completion
+  const handleWizardComplete = async (wizardData) => {
+    console.log('🧙 [LiveShareManager] Wizard completed with data:', wizardData);
+    console.log('🧙 [LiveShareManager] Setup data breakdown:', {
+      hasSetup: !!wizardData.setup,
+      setupTitle: wizardData.setup?.title,
+      setupHasLogoFile: !!wizardData.setup?.logoFile,
+      setupLogoFileName: wizardData.setup?.logoFile?.name,
+      setupGuestId: wizardData.setup?.guestId,
+      setupTitleStyle: wizardData.setup?.titleStyle,
+      setupLogoStyle: wizardData.setup?.logoStyle
+    });
+    
+    const { mode, setup, shareType, deviceId, layout } = wizardData;
+    
+    // Store layout preference
+    if (layout) {
+      localStorage.setItem('liveshare_layout', layout);
+    }
+    
+    // For modes that require setup (podcast, news, show)
+    if (setup) {
+      console.log('🎙️ [LiveShareManager] Processing setup for mode:', mode);
+      // Upload logo if provided
+      let logoUrl = null;
+      if (setup.logoFile) {
+        console.log('📤 [LiveShareManager] Uploading logo file:', setup.logoFile.name);
+        const formData = new FormData();
+        formData.append('logo', setup.logoFile);
+        
+        try {
+          const response = await fetch(`/api/sessions/${sessionId}/podcast-logo`, {
+            method: 'POST',
+            credentials: 'include',
+            body: formData
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            logoUrl = data.logo_url;
+            console.log('✅ [LiveShareManager] Logo uploaded successfully:', logoUrl);
+          } else {
+            console.error('❌ [LiveShareManager] Logo upload failed:', response.status);
+          }
+        } catch (err) {
+          console.error('❌ [LiveShareManager] Logo upload error:', err);
+        }
+      } else {
+        console.log('ℹ️ [LiveShareManager] No logo file to upload');
+      }
+      
+      // Set the mode with configuration
+      const modeConfig = {
+        title: setup.title,
+        logoUrl,
+        titleStyle: setup.titleStyle || {
+          color: '#FFFFFF',
+          size: 24,
+          weight: 700,
+          case: 'none'
+        },
+        logoStyle: setup.logoStyle || {
+          size: 100,
+          x: 10,
+          y: 80
+        },
+        guestId: setup.guestId
+      };
+      
+      console.log('📦 [LiveShareManager] Calling onLiveShareModeSelect with:', {
+        mode,
+        config: modeConfig
+      });
+      
+      if (onLiveShareModeSelect) {
+        onLiveShareModeSelect(mode, modeConfig);
+      }
+    } else if (mode === 'regular') {
+      // Regular mode - just set the mode
+      console.log('📺 [LiveShareManager] Setting regular mode (no config)');
+      if (onLiveShareModeSelect) {
+        onLiveShareModeSelect('regular', null);
+      }
+    }
+    
+    // Store share type for layout selector
+    setSelectedShareType(shareType);
+    
+    console.log('🎬 [LiveShareManager] Starting LiveShare with type:', shareType, 'deviceId:', deviceId, 'layout:', layout);
+    // Start the actual LiveShare
+    onLiveShareTypeSelect(shareType, deviceId, layout);
+    
+    toast.success('LiveShare started!');
+  };
   
   // ✅ Graphics Controls Handlers (Phase 1)
   const handleLogoBugUpload = async (e) => {
@@ -376,6 +608,7 @@ export default function LiveShareManager({
   
   const handleMediaQueueUpload = async (e) => {
     const files = Array.from(e.target.files);
+    console.log('📤 [MediaQueue] Upload started:', { fileCount: files.length, currentQueue: mediaQueue.length });
     
     if (mediaQueue.length + files.length > MAX_QUEUE_ITEMS) {
       toast.error(`Maximum ${MAX_QUEUE_ITEMS} items allowed in queue`);
@@ -385,6 +618,7 @@ export default function LiveShareManager({
     for (const file of files) {
       const isImage = file.type.startsWith('image/');
       const maxSize = isImage ? 5 * 1024 * 1024 : 20 * 1024 * 1024;
+      console.log('📤 [MediaQueue] Uploading file:', { name: file.name, type: file.type, size: `${(file.size / 1024 / 1024).toFixed(2)}MB`, isImage });
       
       if (file.size > maxSize) {
         toast.error(`${file.name} is too large. Max: ${isImage ? '5MB' : '20MB'}`);
@@ -404,6 +638,7 @@ export default function LiveShareManager({
         
         if (response.ok) {
           const queueItem = await response.json();
+          console.log('✅ [MediaQueue] Upload successful:', { itemId: queueItem.id, fileName: file.name, mediaUrl: queueItem.media_url });
           setMediaQueue(prev => [...prev, {
             ...queueItem,
             file,
@@ -411,7 +646,15 @@ export default function LiveShareManager({
           }]);
           toast.success(`${file.name} added to queue`);
         } else {
-          toast.error(`Failed to upload ${file.name}`);
+          // Get error message from backend
+          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+          console.error('❌ [MediaQueue] Upload failed:', {
+            status: response.status,
+            error: errorData.error || errorData.message,
+            sessionId,
+            fileName: file.name
+          });
+          toast.error(`Failed to upload ${file.name}: ${errorData.error || 'Unknown error'}`);
         }
       } catch (error) {
         console.error('Media upload error:', error);
@@ -422,7 +665,12 @@ export default function LiveShareManager({
   
   const handlePlayMedia = (itemId) => {
     const mediaItem = mediaQueue.find(item => item.id === itemId);
-    if (!mediaItem) return;
+    if (!mediaItem) {
+      console.error('❌ [MediaQueue] Item not found:', itemId);
+      return;
+    }
+    
+    console.log('▶️ [MediaQueue] Playing media:', { itemId, fileName: mediaItem.file_name, mediaType: mediaItem.media_type, mediaUrl: mediaItem.media_url });
     
     // Graphics data for media queue display
     const graphicData = {
@@ -437,8 +685,17 @@ export default function LiveShareManager({
       z_index: 8
     };
     
+    // ✅ Apply to host's local GraphicsRenderer FIRST (since WebSocket won't echo back)
+    if (graphicsRendererRef?.current) {
+      console.log('🎨 [MediaQueue] Adding to local GraphicsRenderer');
+      graphicsRendererRef.current.addLayer('media_queue', graphicData);
+      graphicsRendererRef.current.render();
+      console.log('✅ [MediaQueue] Local graphics updated');
+    }
+    
     // Broadcast to all viewers via WebSocket
     if (sendMessage) {
+      console.log('📡 [MediaQueue] Broadcasting to viewers...');
       sendMessage({
         type: 'liveshare_graphics_update',
         data: { graphic: graphicData }
@@ -450,7 +707,7 @@ export default function LiveShareManager({
       item.id === itemId ? { ...item, status: 'played' } : item
     ));
     
-    console.log('🎨 [LiveShareManager] Media queue play broadcast:', graphicData);
+    console.log('✅ [MediaQueue] Broadcast complete, graphic data:', graphicData);
   };
   
   const handleAddTickerItem = () => {
@@ -461,12 +718,20 @@ export default function LiveShareManager({
     
     const newItems = [...tickerItems, tickerText];
     setTickerItems(newItems);
+    localStorage.setItem(`liveshare_ticker_items_${sessionId}`, JSON.stringify(newItems));
     setTickerText('');
+    localStorage.setItem(`liveshare_ticker_text_${sessionId}`, '');
     
     // Graphics data for ticker
     const graphicData = {
       type: 'ticker',
-      content: { items: newItems },
+      content: { 
+        items: newItems,
+        style: { 
+          bgColor: tickerColor,
+          timeBoxColor: timeBoxColor
+        }
+      },
       position: 'bottom',
       active: true,
       z_index: 9
@@ -498,7 +763,13 @@ export default function LiveShareManager({
     
     const graphicData = {
       type: 'ticker',
-      content: { items: tickerItems },
+      content: { 
+        items: tickerItems,
+        style: { 
+          bgColor: tickerColor,
+          timeBoxColor: timeBoxColor
+        }
+      },
       position: 'bottom',
       active: newActive,
       z_index: 9
@@ -532,13 +803,51 @@ export default function LiveShareManager({
     const newActive = !bannerActive;
     setBannerActive(newActive);
     
+    // Get podcast logo position and size from localStorage
+    let podcastLogoSize = 100;
+    let podcastLogoX = 10;
+    let podcastLogoY = 80;
+    try {
+      const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${sessionId}`);
+      if (savedLogoStyles) {
+        const styles = JSON.parse(savedLogoStyles);
+        podcastLogoSize = styles.size || 100;
+        podcastLogoX = styles.x || 10;
+        podcastLogoY = styles.y || 80;
+      }
+    } catch (err) {
+      console.warn('Failed to load podcast logo styles:', err);
+    }
+    
     const graphicData = {
       type: 'banner',
-      content: { text: bannerText },
-      position: 'top',
+      content: { 
+        text: bannerText,
+        style: { 
+          bgColor: bannerColor,
+          textColor: bannerTextColor // Add text color
+        },
+        logoUrl: podcastConfig?.logoUrl || logoBugPreview,
+        podcastLogoSize, // Pass podcast logo dimensions
+        podcastLogoX,
+        podcastLogoY,
+        layout: bannerLayout // 'bn' or 'breakin'
+      },
+      position: 'bottom',
       active: newActive,
       z_index: 11
     };
+    
+    console.log('🎨 [LiveShareManager] Banner data:', {
+      text: bannerText,
+      bgColor: bannerColor,
+      logoUrl: podcastConfig?.logoUrl || logoBugPreview,
+      podcastLogoSize,
+      podcastLogoY,
+      layout: bannerLayout,
+      podcastConfigAvailable: !!podcastConfig,
+      logoBugPreviewAvailable: !!logoBugPreview
+    });
     
     // Save to backend
     fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
@@ -560,8 +869,48 @@ export default function LiveShareManager({
     console.log('🎨 [LiveShareManager] Banner toggle broadcast:', graphicData);
   };
   
+  const handleStopMedia = () => {
+    console.log('⏹️ [MediaQueue] Stopping media overlay');
+    
+    // Remove from host's local GraphicsRenderer
+    if (graphicsRendererRef?.current) {
+      console.log('🎨 [MediaQueue] Removing from local GraphicsRenderer');
+      graphicsRendererRef.current.removeLayer('media_queue');
+      graphicsRendererRef.current.render();
+      console.log('✅ [MediaQueue] Local overlay removed');
+    }
+    
+    // Broadcast removal to viewers
+    if (sendMessage) {
+      console.log('📡 [MediaQueue] Broadcasting overlay removal to viewers...');
+      sendMessage({
+        type: 'liveshare_graphics_update',
+        data: { 
+          graphic: {
+            type: 'media_queue',
+            active: false // Inactive = remove layer
+          }
+        }
+      });
+    }
+    
+    toast.success('Media overlay removed');
+  };
+  
   const handleDeleteMedia = async (itemId) => {
     try {
+      // Check if this item is currently displaying
+      const itemToDelete = mediaQueue.find(item => item.id === itemId);
+      const isCurrentlyPlaying = itemToDelete?.status === 'played';
+      
+      console.log('🗑️ [MediaQueue] Deleting item:', { itemId, isCurrentlyPlaying });
+      
+      // If currently displaying, stop the overlay first
+      if (isCurrentlyPlaying) {
+        console.log('⏹️ [MediaQueue] Item is currently playing, stopping overlay...');
+        handleStopMedia();
+      }
+      
       const response = await fetch(`${API_BASE_URL}/api/sessions/media-queue/${itemId}`, {
         method: 'DELETE',
         credentials: 'include'
@@ -570,6 +919,7 @@ export default function LiveShareManager({
       if (response.ok) {
         setMediaQueue(prev => prev.filter(item => item.id !== itemId));
         toast.success('Media removed from queue');
+        console.log('✅ [MediaQueue] Item deleted from queue');
       } else {
         toast.error('Failed to delete media');
       }
@@ -587,7 +937,11 @@ export default function LiveShareManager({
       type: 'lower_third',
       content: {
         name: lowerThirdName,
-        title: lowerThirdTitle
+        title: lowerThirdTitle,
+        style: {
+          bgColor: lowerThirdColors.background,
+          accentBar: lowerThirdColors.accent
+        }
       },
       position: 'bottom-left',
       active: newActive,
@@ -618,29 +972,416 @@ export default function LiveShareManager({
     }
   };
   
-  const handleThemeColorChange = async (colorKey, value) => {
-    setThemeColors(prev => ({ ...prev, [colorKey]: value }));
+  // Color change handlers that re-broadcast graphics
+  const handleTickerColorChange = (newColor) => {
+    console.log('🎨 [LiveShareManager] Ticker color changed to:', newColor);
+    console.log('🎨 [LiveShareManager] Ticker active:', tickerActive, 'Items:', tickerItems);
+    setTickerColor(newColor);
     
-    // Debounced API call (only send after user stops changing)
-    if (window.themeColorTimeout) clearTimeout(window.themeColorTimeout);
-    window.themeColorTimeout = setTimeout(async () => {
-      try {
-        await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'theme',
-            content: { ...themeColors, [colorKey]: value },
-            position: '',
-            active: true,
-            z_index: 1
-          })
+    // If ticker is active, re-broadcast with new color
+    if (tickerActive && tickerItems.length > 0) {
+      const graphicData = {
+        type: 'ticker',
+        content: { 
+          items: tickerItems,
+          style: { 
+            bgColor: newColor,
+            timeBoxColor: timeBoxColor // Include time box color
+          }
+        },
+        position: 'bottom',
+        active: true,
+        z_index: 9
+      };
+      
+      console.log('🎨 [LiveShareManager] Broadcasting ticker with new color:', graphicData);
+      
+      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(graphicData)
+      }).catch(err => console.error('Ticker color update error:', err));
+      
+      if (sendMessage) {
+        sendMessage({
+          type: 'liveshare_graphics_update',
+          data: { graphic: graphicData }
         });
-      } catch (error) {
-        console.error('Theme update error:', error);
       }
-    }, 500);
+    } else {
+      console.log('🎨 [LiveShareManager] Not broadcasting - ticker not active or no items');
+    }
+  };
+  
+  const handleTimeBoxColorChange = (newColor) => {
+    console.log('🎨 [LiveShareManager] Time box color changed to:', newColor);
+    setTimeBoxColor(newColor);
+    localStorage.setItem('liveshare_ticker_timebox_color', newColor);
+    
+    // If ticker is active, re-broadcast with new time box color
+    if (tickerActive && tickerItems.length > 0) {
+      const graphicData = {
+        type: 'ticker',
+        content: { 
+          items: tickerItems,
+          style: { 
+            bgColor: tickerColor,
+            timeBoxColor: newColor
+          }
+        },
+        position: 'bottom',
+        active: true,
+        z_index: 9
+      };
+      
+      console.log('🎨 [LiveShareManager] Broadcasting ticker with new time box color:', graphicData);
+      
+      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(graphicData)
+      }).catch(err => console.error('Time box color update error:', err));
+      
+      if (sendMessage) {
+        sendMessage({
+          type: 'liveshare_graphics_update',
+          data: { graphic: graphicData }
+        });
+      }
+    }
+  };
+  
+  const handleBannerColorChange = (newColor) => {
+    console.log('🎨 [LiveShareManager] Banner color changed to:', newColor);
+    console.log('🎨 [LiveShareManager] Banner active:', bannerActive, 'Text:', bannerText);
+    setBannerColor(newColor);
+    
+    // If banner is active, re-broadcast with new color
+    if (bannerActive && bannerText.trim()) {
+      // Get podcast logo position and size from localStorage
+      let podcastLogoSize = 100;
+      let podcastLogoX = 10;
+      let podcastLogoY = 80;
+      try {
+        const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${sessionId}`);
+        if (savedLogoStyles) {
+          const styles = JSON.parse(savedLogoStyles);
+          podcastLogoSize = styles.size || 100;
+          podcastLogoX = styles.x || 10;
+          podcastLogoY = styles.y || 80;
+        }
+      } catch (err) {
+        console.warn('Failed to load podcast logo styles:', err);
+      }
+      
+      const graphicData = {
+        type: 'banner',
+        content: { 
+          text: bannerText,
+          style: { bgColor: newColor },
+          logoUrl: podcastConfig?.logoUrl || logoBugPreview,
+          podcastLogoSize,
+          podcastLogoX,
+          podcastLogoY,
+          layout: bannerLayout
+        },
+        position: 'bottom',
+        active: true,
+        z_index: 11
+      };
+      
+      console.log('🎨 [LiveShareManager] Broadcasting banner with new color:', graphicData);
+      
+      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(graphicData)
+      }).catch(err => console.error('Banner color update error:', err));
+      
+      if (sendMessage) {
+        sendMessage({
+          type: 'liveshare_graphics_update',
+          data: { graphic: graphicData }
+        });
+      }
+    } else {
+      console.log('🎨 [LiveShareManager] Not broadcasting - banner not active or no text');
+    }
+  };
+  
+  const handleBannerTextColorChange = (newColor) => {
+    console.log('🎨 [LiveShareManager] Banner text color changed to:', newColor);
+    console.log('🎨 [LiveShareManager] Banner active:', bannerActive, 'Text:', bannerText);
+    setBannerTextColor(newColor);
+    
+    // If banner is active, re-broadcast with new text color
+    if (bannerActive && bannerText.trim()) {
+      // Get podcast logo position and size from localStorage
+      let podcastLogoSize = 100;
+      let podcastLogoX = 10;
+      let podcastLogoY = 80;
+      try {
+        const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${sessionId}`);
+        if (savedLogoStyles) {
+          const styles = JSON.parse(savedLogoStyles);
+          podcastLogoSize = styles.size || 100;
+          podcastLogoX = styles.x || 10;
+          podcastLogoY = styles.y || 80;
+        }
+      } catch (err) {
+        console.warn('Failed to load podcast logo styles:', err);
+      }
+      
+      const graphicData = {
+        type: 'banner',
+        content: { 
+          text: bannerText,
+          style: { 
+            bgColor: bannerColor,
+            textColor: newColor // Use the new color immediately
+          },
+          layout: bannerLayout,
+          podcastLogo: {
+            size: podcastLogoSize,
+            x: podcastLogoX,
+            y: podcastLogoY
+          }
+        },
+        position: 'bottom',
+        active: true,
+        z_index: 11
+      };
+      
+      console.log('🎨 [LiveShareManager] Broadcasting banner with new text color:', graphicData);
+      
+      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(graphicData)
+      }).catch(err => console.error('Banner text color update error:', err));
+      
+      if (sendMessage) {
+        sendMessage({
+          type: 'liveshare_graphics_update',
+          data: { graphic: graphicData }
+        });
+      }
+    } else {
+      console.log('🎨 [LiveShareManager] Not broadcasting - banner not active or no text');
+    }
+  };
+  
+  // Break mode handlers
+  const handleStartBreak = () => {
+    if (!isHost) {
+      toast.error('Only the host can start a break');
+      return;
+    }
+    
+    // Validate media queue selection if media mode is chosen
+    if (breakScreenSource === 'media') {
+      if (mediaQueue.length === 0) {
+        toast.error('No media in queue. Upload media first.');
+        return;
+      }
+      if (selectedBreakMedia.length === 0) {
+        toast.error('Please select at least one media item to play');
+        return;
+      }
+    }
+    
+    const startTime = Date.now();
+    setIsOnBreak(true);
+    setBreakStartTime(startTime);
+    setBreakTimeRemaining(breakDuration);
+    
+    // Mute host camera locally BEFORE broadcasting (if turnOffCamera is enabled)
+    if (breakTurnOffCamera && cameraShareTrackRef?.current) {
+      console.log('📹 [LiveShareManager] Muting HOST camera track');
+      cameraShareTrackRef.current.mute()
+        .then(() => console.log('✅ [LiveShareManager] Host camera muted successfully'))
+        .catch(error => console.error('❌ [LiveShareManager] Failed to mute host camera:', error));
+    }
+    
+    // 🎨 Add break screen to HOST's GraphicsRenderer BEFORE broadcasting
+    if (graphicsRendererRef?.current) {
+      console.log('🎨 [LiveShareManager] Adding break screen to HOST GraphicsRenderer');
+      console.log('🎨 [LiveShareManager] Break screen config:', {
+        screenSource: breakScreenSource,
+        hasCustomImage: !!breakCustomImagePreview,
+        customImageLength: breakCustomImagePreview?.length,
+        customImagePrefix: breakCustomImagePreview?.substring(0, 50)
+      });
+      
+      graphicsRendererRef.current.addLayer('break_screen', {
+        type: 'break_screen',
+        content: {
+          screenSource: breakScreenSource,
+          customImage: breakCustomImagePreview,
+          timeRemaining: breakDuration * 60, // Convert to seconds
+          keepAudio: breakKeepAudio,
+          // Media queue data
+          mediaMode: breakMediaMode,
+          mediaItems: breakScreenSource === 'media' 
+            ? selectedBreakMedia.map(index => mediaQueue[index])
+            : []
+        },
+        zIndex: 100 // Top layer
+      });
+      graphicsRendererRef.current.render();
+      console.log('✅ [LiveShareManager] Break screen added to host renderer');
+    } else {
+      console.warn('⚠️ [LiveShareManager] No GraphicsRenderer available for host');
+    }
+    
+    // Broadcast break started
+    const breakData = {
+      started: true,
+      startTime: startTime,
+      duration: breakDuration,
+      screenSource: breakScreenSource,
+      keepAudio: breakKeepAudio,
+      turnOffCamera: breakTurnOffCamera,
+      customImage: breakCustomImagePreview,
+      // Media queue data for viewers
+      mediaMode: breakMediaMode,
+      mediaItems: breakScreenSource === 'media'
+        ? selectedBreakMedia.map(index => mediaQueue[index])
+        : []
+    };
+    
+    if (sendMessage) {
+      sendMessage({
+        type: 'liveshare_break_started',
+        data: breakData
+      });
+    }
+    
+    // Save to backend
+    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/break`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(breakData)
+    }).catch(err => console.error('Break start error:', err));
+    
+    toast.success(`Taking a ${breakDuration}-minute break`, {
+      icon: '⏸️',
+      duration: 3000
+    });
+    
+    console.log('⏸️ [LiveShareManager] Break started:', breakData);
+  };
+  
+  const handleEndBreak = () => {
+    if (!isHost) {
+      toast.error('Only the host can end the break');
+      return;
+    }
+    
+    setIsOnBreak(false);
+    setBreakStartTime(null);
+    setBreakTimeRemaining(0);
+    
+    // 🎨 Remove break screen from HOST's GraphicsRenderer BEFORE broadcasting
+    if (graphicsRendererRef?.current) {
+      console.log('🎨 [LiveShareManager] Removing break screen from HOST GraphicsRenderer');
+      graphicsRendererRef.current.removeLayer('break_screen');
+      graphicsRendererRef.current.render();
+      console.log('✅ [LiveShareManager] Break screen removed from host renderer');
+    }
+    
+    // Unmute host camera locally BEFORE broadcasting (if it was muted)
+    if (breakTurnOffCamera && cameraShareTrackRef?.current) {
+      console.log('📹 [LiveShareManager] Unmuting HOST camera track');
+      cameraShareTrackRef.current.unmute()
+        .then(() => console.log('✅ [LiveShareManager] Host camera unmuted successfully'))
+        .catch(error => console.error('❌ [LiveShareManager] Failed to unmute host camera:', error));
+    }
+    
+    // Broadcast break ended
+    if (sendMessage) {
+      sendMessage({
+        type: 'liveshare_break_ended',
+        data: { ended: true }
+      });
+    }
+    
+    // Save to backend
+    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/break`, {
+      method: 'DELETE',
+      credentials: 'include'
+    }).catch(err => console.error('Break end error:', err));
+    
+    toast.success('Welcome back! Stream resumed', {
+      icon: '▶️',
+      duration: 3000
+    });
+    
+    console.log('▶️ [LiveShareManager] Break ended');
+  };
+  
+  const handleBreakImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+    
+    setBreakCustomImage(file);
+    
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setBreakCustomImagePreview(reader.result);
+      localStorage.setItem('liveshare_break_custom_image', reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+  
+  const handleLowerThirdColorChange = (colorKey, newColor) => {
+    setLowerThirdColors(prev => ({ ...prev, [colorKey]: newColor }));
+    
+    // If lower third is active, re-broadcast with new colors
+    if (lowerThirdActive && lowerThirdName.trim() && lowerThirdTitle.trim()) {
+      const newColors = colorKey === 'background' 
+        ? { background: newColor, accent: lowerThirdColors.accent }
+        : { background: lowerThirdColors.background, accent: newColor };
+      
+      const graphicData = {
+        type: 'lower_third',
+        content: {
+          name: lowerThirdName,
+          title: lowerThirdTitle,
+          style: {
+            bgColor: newColors.background,
+            accentBar: newColors.accent
+          }
+        },
+        position: 'bottom-left',
+        active: true,
+        z_index: 10
+      };
+      
+      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(graphicData)
+      }).catch(err => console.error('Lower third color update error:', err));
+      
+      if (sendMessage) {
+        sendMessage({
+          type: 'liveshare_graphics_update',
+          data: { graphic: graphicData }
+        });
+      }
+    }
   };
 
   // Fetch initial graphics state when LiveShare mode is active
@@ -687,6 +1428,63 @@ export default function LiveShareManager({
     
     fetchGraphics();
   }, [sessionId, liveShareMode]);
+  
+  // Break mode countdown timer
+  useEffect(() => {
+    if (!isOnBreak || !breakStartTime) return;
+    
+    const updateCountdown = () => {
+      const elapsed = Math.floor((Date.now() - breakStartTime) / 1000); // seconds
+      const remaining = Math.max(0, (breakDuration * 60) - elapsed); // convert duration to seconds
+      setBreakTimeRemaining(remaining);
+      
+      // Update break screen layer with new timeRemaining for host
+      if (graphicsRendererRef?.current) {
+        const breakLayer = graphicsRendererRef.current.layers.find(l => l.id === 'break_screen');
+        if (breakLayer) {
+          breakLayer.content.timeRemaining = remaining;
+          graphicsRendererRef.current.render();
+        }
+      }
+      
+      // Auto-end break when time expires
+      if (remaining === 0 && isHost) {
+        handleEndBreak();
+      }
+    };
+    
+    // Update immediately
+    updateCountdown();
+    
+    // Then update every second
+    const interval = setInterval(updateCountdown, 1000);
+    
+    return () => clearInterval(interval);
+  }, [isOnBreak, breakStartTime, breakDuration, isHost]);
+  
+  // Save break preferences to localStorage
+  useEffect(() => {
+    localStorage.setItem('liveshare_break_screen_source', breakScreenSource);
+  }, [breakScreenSource]);
+  
+  useEffect(() => {
+    localStorage.setItem('liveshare_break_duration', breakDuration.toString());
+  }, [breakDuration]);
+  
+  useEffect(() => {
+    localStorage.setItem('liveshare_break_keep_audio', breakKeepAudio.toString());
+  }, [breakKeepAudio]);
+  
+  useEffect(() => {
+    localStorage.setItem('liveshare_break_turn_off_camera', breakTurnOffCamera.toString());
+  }, [breakTurnOffCamera]);
+  
+  // Reset media selection when screen source changes away from media
+  useEffect(() => {
+    if (breakScreenSource !== 'media') {
+      setSelectedBreakMedia([]);
+    }
+  }, [breakScreenSource]);
 
   // Get eligible guests (exclude current user)
   const eligibleGuests = watchSessionMembers.filter(
@@ -694,7 +1492,17 @@ export default function LiveShareManager({
   );
 
   return (
-    <div className="space-y-4">
+    <>
+      <style>{`
+        details[open] > summary svg:first-of-type {
+          transform: rotate(180deg);
+          transition: transform 0.2s ease;
+        }
+        details > summary svg:first-of-type {
+          transition: transform 0.2s ease;
+        }
+      `}</style>
+      <div className="space-y-4">
       {/* Current Mode Status */}
       {liveShareMode && (() => {
         const modeLabels = {
@@ -717,9 +1525,10 @@ export default function LiveShareManager({
             {isHost && (
               <button
                 onClick={() => onLiveShareModeSelect(null)}
-                className="text-xs text-red-400 hover:text-red-300"
+                className="bg-red-600/90 hover:bg-red-600 text-white py-1.5 px-3 rounded-lg flex items-center space-x-1.5 text-xs font-semibold transition-colors shadow-lg"
               >
-                End Session
+                <span className="text-sm">⏹</span>
+                <span>End Live</span>
               </button>
             )}
           </div>
@@ -733,15 +1542,263 @@ export default function LiveShareManager({
         );
       })()}
       
-      {/* ✅ Studio Controls - Always show when ANY LiveShare mode is active */}
-      {showGraphicsControls && liveShareMode && isHost && (
-        <div className="bg-[#D9D9D9]/10 rounded-xl p-4 space-y-4">
-          <h3 className="text-sm font-bold text-gray-400 uppercase">Studio Controls</h3>
+      {/* ✅ Studio Controls - Hide for lecture halls (classroom watchType) and regular mode, show for video/3d_cinema */}
+      {showGraphicsControls && liveShareMode && liveShareMode !== 'regular' && isHost && watchType !== 'classroom' && (
+        <div className="bg-[#D9D9D9]/10 rounded-xl p-3 space-y-3">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wide">Studio Controls</h3>
           
-          {/* Guest Management */}
-          <details open className="bg-gray-800/50 rounded-lg">
-            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
-              👥 Guest Management
+          {/* Take a Break Controls */}
+          {shouldShowControl('takeABreak') && (
+          <details className="bg-gray-800/50 rounded-xl overflow-hidden">
+            <summary className="pl-3 pr-2.5 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors list-none">
+              <span className="flex items-center gap-2">
+                <ChevronDown size={14} className="text-gray-400" />
+                <PauseCircle size={16} className="text-cyan-400" />
+                Take a Break
+              </span>
+            </summary>
+            <div className="px-2.5 pb-2.5 pt-1.5 space-y-2.5">
+              {!isOnBreak ? (
+                <>
+                  {/* Break Duration */}
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">Break Duration</label>
+                    <select
+                      value={breakDuration}
+                      onChange={(e) => setBreakDuration(parseInt(e.target.value, 10))}
+                      className="w-full px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="1">1 minute</option>
+                      <option value="2">2 minutes</option>
+                      <option value="3">3 minutes</option>
+                      <option value="5">5 minutes</option>
+                      <option value="10">10 minutes</option>
+                      <option value="15">15 minutes</option>
+                      <option value="20">20 minutes</option>
+                      <option value="30">30 minutes</option>
+                    </select>
+                  </div>
+                  
+                  {/* Break Screen Source */}
+                  <div>
+                    <label className="block text-[10px] text-gray-400 mb-1">Break Screen</label>
+                    <select
+                      value={breakScreenSource}
+                      onChange={(e) => setBreakScreenSource(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="static">Static Text ("We'll Be Right Back!")</option>
+                      <option value="media">Media Queue</option>
+                      <option value="upload">Custom Image</option>
+                      <option value="animation">Loading Animation</option>
+                    </select>
+                  </div>
+                  
+                  {/* Media Queue Selection */}
+                  {breakScreenSource === 'media' && (
+                    <div className="space-y-3">
+                      {/* Play Mode */}
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-2">Playback Mode</label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setBreakMediaMode('one')}
+                            className={`flex-1 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                              breakMediaMode === 'one'
+                                ? 'bg-purple-600 text-white'
+                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                            }`}
+                          >
+                            Play One
+                          </button>
+                          <button
+                            onClick={() => setBreakMediaMode('all')}
+                            className={`flex-1 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                              breakMediaMode === 'all'
+                                ? 'bg-purple-600 text-white'
+                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                            }`}
+                          >
+                            Play All
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {/* Media Selection */}
+                      {mediaQueue.length === 0 ? (
+                        <p className="text-xs text-yellow-400 bg-yellow-900/20 rounded p-2">
+                          ⚠️ No media in queue. Upload media first.
+                        </p>
+                      ) : (
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-2">
+                            {breakMediaMode === 'one' ? 'Select Media to Play' : 'Media Queue'}
+                          </label>
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {mediaQueue.map((item, index) => (
+                              <label
+                                key={index}
+                                className="flex items-center gap-2 p-2 bg-gray-700/50 rounded hover:bg-gray-700 cursor-pointer transition-colors"
+                              >
+                                {breakMediaMode === 'one' ? (
+                                  <input
+                                    type="radio"
+                                    name="breakMedia"
+                                    checked={selectedBreakMedia.length === 1 && selectedBreakMedia[0] === index}
+                                    onChange={() => setSelectedBreakMedia([index])}
+                                    className="w-4 h-4 text-purple-600 focus:ring-purple-500"
+                                  />
+                                ) : (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedBreakMedia.includes(index)}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setSelectedBreakMedia([...selectedBreakMedia, index]);
+                                      } else {
+                                        setSelectedBreakMedia(selectedBreakMedia.filter(i => i !== index));
+                                      }
+                                    }}
+                                    className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500"
+                                  />
+                                )}
+                                <img
+                                  src={item.thumbnail || item.url}
+                                  alt={item.filename}
+                                  className="w-12 h-12 object-cover rounded"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs text-white truncate">{item.filename}</p>
+                                  <p className="text-xs text-gray-400">{item.type === 'image' ? '📷 Image' : '🎥 Video'}</p>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                          {breakMediaMode === 'all' && (
+                            <button
+                              onClick={() => setSelectedBreakMedia(mediaQueue.map((_, i) => i))}
+                              className="mt-2 text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                            >
+                              Select All
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Custom Image Upload */}
+                  {breakScreenSource === 'upload' && (
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Upload Break Image</label>
+                      <input
+                        ref={breakImageInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleBreakImageUpload}
+                        className="hidden"
+                      />
+                      <button
+                        onClick={() => breakImageInputRef.current?.click()}
+                        className="w-full px-3 py-2 sm:px-4 sm:py-2.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-white text-sm transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Upload size={16} />
+                        {breakCustomImagePreview ? 'Change Image' : 'Upload Image'}
+                      </button>
+                      {breakCustomImagePreview && (
+                        <div className="mt-2 relative">
+                          <img 
+                            src={breakCustomImagePreview} 
+                            alt="Break screen preview" 
+                            className="w-full h-32 object-cover rounded"
+                          />
+                          <button
+                            onClick={() => {
+                              setBreakCustomImage(null);
+                              setBreakCustomImagePreview(null);
+                              localStorage.removeItem('liveshare_break_custom_image');
+                            }}
+                            className="absolute top-1 right-1 p-1 bg-red-600 hover:bg-red-700 rounded text-white"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Break Options */}
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={breakKeepAudio}
+                        onChange={(e) => setBreakKeepAudio(e.target.checked)}
+                        className="w-4 h-4 rounded-md border-gray-600 bg-gray-700 text-purple-600 focus:ring-purple-500"
+                      />
+                      <span>Keep audio on (show mic pulse)</span>
+                    </label>
+                    
+                    <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={breakTurnOffCamera}
+                        onChange={(e) => setBreakTurnOffCamera(e.target.checked)}
+                        className="w-4 h-4 rounded-md border-gray-600 bg-gray-700 text-purple-600 focus:ring-purple-500"
+                      />
+                      <span>Turn off cameras during break</span>
+                    </label>
+                  </div>
+                  
+                  {/* Start Break Button */}
+                  <button
+                    onClick={handleStartBreak}
+                    className="w-full px-4 py-2 sm:px-5 sm:py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    <PauseCircle size={18} />
+                    Start Break
+                  </button>
+                </>
+              ) : (
+                <>
+                  {/* Break Active - Show Countdown */}
+                  <div className="text-center space-y-3">
+                    <div className="text-4xl font-bold text-orange-400">
+                      {Math.floor(breakTimeRemaining / 60)}:{String(breakTimeRemaining % 60).padStart(2, '0')}
+                    </div>
+                    <p className="text-xs text-gray-400">Break in progress...</p>
+                    {breakKeepAudio && (
+                      <div className="flex items-center justify-center gap-2 text-xs text-green-400">
+                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        <span>Audio active</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* End Break Button */}
+                  <button
+                    onClick={handleEndBreak}
+                    className="w-full px-4 py-2 sm:px-5 sm:py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  >
+                    ▶️ End Break
+                  </button>
+                </>
+              )}
+            </div>
+          </details>
+          )}
+          
+          {/* All other graphics controls - hidden in Regular mode */}
+          {liveShareContentMode !== 'regular' && (
+            <>
+              {/* Guest Management */}
+          <details className="bg-gray-800/50 rounded-lg">
+            <summary className="pl-3 pr-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors list-none">
+              <span className="flex items-center gap-2">
+                <ChevronDown size={14} className="text-gray-400" />
+                <Users size={18} className="text-purple-400" />
+                Guest Management
+              </span>
             </summary>
             <div className="px-3 pb-3 pt-2 space-y-3">
               {/* Current Guest or Select Guest */}
@@ -819,47 +1876,56 @@ export default function LiveShareManager({
             </div>
           </details>
           
-          {/* Theme Colors */}
-          <details className="bg-gray-800/50 rounded-lg">
-            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
-              🎨 Theme Colors
-            </summary>
-            <div className="px-3 pb-3 pt-2 space-y-3">
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Primary Color</label>
-                <input
-                  type="color"
-                  value={themeColors.primary}
-                  onChange={(e) => handleThemeColorChange('primary', e.target.value)}
-                  className="w-full h-10 rounded cursor-pointer"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Secondary Color</label>
-                <input
-                  type="color"
-                  value={themeColors.secondary}
-                  onChange={(e) => handleThemeColorChange('secondary', e.target.value)}
-                  className="w-full h-10 rounded cursor-pointer"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Accent Color</label>
-                <input
-                  type="color"
-                  value={themeColors.accent}
-                  onChange={(e) => handleThemeColorChange('accent', e.target.value)}
-                  className="w-full h-10 rounded cursor-pointer"
-                />
-              </div>
-            </div>
-          </details>
-          
           {/* Graphics Toggles */}
-          <details className="bg-gray-800/50 rounded-lg" open>
-            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
-              📺 Graphics
+          {shouldShowControl('graphics') && (
+          <details className="bg-gray-800/50 rounded-lg relative">
+            <summary className="pl-3 pr-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors flex items-center justify-between list-none">
+              <span className="flex items-center gap-2">
+                <ChevronDown size={14} className="text-gray-400" />
+                <UserCircle size={18} className="text-purple-400" />
+                User Details
+              </span>
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowLowerThirdColorPicker(!showLowerThirdColorPicker);
+                }}
+                className="flex items-center gap-1 p-1 hover:bg-gray-700/50 rounded transition-colors"
+                title="Customize colors"
+              >
+                <img src="/icons/colorPaletteIcon.png" alt="Colors" className="w-5 h-5" />
+                <div className="flex gap-0.5">
+                  <div className="w-3 h-3 rounded-sm border border-gray-600" style={{ backgroundColor: lowerThirdColors.background }}></div>
+                  <div className="w-3 h-3 rounded-sm border border-gray-600" style={{ backgroundColor: lowerThirdColors.accent }}></div>
+                </div>
+              </button>
             </summary>
+            
+            {/* Color picker popover */}
+            {showLowerThirdColorPicker && (
+              <div className="absolute right-2 top-12 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-lg z-20 space-y-2">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Background</label>
+                  <input
+                    type="color"
+                    value={lowerThirdColors.background}
+                    onChange={(e) => handleLowerThirdColorChange('background', e.target.value)}
+                    className="w-full h-8 rounded cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Accent Bar</label>
+                  <input
+                    type="color"
+                    value={lowerThirdColors.accent}
+                    onChange={(e) => handleLowerThirdColorChange('accent', e.target.value)}
+                    className="w-full h-8 rounded cursor-pointer"
+                  />
+                </div>
+              </div>
+            )}
+            
             <div className="px-3 pb-3 pt-2 space-y-3">
               {/* Lower Third */}
               <div className="bg-black/30 rounded-lg p-3">
@@ -868,21 +1934,29 @@ export default function LiveShareManager({
                     type="text"
                     placeholder="Name (e.g., John Doe)"
                     value={lowerThirdName}
-                    onChange={(e) => setLowerThirdName(e.target.value)}
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setLowerThirdName(value);
+                      localStorage.setItem(`liveshare_lower_third_name_${sessionId}`, value);
+                    }}
+                    className="w-full px-3 py-2 sm:px-4 sm:py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
                   />
                   <input
                     type="text"
                     placeholder="Title (e.g., Tech Expert)"
                     value={lowerThirdTitle}
-                    onChange={(e) => setLowerThirdTitle(e.target.value)}
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setLowerThirdTitle(value);
+                      localStorage.setItem(`liveshare_lower_third_title_${sessionId}`, value);
+                    }}
+                    className="w-full px-3 py-2 sm:px-4 sm:py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
                   />
                   <div className="flex gap-2">
                     <button
                       onClick={handleToggleLowerThird}
                       disabled={!lowerThirdName.trim() || !lowerThirdTitle.trim()}
-                      className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
+                      className={`flex-1 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg text-sm font-medium transition-colors ${
                         lowerThirdActive
                           ? 'bg-red-600 hover:bg-red-700 text-white'
                           : 'bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed text-white'
@@ -894,71 +1968,102 @@ export default function LiveShareManager({
                 </div>
               </div>
               
-              {/* Logo Bug */}
-              <div className="bg-black/30 rounded-lg p-3">
-                <label className="flex items-center gap-2 mb-2">
-                  <input
-                    type="checkbox"
-                    checked={logoBugActive}
-                    onChange={() => setLogoBugActive(!logoBugActive)}
-                    className="w-4 h-4 rounded accent-purple-500"
-                  />
-                  <span className="text-sm font-medium text-white">Logo Bug</span>
-                </label>
-                {logoBugActive && (
-                  <div className="mt-2">
-                    {logoBugPreview ? (
-                      <div className="flex items-center gap-2">
-                        <img
-                          src={logoBugPreview}
-                          alt="Logo"
-                          className="w-12 h-12 rounded object-cover"
-                        />
-                        <button
-                          onClick={() => {
-                            setLogoBugFile(null);
-                            setLogoBugPreview(null);
-                            setLogoBugActive(false);
-                          }}
-                          className="text-xs text-red-400 hover:text-red-300"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => logoBugInputRef.current?.click()}
-                        className="w-full px-3 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded text-sm text-gray-300 transition-colors"
-                      >
-                        Upload Logo (max 500KB)
-                      </button>
-                    )}
+              {/* Logo Bug - Hidden in podcast/news/show/regular modes since they have their own logo displays */}
+              {!(liveShareContentMode === 'podcast' || liveShareContentMode === 'news' || liveShareContentMode === 'show' || liveShareContentMode === 'regular') && (
+                <div className="bg-black/30 rounded-lg p-3">
+                  <label className="flex items-center gap-2 mb-2">
                     <input
-                      ref={logoBugInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleLogoBugUpload}
-                      className="hidden"
+                      type="checkbox"
+                      checked={logoBugActive}
+                      onChange={() => setLogoBugActive(!logoBugActive)}
+                      className="w-4 h-4 rounded accent-purple-500"
                     />
-                  </div>
-                )}
-              </div>
+                    <span className="text-sm font-medium text-white">Logo Bug</span>
+                  </label>
+                  {logoBugActive && (
+                    <div className="mt-2">
+                      {logoBugPreview ? (
+                        <div className="flex items-center gap-2">
+                          <img
+                            src={logoBugPreview}
+                            alt="Logo"
+                            className="w-12 h-12 rounded object-cover"
+                          />
+                          <button
+                            onClick={() => {
+                              setLogoBugFile(null);
+                              setLogoBugPreview(null);
+                              setLogoBugActive(false);
+                            }}
+                            className="text-xs text-red-400 hover:text-red-300"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => logoBugInputRef.current?.click()}
+                          className="w-full px-3 py-2 sm:px-4 sm:py-2.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-sm text-gray-300 transition-colors"
+                        >
+                          Upload Logo (max 500KB)
+                        </button>
+                      )}
+                      <input
+                        ref={logoBugInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleLogoBugUpload}
+                        className="hidden"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </details>
+          )}
           
           {/* Media Queue */}
+          {shouldShowControl('mediaQueue') && (
           <details className="bg-gray-800/50 rounded-lg">
-            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
-              📸 Media Queue ({mediaQueue.length}/{MAX_QUEUE_ITEMS})
+            <summary className="pl-3 pr-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors list-none">
+              <span className="flex items-center gap-2">
+                <ChevronDown size={14} className="text-gray-400" />
+                <ImageIcon size={18} className="text-pink-400" />
+                Media Queue ({mediaQueue.length}/{MAX_QUEUE_ITEMS})
+              </span>
             </summary>
             <div className="px-3 pb-3 pt-2 space-y-2">
-              <button
-                onClick={() => mediaQueueInputRef.current?.click()}
-                disabled={mediaQueue.length >= MAX_QUEUE_ITEMS}
-                className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors"
-              >
-                + Upload Media
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => mediaQueueInputRef.current?.click()}
+                  disabled={mediaQueue.length >= MAX_QUEUE_ITEMS}
+                  className="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  + Upload Media
+                </button>
+                <button
+                  onClick={() => {
+                    const playedItems = mediaQueue.filter(item => item.status === 'played');
+                    if (playedItems.length === 0) {
+                      toast.info('No played items to clear');
+                      return;
+                    }
+                    
+                    // Stop media overlay if any played item is currently displayed
+                    handleStopMedia();
+                    
+                    // Remove played items from queue
+                    setMediaQueue(prev => prev.filter(item => item.status !== 'played'));
+                    toast.success(`Cleared ${playedItems.length} played item${playedItems.length > 1 ? 's' : ''} and removed from screen`);
+                  }}
+                  disabled={!mediaQueue.some(item => item.status === 'played')}
+                  className="px-3 py-2 sm:px-4 sm:py-2.5 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+                  title="Clear played items and remove from screen"
+                >
+                  🗑️
+                </button>
+              </div>
               <input
                 ref={mediaQueueInputRef}
                 type="file"
@@ -978,19 +2083,19 @@ export default function LiveShareManager({
                         className="w-10 h-10 rounded object-cover"
                       />
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs text-white truncate">{item.file.name}</p>
+                        <p className="text-xs text-white truncate">{item.file?.name || item.media_url?.split('/').pop() || 'Unknown file'}</p>
                         <p className="text-[10px] text-gray-400">{item.type === 'image' ? '📸 Image' : '🎬 Video'}</p>
                       </div>
                       <button
                         onClick={() => handlePlayMedia(item.id)}
                         disabled={item.status === 'played'}
-                        className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-400 text-white text-xs rounded transition-colors"
+                        className="px-2 py-1 sm:px-3 sm:py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-400 text-white text-xs sm:text-sm rounded-lg transition-colors"
                       >
                         {item.status === 'played' ? '✓' : '▶'}
                       </button>
                       <button
                         onClick={() => handleDeleteMedia(item.id)}
-                        className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors"
+                        className="px-2 py-1 sm:px-3 sm:py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm rounded-lg transition-colors"
                       >
                         ✕
                       </button>
@@ -1004,18 +2109,61 @@ export default function LiveShareManager({
               )}
             </div>
           </details>
+          )}
           
           {/* Ticker/Headlines */}
-          <details className="bg-gray-800/50 rounded-lg">
-            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
-              📰 Ticker / Headlines
+          {shouldShowControl('ticker') && (
+          <details className="bg-gray-800/50 rounded-lg relative">
+            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Newspaper size={18} className="text-blue-400" />
+                Ticker / Headlines
+              </span>
+              {/* Color palette icon with swatch */}
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowTickerColorPicker(!showTickerColorPicker);
+                }}
+                className="flex items-center gap-1 p-1 hover:bg-gray-700/50 rounded transition-colors"
+                title="Customize color"
+              >
+                <img src="/icons/colorPaletteIcon.png" alt="Colors" className="w-5 h-5" />
+                <div className="w-4 h-4 rounded-sm border border-gray-600" style={{ backgroundColor: tickerColor }}></div>
+              </button>
             </summary>
+            
+            {/* Color picker popover - outside summary */}
+            {showTickerColorPicker && (
+              <div className="absolute right-3 top-12 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-lg z-20 space-y-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Ticker Background</label>
+                  <input
+                    type="color"
+                    value={tickerColor}
+                    onChange={(e) => handleTickerColorChange(e.target.value)}
+                    className="w-full h-8 rounded cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Time Box Background</label>
+                  <input
+                    type="color"
+                    value={timeBoxColor}
+                    onChange={(e) => handleTimeBoxColorChange(e.target.value)}
+                    className="w-full h-8 rounded cursor-pointer"
+                  />
+                </div>
+              </div>
+            )}
+            
             <div className="px-3 pb-3 pt-2">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs text-gray-400">Scrolling news ticker</span>
                 <button
                   onClick={handleToggleTicker}
-                  className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
                     tickerActive
                       ? 'bg-green-600 text-white'
                       : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
@@ -1029,14 +2177,18 @@ export default function LiveShareManager({
                 <input
                   type="text"
                   value={tickerText}
-                  onChange={(e) => setTickerText(e.target.value)}
+                  onChange={(e) => {
+                    const newText = e.target.value;
+                    setTickerText(newText);
+                    localStorage.setItem(`liveshare_ticker_text_${sessionId}`, newText);
+                  }}
                   onKeyPress={(e) => e.key === 'Enter' && handleAddTickerItem()}
                   placeholder="Enter headline..."
-                  className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-purple-500"
+                  className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 sm:px-4 sm:py-2.5 text-white text-sm focus:outline-none focus:border-purple-500"
                 />
                 <button
                   onClick={handleAddTickerItem}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm font-medium transition-colors"
+                  className="px-4 py-2 sm:px-5 sm:py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
                 >
                   Add
                 </button>
@@ -1051,6 +2203,7 @@ export default function LiveShareManager({
                         onClick={() => {
                           const newItems = tickerItems.filter((_, i) => i !== index);
                           setTickerItems(newItems);
+                          localStorage.setItem(`liveshare_ticker_items_${sessionId}`, JSON.stringify(newItems));
                         }}
                         className="text-red-400 hover:text-red-300 text-xs ml-2"
                       >
@@ -1066,38 +2219,221 @@ export default function LiveShareManager({
               )}
             </div>
           </details>
+          )}
           
           {/* Breaking News Banner */}
-          <details className="bg-gray-800/50 rounded-lg">
-            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
-              🚨 Breaking News Banner
+          {shouldShowControl('banner') && (
+          <details className="bg-gray-800/50 rounded-lg relative">
+            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <AlertCircle size={18} className="text-red-400" />
+                Breaking News Banner
+              </span>
+              {/* Color palette icon with swatches */}
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowBannerColorPicker(!showBannerColorPicker);
+                }}
+                className="flex items-center gap-1 p-1 hover:bg-gray-700/50 rounded transition-colors"
+                title="Customize colors"
+              >
+                <img src="/icons/colorPaletteIcon.png" alt="Colors" className="w-5 h-5" />
+                <div className="flex gap-0.5">
+                  <div className="w-3 h-3 rounded-sm border border-gray-600" style={{ backgroundColor: bannerColor }}></div>
+                  <div className="w-3 h-3 rounded-sm border border-gray-600" style={{ backgroundColor: bannerTextColor }}></div>
+                </div>
+              </button>
             </summary>
+            
+            {/* Color picker popover - outside summary */}
+            {showBannerColorPicker && (
+              <div className="absolute right-3 top-12 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-lg z-20 space-y-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Background</label>
+                  <input
+                    type="color"
+                    value={bannerColor}
+                    onChange={(e) => handleBannerColorChange(e.target.value)}
+                    className="w-full h-8 rounded cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Text Color</label>
+                  <input
+                    type="color"
+                    value={bannerTextColor}
+                    onChange={(e) => handleBannerTextColorChange(e.target.value)}
+                    className="w-full h-8 rounded cursor-pointer"
+                  />
+                </div>
+              </div>
+            )}
+            
             <div className="px-3 pb-3 pt-2">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs text-gray-400">Top screen banner</span>
+                <span className="text-xs text-gray-400">Breaking news banner</span>
                 <button
                   onClick={handleToggleBanner}
-                  className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  disabled={!bannerText.trim()}
+                  className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
                     bannerActive
-                      ? 'bg-red-600 text-white'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  }`}
+                      ? 'bg-gray-600 text-white hover:bg-gray-700'
+                      : 'bg-red-600 text-white hover:bg-red-700'
+                  } disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed`}
                 >
                   {bannerActive ? 'Hide' : 'Show'}
                 </button>
               </div>
               
+              {/* Layout Selector */}
+              <div className="mb-3">
+                <label className="block text-xs text-gray-400 mb-2">Banner Style</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setBannerLayout('bn');
+                      localStorage.setItem('liveshare_banner_layout', 'bn');
+                      // Re-broadcast if active
+                      if (bannerActive) {
+                        setTimeout(() => handleToggleBanner(), 50);
+                        setTimeout(() => handleToggleBanner(), 100);
+                      }
+                    }}
+                    className={`flex-1 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg text-xs sm:text-sm transition-colors ${
+                      bannerLayout === 'bn'
+                        ? 'bg-red-600 text-white'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    BN Style (Right)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setBannerLayout('breakin');
+                      localStorage.setItem('liveshare_banner_layout', 'breakin');
+                      // Re-broadcast if active
+                      if (bannerActive) {
+                        setTimeout(() => handleToggleBanner(), 50);
+                        setTimeout(() => handleToggleBanner(), 100);
+                      }
+                    }}
+                    className={`flex-1 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg text-xs sm:text-sm transition-colors ${
+                      bannerLayout === 'breakin'
+                        ? 'bg-red-600 text-white'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    Breakin Style (Top)
+                  </button>
+                </div>
+              </div>
+              
               <input
                 type="text"
                 value={bannerText}
-                onChange={(e) => setBannerText(e.target.value)}
+                onChange={(e) => {
+                  const newText = e.target.value;
+                  setBannerText(newText);
+                  localStorage.setItem(`liveshare_banner_text_${sessionId}`, newText);
+                }}
                 placeholder="BREAKING: Enter breaking news..."
-                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-red-500"
+                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 sm:px-4 sm:py-2.5 text-white text-sm focus:outline-none focus:border-red-500"
               />
               
               <p className="text-xs text-gray-500 mt-2">
                 Banner will appear at the top of the screen
               </p>
+            </div>
+          </details>
+          )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* 👥 Guest Management - Standalone for Lecture Halls (classroom watchType) */}
+      {watchType === 'classroom' && liveShareMode && isHost && (
+        <div className="bg-[#D9D9D9]/10 rounded-xl p-4">
+          <details open className="bg-gray-800/50 rounded-lg">
+            <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors">
+              <span className="flex items-center gap-2">
+                <Users size={18} className="text-purple-400" />
+                Guest Management
+              </span>
+            </summary>
+            <div className="px-3 pb-3 pt-2 space-y-3">
+              {/* Current Guest or Select Guest */}
+              {selectedGuest ? (
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Current Guest</label>
+                  <div className="flex items-center justify-between p-2 bg-gray-700/50 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      {selectedGuest.avatar_url && (
+                        <img 
+                          src={selectedGuest.avatar_url} 
+                          alt={selectedGuest.username}
+                          className="w-6 h-6 rounded-full"
+                        />
+                      )}
+                      <span className="text-sm text-white font-medium">{selectedGuest.username}</span>
+                      <span className="text-xs text-gray-400">(Guest)</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSelectedGuest(null);
+                        if (sendMessage) {
+                          sendMessage({
+                            type: 'liveshare_kick_guest',
+                            data: { guestId: selectedGuest.id }
+                          });
+                        }
+                      }}
+                      className="px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => setSelectedGuest(null)}
+                    className="mt-2 w-full px-3 py-1.5 text-xs bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
+                  >
+                    Change Guest
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Select Guest</label>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const guestId = parseInt(e.target.value);
+                      const guest = eligibleGuests.find(g => g.id === guestId);
+                      if (guest) {
+                        setSelectedGuest(guest);
+                        if (sendMessage) {
+                          sendMessage({
+                            type: 'liveshare_grant_permission',
+                            data: { userId: guest.id }
+                          });
+                        }
+                      }
+                    }}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    <option value="">Choose a guest...</option>
+                    {eligibleGuests.map(member => (
+                      <option key={member.id} value={member.id}>
+                        {member.username || `User ${member.id}`}
+                      </option>
+                    ))}
+                  </select>
+                  {eligibleGuests.length === 0 && (
+                    <p className="mt-2 text-xs text-gray-500">No other members in session</p>
+                  )}
+                </div>
+              )}
             </div>
           </details>
         </div>
@@ -1106,25 +2442,12 @@ export default function LiveShareManager({
       {/* Host Controls */}
       {isHost && (
         <div className="space-y-3">
-          {liveShareMode && liveShareMode !== 'regular' ? (
-            <button
-              onClick={() => onLiveShareModeSelect(null)}
-              className="w-full bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2 font-semibold"
-            >
-              <X size={20} />
-              <span>End Live</span>
-            </button>
-          ) : (
+          {!liveShareMode || liveShareMode === 'regular' ? (
             <div className="bg-black p-3 sm:p-4 rounded-lg">
               <button
                 onClick={() => {
-                  // For Lecture Hall, skip mode selection and go directly to type selection
-                  if (watchType === 'classroom') {
-                    setSelectedMode('regular');
-                    setShowTypeSelector(true);
-                  } else {
-                    setShowModeSelector(true);
-                  }
+                  // Open unified LiveShare wizard
+                  setShowLiveShareWizard(true);
                 }}
                 className="w-full bg-[#444AF7]/20 hover:bg-[#444AF7]/30 text-white py-2 px-4 rounded-full flex items-center justify-center space-x-2 font-medium text-sm sm:text-[15px] transition-colors"
               >
@@ -1132,7 +2455,7 @@ export default function LiveShareManager({
                 <span>Go Live</span>
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       )}
 
@@ -1242,9 +2565,9 @@ export default function LiveShareManager({
       {/* Setup Modal (Podcast/News/Show) */}
       {showPodcastSetup && (() => {
         const modeConfig = {
-          podcast: { emoji: '🎙️', title: 'Podcast Setup', fieldLabel: 'Episode Title', guestLabel: 'Guest', buttonText: 'Start Podcast' },
-          news: { emoji: '📰', title: 'News Setup', fieldLabel: 'Broadcast Title', guestLabel: 'Co-Anchor', buttonText: 'Start News' },
-          show: { emoji: '🎬', title: 'Show Setup', fieldLabel: 'Show Title', guestLabel: 'Co-Host', buttonText: 'Start Show' }
+          podcast: { icon: <Mic size={20} className="text-purple-400" />, title: 'Podcast Setup', fieldLabel: 'Episode Title', guestLabel: 'Guest', buttonText: 'Start Podcast' },
+          news: { icon: <Radio size={20} className="text-red-400" />, title: 'News Setup', fieldLabel: 'Broadcast Title', guestLabel: 'Co-Anchor', buttonText: 'Start News' },
+          show: { icon: <Clapperboard size={20} className="text-blue-400" />, title: 'Show Setup', fieldLabel: 'Show Title', guestLabel: 'Co-Host', buttonText: 'Start Show' }
         };
         const config = modeConfig[selectedMode] || modeConfig.podcast;
         
@@ -1252,7 +2575,10 @@ export default function LiveShareManager({
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 overflow-y-auto">
             <div className="bg-gray-900 rounded-lg max-w-md w-full p-4 sm:p-6 my-4 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-bold text-white">{config.emoji} {config.title}</h2>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  {config.icon}
+                  {config.title}
+                </h2>
                 <button
                   onClick={() => setShowPodcastSetup(false)}
                   className="text-gray-400 hover:text-white"
@@ -1516,19 +2842,19 @@ export default function LiveShareManager({
                       <div className="grid grid-cols-3 gap-2">
                         <button
                           onClick={() => applyPreset('professional')}
-                          className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-xs text-white transition-colors"
+                          className="px-3 py-2 sm:px-4 sm:py-2.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs sm:text-sm text-white transition-colors"
                         >
                           Professional
                         </button>
                         <button
                           onClick={() => applyPreset('vibrant')}
-                          className="px-3 py-2 bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-600/50 rounded text-xs text-yellow-300 transition-colors"
+                          className="px-3 py-2 sm:px-4 sm:py-2.5 bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-600/50 rounded-lg text-xs sm:text-sm text-yellow-300 transition-colors"
                         >
                           Vibrant
                         </button>
                         <button
                           onClick={() => applyPreset('minimal')}
-                          className="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded text-xs text-gray-400 transition-colors"
+                          className="px-3 py-2 sm:px-4 sm:py-2.5 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded-lg text-xs sm:text-sm text-gray-400 transition-colors"
                         >
                           Minimal
                         </button>
@@ -1539,7 +2865,7 @@ export default function LiveShareManager({
                     <div className="hidden md:block">
                       <button
                         onClick={() => setShowPreview(!showPreview)}
-                        className="w-full px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-600/50 rounded text-sm text-purple-300 transition-colors"
+                        className="w-full px-3 py-2 sm:px-4 sm:py-2.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-600/50 rounded-lg text-sm text-purple-300 transition-colors"
                       >
                         {showPreview ? 'Hide Preview' : 'Show Preview'}
                       </button>
@@ -1611,6 +2937,19 @@ export default function LiveShareManager({
           onClose={() => setShowLayoutSelector(false)}
         />
       )}
+
+      {/* Unified LiveShare Wizard */}
+      {showLiveShareWizard && (
+        <LiveShareWizard
+          onComplete={handleWizardComplete}
+          onClose={() => setShowLiveShareWizard(false)}
+          isGuest={!isHost && hasLiveSharePermission}
+          watchType={watchType}
+          watchSessionMembers={watchSessionMembers}
+          currentUser={currentUser}
+        />
+      )}
     </div>
+    </>
   );
 }

@@ -20,6 +20,40 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
+// GetLiveKitURL returns the appropriate LiveKit URL based on the request environment
+// For localhost requests, returns localhost URL; for production, returns env variable URL
+func GetLiveKitURL(r *http.Request) string {
+	// Check request origin and host headers
+	origin := r.Header.Get("Origin")
+	host := r.Host
+	referer := r.Header.Get("Referer")
+	
+	// Determine if request is from localhost environment
+	isLocalhost := strings.Contains(origin, "localhost") || 
+		strings.Contains(host, "localhost") || 
+		strings.Contains(referer, "localhost") ||
+		strings.Contains(origin, "127.0.0.1") || 
+		strings.Contains(host, "127.0.0.1") || 
+		strings.Contains(referer, "127.0.0.1")
+	
+	if isLocalhost {
+		// Return localhost LiveKit URL for local development
+		log.Printf("🏠 [LiveKit] Localhost environment detected, using http://localhost:7880")
+		return "http://localhost:7880"
+	}
+	
+	// Return production LiveKit URL from environment variable
+	livekitURL := os.Getenv("LIVEKIT_URL")
+	if livekitURL == "" {
+		// Fallback to localhost if no env variable set (safety)
+		log.Printf("⚠️ [LiveKit] No LIVEKIT_URL env variable, defaulting to localhost")
+		return "http://localhost:7880"
+	}
+	
+	log.Printf("🌐 [LiveKit] Production environment detected, using %s", livekitURL)
+	return livekitURL
+}
+
 // GenerateLiveKitToken generates a LiveKit access token for a user in a room
 func GenerateLiveKitToken(roomName string, identity string, isHost bool) (string, error) {
 	apiKey := os.Getenv("LIVEKIT_API_KEY")

@@ -15,27 +15,27 @@ export default function UserProfileModal({
   isRequester = false, // ✅ NEW: Did current user send the request?
 }) {
   // 🐛 DEBUG: Log props on render
-  console.log('👤 [UserProfileModal] Rendering with props:', {
-    username: user?.username,
-    userId: user?.id,
-    isOpen,
-    isOwnProfile,
-    isInWatchSession,
-    friendshipStatus,
-    isRequester,
-    hasOnAddFriend: !!onAddFriend,
-    hasOnMessage: !!onMessage
-  });
+  // console.log('👤 [UserProfileModal] Rendering with props:', {
+  //   username: user?.username,
+  //   userId: user?.id,
+  //   isOpen,
+  //   isOwnProfile,
+  //   isInWatchSession,
+  //   friendshipStatus,
+  //   isRequester,
+  //   hasOnAddFriend: !!onAddFriend,
+  //   hasOnMessage: !!onMessage
+  // });
   
   // 🐛 DEBUG: Log button visibility logic
   const shouldShowAddFriendButton = isInWatchSession && friendshipStatus !== 'accepted';
-  console.log('🔍 [UserProfileModal] Button visibility logic:', {
-    isInWatchSession,
-    friendshipStatus,
-    friendshipStatusIsNotAccepted: friendshipStatus !== 'accepted',
-    shouldShowAddFriendButton,
-    willRenderAddFriendButton: shouldShowAddFriendButton && !!onAddFriend
-  });
+  // console.log('🔍 [UserProfileModal] Button visibility logic:', {
+  //   isInWatchSession,
+  //   friendshipStatus,
+  //   friendshipStatusIsNotAccepted: friendshipStatus !== 'accepted',
+  //   shouldShowAddFriendButton,
+  //   willRenderAddFriendButton: shouldShowAddFriendButton && !!onAddFriend
+  // });
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedUsername, setEditedUsername] = useState(user?.username || '');

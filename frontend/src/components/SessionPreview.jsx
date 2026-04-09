@@ -1,9 +1,11 @@
-// SessionPreview.jsx - Displays session preview with emoji → spinner → poster → GIF fallback
-import React, { useState, useEffect } from 'react';
+// SessionPreview.jsx - Displays session preview with emoji → spinner → poster → MP4 video fallback
+import React, { useState, useEffect, useRef } from 'react';
 
 const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating }) => {
-  const [loadState, setLoadState] = useState('emoji'); // 'emoji' | 'loading' | 'poster' | 'gif'
+  const [loadState, setLoadState] = useState('emoji'); // 'emoji' | 'loading' | 'poster' | 'video'
   const [imageError, setImageError] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState(null); // width / height
+  const videoRef = useRef(null);
 
   useEffect(() => {
     if (isGenerating) {
@@ -12,13 +14,51 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating }) => {
     }
 
     if (previewUrl && !imageError) {
-      setLoadState('gif');
+      setLoadState('video');
     } else if (posterUrl && !imageError) {
       setLoadState('poster');
     } else {
       setLoadState('emoji');
     }
   }, [previewUrl, posterUrl, isGenerating, imageError]);
+
+  // Detect video aspect ratio for TikTok-style rendering
+  useEffect(() => {
+    if (loadState === 'video' && videoRef.current) {
+      const video = videoRef.current;
+      
+      const handleLoadedMetadata = () => {
+        const ratio = video.videoWidth / video.videoHeight;
+        setAspectRatio(ratio);
+        console.log(`📐 Video aspect ratio: ${ratio.toFixed(2)} (${video.videoWidth}x${video.videoHeight})`);
+      };
+
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      
+      // If metadata already loaded
+      if (video.videoWidth && video.videoHeight) {
+        handleLoadedMetadata();
+      }
+
+      return () => {
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      };
+    }
+  }, [loadState, previewUrl]);
+
+  // Determine fit style based on aspect ratio (TikTok-style)
+  const getVideoFitStyle = () => {
+    if (aspectRatio === null) return 'object-cover'; // Default while loading
+    
+    // Portrait videos (like TikTok): fill screen
+    // Includes 9:16 (0.56), 3:4 (0.75), and other vertical orientations
+    if (aspectRatio < 0.8) {
+      return 'object-cover';
+    }
+    
+    // Landscape/square videos: pillarbox (contain)
+    return 'object-contain';
+  };
 
   // Get source emoji based on session metadata
   const getSourceEmoji = () => {
@@ -82,24 +122,28 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating }) => {
               setLoadState('emoji');
             }}
           />
-          {/* Optional: Loading overlay for GIF */}
+          {/* Optional: Loading overlay for video generation */}
           {isGenerating && (
             <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-              <div className="text-white text-sm">Generating GIF...</div>
+              <div className="text-white text-sm">Generating video...</div>
             </div>
           )}
         </div>
       )}
 
-      {/* GIF State */}
-      {loadState === 'gif' && previewUrl && (
-        <img
+      {/* Video State */}
+      {loadState === 'video' && previewUrl && (
+        <video
+          ref={videoRef}
           src={previewUrl}
-          alt="Session preview"
-          className="w-full h-full object-cover"
+          autoPlay
+          loop
+          muted
+          playsInline
+          className={`w-full h-full ${getVideoFitStyle()}`}
           onError={() => {
             setImageError(true);
-            // Fallback to poster if GIF fails
+            // Fallback to poster if video fails
             if (posterUrl) {
               setLoadState('poster');
             } else {

@@ -32,6 +32,7 @@ const AccessModal = ({ isOpen, onClose, onSelectAccess, title = "Choose Room Acc
   ];
 
   const handleSelectAccess = (isPublic) => {
+    console.log('🔐 [AccessModal] Calling onSelectAccess with:', { isPublic, isSessionPrivate, contentRating });
     // Pass access type, session privacy, and content rating to parent
     onSelectAccess(isPublic, isSessionPrivate, contentRating);
   };

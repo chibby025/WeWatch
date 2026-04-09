@@ -439,6 +439,7 @@ export default function CinemaScene3DDemo() {
   const [newSessionMessage, setNewSessionMessage] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
+  const [isLiveShareWizardOpen, setIsLiveShareWizardOpen] = useState(false); // ✅ Track wizard modal state for taskbar
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   const [isTheaterOverviewOpen, setIsTheaterOverviewOpen] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
@@ -2939,10 +2940,20 @@ export default function CinemaScene3DDemo() {
 
   // 🎙️ Podcast Canvas Compositor - Draws video + overlays for 3D screen
   useEffect(() => {
-    const isPodcastMode = podcastConfig?.mode === 'podcast';
+    const isPodcastMode = ['podcast', 'news', 'show'].includes(podcastConfig?.mode);
     const cameraVideo = liveShareCameraVideoRef.current;
     
-    console.log('🎨 [PODCAST] Canvas effect triggered:', { isPodcastMode, hasCameraVideo: !!cameraVideo, cameraVideoReady });
+    console.log('🎨 [PODCAST] Canvas effect triggered:', { 
+      mode: podcastConfig?.mode, 
+      isPodcastMode, 
+      hasCameraVideo: !!cameraVideo, 
+      cameraVideoReady,
+      podcastConfigFull: podcastConfig,
+      title: podcastConfig?.title,
+      logoUrl: podcastConfig?.logoUrl,
+      titleStyle: podcastConfig?.titleStyle,
+      logoStyle: podcastConfig?.logoStyle
+    });
     
     if (!isPodcastMode || !cameraVideo || !cameraVideoReady) {
       // Clear canvas when not in podcast mode
@@ -2962,12 +2973,13 @@ export default function CinemaScene3DDemo() {
     // Create canvas if it doesn't exist
     if (!podcastCanvasRef.current) {
       const canvas = document.createElement('canvas');
+      // Start with default size - will resize to match video
       canvas.width = 1920;
       canvas.height = 1080;
       canvas.style.cssText = 'position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;';
       document.body.appendChild(canvas);
       podcastCanvasRef.current = canvas;
-      console.log('✅ [PODCAST] Canvas created');
+      console.log('✅ [PODCAST] Canvas created (will adapt to video size)');
     }
     
     // Preload logo image
@@ -2992,158 +3004,110 @@ export default function CinemaScene3DDemo() {
     
     const drawFrame = () => {
       if (cameraVideo.readyState >= cameraVideo.HAVE_CURRENT_DATA) {
-        // Match canvas size to video
-        if (canvas.width !== cameraVideo.videoWidth || canvas.height !== cameraVideo.videoHeight) {
-          canvas.width = cameraVideo.videoWidth || 1920;
-          canvas.height = cameraVideo.videoHeight || 1080;
-          console.log('📐 [PODCAST] Canvas resized:', canvas.width, 'x', canvas.height);
+        // ✅ RESPONSIVE CANVAS: Match VIEWPORT dimensions for full-screen mobile experience
+        // Get actual video dimensions
+        const videoWidth = cameraVideo.videoWidth || 1920;
+        const videoHeight = cameraVideo.videoHeight || 1080;
+        const videoAspect = videoWidth / videoHeight;
+        
+        // Get viewport dimensions (for mobile portrait/landscape detection)
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const viewportAspect = viewportWidth / viewportHeight;
+        
+        // Canvas should match viewport aspect ratio (TikTok-style full screen)
+        let canvasWidth, canvasHeight;
+        
+        if (viewportAspect > videoAspect) {
+          // Viewport is wider than video (e.g., landscape viewport, portrait video)
+          // Fill width, crop height
+          canvasWidth = Math.max(viewportWidth, 1920);
+          canvasHeight = Math.round(canvasWidth / viewportAspect);
+        } else {
+          // Viewport is taller than video (e.g., portrait viewport, landscape video)
+          // Fill height, crop width
+          canvasHeight = Math.max(viewportHeight, 1080);
+          canvasWidth = Math.round(canvasHeight * viewportAspect);
+        }
+        
+        // Update canvas size if changed
+        if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+          canvas.width = canvasWidth;
+          canvas.height = canvasHeight;
+          console.log('📐 [PODCAST] Canvas adapted to viewport:', {
+            canvasSize: `${canvas.width}x${canvas.height}`,
+            videoSize: `${videoWidth}x${videoHeight}`,
+            viewportSize: `${viewportWidth}x${viewportHeight}`,
+            mode: viewportAspect > 1 ? 'landscape' : 'portrait'
+          });
         }
         
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        // Draw video frame
-        ctx.drawImage(cameraVideo, 0, 0, canvas.width, canvas.height);
+        // Draw video frame - fill canvas (crop if needed for full-screen effect)
+        // Calculate scale to fill canvas completely
+        const scale = Math.max(canvas.width / videoWidth, canvas.height / videoHeight);
+        const scaledWidth = videoWidth * scale;
+        const scaledHeight = videoHeight * scale;
         
-        // Draw overlays on top
-        const scale = canvas.width / 1920; // Scale overlays to video resolution
+        // Center the video
+        const x = (canvas.width - scaledWidth) / 2;
+        const y = (canvas.height - scaledHeight) / 2;
         
-        // LIVE indicator (top center)
+        ctx.drawImage(cameraVideo, x, y, scaledWidth, scaledHeight);
+        
+        // ✅ RESPONSIVE OVERLAYS: Use percentage-based sizing (works for any aspect ratio)
+        const baseSize = Math.min(canvas.width, canvas.height); // Use smaller dimension as base
+        const isPortrait = canvas.height > canvas.width;
+        
+        // LIVE indicator (top center) - 6% width, 3.5% height
         ctx.fillStyle = 'rgba(220, 38, 38, 0.9)';
         ctx.beginPath();
-        const liveWidth = 120 * scale;
-        const liveHeight = 40 * scale;
+        const liveWidth = baseSize * 0.06;
+        const liveHeight = baseSize * 0.035;
         const liveX = canvas.width / 2 - liveWidth / 2;
-        const liveY = 20 * scale;
-        ctx.roundRect(liveX, liveY, liveWidth, liveHeight, 20 * scale);
+        const liveY = baseSize * 0.01; // 1% from top
+        const liveRadius = liveHeight * 0.5;
+        ctx.roundRect(liveX, liveY, liveWidth, liveHeight, liveRadius);
         ctx.fill();
         
-        // LIVE text
+        // LIVE text - font scales with base size
         ctx.fillStyle = 'white';
-        ctx.font = `bold ${16 * scale}px sans-serif`;
+        ctx.font = `bold ${baseSize * 0.014}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('🔴 LIVE', canvas.width / 2, liveY + liveHeight / 2);
         
-        // Host label (top left)
+        // Host label (top left) - scales with base size
         const hostText = `${podcastConfig.hostUsername || 'Host'} (Host)`;
-        ctx.font = `${16 * scale}px sans-serif`;
+        ctx.font = `${baseSize * 0.014}px sans-serif`;
         ctx.textAlign = 'left';
         const hostTextWidth = ctx.measureText(hostText).width;
-        const hostBoxWidth = hostTextWidth + 40 * scale;
-        const hostBoxHeight = 40 * scale;
-        const hostX = 20 * scale;
-        const hostY = 20 * scale;
+        const hostPadding = baseSize * 0.02;
+        const hostBoxWidth = hostTextWidth + hostPadding * 2;
+        const hostBoxHeight = baseSize * 0.035;
+        const hostX = baseSize * 0.01; // 1% from left
+        const hostY = baseSize * 0.01; // 1% from top
+        const hostRadius = hostBoxHeight * 0.25;
         
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
         ctx.beginPath();
-        ctx.roundRect(hostX, hostY, hostBoxWidth, hostBoxHeight, 10 * scale);
+        ctx.roundRect(hostX, hostY, hostBoxWidth, hostBoxHeight, hostRadius);
         ctx.fill();
         
         ctx.fillStyle = 'white';
         ctx.textBaseline = 'middle';
-        ctx.fillText(hostText, hostX + 20 * scale, hostY + hostBoxHeight / 2);
+        ctx.fillText(hostText, hostX + hostPadding, hostY + hostBoxHeight / 2);
         
-        // Logo (bottom left above title) - load position and size from localStorage
-        if (podcastLogoImageRef.current) {
-          // Load custom logo styles from localStorage
-          let logoSize = 100; // Default size
-          let logoX = 10; // Default X position
-          let logoY = 80; // Default Y position (from bottom)
-          
-          try {
-            const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${podcastConfig.sessionId || sessionId}`);
-            if (savedLogoStyles) {
-              const styles = JSON.parse(savedLogoStyles);
-              logoSize = styles.size || 100;
-              logoX = styles.x || 10;
-              logoY = styles.y || 80;
-            }
-          } catch (err) {
-            console.warn('Failed to load logo styles:', err);
-          }
-          
-          const scaledLogoSize = logoSize * scale;
-          const scaledLogoX = logoX * scale;
-          const scaledLogoY = canvas.height - (logoY * scale) - scaledLogoSize; // Convert from bottom to top
-          
-          // Draw logo image
-          ctx.drawImage(podcastLogoImageRef.current, scaledLogoX, scaledLogoY, scaledLogoSize, scaledLogoSize);
-        }
-        
-        // Title (bottom left with custom styling)
-        if (podcastConfig.title) {
-          // Load custom styles from localStorage
-          let titleColor = 'white';
-          let titleSize = 24;
-          let titleWeight = 700;
-          let titleCase = 'none';
-          
-          try {
-            const savedStyles = localStorage.getItem(`podcast_title_style_${podcastConfig.sessionId || sessionId}`);
-            if (savedStyles) {
-              const styles = JSON.parse(savedStyles);
-              titleColor = styles.color || 'white';
-              titleSize = styles.size || 24;
-              titleWeight = styles.weight || 700;
-              titleCase = styles.case || 'none';
-            }
-          } catch (err) {
-            console.warn('Failed to load title styles:', err);
-          }
-          
-          // Apply text case transformation
-          const applyTextCase = (text, caseType) => {
-            if (!text) return text;
-            
-            switch (caseType) {
-              case 'title':
-                return text.toLowerCase().replace(/\b\w/g, char => char.toUpperCase());
-              case 'upper':
-                return text.toUpperCase();
-              case 'lower':
-                return text.toLowerCase();
-              case 'sentence':
-                return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
-              case 'none':
-              default:
-                return text;
-            }
-          };
-          
-          // Map weight to CSS font-weight keyword
-          const fontWeightMap = {
-            300: 'lighter',
-            400: 'normal',
-            500: '500',
-            700: 'bold',
-            800: 'bolder'
-          };
-          const fontWeightKeyword = fontWeightMap[titleWeight] || 'bold';
-          
-          ctx.font = `${fontWeightKeyword} ${titleSize * scale}px sans-serif`;
-          ctx.textAlign = 'left';
-          const titleText = applyTextCase(podcastConfig.title, titleCase);
-          const titleTextWidth = ctx.measureText(titleText).width;
-          const titleBoxWidth = titleTextWidth + 40 * scale;
-          const titleBoxHeight = (titleSize + 20) * scale;
-          const titleX = 10 * scale; // 10px from left
-          const titleY = canvas.height - titleBoxHeight - 10 * scale; // 10px from bottom
-          
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-          ctx.beginPath();
-          ctx.roundRect(titleX, titleY, titleBoxWidth, titleBoxHeight, 10 * scale);
-          ctx.fill();
-          
-          ctx.fillStyle = titleColor;
-          ctx.textBaseline = 'middle';
-          ctx.fillText(titleText, titleX + 20 * scale, titleY + titleBoxHeight / 2);
-        }
+        // ✨ LOGO AND TITLE REMOVED - Now rendered via GraphicsRenderer for per-viewer adaptation
+        // Logo and title are sent as graphics_update messages and rendered by each viewer's GraphicsRenderer
+        // This allows overlays to adapt to each viewer's device orientation (portrait/landscape)
         
         // Log every 60 frames (once per second at 60fps)
         frameCount++;
         if (frameCount % 60 === 0) {
-          console.log('🎞️ [PODCAST] Drawing frame', frameCount, 'Logo loaded:', !!podcastLogoImageRef.current);
+          console.log('🎞️ [PODCAST] Drawing frame', frameCount, 'Video size:', videoWidth, 'x', videoHeight, 'Canvas size:', canvas.width, 'x', canvas.height);
         }
       }
       
@@ -5611,6 +5575,7 @@ export default function CinemaScene3DDemo() {
         isLeftSidebarOpen={isLeftSidebarOpen}
         onToggleLeftSidebar={() => setIsLeftSidebarOpen(prev => !prev)}
         toggleAudio={toggleAudio}
+        hasOpenModal={isLiveShareWizardOpen} // ✅ Prevent taskbar from showing during wizard
         isMediaPlaying={isPlaying || isImmersiveMode}
         showSeatMarkers={showSeatMarkers}
         onToggleSeatMarkers={setShowSeatMarkers}
@@ -5879,6 +5844,7 @@ export default function CinemaScene3DDemo() {
             onGrantLiveSharePermission={handleGrantLiveSharePermission}
             onRevokeLiveSharePermission={handleRevokeLiveSharePermission}
             onKickLiveShareGuest={handleKickLiveShareGuest}
+            onWizardStateChange={setIsLiveShareWizardOpen} // ✅ Track wizard state
           />
         </div>
       )}

@@ -8,7 +8,8 @@ keys:
 rtc:
   port_range_start: 50000
   port_range_end: 50100
-  use_external_ip: true
+  use_external_ip: false  # ✅ False - we set node_ip explicitly instead
+  node_ip: "127.0.0.1"  # ✅ CRITICAL for Docker: advertise host's localhost (requires --network host)
   
   # STUN servers for NAT traversal
   stun_servers:

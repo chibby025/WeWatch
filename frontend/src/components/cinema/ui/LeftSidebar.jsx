@@ -1,9 +1,20 @@
 
 // src/components/cinema/ui/LeftSidebar.jsx
-import { useState, useRef, useEffect } from 'react';
-import { uploadMediaToRoom, apiClient } from '../../../services/api';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { uploadMediaToRoom, uploadChunk, apiClient } from '../../../services/api';
 import { Gamepad2 } from 'lucide-react'; // Game icon
 import toast from 'react-hot-toast';
+import { 
+  splitFileIntoChunks, 
+  generateUploadId, 
+  uploadChunkWithRetry,
+  uploadChunksParallel,
+  getOptimalChunkSize,
+  getUploadConcurrency,
+  saveChunkUploadState,
+  clearChunkUploadState 
+} from '../../../utils/uploadChunker';
+import { useUploadServiceWorker } from '../../../hooks/useUploadServiceWorker';
 import LiveShareManager from './LiveShareManager';
 
 export default function LeftSidebar({
@@ -36,13 +47,15 @@ export default function LeftSidebar({
   activeQuiz, // Currently active quiz (for students)
   quizHistory, // Quiz history with active_quizzes array (for late joiners)
   onTakeQuiz, // Handler for student to take quiz
+  onSessionCleanup, // ✅ Callback to expose cleanup function to parent
   watchType, // 'video', '3d_cinema', or 'classroom'
   classType, // 'classroom' or 'lecture_hall'
   darknessLevel, // ✅ NEW: 'regular' | 'extreme'
   onDarknessLevelChange, // ✅ NEW: Handler for darkness level changes
   // ✅ LiveShare props
   watchSessionMembers = [], // Array of members in watch session
-  liveShareMode = 'regular', // Current LiveShare mode
+  liveShareMode = 'regular', // Current LiveShare share type (camera/screen/both)
+  liveShareContentMode = null, // Content mode ('regular', 'podcast', 'news', 'show')
   liveShareGuest = null, // Active guest object or null
   hasLiveSharePermission = false, // Boolean for members (is LiveShare tab visible?)
   onLiveShareModeSelect, // Handler for mode selection
@@ -50,6 +63,9 @@ export default function LeftSidebar({
   onGrantLiveSharePermission, // Handler for granting permission
   onRevokeLiveSharePermission, // Handler for revoking permission
   onKickLiveShareGuest, // Handler for kicking guest
+  cameraShareTrackRef, // ✅ NEW: Ref to LiveKit camera track for mute/unmute during breaks
+  graphicsRendererRef, // ✅ NEW: Ref to GraphicsRenderer for break screen overlay
+  onWizardStateChange, // ✅ NEW: Callback to notify parent when wizard opens/closes
 }) {
   // ✅ Host verification state
   const [isHost, setIsHost] = useState(isHostProp);
@@ -134,12 +150,159 @@ export default function LeftSidebar({
   const [totalBytes, setTotalBytes] = useState(0);
   const uploadAbortControllerRef = useRef(null);
   const uploadStartTimeRef = useRef(null);
+  const lastProgressUpdateRef = useRef(0); // Throttle progress updates
+  const progressPersistenceTimerRef = useRef(null); // Save progress every 5s
+  
+  // Network quality state
+  const [networkQuality, setNetworkQuality] = useState('unknown'); // '2g', '3g', '4g', 'wifi', 'unknown'
+  
+  // ✅ Service Worker for background uploads
+  const uploadSW = useUploadServiceWorker();
+  
+  // Listen for SW status updates (not used in simplified approach but kept for future)
+  useEffect(() => {
+    if (!uploadSW.isRegistered) return;
+    
+    const unregister = uploadSW.onMessage('UPLOAD_STATUS', (data) => {
+      console.log('[SW Status]:', data);
+    });
+    
+    return unregister;
+  }, [uploadSW.isRegistered]);
+  
   const [showWatchFromInstructions, setShowWatchFromInstructions] = useState(false);
   const [showLiveShareMenu, setShowLiveShareMenu] = useState(false);
   const [showUploadDisclaimer, setShowUploadDisclaimer] = useState(false);
+  const [showResumeUpload, setShowResumeUpload] = useState(false);
+  const [pendingResumeData, setPendingResumeData] = useState(null);
   const [hasAcceptedTerms, setHasAcceptedTerms] = useState(() => {
     return localStorage.getItem('wewatch_upload_terms_accepted') === 'true';
   });
+  
+  // Check for incomplete uploads on mount
+  useEffect(() => {
+    const uploadId = localStorage.getItem('current_upload_id');
+    if (!uploadId) return;
+    
+    const stateStr = localStorage.getItem(`upload_chunks_${uploadId}`);
+    if (!stateStr) {
+      localStorage.removeItem('current_upload_id');
+      return;
+    }
+    
+    const state = JSON.parse(stateStr);
+    const uploadedChunks = state.uploadedChunks || [];
+    const remainingChunks = [];
+    
+    for (let i = 0; i < state.totalChunks; i++) {
+      if (!uploadedChunks.includes(i)) {
+        remainingChunks.push(i);
+      }
+    }
+    
+    if (remainingChunks.length > 0) {
+      console.log('📋 [Resume] Found incomplete upload:', {
+        uploadId,
+        fileName: state.fileName,
+        progress: Math.round((uploadedChunks.length / state.totalChunks) * 100),
+        remainingChunks: remainingChunks.length
+      });
+      
+      setPendingResumeData(state);
+      setShowResumeUpload(true);
+    } else {
+      // Upload was complete, clean up
+      clearChunkUploadState(uploadId);
+      localStorage.removeItem('current_upload_id');
+    }
+  }, []);
+  
+  // Detect network quality on mount
+  useEffect(() => {
+    const detectNetworkQuality = () => {
+      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      
+      if (!connection) {
+        setNetworkQuality('unknown');
+        return;
+      }
+      
+      const effectiveType = connection.effectiveType; // '2g', '3g', '4g', 'slow-2g'
+      console.log('🌐 [Network Detection] Effective type:', effectiveType);
+      
+      if (effectiveType === 'slow-2g' || effectiveType === '2g') {
+        setNetworkQuality('2g');
+        console.log('📶 [Network] 2G detected - Using 2 concurrent chunks');
+      } else if (effectiveType === '3g') {
+        setNetworkQuality('3g');
+        console.log('📶 [Network] 3G detected - Using 3 concurrent chunks');
+      } else if (effectiveType === '4g') {
+        setNetworkQuality('4g');
+        console.log('📶 [Network] 4G detected - Using 5 concurrent chunks');
+      } else {
+        setNetworkQuality('wifi');
+        console.log('📶 [Network] WiFi/Fast connection - Using 5 concurrent chunks');
+      }
+    };
+    
+    detectNetworkQuality();
+    
+    // Listen for connection changes
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (connection) {
+      connection.addEventListener('change', detectNetworkQuality);
+      return () => connection.removeEventListener('change', detectNetworkQuality);
+    }
+  }, []);
+  
+  // ✅ Handle beforeunload - Notify SW that upload was paused
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      // Only notify SW if actively uploading
+      if (!uploading || !uploadSW.isRegistered) return;
+      
+      const uploadId = localStorage.getItem('current_upload_id');
+      const stateStr = localStorage.getItem(`upload_chunks_${uploadId}`);
+      
+      if (!uploadId || !stateStr) return;
+      
+      const state = JSON.parse(stateStr);
+      
+      // Calculate remaining chunks
+      const uploadedChunks = state.uploadedChunks || [];
+      const remainingChunks = [];
+      
+      for (let i = 0; i < state.totalChunks; i++) {
+        if (!uploadedChunks.includes(i)) {
+          remainingChunks.push(i);
+        }
+      }
+      
+      if (remainingChunks.length === 0) return; // Already complete
+      
+      console.log(`⚠️ [Tab Close] Notifying SW - ${remainingChunks.length}/${state.totalChunks} chunks remaining`);
+      
+      // Notify Service Worker (will show notification)
+      uploadSW.notifyUploadPaused({
+        uploadId,
+        fileName: state.fileName,
+        fileSize: state.fileSize,
+        totalChunks: state.totalChunks,
+        uploadedChunks,
+        remainingChunks,
+        roomId: roomId || state.roomId,
+        sessionId: sessionId || state.sessionId
+      });
+      
+      // Browser will show confirmation dialog
+      e.preventDefault();
+      e.returnValue = 'Upload in progress. If you leave, you can resume when you return.';
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [uploading, uploadSW, roomId, sessionId]);
+
 
   // Helper function to check if media has saved resume state
   const getSavedResumeState = (mediaItem) => {
@@ -220,17 +383,21 @@ export default function LeftSidebar({
     }
   };
 
-  const handleFileUpload = async (files) => {
-    if (!files?.length || !roomId) return;
-    
-    const file = files[0];
-    
-    // Check if user has accepted terms
-    if (!hasAcceptedTerms) {
-      setShowUploadDisclaimer(true);
-      return;
-    }
+  // ✅ CLEANUP FUNCTION: No-op (compression removed, cleanup handled elsewhere)
+  const cleanupSessionState = useCallback(() => {
+    console.log('🧹 [LeftSidebar] Session cleanup called (no-op)');
+    // Actual cleanup (temp media, posters) handled in websocket.go on session end
+  }, []);
 
+  // ✅ EXPOSE CLEANUP to parent via callback
+  useEffect(() => {
+    if (onSessionCleanup) {
+      onSessionCleanup(cleanupSessionState);
+    }
+  }, [onSessionCleanup, cleanupSessionState]);
+
+  // ✅ CHUNKED UPLOAD FUNCTION WITH PARALLEL UPLOADS
+  const uploadFileChunked = async (file) => {
     setUploading(true);
     setUploadProgress(0);
     setUploadSpeed(0);
@@ -238,54 +405,141 @@ export default function LeftSidebar({
     setUploadedBytes(0);
     setTotalBytes(file.size);
     uploadStartTimeRef.current = Date.now();
+    lastProgressUpdateRef.current = Date.now();
     
-    // Create abort controller for cancel functionality
     const abortController = new AbortController();
     uploadAbortControllerRef.current = abortController;
+    
+    const uploadId = generateUploadId();
+    const chunkSize = getOptimalChunkSize(networkQuality);
+    const chunks = splitFileIntoChunks(file, chunkSize);
+    
+    console.log(`📦 [Chunked Upload] Starting:`, {
+      uploadId,
+      fileName: file.name,
+      fileSize: formatFileSize(file.size),
+      totalChunks: chunks.length,
+      chunkSize: formatFileSize(chunkSize)
+    });
+    
+    saveChunkUploadState(uploadId, {
+      uploadId,
+      fileName: file.name,
+      fileSize: file.size,
+      totalChunks: chunks.length,
+      uploadedChunks: [],
+      sessionId,
+      roomId
+    });
+    
+    // Store upload ID for background transfer
+    localStorage.setItem('current_upload_id', uploadId);
 
     try {
-      await uploadMediaToRoom(
+      const startTime = Date.now();
+      const concurrency = getUploadConcurrency(networkQuality);
+      
+      console.log(`🚀 [Parallel Upload] Using ${concurrency} concurrent uploads for ${networkQuality}`);
+      
+      // Upload chunks in parallel batches
+      await uploadChunksParallel({
+        chunks,
+        uploadId,
+        fileName: file.name,
+        fileSize: file.size,
         roomId,
-        file,
-        (progressData) => {
-          if (typeof progressData === 'object') {
-            // New format with enhanced data
-            setUploadProgress(progressData.percent);
-            setUploadedBytes(progressData.loaded);
-            setTotalBytes(progressData.total);
-            setUploadSpeed(progressData.speed);
-            
-            // Format ETA
-            if (progressData.eta < 60) {
-              setUploadETA(`${Math.round(progressData.eta)}s`);
-            } else if (progressData.eta < 3600) {
-              setUploadETA(`${Math.round(progressData.eta / 60)}m`);
-            } else {
-              setUploadETA(`${Math.round(progressData.eta / 3600)}h`);
-            }
-          } else {
-            // Legacy format (just percent)
-            setUploadProgress(progressData);
-          }
-        },
-        true,
         sessionId,
-        abortController.signal
-      );
+        uploadFn: uploadChunk,
+        concurrency,
+        maxRetries: 3,
+        onProgress: ({ chunkIndex, totalChunks, completedChunks, percent }) => {
+          const now = Date.now();
+          if (now - lastProgressUpdateRef.current < 500 && percent < 100) return;
+          lastProgressUpdateRef.current = now;
+          
+          const uploadedBytes = completedChunks * chunkSize;
+          const elapsedSeconds = (now - startTime) / 1000;
+          const speed = uploadedBytes / 1024 / 1024 / (elapsedSeconds || 1);
+          const remainingBytes = file.size - uploadedBytes;
+          const etaSeconds = remainingBytes / (speed * 1024 * 1024);
+          
+          setUploadProgress(percent);
+          setUploadedBytes(uploadedBytes);
+          setUploadSpeed(speed);
+          
+          if (etaSeconds < 60) setUploadETA(`${Math.round(etaSeconds)}s`);
+          else if (etaSeconds < 3600) setUploadETA(`${Math.round(etaSeconds / 60)}m`);
+          else setUploadETA(`${Math.round(etaSeconds / 3600)}h`);
+          
+          saveChunkUploadState(uploadId, {
+            uploadId,
+            fileName: file.name,
+            fileSize: file.size,
+            totalChunks: chunks.length,
+            uploadedChunks: Array.from({ length: completedChunks }, (_, i) => i),
+            sessionId,
+            roomId,
+            progress: percent
+          });
+        }
+      });
+      
+      console.log('✅ [Chunked Upload] Complete');
+      setUploadProgress(100);
+      clearChunkUploadState(uploadId);
+      localStorage.removeItem('current_upload_id');
+      
+      // Notify Service Worker of completion
+      if (uploadSW.isRegistered) {
+        uploadSW.notifyUploadCompleted({
+          uploadId,
+          fileName: file.name,
+          roomId
+        });
+      }
+
+      // ✅ RETRY POSTER: Poster generates async on backend (takes ~500ms)
+      // If we get placeholder poster, retry fetching after 1.5s to get real poster
+      setTimeout(async () => {
+        try {
+          console.log('🎨 [Poster Retry] Fetching updated media items for poster...');
+          const token = localStorage.getItem('token');
+          const response = await fetch(`/api/rooms/${roomId}/temporary-media`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log('🎨 [Poster Retry] Received updated media items:', data);
+            
+            // Trigger parent to refresh playlist with updated posters
+            if (onUploadComplete) {
+              onUploadComplete();
+            }
+          }
+        } catch (err) {
+          console.warn('⚠️ [Poster Retry] Failed to fetch updated poster:', err);
+        }
+      }, 1500); // Wait 1.5s for async poster generation
 
       if (onUploadComplete) {
-        console.log('📤 [LeftSidebar] Upload complete, refreshing playlist...');
         onUploadComplete();
       }
     } catch (err) {
       if (err.name === 'CanceledError' || err.message?.includes('cancel')) {
-        console.log('🚫 [LeftSidebar] Upload cancelled by user');
+        console.log('🚫 [Upload] Cancelled');
+        clearChunkUploadState(uploadId);
+        localStorage.removeItem('current_upload_id');
         alert("Upload cancelled.");
       } else {
-        console.error("Upload failed:", err);
-        alert("Upload failed. Please check your connection and try again.");
+        console.error("❌ [Upload] Failed:", err);
+        clearChunkUploadState(uploadId);
+        localStorage.removeItem('current_upload_id');
+        alert(`Upload failed: ${err.message}`);
       }
     } finally {
+      localStorage.removeItem('wewatch_active_upload');
+      localStorage.removeItem('current_upload_id');
       setUploading(false);
       setUploadProgress(0);
       setUploadSpeed(0);
@@ -295,12 +549,61 @@ export default function LeftSidebar({
       uploadAbortControllerRef.current = null;
     }
   };
-  
+
+  const handleFileUpload = async (files) => {
+    if (!files?.length || !roomId) return;
+    
+    const file = files[0];
+    
+    // ✅ CLIENT-SIDE VALIDATION
+    const allowedTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska', 'video/avi', 'video/x-msvideo'];
+    if (!allowedTypes.includes(file.type)) {
+      alert(`Invalid file type: ${file.type}\\n\\nAllowed types: MP4, WebM, MOV, MKV, AVI`);
+      return;
+    }
+    
+    const maxSize = 1 * 1024 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(`File too large: ${(file.size / 1024 / 1024 / 1024).toFixed(2)} GB\\n\\nMaximum: 1 GB`);
+      return;
+    }
+    
+    if (file.size < 1024) {
+      alert('File too small. Please select a valid video file.');
+      return;
+    }
+    
+    console.log('✅ [Validation] Passed:', {
+      name: file.name,
+      type: file.type,
+      size: formatFileSize(file.size)
+    });
+    
+    if (!hasAcceptedTerms) {
+      setShowUploadDisclaimer(true);
+      return;
+    }
+    
+    // ✅ START UPLOAD DIRECTLY (no compression)
+    await uploadFileChunked(file);
+  };
+
   const handleCancelUpload = () => {
     if (uploadAbortControllerRef.current) {
       uploadAbortControllerRef.current.abort();
       console.log('🚫 [LeftSidebar] Upload cancel requested');
     }
+    
+    // Clear persistence timer
+    if (progressPersistenceTimerRef.current) {
+      clearInterval(progressPersistenceTimerRef.current);
+      progressPersistenceTimerRef.current = null;
+    }
+    
+    // Clear any saved upload state
+    const uploads = Object.keys(localStorage).filter(key => key.startsWith('wewatch_chunk_upload_'));
+    uploads.forEach(key => localStorage.removeItem(key));
+    localStorage.removeItem('wewatch_active_upload');
   };
   
   const formatFileSize = (bytes) => {
@@ -473,7 +776,6 @@ export default function LeftSidebar({
     
     // Anime & Animation (Free tiers, screen-share friendly)
     { id: 'crunchyroll', name: 'Crunchyroll', url: 'https://www.crunchyroll.com' },
-    { id: 'animixplay', name: 'AnimeDao', url: 'https://animedao.to' },
     { id: 'retrocrush', name: 'RetroCrush', url: 'https://www.retrocrush.tv' },
     
     // Sports & Live Events (Free tiers)
@@ -605,7 +907,7 @@ export default function LeftSidebar({
   return (
     <div
       ref={sidebarRef}
-      className="fixed left-0 top-0 h-full w-full sm:w-[350px] md:w-96 z-40 overflow-y-auto hide-scrollbar left-sidebar"
+      className="fixed left-0 top-0 h-full w-full sm:w-[350px] md:w-96 z-40 overflow-y-auto hide-scrollbar left-sidebar pt-16"
       onClick={(e) => e.stopPropagation()}
     >
       {/* ✅ Host Verification Loading Overlay */}
@@ -618,28 +920,6 @@ export default function LeftSidebar({
         </div>
       )}
       
-      {/* 🖼️ Host Settings - Preview Thumbnails Toggle */}
-      {isHost && (
-        <div className="mt-6 mb-3 p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
-          <label className="flex items-start gap-3 cursor-pointer group">
-            <input
-              type="checkbox"
-              checked={hidePreviewThumbnails}
-              onChange={handleTogglePreviewThumbnails}
-              className="mt-0.5 w-4 h-4 sm:w-5 sm:h-5 rounded border-gray-600 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 focus:ring-offset-transparent bg-gray-700 cursor-pointer transition-all"
-            />
-            <div className="flex-1 min-w-0">
-              <span className="text-sm sm:text-base font-medium text-white group-hover:text-blue-400 transition-colors">
-                Hide Preview from lobby
-              </span>
-              <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 leading-relaxed">
-                content moderation - hide preview from public, use if not suitable for public to view.
-              </p>
-            </div>
-          </label>
-        </div>
-      )}
-
       {/* 🌙 Host Settings - Darkness Level Control (3D Cinema Only) */}
       {isHost && watchType === '3d_cinema' && darknessLevel && onDarknessLevelChange && (
         <div className="mb-3 p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
@@ -676,6 +956,28 @@ export default function LeftSidebar({
         </div>
       )}
 
+      {/* 🖼️ Host Settings - Preview Thumbnails Toggle */}
+      {isHost && (
+        <div className="mb-3 p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
+          <label className="flex items-start gap-3 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={hidePreviewThumbnails}
+              onChange={handleTogglePreviewThumbnails}
+              className="mt-0.5 w-4 h-4 sm:w-5 sm:h-5 rounded border-gray-600 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 focus:ring-offset-transparent bg-gray-700 cursor-pointer transition-all"
+            />
+            <div className="flex-1 min-w-0">
+              <span className="text-sm sm:text-base font-medium text-white group-hover:text-blue-400 transition-colors">
+                Hide Preview from lobby
+              </span>
+              <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 leading-relaxed">
+                content moderation - hide preview from public, use if not suitable for public to view.
+              </p>
+            </div>
+          </label>
+        </div>
+      )}
+
       {/* Tab Navigation */}
       <div className="p-2 sm:p-3 bg-[#D9D9D9]/10 rounded-xl">
         <div className="flex gap-1 sm:gap-2">
@@ -683,10 +985,10 @@ export default function LeftSidebar({
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`flex-1 h-[40px] sm:h-[43px] flex items-center justify-center text-xs sm:text-sm md:text-[15px] font-normal text-gray-400 transition-colors px-2 ${
+              className={`flex-1 h-[40px] sm:h-[43px] flex items-center justify-center transition-colors px-2 ${
                 activeTab === tab
-                  ? 'text-black font-black bg-[#D9D9D9]/25 rounded-full'
-                  : 'hover:text-white'
+                  ? 'text-white font-bold text-base sm:text-base md:text-[17px] bg-[#D9D9D9]/25 rounded-full'
+                  : 'text-gray-400 font-normal text-sm sm:text-sm md:text-[15px] hover:text-white'
               }`}
             >
               {tab === 'upload' && <span className="truncate">Upload</span>}
@@ -1079,6 +1381,7 @@ export default function LeftSidebar({
             isHost={isHost}
             watchType={watchType}
             liveShareMode={liveShareMode}
+            liveShareContentMode={liveShareContentMode}
             liveShareGuest={liveShareGuest}
             hasLiveSharePermission={hasLiveSharePermission}
             onLiveShareModeSelect={onLiveShareModeSelect}
@@ -1089,6 +1392,9 @@ export default function LeftSidebar({
             onStartScreenShare={onStartScreenShare}
             onCameraPreview={onCameraPreview}
             sendMessage={sendMessage}
+            cameraShareTrackRef={cameraShareTrackRef}
+            graphicsRendererRef={graphicsRendererRef}
+            onWizardStateChange={onWizardStateChange} // ✅ Pass through to LiveShareManager
           />
         </div>
       )}
@@ -1301,6 +1607,67 @@ export default function LeftSidebar({
             <p className="text-gray-500 text-xs text-center mt-3">
               This acceptance will be remembered for this browser
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* 🔄 Resume Upload Modal */}
+      {showResumeUpload && pendingResumeData && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-gray-800 rounded-xl p-6 max-w-md w-full shadow-2xl">
+            <h3 className="text-xl font-bold text-white mb-4">Resume Upload?</h3>
+            <p className="text-gray-300 mb-2">
+              You have an incomplete upload:
+            </p>
+            <p className="text-white font-semibold mb-4">
+              {pendingResumeData.fileName}
+            </p>
+            <div className="mb-4 bg-gray-700 rounded-lg p-3">
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-gray-400">Progress:</span>
+                <span className="text-white">
+                  {Math.round(((pendingResumeData.uploadedChunks?.length || 0) / pendingResumeData.totalChunks) * 100)}%
+                </span>
+              </div>
+              <div className="bg-gray-600 rounded-full h-2 overflow-hidden">
+                <div 
+                  className="bg-blue-500 h-full"
+                  style={{ 
+                    width: `${((pendingResumeData.uploadedChunks?.length || 0) / pendingResumeData.totalChunks) * 100}%` 
+                  }}
+                />
+              </div>
+            </div>
+            <p className="text-sm text-gray-400 mb-6">
+              Would you like to continue where you left off?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  const uploadId = localStorage.getItem('current_upload_id');
+                  if (uploadId) {
+                    clearChunkUploadState(uploadId);
+                    localStorage.removeItem('current_upload_id');
+                  }
+                  setShowResumeUpload(false);
+                  setPendingResumeData(null);
+                }}
+                className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+              >
+                Discard
+              </button>
+              <button
+                onClick={() => {
+                  setShowResumeUpload(false);
+                  alert('Resume functionality requires re-selecting the file. Please use the upload button and select the same file.');
+                  // Note: We can't resume without the user re-selecting the file
+                  // because we don't have access to the File object
+                }}
+                className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-semibold"
+              >
+                Resume
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -47,6 +47,45 @@ import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
   
+  // Add CSS animation for banner text sliding
+  useEffect(() => {
+    const styleId = 'banner-animation-styles';
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@700&display=swap');
+        
+        @keyframes slideUpBanner {
+          0% {
+            transform: translateY(0);
+            opacity: 1;
+          }
+          45% {
+            transform: translateY(0);
+            opacity: 1;
+          }
+          55% {
+            transform: translateY(-30%);
+            opacity: 0.7;
+          }
+          100% {
+            transform: translateY(-30%);
+            opacity: 0;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    return () => {
+      const existingStyle = document.getElementById(styleId);
+      if (existingStyle) {
+        existingStyle.remove();
+      }
+    };
+  }, []);
+  
   // 📋 CAPTURE LOGS: Intercept console methods and store logs globally
   useEffect(() => {
     // Initialize global log storage
@@ -131,7 +170,7 @@ export default function VideoWatch() {
   const urlParams = new URLSearchParams(window.location.search);
   const urlSessionId = urlParams.get('session_id');
   const isInstantWatch = urlParams.get('instant') === 'true';
-  console.log('🔍 [VideoWatch] Extracted session_id from URL:', urlSessionId);
+  // Session ID extracted (log removed to reduce noise)
 
   const { sendMessage, messages, isConnected, sessionStatus, setBinaryMessageHandler } = useWebSocket(
     roomId,
@@ -229,6 +268,7 @@ export default function VideoWatch() {
   const [notifications, setNotifications] = useState([]);
   const [pendingSeatRequests, setPendingSeatRequests] = useState([]);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
+  const [isLiveShareWizardOpen, setIsLiveShareWizardOpen] = useState(false); // ✅ Track wizard modal state for taskbar
   const [isVideoSidebarOpen, setIsVideoSidebarOpen] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [isGlowing, setIsGlowing] = useState(false);
@@ -260,19 +300,129 @@ export default function VideoWatch() {
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
   
+  // Breaking News Banner state (DOM-based)
+  const [bannerState, setBannerState] = useState(null);
+  
+  // Banner text line cycling state
+  const [currentBannerLineIndex, setCurrentBannerLineIndex] = useState(0);
+  const [bannerTextLines, setBannerTextLines] = useState([]);
+  
+  // 📱 Responsive state for LiveShare graphics
+  const [screenSize, setScreenSize] = useState('desktop'); // 'mobile' | 'tablet' | 'desktop'
+  
   // 🔍 Debug: Log roomMembers changes
   useEffect(() => {
     console.log('👥 [VideoWatch] roomMembers state changed:', roomMembers);
     console.log('👥 [VideoWatch] roomMembers count:', roomMembers?.length);
   }, [roomMembers]);
   
+  // 📱 Detect screen size for responsive LiveShare graphics
+  useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      if (width < 640) {
+        setScreenSize('mobile');
+      } else if (width < 1024) {
+        setScreenSize('tablet');
+      } else {
+        setScreenSize('desktop');
+      }
+    };
+    
+    handleResize(); // Initial check
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  
+  // 📰 Banner text line cycling effect
+  useEffect(() => {
+    if (!bannerTextLines || bannerTextLines.length === 0) return;
+    
+    const interval = setInterval(() => {
+      setCurrentBannerLineIndex(prev => {
+        // Mobile: increment by 2 (show 2 lines, skip both on next cycle)
+        // Desktop: increment by 1 (show 1 line at a time)
+        const increment = screenSize === 'mobile' ? 2 : 1;
+        return (prev + increment) % bannerTextLines.length;
+      });
+    }, 5000); // Change line every 5 seconds
+    
+    return () => clearInterval(interval);
+  }, [bannerTextLines, screenSize]);
+  
+  // 📏 Measure and split banner text into lines that fit
+  useEffect(() => {
+    if (!bannerState?.text) {
+      setBannerTextLines([]);
+      return;
+    }
+    
+    // Get logo size for calculation
+    let logoSize = 100;
+    try {
+      const sessionId = sessionStatus?.id;
+      if (sessionId) {
+        const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${sessionId}`);
+        if (savedLogoStyles) {
+          const styles = JSON.parse(savedLogoStyles);
+          logoSize = styles.size || 100;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load logo styles:', err);
+    }
+    
+    const bannerHeight = bannerState.podcastLogoSize || 100;
+    const fontSize = screenSize === 'mobile' 
+      ? Math.max(14, bannerHeight * 0.4) // Mobile: smaller font for 2 lines
+      : Math.max(14, bannerHeight * 0.7); // Desktop: larger font for 1 line
+    const availableWidth = window.innerWidth - logoSize - (screenSize === 'mobile' ? 10 : 20); // Responsive gap
+    
+    // Create temporary measuring element with responsive font
+    const measureEl = document.createElement('div');
+    measureEl.style.position = 'absolute';
+    measureEl.style.visibility = 'hidden';
+    measureEl.style.whiteSpace = 'nowrap';
+    measureEl.style.fontSize = `${fontSize}px`;
+    measureEl.style.fontFamily = screenSize === 'mobile' 
+      ? "'Archivo Narrow', 'Roboto Condensed', 'Arial Narrow', sans-serif"
+      : "'Roboto Condensed', 'Arial Narrow', sans-serif";
+    measureEl.style.fontWeight = screenSize === 'mobile' ? '500' : '700'; // Medium on mobile
+    measureEl.style.letterSpacing = screenSize === 'mobile' ? '-0.05em' : 'normal';
+    document.body.appendChild(measureEl);
+    
+    // Split text into lines based on actual measurement
+    const words = bannerState.text.split(' ');
+    const lines = [];
+    let currentLine = '';
+    
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      measureEl.textContent = testLine;
+      
+      if (measureEl.offsetWidth <= availableWidth) {
+        currentLine = testLine;
+      } else {
+        if (currentLine) lines.push(currentLine);
+        currentLine = word;
+      }
+    }
+    if (currentLine) lines.push(currentLine);
+    
+    // Cleanup
+    document.body.removeChild(measureEl);
+    
+    setBannerTextLines(lines);
+    setCurrentBannerLineIndex(0); // Reset to first line
+  }, [bannerState?.text, bannerState?.podcastLogoSize, sessionStatus?.id, screenSize]); // Re-measure on screen size change
+  
   // ✅ Fetch session members from API (active watch session participants)
   useEffect(() => {
-    console.log('🔄 [fetchSessionMembers useEffect] TRIGGERED with roomId:', roomId);
+    // console.log('🔄 [fetchSessionMembers useEffect] TRIGGERED with roomId:', roomId);
     
     const fetchSessionMembers = async () => {
-      console.log('🚀 [fetchSessionMembers] Function starting...');
-      console.log('🔍 [fetchSessionMembers] roomId value:', roomId, 'type:', typeof roomId);
+      // console.log('🚀 [fetchSessionMembers] Function starting...');
+      // console.log('🔍 [fetchSessionMembers] roomId value:', roomId, 'type:', typeof roomId);
       
       if (!roomId) {
         console.warn('⚠️ [fetchSessionMembers] No roomId, ABORTING fetch');
@@ -280,35 +430,35 @@ export default function VideoWatch() {
       }
       
       try {
-        console.log('📡 [fetchSessionMembers] ✅ About to call getActiveSession API for room:', roomId);
+        // console.log('📡 [fetchSessionMembers] ✅ About to call getActiveSession API for room:', roomId);
         const response = await getActiveSession(roomId);
-        console.log('📥 [fetchSessionMembers] ✅ API call completed successfully');
-        console.log('📥 [fetchSessionMembers] Full response object:', response);
-        console.log('📥 [fetchSessionMembers] response.data:', response.data);
-        console.log('📥 [fetchSessionMembers] response.data type:', typeof response.data);
-        console.log('📥 [fetchSessionMembers] response.data.members:', response.data?.members);
+        // console.log('📥 [fetchSessionMembers] ✅ API call completed successfully');
+        // console.log('📥 [fetchSessionMembers] Full response object:', response);
+        // console.log('📥 [fetchSessionMembers] response.data:', response.data);
+        // console.log('📥 [fetchSessionMembers] response.data type:', typeof response.data);
+        // console.log('📥 [fetchSessionMembers] response.data.members:', response.data?.members);
         
         const sessionMembers = response.data?.members || [];
-        console.log('👥 [fetchSessionMembers] Extracted sessionMembers array:', sessionMembers);
-        console.log('👥 [fetchSessionMembers] sessionMembers.length:', sessionMembers.length);
-        console.log('👥 [fetchSessionMembers] Is array?:', Array.isArray(sessionMembers));
+        // console.log('👥 [fetchSessionMembers] Extracted sessionMembers array:', sessionMembers);
+        // console.log('👥 [fetchSessionMembers] sessionMembers.length:', sessionMembers.length);
+        // console.log('👥 [fetchSessionMembers] Is array?:', Array.isArray(sessionMembers));
         
         if (sessionMembers.length > 0) {
-          console.log('✅ [fetchSessionMembers] Found', sessionMembers.length, 'members:');
-          sessionMembers.forEach((m, idx) => {
-            console.log(`  Member ${idx + 1}:`, {
-              user_id: m.user_id,
-              username: m.username,
-              user_role: m.user_role,
-              raw: m
-            });
-          });
+          // console.log('✅ [fetchSessionMembers] Found', sessionMembers.length, 'members:');
+          // sessionMembers.forEach((m, idx) => {
+          //   console.log(`  Member ${idx + 1}:`, {
+          //     user_id: m.user_id,
+          //     username: m.username,
+          //     user_role: m.user_role,
+          //     raw: m
+          //   });
+          // });
         } else {
           console.warn('⚠️ [fetchSessionMembers] sessionMembers array is EMPTY');
         }
         
         // Transform to match component format
-        console.log('🔄 [fetchSessionMembers] Transforming members to component format...');
+        // console.log('🔄 [fetchSessionMembers] Transforming members to component format...');
         const formattedMembers = sessionMembers.map(member => {
           const formatted = {
             id: member.user_id,
@@ -317,14 +467,14 @@ export default function VideoWatch() {
             avatar_url: member.avatar_url || null,
             user_role: member.user_role || 'viewer',
           };
-          console.log('  Formatted member:', formatted);
+          // console.log('  Formatted member:', formatted);
           return formatted;
         });
         
-        console.log('📤 [fetchSessionMembers] About to call setRoomMembers with', formattedMembers.length, 'members');
-        console.log('📤 [fetchSessionMembers] formattedMembers:', formattedMembers);
+        // console.log('📤 [fetchSessionMembers] About to call setRoomMembers with', formattedMembers.length, 'members');
+        // console.log('📤 [fetchSessionMembers] formattedMembers:', formattedMembers);
         setRoomMembers(formattedMembers);
-        console.log('✅ [fetchSessionMembers] setRoomMembers called successfully');
+        // console.log('✅ [fetchSessionMembers] setRoomMembers called successfully');
         
       } catch (error) {
         console.error('❌ [fetchSessionMembers] API call FAILED');
@@ -337,9 +487,9 @@ export default function VideoWatch() {
       }
     };
     
-    console.log('⏱️ [fetchSessionMembers useEffect] About to call fetchSessionMembers()...');
+    // console.log('⏱️ [fetchSessionMembers useEffect] About to call fetchSessionMembers()...');
     fetchSessionMembers();
-    console.log('⏱️ [fetchSessionMembers useEffect] fetchSessionMembers() called (async, will complete later)');
+    // console.log('⏱️ [fetchSessionMembers useEffect] fetchSessionMembers() called (async, will complete later)');
   }, [roomId]);
   
   const [loadingMembers, setLoadingMembers] = useState(false);
@@ -352,7 +502,9 @@ export default function VideoWatch() {
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // ⏱️ State-based seek (triggers re-renders)
   
   // 📹 LiveShare state (screen + camera)
-  const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both'
+  const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both' - the share type
+  const [liveShareContentMode, setLiveShareContentMode] = useState(null); // 'regular', 'podcast', 'news', 'show' - the content mode
+  const [selectedLiveShareLayout, setSelectedLiveShareLayout] = useState(null); // 'solo-view', 'screen-share', 'split-view', 'panel-view'
   const [sharingSource, setSharingSource] = useState(null); // 'liveshare' | 'watchfrom' | null
   const [podcastConfig, setPodcastConfig] = useState(null); // { title, logoUrl, guestUserId, guestUsername, hostUsername, sessionId }
   const screenShareTrackRef = useRef(null);
@@ -389,6 +541,9 @@ export default function VideoWatch() {
 
   // ✅ Track active session ID for ending sessions
   const [activeSessionId, setActiveSessionId] = useState(null);
+  
+  // 🧹 LeftSidebar cleanup function ref (for compression state cleanup on session end)
+  const leftSidebarCleanupRef = useRef(null);
 
   // 🪑 Seat swap notifications
   const [seatSwapRequest, setSeatSwapRequest] = useState(null);
@@ -515,7 +670,23 @@ export default function VideoWatch() {
     if (lastMessage.type === 'liveshare_graphics_update') {
       const { graphic } = lastMessage.data;
       console.log('🎨 [VideoWatch] Graphics update received:', graphic);
-      console.log('🎨 [VideoWatch] graphicsRendererRef.current:', graphicsRendererRef.current);
+      console.log('🎨 [VideoWatch] Graphic type:', graphic.type);
+      
+      // Handle banner separately with DOM rendering
+      if (graphic.type === 'banner') {
+        console.log('📰 [VideoWatch] Banner update - using DOM rendering');
+        if (graphic.active) {
+          setBannerState(graphic.content);
+        } else {
+          setBannerState(null);
+        }
+        return;
+      }
+      
+      console.log('🎨 [VideoWatch] Graphic content:', graphic.content);
+      console.log('🎨 [VideoWatch] Graphic content.logoUrl:', graphic.content?.logoUrl);
+      console.log('🎨 [VideoWatch] Graphic style:', graphic.content?.style);
+      console.log('🎨 [VideoWatch] Has renderer:', !!graphicsRendererRef.current);
       console.log('🎨 [VideoWatch] liveShareMode:', liveShareMode);
       
       if (graphicsRendererRef.current && graphic) {
@@ -528,7 +699,7 @@ export default function VideoWatch() {
             position: graphic.position,
             zIndex: graphic.z_index || 1
           });
-          console.log('🎨 [VideoWatch] Layer added successfully');
+          console.log('🎨 [VideoWatch] Layer added successfully, layer count:', graphicsRendererRef.current.layers.length);
         } else {
           // Remove layer
           console.log('🎨 [VideoWatch] Removing layer:', graphic.type);
@@ -542,6 +713,24 @@ export default function VideoWatch() {
       }
     }
   }, [messages, liveShareMode]);
+  
+  // 🎨 Update break screen countdown timer every second
+  useEffect(() => {
+    if (!graphicsRendererRef.current) return;
+    
+    const breakLayer = graphicsRendererRef.current.layers.find(l => l.type === 'break_screen');
+    if (!breakLayer) return;
+    
+    const interval = setInterval(() => {
+      const breakLayerCurrent = graphicsRendererRef.current.layers.find(l => l.type === 'break_screen');
+      if (breakLayerCurrent && breakLayerCurrent.content.timeRemaining > 0) {
+        breakLayerCurrent.content.timeRemaining -= 1;
+        graphicsRendererRef.current.render();
+      }
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [messages]); // Re-run when messages change (including break_started)
   
   // 🔍 Debug: Log LiveKit connection status changes
   useEffect(() => {
@@ -677,6 +866,56 @@ export default function VideoWatch() {
           trackName: publication.trackName,
           participant: participant.identity
         });
+        
+        // Handle screen share tracks for LiveShare
+        if (publication.source === Track.Source.ScreenShare) {
+          console.log('✅ [LiveShare] Screen share track subscribed from:', participant.identity);
+          
+          const screenStream = new MediaStream([track.mediaStreamTrack]);
+          
+          // Check if host also has camera track
+          const cameraTrackPub = participant.getTrackPublication(Track.Source.Camera);
+          let cameraStream = null;
+          
+          if (cameraTrackPub && cameraTrackPub.track) {
+            cameraStream = new MediaStream([cameraTrackPub.track.mediaStreamTrack]);
+            console.log('📹 [LiveShare] Host camera track also available');
+          }
+          
+          console.log('🎬 [LiveShare] Member displaying screen share');
+          
+          // TODO: Update state to display screen share stream
+          // For now, just log that we received it
+          console.log('🎥 Screen stream ready:', screenStream);
+          console.log('📹 Camera stream ready:', cameraStream);
+          
+          return;
+        }
+        
+        // Handle camera tracks for LiveShare
+        if (publication.source === Track.Source.Camera) {
+          console.log('✅ [LiveShare] Camera track subscribed from:', participant.identity);
+          
+          const cameraStream = new MediaStream([track.mediaStreamTrack]);
+          
+          // Check if host also has screen share track
+          const screenTrackPub = participant.getTrackPublication(Track.Source.ScreenShare);
+          let screenStream = null;
+          
+          if (screenTrackPub && screenTrackPub.track) {
+            screenStream = new MediaStream([screenTrackPub.track.mediaStreamTrack]);
+            console.log('🖥️ [LiveShare] Host screen share track also available');
+          }
+          
+          console.log('🎬 [LiveShare] Member displaying camera');
+          
+          // TODO: Update state to display camera stream
+          // For now, just log that we received it
+          console.log('📹 Camera stream ready:', cameraStream);
+          console.log('🎥 Screen stream ready:', screenStream);
+          
+          return;
+        }
       }
     };
 
@@ -1915,7 +2154,7 @@ export default function VideoWatch() {
 
     const updateInterval = setInterval(() => {
       const currentSeekTime = Math.floor(playbackPositionRef.current);
-      console.log(`⏰ [VideoWatch] Periodic seek time update: ${currentSeekTime}s`);
+      // console.log(`⏰ [VideoWatch] Periodic seek time update: ${currentSeekTime}s`);
       
       sendMessage({
         type: "playback_control",
@@ -2025,11 +2264,33 @@ export default function VideoWatch() {
           toast.error('No camera devices found');
           if (mode === 'camera') return;
         } else {
-          // Use first available camera
-          const device = videoDevices[0];
+          // Filter out virtual/wireless cameras and prefer built-in ones
+          const virtualCameraKeywords = ['virtual', 'obs', 'snap', 's21', 'samsung', 'phone', 'wireless', 'droidcam', 'iriun', 'epoccam'];
+          const builtInCameraKeywords = ['integrated', 'built-in', 'facetime', 'front camera', 'back camera', 'hd webcam'];
+          
+          console.log('📹 [VideoWatch] Available video devices:', videoDevices.map(d => d.label));
+          
+          // Prioritize built-in cameras, then non-virtual cameras, then fallback to any camera
+          let device = videoDevices.find(d => {
+            const label = (d.label || '').toLowerCase();
+            return builtInCameraKeywords.some(keyword => label.includes(keyword));
+          });
+          
+          if (!device) {
+            device = videoDevices.find(d => {
+              const label = (d.label || '').toLowerCase();
+              return !virtualCameraKeywords.some(keyword => label.includes(keyword));
+            });
+          }
+          
+          if (!device) {
+            device = videoDevices[0]; // Fallback to first device
+          }
+          
+          console.log('📹 [VideoWatch] Using camera device:', device.label || device.deviceId);
           const stream = await navigator.mediaDevices.getUserMedia({
             video: {
-              deviceId: { exact: device.deviceId },
+              deviceId: device.deviceId ? { ideal: device.deviceId } : true,
               width: { ideal: 1280 }, // ✅ Lower resolution = lower latency
               height: { ideal: 720 },
               frameRate: { ideal: 30, max: 30 },
@@ -2201,31 +2462,52 @@ export default function VideoWatch() {
   };
   
   // 🎬 Handle LiveShare type selection (for Regular mode)
-  const handleLiveShareTypeSelect = (type) => {
-    console.log('🎬 [VideoWatch] LiveShare type selected:', type);
+  const handleLiveShareTypeSelect = (type, deviceId, layout) => {
+    console.log('🎬 [VideoWatch] LiveShare type selected:', type, 'layout:', layout);
+    console.log('🎨 [VideoWatch] Setting selectedLiveShareLayout to:', layout);
+    setSelectedLiveShareLayout(layout);
     handleStartLiveShare(type, 'liveshare');
   };
   
   // 🎙️ Handle LiveShare mode selection (for Podcast/News/Show modes)
   const handleLiveShareModeSelect = (mode, config = null) => {
     console.log('🎙️ [VideoWatch] LiveShare mode selected:', mode, config);
+    console.log('🎙️ [VideoWatch] Config breakdown:', {
+      hasConfig: !!config,
+      title: config?.title,
+      logoUrl: config?.logoUrl,
+      titleStyle: config?.titleStyle,
+      logoStyle: config?.logoStyle,
+      guestId: config?.guestId,
+      fullConfig: config
+    });
     
     if (mode === null) {
       // End LiveShare
+      console.log('🛑 [VideoWatch] Ending LiveShare mode');
+      setLiveShareContentMode(null);
       setPodcastConfig(null);
       handleEndScreenShare();
       return;
     }
     
+    // Store the content mode (podcast, news, show, regular)
+    console.log('📌 [VideoWatch] Setting liveShareContentMode to:', mode);
+    setLiveShareContentMode(mode);
+    
     // Store podcast config for overlay rendering
     if (config) {
-      setPodcastConfig({
+      const podcastConfigData = {
         ...config,
         mode: mode, // 'podcast', 'news', or 'show'
         hostUsername: currentUser?.username || 'Host',
         sessionId: activeSessionId
-      });
-      console.log('📦 [VideoWatch] Podcast config stored:', config);
+      };
+      console.log('📦 [VideoWatch] Setting podcastConfig to:', podcastConfigData);
+      setPodcastConfig(podcastConfigData);
+    } else {
+      console.log('ℹ️ [VideoWatch] No config provided, clearing podcastConfig');
+      setPodcastConfig(null);
     }
   };
   
@@ -2909,6 +3191,12 @@ export default function VideoWatch() {
           setPrivateMessages({});
           setUnreadMessages({});
           
+          // ✅ Clear compression state from LeftSidebar
+          if (leftSidebarCleanupRef.current) {
+            console.log('🧹 [VideoWatch] Calling LeftSidebar cleanup...');
+            leftSidebarCleanupRef.current();
+          }
+          
           // Clear ticket cache for this session
           if (urlSessionId) {
             clearTicketCache(message.data?.session_id || urlSessionId);
@@ -3115,7 +3403,67 @@ export default function VideoWatch() {
           console.log('🎨 [VideoWatch] Graphics update acknowledged:', message.data?.graphic?.type);
           break;
           
+        case "liveshare_break_started":
+          console.log('⏸️ [VideoWatch] Break started:', message.data);
+          
+          // Show break screen overlay if GraphicsRenderer exists
+          if (graphicsRendererRef.current && message.data) {
+            graphicsRendererRef.current.addLayer('break_screen', {
+              type: 'break_screen',
+              content: {
+                screenSource: message.data.screenSource,
+                customImage: message.data.customImage,
+                timeRemaining: message.data.duration * 60, // Convert to seconds
+                keepAudio: message.data.keepAudio
+              },
+              zIndex: 100 // Top layer
+            });
+            graphicsRendererRef.current.render();
+          }
+          
+          // Mute camera video using LiveKit API if turnOffCamera is true
+          if (message.data.turnOffCamera && cameraShareTrackRef.current) {
+            console.log('📹 [VideoWatch] Muting camera track for break (LiveKit)');
+            cameraShareTrackRef.current.mute()
+              .then(() => console.log('✅ [VideoWatch] Camera track muted successfully'))
+              .catch(error => console.error('❌ [VideoWatch] Failed to mute camera:', error));
+          }
+          
+          toast('Taking a break - Stream paused', {
+            icon: '⏸️',
+            duration: 3000
+          });
+          break;
+          
+        case "liveshare_break_ended":
+          console.log('▶️ [VideoWatch] Break ended');
+          
+          // Remove break screen overlay
+          if (graphicsRendererRef.current) {
+            graphicsRendererRef.current.removeLayer('break_screen');
+            graphicsRendererRef.current.render();
+          }
+          
+          // Unmute camera video using LiveKit API
+          if (cameraShareTrackRef.current) {
+            console.log('📹 [VideoWatch] Unmuting camera track (LiveKit)');
+            cameraShareTrackRef.current.unmute()
+              .then(() => console.log('✅ [VideoWatch] Camera track unmuted successfully'))
+              .catch(error => console.error('❌ [VideoWatch] Failed to unmute camera:', error));
+          }
+          
+          toast.success('Break ended - Stream resumed', {
+            icon: '▶️',
+            duration: 3000
+          });
+          break;
+          
         default:
+          // Known informational message types that don't need action
+          if (message.type === 'session_preview_updated' || message.type === 'media_state_changed') {
+            // These are informational broadcasts - no action needed
+            break;
+          }
           console.warn("[VideoWatch] Unknown WebSocket message type:", message.type, message);
       }
     });
@@ -3764,6 +4112,7 @@ export default function VideoWatch() {
           isHost={isHost}
           track={remoteScreenTrack}
           localScreenTrack={localScreenTrack}
+          layout={selectedLiveShareLayout}
           playbackPositionRef={playbackPositionRef}
           onPlay={handlePlay}
           onPause={handlePause}
@@ -3780,7 +4129,7 @@ export default function VideoWatch() {
             ref={graphicsCanvasRef}
             className="absolute inset-0 pointer-events-none"
             style={{ 
-              zIndex: 15,
+              zIndex: 25,
               width: '100%',
               height: '100%'
             }}
@@ -3795,10 +4144,230 @@ export default function VideoWatch() {
               <span className="text-white font-medium text-sm sm:text-base">{podcastConfig.hostUsername || 'Host'} (Host)</span>
             </div>
             
-            {/* Podcast Logo & Title (bottom left, side by side) */}
-            {(podcastConfig.logoUrl || podcastConfig.title) && (() => {
+            {/* Breaking News Banner (DOM-based, full width, behind logo) */}
+            {bannerState && (() => {
+              // Get podcast logo position from localStorage
+              let logoY = 80;
               let logoSize = 100;
-              let logoX = 10;
+              try {
+                const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${activeSessionId}`);
+                if (savedLogoStyles) {
+                  const styles = JSON.parse(savedLogoStyles);
+                  logoY = styles.y || 80;
+                  logoSize = styles.size || 100;
+                }
+              } catch (err) {
+                console.warn('Failed to load logo styles:', err);
+              }
+
+              // 📱 Responsive calculations based on screen size
+              const responsiveScale = screenSize === 'mobile' ? 0.5 : screenSize === 'tablet' ? 0.75 : 1;
+              const baseBannerHeight = bannerState.podcastLogoSize || 100;
+              const bannerHeight = baseBannerHeight; // Always match logo size, no scaling
+              const layout = bannerState.layout || 'bn';
+              const bgColor = bannerState.style?.bgColor || '#DC2626';
+              
+              // Use pre-measured lines from state
+              const currentLine = bannerTextLines[currentBannerLineIndex] || bannerState.text || '';
+              
+              // For breakin layout: get current and next line
+              const line1 = bannerTextLines[currentBannerLineIndex] || bannerState.text || '';
+              const line2 = bannerTextLines[(currentBannerLineIndex + 1) % bannerTextLines.length] || '';
+              
+              return (
+                <div
+                  className="absolute left-0 right-0 pointer-events-none"
+                  style={{
+                    bottom: `${logoY}px`,
+                    height: `${bannerHeight}px`,
+                    backgroundColor: bgColor,
+                    zIndex: 5, // Behind logo (logo is 10)
+                    overflow: 'visible' // Allow BN.png to extend beyond banner
+                  }}
+                >
+                  {/* Layout: BN icon on right */}
+                  {layout === 'bn' && (
+                    <>
+                      {/* Scrolling text - One line at a time - Full width */}
+                      <div className="absolute inset-0 flex items-center justify-start" style={{
+                        paddingLeft: `${logoSize + (screenSize === 'mobile' ? 10 : 20)}px` // Tighter gap on mobile
+                      }}>
+                        {screenSize === 'mobile' ? (
+                          /* Mobile: 2 lines */
+                          <div className="flex flex-col justify-center" style={{ width: '100%' }}>
+                            <div 
+                              style={{ 
+                                fontSize: `${Math.max(14, bannerHeight * 0.4)}px`, // Smaller for 2 lines
+                                lineHeight: `${Math.max(14, bannerHeight * 0.4) * 1.1}px`, // Comfortable spacing
+                                fontFamily: "'Archivo Narrow', 'Roboto Condensed', 'Arial Narrow', sans-serif",
+                                fontWeight: 500,
+                                letterSpacing: '-0.05em',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'clip',
+                                width: '100%',
+                                color: bannerState.style?.textColor || '#FFFFFF'
+                              }}
+                            >
+                              {bannerTextLines[currentBannerLineIndex] || currentLine}
+                            </div>
+                            <div 
+                              style={{ 
+                                fontSize: `${Math.max(14, bannerHeight * 0.4)}px`,
+                                lineHeight: `${Math.max(14, bannerHeight * 0.4) * 1.1}px`,
+                                fontFamily: "'Archivo Narrow', 'Roboto Condensed', 'Arial Narrow', sans-serif",
+                                fontWeight: 500,
+                                letterSpacing: '-0.05em',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'clip',
+                                width: '100%',
+                                color: bannerState.style?.textColor || '#FFFFFF'
+                              }}
+                            >
+                              {bannerTextLines[(currentBannerLineIndex + 1) % bannerTextLines.length] || ''}
+                            </div>
+                          </div>
+                        ) : (
+                          /* Desktop: 1 line */
+                          <div 
+                            style={{ 
+                              fontSize: `${Math.max(14, bannerHeight * 0.7)}px`, // Min 14px
+                              lineHeight: `${bannerHeight}px`,
+                              fontFamily: "'Roboto Condensed', 'Arial Narrow', sans-serif",
+                              fontWeight: 700,
+                              letterSpacing: 'normal',
+                              whiteSpace: 'nowrap', // Single line
+                              overflow: 'hidden',
+                              textOverflow: 'clip', // No ellipsis, just clip at edge
+                              width: '100%', // Fill available space to max width
+                              color: bannerState.style?.textColor || '#FFFFFF'
+                            }}
+                            key={currentBannerLineIndex} // Force re-render on line change
+                          >
+                            {currentLine}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* BN icon on right - Absolutely positioned, doesn't affect text layout */}
+                      <div style={{ 
+                        position: 'absolute',
+                        right: `${-70 + (bannerHeight * 3 * (screenSize === 'mobile' ? 0.80 : 1) * 0.06)}px`, // Moved left by 6%
+                        bottom: `${bannerHeight * 3 * (screenSize === 'mobile' ? 0.80 : 1) * 0.04}px`, // Moved up by 4%
+                        width: `${bannerHeight * 3 * (screenSize === 'mobile' ? 0.80 : 1)}px`, // 20% smaller on mobile only
+                        height: `${bannerHeight * 3 * (screenSize === 'mobile' ? 0.80 : 1)}px` // 20% smaller on mobile only
+                      }}>
+                        <img 
+                          src="/icons/BN.png" 
+                          alt="Breaking News"
+                          className="object-contain"
+                          style={{ 
+                            width: '100%', 
+                            height: '100%'
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Layout: Breakin icon on top-left */}
+                  {layout === 'breakin' && (
+                    <>
+                      {/* Scrolling text - One line at a time - Full width */}
+                      <div className="absolute inset-0 flex items-center justify-start" style={{
+                        paddingLeft: `${logoSize + (screenSize === 'mobile' ? 10 : 20)}px`, // Tighter gap on mobile
+                        paddingRight: screenSize === 'mobile' ? '0' : '20px' // No right padding on mobile
+                      }}>
+                        {screenSize === 'mobile' ? (
+                          /* Mobile: 2 lines */
+                          <div className="flex flex-col justify-center" style={{ width: '100%' }}>
+                            <div 
+                              style={{ 
+                                fontSize: `${Math.max(14, bannerHeight * 0.4)}px`, // Smaller for 2 lines
+                                lineHeight: `${Math.max(14, bannerHeight * 0.4) * 1.1}px`, // Comfortable spacing
+                                fontFamily: "'Archivo Narrow', 'Roboto Condensed', 'Arial Narrow', sans-serif",
+                                fontWeight: 500,
+                                letterSpacing: '-0.05em',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'clip',
+                                width: '100%',
+                                color: bannerState.style?.textColor || '#FFFFFF'
+                              }}
+                            >
+                              {bannerTextLines[currentBannerLineIndex] || currentLine}
+                            </div>
+                            <div 
+                              style={{ 
+                                fontSize: `${Math.max(14, bannerHeight * 0.4)}px`,
+                                lineHeight: `${Math.max(14, bannerHeight * 0.4) * 1.1}px`,
+                                fontFamily: "'Archivo Narrow', 'Roboto Condensed', 'Arial Narrow', sans-serif",
+                                fontWeight: 500,
+                                letterSpacing: '-0.05em',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'clip',
+                                width: '100%',
+                                color: bannerState.style?.textColor || '#FFFFFF'
+                              }}
+                            >
+                              {bannerTextLines[(currentBannerLineIndex + 1) % bannerTextLines.length] || ''}
+                            </div>
+                          </div>
+                        ) : (
+                          /* Desktop: 1 line */
+                          <div 
+                            style={{ 
+                              fontSize: `${Math.max(14, bannerHeight * 0.7)}px`, // Min 14px
+                              lineHeight: `${bannerHeight}px`,
+                              fontFamily: "'Roboto Condensed', 'Arial Narrow', sans-serif",
+                              fontWeight: 700,
+                              letterSpacing: 'normal',
+                              whiteSpace: 'nowrap', // Single line
+                              overflow: 'hidden',
+                              textOverflow: 'clip', // No ellipsis, just clip at edge
+                              width: '100%', // Fill available space to max width
+                              color: bannerState.style?.textColor || '#FFFFFF'
+                            }}
+                            key={currentBannerLineIndex} // Force re-render on line change
+                          >
+                            {currentLine}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Breakin icon - Positioned ABOVE the banner (bottom edge aligned to banner top) */}
+                      <div style={{ 
+                        position: 'absolute',
+                        left: `-${bannerHeight * 3.15 * 0.05 * (screenSize === 'mobile' ? 0.6 : screenSize === 'tablet' ? 0.8 : 1)}px`, // Responsive negative margin
+                        bottom: `-${bannerHeight * 3.15 * 0.10}px`, // Shifted down by 10% of logo height
+                        width: `${bannerHeight * 3.15}px`, // Another 50% larger (2.1 * 1.5)
+                        height: `${bannerHeight * 3.15}px` // Another 50% larger (2.1 * 1.5)
+                      }}>
+                        <img 
+                          src="/icons/Breakin.png" 
+                          alt="Breaking"
+                          className="object-contain"
+                          style={{ 
+                            width: '100%', 
+                            height: '100%'
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+            
+            {/* Podcast Logo & Title (bottom left, side by side) - Hide title when banner is active */}
+            {(podcastConfig.logoUrl || podcastConfig.title) && (() => {
+              // Check if banner is active (now DOM-based)
+              const isBannerActive = !!bannerState;
+              
+              let logoSize = 100;
+              let logoX = 0;
               let logoY = 80;
               let titleColor = '#FFFFFF';
               let titleSize = 24;
@@ -3849,7 +4418,8 @@ export default function VideoWatch() {
                   className="absolute flex items-center gap-3 pointer-events-auto"
                   style={{
                     left: `${logoX}px`,
-                    bottom: `${logoY}px`
+                    bottom: `${logoY}px`,
+                    zIndex: 10 // In front of banner (banner is z-index 5)
                   }}
                 >
                   {/* Logo */}
@@ -3865,8 +4435,8 @@ export default function VideoWatch() {
                     />
                   )}
                   
-                  {/* Title */}
-                  {podcastConfig.title && (
+                  {/* Title - Hide when banner is active */}
+                  {podcastConfig.title && !isBannerActive && (
                     <div 
                       className="bg-black/70 backdrop-blur-sm px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg shadow-xl"
                       style={{
@@ -3907,6 +4477,7 @@ export default function VideoWatch() {
           showProgram={isClassroom} // Show Board button for classrooms
           showEmotes={false}
           openChat={openChat}
+          hasOpenModal={isLiveShareWizardOpen} // ✅ Prevent taskbar from showing during wizard
           onQuizClick={handleQuizClick}
           activeQuizCount={activeQuiz ? 1 : 0}
           isVisible={isVisible}
@@ -4047,9 +4618,12 @@ export default function VideoWatch() {
             onClose={() => setIsLeftSidebarOpen(false)}
             onUploadComplete={fetchAndGeneratePosters}
             sessionId={activeSessionId}
+            onSessionCleanup={(cleanup) => { leftSidebarCleanupRef.current = cleanup; }}
             // ✅ LiveShare props
             watchSessionMembers={participants}
             liveShareMode={liveShareMode}
+            liveShareContentMode={liveShareContentMode}
+            podcastConfig={podcastConfig}
             liveShareGuest={null}
             hasLiveSharePermission={false}
             onLiveShareModeSelect={handleLiveShareModeSelect}
@@ -4057,6 +4631,9 @@ export default function VideoWatch() {
             onGrantLiveSharePermission={() => {}}
             onRevokeLiveSharePermission={() => {}}
             onKickLiveShareGuest={() => {}}
+            cameraShareTrackRef={cameraShareTrackRef}
+            graphicsRendererRef={graphicsRendererRef}
+            onWizardStateChange={setIsLiveShareWizardOpen} // ✅ Track wizard state
           />
         </div>
       )}

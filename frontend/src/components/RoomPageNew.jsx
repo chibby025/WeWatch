@@ -1347,7 +1347,8 @@ const RoomPageNew = () => {
       watch_type: selectedWatchType,
       ticketing_enabled: true,
       ...config,
-      content_rating: ticketingConfig.content_rating || 'G',
+      // ✅ Use config.content_rating directly (not stale state)
+      content_rating: config.content_rating || 'G',
     });
   };
 
@@ -1359,6 +1360,9 @@ const RoomPageNew = () => {
         ...sessionData,
         ...(selectedWatchType === 'classroom' && selectedClassType && { class_type: selectedClassType })
       };
+      
+      console.log('🎬 [RoomPageNew] Creating session with data:', finalSessionData);
+      console.log('🎬 [RoomPageNew] content_rating:', finalSessionData.content_rating);
       
       const response = await apiClient.post(`/api/rooms/${roomId}/sessions`, finalSessionData);
       const { session_id, watch_type: type } = response.data;

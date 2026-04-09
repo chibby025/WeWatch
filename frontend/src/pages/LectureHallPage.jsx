@@ -5809,11 +5809,46 @@ const PositionCalculatorPage = () => {
         }
         
         const cameraDevices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = cameraDevices.filter(d => d.kind === 'videoinput');
+        let videoDevices = cameraDevices.filter(d => d.kind === 'videoinput');
         
-        console.log('🎥 [LiveShare] Video devices detected:', videoDevices.length);
+        // 🎯 SMART CAMERA PRIORITIZATION
+        // Prioritize: Built-in cameras > External USB cameras > Avoid virtual cameras
+        const smartSortCameras = (devices) => {
+          return devices.sort((a, b) => {
+            const labelA = (a.label || '').toLowerCase();
+            const labelB = (b.label || '').toLowerCase();
+            
+            // Avoid virtual cameras and mobile phones (lowest priority)
+            const isVirtualA = labelA.includes('virtual') || labelA.includes('obs') || labelA.includes('snap') || 
+                               labelA.includes('phone') || labelA.includes('s21') || labelA.includes('iphone');
+            const isVirtualB = labelB.includes('virtual') || labelB.includes('obs') || labelB.includes('snap') || 
+                               labelB.includes('phone') || labelB.includes('s21') || labelB.includes('iphone');
+            
+            if (isVirtualA && !isVirtualB) return 1;  // B has priority
+            if (!isVirtualA && isVirtualB) return -1; // A has priority
+            
+            // Prioritize built-in cameras (integrated, built-in, facetime)
+            const isBuiltInA = labelA.includes('integrated') || labelA.includes('built-in') || labelA.includes('facetime');
+            const isBuiltInB = labelB.includes('integrated') || labelB.includes('built-in') || labelB.includes('facetime');
+            
+            if (isBuiltInA && !isBuiltInB) return -1; // A has priority
+            if (!isBuiltInA && isBuiltInB) return 1;  // B has priority
+            
+            // If both similar, maintain original order
+            return 0;
+          });
+        };
+        
+        videoDevices = smartSortCameras(videoDevices);
+        
+        console.log('🎥 [LiveShare] Video devices detected (sorted by priority):', videoDevices.length);
         videoDevices.forEach((device, idx) => {
-          console.log(`  ${idx + 1}. ${device.label || 'Unnamed'} (${device.deviceId.substring(0, 20)}...)`);
+          const label = device.label || 'Unnamed';
+          const isVirtual = label.toLowerCase().includes('virtual') || 
+                           label.toLowerCase().includes('phone') || 
+                           label.toLowerCase().includes('s21');
+          const priority = isVirtual ? '⚠️ VIRTUAL' : '✅ REAL';
+          console.log(`  ${idx + 1}. [${priority}] ${label} (${device.deviceId.substring(0, 20)}...)`);
         });
         
         if (videoDevices.length === 0) {
@@ -5824,7 +5859,7 @@ const PositionCalculatorPage = () => {
           let stream = null;
           let cameraSuccess = false;
           
-          // 🎯 Strategy: Try each available camera device one by one
+          // 🎯 Strategy: Try each available camera device one by one (now sorted by priority)
           for (let deviceIndex = 0; deviceIndex < videoDevices.length && !cameraSuccess; deviceIndex++) {
             const device = videoDevices[deviceIndex];
             console.log(`\n🎯 [LiveShare] Trying camera ${deviceIndex + 1}/${videoDevices.length}: ${device.label || 'Unnamed'}`);

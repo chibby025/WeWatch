@@ -65,6 +65,10 @@ func (h *LiveShareHandler) HandleMessage(msgType string, data map[string]interfa
 		return h.handleKickGuest(data, client)
 	case "liveshare_graphics_update":
 		return h.handleGraphicsUpdate(data, client)
+	case "liveshare_break_started":
+		return h.handleBreakStarted(data, client)
+	case "liveshare_break_ended":
+		return h.handleBreakEnded(data, client)
 	default:
 		return fmt.Errorf("unknown LiveShare message type: %s", msgType)
 	}
@@ -75,6 +79,12 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 	mode, ok := data["mode"].(string)
 	if !ok {
 		return fmt.Errorf("missing or invalid 'mode' field")
+	}
+
+	// Migration: Convert deprecated 'standup' mode to 'show'
+	if mode == "standup" {
+		log.Printf("⚠️ [LiveShare] Migrating deprecated 'standup' mode to 'show'")
+		mode = "show"
 	}
 
 	sessionID := client.GetSessionID()
@@ -504,5 +514,53 @@ func (h *LiveShareHandler) handleGraphicsUpdate(data map[string]interface{}, cli
 	}, client)
 	
 	log.Printf("✅ [LiveShare] Graphics update broadcast successfully")
+	return nil
+}
+
+// handleBreakStarted - Host starts a break
+func (h *LiveShareHandler) handleBreakStarted(data map[string]interface{}, client Client) error {
+	log.Printf("⏸️ [LiveShare] Break started by user %d", client.GetUserID())
+	
+	// Broadcast to all room members
+	broadcastMsg := map[string]interface{}{
+		"type": "liveshare_break_started",
+		"data": data,
+	}
+	
+	broadcastBytes, err := json.Marshal(broadcastMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal break started message: %v", err)
+	}
+	
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     broadcastBytes,
+		IsBinary: false,
+	}, client)
+	
+	log.Printf("✅ [LiveShare] Break started broadcast successfully")
+	return nil
+}
+
+// handleBreakEnded - Host ends a break
+func (h *LiveShareHandler) handleBreakEnded(data map[string]interface{}, client Client) error {
+	log.Printf("▶️ [LiveShare] Break ended by user %d", client.GetUserID())
+	
+	// Broadcast to all room members
+	broadcastMsg := map[string]interface{}{
+		"type": "liveshare_break_ended",
+		"data": data,
+	}
+	
+	broadcastBytes, err := json.Marshal(broadcastMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal break ended message: %v", err)
+	}
+	
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     broadcastBytes,
+		IsBinary: false,
+	}, client)
+	
+	log.Printf("✅ [LiveShare] Break ended broadcast successfully")
 	return nil
 }

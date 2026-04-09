@@ -91,6 +91,103 @@ func GeneratePreviewGIF(inputPath, outputPath, startTime string, duration int) e
 	return cmd.Run()
 }
 
+// GetVideoResolution returns video width and height
+func GetVideoResolution(filePath string) (width, height int, err error) {
+	cmd := exec.Command("ffprobe", "-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=width,height",
+		"-of", "csv=p=0",
+		filePath,
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get video resolution: %w", err)
+	}
+
+	parts := strings.Split(strings.TrimSpace(string(output)), ",")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid resolution output: %s", output)
+	}
+
+	var parseErr error
+	width, parseErr = strconv.Atoi(parts[0])
+	if parseErr != nil {
+		return 0, 0, fmt.Errorf("failed to parse width: %w", parseErr)
+	}
+
+	height, parseErr = strconv.Atoi(parts[1])
+	if parseErr != nil {
+		return 0, 0, fmt.Errorf("failed to parse height: %w", parseErr)
+	}
+
+	return width, height, nil
+}
+
+// GeneratePreviewMP4 generates a 30-second preview MP4 from video at specified time
+// startTime: format "HH:MM:SS" or "SS" (e.g., "00:02:30" or "150")
+// duration: how long the MP4 should be in seconds (typically 30)
+// TikTok-quality specs: 720p max (or source resolution if lower), 24fps, H.264 + AAC audio
+func GeneratePreviewMP4(inputPath, outputPath, startTime string, duration int) error {
+	// Detect source resolution
+	_, height, err := GetVideoResolution(inputPath)
+	if err != nil {
+		return fmt.Errorf("failed to detect source resolution: %w", err)
+	}
+
+	// Calculate target resolution: MIN(720p, source_height)
+	targetHeight := 720
+	if height < targetHeight {
+		targetHeight = height // Never upscale
+	}
+
+	// Build scale filter: maintain aspect ratio, cap at target height
+	scaleFilter := fmt.Sprintf("scale=-2:%d:flags=lanczos", targetHeight)
+
+	// Generate MP4 with audio (if available)
+	cmd := exec.Command("ffmpeg", "-y",
+		"-ss", startTime,
+		"-i", inputPath,
+		"-t", fmt.Sprintf("%d", duration),
+		"-c:v", "libx264",
+		"-crf", "26",          // Quality factor (lower = better, 26 is good balance)
+		"-preset", "fast",     // Encoding speed
+		"-vf", fmt.Sprintf("fps=24,%s", scaleFilter), // 24fps + adaptive scale
+		"-c:a", "aac",         // Audio codec (will be skipped if no audio)
+		"-b:a", "96k",         // Audio bitrate
+		"-movflags", "+faststart", // Enable fast web playback
+		outputPath,
+	)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
+// GenerateMP4FromFrames creates an MP4 from a series of image frames (for WebRTC streams)
+// framesPattern: path pattern like "/tmp/frame_%03d.jpg" (ffmpeg glob pattern)
+// outputPath: where to save the final MP4
+// fps: frames per second for the output MP4 (typically 24 for smooth previews)
+func GenerateMP4FromFrames(framesPattern, outputPath string, fps int) error {
+	cmd := exec.Command("ffmpeg", "-y",
+		"-framerate", fmt.Sprintf("%d", fps),
+		"-i", framesPattern,
+		"-c:v", "libx264",
+		"-crf", "26",
+		"-preset", "fast",
+		"-vf", fmt.Sprintf("fps=%d,scale=-2:720:flags=lanczos", fps), // 24fps, 720p max
+		"-movflags", "+faststart",
+		"-pix_fmt", "yuv420p", // Ensure compatibility
+		outputPath,
+	)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
 // GenerateGIFFromFrames creates a GIF from a series of image frames (for WebRTC streams)
 // framesPattern: path pattern like "/tmp/frame_%03d.jpg" (ffmpeg glob pattern)
 // outputPath: where to save the final GIF

@@ -143,6 +143,7 @@ const Taskbar = ({
   isSilenceMode = false,
   onToggleSilenceMode,
   broadcastPermissions = {},
+  hasOpenModal = false, // ✅ Prevent taskbar from showing when modal is open
   // Raise hand props
   handRaised = false,
   hasHostApproval = false,
@@ -233,6 +234,16 @@ const Taskbar = ({
 
   // Mouse visibility logic — stable during media playback
   useEffect(() => {
+    // ✅ Force hide taskbar when modal is open
+    if (hasOpenModal) {
+      setIsVisible(false);
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+      return; // Skip mouse movement logic when modal is active
+    }
+
     const handleMouseMove = (e) => {
       const now = Date.now();
       if (now - lastEventTimeRef.current < 100) return; // debounce
@@ -241,7 +252,8 @@ const Taskbar = ({
       const windowHeight = window.innerHeight;
       const mouseY = e.clientY;
 
-      if (mouseY > windowHeight * 0.92) {
+      // ✅ Changed from 0.92 (8%) to 0.94 (6%) - show taskbar in bottom 6% of screen
+      if (mouseY > windowHeight * 0.94) {
         setIsVisible(true);
         if (hideTimerRef.current) {
           clearTimeout(hideTimerRef.current);
@@ -262,7 +274,7 @@ const Taskbar = ({
       window.removeEventListener('mousemove', handleMouseMove);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
-  }, []);
+  }, [hasOpenModal]);
 
   // Auto-unpin when sidebar closes
   useEffect(() => {
@@ -389,16 +401,19 @@ const Taskbar = ({
   return (
     <>
       {/* Invisible swipe-up zone at bottom of screen (mobile only) */}
-      <div
-        className="fixed bottom-0 left-0 right-0 h-20 z-[999] pointer-events-auto md:hidden"
-        style={{
-          touchAction: 'none',
-          background: isVisible ? 'transparent' : 'transparent'
-        }}
-        onTouchStart={handleSwipeZoneTouchStart}
-        onTouchMove={handleSwipeZoneTouchMove}
-        onTouchEnd={handleSwipeZoneTouchEnd}
-      />
+      {/* ✅ Hidden when modal is open to prevent blocking modal buttons */}
+      {!hasOpenModal && (
+        <div
+          className="fixed bottom-0 left-0 right-0 h-20 z-[999] pointer-events-auto md:hidden"
+          style={{
+            touchAction: 'none',
+            background: isVisible ? 'transparent' : 'transparent'
+          }}
+          onTouchStart={handleSwipeZoneTouchStart}
+          onTouchMove={handleSwipeZoneTouchMove}
+          onTouchEnd={handleSwipeZoneTouchEnd}
+        />
+      )}
       
       <div
         style={taskbarStyle}

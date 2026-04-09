@@ -727,13 +727,25 @@ export const deleteSingleTemporaryMediaItem = async (roomId, itemId) => {
 
 
 /**
- * Creates a new watch session for a room (host-only)
+ * ⚠️ DEPRECATED (April 2026): Legacy session creation - DO NOT USE
+ * This endpoint has been replaced by POST /api/rooms/:id/sessions
+ * Only used by old RoomPage.jsx which is no longer in routing table
+ * Use the direct apiClient.post() call in RoomPageNew.jsx instead
+ * 
  * @param {string|number} roomId 
  * @param {string} watchType - "video" or "3d_cinema"
  * @returns {Promise<AxiosResponse>}
+ * @deprecated Use POST /api/rooms/:id/sessions instead
  */
-export const createWatchSessionForRoom = (roomId, watchType = 'video') => {
-  return apiClient.post(`/api/rooms/${roomId}/watch-session`, { watch_type: watchType });
+export const createWatchSessionForRoom = (roomId, watchTypeOrConfig = 'video') => {
+  console.warn('[DEPRECATED] createWatchSessionForRoom is deprecated. Use POST /api/rooms/:id/sessions instead.');
+  
+  // Support both old signature (watchType string) and new signature (config object)
+  const requestBody = typeof watchTypeOrConfig === 'string'
+    ? { watch_type: watchTypeOrConfig } 
+    : watchTypeOrConfig;
+  
+  return apiClient.post(`/api/rooms/${roomId}/watch-session`, requestBody);
 };
 
 
@@ -762,6 +774,35 @@ export const endWatchSession = async (roomId, sessionId) => {
     console.error('API Error (endWatchSession):', error);
     throw error;
   }
+};
+
+/**
+ * Upload single chunk to backend
+ * @param {Object} params - Chunk upload parameters
+ * @returns {Promise} Upload response
+ */
+export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fileName, fileSize, roomId, sessionId, abortSignal }) => {
+  const formData = new FormData();
+  formData.append('chunk', chunk);
+  formData.append('chunk_index', chunkIndex);
+  formData.append('total_chunks', totalChunks);
+  formData.append('upload_id', uploadId);
+  formData.append('file_name', fileName);
+  formData.append('file_size', fileSize);
+  
+  const config = {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000, // 2 minutes per chunk
+    signal: abortSignal
+  };
+  
+  let uploadUrl = `/api/rooms/${roomId}/upload?chunked=true`;
+  if (sessionId) {
+    uploadUrl += `&session_id=${encodeURIComponent(sessionId)}`;
+  }
+  
+  const response = await apiClient.post(uploadUrl, formData, config);
+  return response.data;
 };
 
 export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false, sessionId = null, abortSignal = null) => {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -89,11 +90,6 @@ func (LiveShareMediaQueueItem) TableName() string {
 // UploadLogoBug handles logo bug upload for LiveShare
 func UploadLogoBug(c *gin.Context) {
 	sessionIDStr := c.Param("id")
-	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
-		return
-	}
 
 	// Verify user is host
 	userID, exists := c.Get("user_id")
@@ -103,7 +99,8 @@ func UploadLogoBug(c *gin.Context) {
 	}
 
 	var session models.WatchSession
-	if err := DB.First(&session, sessionID).Error; err != nil {
+	// Query by session_id (UUID) instead of numeric ID
+	if err := DB.Where("session_id = ?", sessionIDStr).First(&session).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
 		return
 	}
@@ -142,7 +139,7 @@ func UploadLogoBug(c *gin.Context) {
 	}
 
 	// Generate unique filename
-	filename := fmt.Sprintf("logo_bug_%d_%s%s", sessionID, uuid.New().String(), ext)
+	filename := fmt.Sprintf("logo_bug_%d_%s%s", session.ID, uuid.New().String(), ext)
 	uploadDir := filepath.Join("uploads", "liveshare")
 	uploadPath := filepath.Join(uploadDir, filename)
 
@@ -177,11 +174,6 @@ func UploadLogoBug(c *gin.Context) {
 // UploadMediaQueue handles media queue item upload
 func UploadMediaQueue(c *gin.Context) {
 	sessionIDStr := c.Param("id")
-	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
-		return
-	}
 
 	// Verify user is host
 	userID, exists := c.Get("user_id")
@@ -191,7 +183,8 @@ func UploadMediaQueue(c *gin.Context) {
 	}
 
 	var session models.WatchSession
-	if err := DB.First(&session, sessionID).Error; err != nil {
+	// Query by session_id (UUID) instead of numeric ID
+	if err := DB.Where("session_id = ?", sessionIDStr).First(&session).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
 		return
 	}
@@ -209,7 +202,7 @@ func UploadMediaQueue(c *gin.Context) {
 
 	// Check queue limit
 	var count int64
-	DB.Model(&LiveShareMediaQueueItem{}).Where("session_id = ?", sessionID).Count(&count)
+	DB.Model(&LiveShareMediaQueueItem{}).Where("session_id = ?", session.ID).Count(&count)
 	if count >= 5 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Maximum 5 media items allowed"})
 		return
@@ -251,7 +244,7 @@ func UploadMediaQueue(c *gin.Context) {
 	}
 
 	// Generate unique filename
-	filename := fmt.Sprintf("media_%d_%s%s", sessionID, uuid.New().String(), ext)
+	filename := fmt.Sprintf("media_%d_%s%s", session.ID, uuid.New().String(), ext)
 	uploadDir := filepath.Join("uploads", "liveshare")
 	uploadPath := filepath.Join(uploadDir, filename)
 
@@ -280,13 +273,13 @@ func UploadMediaQueue(c *gin.Context) {
 	// Get next position in queue
 	var maxPosition int
 	DB.Model(&LiveShareMediaQueueItem{}).
-		Where("session_id = ?", sessionID).
+		Where("session_id = ?", session.ID).
 		Select("COALESCE(MAX(position), -1) + 1").
 		Scan(&maxPosition)
 
 	// Save to database
 	queueItem := LiveShareMediaQueueItem{
-		SessionID: uint(sessionID),
+		SessionID: session.ID,
 		MediaType: mediaType,
 		MediaURL:  mediaURL,
 		FileName:  header.Filename,
@@ -526,3 +519,79 @@ func broadcastGraphicsUpdate(sessionID uint, graphic LiveShareGraphic) {
 		}
 	}
 }
+
+// CleanupLiveShareAssets deletes all LiveShare graphics and media queue items for a session
+// and removes associated uploaded files from disk
+func CleanupLiveShareAssets(sessionID uint) {
+	log.Printf("🧹 [CleanupLiveShare] Starting cleanup for session ID %d", sessionID)
+	
+	// Get all media queue items to delete their files
+	var mediaItems []LiveShareMediaQueueItem
+	if err := DB.Where("session_id = ?", sessionID).Find(&mediaItems).Error; err == nil {
+		for _, item := range mediaItems {
+			// Delete file from disk if it exists
+			if item.MediaURL != "" {
+				// MediaURL format: "/uploads/liveshare/filename.ext"
+				filePath := filepath.Join(".", item.MediaURL) // Prepend current dir to make absolute
+				if err := os.Remove(filePath); err != nil {
+					log.Printf("⚠️ [CleanupLiveShare] Failed to delete file %s: %v", filePath, err)
+				} else {
+					log.Printf("🗑️ [CleanupLiveShare] Deleted file: %s", filePath)
+				}
+			}
+		}
+		
+		// Delete database records
+		if err := DB.Where("session_id = ?", sessionID).Delete(&LiveShareMediaQueueItem{}).Error; err != nil {
+			log.Printf("⚠️ [CleanupLiveShare] Failed to delete media queue items: %v", err)
+		} else if len(mediaItems) > 0 {
+			log.Printf("✅ [CleanupLiveShare] Deleted %d media queue items", len(mediaItems))
+		}
+	}
+	
+	// Delete graphics records
+	result := DB.Where("session_id = ?", sessionID).Delete(&LiveShareGraphic{})
+	if result.Error != nil {
+		log.Printf("⚠️ [CleanupLiveShare] Failed to delete graphics: %v", result.Error)
+	} else if result.RowsAffected > 0 {
+		log.Printf("✅ [CleanupLiveShare] Deleted %d graphics records", result.RowsAffected)
+	}
+}
+
+// CleanupLiveShareAssetsInTransaction same as CleanupLiveShareAssets but uses provided transaction
+func CleanupLiveShareAssetsInTransaction(tx *gorm.DB, sessionID uint) {
+	log.Printf("🧹 [CleanupLiveShare] Starting cleanup for session ID %d (in transaction)", sessionID)
+	
+	// Get all media queue items to delete their files
+	var mediaItems []LiveShareMediaQueueItem
+	if err := tx.Where("session_id = ?", sessionID).Find(&mediaItems).Error; err == nil {
+		for _, item := range mediaItems {
+			// Delete file from disk if it exists
+			if item.MediaURL != "" {
+				// MediaURL format: "/uploads/liveshare/filename.ext"
+				filePath := filepath.Join(".", item.MediaURL) // Prepend current dir to make absolute
+				if err := os.Remove(filePath); err != nil {
+					log.Printf("⚠️ [CleanupLiveShare] Failed to delete file %s: %v", filePath, err)
+				} else {
+					log.Printf("🗑️ [CleanupLiveShare] Deleted file: %s", filePath)
+				}
+			}
+		}
+		
+		// Delete database records
+		if err := tx.Where("session_id = ?", sessionID).Delete(&LiveShareMediaQueueItem{}).Error; err != nil {
+			log.Printf("⚠️ [CleanupLiveShare] Failed to delete media queue items: %v", err)
+		} else if len(mediaItems) > 0 {
+			log.Printf("✅ [CleanupLiveShare] Deleted %d media queue items", len(mediaItems))
+		}
+	}
+	
+	// Delete graphics records
+	result := tx.Where("session_id = ?", sessionID).Delete(&LiveShareGraphic{})
+	if result.Error != nil {
+		log.Printf("⚠️ [CleanupLiveShare] Failed to delete graphics: %v", result.Error)
+	} else if result.RowsAffected > 0 {
+		log.Printf("✅ [CleanupLiveShare] Deleted %d graphics records", result.RowsAffected)
+	}
+}
+

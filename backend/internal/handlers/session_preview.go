@@ -91,11 +91,11 @@ func GenerateSessionPreviewHandler(c *gin.Context) {
 	// Generate unique filenames
 	timestamp := time.Now().Unix()
 	posterFilename := fmt.Sprintf("session_%s_poster_%d.jpg", sessionID, timestamp)
-	gifFilename := fmt.Sprintf("session_%s_preview_%d.gif", sessionID, timestamp)
+	mp4Filename := fmt.Sprintf("session_%s_preview_%d.mp4", sessionID, timestamp)
 	posterPath := filepath.Join(PreviewsDir, posterFilename)
-	gifPath := filepath.Join(PreviewsDir, gifFilename)
+	mp4Path := filepath.Join(PreviewsDir, mp4Filename)
 
-	var posterURL, gifURL string
+	var posterURL, mp4URL string
 
 	// Handle different sources
 	switch req.Source {
@@ -165,14 +165,14 @@ func GenerateSessionPreviewHandler(c *gin.Context) {
 			log.Printf("✅ [GenerateSessionPreview] Poster generated: %s", posterURL)
 		}
 
-		// Generate GIF (30 seconds)
-		log.Printf("🎞️ [GenerateSessionPreview] Generating GIF from: %s", mediaPath)
-		if err := utils.GeneratePreviewGIF(mediaPath, gifPath, startTime, 30); err != nil {
-			log.Printf("❌ [GenerateSessionPreview] GIF generation failed: %v", err)
-			gifURL = "" // Will fallback to poster
+		// Generate MP4 preview (30 seconds) with audio
+		log.Printf("🎞️ [GenerateSessionPreview] Generating MP4 preview from: %s", mediaPath)
+		if err := utils.GeneratePreviewMP4(mediaPath, mp4Path, startTime, 30); err != nil {
+			log.Printf("❌ [GenerateSessionPreview] MP4 generation failed: %v", err)
+			mp4URL = "" // Will fallback to poster
 		} else {
-			gifURL = fmt.Sprintf("/uploads/previews/%s", gifFilename)
-			log.Printf("✅ [GenerateSessionPreview] GIF generated: %s", gifURL)
+			mp4URL = fmt.Sprintf("/uploads/previews/%s", mp4Filename)
+			log.Printf("✅ [GenerateSessionPreview] MP4 generated: %s", mp4URL)
 		}
 
 	case "liveshare", "watchfrom":
@@ -180,7 +180,7 @@ func GenerateSessionPreviewHandler(c *gin.Context) {
 		// This endpoint just acknowledges the request
 		log.Printf("ℹ️ [GenerateSessionPreview] WebRTC source - expecting frame upload")
 		posterURL = "/icons/placeholder-poster.jpg"
-		gifURL = ""
+		mp4URL = ""
 
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid source type"})
@@ -193,12 +193,12 @@ func GenerateSessionPreviewHandler(c *gin.Context) {
 		"session_id":  sessionID,
 		"source":      req.Source,
 		"poster_url":  posterURL,
-		"preview_url": gifURL,
+		"preview_url": mp4URL,
 	})
 }
 
 // UploadSessionFramesHandler handles POST /api/sessions/:sessionId/upload-frames
-// Receives canvas-captured frames from WebRTC streams and generates GIF
+// Receives canvas-captured frames from WebRTC streams and generates MP4
 func UploadSessionFramesHandler(c *gin.Context) {
 	log.Println("📸 [UploadSessionFrames] Request received")
 
@@ -293,16 +293,16 @@ func UploadSessionFramesHandler(c *gin.Context) {
 	}
 	posterURL := fmt.Sprintf("/uploads/previews/%s", posterFilename)
 
-	// Generate GIF from frames
-	gifFilename := fmt.Sprintf("session_%s_preview_%d.gif", sessionID, timestamp)
-	gifPath := filepath.Join(PreviewsDir, gifFilename)
+	// Generate MP4 from frames
+	mp4Filename := fmt.Sprintf("session_%s_preview_%d.mp4", sessionID, timestamp)
+	mp4Path := filepath.Join(PreviewsDir, mp4Filename)
 	framesPattern := filepath.Join(tempDir, "frame_%03d.jpg")
 
-	log.Printf("🎞️ [UploadSessionFrames] Generating GIF from %d frames", len(files))
-	if err := utils.GenerateGIFFromFrames(framesPattern, gifPath, 5); err != nil {
-		log.Printf("❌ [UploadSessionFrames] GIF generation failed: %v", err)
+	log.Printf("🎞️ [UploadSessionFrames] Generating MP4 from %d frames", len(files))
+	if err := utils.GenerateMP4FromFrames(framesPattern, mp4Path, 5); err != nil {
+		log.Printf("❌ [UploadSessionFrames] MP4 generation failed: %v", err)
 		c.JSON(http.StatusOK, gin.H{
-			"message":     "Frames uploaded but GIF generation failed",
+			"message":     "Frames uploaded but MP4 generation failed",
 			"session_id":  sessionID,
 			"poster_url":  posterURL,
 			"preview_url": "",
@@ -310,15 +310,15 @@ func UploadSessionFramesHandler(c *gin.Context) {
 		return
 	}
 
-	gifURL := fmt.Sprintf("/uploads/previews/%s", gifFilename)
-	log.Printf("✅ [UploadSessionFrames] GIF generated successfully: %s", gifURL)
+	mp4URL := fmt.Sprintf("/uploads/previews/%s", mp4Filename)
+	log.Printf("✅ [UploadSessionFrames] MP4 generated successfully: %s", mp4URL)
 
 	// ✅ Update session with preview URLs in database
 	if err := DB.Model(&models.WatchSession{}).
 		Where("session_id = ?", sessionID).
 		Updates(map[string]interface{}{
 			"poster_url":  posterURL,
-			"preview_url": gifURL,
+			"preview_url": mp4URL,
 		}).Error; err != nil {
 		log.Printf("❌ [UploadSessionFrames] Failed to update session preview URLs: %v", err)
 	} else {
@@ -330,7 +330,7 @@ func UploadSessionFramesHandler(c *gin.Context) {
 		"type":        "session_preview_updated",
 		"session_id":  sessionID,
 		"poster_url":  posterURL,
-		"preview_url": gifURL,
+		"preview_url": mp4URL,
 	}
 	broadcastJSON, _ := json.Marshal(broadcastData)
 	
@@ -342,10 +342,10 @@ func UploadSessionFramesHandler(c *gin.Context) {
 	log.Printf("✅ [UploadSessionFrames] Lobby broadcast sent for session %s", sessionID)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":     "Frames uploaded and GIF generated",
+		"message":     "Frames uploaded and MP4 generated",
 		"session_id":  sessionID,
 		"poster_url":  posterURL,
-		"preview_url": gifURL,
+		"preview_url": mp4URL,
 	})
 }
 

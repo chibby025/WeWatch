@@ -696,6 +696,9 @@ func EndWatchSessionHandler(c *gin.Context) {
 	if mediaSwitchHandler != nil {
 		mediaSwitchHandler.HandleSessionEnd(sessionID)
 	}
+	
+	// ✅ CLEANUP LIVESHARE GRAPHICS AND MEDIA QUEUE (delete uploaded files + DB records)
+	CleanupLiveShareAssets(session.ID)
 
 	// ✅ CLEAR SEATING ASSIGNMENTS for this room (prevent stale seat data in new sessions)
 	if hub != nil {
@@ -1318,19 +1321,8 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 		return
 	}
 
-	// 🔄 Dynamic LiveKit URL based on request origin
-	livekitURL := os.Getenv("LIVEKIT_URL")
-	
-	// Check multiple sources to determine if request is from localhost or external
-	requestHost := c.Request.Host
-	origin := c.GetHeader("Origin")
-	referer := c.GetHeader("Referer")
-	forwardedHost := c.GetHeader("X-Forwarded-Host")
-	
-	log.Printf("🔍 [LiveKit] Request headers - Host: %s, Origin: %s, Referer: %s, X-Forwarded-Host: %s", 
-		requestHost, origin, referer, forwardedHost)
-	
-	// Use LIVEKIT_URL from environment (supports both local dev and production LiveKit Cloud)
+	// ✅ Environment-aware LiveKit URL (localhost for dev, production URL for deployed)
+	livekitURL := utils.GetLiveKitURL(c.Request)
 	log.Printf("✅ [LiveKit] Token generated successfully. URL=%s", livekitURL)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1451,15 +1443,19 @@ func CreateInstantWatchHandler(c *gin.Context) {
 	sessionUUID := uuid.New().String()
 	
 	// Validate and set content rating (default to 'G')
+	log.Printf("🎬 [CreateInstantWatch] Received content_rating: '%s'", input.ContentRating)
 	contentRating := "G"
 	if input.ContentRating != "" {
 		validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
 		for _, rating := range validRatings {
 			if input.ContentRating == rating {
 				contentRating = rating
+				log.Printf("✅ [CreateInstantWatch] Valid content_rating matched: '%s'", contentRating)
 				break
 			}
 		}
+	} else {
+		log.Printf("⚠️ [CreateInstantWatch] No content_rating received, defaulting to 'G'")
 	}
 	
 	watchSession := models.WatchSession{
@@ -1479,6 +1475,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
 		return
 	}
+	log.Printf("✅ [CreateInstantWatch] Session created with content_rating: '%s' (session_id: %s)", watchSession.ContentRating, sessionUUID)
 
 	// ✅ COMMIT TRANSACTION
 	if err := tx.Commit().Error; err != nil {
@@ -2289,6 +2286,7 @@ func GetActiveSessionHandler(c *gin.Context) {
 	}
 	
 	log.Printf("✅ [GetActiveSessionHandler] Returning %d active members for session %s", len(members), session.SessionID)
+	log.Printf("🎬 [GetActiveSessionHandler] Session content_rating from DB: '%s'", session.ContentRating)
 
 	// ✅ Fetch host username for ticket purchase modal
 	var hostUser models.User
@@ -2305,6 +2303,7 @@ func GetActiveSessionHandler(c *gin.Context) {
 		"watch_type":            session.WatchType,
 		"class_type":            session.ClassType,
 		"session_title":         session.SessionTitle,
+		"content_rating":        session.ContentRating,  // ✅ Include content rating
 		"host_id":               session.HostID,
 		"host_name":             hostName,  // ✅ Add host name for ticket purchase modal
 		"is_existing":           true,
@@ -2326,22 +2325,74 @@ func GetActiveSessionHandler(c *gin.Context) {
 
 // CreateWatchSessionForRoomHandler creates a WatchSession for a persistent room
 func CreateWatchSessionForRoomHandler(c *gin.Context) {
+	log.Println("\n🎬🎬🎬 ===== CREATE WATCH SESSION API CALLED =====")
 	userID := c.MustGet("user_id").(uint)
 	roomID, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	log.Printf("🔍 [CreateWatchSession] User %d creating session for room %d", userID, roomID)
 
-	// Parse watch_type from request body
+	// Parse watch_type, class_type, ticketing, and content_rating from request body
 	var input struct {
-		WatchType string `json:"watch_type"` // "video" or "3d_cinema"
+		WatchType            string  `json:"watch_type"`              // "video", "3d_cinema", or "classroom"
+		ClassType            *string `json:"class_type"`              // "classroom" or "lecture_hall" (for classroom watch_type)
+		ContentRating        string  `json:"content_rating"`          // "G", "PG", "13+", "16+", "18+", "Mature"
+		TicketingEnabled     bool    `json:"ticketing_enabled"`       // Whether entry requires ticket purchase
+		TicketPriceTokens    int     `json:"ticket_price_tokens"`     // Price in tokens
+		TicketPriceCurrency  string  `json:"ticket_price_currency"`   // Currency symbol (₦, $, etc.)
+		TicketPriceAmount    float64 `json:"ticket_price_amount"`     // Price in local currency
+		EarlyBirdEnabled     bool    `json:"early_bird_enabled"`      // Early bird pricing active
+		EarlyBirdPriceTokens int     `json:"early_bird_price_tokens"` // Early bird price in tokens
+		EarlyBirdPriceAmount float64 `json:"early_bird_price_amount"` // Early bird price in local currency
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("⚠️ [CreateWatchSession] JSON bind error: %v - using defaults", err)
 		// Default to "video" if not specified
 		input.WatchType = "video"
 	}
 	
+	log.Printf("📥 [CreateWatchSession] RAW INPUT RECEIVED:")
+	log.Printf("  ├─ content_rating: '%s'", input.ContentRating)
+	log.Printf("  ├─ watch_type: '%s'", input.WatchType)
+	log.Printf("  ├─ class_type: %v", input.ClassType)
+	log.Printf("  ├─ ticketing_enabled: %v", input.TicketingEnabled)
+	log.Printf("🎬 [CreateWatchSession] Received ticketing_enabled: %v", input.TicketingEnabled)
+	log.Printf("🎬 [CreateWatchSession] Received watch_type: '%s', class_type: %v", input.WatchType, input.ClassType)
+	
 	// Validate watch_type
-	if input.WatchType != "video" && input.WatchType != "3d_cinema" {
+	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" {
 		input.WatchType = "video"
 	}
+	
+	// Handle class_type for classroom watch_type
+	var classType string
+	if input.WatchType == "classroom" {
+		if input.ClassType != nil && (*input.ClassType == "classroom" || *input.ClassType == "lecture_hall") {
+			classType = *input.ClassType
+		} else {
+			classType = "lecture_hall" // Default
+		}
+	}
+	
+	// Validate content_rating
+	log.Printf("🔍 [CreateWatchSession] Starting content_rating validation...")
+	log.Printf("  ├─ Input value: '%s' (length: %d)", input.ContentRating, len(input.ContentRating))
+	contentRating := "G" // Default to 'G' if not provided or invalid
+	validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
+	matched := false
+	for _, rating := range validRatings {
+		log.Printf("  ├─ Comparing '%s' == '%s' ? %v", input.ContentRating, rating, input.ContentRating == rating)
+		if input.ContentRating == rating {
+			contentRating = rating
+			matched = true
+			log.Printf("✅ [CreateWatchSession] Valid content_rating matched: '%s'", contentRating)
+			break
+		}
+	}
+	if !matched {
+		log.Printf("⚠️ [CreateWatchSession] NO MATCH FOUND! Defaulting to 'G'. Input was: '%s'", input.ContentRating)
+	}
+	
+	// Early bird pricing is managed by the utils.StartEarlyBirdScheduler
+	// It auto-deactivates 1 hour before scheduled events
 
 	// Verify user is host
 	var room models.Room
@@ -2355,11 +2406,18 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	}
 
 	// ✅ Check for existing active session before creating new one
+	log.Printf("🔍 [CreateWatchSession] Checking for existing active session in room %d...", roomID)
 	var existingSession models.WatchSession
 	result := DB.Where("room_id = ? AND ended_at IS NULL AND is_active = ?", roomID, true).First(&existingSession)
 	if result.Error == nil {
 		// Active session already exists - return it
-		log.Printf("✅ Found existing active session for room %d: %s (type: %s)", roomID, existingSession.SessionID, existingSession.WatchType)
+		log.Printf("⚠️⚠️⚠️ EXISTING SESSION FOUND!")
+		log.Printf("  ├─ Session ID: %s", existingSession.SessionID)
+		log.Printf("  ├─ Watch Type: %s", existingSession.WatchType)
+		log.Printf("  ├─ Content Rating: '%s'", existingSession.ContentRating)
+		log.Printf("  ├─ Started At: %v", existingSession.StartedAt)
+		log.Printf("  ├─ Is Active: %v", existingSession.IsActive)
+		log.Printf("  └─ RETURNING EXISTING SESSION (not creating new one)")
 		
 		// Count active members
 		var memberCount int64
@@ -2377,27 +2435,82 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	}
 
 	// No active session found - create new session
+	log.Printf("✅ [CreateWatchSession] No existing session - creating NEW session")
 	sessionID := uuid.New().String()
+	log.Printf("🆕 [CreateWatchSession] Generated session_id: %s", sessionID)
+	log.Printf("📝 [CreateWatchSession] Session struct being created with:")
+	log.Printf("  ├─ content_rating: '%s'", contentRating)
+	log.Printf("  ├─ watch_type: '%s'", input.WatchType)
+	log.Printf("  ├─ class_type: '%s'", classType)
+	log.Printf("  └─ is_active: true")
 	session := models.WatchSession{
-		SessionID: sessionID,
-		RoomID:    uint(roomID),
-		HostID:    userID,
-		WatchType: input.WatchType,
-		StartedAt: time.Now(),
+		SessionID:         sessionID,
+		RoomID:            uint(roomID),
+		HostID:            userID,
+		WatchType:         input.WatchType,
+		ClassType:         classType,         // ✅ Set class_type for classroom sessions
+		ContentRating:     contentRating,     // ✅ Set content rating
+		StartedAt:         time.Now(),
+		IsActive:          true,
 	}
+	
+	// Only populate ticketing fields if ticketing is enabled
+	if input.TicketingEnabled {
+		session.TicketingEnabled = true
+		session.TicketPriceTokens = input.TicketPriceTokens
+		session.TicketPriceCurrency = input.TicketPriceCurrency
+		session.TicketPriceAmount = input.TicketPriceAmount
+		
+		// Only populate early bird fields if early bird is also enabled
+		if input.EarlyBirdEnabled {
+			session.EarlyBirdEnabled = true
+			session.EarlyBirdPriceTokens = input.EarlyBirdPriceTokens
+			session.EarlyBirdPriceAmount = input.EarlyBirdPriceAmount
+			session.EarlyBirdActive = true // Default to active, scheduler will deactivate later
+		}
+	}
+	
 	if err := DB.Create(&session).Error; err != nil {
 		log.Printf("❌ Failed to create watch session: %v", err)
 		c.JSON(500, gin.H{"error": "Failed to create session"})
 		return
 	}
 
-	log.Printf("✅ Created new watch session for room %d: %s (type: %s)", roomID, sessionID, input.WatchType)
+	log.Printf("✅✅✅ [CreateWatchSession] Session SAVED to database!")
+	log.Printf("  ├─ session_id: %s", sessionID)
+	log.Printf("  ├─ content_rating in struct: '%s'", session.ContentRating)
+	log.Printf("  ├─ ticketing_enabled: %v", input.TicketingEnabled)
+	
+	// Verify what was actually saved
+	var savedSession models.WatchSession
+	if err := DB.Where("session_id = ?", sessionID).First(&savedSession).Error; err == nil {
+		log.Printf("🔍 [CreateWatchSession] VERIFICATION - Reading back from database:")
+		log.Printf("  ├─ content_rating from DB: '%s'", savedSession.ContentRating)
+		log.Printf("  ├─ watch_type from DB: '%s'", savedSession.WatchType)
+		log.Printf("  └─ is_active from DB: %v", savedSession.IsActive)
+	} else {
+		log.Printf("⚠️ [CreateWatchSession] Could not verify saved session: %v", err)
+	}
+	log.Printf("📤 [CreateWatchSession] Sending response to frontend:")
+	log.Printf("  ├─ content_rating: '%s'", contentRating)
+	log.Printf("  ├─ session_id: %s", sessionID)
+	log.Printf("  └─ is_existing: false")
 	c.JSON(201, gin.H{
-		"session_id":   sessionID,
-		"watch_type":   input.WatchType,
-		"is_existing":  false,
-		"started_at":   session.StartedAt,
-		"member_count": 0,
+		"session_id":             sessionID,
+		"watch_type":             input.WatchType,
+		"class_type":             classType,
+		"content_rating":         contentRating,             // ✅ Return content rating to frontend
+		"ticketing_enabled":      input.TicketingEnabled,    // ✅ Return ticketing status
+		"ticket_price_tokens":    input.TicketPriceTokens,   // ✅ Return ticket price
+		"ticket_price_currency":  input.TicketPriceCurrency, // ✅ Return currency
+		"ticket_price_amount":    input.TicketPriceAmount,   // ✅ Return local price
+		"early_bird_enabled":     input.EarlyBirdEnabled,    // ✅ Return early bird status
+		"early_bird_price_tokens": input.EarlyBirdPriceTokens,
+		"early_bird_price_amount": input.EarlyBirdPriceAmount,
+		"early_bird_active":      session.EarlyBirdActive,   // ✅ Return active status from session
+		"is_existing":            false,
+		"started_at":             session.StartedAt,
+		"member_count":           0,
 	})
 }
 

@@ -357,7 +357,12 @@ func main() {
 		roomGroup.POST("/:id/sessions", handlers.CreateWatchSession)   // POST /api/rooms/:id/sessions (Create new watch session)
 		roomGroup.POST("/:id/sessions/:session_id/end", handlers.EndWatchSessionHandler) // POST /api/rooms/:id/sessions/:session_id/end (End watch session)
 		
-		roomGroup.POST("/:id/watch-session", handlers.CreateWatchSessionForRoomHandler) // Regular Room Video Watch
+		// ⚠️ DEPRECATED (April 2026): Legacy session creation endpoint - DO NOT USE
+		// Replaced by POST /api/rooms/:id/sessions (CreateWatchSession handler)
+		// Only used by old RoomPage.jsx which is no longer in routing table
+		// TODO: Remove after confirming no external API consumers
+		// roomGroup.POST("/:id/watch-session", handlers.CreateWatchSessionForRoomHandler)
+		
 		roomGroup.GET("/:id/active-session", handlers.GetActiveSessionHandler)
 		roomGroup.PUT("/:id/status", handlers.UpdateRoomStatusHandler)
 		roomGroup.DELETE("/:id/temporary-media/:item_id", handlers.DeleteSingleTemporaryMediaItemHandler)
