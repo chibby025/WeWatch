@@ -401,6 +401,11 @@ func main() {
 	// ✅ Session ratings
 	sessionGroup.POST("/:id/ratings", handlers.SubmitSessionRatingHandler)   // POST /api/sessions/:id/ratings (Submit rating after session)
 	
+	// ✅ Session engagement (likes)
+	sessionGroup.POST("/:id/like", handlers.LikeSessionHandler)              // POST /api/sessions/:id/like (Like a session)
+	sessionGroup.DELETE("/:id/unlike", handlers.UnlikeSessionHandler)        // DELETE /api/sessions/:id/unlike (Unlike a session)
+	sessionGroup.GET("/:id/like-status", handlers.GetSessionLikeStatusHandler) // GET /api/sessions/:id/like-status (Get like status and count)
+	
 	// ✅ LiveShare Graphics routes
 	sessionGroup.POST("/:id/logo-bug", handlers.UploadLogoBug)        // POST /api/sessions/:id/logo-bug (Upload logo bug)
 	sessionGroup.POST("/:id/media-queue", handlers.UploadMediaQueue)  // POST /api/sessions/:id/media-queue (Upload media to queue)
@@ -419,6 +424,15 @@ func main() {
 	sessionGroup.GET("/:id/broadcast/active", handlers.GetActiveBroadcasters) // GET /api/sessions/:id/broadcast/active
 	sessionGroup.GET("/:id/broadcast/requests", handlers.GetPendingBroadcastRequests) // GET /api/sessions/:id/broadcast/requests
 }
+
+	// ✅ Public session engagement routes (no auth required for reading counts)
+	sessionPublic := r.Group("/api/sessions")
+	{
+		sessionPublic.GET("/:id/likes-count", handlers.GetSessionLikesCountHandler) // GET /api/sessions/:id/likes-count (Get likes count)
+		sessionPublic.GET("/:id/is-liked", handlers.AuthMiddleware(), handlers.IsSessionLikedHandler) // GET /api/sessions/:id/is-liked (Check if user liked - requires auth)
+		sessionPublic.GET("/:id/chat-preview", handlers.GetSessionChatPreviewHandler) // GET /api/sessions/:id/chat-preview (Get last 10 messages)
+		sessionPublic.GET("/:id/chat-count", handlers.GetSessionChatCountHandler)   // GET /api/sessions/:id/chat-count (Get total chat messages)
+	}
 
 	theaterGroup := r.Group("/api/theaters")
 	theaterGroup.Use(handlers.AuthMiddleware())

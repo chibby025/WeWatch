@@ -1,26 +1,39 @@
 // SessionPreview.jsx - Displays session preview with emoji → spinner → poster → MP4 video fallback
 import React, { useState, useEffect, useRef } from 'react';
+import { FilmIcon, VideoCameraIcon, AcademicCapIcon } from '@heroicons/react/24/solid';
 
-const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating }) => {
+const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isClearing = false, muted = true }) => {
   const [loadState, setLoadState] = useState('emoji'); // 'emoji' | 'loading' | 'poster' | 'video'
   const [imageError, setImageError] = useState(false);
   const [aspectRatio, setAspectRatio] = useState(null); // width / height
   const videoRef = useRef(null);
 
   useEffect(() => {
+    console.log('🎬 [SessionPreview] State update:', { isGenerating, isClearing, previewUrl, posterUrl, imageError, session: session.session_id });
+    
+    // ✅ If clearing (session ended), go to emoji immediately without spinner
+    if (isClearing) {
+      console.log('🧹 [SessionPreview] Clearing preview (session ended)');
+      setLoadState('emoji');
+      return;
+    }
+    
     if (isGenerating) {
       setLoadState('loading');
       return;
     }
 
     if (previewUrl && !imageError) {
+      console.log('✅ [SessionPreview] Switching to video state:', previewUrl);
       setLoadState('video');
     } else if (posterUrl && !imageError) {
+      console.log('📸 [SessionPreview] Switching to poster state:', posterUrl);
       setLoadState('poster');
     } else {
+      console.log('😀 [SessionPreview] Switching to emoji state');
       setLoadState('emoji');
     }
-  }, [previewUrl, posterUrl, isGenerating, imageError]);
+  }, [previewUrl, posterUrl, isGenerating, isClearing, imageError]);
 
   // Detect video aspect ratio for TikTok-style rendering
   useEffect(() => {
@@ -60,21 +73,21 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating }) => {
     return 'object-contain';
   };
 
-  // Get source emoji based on session metadata
-  const getSourceEmoji = () => {
+  // Get source icon based on session metadata (white solid icons)
+  const getSourceIcon = () => {
     // ✅ Lecture hall specific detection
     if (session.watch_type === 'classroom' && session.class_type === 'lecture_hall') {
       // Check if there's active media
-      if (session.current_media_url) return '📹'; // Uploaded video playing
+      if (session.current_media_url) return <VideoCameraIcon className="w-24 h-24 text-white" />; // Uploaded video playing
       if (session.is_screen_sharing_active) {
-        return session.sharing_source === 'watchfrom' ? '📺' : '💻'; // Watch From or LiveShare
+        return <VideoCameraIcon className="w-24 h-24 text-white" />; // Watch From or LiveShare
       }
-      return '🎓'; // Lecture hall with no media
+      return <AcademicCapIcon className="w-24 h-24 text-white" />; // Lecture hall with no media
     }
     
-    if (session.watch_type === '3d_cinema') return '🎭';
-    if (session.watch_type === 'classroom') return '🎓';
-    return '🎬';
+    if (session.watch_type === '3d_cinema') return <VideoCameraIcon className="w-24 h-24 text-white" />;
+    if (session.watch_type === 'classroom') return <AcademicCapIcon className="w-24 h-24 text-white" />;
+    return <FilmIcon className="w-24 h-24 text-white" />;
   };
 
   const getSourceLabel = () => {
@@ -97,7 +110,7 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating }) => {
       {/* Emoji State */}
       {loadState === 'emoji' && (
         <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-purple-500 to-blue-600">
-          <div className="text-8xl mb-4">{getSourceEmoji()}</div>
+          <div className="mb-4">{getSourceIcon()}</div>
           <div className="text-white text-lg font-medium">{getSourceLabel()}</div>
         </div>
       )}
@@ -138,10 +151,23 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating }) => {
           src={previewUrl}
           autoPlay
           loop
-          muted
+          muted={muted}
           playsInline
           className={`w-full h-full ${getVideoFitStyle()}`}
-          onError={() => {
+          onLoadedData={() => {
+            console.log('✅ [SessionPreview] Video loaded successfully:', previewUrl);
+          }}
+          onEnded={() => {
+            console.log('🔁 [SessionPreview] Video ended, should loop automatically');
+            // Video should loop automatically due to loop attribute
+            // If it doesn't, manually restart
+            if (videoRef.current) {
+              videoRef.current.currentTime = 0;
+              videoRef.current.play().catch(err => console.error('❌ [SessionPreview] Failed to restart video:', err));
+            }
+          }}
+          onError={(e) => {
+            console.error('❌ [SessionPreview] Video error:', e);
             setImageError(true);
             // Fallback to poster if video fails
             if (posterUrl) {

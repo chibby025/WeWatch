@@ -2,7 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests } from '../services/api';
-import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon } from '@heroicons/react/24/solid';
+import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon } from '@heroicons/react/24/solid';
+import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon } from '@heroicons/react/24/outline';
 import jwtDecodeUtil from '../utils/jwt';
 import apiClient from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
@@ -33,6 +34,9 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import DateOfBirthPromptModal from './DateOfBirthPromptModal';
 import { checkDateOfBirth, updateDateOfBirth } from '../services/api';
+import SessionChatPreviewModal from './SessionChatPreviewModal';
+import { formatCount } from '../utils/formatCount';
+import TikTokHeartAnimation from './TikTokHeartAnimation';
 
 const LobbyPage = () => {
   // ✅ Tab State
@@ -66,6 +70,10 @@ const LobbyPage = () => {
   const [newChatMessage, setNewChatMessage] = useState('');
   const [chatsLoading, setChatsLoading] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState({}); // { userId: count }
+  const [friendsSearchTerm, setFriendsSearchTerm] = useState(''); // Search friends
+  const [chatView, setChatView] = useState('friends'); // 'friends' or 'messages'
+  const [lastMessagePreviews, setLastMessagePreviews] = useState({}); // { userId: lastMessage }
+  const [onlineStatus, setOnlineStatus] = useState({}); // { userId: boolean }
   
   // ✅ Chat Enhancement Modals State
   const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
@@ -135,6 +143,38 @@ const LobbyPage = () => {
   const [sessionPreviews, setSessionPreviews] = useState({}); // { sessionId: { posterUrl, previewUrl, isGenerating } }
   const previewIntervalsRef = React.useRef({}); // Track intervals per session
   
+  // ✅ Session Likes State
+  const [sessionLikes, setSessionLikes] = useState({}); // { sessionId: { count, isLiked } }
+  
+  // ✅ Session Chat Counts State
+  const [sessionChatCounts, setSessionChatCounts] = useState({}); // { sessionId: messageCount }
+  
+  // ✅ Chat Preview Modal State (OLD - kept for backward compatibility)
+  const [isChatPreviewOpen, setIsChatPreviewOpen] = useState(false);
+  const [selectedSessionForChat, setSelectedSessionForChat] = useState(null);
+  
+  // 💬 Interactive Session Chat State (70-30 Split Mode)
+  const [activeChatSession, setActiveChatSession] = useState(null); // Session object with chat open
+  const [sessionChatMessages, setSessionChatMessages] = useState([]); // Real-time session chat messages
+  const [chatWsRef, setChatWsRef] = useState(null); // WebSocket connection for chat
+  const [isChatConnecting, setIsChatConnecting] = useState(false);
+  
+  // ❤️ Like Animation State
+  const [showHeartAnimation, setShowHeartAnimation] = useState(false);
+  const lastLikeTimeRef = React.useRef({});
+  
+  // Helper: Get content rating glow color (matches PricingModal)
+  const getRatingGlowColor = (rating) => {
+    switch(rating) {
+      case 'G': return 'drop-shadow(0 0 20px rgba(74, 222, 128, 0.8))';
+      case 'PG': return 'drop-shadow(0 0 20px rgba(96, 165, 250, 0.8))';
+      case '13+': return 'drop-shadow(0 0 20px rgba(250, 204, 21, 0.8))';
+      case '18+': return 'drop-shadow(0 0 20px rgba(248, 113, 113, 0.8))';
+      case 'Mature': return 'drop-shadow(0 0 20px rgba(192, 132, 252, 0.8))';
+      default: return 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))';
+    }
+  };
+  
   // ✅ Infinite Scroll State for "Watching Now"
   const [sessionsPage, setSessionsPage] = useState({ 
     data: [], 
@@ -159,6 +199,179 @@ const LobbyPage = () => {
   
   // Use currentUser.id for authenticated user ID
   const authenticatedUserID = currentUser?.id || null;
+  
+  // ❤️ Handle session like/unlike (single click to toggle)
+  const handleSessionLike = async (sessionId, e) => {
+    e.stopPropagation();
+    
+    if (!currentUser) {
+      toast.error('Please login to like sessions');
+      return;
+    }
+    
+    const currentLikeState = sessionLikes[sessionId] || { count: 0, isLiked: false };
+    
+    // Toggle: If already liked, unlike. If not liked, like.
+    if (currentLikeState.isLiked) {
+      // Unlike
+      // Optimistic update
+      setSessionLikes(prev => ({
+        ...prev,
+        [sessionId]: {
+          count: Math.max(0, currentLikeState.count - 1),
+          isLiked: false
+        }
+      }));
+      
+      try {
+        await apiClient.delete(`/api/sessions/${sessionId}/unlike`);
+      } catch (err) {
+        console.error('Failed to unlike session:', err);
+        // Revert on error
+        setSessionLikes(prev => ({
+          ...prev,
+          [sessionId]: {
+            count: currentLikeState.count,
+            isLiked: true
+          }
+        }));
+      }
+    } else {
+      // Like
+      setShowHeartAnimation(true);
+      setTimeout(() => setShowHeartAnimation(false), 1000);
+      
+      // Optimistic update
+      setSessionLikes(prev => ({
+        ...prev,
+        [sessionId]: {
+          count: currentLikeState.count + 1,
+          isLiked: true
+        }
+      }));
+      
+      try {
+        await apiClient.post(`/api/sessions/${sessionId}/like`);
+      } catch (err) {
+        console.error('Failed to like session:', err);
+        // Revert on error
+        setSessionLikes(prev => ({
+          ...prev,
+          [sessionId]: {
+            count: currentLikeState.count,
+            isLiked: false
+          }
+        }));
+      }
+    }
+  };
+  
+  // 💬 Handle opening interactive chat (70-30 split mode)
+  const handleOpenChatPreview = (session, e) => {
+    e.stopPropagation();
+    
+    // Close previous chat if open
+    if (activeChatSession && chatWsRef) {
+      chatWsRef.close();
+      setChatWsRef(null);
+    }
+    
+    // Set active chat session (triggers 70-30 split rendering)
+    setActiveChatSession(session);
+    setSessionChatMessages([]);
+    setIsChatConnecting(true);
+    
+    // Connect to WebSocket for this session
+    connectToSessionChat(session);
+  };
+  
+  // 🔌 Connect to session chat via REST API polling
+  const connectToSessionChat = (session) => {
+    const fetchMessages = async () => {
+      try {
+        const response = await apiClient.get(`/api/sessions/${session.session_id}/chat-preview`);
+        const messages = response.data.messages || [];
+        setSessionChatMessages(messages);
+        
+        // Update chat count from message array length
+        setSessionChatCounts(prev => ({
+          ...prev,
+          [session.session_id]: messages.length
+        }));
+        
+        setIsChatConnecting(false);
+      } catch (err) {
+        // Silently handle errors (session might be private or ended)
+        console.log(`ℹ️ [LobbyChat] Failed to fetch chat for ${session.session_id}:`, err.response?.data?.error || err.message);
+        setIsChatConnecting(false);
+      }
+    };
+
+    // Initial fetch
+    fetchMessages();
+    
+    // Poll every 2 seconds while chat is open
+    const interval = setInterval(fetchMessages, 2000);
+    
+    // Store interval reference with close method for cleanup compatibility
+    setChatWsRef({ 
+      close: () => clearInterval(interval),
+      interval: interval
+    });
+  };
+  
+  // 🚪 Close interactive chat
+  const handleCloseChatPreview = () => {
+    if (chatWsRef) {
+      chatWsRef.close();
+      setChatWsRef(null);
+    }
+    setActiveChatSession(null);
+    setSessionChatMessages([]);
+  };
+  
+  // 📱 Touch gesture handling for swipe down to close chat
+  const [touchStartY, setTouchStartY] = useState(null);
+  const [touchEndY, setTouchEndY] = useState(null);
+  
+  const handleChatTouchStart = (e) => {
+    setTouchStartY(e.touches[0].clientY);
+  };
+  
+  const handleChatTouchMove = (e) => {
+    setTouchEndY(e.touches[0].clientY);
+  };
+  
+  const handleChatTouchEnd = () => {
+    if (!touchStartY || !touchEndY) return;
+    
+    const distance = touchEndY - touchStartY;
+    const isDownSwipe = distance > 100; // Swipe down at least 100px
+    
+    if (isDownSwipe) {
+      handleCloseChatPreview();
+    }
+    
+    setTouchStartY(null);
+    setTouchEndY(null);
+  };
+  
+  // 🧹 Cleanup WebSocket on unmount or when leaving fullscreen
+  useEffect(() => {
+    return () => {
+      if (chatWsRef) {
+        chatWsRef.close();
+        setChatWsRef(null);
+      }
+    };
+  }, [chatWsRef]);
+  
+  // 🧹 Close chat when exiting fullscreen
+  useEffect(() => {
+    if (!isWatchingNowFullscreen && activeChatSession) {
+      handleCloseChatPreview();
+    }
+  }, [isWatchingNowFullscreen]);
   
   // ✅ Handle navigation state from RoomMembersModal
   useEffect(() => {
@@ -737,10 +950,26 @@ const LobbyPage = () => {
     
     try {
       const response = await apiClient.get(`/api/lobby-chats/messages/${actualUserId}`);
+      const messages = response.data.messages || [];
+      
       setChatMessages(prev => ({
         ...prev,
-        [actualUserId]: response.data.messages || []
+        [actualUserId]: messages
       }));
+      
+      // ✅ Save last message preview
+      if (messages.length > 0) {
+        const lastMsg = messages[messages.length - 1];
+        setLastMessagePreviews(prev => ({
+          ...prev,
+          [actualUserId]: {
+            text: lastMsg.message_type === 'text' ? lastMsg.message : `[${lastMsg.message_type}]`,
+            timestamp: lastMsg.created_at,
+            isOwn: lastMsg.sender_id === currentUser?.id
+          }
+        }));
+      }
+      
       // Clear unread count when opening chat
       setUnreadCounts(prev => ({ ...prev, [actualUserId]: 0 }));
       scrollToBottomChat();
@@ -797,7 +1026,14 @@ const LobbyPage = () => {
       id: userId
     };
     setSelectedChatUser(normalizedUser);
+    setChatView('messages'); // ✅ Switch to messages view
     fetchChatMessages(userId);
+  };
+  
+  // ✅ Handle back to friends list
+  const handleBackToFriends = () => {
+    setChatView('friends');
+    setSelectedChatUser(null);
   };
 
   // ✅ NEW: Handle file attachment upload
@@ -1376,8 +1612,50 @@ const LobbyPage = () => {
                 break;
                 
               case 'session_started':
-              case 'session_ended':
                 fetchSessionsData();
+                // ✅ Immediately trigger preview generation for new session
+                if (message.session_id) {
+                  setTimeout(() => generateSessionPreview(message.session_id), 500);
+                }
+                break;
+                
+              case 'session_ended':
+                // ✅ OPTIMISTIC UPDATE: Remove session immediately without API call
+                if (message.session_id) {
+                  console.log(`🗑️ [Lobby] Session ended: ${message.session_id} - removing from state`);
+                  
+                  // Remove from sessions state
+                  setSessions(prev => prev.filter(s => s.session_id !== message.session_id));
+                  
+                  // Remove from sessionsPage data (infinite scroll)
+                  setSessionsPage(prev => ({
+                    ...prev,
+                    data: prev.data.filter(s => s.session_id !== message.session_id)
+                  }));
+                  
+                  // Clear preview data
+                  setSessionPreviews(prev => {
+                    const updated = { ...prev };
+                    delete updated[message.session_id];
+                    return updated;
+                  });
+                  
+                  // Clear likes and chat counts
+                  setSessionLikes(prev => {
+                    const updated = { ...prev };
+                    delete updated[message.session_id];
+                    return updated;
+                  });
+                  
+                  setSessionChatCounts(prev => {
+                    const updated = { ...prev };
+                    delete updated[message.session_id];
+                    return updated;
+                  });
+                } else {
+                  // Fallback: refresh if session_id not provided
+                  fetchSessionsData();
+                }
                 break;
                 
               case 'friend_request_received':
@@ -1442,30 +1720,52 @@ const LobbyPage = () => {
                 
               case 'session_preview_updated':
                 // Backend broadcasts when preview is ready (from frame upload)
-                // console.log(`🖼️ [LobbyPage] Preview ready - Full message:`, message);
-                // console.log(`🖼️ [LobbyPage] session_id: ${message.session_id}`);
-                // console.log(`🖼️ [LobbyPage] preview_url: ${message.preview_url}`);
+                console.log(`🖼️ [LobbyPage] 📥 Preview update received:`, {
+                  session_id: message.session_id,
+                  poster_url: message.poster_url,
+                  preview_url: message.preview_url
+                });
                 
                 if (message.session_id) {
-                  // ✅ If preview_url is empty, it means preview was cleared (media type switched)
-                  if (!message.preview_url) {
+                  // ✅ Handle different scenarios:
+                  // 1. Poster only (MP4 not ready): show poster
+                  // 2. Both poster + MP4: show video
+                  // 3. Empty URLs: clearing preview (media switched)
+                  
+                  if (!message.poster_url && !message.preview_url) {
+                    // Empty URLs = clearing preview
                     console.log(`🧹 [LobbyPage] Preview cleared for session: ${message.session_id}`);
                     setSessionPreviews(prev => ({
                       ...prev,
                       [message.session_id]: {
                         posterUrl: null,
                         previewUrl: null,
-                        isGenerating: true, // Show loading state
+                        isGenerating: true,
+                        isClearing: false,
+                      }
+                    }));
+                  } else if (message.poster_url && !message.preview_url) {
+                    // Poster only (MP4 generating or upload video)
+                    console.log(`📸 [LobbyPage] Poster ready for session ${message.session_id}:`, message.poster_url);
+                    setSessionPreviews(prev => ({
+                      ...prev,
+                      [message.session_id]: {
+                        posterUrl: message.poster_url,
+                        previewUrl: null,
+                        isGenerating: false, // ✅ Show poster, not spinner
+                        isClearing: false,
                       }
                     }));
                   } else {
-                    // Preview is ready
+                    // Full preview ready (poster + MP4)
+                    console.log(`✅ [LobbyPage] Full preview ready for session ${message.session_id}`);
                     setSessionPreviews(prev => ({
                       ...prev,
                       [message.session_id]: {
                         posterUrl: message.poster_url,
                         previewUrl: message.preview_url,
                         isGenerating: false,
+                        isClearing: false,
                       }
                     }));
                   }
@@ -1528,27 +1828,62 @@ const LobbyPage = () => {
                     session.room_id === message.room_id
                       ? { 
                           ...session, 
-                          average_rating: message.average_rating, 
-                          total_ratings: message.total_ratings 
+                          average_rating: message.average_rating,
                         }
                       : session
                   )
                 );
+                break;
                 
-                // Update paginated sessions data
-                setSessionsPage(prev => ({
+              case 'session_liked':
+                // ✅ Real-time like update
+                console.log(`❤️ [LobbyPage] Session liked: ${message.session_id}, count: ${message.likes_count}`);
+                setSessionLikes(prev => ({
                   ...prev,
-                  data: prev.data.map(session =>
-                    session.room_id === message.room_id
-                      ? { 
-                          ...session, 
-                          average_rating: message.average_rating, 
-                          total_ratings: message.total_ratings 
-                        }
-                      : session
-                  )
+                  [message.session_id]: {
+                    ...prev[message.session_id],
+                    count: message.likes_count
+                  }
                 }));
                 break;
+                
+              case 'session_unliked':
+                // ✅ Real-time unlike update
+                console.log(`💔 [LobbyPage] Session unliked: ${message.session_id}, count: ${message.likes_count}`);
+                setSessionLikes(prev => ({
+                  ...prev,
+                  [message.session_id]: {
+                    ...prev[message.session_id],
+                    count: message.likes_count
+                  }
+                }));
+                break;
+                
+              case 'session_chat_sent':
+                // ✅ Real-time chat count update (for users NOT currently viewing the chat)
+                console.log(`💬 [LobbyPage] Chat sent in session: ${message.session_id}, count: ${message.chat_count}`);
+                // Only update if chat is NOT open (open chat updates from polling)
+                if (activeChatSession?.session_id !== message.session_id) {
+                  setSessionChatCounts(prev => ({
+                    ...prev,
+                    [message.session_id]: message.chat_count
+                  }));
+                }
+                break;
+                
+              case 'session_chat_sent':
+                // ✅ Real-time chat count update (for users NOT currently viewing the chat)
+                console.log(`💬 [LobbyPage] Chat sent in session: ${message.session_id}, count: ${message.chat_count}`);
+                // Only update if chat is NOT open (open chat updates from polling)
+                if (activeChatSession?.session_id !== message.session_id) {
+                  setSessionChatCounts(prev => ({
+                    ...prev,
+                    [message.session_id]: message.chat_count
+                  }));
+                }
+                break;
+                
+              case 'rating_updated':
             }
           } catch (err) {
             console.error('❌ [LobbyPage WS] Failed to parse message:', err);
@@ -1999,6 +2334,41 @@ const LobbyPage = () => {
     previewIntervalsRef.current[sessionId] = { interval };
   };
 
+  // ✅ Fetch session like status (isLiked + count)
+  const fetchSessionLikes = async (sessionId) => {
+    try {
+      const response = await apiClient.get(`/api/sessions/${sessionId}/like-status`);
+      setSessionLikes(prev => ({
+        ...prev,
+        [sessionId]: {
+          count: response.data.count || 0,
+          isLiked: response.data.isLiked || false
+        }
+      }));
+    } catch (err) {
+      // Silently handle errors (session might have ended)
+      if (err.response?.status !== 404) {
+        console.error(`Failed to fetch likes for session ${sessionId}:`, err);
+      }
+    }
+  };
+
+  // ✅ Fetch session chat message count (initial load only)
+  const fetchSessionChatCount = async (sessionId) => {
+    try {
+      const response = await apiClient.get(`/api/sessions/${sessionId}/chat-count`);
+      setSessionChatCounts(prev => ({
+        ...prev,
+        [sessionId]: response.data.count || 0
+      }));
+    } catch (err) {
+      // Silently handle errors (session might have ended)
+      if (err.response?.status !== 404) {
+        console.error(`Failed to fetch chat count for session ${sessionId}:`, err);
+      }
+    }
+  };
+
   // ✅ Setup preview generation for all active sessions
   useEffect(() => {
     // Setup preview generation for each session from sessionsPage (the actual rendered data)
@@ -2037,6 +2407,19 @@ const LobbyPage = () => {
       });
     };
   }, [sessionsPage.data, sessionPreviews]);
+  
+  // ✅ Fetch likes and chat counts for all sessions
+  useEffect(() => {
+    sessionsPage.data.forEach(session => {
+      // Only fetch if not already fetched
+      if (!sessionLikes[session.session_id]) {
+        fetchSessionLikes(session.session_id);
+      }
+      if (sessionChatCounts[session.session_id] === undefined) {
+        fetchSessionChatCount(session.session_id);
+      }
+    });
+  }, [sessionsPage.data]);
 
   return (
     <div className="relative min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-white transition-colors duration-200">
@@ -2244,8 +2627,7 @@ const LobbyPage = () => {
                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
             }`}
           >
-            <span className="hidden sm:inline">Watching Now</span>
-            <span className="sm:hidden">Watching</span>
+            Watching Now
             {sessions.length > 0 && (
               <span className="ml-1 sm:ml-2 px-1.5 py-0.5 text-[10px] sm:text-xs bg-purple-600 text-white rounded-full">
                 {sessions.length}
@@ -2500,8 +2882,8 @@ const LobbyPage = () => {
       {activeTab === 'watching' && (
         <div 
           ref={watchingNowScrollRef}
-          className="overflow-y-auto h-full custom-sleek-scrollbar"
-          style={{ maxHeight: 'calc(100vh - 200px)' }}
+          className="overflow-y-auto overflow-x-hidden h-full scrollbar-hide"
+          style={{ maxHeight: 'calc(100vh - 200px)', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
         >
           {/* ✅ Refresh Button */}
           <div className="flex justify-center mb-4">
@@ -2631,6 +3013,8 @@ const LobbyPage = () => {
                         previewUrl={preview.previewUrl}
                         posterUrl={preview.posterUrl}
                         isGenerating={preview.isGenerating}
+                        isClearing={preview.isClearing || false}
+                        muted={false}
                       />
                     </div>
                     
@@ -2639,7 +3023,7 @@ const LobbyPage = () => {
                     
                     {/* TikTok-style Minimalist Info Overlay */}
                     <div 
-                      className="absolute bottom-4 left-4 right-4 text-white pointer-events-auto"
+                      className="absolute bottom-4 left-4 right-20 text-white pointer-events-auto"
                       style={{ fontFamily: '"Outfit", -apple-system, "Segoe UI", sans-serif' }}
                     >
                       {/* Row 1: Room Avatar + Name & Star + Content Rating */}
@@ -2693,43 +3077,17 @@ const LobbyPage = () => {
                             </div>
                           )}
                         </div>
-                        
-                        {/* Content Rating */}
-                        {session.content_rating && (
-                          <img 
-                            src={
-                              session.content_rating === 'G' ? '/icons/G Rating Icon.png' :
-                              session.content_rating === 'PG' ? '/icons/PG Rating Icon.png' :
-                              session.content_rating === '13+' ? '/icons/13_ Rating Icon.png' :
-                              session.content_rating === '18+' ? '/icons/18_ Rating Icon.png' :
-                              session.content_rating === 'Mature' ? '/icons/Mature Rating Icon.png' :
-                              '/icons/G Rating Icon.png'
-                            }
-                            alt={`${session.content_rating} rating`}
-                            className="h-12 w-auto flex-shrink-0"
-                            style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}
-                          />
-                        )}
                       </div>
                       
-                      {/* Row 2: Title + Viewers */}
-                      <div className="flex items-start gap-2 mb-2">
+                      {/* Row 2: Title */}
+                      <div className="mb-2">
                         {/* Title */}
                         <h3 
-                          className="text-lg font-bold leading-tight flex-1 line-clamp-2"
+                          className="text-lg font-bold leading-tight line-clamp-2"
                           style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}
                         >
                           {session.session_title || session.currently_playing || 'Live Session'}
                         </h3>
-                        
-                        {/* Viewers Count */}
-                        <div 
-                          className="flex items-center gap-1 flex-shrink-0"
-                          style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
-                        >
-                          <UsersIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
-                          <span className="text-sm font-semibold">{session.member_count}</span>
-                        </div>
                       </div>
                       
                       {/* Row 3: Expandable "... more" */}
@@ -2778,6 +3136,85 @@ const LobbyPage = () => {
                       </div>
                     </div>
                     
+                    {/* Right Icon Stack - TikTok Style */}
+                    <div className="absolute bottom-4 right-4 flex flex-col items-center gap-4 pointer-events-auto">
+                      {/* Content Rating - Neon Outline Frame */}
+                      {session.content_rating && (
+                        <div 
+                          className="w-[38px] h-14 flex items-center justify-center border-2"
+                          style={{
+                            borderColor: 
+                              session.content_rating === 'G' ? 'rgb(74, 222, 128)' :
+                              session.content_rating === 'PG' ? 'rgb(96, 165, 250)' :
+                              session.content_rating === '13+' ? 'rgb(250, 204, 21)' :
+                              session.content_rating === '18+' ? 'rgb(248, 113, 113)' :
+                              session.content_rating === 'Mature' ? 'rgb(192, 132, 252)' :
+                              'rgb(156, 163, 175)',
+                            boxShadow: 
+                              session.content_rating === 'G' ? 'inset 0 0 12px rgba(74, 222, 128, 0.3), 0 0 12px rgba(74, 222, 128, 0.6), 0 0 24px rgba(74, 222, 128, 0.4)' :
+                              session.content_rating === 'PG' ? 'inset 0 0 12px rgba(96, 165, 250, 0.3), 0 0 12px rgba(96, 165, 250, 0.6), 0 0 24px rgba(96, 165, 250, 0.4)' :
+                              session.content_rating === '13+' ? 'inset 0 0 12px rgba(250, 204, 21, 0.3), 0 0 12px rgba(250, 204, 21, 0.6), 0 0 24px rgba(250, 204, 21, 0.4)' :
+                              session.content_rating === '18+' ? 'inset 0 0 12px rgba(248, 113, 113, 0.3), 0 0 12px rgba(248, 113, 113, 0.6), 0 0 24px rgba(248, 113, 113, 0.4)' :
+                              session.content_rating === 'Mature' ? 'inset 0 0 12px rgba(192, 132, 252, 0.3), 0 0 12px rgba(192, 132, 252, 0.6), 0 0 24px rgba(192, 132, 252, 0.4)' :
+                              'inset 0 0 12px rgba(156, 163, 175, 0.3), 0 0 12px rgba(156, 163, 175, 0.6), 0 0 24px rgba(156, 163, 175, 0.4)'
+                          }}
+                        >
+                          <img 
+                            src={
+                              session.content_rating === 'G' ? '/icons/G Rating Icon.png' :
+                              session.content_rating === 'PG' ? '/icons/PG Rating Icon.png' :
+                              session.content_rating === '13+' ? '/icons/13_ Rating Icon.png' :
+                              session.content_rating === '18+' ? '/icons/18_ Rating Icon.png' :
+                              session.content_rating === 'Mature' ? '/icons/Mature Rating Icon.png' :
+                              '/icons/G Rating Icon.png'
+                            }
+                            alt={`${session.content_rating} rating`}
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                      )}
+                      
+                      {/* Likes */}
+                      <button
+                        onClick={(e) => handleSessionLike(session.session_id, e)}
+                        className="flex flex-col items-center gap-1 group transition-transform hover:scale-110"
+                      >
+                        <HeartIcon 
+                          className={`w-9 h-9 ${
+                            sessionLikes[session.session_id]?.isLiked ? 'text-red-500' : 'text-white'
+                          }`} 
+                          style={{ 
+                            filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))',
+                            fill: sessionLikes[session.session_id]?.isLiked ? 'currentColor' : 'none',
+                            stroke: sessionLikes[session.session_id]?.isLiked ? 'none' : 'currentColor',
+                            strokeWidth: sessionLikes[session.session_id]?.isLiked ? 0 : 1.5
+                          }} 
+                        />
+                        <span className="text-white text-xs font-bold" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.9)' }}>
+                          {formatCount(sessionLikes[session.session_id]?.count || 0)}
+                        </span>
+                      </button>
+                      
+                      {/* Chat */}
+                      <button
+                        onClick={(e) => handleOpenChatPreview(session, e)}
+                        className="flex flex-col items-center gap-1 group transition-transform hover:scale-110"
+                      >
+                        <ChatBubbleLeftIcon className="w-9 h-9 text-white" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
+                        <span className="text-white text-xs font-bold" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.9)' }}>
+                          {formatCount(sessionChatCounts[session.session_id] || 0)}
+                        </span>
+                      </button>
+                      
+                      {/* Members */}
+                      <div className="flex flex-col items-center gap-1">
+                        <UsersIcon className="w-9 h-9 text-white" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
+                        <span className="text-white text-xs font-bold" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.9)' }}>
+                          {formatCount(session.member_count || 0)}
+                        </span>
+                      </div>
+                    </div>
+                    
                     <div className="absolute inset-0 border-4 border-transparent hover:border-blue-500/50 transition-colors duration-300 rounded-2xl pointer-events-none"></div>
                   </div>
                   );
@@ -2819,43 +3256,45 @@ const LobbyPage = () => {
         </div>
       )}
       
+      {/* ✅ Session Chat Preview Modal */}
+      <SessionChatPreviewModal
+        isOpen={isChatPreviewOpen}
+        onClose={() => setIsChatPreviewOpen(false)}
+        sessionId={selectedSessionForChat?.session_id}
+        sessionTitle={selectedSessionForChat?.session_title || selectedSessionForChat?.currently_playing}
+      />
+      
       {/* ✅ CHATS TAB CONTENT */}
       {activeTab === 'chats' && (
         <div className="max-w-5xl mx-auto">
-          <h2 className="text-2xl font-semibold mb-6 text-gray-900 dark:text-white text-center">
-            Lobby Chats
-          </h2>
-          
           {chatsLoading ? (
             <div className="flex justify-center items-center h-96">
               <p className="text-lg text-gray-700 dark:text-gray-300">Loading chats...</p>
             </div>
           ) : (
-            <div className="flex gap-2 sm:gap-4 h-[calc(100vh-220px)] sm:h-[calc(100vh-250px)]">
-              {/* Left: Friends List - Always visible unless chat is expanded */}
-              <div className={`bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700 flex flex-col transition-all duration-300 ${
-                expandedView === 'chat' ? 'hidden' : 
-                expandedView === 'friends' ? 'fixed inset-0 w-screen h-screen z-50 rounded-none' : 
-                'w-[35%] min-w-[200px] max-w-[320px]'
-              }`}>
-                <div className="bg-gradient-to-r from-green-600 to-green-700 p-2 sm:p-4 flex items-center justify-between">
-                  <h3 className="text-white font-semibold text-base sm:text-lg">Friends</h3>
-                  <button
-                    onClick={() => setExpandedView(expandedView === 'friends' ? null : 'friends')}
-                    className="text-white hover:bg-white/20 rounded p-1 transition-colors"
-                    title={expandedView === 'friends' ? 'Exit fullscreen' : 'Expand fullscreen'}
-                  >
-                    {expandedView === 'friends' ? (
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            <div className="h-[calc(100vh-160px)] sm:h-[calc(100vh-200px)]">
+              {/* ✅ STACKED SINGLE-VIEW: Friends List OR Messages (Mobile-First) */}
+              {chatView === 'friends' ? (
+                /* ========== FRIENDS LIST VIEW ========== */
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700 flex flex-col h-full">
+                  {/* ✅ Friends List Header */}
+                  <div className="bg-gradient-to-r from-green-600 to-green-700 p-3 sm:p-4">
+                    <h3 className="text-white font-bold text-lg sm:text-xl mb-3">Chats</h3>
+                    
+                    {/* ✅ Search Bar */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={friendsSearchTerm}
+                        onChange={(e) => setFriendsSearchTerm(e.target.value)}
+                        placeholder="Search friends..."
+                        className="w-full pl-10 pr-4 py-2 bg-white/10 border border-white/20 rounded-full text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/40 text-sm"
+                      />
+                      <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                       </svg>
-                    ) : (
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
+                    </div>
+                  </div>
                 
                 {/* Sub-tabs for Friends vs Requests */}
                 <div className="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
@@ -2892,56 +3331,101 @@ const LobbyPage = () => {
                   </button>
                 </div>
                 
-                {/* Friends Tab Content */}
-                {activeRequestsTab === 'friends' && (
-                  <div 
-                    className="overflow-y-auto flex-1 custom-sleek-scrollbar"
-                    style={{
-                      scrollbarWidth: 'thin',
-                      scrollbarColor: '#10b981 #1f2937',
-                    }}
-                  >
-                    {friendsList.length === 0 ? (
-                      <div className="text-center py-6 sm:py-10 text-gray-500 dark:text-gray-400">
-                        <p className="text-xs sm:text-sm">No friends yet</p>
-                        <p className="text-[10px] sm:text-xs mt-2 px-4">Accept friend requests to start chatting!</p>
-                      </div>
-                    ) : (
-                      friendsList.map(friend => {
-                      const unreadCount = unreadCounts[friend.id] || 0;
-                      const isSelected = selectedChatUser?.id === friend.id;
-                      
-                      return (
-                        <div key={friend.id} className="relative group friend-menu-container">
-                          <button
-                            onClick={() => handleOpenChat(friend)}
-                            className={`w-full p-2 sm:p-4 flex items-center gap-2 sm:gap-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-200 dark:border-gray-700 ${
-                              isSelected ? 'bg-green-50 dark:bg-gray-700' : ''
-                            }`}
-                          >
-                            {/* Avatar */}
-                            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center text-white font-bold text-base sm:text-lg flex-shrink-0 overflow-hidden">
-                              {friend.avatar_url ? (
-                                <img src={friend.avatar_url} alt={friend.username} className="w-full h-full object-cover" />
-                              ) : (
-                                friend.username?.[0]?.toUpperCase() || 'U'
-                              )}
-                            </div>
-                            
-                            {/* Info */}
-                            <div className="flex-1 text-left min-w-0">
-                              <p className="font-semibold text-sm sm:text-base text-gray-900 dark:text-white truncate">
-                                {friend.username}
-                              </p>
-                            </div>
-                            
-                            {/* Unread Badge */}
-                            {unreadCount > 0 && (
-                              <div className="bg-green-600 text-white text-[10px] sm:text-xs font-bold rounded-full w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center flex-shrink-0">
-                                {unreadCount > 9 ? '9+' : unreadCount}
-                              </div>
-                            )}
-                          </button>
+                  {/* ✅ Friends Tab Content - Enhanced with message previews */}
+                  {activeRequestsTab === 'friends' && (
+                    <div 
+                      className="overflow-y-auto flex-1 custom-sleek-scrollbar"
+                      style={{
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: '#10b981 #1f2937',
+                      }}
+                    >
+                      {friendsList.filter(f => 
+                        !friendsSearchTerm || 
+                        f.username.toLowerCase().includes(friendsSearchTerm.toLowerCase())
+                      ).length === 0 ? (
+                        <div className="text-center py-10 text-gray-500 dark:text-gray-400">
+                          {friendsSearchTerm ? (
+                            <>
+                              <p className="text-sm">No friends found</p>
+                              <p className="text-xs mt-2">Try a different search</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-sm">No friends yet</p>
+                              <p className="text-xs mt-2 px-4">Accept friend requests to start chatting!</p>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        friendsList
+                          .filter(f => 
+                            !friendsSearchTerm || 
+                            f.username.toLowerCase().includes(friendsSearchTerm.toLowerCase())
+                          )
+                          .map(friend => {
+                          const unreadCount = unreadCounts[friend.id] || 0;
+                          const lastMsg = lastMessagePreviews[friend.id];
+                          const isOnline = onlineStatus[friend.id];
+                          
+                          return (
+                            <div key={friend.id} className="relative group friend-menu-container">
+                              <button
+                                onClick={() => handleOpenChat(friend)}
+                                className="w-full p-3 sm:p-4 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors border-b border-gray-100 dark:border-gray-700/50 active:bg-gray-100 dark:active:bg-gray-700"
+                              >
+                                {/* Avatar with Online Status */}
+                                <div className="relative flex-shrink-0">
+                                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center text-white font-bold text-lg overflow-hidden ring-2 ring-white dark:ring-gray-800">
+                                    {friend.avatar_url ? (
+                                      <img src={friend.avatar_url} alt={friend.username} className="w-full h-full object-cover" />
+                                    ) : (
+                                      friend.username?.[0]?.toUpperCase() || 'U'
+                                    )}
+                                  </div>
+                                  {/* Online Status Indicator */}
+                                  {isOnline && (
+                                    <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+                                  )}
+                                </div>
+                                
+                                {/* Info with Message Preview */}
+                                <div className="flex-1 text-left min-w-0 pr-2">
+                                  <div className="flex items-baseline justify-between mb-1">
+                                    <p className="font-semibold text-base text-gray-900 dark:text-white truncate">
+                                      {friend.username}
+                                    </p>
+                                    {lastMsg && (
+                                      <span className="text-xs text-gray-500 dark:text-gray-400 ml-2 flex-shrink-0">
+                                        {new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {lastMsg && (
+                                    <p className={`text-sm truncate ${
+                                      unreadCount > 0 
+                                        ? 'font-medium text-gray-900 dark:text-white' 
+                                        : 'text-gray-600 dark:text-gray-400'
+                                    }`}>
+                                      {lastMsg.isOwn && (
+                                        <span className="text-green-600 dark:text-green-400 mr-1">
+                                          <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                          </svg>
+                                        </span>
+                                      )}
+                                      {lastMsg.text}
+                                    </p>
+                                  )}
+                                </div>
+                                
+                                {/* Unread Badge */}
+                                {unreadCount > 0 && (
+                                  <div className="bg-green-600 text-white text-xs font-bold rounded-full min-w-[24px] h-6 flex items-center justify-center px-2 flex-shrink-0">
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                  </div>
+                                )}
+                              </button>
                           
                           {/* Ellipsis Menu Button */}
                           <button
@@ -3106,45 +3590,57 @@ const LobbyPage = () => {
                 )}
               </div>
               
-              {/* Right: Chat Window - Always wider */}
-              <div className={`bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700 flex flex-col transition-all duration-300 ${
-                expandedView === 'friends' ? 'hidden' : 
-                expandedView === 'chat' ? 'fixed inset-0 w-screen h-screen z-50 rounded-none' : 
-                'flex-1'
-              }`}>
-                {selectedChatUser ? (
-                  <>
-                    {/* Chat Header */}
-                    <div className="bg-gradient-to-r from-green-600 to-green-700 p-2 sm:p-4 flex items-center gap-2 sm:gap-3">
-                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-sm sm:text-base overflow-hidden">
-                        {selectedChatUser.avatar_url ? (
-                          <img src={selectedChatUser.avatar_url} alt={selectedChatUser.username} className="w-full h-full object-cover" />
-                        ) : (
-                          selectedChatUser.username?.[0]?.toUpperCase() || 'U'
-                        )}
+              ) : (
+                /* ========== MESSAGES VIEW ========== */
+                <div 
+                  className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700 flex flex-col h-full"
+                  onTouchStart={handleChatTouchStart}
+                  onTouchMove={handleChatTouchMove}
+                  onTouchEnd={handleChatTouchEnd}
+                >
+                  {selectedChatUser && (
+                    <>
+                      {/* ✅ Messages Header with Back Button */}
+                      <div className="bg-gradient-to-r from-green-600 to-green-700 p-3 sm:p-4 flex items-center gap-3">
+                        {/* Back Button */}
+                        <button
+                          onClick={handleBackToFriends}
+                          className="text-white hover:bg-white/20 rounded-full p-2 transition-colors flex-shrink-0"
+                          title="Back to friends"
+                        >
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                          </svg>
+                        </button>
+                        
+                        {/* Friend Avatar */}
+                        <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-base overflow-hidden ring-2 ring-white/30 flex-shrink-0">
+                          {selectedChatUser.avatar_url ? (
+                            <img src={selectedChatUser.avatar_url} alt={selectedChatUser.username} className="w-full h-full object-cover" />
+                          ) : (
+                            selectedChatUser.username?.[0]?.toUpperCase() || 'U'
+                          )}
+                        </div>
+                        
+                        {/* Friend Info */}
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-white font-bold text-base sm:text-lg truncate">{selectedChatUser.username}</h3>
+                          {onlineStatus[selectedChatUser.id] && (
+                            <p className="text-white/80 text-xs">● Online</p>
+                          )}
+                        </div>
+                        
+                        {/* Call Button */}
+                        <Button
+                          onClick={() => initiateCall(selectedChatUser)}
+                          variant="ghost"
+                          size="icon"
+                          className="h-10 w-10 text-white hover:bg-white/20 hover:text-white flex-shrink-0 rounded-full"
+                          title="Call"
+                        >
+                          <PhoneIcon className="h-6 w-6" />
+                        </Button>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-white font-semibold text-sm sm:text-base truncate">{selectedChatUser.username}</h3>
-                      </div>
-                      <Button
-                        onClick={() => initiateCall(selectedChatUser)}
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 text-white hover:bg-white/20 hover:text-white flex-shrink-0"
-                        title="Call"
-                      >
-                        <PhoneIcon className="h-5 w-5" />
-                      </Button>
-                      <Button
-                        onClick={() => setExpandedView(expandedView === 'chat' ? null : 'chat')}
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 text-white hover:bg-white/20 hover:text-white flex-shrink-0"
-                        title={expandedView === 'chat' ? 'Exit fullscreen' : 'Expand fullscreen'}
-                      >
-                        <ArrowsPointingOutIcon className="h-5 w-5" />
-                      </Button>
-                    </div>
                     
                     {/* Messages */}
                     <div 
@@ -3275,17 +3771,10 @@ const LobbyPage = () => {
                         </div>
                       </form>
                     )}
-                  </>
-                ) : (
-                  <div className="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400">
-                    <div className="text-center px-4">
-                      <FilmIcon className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-3 sm:mb-4 opacity-30" />
-                      <p className="text-base sm:text-lg">Select a friend to start chatting</p>
-                      <p className="text-xs sm:text-sm mt-1 sm:mt-2">Continue conversations outside watch sessions</p>
-                    </div>
-                  </div>
-                )}
-              </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -3398,6 +3887,19 @@ const LobbyPage = () => {
             .fullscreen-scroll::-webkit-scrollbar {
               display: none;
             }
+            @keyframes slideUp {
+              from {
+                transform: translateY(100%);
+                opacity: 0;
+              }
+              to {
+                transform: translateY(0);
+                opacity: 1;
+              }
+            }
+            .animate-slide-up {
+              animation: slideUp 0.3s ease-out forwards;
+            }
           `}</style>
 
           {/* Close Button */}
@@ -3484,26 +3986,111 @@ const LobbyPage = () => {
               'video': { emoji: '🎬', name: 'Video Watch', color: 'purple' }
             };
             const watchType = watchTypeConfig[session.watch_type] || watchTypeConfig['video'];
+            
+            // Check if this session has active chat (70-30 split mode)
+            const isChatActive = activeChatSession?.session_id === session.session_id;
+            
+            // Determine chat title based on watch type
+            const chatTitle = session.watch_type === 'classroom' && session.class_type === 'lecture_hall'
+              ? 'Class Chat'
+              : 'Watch Party Chat';
 
             return (
               <div 
                 key={`fullscreen-session-${session.session_id}`}
-                className="relative w-screen h-screen flex-shrink-0"
+                className="relative w-screen h-screen flex-shrink-0 flex flex-col"
                 style={{ 
                   scrollSnapAlign: 'start',
                   scrollSnapStop: 'always'
                 }}
+                onClick={(e) => {
+                  // Close chat if clicking outside chat widget
+                  if (isChatActive && e.target === e.currentTarget) {
+                    handleCloseChatPreview();
+                  }
+                }}
               >
-                {/* Preview Background */}
-                <div className="absolute inset-0">
-                  <SessionPreview
-                    session={session}
-                    previewUrl={preview.previewUrl}
-                    posterUrl={preview.posterUrl}
-                    isGenerating={preview.isGenerating}
-                  />
+                {/* Video Preview Area (100% height normally, 30% when chat active) */}
+                <div 
+                  className={`relative ${isChatActive ? 'h-[30%]' : 'h-full'} transition-all duration-300`}
+                  onClick={() => {
+                    // Tap video to close chat
+                    if (isChatActive) {
+                      handleCloseChatPreview();
+                    }
+                  }}
+                >
+                  {/* Preview Background */}
+                  <div className="absolute inset-0">
+                    <SessionPreview
+                      session={session}
+                      previewUrl={preview.previewUrl}
+                      posterUrl={preview.posterUrl}
+                      isGenerating={preview.isGenerating}
+                      isClearing={preview.isClearing || false}
+                      muted={false}
+                    />
+                  </div>
+                  
+                  {/* Dark Gradient Overlay (only when chat NOT active) */}
+                  {!isChatActive && (
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none"></div>
+                  )}
                 </div>
                 
+                {/* Chat Widget (70% height, slides up from bottom) */}
+                {isChatActive && (
+                  <div 
+                    className="h-[70%] bg-black/80 backdrop-blur-md border-t border-gray-700 flex flex-col animate-slide-up"
+                    onClick={(e) => e.stopPropagation()}
+                    onTouchStart={handleChatTouchStart}
+                    onTouchMove={handleChatTouchMove}
+                    onTouchEnd={handleChatTouchEnd}
+                  >
+                    {/* Chat Header */}
+                    <div className="flex justify-between items-center p-3 border-b border-gray-700 flex-shrink-0">
+                      <h3 className="text-white font-medium">{chatTitle}</h3>
+                      <button 
+                        onClick={handleCloseChatPreview}
+                        className="text-gray-400 hover:text-white text-2xl leading-none"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    
+                    {/* Chat Messages */}
+                    <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                      {isChatConnecting ? (
+                        <div className="text-gray-500 text-sm text-center py-4">Connecting...</div>
+                      ) : sessionChatMessages.length === 0 ? (
+                        <div className="text-gray-500 text-sm text-center py-4">Be the first to chat!</div>
+                      ) : (
+                        sessionChatMessages.map((msg, idx) => (
+                          <div 
+                            key={msg.ID || idx}
+                            className="text-sm"
+                          >
+                            <div className="flex items-start gap-2">
+                              <span className="font-semibold text-purple-400">{msg.Username}:</span>
+                              <span className="text-gray-200">{msg.Message}</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    
+                    {/* Read-Only Notice (No Input Field) */}
+                    <div className="p-3 border-t border-gray-700 flex-shrink-0">
+                      <div className="text-center text-sm text-gray-400 italic">
+                        Join the session to send messages
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Original UI (only show when chat NOT active) */}
+                {!isChatActive && (
+                  <>
                 {/* Dark Gradient Overlay for readability */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none"></div>
                 
@@ -3563,43 +4150,17 @@ const LobbyPage = () => {
                         </div>
                       )}
                     </div>
-                    
-                    {/* Content Rating */}
-                    {session.content_rating && (
-                      <img 
-                        src={
-                          session.content_rating === 'G' ? '/icons/G Rating Icon.png' :
-                          session.content_rating === 'PG' ? '/icons/PG Rating Icon.png' :
-                          session.content_rating === '13+' ? '/icons/13_ Rating Icon.png' :
-                          session.content_rating === '18+' ? '/icons/18_ Rating Icon.png' :
-                          session.content_rating === 'Mature' ? '/icons/Mature Rating Icon.png' :
-                          '/icons/G Rating Icon.png'
-                        }
-                        alt={`${session.content_rating} rating`}
-                        className="h-14 w-auto flex-shrink-0"
-                        style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}
-                      />
-                    )}
                   </div>
                   
-                  {/* Row 2: Title + Viewers */}
-                  <div className="flex items-start gap-2 mb-2">
+                  {/* Row 2: Title */}
+                  <div className="mb-2">
                     {/* Title */}
                     <h3 
-                      className="text-2xl font-bold leading-tight flex-1 line-clamp-2"
+                      className="text-2xl font-bold leading-tight line-clamp-2"
                       style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}
                     >
                       {session.session_title || session.currently_playing || 'Live Session'}
                     </h3>
-                    
-                    {/* Viewers Count */}
-                    <div 
-                      className="flex items-center gap-1 flex-shrink-0"
-                      style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
-                    >
-                      <UsersIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
-                      <span className="text-base font-semibold">{session.member_count}</span>
-                    </div>
                   </div>
                   
                   {/* Row 3: Expandable "... more" */}
@@ -3648,6 +4209,85 @@ const LobbyPage = () => {
                   </div>
                 </div>
                 
+                {/* Right Icon Stack - TikTok Style (Fullscreen) */}
+                <div className="absolute bottom-24 right-6 flex flex-col items-center gap-6 pointer-events-auto">
+                  {/* Content Rating - Neon Outline Frame */}
+                  {session.content_rating && (
+                    <div 
+                      className="w-[45px] h-16 flex items-center justify-center border-2"
+                      style={{
+                        borderColor: 
+                          session.content_rating === 'G' ? 'rgb(74, 222, 128)' :
+                          session.content_rating === 'PG' ? 'rgb(96, 165, 250)' :
+                          session.content_rating === '13+' ? 'rgb(250, 204, 21)' :
+                          session.content_rating === '18+' ? 'rgb(248, 113, 113)' :
+                          session.content_rating === 'Mature' ? 'rgb(192, 132, 252)' :
+                          'rgb(156, 163, 175)',
+                        boxShadow: 
+                          session.content_rating === 'G' ? 'inset 0 0 16px rgba(74, 222, 128, 0.3), 0 0 16px rgba(74, 222, 128, 0.7), 0 0 32px rgba(74, 222, 128, 0.5)' :
+                          session.content_rating === 'PG' ? 'inset 0 0 16px rgba(96, 165, 250, 0.3), 0 0 16px rgba(96, 165, 250, 0.7), 0 0 32px rgba(96, 165, 250, 0.5)' :
+                          session.content_rating === '13+' ? 'inset 0 0 16px rgba(250, 204, 21, 0.3), 0 0 16px rgba(250, 204, 21, 0.7), 0 0 32px rgba(250, 204, 21, 0.5)' :
+                          session.content_rating === '18+' ? 'inset 0 0 16px rgba(248, 113, 113, 0.3), 0 0 16px rgba(248, 113, 113, 0.7), 0 0 32px rgba(248, 113, 113, 0.5)' :
+                          session.content_rating === 'Mature' ? 'inset 0 0 16px rgba(192, 132, 252, 0.3), 0 0 16px rgba(192, 132, 252, 0.7), 0 0 32px rgba(192, 132, 252, 0.5)' :
+                          'inset 0 0 16px rgba(156, 163, 175, 0.3), 0 0 16px rgba(156, 163, 175, 0.7), 0 0 32px rgba(156, 163, 175, 0.5)'
+                      }}
+                    >
+                      <img 
+                        src={
+                          session.content_rating === 'G' ? '/icons/G Rating Icon.png' :
+                          session.content_rating === 'PG' ? '/icons/PG Rating Icon.png' :
+                          session.content_rating === '13+' ? '/icons/13_ Rating Icon.png' :
+                          session.content_rating === '18+' ? '/icons/18_ Rating Icon.png' :
+                          session.content_rating === 'Mature' ? '/icons/Mature Rating Icon.png' :
+                          '/icons/G Rating Icon.png'
+                        }
+                        alt={`${session.content_rating} rating`}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                  )}
+                  
+                  {/* Likes */}
+                  <button
+                    onClick={(e) => handleSessionLike(session.session_id, e)}
+                    className="flex flex-col items-center gap-1.5 group transition-transform hover:scale-110"
+                  >
+                    <HeartIcon 
+                      className={`w-11 h-11 ${
+                        sessionLikes[session.session_id]?.isLiked ? 'text-red-500' : 'text-white'
+                      }`} 
+                      style={{ 
+                        filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))',
+                        fill: sessionLikes[session.session_id]?.isLiked ? 'currentColor' : 'none',
+                        stroke: sessionLikes[session.session_id]?.isLiked ? 'none' : 'currentColor',
+                        strokeWidth: sessionLikes[session.session_id]?.isLiked ? 0 : 1.5
+                      }} 
+                    />
+                    <span className="text-white text-base font-bold" style={{ textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
+                      {formatCount(sessionLikes[session.session_id]?.count || 0)}
+                    </span>
+                  </button>
+                  
+                  {/* Chat */}
+                  <button
+                    onClick={(e) => handleOpenChatPreview(session, e)}
+                    className="flex flex-col items-center gap-1.5 group transition-transform hover:scale-110"
+                  >
+                    <ChatBubbleLeftIcon className="w-11 h-11 text-white" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }} />
+                    <span className="text-white text-base font-bold" style={{ textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
+                      {formatCount(sessionChatCounts[session.session_id] || 0)}
+                    </span>
+                  </button>
+                  
+                  {/* Members */}
+                  <div className="flex flex-col items-center gap-1.5">
+                    <UsersIcon className="w-11 h-11 text-white" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }} />
+                    <span className="text-white text-base font-bold" style={{ textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
+                      {formatCount(session.member_count || 0)}
+                    </span>
+                  </div>
+                </div>
+                
                 {/* Sleek Join Now Button - Fixed Bottom Center */}
                 <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-3 pointer-events-auto">
                   <button
@@ -3681,6 +4321,8 @@ const LobbyPage = () => {
                     </div>
                   )}
                 </div>
+                  </>
+                )}
               </div>
             );
           })}
@@ -3693,6 +4335,13 @@ const LobbyPage = () => {
         onSubmit={handleDOBSubmit}
         isSubmitting={isDOBSubmitting}
       />
+      
+      {/* ❤️ Heart Animation for likes */}
+      {showHeartAnimation && (
+        <TikTokHeartAnimation 
+          onComplete={() => setShowHeartAnimation(false)}
+        />
+      )}
     </div>
   );
 };

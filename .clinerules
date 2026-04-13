@@ -21,11 +21,17 @@ WeWatch/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── cinema/
-│   │   │   │   ├── VideoWatch.jsx (4800+ lines - main viewer)
+│   │   │   │   ├── VideoWatch.jsx (5100+ lines - 2D video watch)
+│   │   │   │   ├── 3d-cinema/
+│   │   │   │   │   └── CinemaScene3DDemo.jsx (6700+ lines - 3D cinema viewer)
 │   │   │   │   ├── ui/ (seats, video player, etc.)
 │   │   │   │   │   └── LeftSidebar.jsx (1800+ lines - upload UI)
 │   │   │   │   └── modals/ (quiz, games, etc.)
+│   │   │   ├── PricingModal.jsx (pricing + content rating selection)
 │   │   │   └── LiveShareManager.jsx (studio controls)
+│   │   ├── pages/
+│   │   │   ├── LectureHallPage.jsx (7700+ lines - lecture hall viewer)
+│   │   │   └── PositionCalculatorPage.jsx (DEPRECATED - old lecture hall dev tool)
 │   │   ├── utils/
 │   │   │   ├── GraphicsRenderer.js (canvas rendering)
 │   │   │   ├── uploadChunker.js (chunked upload utilities)
@@ -54,14 +60,52 @@ WeWatch/
 
 ## Key File Locations
 
-### VideoWatch.jsx (Main Viewer Component)
+### Watch Session Components (3 Active Types)
+
+#### 1. VideoWatch.jsx (2D Video Watch - 5100+ lines)
+- **Path**: `frontend/src/components/cinema/VideoWatch.jsx`
+- **Purpose**: 2D video watching experience with video player
 - **Lines 50-100**: CSS animations and setup
-- **Lines 280-330**: State declarations (banner, seats, camera, etc.)
+- **Lines 315-370**: State declarations (like states, banner, seats, camera, etc.)
+- **Lines 185-197**: Double-click like handler and fetch like status
 - **Lines 307-328**: Responsive detection and banner text cycling
 - **Lines 330-410**: Banner text measurement and line splitting logic
 - **Lines 4045-4200**: LiveShare overlays and breaking news banner rendering
   - Lines 4095-4130: BN layout (Breaking News with BN.png logo)
   - Lines 4145-4180: Breakin layout (Breaking with Breakin.png logo)
+
+#### 2. CinemaScene3DDemo.jsx (3D Cinema - 6700+ lines)
+- **Path**: `frontend/src/components/cinema/3d-cinema/CinemaScene3DDemo.jsx`
+- **Purpose**: Immersive 3D cinema experience with Three.js
+- **Lines 260-310**: Navigation state and user optimization
+- **Lines 273-307**: Double-click like handler
+- **Lines 439-447**: Like-related state declarations
+- **Lines 490-550**: State declarations (seats, chat, audio, loading, etc.)
+- **Features**: 3D seat positioning, spatial audio, camera controls
+
+#### 3. LectureHallPage.jsx (Lecture Hall - 7700+ lines)
+- **Path**: `frontend/src/pages/LectureHallPage.jsx`
+- **Purpose**: Classroom/lecture hall with blackboard and row-based seating
+- **Lines 1034-1037**: Like-related state declarations
+- **Lines 1254-1266**: Fetch initial like status
+- **Lines 1270-1304**: Double-click like handler
+- **Features**: 145 seats (3 columns), host view toggle, raise hand system
+
+#### PositionCalculatorPage.jsx (DEPRECATED)
+- **Path**: `frontend/src/pages/PositionCalculatorPage.jsx`
+- **Status**: Abandoned development tool, replaced by LectureHallPage.jsx
+- **Purpose**: Was used to calculate seat positions during lecture hall development
+- **Note**: Do NOT use or reference this file - it's kept for historical reference only
+
+### Other Key Components
+
+#### PricingModal.jsx (Session Configuration)
+- **Path**: `frontend/src/components/PricingModal.jsx`
+- **Purpose**: Host selects Free/Paid pricing + Content Rating before session creation
+- **Lines 13-48**: Content rating definitions (G, PG, 13+, 18+, Mature) with gradients
+- **Lines 50-84**: Pricing options (Free, Paid) with animated cards
+- **Lines 87-137**: Carousel scroll logic for rating selection
+- **Features**: Auto-center scroll, gradient badges, responsive design
 
 ### LiveShareManager.jsx (Studio Controls)
 - **Lines 118-120**: Media queue break mode state
@@ -584,3 +628,319 @@ const response = await apiClient.post(`/api/rooms/${roomId}/sessions`, {
 1. ✅ Phase 1 (April 8, 2026): Endpoints commented out, imports removed
 2. ⏳ Phase 2 (May 2026): Monitor logs for any deprecated endpoint usage
 3. ⏳ Phase 3 (June 2026): Full removal if no usage detected
+---
+
+## Session Preview Design Updates (April 11-12, 2026)
+
+### Content Rating Badge - Neon Outline Design
+**Location:** LobbyPage.jsx (preview card ~2920-2950, fullscreen ~3858-3900)
+**Status:** ✅ Implemented (Updated April 12)
+
+**Design Evolution:**
+- ~~Original: Solid gradient background with colored icon~~ (Removed)
+- ~~V2: Pure icon with drop-shadow glow~~ (Replaced)
+- **V3 (Current): Neon outline frame with sharp edges**
+
+**Current Implementation:**
+- **Frame**: Sharp rectangular border (no rounded corners) with colored neon glow
+- **Sizing**: Preview card `w-[38px] h-14`, Fullscreen `w-[45px] h-16`
+- **Icon**: Fills entire frame (`w-full h-full object-contain`)
+- **Neon Effect**: Triple-layer box-shadow (inset + medium + large outer glow)
+  - G: Green `rgb(74, 222, 128)`
+  - PG: Blue `rgb(96, 165, 250)`
+  - 13+: Yellow `rgb(250, 204, 21)`
+  - 18+: Red `rgb(248, 113, 113)`
+  - Mature: Purple `rgb(192, 132, 252)`
+
+**Placement:**
+- **Preview Card**: Top of right sidebar (above like/chat/members)
+- **Fullscreen**: Top of right sidebar (was in top-left with room info, moved April 12)
+
+### Like/Unlike Functionality
+**Location:** LobbyPage.jsx lines 192-258 (handler), ~2960 (preview card button), ~3870 (fullscreen button)
+**Backend:** backend/internal/handlers/likes.go
+**Status:** ✅ Implemented & Fixed (April 12)
+
+**Behavior:**
+- **Single Click Toggle**: Like if not liked, unlike if already liked
+- **Animation**: TikTokHeartAnimation plays on like (no toast notification)
+- **API Endpoints**: 
+  - Like: `POST /api/sessions/{id}/like`
+  - Unlike: `DELETE /api/sessions/{id}/unlike` (not `/like`)
+
+**State Management:**
+```javascript
+const [sessionLikes, setSessionLikes] = useState({}); // { sessionId: { count, isLiked } }
+const [showHeartAnimation, setShowHeartAnimation] = useState(false);
+```
+
+**Icons:**
+- Liked: Solid heart (`<HeartIcon />` with `fill: currentColor`) - red color
+- Not Liked: Outline heart (`<HeartIcon />` with `stroke: currentColor, fill: none`)
+
+**Backend Fix (April 12):**
+- **Problem**: Soft deletes caused unique constraint violations on re-like
+- **Solution**: 
+  - Unlike uses hard delete (`DB.Unscoped().Delete()`)
+  - Like checks for soft-deleted records and restores them (`Update("deleted_at", nil)`)
+  - Prevents duplicate key errors on rapid like/unlike toggling
+
+### Chat Preview Integration
+**Location:** LobbyPage.jsx
+**Status:** ✅ Implemented (Updated April 12, 2026)
+
+**Two Chat Systems:**
+
+1. **SessionChatPreviewModal (OLD - Read-only modal)**
+   - Lines 37: Import
+   - Lines 3116-3124: Modal render
+   - Large modal overlay with gradient header "Session Chat"
+   - Read-only view of session chat messages
+   - **Status**: Kept for backward compatibility, not actively used in fullscreen previews
+
+2. **Interactive 70-30 Split Chat (NEW)**
+   - **Lines 152-156**: State declarations
+     - `activeChatSession` - Session object with chat open
+     - `sessionChatMessages` - Real-time chat messages array
+     - `chatWsRef` - Interval reference (REST polling, not WebSocket)
+     - `isChatConnecting` - Connection loading state
+     - `sessionChatCounts` - Chat message counts { sessionId: count }
+   - **Lines 285-328**: Chat handlers
+     - `handleOpenChatPreview()` - Opens 70-30 split, starts REST polling
+     - `connectToSessionChat()` - REST API polling (every 2s)
+     - `handleCloseChatPreview()` - Cleanup (clear interval, clear state)
+   - **Lines 330-363**: Touch gesture handlers (swipe down to close)
+   - **Lines 364-389**: Cleanup effects (unmount, exit fullscreen)
+   - **Lines 3894-3964**: 70-30 Split UI rendering (no "Join" button)
+
+**Interactive Chat Features:**
+- **Layout**: Video 30% top, Chat 70% bottom
+- **Title**: Dynamic based on watch type
+  - `classroom` + `lecture_hall` = "Class Chat"
+  - `3d_cinema` / `video` = "Watch Party Chat"
+- **Read-only**: No input field, shows "Join the session to send messages"
+- **Data Source**: REST API polling (GET `/api/sessions/:id/chat-preview` every 2 seconds)
+- **Chat Count**: Real-time updates via WebSocket `session_chat_sent` event
+- **Close Triggers**: X button, tap video, swipe down (>100px), click outside
+- **Animation**: Slides up from bottom (0.3s ease-out)
+- **Locking**: Prevents swiping to other previews while chat open
+- **Auto-cleanup**: Closes on unmount or exit fullscreen
+- **Audio**: Adaptive - muted in grid view, audio ON in fullscreen
+
+**Implementation Details:**
+- Uses `apiClient.get('/api/sessions/:id/chat-preview')` for messages
+- Polls every 2 seconds while chat is open
+- Returns last 10 messages from backend (chat.go lines 373-430)
+- Handles privacy automatically (private sessions, mature content blocked)
+- ~2 second delay for new messages (acceptable for preview mode)
+- Chat count updates instantly via lobby WebSocket broadcast
+
+**Real-time Chat Count (April 13, 2026):**
+- **Approach**: Derived from message array length (no separate API/WebSocket needed)
+- **When Chat Open**: Count = `sessionChatMessages.length` (updated every 2s with polling)
+- **When Chat Closed**: Initial count from GET `/api/sessions/:id/chat-count` on mount
+- **Update Mechanism**: As messages are polled, count updates automatically from array
+- **Benefit**: Zero overhead - no extra API calls, no WebSocket broadcasts, just count existing data
+
+**Real-time Session Preview Generation (April 13, 2026):**
+- **WebSocket Event**: `session_started` triggers immediate preview generation
+- **Timing**: 500ms delay after session creation to ensure media is ready
+- **Benefit**: New sessions appear in "Watching Now" without requiring refresh
+- **Fallback**: 5-minute interval refresh + `media_state_changed` event triggers
+
+**Why REST Polling Instead of WebSocket:**
+- ✅ Simpler - no connection management
+- ✅ No sync issues - direct data source
+- ✅ Uses existing backend endpoint
+- ✅ Automatic privacy/moderation handling
+- ✅ Lower overhead for preview feature
+- ✅ Chat count via existing lobby WebSocket (no additional connection)
+
+**Audio Management (April 13, 2026):**
+- **Grid View (Preview Cards)**: Videos play with audio (`muted={false}`)
+- **Fullscreen View**: Videos play with audio (`muted={false}`)
+- **Component**: SessionPreview.jsx accepts `muted` prop (defaults to `true`)
+- **Why No Echo**: Grid view is completely hidden when fullscreen modal opens - only one SessionPreview instance is visible at any time
+- **Benefit**: Users can hear previews in both modes without audio conflicts
+
+**Known Issue (April 12, 2026) - RESOLVED:**
+~~**Problem**: Messages sent in active session don't appear in lobby preview chat~~
+~~**Root Cause**: Lobby WebSocket connects to session room, but messages are broadcast via different WebSocket message type~~
+**Solution**: Replaced WebSocket with REST API polling - messages now appear with ~2 second delay
+
+### Session Preview Generation System
+**Location:** LobbyPage.jsx lines 2077-2250
+**Backend:** backend/internal/handlers/session_preview.go
+**Status:** ✅ Implemented with Known Issue (April 12, 2026)
+
+**Preview Generation Logic:**
+- **Function**: `generateSessionPreview(sessionId)`
+- **Triggers**:
+  1. Initial: When session appears in lobby (lines 2290-2293)
+  2. Event-driven: Via WebSocket `media_state_changed` message (lines 1674-1688)
+  3. Periodic: 5-minute refresh interval (lines 2223-2232)
+
+**Source Detection (Lines 2095-2110):**
+- **Upload**: Video files uploaded to session
+- **LiveShare/WatchFrom**: WebRTC streams (requires frame capture)
+- **Classroom**: Checks `current_media_url` and `is_screen_sharing_active`
+
+**API Call (Lines 2182-2190):**
+```javascript
+const response = await apiClient.post(`/api/sessions/${sessionId}/generate-preview`, {
+  source: source,
+  current_time: '5', // ⚠️ HARDCODED - NOT USING ACTUAL PLAYBACK TIME
+});
+```
+
+**Backend Handler (session_preview.go lines 37-195):**
+- Lines 153-157: Uses `current_time` or defaults to "5" seconds
+- Lines 167-175: Calls `utils.GeneratePreviewMP4(mediaPath, mp4Path, startTime, 30)`
+- Generates 30-second MP4 preview with audio
+
+**Known Issue (April 12, 2026):**
+**Problem**: Session preview stuck on same clip even as media plays
+**Root Cause**: `current_time: '5'` is hardcoded in LobbyPage.jsx line 2187
+**Expected Behavior**: Should use actual playback position from session
+**Solution Needed**:
+1. Get session's current playback position from WebSocket `sessionStatus.playbackPosition`
+2. Pass actual time instead of hardcoded '5'
+3. Consider caching recent previews to avoid regenerating identical clips
+
+**Correct Implementation:**
+```javascript
+// ❌ CURRENT (Wrong):
+const response = await apiClient.post(`/api/sessions/${sessionId}/generate-preview`, {
+  source: source,
+  current_time: '5', // Always generates from 5 seconds
+});
+
+// ✅ SHOULD BE (Correct):
+const session = sessionsPage.data.find(s => s.session_id === sessionId);
+const currentTime = session?.playback_position || session?.current_time || 5;
+const response = await apiClient.post(`/api/sessions/${sessionId}/generate-preview`, {
+  source: source,
+  current_time: String(currentTime), // Use actual playback position
+});
+```
+
+**Additional Context:**
+- Preview refresh happens every 5 minutes (line 2228)
+- WebSocket `media_state_changed` triggers immediate regeneration (lines 1674-1688)
+- Preview URLs are stored in state: `sessionPreviews[sessionId] = { posterUrl, previewUrl, isGenerating }`
+- Backend generates both poster (thumbnail) and 30-second MP4 with audio
+
+
+**Consistent Order (Both Views):**
+1. **Content Rating Badge** (neon outline frame)
+2. **Like Button** (heart icon with count)
+3. **Chat Button** (chat bubble icon with message count)
+4. **Members Button** (users icon with viewer count)
+
+**Fixes Applied (April 12):**
+- Removed duplicate state declarations (`showHeartAnimation`, `lastLikeTimeRef`, `getRatingGlowColor`)
+- Removed duplicate Members icon from fullscreen title area
+- Moved content rating from top-left to right sidebar in fullscreen view
+- Unified interactive element placement across preview and fullscreen modes
+
+**Event Handling:** All buttons use `e.stopPropagation()` to prevent unwanted modal triggers.
+---
+
+## Deprecated Files & Components (Scheduled for Deletion)
+
+### Frontend Components - Deprecated Seat Systems
+
+**Status:** Deprecated as of December 21, 2025 - January 27, 2026  
+**Source:** documentation/DEPRECATED_FILES.md
+
+#### Seat Modal Components (Dec 21, 2025)
+- **`frontend/src/components/cinema/ui/SeatsModal.jsx`**
+  - Replaced by: LectureHallSeatsGrid.jsx, CinemaSeatsGrid.jsx, UnifiedSeatsModal.jsx
+  - Reason: Modular seat grid components per watch type
+  
+- **`frontend/src/components/SeatsModal.jsx`** (if exists)
+  - Replaced by: cinema-specific components
+  
+- **`frontend/src/components/SeatingGrid.jsx`** (if exists)
+  - Replaced by: Watch-type-specific grid components
+
+#### 3D Cinema Seat System (Jan 27, 2026)
+- **`frontend/src/components/cinema/3d-cinema/seatCalculator.js`**
+  - Replaced by: Manual position recording (cinemaSeats.json + Position Calculator modal)
+  - Reason: Interpolation-based calculation replaced by manual WASD positioning
+  
+- **`frontend/src/components/cinema/3d-cinema/SeatMarkers.jsx`**
+  - Replaced by: None (integrated into Position Calculator modal)
+  - Reason: Debug visualization no longer needed
+  
+- **`frontend/src/components/cinema/3d-cinema/useSeatController.js`**
+  - Replaced by: Direct seat key management in CinemaScene3DDemo.jsx
+  - Reason: Simplified seat management
+
+#### Root Scripts (Jan 27, 2026)
+- **`adjust_seat_heights.js`** (root directory)
+  - Reason: Script for old interpolation-based seat system
+  - Replacement: None needed
+  
+- **`revert_seat_heights.js`** (root directory)
+  - Reason: Script for old interpolation-based seat system
+  - Replacement: None needed
+  
+- **`generate_seats.js`** (root directory)
+  - Reason: Lecture hall specific, not used by 3D cinema
+  - Replacement: None needed
+
+### Pages - Development Tools
+
+**Status:** Deprecated as of April 12, 2026
+
+- **`frontend/src/pages/PositionCalculatorPage.jsx`**
+  - **Lines**: ~7700 lines
+  - **Replaced by**: LectureHallPage.jsx
+  - **Reason**: Abandoned development tool used for calculating seat positions during lecture hall development
+  - **Note**: Do NOT use or reference this file - kept for historical reference only
+  - **Status**: Can be safely deleted after verification
+
+### Modals - Old Chat Preview
+
+**Status:** Partially deprecated as of April 12, 2026
+
+- **`frontend/src/components/SessionChatPreviewModal.jsx`**
+  - **Lines**: ~201 lines
+  - **Status**: Kept for backward compatibility but not actively used in fullscreen previews
+  - **Replaced by**: Interactive 70-30 split chat in LobbyPage.jsx (lines 3894-3964)
+  - **Reason**: Read-only modal replaced by embedded interactive chat widget
+  - **Action**: Can be deleted once all references are verified removed
+
+### Renamed Files (Still in Use)
+
+**Date:** January 27, 2026
+
+- **`AvatarManager.jsx` → `CinemaAvatarManager.jsx`**
+  - Location: `frontend/src/components/cinema/3d-cinema/avatars/`
+  - Reason: Cinema-specific component, better organization
+
+---
+
+## Cleanup Checklist
+
+**Before Deletion:**
+- [ ] Verify all cinema scenes use new seat components
+- [ ] Verify video watch uses new seat components
+- [ ] Verify classroom/lecture hall uses new seat components
+- [ ] Search codebase for imports of deprecated files
+- [ ] Verify PositionCalculatorPage.jsx has no active routes
+- [ ] Verify SessionChatPreviewModal.jsx has no remaining references
+- [ ] Test seat selection in all watch types (3d_cinema, classroom, video)
+- [ ] Verify manual position recording works in 3D cinema
+- [ ] Test WASD camera movement in Position Calculator modal
+
+**After Verification:**
+- [ ] Delete deprecated seat modal files
+- [ ] Delete deprecated 3D cinema seat system files
+- [ ] Delete root seat adjustment scripts
+- [ ] Delete PositionCalculatorPage.jsx
+- [ ] Delete SessionChatPreviewModal.jsx (if unused)
+- [ ] Update documentation
+- [ ] Remove imports from active files
+- [ ] Clear unused routes from App.jsx

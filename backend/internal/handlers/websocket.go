@@ -4038,6 +4038,22 @@ func (client *Client) handleMessage(message []byte) {
             client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: broadcastBytes, IsBinary: false}, nil)
             log.Printf("[chat_message] 📢 Broadcasted message to room %d", client.roomID)
         }
+        
+        // ✅ Broadcast to lobby for real-time chat count updates (for users NOT in the chat)
+        var chatCount int64
+        DB.Model(&models.ChatMessage{}).Where("session_id = ?", chatData.SessionID).Count(&chatCount)
+        
+        lobbyEvent := map[string]interface{}{
+            "type":       "session_chat_sent",
+            "session_id": chatData.SessionID,
+            "chat_count": chatCount,
+        }
+        
+        if lobbyBytes, err := json.Marshal(lobbyEvent); err == nil {
+            client.hub.BroadcastToLobby(OutgoingMessage{Data: lobbyBytes, IsBinary: false})
+            log.Printf("[chat_message] 📢 Broadcasted chat count to lobby for session %s (count: %d)", chatData.SessionID, chatCount)
+        }
+        
         return
     }
 

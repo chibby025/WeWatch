@@ -43,6 +43,8 @@ import GameLobbyModal from '../Games/GameLobbyModal';
 import GameOverlay from '../Games/GameOverlay';
 // Graphics renderer for LiveShare overlays
 import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
+import TikTokHeartAnimation from '../TikTokHeartAnimation';
+import { HeartIcon } from '@heroicons/react/24/solid';
 
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
@@ -170,13 +172,69 @@ export default function VideoWatch() {
   const urlParams = new URLSearchParams(window.location.search);
   const urlSessionId = urlParams.get('session_id');
   const isInstantWatch = urlParams.get('instant') === 'true';
-  // Session ID extracted (log removed to reduce noise)
-
+  
+  // ✅ Initialize WebSocket connection (must be before hooks that use sessionStatus)
   const { sendMessage, messages, isConnected, sessionStatus, setBinaryMessageHandler } = useWebSocket(
     roomId,
     stableTokenRef.current,
     urlSessionId  // ✅ Pass session_id to WebSocket so backend can add us to session members
   );
+  
+  // ❤️ Fetch initial like status
+  useEffect(() => {
+    const fetchLikeStatus = async () => {
+      const activeSessionId = sessionStatus?.id || urlSessionId;
+      if (!activeSessionId) return;
+      try {
+        const response = await apiClient.get(`/api/sessions/${activeSessionId}/like-status`);
+        setIsSessionLiked(response.data.isLiked);
+        setSessionLikesCount(response.data.count);
+      } catch (err) {
+        console.error('Failed to fetch like status:', err);
+      }
+    };
+    
+    fetchLikeStatus();
+  }, [sessionStatus?.id, urlSessionId]);
+  
+  // ❤️ Double-click like handler
+  const handleDoubleClickLike = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const activeSessionId = sessionStatus?.id || urlSessionId;
+    if (!activeSessionId) return;
+    
+    // Debounce (prevent rapid double-clicks)
+    const now = Date.now();
+    if (now - lastLikeTimeRef.current < 1000) return;
+    lastLikeTimeRef.current = now;
+    
+    // Don't allow liking again if already liked
+    if (isSessionLiked) {
+      toast.error('You already liked this session!', { duration: 2000 });
+      return;
+    }
+    
+    // Show animation immediately
+    setShowHeartAnimation(true);
+    
+    // Optimistic UI update
+    setIsSessionLiked(true);
+    setSessionLikesCount(prev => prev + 1);
+    
+    // Call API
+    try {
+      await apiClient.post(`/api/sessions/${activeSessionId}/like`);
+      toast.success('Liked! ❤️', { duration: 2000 });
+    } catch (err) {
+      console.error('Failed to like session:', err);
+      // Revert on error
+      setIsSessionLiked(false);
+      setSessionLikesCount(prev => prev - 1);
+      toast.error(err.response?.data?.error || 'Failed to like session');
+    }
+  };
 
   // 🎯 HYBRID WATCH TYPE DETECTION
   // Primary: Use sessionStatus from WebSocket
@@ -268,6 +326,12 @@ export default function VideoWatch() {
   const [notifications, setNotifications] = useState([]);
   const [pendingSeatRequests, setPendingSeatRequests] = useState([]);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
+  
+  // ❤️ Session like state
+  const [isSessionLiked, setIsSessionLiked] = useState(false);
+  const [sessionLikesCount, setSessionLikesCount] = useState(0);
+  const [showHeartAnimation, setShowHeartAnimation] = useState(false);
+  const lastLikeTimeRef = useRef(0);
   const [isLiveShareWizardOpen, setIsLiveShareWizardOpen] = useState(false); // ✅ Track wizard modal state for taskbar
   const [isVideoSidebarOpen, setIsVideoSidebarOpen] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
@@ -4104,7 +4168,10 @@ export default function VideoWatch() {
       </div>
 
       {/* 📺 Main Video Player — PASS LIVEKIT TRACK */}
-      <div className="relative w-full h-full">
+      <div 
+        className="relative w-full h-full"
+        onDoubleClick={handleDoubleClickLike}
+      >
         <CinemaVideoPlayer
           ref={videoPlayerRef}
           mediaItem={currentMedia}
@@ -4122,6 +4189,13 @@ export default function VideoWatch() {
           onTimeUpdate={handleTimeUpdate}
           // ❌ REMOVED: onBinaryHandlerReady, onScreenShareReady (not needed with LiveKit)
         />
+        
+        {/* ❤️ TikTok Heart Animation */}
+        {showHeartAnimation && (
+          <TikTokHeartAnimation 
+            onComplete={() => setShowHeartAnimation(false)}
+          />
+        )}
         
         {/* � Graphics Canvas Overlay for LiveShare */}
         {liveShareMode && (

@@ -92,7 +92,7 @@ func (pq *PreviewQueue) QueuePreview(req PreviewRequest) {
 	// Check if preview generation is enabled for this session
 	var session models.WatchSession
 	if err := pq.db.Where("session_id = ?", req.SessionID).First(&session).Error; err != nil {
-		log.Printf("⚠️ [PreviewQueue] Failed to fetch session %s: %v", req.SessionID, err)
+		log.Printf("❌ [PreviewQueue] Session not found: %s, error: %v", req.SessionID, err)
 		return
 	}
 	
@@ -103,12 +103,12 @@ func (pq *PreviewQueue) QueuePreview(req PreviewRequest) {
 	
 	// Check if already in queue
 	if pq.active[req.SessionID] {
-		log.Printf("⏭️ [PreviewQueue] Session %s already has pending preview, skipping", req.SessionID)
+		log.Printf("⏭️ [PreviewQueue] Preview already queued for session %s, skipping duplicate", req.SessionID)
 		return
 	}
 	
 	pq.active[req.SessionID] = true
-	log.Printf("📥 [PreviewQueue] Queued preview request for session %s, type: %s", req.SessionID, req.MediaType)
+	log.Printf("📥 [PreviewQueue] ✅ QUEUED preview request for session %s, type: %s, timestamp: %d", req.SessionID, req.MediaType, req.CurrentTimestamp)
 	pq.queue <- req
 }
 
@@ -143,7 +143,7 @@ func (pq *PreviewQueue) generateUploadPreview(req PreviewRequest) {
 	baseName := filepath.Base(req.MediaPath)
 	ext := filepath.Ext(baseName)
 	nameWithoutExt := strings.TrimSuffix(baseName, ext)
-	previewFilename := fmt.Sprintf("%s_preview_%d.gif", nameWithoutExt, time.Now().Unix())
+	previewFilename := fmt.Sprintf("%s_preview_%d.mp4", nameWithoutExt, time.Now().Unix())
 	
 	var previewPath string
 	var previewURL string
@@ -158,15 +158,15 @@ func (pq *PreviewQueue) generateUploadPreview(req PreviewRequest) {
 	
 	// Generate preview starting from current timestamp
 	startTime := formatSeconds(req.CurrentTimestamp)
-	log.Printf("🎬 [PreviewQueue] Generating preview from timestamp: %s (file: %s)", startTime, req.MediaPath)
+	log.Printf("🎬 [PreviewQueue] 🚀 Generating MP4 preview from timestamp: %s (file: %s)", startTime, req.MediaPath)
 	
-	err := utils.GeneratePreviewGIF(req.MediaPath, previewPath, startTime, 30)
+	err := utils.GeneratePreviewMP4(req.MediaPath, previewPath, startTime, 30)
 	if err != nil {
-		log.Printf("❌ [PreviewQueue] Failed to generate preview GIF: %v", err)
+		log.Printf("❌ [PreviewQueue] Failed to generate MP4 preview: %v", err)
 		return
 	}
 	
-	log.Printf("✅ [PreviewQueue] Preview GIF generated: %s", previewPath)
+	log.Printf("✅ [PreviewQueue] MP4 preview generated successfully: %s", previewPath)
 	
 	// Update database
 	if req.IsTemporary {
@@ -203,6 +203,10 @@ func (pq *PreviewQueue) generateUploadPreview(req PreviewRequest) {
 
 // broadcastPreviewToLobby sends preview update to lobby WebSocket
 func (pq *PreviewQueue) broadcastPreviewToLobby(sessionID, posterURL, previewURL string) {
+	log.Printf("📡 [PreviewQueue] Broadcasting preview update for session %s", sessionID)
+	log.Printf("   📸 Poster: %s", posterURL)
+	log.Printf("   🎬 Preview: %s", previewURL)
+	
 	broadcastData := map[string]interface{}{
 		"type":        "session_preview_updated",
 		"session_id":  sessionID,
@@ -221,7 +225,7 @@ func (pq *PreviewQueue) broadcastPreviewToLobby(sessionID, posterURL, previewURL
 		IsBinary: false,
 	})
 	
-	log.Printf("📡 [PreviewQueue] Broadcast preview update for session %s", sessionID)
+	log.Printf("✅ [PreviewQueue] Broadcast sent successfully for session %s", sessionID)
 }
 
 // StartRefreshTimer starts a 1-minute refresh timer for a session (⚡ TESTING MODE - change back to 5 minutes for production)
@@ -229,17 +233,21 @@ func (pq *PreviewQueue) StartRefreshTimer(sessionID string) {
 	// Stop existing timer if any
 	pq.StopRefreshTimer(sessionID)
 	
+	log.Printf("⏱️ [PreviewQueue] 🚀 STARTING 1-minute refresh timer for session %s (TESTING MODE)", sessionID)
 	ticker := time.NewTicker(1 * time.Minute) // ⚡ TESTING: 1 minute (change to 5 * time.Minute for production)
 	pq.timers[sessionID] = ticker
 	
 	go func() {
+		tickerCount := 0
 		for range ticker.C {
-			log.Printf("⏰ [PreviewQueue] 1-minute refresh triggered for session %s (TESTING MODE)", sessionID)
+			tickerCount++
+			log.Printf("⏰ [PreviewQueue] 🔔 TIMER TICK #%d for session %s - triggering refresh", tickerCount, sessionID)
 			pq.refreshPreview(sessionID)
 		}
+		log.Printf("⏹️ [PreviewQueue] Timer goroutine exited for session %s", sessionID)
 	}()
 	
-	log.Printf("⏱️ [PreviewQueue] Started 1-minute refresh timer for session %s (TESTING MODE)", sessionID)
+	log.Printf("✅ [PreviewQueue] Timer goroutine spawned for session %s", sessionID)
 }
 
 // StopRefreshTimer stops the refresh timer for a session
@@ -253,18 +261,25 @@ func (pq *PreviewQueue) StopRefreshTimer(sessionID string) {
 
 // refreshPreview generates a new preview based on current playback position
 func (pq *PreviewQueue) refreshPreview(sessionID string) {
+	log.Printf("🔄 [PreviewQueue] refreshPreview called for session %s", sessionID)
+	
 	var session models.WatchSession
 	result := pq.db.Where("session_id = ?", sessionID).First(&session)
 	if result.Error != nil {
-		log.Printf("❌ [PreviewQueue] Session not found for refresh: %s", sessionID)
+		log.Printf("❌ [PreviewQueue] Session not found for refresh: %s, error: %v", sessionID, result.Error)
 		return
 	}
 	
+	log.Printf("📊 [PreviewQueue] Session state: MediaType=%s, MediaPath=%s, PlaybackTime=%d", 
+		session.CurrentMediaType, session.CurrentMediaPath, session.CurrentPlaybackTime)
+	
 	// Only refresh if media is upload type
 	if session.CurrentMediaType != string(MediaTypeUpload) {
-		log.Printf("ℹ️ [PreviewQueue] Session %s is not upload type, skipping refresh", sessionID)
+		log.Printf("⏭️ [PreviewQueue] Skipping refresh - not upload type (current: %s)", session.CurrentMediaType)
 		return
 	}
+	
+	log.Printf("✅ [PreviewQueue] Queueing new preview generation from position %d seconds", session.CurrentPlaybackTime)
 	
 	// Queue new preview generation from current position
 	pq.QueuePreview(PreviewRequest{

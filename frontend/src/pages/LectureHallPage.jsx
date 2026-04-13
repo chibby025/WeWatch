@@ -36,6 +36,8 @@ import LiveKitAudioDebugPanel from '../components/LiveKitAudioDebugPanel';
 import logger from '../utils/logger';
 import FloatingGiftIcon from '../components/FloatingGiftIcon';
 import DonationNotification from '../components/DonationNotification';
+import TikTokHeartAnimation from '../components/TikTokHeartAnimation';
+import { HeartIcon } from '@heroicons/react/24/solid';
 
 
 // ✅ Constant empty array - prevents recreation on every render
@@ -1016,6 +1018,12 @@ const PositionCalculatorPage = () => {
   const [showDebugPanels, setShowDebugPanels] = useState(false);
   const [showAudioDebugPanel, setShowAudioDebugPanel] = useState(false);
   
+  // ❤️ Double-click like states
+  const [showHeartAnimation, setShowHeartAnimation] = useState(false);
+  const [isSessionLiked, setIsSessionLiked] = useState(false);
+  const [sessionLikesCount, setSessionLikesCount] = useState(0);
+  const lastLikeTimeRef = useRef(0);
+  
   // Left sidebar state
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
   
@@ -1240,6 +1248,60 @@ const PositionCalculatorPage = () => {
     wsToken,
     finalSessionId
   );
+  
+  // ❤️ Fetch initial like status
+  useEffect(() => {
+    const fetchLikeStatus = async () => {
+      if (!finalSessionId) return;
+      try {
+        const response = await apiClient.get(`/api/sessions/${finalSessionId}/like-status`);
+        setIsSessionLiked(response.data.isLiked);
+        setSessionLikesCount(response.data.count);
+      } catch (err) {
+        console.error('Failed to fetch like status:', err);
+      }
+    };
+    
+    fetchLikeStatus();
+  }, [finalSessionId]);
+  
+  // ❤️ Double-click like handler
+  const handleDoubleClickLike = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!finalSessionId) return;
+    
+    // Debounce (prevent rapid double-clicks)
+    const now = Date.now();
+    if (now - lastLikeTimeRef.current < 1000) return;
+    lastLikeTimeRef.current = now;
+    
+    // Don't allow liking again if already liked
+    if (isSessionLiked) {
+      toast.error('You already liked this session!', { duration: 2000 });
+      return;
+    }
+    
+    // Show animation immediately
+    setShowHeartAnimation(true);
+    
+    // Optimistic UI update
+    setIsSessionLiked(true);
+    setSessionLikesCount(prev => prev + 1);
+    
+    // Call API
+    try {
+      await apiClient.post(`/api/sessions/${finalSessionId}/like`);
+      toast.success('Liked! ❤️', { duration: 2000 });
+    } catch (err) {
+      console.error('Failed to like session:', err);
+      // Revert on error
+      setIsSessionLiked(false);
+      setSessionLikesCount(prev => prev - 1);
+      toast.error(err.response?.data?.error || 'Failed to like session');
+    }
+  };
   
   // isConnected tracked internally
   
@@ -6633,7 +6695,10 @@ const PositionCalculatorPage = () => {
   return (
     <div className="h-screen bg-gray-900 text-white flex overflow-hidden">
       {/* 3D Canvas */}
-      <div className="flex-1 relative overflow-hidden">
+      <div 
+        className="flex-1 relative overflow-hidden"
+        onDoubleClick={handleDoubleClickLike}
+      >
         <Canvas
           camera={{ position: initialCameraPosition, fov: 50 }}
           onCreated={({ gl }) => {
@@ -6740,6 +6805,13 @@ const PositionCalculatorPage = () => {
           <gridHelper args={[20, 20]} />
           <axesHelper args={[5]} />
         </Canvas>
+        
+        {/* ❤️ TikTok Heart Animation */}
+        {showHeartAnimation && (
+          <TikTokHeartAnimation 
+            onComplete={() => setShowHeartAnimation(false)}
+          />
+        )}
         
         {/* Discussion Mode Bar - Top of screen (auto-hides like cinema AudioModeBar) */}
         <DiscussionModeBar

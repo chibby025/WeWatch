@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -201,7 +202,7 @@ func ChunkUploadHandler(c *gin.Context) {
 			log.Printf("✅ [ChunkUpload] Created TemporaryMediaItem ID=%d for session %s", newTempMediaItem.ID, sessionID)
 			
 			// ✅ ASYNC POSTER GENERATION
-			go func(itemID uint, videoPath, posterPath string) {
+			go func(itemID uint, videoPath, posterPath, sid string) {
 				log.Printf("🎨 [Async] Starting poster generation for temp item %d", itemID)
 				
 				err := utils.ExtractThumbnail(videoPath, posterPath)
@@ -215,8 +216,25 @@ func ChunkUploadHandler(c *gin.Context) {
 					log.Printf("❌ [Async] Failed to update poster URL for temp item %d: %v", itemID, err)
 				} else {
 					log.Printf("✅ [Async] Poster generated and updated for temp item %d: %s", itemID, posterURL)
+					
+					// ✅ BROADCAST POSTER UPDATE TO LOBBY (so preview cards update immediately)
+					if sid != "" {
+						broadcastData := map[string]interface{}{
+							"type":        "session_preview_updated",
+							"session_id":  sid,
+							"poster_url":  posterURL,
+							"preview_url": "", // MP4 not ready yet
+						}
+						broadcastJSON, _ := json.Marshal(broadcastData)
+						
+						log.Printf("📡 [Poster] Broadcasting poster update to lobby for session %s", sid)
+						hub.BroadcastToLobby(OutgoingMessage{
+							Data:     broadcastJSON,
+							IsBinary: false,
+						})
+					}
 				}
-			}(newTempMediaItem.ID, finalFilePath, posterPath)
+			}(newTempMediaItem.ID, finalFilePath, posterPath, sessionID)
 			
 			// ✅ Construct public URL for browser access
 			publicURL := fmt.Sprintf("/uploads/temp/%s", uniqueFilename)

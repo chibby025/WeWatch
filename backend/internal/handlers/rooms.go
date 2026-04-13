@@ -747,14 +747,16 @@ func EndWatchSessionHandler(c *gin.Context) {
 
 	// Broadcast to lobby for real-time session list updates
 	lobbyBroadcastData := map[string]interface{}{
-		"type":    "session_ended",
-		"room_id": session.RoomID,
+		"type":       "session_ended",
+		"session_id": sessionID, // ✅ Include session_id for instant removal
+		"room_id":    session.RoomID,
 	}
 	if lobbyJsonData, err := json.Marshal(lobbyBroadcastData); err == nil {
 		hub.BroadcastToLobby(OutgoingMessage{
 			Data:     lobbyJsonData,
 			IsBinary: false,
 		})
+		log.Printf("📡 [EndWatchSessionHandler] Lobby broadcast sent with session_id: %s", sessionID)
 	}
 
 	// ✅ DISCONNECT ALL WEBSOCKET CLIENTS IN THIS ROOM

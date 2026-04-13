@@ -347,3 +347,89 @@ func DeleteSessionPrivateMessagesHandler(c *gin.Context) {
 		"message":       "Private messages deleted successfully",
 	})
 }
+
+// GetSessionChatPreviewHandler handles GET /api/sessions/:id/chat-preview
+// Returns last 10 messages for a session (for lobby preview)
+func GetSessionChatPreviewHandler(c *gin.Context) {
+	sessionID := c.Param("id")
+	
+	// Check if session exists and get privacy settings
+	var session models.WatchSession
+	if err := DB.Where("session_id = ?", sessionID).First(&session).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+		return
+	}
+	
+	// Check privacy flags - deny if session is private or preview disabled
+	if session.IsPrivate || !session.PreviewEnabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Chat preview disabled for this session"})
+		return
+	}
+	
+	// Check content rating - deny if 18+ or Mature
+	if session.ContentRating == "18+" || session.ContentRating == "Mature" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Chat preview disabled for mature content"})
+		return
+	}
+	
+	// Get total count of non-deleted messages
+	var totalCount int64
+	if err := DB.Model(&models.ChatMessage{}).
+		Where("session_id = ? AND deleted_by_host = false", sessionID).
+		Count(&totalCount).Error; err != nil {
+		log.Printf("❌ [ChatPreview] Failed to count messages: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch chat count"})
+		return
+	}
+	
+	// Fetch last 10 messages (ORDER BY DESC, then reverse in response)
+	var messages []models.ChatMessage
+	if err := DB.Where("session_id = ? AND deleted_by_host = false", sessionID).
+		Order("created_at DESC").
+		Limit(10).
+		Find(&messages).Error; err != nil {
+		log.Printf("❌ [ChatPreview] Failed to fetch messages: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch chat preview"})
+		return
+	}
+	
+	// Reverse messages to show oldest first
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+	
+	log.Printf("✅ [ChatPreview] Returned %d messages for session %s (total: %d)", len(messages), sessionID, totalCount)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"messages":    messages,
+		"total_count": totalCount,
+	})
+}
+
+// GetSessionChatCountHandler handles GET /api/sessions/:id/chat-count
+// Returns total message count for a session
+func GetSessionChatCountHandler(c *gin.Context) {
+	sessionID := c.Param("id")
+	
+	// Check if session exists
+	var session models.WatchSession
+	if err := DB.Where("session_id = ?", sessionID).First(&session).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+		return
+	}
+	
+	// Count non-deleted messages
+	var count int64
+	if err := DB.Model(&models.ChatMessage{}).
+		Where("session_id = ? AND deleted_by_host = false", sessionID).
+		Count(&count).Error; err != nil {
+		log.Printf("❌ [ChatCount] Failed to count messages: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count messages"})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"session_id": sessionID,
+		"count":      count, // ✅ Changed from chat_count to match frontend expectation
+	})
+}

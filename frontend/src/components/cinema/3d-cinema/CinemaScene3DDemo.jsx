@@ -44,6 +44,8 @@ import GameScreenRenderer from '../../Games/GameScreenRenderer'; // ✅ NEW
 import VolumeControl from '../../VolumeControl';
 // Graphics renderer for LiveShare overlays
 import { GraphicsRenderer } from '../../../utils/GraphicsRenderer';
+import TikTokHeartAnimation from '../../TikTokHeartAnimation';
+import { HeartIcon } from '@heroicons/react/24/solid';
 // LocalStorage cache utilities
 import { 
   getCachedUser, 
@@ -266,6 +268,44 @@ export default function CinemaScene3DDemo() {
   const { currentUser: hookCurrentUser, wsToken, loading: authLoading, refreshUser } = useAuth();
   const currentUser = passedCurrentUser || hookCurrentUser; // Use passed user immediately, fall back to hook
   
+  // ❤️ Double-click like handler
+  const handleDoubleClickLike = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!finalSessionId) return;
+    
+    // Debounce (prevent rapid double-clicks)
+    const now = Date.now();
+    if (now - lastLikeTimeRef.current < 1000) return;
+    lastLikeTimeRef.current = now;
+    
+    // Don't allow liking again if already liked
+    if (isSessionLiked) {
+      toast.error('You already liked this session!', { duration: 2000 });
+      return;
+    }
+    
+    // Show animation immediately
+    setShowHeartAnimation(true);
+    
+    // Optimistic UI update
+    setIsSessionLiked(true);
+    setSessionLikesCount(prev => prev + 1);
+    
+    // Call API
+    try {
+      await apiClient.post(`/api/sessions/${finalSessionId}/like`);
+      toast.success('Liked! ❤️', { duration: 2000 });
+    } catch (err) {
+      console.error('Failed to like session:', err);
+      // Revert on error
+      setIsSessionLiked(false);
+      setSessionLikesCount(prev => prev - 1);
+      toast.error(err.response?.data?.error || 'Failed to like session');
+    }
+  };
+  
   // Log optimization status
   useEffect(() => {
     if (passedCurrentUser) {
@@ -274,6 +314,22 @@ export default function CinemaScene3DDemo() {
       console.log('⏳ [CinemaScene3DDemo] currentUser loading via useAuth hook (direct URL access)');
     }
   }, [passedCurrentUser]);
+  
+  // ❤️ Fetch initial like status
+  useEffect(() => {
+    const fetchLikeStatus = async () => {
+      if (!finalSessionId) return;
+      try {
+        const response = await apiClient.get(`/api/sessions/${finalSessionId}/like-status`);
+        setIsSessionLiked(response.data.isLiked);
+        setSessionLikesCount(response.data.count);
+      } catch (err) {
+        console.error('Failed to fetch like status:', err);
+      }
+    };
+    
+    fetchLikeStatus();
+  }, [finalSessionId]);
   
   // 🐛 DEBUG: Track component mounts/remounts
   const componentIdRef = useRef(`cinema-${Date.now()}-${Math.random()}`);
@@ -380,6 +436,13 @@ export default function CinemaScene3DDemo() {
     };
   }, []);
   const stableTokenRef = useRef(null);
+  
+  // ❤️ Session like state
+  const [isSessionLiked, setIsSessionLiked] = useState(false);
+  const [sessionLikesCount, setSessionLikesCount] = useState(0);
+  const [showHeartAnimation, setShowHeartAnimation] = useState(false);
+  const lastLikeTimeRef = useRef(0);
+  
   const [showSeatMarkers, setShowSeatMarkers] = useState(false);
   
   // 🎯 Position Calculator Modal state
@@ -5519,10 +5582,14 @@ export default function CinemaScene3DDemo() {
       )}
 
       {/* 3D Scene */}
-      <CinemaScene3D
-        ref={cinemaSceneRef}
-        useGLBModel="improved"
-        authenticatedUserID={currentUser?.id}
+      <div 
+        className="absolute inset-0"
+        onDoubleClick={handleDoubleClickLike}
+      >
+        <CinemaScene3D
+          ref={cinemaSceneRef}
+          useGLBModel="improved"
+          authenticatedUserID={currentUser?.id}
         videoElement={liveShareVideoRef.current || videoRef.current} // ✅ Use LiveShare video if active
         cameraVideoElement={liveShareCameraVideoRef.current || cameraVideoRef.current} // ✅ Use LiveShare camera if active
         gameCanvas={gameCanvas} // 🎮 NEW: Game canvas for screen texture
@@ -5564,6 +5631,15 @@ export default function CinemaScene3DDemo() {
         }}
         onScreenClick={handleScreenClick} // 🎬 Click 3D screen to enter fullscreen
       />
+      
+      {/* ❤️ TikTok Heart Animation */}
+      {showHeartAnimation && (
+        <TikTokHeartAnimation 
+          onComplete={() => setShowHeartAnimation(false)}
+        />
+      )}
+      </div>
+      
       {/* {console.log('🎬 Final roomMembers passed to Taskbar:', roomMembers)} */}
       {/* Taskbar - hidden by default on mobile, tap to reveal */}
       {isTaskbarVisible && (

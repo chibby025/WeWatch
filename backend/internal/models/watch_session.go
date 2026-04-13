@@ -53,6 +53,9 @@ type WatchSession struct {
 	// Content moderation (age-based filtering)
 	ContentRating         string  `gorm:"type:varchar(10);default:'G';not null" json:"content_rating"` // 'G', 'PG', '13+', '16+', '18+', 'Mature'
 	
+	// Engagement metrics (added via migration 008)
+	LikesCount            int     `gorm:"default:0" json:"likes_count"`                           // Cached count of likes (updated on like/unlike)
+	
 	// Preview generation state
 	CurrentPlaybackTime   int     `gorm:"default:0" json:"current_playback_time"`                // Current video timestamp in seconds
 	CurrentMediaID        int     `gorm:"default:0" json:"current_media_id"`                      // ID of currently playing media item
