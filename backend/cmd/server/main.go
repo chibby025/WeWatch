@@ -276,6 +276,10 @@ func main() {
 	r.POST("/api/auth/register", handlers.RegisterHandler)
 	r.POST("/api/auth/login", handlers.LoginHandler)
 	r.POST("/api/auth/logout", handlers.LogoutHandler)
+	
+	// Google OAuth routes
+	r.GET("/api/auth/google/login", handlers.GoogleLoginHandler)
+	r.GET("/api/auth/google/callback", handlers.GoogleCallbackHandler)
 
 	// Protected routes (auth required)
 	// Apply the AuthMiddleware to the /api/auth/me route
@@ -411,6 +415,7 @@ func main() {
 	sessionGroup.POST("/:id/media-queue", handlers.UploadMediaQueue)  // POST /api/sessions/:id/media-queue (Upload media to queue)
 	sessionGroup.POST("/:id/graphics", handlers.UpdateGraphics)       // POST /api/sessions/:id/graphics (Update graphics state)
 	sessionGroup.GET("/:id/graphics", handlers.GetGraphics)           // GET /api/sessions/:id/graphics (Get all graphics)
+	sessionGroup.DELETE("/:id/graphics", handlers.DeleteAllGraphics)  // DELETE /api/sessions/:id/graphics (Delete all graphics when LiveShare ends)
 	sessionGroup.GET("/:id/media-queue", handlers.GetMediaQueue)      // GET /api/sessions/:id/media-queue (Get media queue)
 	sessionGroup.DELETE("/media-queue/:itemId", handlers.DeleteMediaQueueItem) // DELETE /api/sessions/media-queue/:itemId (Delete queue item)
 	

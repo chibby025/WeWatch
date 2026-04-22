@@ -1650,6 +1650,109 @@ func WebSocketHandler(c *gin.Context) {
 		hub.activeSessions[watchSession.SessionID] = &watchSession
 		hub.sessionMutex.Unlock()
 		
+		// 🔞 AGE VERIFICATION: Check content rating before allowing connection
+		if watchSession.ContentRating != "" {
+			// Host is exempt from age checks
+			isHost := authenticatedUserID == watchSession.HostID
+			
+			if !isHost {
+				// Get user's date of birth
+				var user models.User
+				if err := DB.Select("date_of_birth").First(&user, authenticatedUserID).Error; err != nil {
+					log.Printf("❌ [WebSocketHandler] Failed to get user %d for age verification: %v", authenticatedUserID, err)
+					errorMsg := map[string]interface{}{
+						"type": "age_verification_error",
+						"data": map[string]interface{}{
+							"message": "Failed to verify your age. Please try again.",
+						},
+					}
+					if err := conn.WriteJSON(errorMsg); err == nil {
+						log.Printf("📤 [WebSocketHandler] Sent age_verification_error message to user %d", authenticatedUserID)
+					}
+					conn.Close()
+					return
+				}
+				
+				// Check if user has DOB set
+				if user.DateOfBirth == nil {
+					log.Printf("❌ [WebSocketHandler] User %d has no date of birth - rejecting connection to rated session %s", authenticatedUserID, sessionID)
+					errorMsg := map[string]interface{}{
+						"type": "age_verification_required",
+						"data": map[string]interface{}{
+							"content_rating": watchSession.ContentRating,
+							"message":        "Please set your date of birth to view this content.",
+						},
+					}
+					if err := conn.WriteJSON(errorMsg); err == nil {
+						log.Printf("📤 [WebSocketHandler] Sent age_verification_required message to user %d", authenticatedUserID)
+					}
+					conn.Close()
+					return
+				}
+				
+				// Calculate user's age
+				now := time.Now()
+				age := now.Year() - user.DateOfBirth.Year()
+				if now.YearDay() < user.DateOfBirth.YearDay() {
+					age--
+				}
+				
+				// Check age requirement based on content rating
+				ageRequirements := map[string]int{
+					"G":      0,
+					"PG":     0,
+					"13+":    13,
+					"16+":    16,
+					"18+":    18,
+					"Mature": 18,
+				}
+				
+				requiredAge, ok := ageRequirements[watchSession.ContentRating]
+				if !ok {
+					log.Printf("⚠️ [WebSocketHandler] Unknown content rating: %s", watchSession.ContentRating)
+					requiredAge = 0 // Default to no restriction if rating is unrecognized
+				}
+				
+				if age < requiredAge {
+					log.Printf("❌ [WebSocketHandler] Age verification failed: User %d is %d years old, needs %d for %s - rejecting connection", 
+						authenticatedUserID, age, requiredAge, watchSession.ContentRating)
+					
+					// Build dynamic error message
+					var message string
+					if watchSession.ContentRating == "13+" {
+						message = fmt.Sprintf("This session is rated %s. You must be 13 or older to view this content.", watchSession.ContentRating)
+					} else if watchSession.ContentRating == "16+" {
+						message = fmt.Sprintf("This session is rated %s. You must be 16 or older to view this content.", watchSession.ContentRating)
+					} else if watchSession.ContentRating == "18+" || watchSession.ContentRating == "Mature" {
+						message = fmt.Sprintf("This session is rated %s. You must be 18 or older to view this content.", watchSession.ContentRating)
+					} else {
+						message = fmt.Sprintf("This session is rated %s. You do not meet the age requirement.", watchSession.ContentRating)
+					}
+					
+					errorMsg := map[string]interface{}{
+						"type": "age_restricted",
+						"data": map[string]interface{}{
+							"content_rating": watchSession.ContentRating,
+							"required_age":   requiredAge,
+							"user_age":       age,
+							"message":        message,
+						},
+					}
+					
+					if err := conn.WriteJSON(errorMsg); err == nil {
+						log.Printf("📤 [WebSocketHandler] Sent age_restricted message to user %d", authenticatedUserID)
+					}
+					
+					conn.Close()
+					log.Printf("🔌 [WebSocketHandler] Closed connection for user %d (age restriction)", authenticatedUserID)
+					return
+				}
+				
+				log.Printf("✅ [WebSocketHandler] Age verified: User %d is %d years old, %s requires %d", 
+					authenticatedUserID, age, watchSession.ContentRating, requiredAge)
+			}
+		}
+		
 		// 🎫 TICKET ENFORCEMENT: Check if session requires tickets
 		if watchSession.TicketingEnabled {
 			// Host is always allowed
@@ -2679,10 +2782,11 @@ func (client *Client) handleMessage(message []byte) {
     if msg.Type == "mute_all_members" {
         log.Printf("🔇 [mute_all_members] Received from user %d in room %d", client.userID, client.roomID)
         
-        // Extract hostId and sessionId from message
+        // Extract hostId, sessionId, and exemptGuestId from message
         var muteData struct {
-            HostID    uint   `json:"hostId"`
-            SessionID string `json:"sessionId"`
+            HostID        uint   `json:"hostId"`
+            SessionID     string `json:"sessionId"`
+            ExemptGuestID uint   `json:"exemptGuestId"` // 🆕 Guest to exempt from mute
         }
         if err := json.Unmarshal(message, &muteData); err != nil {
             log.Printf("🔇 [mute_all_members] ❌ Failed to unmarshal mute data: %v", err)
@@ -2713,12 +2817,17 @@ func (client *Client) handleMessage(message []byte) {
             return
         }
 
-        // Build list of non-host participants
+        // Build list of participants (exclude host AND exempt guest)
         recipientIDs := []uint{}
         for c := range roomClients {
-            if c.userID != muteData.HostID {
+            // 🆕 Skip both host and exempt guest
+            if c.userID != muteData.HostID && c.userID != muteData.ExemptGuestID {
                 recipientIDs = append(recipientIDs, c.userID)
             }
+        }
+        
+        if muteData.ExemptGuestID > 0 {
+            log.Printf("🔇 [mute_all_members] Exempt guest ID: %d, muting %d other users", muteData.ExemptGuestID, len(recipientIDs))
         }
 
         if len(recipientIDs) == 0 {
@@ -2822,6 +2931,163 @@ func (client *Client) handleMessage(message []byte) {
         })
 
         log.Printf("🔊 [unmute_all_members] ✅ Broadcasted unlock_mute to %d participants in room %d", len(recipientIDs), client.roomID)
+        return
+    }
+
+    // Handle unmute_member - host unmutes a specific member
+    if msg.Type == "unmute_member" {
+        log.Printf("🔊 [unmute_member] Received from user %d in room %d", client.userID, client.roomID)
+        
+        var unmuteMemberData struct {
+            HostID       uint `json:"hostId"`
+            TargetUserID uint `json:"targetUserId"`
+        }
+        if err := json.Unmarshal(message, &unmuteMemberData); err != nil {
+            log.Printf("🔊 [unmute_member] ❌ Failed to unmarshal data: %v", err)
+            return
+        }
+
+        // Verify sender is the host
+        if unmuteMemberData.HostID != client.userID {
+            log.Printf("🔊 [unmute_member] ❌ User %d attempted to unmute but is not the host (%d)", client.userID, unmuteMemberData.HostID)
+            return
+        }
+
+        // Send unlock_mute to target user
+        unlockMuteMsg := WebSocketMessage{
+            Type: "unlock_mute",
+            Data: map[string]interface{}{
+                "hostId": unmuteMemberData.HostID,
+            },
+        }
+
+        unlockMuteBytes, err := json.Marshal(unlockMuteMsg)
+        if err != nil {
+            log.Printf("🔊 [unmute_member] ❌ Failed to marshal unlock_mute message: %v", err)
+            return
+        }
+
+        client.hub.BroadcastToUsers([]uint{unmuteMemberData.TargetUserID}, OutgoingMessage{
+            Data:     unlockMuteBytes,
+            IsBinary: false,
+        })
+
+        log.Printf("🔊 [unmute_member] ✅ Sent unlock_mute to user %d", unmuteMemberData.TargetUserID)
+        return
+    }
+
+    // Handle raise_hand - member raises hand to speak
+    if msg.Type == "raise_hand" {
+        log.Printf("✋ [raise_hand] Received from user %d in room %d", client.userID, client.roomID)
+        
+        var raiseHandData struct {
+            UserID   uint   `json:"userId"`
+            Username string `json:"username"`
+        }
+        if err := json.Unmarshal(message, &raiseHandData); err != nil {
+            log.Printf("✋ [raise_hand] ❌ Failed to unmarshal data: %v", err)
+            return
+        }
+
+        // Broadcast to all room members
+        raiseHandMsg := WebSocketMessage{
+            Type: "hand_raised",
+            Data: map[string]interface{}{
+                "userId":   raiseHandData.UserID,
+                "username": raiseHandData.Username,
+            },
+        }
+
+        raiseHandBytes, err := json.Marshal(raiseHandMsg)
+        if err != nil {
+            log.Printf("✋ [raise_hand] ❌ Failed to marshal message: %v", err)
+            return
+        }
+
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{
+            Data:     raiseHandBytes,
+            IsBinary: false,
+        }, client)
+
+        log.Printf("✋ [raise_hand] ✅ Broadcasted hand_raised for user %d (%s)", raiseHandData.UserID, raiseHandData.Username)
+        return
+    }
+
+    // Handle lower_hand - member lowers hand
+    if msg.Type == "lower_hand" {
+        log.Printf("👋 [lower_hand] Received from user %d in room %d", client.userID, client.roomID)
+        
+        var lowerHandData struct {
+            UserID uint `json:"userId"`
+        }
+        if err := json.Unmarshal(message, &lowerHandData); err != nil {
+            log.Printf("👋 [lower_hand] ❌ Failed to unmarshal data: %v", err)
+            return
+        }
+
+        // Broadcast to all room members
+        lowerHandMsg := WebSocketMessage{
+            Type: "hand_lowered",
+            Data: map[string]interface{}{
+                "userId": lowerHandData.UserID,
+            },
+        }
+
+        lowerHandBytes, err := json.Marshal(lowerHandMsg)
+        if err != nil {
+            log.Printf("👋 [lower_hand] ❌ Failed to marshal message: %v", err)
+            return
+        }
+
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{
+            Data:     lowerHandBytes,
+            IsBinary: false,
+        }, client)
+
+        log.Printf("👋 [lower_hand] ✅ Broadcasted hand_lowered for user %d", lowerHandData.UserID)
+        return
+    }
+
+    // Handle emote - member sends an emote
+    if msg.Type == "emote" {
+        log.Printf("😊 [emote] Received from user %d in room %d", client.userID, client.roomID)
+        
+        var emoteData struct {
+            UserID    uint   `json:"userId"`
+            Username  string `json:"username"`
+            Emote     string `json:"emote"`
+            Timestamp int64  `json:"timestamp"`
+        }
+
+        if err := json.Unmarshal(message, &emoteData); err != nil {
+            log.Printf("😊 [emote] ❌ Failed to unmarshal data: %v", err)
+            return
+        }
+
+        // Broadcast emote to all members in the room
+        emoteMsg := WebSocketMessage{
+            Type: "emote",
+            Data: map[string]interface{}{
+                "userId":    emoteData.UserID,
+                "username":  emoteData.Username,
+                "emote":     emoteData.Emote,
+                "timestamp": emoteData.Timestamp,
+            },
+        }
+
+        emoteBytes, err := json.Marshal(emoteMsg)
+        if err != nil {
+            log.Printf("😊 [emote] ❌ Failed to marshal message: %v", err)
+            return
+        }
+
+        // Broadcast to all users in the room (including sender for consistency)
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{
+            Data:     emoteBytes,
+            IsBinary: false,
+        }, client)
+
+        log.Printf("😊 [emote] ✅ Broadcasted emote '%s' from user %d", emoteData.Emote, emoteData.UserID)
         return
     }
 

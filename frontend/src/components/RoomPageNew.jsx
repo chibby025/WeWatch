@@ -33,6 +33,8 @@ import CreatePollModal from './CreatePollModal';
 import PollMessage from './PollMessage';
 import SessionRatingModal from './SessionRatingModal';
 import SessionEarningsModal from './SessionEarningsModal';
+import DateOfBirthPromptModal from './DateOfBirthPromptModal';
+import { checkDateOfBirth, updateDateOfBirth } from '../services/api';
 // TODO: Review MediaBanner integration later - currently commented out for future use
 // import MediaBanner from './MediaBanner';
 
@@ -135,6 +137,11 @@ const RoomPageNew = () => {
   // Host stats state
   const [hostAverageWatchers, setHostAverageWatchers] = useState(0);
   const [loadingHostStats, setLoadingHostStats] = useState(false);
+  
+  // ✅ Date of Birth state (for age verification)
+  const [showDOBModal, setShowDOBModal] = useState(false);
+  const [dobSubmitting, setDobSubmitting] = useState(false);
+  const [pendingJoinAfterDOB, setPendingJoinAfterDOB] = useState(false);
 
   // TODO: Review media state later - currently commented out for future use
   // const [mediaItems, setMediaItems] = useState([]);
@@ -169,6 +176,62 @@ const RoomPageNew = () => {
       memberCount: activeSession?.members?.length || 0
     });
   }, [activeSession]);
+  
+  // ✅ Helper: Get age requirement message based on content rating
+  const getAgeRequirementMessage = (contentRating) => {
+    const ratings = {
+      'G': null, // No restriction
+      'PG': null, // No restriction
+      '13+': 'This session is rated 13+ and requires viewers to be 13 or older',
+      '16+': 'This session is rated 16+ and requires viewers to be 16 or older',
+      '18+': 'This session is rated 18+ and requires viewers to be 18 or older',
+      'Mature': 'This session is rated Mature and requires viewers to be 18 or older'
+    };
+    return ratings[contentRating] || null;
+  };
+  
+  // ✅ Helper: Check if user can view content based on age
+  const canUserViewContent = (contentRating, userAge) => {
+    if (!contentRating || contentRating === 'G' || contentRating === 'PG') return true;
+    if (userAge === null) return false; // No DOB set
+    
+    const requirements = {
+      '13+': 13,
+      '16+': 16,
+      '18+': 18,
+      'Mature': 18
+    };
+    
+    const required = requirements[contentRating];
+    return required ? userAge >= required : true;
+  };
+  
+  // ✅ Handle DOB submission
+  const handleDOBSubmit = async (dateOfBirth) => {
+    setDobSubmitting(true);
+    try {
+      await updateDateOfBirth(dateOfBirth);
+      
+      // ✅ Refresh user data from backend to get computed age field
+      if (refreshUser) {
+        await refreshUser();
+      }
+      
+      toast.success('Date of birth saved');
+      setShowDOBModal(false);
+      
+      // If user was trying to join, retry now
+      if (pendingJoinAfterDOB) {
+        setPendingJoinAfterDOB(false);
+        setTimeout(() => handleJoinSession(), 500);
+      }
+    } catch (err) {
+      console.error('Failed to save DOB:', err);
+      toast.error('Failed to save date of birth');
+    } finally {
+      setDobSubmitting(false);
+    }
+  };
 
   // ✅ Refetch session when page becomes visible (catches missed session_ended messages)
   useEffect(() => {
@@ -1416,6 +1479,7 @@ const RoomPageNew = () => {
         session_id: response.data.session_id,
         host_id: response.data.host_id,
         ticketing_enabled: response.data.ticketing_enabled,
+        content_rating: response.data.content_rating,
         currentUser: currentUser?.id
       });
       
@@ -1426,10 +1490,37 @@ const RoomPageNew = () => {
         return;
       }
 
-      // ✅ Check if session requires tickets
       const sessionDetails = response.data;
-      // ✅ Use isHost state as fallback if currentUser not loaded yet
       const isUserHost = (currentUser && currentUser.id === sessionDetails.host_id) || isHost;
+      
+      // ✅ AGE VERIFICATION (check content rating before allowing join)
+      if (!isUserHost && sessionDetails.content_rating) {
+        // Check if user has age set (0 = no DOB provided)
+        const userAge = currentUser?.age ?? 0;
+        if (userAge === 0) {
+          console.log('⚠️ [handleJoinSession] User has no age/DOB - prompting');
+          setPendingJoinAfterDOB(true);
+          setShowDOBModal(true);
+          return;
+        }
+        
+        // Check if user can view this content
+        if (!canUserViewContent(sessionDetails.content_rating, userAge)) {
+          const errorMsg = getAgeRequirementMessage(sessionDetails.content_rating);
+          console.log('🔒 [handleJoinSession] Age restriction:', {
+            userAge,
+            contentRating: sessionDetails.content_rating,
+            errorMsg
+          });
+          toast.error(errorMsg || 'You do not meet the age requirement for this session');
+          return;
+        }
+        
+        console.log('✅ [handleJoinSession] Age verification passed:', {
+          userAge,
+          contentRating: sessionDetails.content_rating
+        });
+      }
       
       console.log('👑 [handleJoinSession] Host check:', {
         currentUserId: currentUser?.id,
@@ -1439,6 +1530,7 @@ const RoomPageNew = () => {
         ticketingEnabled: sessionDetails.ticketing_enabled
       });
       
+      // ✅ Check if session requires tickets
       if (sessionDetails.ticketing_enabled && !isUserHost) {
         console.log('🎟️ [RoomPageNew] Paid session detected, checking ticket...', {
           sessionId: sessionDetails.session_id,
@@ -1456,7 +1548,7 @@ const RoomPageNew = () => {
         
         console.log('✅ [RoomPageNew] Ticket found in cache, allowing join');
       } else if (isUserHost) {
-        console.log('👑 [RoomPageNew] User is host, bypassing ticket check');
+        console.log('👑 [RoomPageNew] User is host, bypassing ticket and age checks');
       } else {
         console.log('ℹ️ [RoomPageNew] Free session or host - no ticket required');
       }
@@ -2501,6 +2593,13 @@ const RoomPageNew = () => {
           }}
         />
       )}
+      
+      {/* ✅ Date of Birth Modal - Required for age-restricted content */}
+      <DateOfBirthPromptModal
+        isOpen={showDOBModal}
+        onSubmit={handleDOBSubmit}
+        isSubmitting={dobSubmitting}
+      />
     </div>
   );
 };

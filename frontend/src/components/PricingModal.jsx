@@ -8,7 +8,6 @@ import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
   const [contentRating, setContentRating] = useState('G'); // Default to General
   const [scrollIndex, setScrollIndex] = useState(0);
-  const carouselRef = useRef(null);
 
   const ratings = [
     {
@@ -34,6 +33,14 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       icon: '/icons/13_ Rating Icon.png',
       gradient: 'from-yellow-400 to-yellow-600',
       minAge: 13
+    },
+    {
+      id: '16+',
+      name: '16+',
+      desc: 'Older Teens 16+ - May not be suitable for viewers under 16',
+      icon: '/icons/16_ Rating Icon.png',
+      gradient: 'from-orange-400 to-orange-600',
+      minAge: 16
     },
     {
       id: '18+',
@@ -84,51 +91,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
     },
   ];
 
-  // Auto-select centered card on scroll
-  useEffect(() => {
-    const carousel = carouselRef.current;
-    if (!carousel) return;
-
-    const handleScroll = () => {
-      const scrollLeft = carousel.scrollLeft;
-      const cards = carousel.children;
-      if (cards.length === 0) return;
-      
-      // Get the actual card width from the first card
-      const cardWidth = cards[0].offsetWidth + 8; // +8 for gap-2
-      const centerIndex = Math.round(scrollLeft / cardWidth);
-      
-      if (centerIndex >= 0 && centerIndex < ratings.length) {
-        setScrollIndex(centerIndex);
-        setContentRating(ratings[centerIndex].id);
-      }
-    };
-
-    carousel.addEventListener('scroll', handleScroll);
-    return () => carousel.removeEventListener('scroll', handleScroll);
-  }, [ratings]);
-
   const scrollToCard = (index) => {
-    const carousel = carouselRef.current;
-    if (!carousel) return;
-
-    const cards = Array.from(carousel.children);
-    if (cards.length === 0 || !cards[index]) return;
-
-    // Get the target card element
-    const targetCard = cards[index];
-    const cardRect = targetCard.getBoundingClientRect();
-    const carouselRect = carousel.getBoundingClientRect();
-    
-    // Calculate scroll position to center the card
-    const scrollLeft = carousel.scrollLeft + (cardRect.left - carouselRect.left) - (carouselRect.width / 2) + (cardRect.width / 2);
-    
-    carousel.scrollTo({
-      left: scrollLeft,
-      behavior: 'smooth'
-    });
-    
-    // Update state immediately for responsive feel
     setScrollIndex(index);
     setContentRating(ratings[index].id);
   };
@@ -261,44 +224,112 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
                 <ChevronLeftIcon className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
               </button>
 
-              {/* Carousel Container */}
-              <div
-                ref={carouselRef}
-                className="flex gap-2 overflow-x-auto snap-x snap-mandatory scrollbar-hide px-7 sm:px-9 py-2"
-                style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-              >
-                {ratings.map((rating, index) => {
-                  const isCentered = index === scrollIndex;
-                  return (
-                    <div
-                      key={rating.id}
-                      className={`flex-shrink-0 snap-center transition-all duration-300 cursor-pointer ${
-                        isCentered 
-                          ? 'w-24 sm:w-32' 
-                          : 'w-16 sm:w-24 opacity-50 scale-90'
-                      }`}
-                      onClick={() => scrollToCard(index)}
-                    >
-                      <div className={`bg-gradient-to-br ${rating.gradient} rounded-lg p-2 sm:p-3 shadow-lg transform transition-all ${
-                        isCentered ? 'ring-4 ring-purple-500 ring-offset-2' : 'hover:scale-105'
-                      }`}>
+              {/* 3-Card Display Container */}
+              <div className="flex items-center justify-center gap-3 py-2 px-12 sm:px-16 min-h-[140px] sm:min-h-[160px]">
+                {/* Extra Left Card (when at end, show 2 left cards) */}
+                {scrollIndex === ratings.length - 1 && scrollIndex > 1 && (
+                  <div
+                    className="w-16 sm:w-20 flex-shrink-0 cursor-pointer"
+                    onClick={() => scrollToCard(scrollIndex - 2)}
+                  >
+                    <div className="transition-all duration-300 opacity-50 scale-90">
+                      <div className={`bg-gradient-to-br ${ratings[scrollIndex - 2].gradient} rounded-lg p-2 shadow-lg hover:scale-105 transition-all`}>
                         <img
-                          src={rating.icon}
-                          alt={rating.name}
+                          src={ratings[scrollIndex - 2].icon}
+                          alt={ratings[scrollIndex - 2].name}
                           className="w-full h-auto rounded"
                         />
-                        <p className="text-white font-bold text-center mt-1.5 text-xs sm:text-sm">
-                          {rating.name}
+                        <p className="text-white font-bold text-center mt-1 text-[10px] sm:text-xs">
+                          {ratings[scrollIndex - 2].name}
                         </p>
-                        {rating.minAge > 0 && (
-                          <p className="text-white text-opacity-90 text-center text-[10px] sm:text-xs">
-                            {rating.minAge}+
-                          </p>
-                        )}
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+                )}
+
+                {/* Left Card (if exists) */}
+                {scrollIndex > 0 && (
+                  <div
+                    className="w-16 sm:w-20 flex-shrink-0 cursor-pointer"
+                    onClick={() => scrollToCard(scrollIndex - 1)}
+                  >
+                    <div className="transition-all duration-300 opacity-50 scale-90">
+                      <div className={`bg-gradient-to-br ${ratings[scrollIndex - 1].gradient} rounded-lg p-2 shadow-lg hover:scale-105 transition-all`}>
+                        <img
+                          src={ratings[scrollIndex - 1].icon}
+                          alt={ratings[scrollIndex - 1].name}
+                          className="w-full h-auto rounded"
+                        />
+                        <p className="text-white font-bold text-center mt-1 text-[10px] sm:text-xs">
+                          {ratings[scrollIndex - 1].name}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Center Card (selected) */}
+                <div className="w-24 sm:w-32 flex-shrink-0">
+                  <div className="transition-all duration-300">
+                    <div className={`bg-gradient-to-br ${ratings[scrollIndex].gradient} rounded-lg p-2 sm:p-3 shadow-lg ring-4 ring-purple-500 ring-offset-2`}>
+                      <img
+                        src={ratings[scrollIndex].icon}
+                        alt={ratings[scrollIndex].name}
+                        className="w-full h-auto rounded"
+                      />
+                      <p className="text-white font-bold text-center mt-1.5 text-xs sm:text-sm">
+                        {ratings[scrollIndex].name}
+                      </p>
+                      {ratings[scrollIndex].minAge > 0 && (
+                        <p className="text-white text-opacity-90 text-center text-[10px] sm:text-xs">
+                          {ratings[scrollIndex].minAge}+
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Card (if exists) */}
+                {scrollIndex < ratings.length - 1 && (
+                  <div
+                    className="w-16 sm:w-20 flex-shrink-0 cursor-pointer"
+                    onClick={() => scrollToCard(scrollIndex + 1)}
+                  >
+                    <div className="transition-all duration-300 opacity-50 scale-90">
+                      <div className={`bg-gradient-to-br ${ratings[scrollIndex + 1].gradient} rounded-lg p-2 shadow-lg hover:scale-105 transition-all`}>
+                        <img
+                          src={ratings[scrollIndex + 1].icon}
+                          alt={ratings[scrollIndex + 1].name}
+                          className="w-full h-auto rounded"
+                        />
+                        <p className="text-white font-bold text-center mt-1 text-[10px] sm:text-xs">
+                          {ratings[scrollIndex + 1].name}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Extra Right Card (when at start, show 2 right cards) */}
+                {scrollIndex === 0 && ratings.length > 2 && (
+                  <div
+                    className="w-16 sm:w-20 flex-shrink-0 cursor-pointer"
+                    onClick={() => scrollToCard(scrollIndex + 2)}
+                  >
+                    <div className="transition-all duration-300 opacity-50 scale-90">
+                      <div className={`bg-gradient-to-br ${ratings[scrollIndex + 2].gradient} rounded-lg p-2 shadow-lg hover:scale-105 transition-all`}>
+                        <img
+                          src={ratings[scrollIndex + 2].icon}
+                          alt={ratings[scrollIndex + 2].name}
+                          className="w-full h-auto rounded"
+                        />
+                        <p className="text-white font-bold text-center mt-1 text-[10px] sm:text-xs">
+                          {ratings[scrollIndex + 2].name}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Right Arrow */}
@@ -309,6 +340,22 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
               >
                 <ChevronRightIcon className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
               </button>
+
+              {/* Pagination Dots */}
+              <div className="flex justify-center gap-1 sm:gap-2 mt-2 sm:mt-3">
+                {ratings.map((_, index) => (
+                  <button
+                    key={index}
+                    onClick={() => scrollToCard(index)}
+                    className={`transition-all ${
+                      index === scrollIndex
+                        ? 'w-4 h-1 sm:w-8 sm:h-2.5 bg-purple-500'
+                        : 'w-1 h-1 sm:w-2.5 sm:h-2.5 bg-gray-300 hover:bg-gray-400'
+                    } rounded-full`}
+                    aria-label={`Go to rating ${index + 1}`}
+                  />
+                ))}
+              </div>
             </div>
 
             {/* Current Rating Description */}

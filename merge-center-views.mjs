@@ -1,4 +1,5 @@
-import fs from 'fs';
+ 
+ import fs from 'fs';
 
 // Read current cinemaSeats.json
 const currentData = JSON.parse(

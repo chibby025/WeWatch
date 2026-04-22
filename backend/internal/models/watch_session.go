@@ -69,6 +69,14 @@ type WatchSession struct {
 	PodcastLogoURL        string  `gorm:"type:text" json:"podcast_logo_url,omitempty"`                // URL to podcast logo (optional)
 	PodcastGuestUserID    *uint   `json:"podcast_guest_user_id,omitempty"`                            // Guest user ID (1 guest only for MVP)
 	
+	// LiveShare graphics state (persistent canvas overlays for late joiners)
+	LiveShareBannerText   string  `gorm:"type:text" json:"liveshare_banner_text,omitempty"`           // Current banner text
+	LiveShareTickerItems  string  `gorm:"type:text" json:"liveshare_ticker_items,omitempty"`          // JSON array: [{text, speed, color}]
+	LiveShareLowerThird   string  `gorm:"type:text" json:"liveshare_lower_third,omitempty"`           // JSON object: {name, title, position}
+	LiveShareLogoBug      string  `gorm:"type:text" json:"liveshare_logo_bug,omitempty"`              // JSON object: {imageUrl, position, size}
+	LiveShareBreakScreen  string  `gorm:"type:text" json:"liveshare_break_screen,omitempty"`          // JSON object: {screenSource, customImage, duration, keepAudio}
+	LiveShareLayout       string  `gorm:"column:liveshare_layout;type:text" json:"liveshare_layout,omitempty"` // Layout: solo-view, screen-share, split-view, panel-view
+	
 	// Scheduled event integration
 	ScheduledEventID      *uint   `gorm:"index" json:"scheduled_event_id,omitempty"`                  // Link to scheduled event (if auto-created)
 	HostRequired          bool    `gorm:"default:true" json:"host_required"`                          // If false, session runs without host (for scheduled events)

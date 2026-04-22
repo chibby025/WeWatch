@@ -39,10 +39,10 @@ const FloatingGiftIcon = ({
         clearTimeout(inactivityTimerRef.current);
       }
 
-      // Set new timer for 3 seconds of inactivity
+      // Set new timer for 30 seconds of inactivity
       inactivityTimerRef.current = setTimeout(() => {
         setIsInactive(true);
-      }, 3000);
+      }, 30000);
     };
 
     const handleActivity = () => {
@@ -141,19 +141,6 @@ const FloatingGiftIcon = ({
     !currentUserId || // Don't show if currentUserId is not set
     currentUserId === hostId || // Don't show if current user IS the host
     isInactive;
-
-  // Debug logging to help identify issues
-  useEffect(() => {
-    if (currentUserId && hostId) {
-      console.log('🎁 [FloatingGiftIcon] Props:', {
-        currentUserId,
-        hostId,
-        isCurrentUserHost: currentUserId === hostId,
-        shouldHide,
-        tokenBalance
-      });
-    }
-  }, [currentUserId, hostId, shouldHide, tokenBalance]);
 
   if (shouldHide) {
     return null;

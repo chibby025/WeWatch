@@ -12,10 +12,15 @@ type User struct {
 	Username   string  `gorm:"type:varchar(50);uniqueIndex;not null" json:"username"`
 	Email	   string  `gorm:"type:varchar(100);uniqueIndex;not null" json:"email"`
 	// Passwordhash to store hashed password not plain text!
-	PasswordHash string `gorm:"type:varchar(255);not null" json:"-"`
+	PasswordHash string `gorm:"type:varchar(255)" json:"-"` // Nullable for OAuth users
 	AvatarURL string `gorm:"default:'/avatars/default.png'" json:"avatar_url"`
 	Bio       string `gorm:"type:text" json:"bio"` // User bio/description
 	Role      string `gorm:"type:varchar(20);default:'user'" json:"role"` // 'user', 'admin', 'super_admin'
+	
+	// OAuth authentication fields
+	OAuthProvider   *string `gorm:"type:varchar(20)" json:"oauth_provider,omitempty"` // 'google', 'facebook', 'apple'
+	OAuthProviderID *string `gorm:"type:varchar(255)" json:"-"` // Provider's unique user ID (private)
+	EmailVerified   bool    `gorm:"default:false" json:"email_verified"` // OAuth users auto-verified
 	
 	// Age verification & content moderation (NEVER expose in JSON)
 	DateOfBirth *time.Time `gorm:"type:date" json:"-"` // Private: For age calculation and content filtering

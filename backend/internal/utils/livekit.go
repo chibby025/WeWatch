@@ -45,9 +45,9 @@ func GetLiveKitURL(r *http.Request) string {
 	// Return production LiveKit URL from environment variable
 	livekitURL := os.Getenv("LIVEKIT_URL")
 	if livekitURL == "" {
-		// Fallback to localhost if no env variable set (safety)
-		log.Printf("⚠️ [LiveKit] No LIVEKIT_URL env variable, defaulting to localhost")
-		return "http://localhost:7880"
+		// Fallback to WSL IP if no env variable set (safety - for local dev)
+		log.Printf("⚠️ [LiveKit] No LIVEKIT_URL env variable, defaulting to WSL IP")
+		return "http://172.24.217.44:7880"
 	}
 	
 	log.Printf("🌐 [LiveKit] Production environment detected, using %s", livekitURL)

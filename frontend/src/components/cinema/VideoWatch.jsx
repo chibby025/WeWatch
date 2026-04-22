@@ -45,6 +45,8 @@ import GameOverlay from '../Games/GameOverlay';
 import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
 import TikTokHeartAnimation from '../TikTokHeartAnimation';
 import { HeartIcon } from '@heroicons/react/24/solid';
+import useEmoteSounds from '../../hooks/useEmoteSounds';
+import FloatingEmoteOverlay from './ui/FloatingEmoteOverlay';
 
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
@@ -180,6 +182,18 @@ export default function VideoWatch() {
     urlSessionId  // ✅ Pass session_id to WebSocket so backend can add us to session members
   );
   
+  // 🔍 DEBUG: Track sessionStatus changes
+  useEffect(() => {
+    console.log('📊 [SESSION STATUS] Update received:', {
+      sessionStatus,
+      hasLiveShareActive: sessionStatus && 'liveShareActive' in sessionStatus,
+      liveShareActiveValue: sessionStatus?.liveShareActive,
+      sessionId: sessionStatus?.id,
+      hostId: sessionStatus?.hostId,
+      isActive: sessionStatus?.isActive
+    });
+  }, [sessionStatus]);
+  
   // ❤️ Fetch initial like status
   useEffect(() => {
     const fetchLikeStatus = async () => {
@@ -269,6 +283,49 @@ export default function VideoWatch() {
         
         const isUserHost = currentUser.id === sessionDetails.host_id;
         
+        // ✅ AGE VERIFICATION - Check content rating before allowing access
+        if (!isUserHost && sessionDetails.content_rating) {
+          // Check if user has age set (0 = no DOB provided)
+          const userAge = currentUser.age ?? 0;
+          if (userAge === 0) {
+            console.log('⚠️ [VideoWatch] User has no age/DOB - redirecting');
+            toast.error('Please set your date of birth to view this content');
+            navigate(`/rooms/${roomId}`, { replace: true });
+            return;
+          }
+          
+          // Check age requirements
+          const ageRequirements = {
+            'G': 0, 'PG': 0, '13+': 13, '16+': 16, '18+': 18, 'Mature': 18
+          };
+          const requiredAge = ageRequirements[sessionDetails.content_rating];
+          
+          if (requiredAge && userAge < requiredAge) {
+            const errorMessages = {
+              '13+': 'This session is rated 13+ and requires viewers to be 13 or older',
+              '16+': 'This session is rated 16+ and requires viewers to be 16 or older',
+              '18+': 'This session is rated 18+ and requires viewers to be 18 or older',
+              'Mature': 'This session is rated Mature and requires viewers to be 18 or older'
+            };
+            
+            console.log('🔒 [VideoWatch] Age restriction:', {
+              userAge,
+              contentRating: sessionDetails.content_rating,
+              requiredAge
+            });
+            
+            toast.error(errorMessages[sessionDetails.content_rating] || 'You do not meet the age requirement for this session');
+            navigate(`/rooms/${roomId}`, { replace: true });
+            return;
+          }
+          
+          console.log('✅ [VideoWatch] Age verification passed:', {
+            userAge,
+            contentRating: sessionDetails.content_rating
+          });
+        }
+        
+        // ✅ TICKET CHECK
         if (sessionDetails.ticketing_enabled && !isUserHost) {
           console.log('🎟️ [VideoWatch] Paid session detected, checking ticket...');
           
@@ -568,9 +625,12 @@ export default function VideoWatch() {
   // 📹 LiveShare state (screen + camera)
   const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both' - the share type
   const [liveShareContentMode, setLiveShareContentMode] = useState(null); // 'regular', 'podcast', 'news', 'show' - the content mode
-  const [selectedLiveShareLayout, setSelectedLiveShareLayout] = useState(null); // 'solo-view', 'screen-share', 'split-view', 'panel-view'
+  const [selectedLiveShareLayout, setSelectedLiveShareLayout] = useState(null); // 'solo-view', 'screen-share', 'split-view'
   const [sharingSource, setSharingSource] = useState(null); // 'liveshare' | 'watchfrom' | null
+  const [hasLiveSharePermission, setHasLiveSharePermission] = useState(false); // Guest permission for LiveShare
+  const [forceActiveTab, setForceActiveTab] = useState(null); // Force LeftSidebar to specific tab
   const [podcastConfig, setPodcastConfig] = useState(null); // { title, logoUrl, guestUserId, guestUsername, hostUsername, sessionId }
+  const [liveShareGuestId, setLiveShareGuestId] = useState(null); // Selected guest ID for LiveShare (for mute exemption)
   const screenShareTrackRef = useRef(null);
   const cameraShareTrackRef = useRef(null);
   const liveShareVideoRef = useRef(null); // Separate ref for LiveShare main video
@@ -632,6 +692,18 @@ export default function VideoWatch() {
   const [showMuteAllBanner, setShowMuteAllBanner] = useState(false); // Show mute notification
   const [isMuteAllActive, setIsMuteAllActive] = useState(false); // Track toggle state for host
 
+  // ✋ Raised hands tracking
+  const [raisedHands, setRaisedHands] = useState([]); // Array of {userId, username, timestamp}
+  const [isHandRaised, setIsHandRaised] = useState(false); // Current user's hand state
+  
+  // 😊 Emote system
+  const [localEmotes, setLocalEmotes] = useState([]); // Floating emotes for current user
+  const [memberEmotes, setMemberEmotes] = useState({}); // Map of userId -> {emote, timestamp} for member cards
+  const emoteSounds = useEmoteSounds();
+  const playEmoteSound = emoteSounds?.playEmoteSound || (() => {
+    console.warn('⚠️ [VideoWatch] playEmoteSound not available');
+  });
+
   // 🎭 Determine if current user is host (MUST BE BEFORE useEffects that use isHost)
   const isHost = React.useMemo(() => {
     // ✅ Primary: Use sessionStatus.hostId from WebSocket
@@ -685,9 +757,34 @@ export default function VideoWatch() {
 
   // 🎨 Initialize GraphicsRenderer for LiveShare overlays
   useEffect(() => {
-    if (!liveShareMode) {
+    // Determine if LiveShare is active for this user
+    // HOST: Check liveShareMode (set when they start sharing)
+    // MEMBER: Check liveShareContentMode (set when they receive mode broadcast)
+    const isLiveShareActive = isHost ? liveShareMode : liveShareContentMode;
+    
+    // 🔍 DEBUG: Log renderer initialization attempt
+    console.log('🔍 [GRAPHICS INIT] Checking renderer initialization:', {
+      liveShareMode,
+      liveShareContentMode,
+      isLiveShareActive,
+      isHost,
+      sessionStatus: sessionStatus,
+      hasCanvas: !!graphicsCanvasRef.current,
+      hasRenderer: !!graphicsRendererRef.current,
+      userRole: isHost ? 'HOST' : 'MEMBER',
+      currentUserId: currentUser?.id,
+      currentUserName: currentUser?.username
+    });
+    
+    if (!isLiveShareActive) {
+      console.log('⚠️ [GRAPHICS INIT] Blocked: No active LiveShare session');
+      console.log('   → User role:', isHost ? 'HOST' : 'MEMBER');
+      console.log('   → liveShareMode (HOST):', liveShareMode);
+      console.log('   → liveShareContentMode (MEMBER):', liveShareContentMode);
+      
       // No LiveShare mode - cleanup if renderer exists
       if (graphicsRendererRef.current) {
+        console.log('🧹 [GRAPHICS INIT] Cleaning up existing renderer');
         if (renderLoopRef.current) {
           cancelAnimationFrame(renderLoopRef.current);
           renderLoopRef.current = null;
@@ -697,9 +794,20 @@ export default function VideoWatch() {
       return;
     }
     
-    if (!graphicsCanvasRef.current || graphicsRendererRef.current) return;
+    if (!graphicsCanvasRef.current) {
+      console.error('❌ [GRAPHICS INIT] Canvas ref is null - cannot initialize renderer');
+      return;
+    }
     
-    console.log('🎨 [VideoWatch] Initializing GraphicsRenderer for mode:', liveShareMode);
+    if (graphicsRendererRef.current) {
+      console.log('ℹ️ [GRAPHICS INIT] Renderer already exists, skipping initialization');
+      return;
+    }
+    
+    console.log('🎨 [VideoWatch] Initializing GraphicsRenderer');
+    console.log('   → User role:', isHost ? 'HOST' : 'MEMBER');
+    console.log('   → Active mode:', isLiveShareActive);
+    console.log('   → Canvas dimensions: 1920x1080');
     
     // Initialize renderer
     const renderer = new GraphicsRenderer(graphicsCanvasRef.current);
@@ -714,6 +822,8 @@ export default function VideoWatch() {
     renderLoop();
     
     console.log('🎨 [VideoWatch] GraphicsRenderer initialized and rendering');
+    console.log('   → Initialized for:', isHost ? 'HOST' : 'MEMBER');
+    console.log('   → Active mode:', isLiveShareActive);
     
     // Cleanup
     return () => {
@@ -723,7 +833,7 @@ export default function VideoWatch() {
       }
       graphicsRendererRef.current = null;
     };
-  }, [liveShareMode]);
+  }, [liveShareMode, liveShareContentMode, isHost]);
 
   // 🎨 Listen for graphics updates via WebSocket
   useEffect(() => {
@@ -733,47 +843,80 @@ export default function VideoWatch() {
     
     if (lastMessage.type === 'liveshare_graphics_update') {
       const { graphic } = lastMessage.data;
-      console.log('🎨 [VideoWatch] Graphics update received:', graphic);
-      console.log('🎨 [VideoWatch] Graphic type:', graphic.type);
+      
+      // 🔍 DEBUG: Comprehensive graphics update logging
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('📨 [GRAPHICS UPDATE] WebSocket message received');
+      console.log('User Role:', isHost ? 'HOST' : 'MEMBER');
+      console.log('User:', currentUser?.username, `(ID: ${currentUser?.id})`);
+      console.log('───────────────────────────────────────────────────────');
+      console.log('Graphic Details:', {
+        type: graphic.type,
+        active: graphic.active,
+        content: graphic.content,
+        position: graphic.position,
+        zIndex: graphic.z_index
+      });
+      console.log('───────────────────────────────────────────────────────');
+      console.log('Renderer State:', {
+        hasRenderer: !!graphicsRendererRef.current,
+        hasCanvas: !!graphicsCanvasRef.current,
+        liveShareMode: liveShareMode,
+        rendererInitialized: graphicsRendererRef.current ? 'YES ✅' : 'NO ❌'
+      });
+      console.log('═══════════════════════════════════════════════════════');
       
       // Handle banner separately with DOM rendering
       if (graphic.type === 'banner') {
-        console.log('📰 [VideoWatch] Banner update - using DOM rendering');
+        console.log('📰 [BANNER] Processing banner update (DOM rendering)');
         if (graphic.active) {
+          console.log('✅ [BANNER] Showing banner:', graphic.content);
           setBannerState(graphic.content);
         } else {
+          console.log('🚫 [BANNER] Hiding banner');
           setBannerState(null);
         }
         return;
       }
       
-      console.log('🎨 [VideoWatch] Graphic content:', graphic.content);
-      console.log('🎨 [VideoWatch] Graphic content.logoUrl:', graphic.content?.logoUrl);
-      console.log('🎨 [VideoWatch] Graphic style:', graphic.content?.style);
-      console.log('🎨 [VideoWatch] Has renderer:', !!graphicsRendererRef.current);
-      console.log('🎨 [VideoWatch] liveShareMode:', liveShareMode);
+      // Check if renderer exists
+      if (!graphicsRendererRef.current) {
+        console.error('❌ [GRAPHICS UPDATE] CRITICAL ERROR: Cannot render graphics');
+        console.error('   → Reason: graphicsRendererRef.current is null');
+        console.error('   → User Role:', isHost ? 'HOST' : 'MEMBER');
+        console.error('   → liveShareMode:', liveShareMode || 'null/undefined');
+        console.error('   → liveShareContentMode:', liveShareContentMode || 'null/undefined');
+        console.error('   → Graphic type:', graphic.type);
+        console.error('   → This indicates the renderer was not initialized properly');
+        console.error('   → Check if LiveShare session is active and renderer useEffect ran');
+        return;
+      }
       
-      if (graphicsRendererRef.current && graphic) {
-        if (graphic.active) {
-          // Add or update layer
-          console.log('🎨 [VideoWatch] Adding layer:', graphic.type, graphic.content);
-          graphicsRendererRef.current.addLayer(graphic.type, {
-            type: graphic.type,
-            content: graphic.content,
-            position: graphic.position,
-            zIndex: graphic.z_index || 1
-          });
-          console.log('🎨 [VideoWatch] Layer added successfully, layer count:', graphicsRendererRef.current.layers.length);
-        } else {
-          // Remove layer
-          console.log('🎨 [VideoWatch] Removing layer:', graphic.type);
-          graphicsRendererRef.current.removeLayer(graphic.type);
-        }
-      } else {
-        console.warn('🎨 [VideoWatch] Cannot add layer - renderer or graphic is null:', {
-          hasRenderer: !!graphicsRendererRef.current,
-          hasGraphic: !!graphic
+      if (!graphic) {
+        console.error('❌ [GRAPHICS UPDATE] Graphic data is null/undefined');
+        return;
+      }
+      
+      // Render graphics on canvas
+      if (graphic.active) {
+        console.log('➕ [CANVAS] Adding layer:', graphic.type);
+        console.log('   Content:', graphic.content);
+        
+        graphicsRendererRef.current.addLayer(graphic.type, {
+          type: graphic.type,
+          content: graphic.content,
+          position: graphic.position,
+          zIndex: graphic.z_index || 1
         });
+        
+        const layerCount = graphicsRendererRef.current.layers.length;
+        console.log('✅ [CANVAS] Layer added successfully');
+        console.log('   Total layers:', layerCount);
+        console.log('   Active layers:', graphicsRendererRef.current.layers.map(l => l.type));
+      } else {
+        console.log('➖ [CANVAS] Removing layer:', graphic.type);
+        graphicsRendererRef.current.removeLayer(graphic.type);
+        console.log('✅ [CANVAS] Layer removed');
       }
     }
   }, [messages, liveShareMode]);
@@ -933,25 +1076,28 @@ export default function VideoWatch() {
         
         // Handle screen share tracks for LiveShare
         if (publication.source === Track.Source.ScreenShare) {
-          console.log('✅ [LiveShare] Screen share track subscribed from:', participant.identity);
-          
           const screenStream = new MediaStream([track.mediaStreamTrack]);
           
-          // Check if host also has camera track
+          // Check if participant has camera track (for members viewing both)
           const cameraTrackPub = participant.getTrackPublication(Track.Source.Camera);
-          let cameraStream = null;
+          let remoteCameraStream = null;
           
           if (cameraTrackPub && cameraTrackPub.track) {
-            cameraStream = new MediaStream([cameraTrackPub.track.mediaStreamTrack]);
-            console.log('📹 [LiveShare] Host camera track also available');
+            remoteCameraStream = new MediaStream([cameraTrackPub.track.mediaStreamTrack]);
           }
           
-          console.log('🎬 [LiveShare] Member displaying screen share');
+          console.log('✅ [LiveShare] Screen share from:', participant.identity, 'isHost:', isHost);
           
-          // TODO: Update state to display screen share stream
-          // For now, just log that we received it
-          console.log('🎥 Screen stream ready:', screenStream);
-          console.log('📹 Camera stream ready:', cameraStream);
+          // ✅ For HOST: Preserve local camera stream, add guest screen
+          // ✅ For MEMBER: Use remote camera if available from same participant
+          setCurrentMedia(prev => ({
+            type: 'liveshare', 
+            title: 'LiveShare',
+            stream: screenStream,
+            cameraStream: isHost ? prev?.cameraStream : remoteCameraStream
+          }));
+          setIsPlaying(true);
+          setIsScreenSharingActive(true);
           
           return;
         }
@@ -972,11 +1118,20 @@ export default function VideoWatch() {
           }
           
           console.log('🎬 [LiveShare] Member displaying camera');
-          
-          // TODO: Update state to display camera stream
-          // For now, just log that we received it
           console.log('📹 Camera stream ready:', cameraStream);
           console.log('🎥 Screen stream ready:', screenStream);
+          
+          // ✅ Set currentMedia with both streams so CinemaVideoPlayer can render split-view
+          if (screenStream) {
+            setCurrentMedia({ 
+              type: 'liveshare', 
+              title: 'LiveShare',
+              stream: screenStream,
+              cameraStream: cameraStream
+            });
+            setIsPlaying(true);
+            setIsScreenSharingActive(true);
+          }
           
           return;
         }
@@ -1440,7 +1595,7 @@ export default function VideoWatch() {
       // 🎮 Handle game_forfeited
       if (messageData.type === 'game_forfeited') {
         console.log('🎮 [VideoWatch] Game forfeited:', messageData.data);
-        toast.info(`${messageData.data.username} forfeited. ${messageData.data.winner_username} wins!`, {
+        toast(`${messageData.data.username} forfeited. ${messageData.data.winner_username} wins!`, {
           duration: 4000,
           icon: '🏆'
         });
@@ -1765,7 +1920,7 @@ export default function VideoWatch() {
   const handleViewResults = useCallback((quizId) => {
     // TODO: Fetch quiz results from backend
     console.log('📊 View results for quiz:', quizId);
-    toast.info('Results view coming soon!');
+    toast('Results view coming soon!');
   }, []);
 
   // 🎮 GAME SYSTEM: Handler Functions
@@ -1773,7 +1928,7 @@ export default function VideoWatch() {
     if (isHost) {
       setIsGameLobbyOpen(true);
     } else {
-      toast.info('Only the host can start games');
+      toast('Only the host can start games');
     }
   }, [isHost]);
 
@@ -1883,7 +2038,8 @@ export default function VideoWatch() {
   // 🎯 Apply pending seek time when video loads (for late joiner sync)
   useEffect(() => {
     const video = videoPlayerRef.current;
-    if (!video || !currentMedia || liveShareMode) return;
+    // Skip for LiveShare streams (both host mode and member viewing)
+    if (!video || !currentMedia || liveShareMode || liveShareContentMode) return;
 
     const handleLoadedData = () => {
       console.log('✅ [VideoWatch] Video data loaded', {
@@ -2267,11 +2423,25 @@ export default function VideoWatch() {
       // Start screen share
       if (mode === 'screen' || mode === 'both') {
         console.log('🖥️ [VideoWatch] Starting screen share...');
+        
+        // 📊 Adaptive bitrate: 2-5 Mbps based on network quality
+        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        const effectiveType = connection?.effectiveType || '4g';
+        let screenBitrate = 5000000; // Default 5 Mbps for 4G/WiFi
+        
+        if (effectiveType === '3g') {
+          screenBitrate = 3000000; // 3 Mbps for 3G
+        } else if (effectiveType === '2g' || effectiveType === 'slow-2g') {
+          screenBitrate = 2000000; // 2 Mbps for 2G
+        }
+        
+        console.log(`📶 [VideoWatch] Network: ${effectiveType} - Using ${screenBitrate / 1000000} Mbps for screen share`);
+        
         await localParticipant.setScreenShareEnabled(true, {
           audio: true,
           resolution: { width: 1920, height: 1080, frameRate: 30 },
           simulcast: false,
-          videoBitrate: 3000000
+          videoBitrate: screenBitrate // ✅ Adaptive 2-5 Mbps based on network
         });
         
         // ✅ Get track publication immediately
@@ -2355,8 +2525,8 @@ export default function VideoWatch() {
           const stream = await navigator.mediaDevices.getUserMedia({
             video: {
               deviceId: device.deviceId ? { ideal: device.deviceId } : true,
-              width: { ideal: 1280 }, // ✅ Lower resolution = lower latency
-              height: { ideal: 720 },
+              width: { ideal: 1920 }, // ✅ Full HD for crisp camera
+              height: { ideal: 1080 },
               frameRate: { ideal: 30, max: 30 },
               // ✅ Low-latency optimizations
               latency: { ideal: 0 }, // Request lowest possible latency
@@ -2365,21 +2535,45 @@ export default function VideoWatch() {
             audio: false
           });
           
-          console.log('✅ [VideoWatch] Camera stream acquired');
+          const videoTrack = stream.getVideoTracks()[0];
+          const settings = videoTrack.getSettings();
+          
+          console.log('✅ [VideoWatch] Camera stream acquired:', {
+            resolution: `${settings.width}x${settings.height}`,
+            frameRate: settings.frameRate,
+            deviceId: settings.deviceId?.substring(0, 20),
+            label: videoTrack.label,
+            aspectRatio: settings.aspectRatio,
+            facingMode: settings.facingMode
+          });
+          
+          console.log(`📊 [VideoWatch] Resolution check: ${settings.width}x${settings.height === 1920 ? '🎯 FULL HD (1080p)' : settings.width === 1280 ? '📺 HD (720p)' : settings.width === 640 ? '📱 SD (480p)' : '🔍 Custom'}`);
           
           // Create LocalVideoTrack and publish
-          const videoTrack = stream.getVideoTracks()[0];
           const LocalVideoTrack = (await import('livekit-client')).LocalVideoTrack;
           const localVideoTrack = new LocalVideoTrack(videoTrack);
           
           const publishStartTime = Date.now();
           
+          // 📊 Adaptive bitrate: 1.5-3.5 Mbps based on network quality
+          const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+          const effectiveType = connection?.effectiveType || '4g';
+          let cameraBitrate = 3500000; // Default 3.5 Mbps for 4G/WiFi
+          
+          if (effectiveType === '3g') {
+            cameraBitrate = 2500000; // 2.5 Mbps for 3G
+          } else if (effectiveType === '2g' || effectiveType === 'slow-2g') {
+            cameraBitrate = 1500000; // 1.5 Mbps for 2G
+          }
+          
+          console.log(`📶 [VideoWatch] Network: ${effectiveType} - Using ${cameraBitrate / 1000000} Mbps for camera`);
+          
           const cameraPublication = await localParticipant.publishTrack(localVideoTrack, {
-            source: Track.Source.ScreenShare, // ✅ ScreenShare routes correctly through LiveKit Cloud
+            source: Track.Source.Camera, // ✅ Correct source type for camera
             name: 'camera-share',
-            simulcast: false,
+            simulcast: false, // Disabled for WSL localhost compatibility
             videoEncoding: {
-              maxBitrate: 2500000, // ✅ Reduced for lower latency
+              maxBitrate: cameraBitrate, // ✅ Adaptive 1.5-3.5 Mbps based on network
               maxFramerate: 30
             },
             // ✅ Lower latency settings
@@ -2512,6 +2706,15 @@ export default function VideoWatch() {
     setCurrentMedia(null);
     setIsPlaying(false);
     
+    // ✅ Clear LiveShare layout and content mode when ending live
+    setSelectedLiveShareLayout(null);
+    setLiveShareContentMode(null);
+    setPodcastConfig(null);
+    
+    // ✅ Clear guest permission - allows host to invite different person
+    setHasLiveSharePermission(false);
+    console.log('✅ LiveShare layout, mode, and guest permission cleared');
+    
     sendMessage({
       type: "update_room_status",
       data: {
@@ -2527,15 +2730,28 @@ export default function VideoWatch() {
   
   // 🎬 Handle LiveShare type selection (for Regular mode)
   const handleLiveShareTypeSelect = (type, deviceId, layout) => {
-    console.log('🎬 [VideoWatch] LiveShare type selected:', type, 'layout:', layout);
-    console.log('🎨 [VideoWatch] Setting selectedLiveShareLayout to:', layout);
+    console.log('🎬 [VideoWatch HOST] LiveShare type selected:', type, 'layout:', layout);
+    console.log('🎨 [VideoWatch HOST] Setting selectedLiveShareLayout to:', layout);
+    console.log('📊 [VideoWatch HOST] Layout tracking:', {
+      receivedLayout: layout,
+      willSetState: true,
+      currentLayout: selectedLiveShareLayout,
+      timestamp: new Date().toISOString()
+    });
     setSelectedLiveShareLayout(layout);
     handleStartLiveShare(type, 'liveshare');
   };
   
   // 🎙️ Handle LiveShare mode selection (for Podcast/News/Show modes)
-  const handleLiveShareModeSelect = (mode, config = null) => {
-    console.log('🎙️ [VideoWatch] LiveShare mode selected:', mode, config);
+  const handleLiveShareModeSelect = (mode, config = null, layout = null) => {
+    console.log('🎙️ [VideoWatch HOST] LiveShare mode selected:', mode, config, 'layout:', layout);
+    console.log('📊 [VideoWatch HOST] Mode select tracking:', {
+      mode,
+      hasConfig: !!config,
+      layout,
+      willBroadcast: !!sendMessage,
+      timestamp: new Date().toISOString()
+    });
     console.log('🎙️ [VideoWatch] Config breakdown:', {
       hasConfig: !!config,
       title: config?.title,
@@ -2551,6 +2767,18 @@ export default function VideoWatch() {
       console.log('🛑 [VideoWatch] Ending LiveShare mode');
       setLiveShareContentMode(null);
       setPodcastConfig(null);
+      setBannerState(null); // Clear banner from previous broadcast
+      
+      // Clear all GraphicsRenderer layers (ticker, lower_third, logo_bug, etc.)
+      if (graphicsRendererRef?.current) {
+        console.log('🎨 [VideoWatch] Clearing all graphics layers');
+        graphicsRendererRef.current.removeLayer('ticker');
+        graphicsRendererRef.current.removeLayer('lower_third');
+        graphicsRendererRef.current.removeLayer('logo_bug');
+        graphicsRendererRef.current.removeLayer('media_queue');
+        graphicsRendererRef.current.render();
+      }
+      
       handleEndScreenShare();
       return;
     }
@@ -2558,6 +2786,20 @@ export default function VideoWatch() {
     // Store the content mode (podcast, news, show, regular)
     console.log('📌 [VideoWatch] Setting liveShareContentMode to:', mode);
     setLiveShareContentMode(mode);
+    
+    // Store layout if provided
+    if (layout) {
+      console.log('🎨 [VideoWatch HOST] Setting selectedLiveShareLayout to:', layout);
+      console.log('📊 [VideoWatch HOST] Layout state update:', {
+        previousLayout: selectedLiveShareLayout,
+        newLayout: layout,
+        willBroadcast: true,
+        timestamp: new Date().toISOString()
+      });
+      setSelectedLiveShareLayout(layout);
+    } else {
+      console.warn('⚠️ [VideoWatch HOST] No layout provided to handleLiveShareModeSelect');
+    }
     
     // Store podcast config for overlay rendering
     if (config) {
@@ -2572,6 +2814,45 @@ export default function VideoWatch() {
     } else {
       console.log('ℹ️ [VideoWatch] No config provided, clearing podcastConfig');
       setPodcastConfig(null);
+    }
+    
+    // 📡 BROADCAST: Send mode selection to all members via WebSocket
+    // This triggers backend to save config and broadcast to all viewers
+    if (sendMessage) {
+      const broadcastData = {
+        type: 'liveshare_mode_selected',
+        mode: mode,
+      };
+      
+      // Include layout if provided
+      if (layout) {
+        broadcastData.layout = layout;
+        console.log('📡 [VideoWatch HOST] Broadcasting layout to all members:', layout);
+      } else {
+        console.warn('⚠️ [VideoWatch HOST] Layout not included in broadcast - was not provided');
+      }
+      
+      // Include config for podcast, show, and news modes (all support title + logo)
+      if ((mode === 'podcast' || mode === 'show' || mode === 'news') && config) {
+        broadcastData.podcastTitle = config.title;
+        broadcastData.podcastLogoURL = config.logoUrl;
+        if (config.guestId) {
+          broadcastData.guestUserId = config.guestId;
+        }
+        console.log(`📡 [VideoWatch HOST BROADCAST] ${mode.toUpperCase()} CONFIG:`, {
+          mode,
+          title: config.title,
+          logoUrl: config.logoUrl,
+          guestId: config.guestId,
+          layout,
+          fullBroadcastData: broadcastData
+        });
+      }
+      
+      console.log(`📡 [VideoWatch HOST] Broadcasting ${mode} mode:`, JSON.stringify(broadcastData, null, 2));
+      sendMessage(broadcastData);
+    } else {
+      console.warn('⚠️ [VideoWatch] Cannot broadcast mode - sendMessage not available');
     }
   };
   
@@ -2667,13 +2948,14 @@ export default function VideoWatch() {
 
   // Handle ALL WebSocket messages
   useEffect(() => {
-    console.log('📨 [VideoWatch] Messages array length:', messages?.length, 'Processed:', processedMessageCountRef.current);
     const newMessages = messages.slice(processedMessageCountRef.current);
-    console.log('📨 [VideoWatch] New messages to process:', newMessages.length);
     if (newMessages.length === 0) return;
 
     newMessages.forEach((message) => {
-      console.log('📨 [VideoWatch] Processing message type:', message.type, 'data:', message.data);
+      // Only log important messages
+      if (message.type.includes('liveshare') || message.type === 'screen_share_stopped' || message.type.includes('graphics')) {
+        console.log('📨 [VideoWatch]', message.type, ':', message.data);
+      }
       switch (message.type) {
         case "session_status":
           const data = message.data;
@@ -2720,6 +3002,109 @@ export default function VideoWatch() {
           } else {
             console.error('❌ [VideoWatch] session_status members is NOT an array!', typeof data.members, data.members);
           }
+          
+          // ✅ RESTORE LIVESHARE STATE for late joiners (after LiveShare already started)
+          if (data.liveshare_mode && data.liveshare_mode !== 'regular') {
+            console.log('🔄 [VideoWatch] Restoring LiveShare state for late joiner:', {
+              mode: data.liveshare_mode,
+              hasPodcastTitle: !!data.podcast_title,
+              hasLayout: !!data.liveshare_layout,
+              layout: data.liveshare_layout,
+              hasGraphics: !!(data.liveshare_banner_text || data.liveshare_ticker_items || data.liveshare_lower_third || data.liveshare_logo_bug),
+              hasBreakScreen: !!data.liveshare_break_screen
+            });
+            
+            setLiveShareContentMode(data.liveshare_mode);
+            
+            // Restore layout if present
+            if (data.liveshare_layout) {
+              console.log('🎨 [VideoWatch LATE JOINER] Restoring layout from database:', data.liveshare_layout);
+              setSelectedLiveShareLayout(data.liveshare_layout);
+            } else {
+              console.warn('⚠️ [VideoWatch LATE JOINER] No layout found in session_status - will use default');
+            }
+            
+            // Restore podcast/news/show config (all modes support title + logo)
+            if ((data.liveshare_mode === 'podcast' || data.liveshare_mode === 'show' || data.liveshare_mode === 'news') && data.podcast_title) {
+              const restoredConfig = {
+                mode: data.liveshare_mode,
+                title: data.podcast_title,
+                logoUrl: data.podcast_logo_url || null,
+                guestUserId: data.podcast_guest_user_id || null,
+                hostUsername: currentUser?.username || 'Host',
+                sessionId: data.session_id,
+              };
+              console.log(`🎙️ [VideoWatch LATE JOINER] Restoring ${data.liveshare_mode} config:`, restoredConfig);
+              setPodcastConfig(restoredConfig);
+            }
+            
+            // Restore canvas graphics (banner, ticker, lower third, logo bug)
+            if (graphicsRendererRef.current) {
+              let graphicsRestored = false;
+              
+              if (data.liveshare_banner_text) {
+                try {
+                  const bannerData = JSON.parse(data.liveshare_banner_text);
+                  console.log('🎨 [VideoWatch] Restoring banner:', bannerData);
+                  graphicsRendererRef.current.addLayer('banner', bannerData);
+                  graphicsRestored = true;
+                } catch (e) {
+                  console.error('❌ [VideoWatch] Failed to parse banner data:', e);
+                }
+              }
+              
+              if (data.liveshare_ticker_items) {
+                try {
+                  const tickerData = JSON.parse(data.liveshare_ticker_items);
+                  console.log('🎨 [VideoWatch] Restoring ticker:', tickerData);
+                  graphicsRendererRef.current.addLayer('ticker', tickerData);
+                  graphicsRestored = true;
+                } catch (e) {
+                  console.error('❌ [VideoWatch] Failed to parse ticker data:', e);
+                }
+              }
+              
+              if (data.liveshare_lower_third) {
+                try {
+                  const lowerThirdData = JSON.parse(data.liveshare_lower_third);
+                  console.log('🎨 [VideoWatch] Restoring lower third:', lowerThirdData);
+                  graphicsRendererRef.current.addLayer('lower_third', lowerThirdData);
+                  graphicsRestored = true;
+                } catch (e) {
+                  console.error('❌ [VideoWatch] Failed to parse lower third data:', e);
+                }
+              }
+              
+              if (data.liveshare_logo_bug) {
+                try {
+                  const logoBugData = JSON.parse(data.liveshare_logo_bug);
+                  console.log('🎨 [VideoWatch] Restoring logo bug:', logoBugData);
+                  graphicsRendererRef.current.addLayer('logo_bug', logoBugData);
+                  graphicsRestored = true;
+                } catch (e) {
+                  console.error('❌ [VideoWatch] Failed to parse logo bug data:', e);
+                }
+              }
+              
+              if (data.liveshare_break_screen) {
+                try {
+                  const breakData = JSON.parse(data.liveshare_break_screen);
+                  console.log('⏸️ [VideoWatch] Restoring break screen:', breakData);
+                  graphicsRendererRef.current.addLayer('break_screen', breakData);
+                  graphicsRestored = true;
+                } catch (e) {
+                  console.error('❌ [VideoWatch] Failed to parse break screen data:', e);
+                }
+              }
+              
+              if (graphicsRestored) {
+                graphicsRendererRef.current.render();
+                console.log('✅ [VideoWatch] LiveShare graphics state restored for late joiner');
+              }
+            } else {
+              console.warn('⚠️ [VideoWatch] GraphicsRenderer not initialized yet - graphics will be restored after initialization');
+            }
+          }
 
           // 👇 Rest of your screen share logic (unchanged)
           if (data.is_screen_sharing && data.screen_share_host_id) {
@@ -2749,6 +3134,40 @@ export default function VideoWatch() {
             if (currentMedia.original_name !== message.data.currently_playing) {
               setCurrentMedia(prev => ({ ...prev, original_name: message.data.currently_playing }));
             }
+          }
+          
+          // ✅ Clear ALL LiveShare layouts and media when host ends LiveShare
+          // Works for: solo-view, split-view, screen-share
+          // Works for: camera, screen, both, podcast, news, show, church modes
+          if (!message.data?.is_screen_sharing && message.data?.liveshare_mode === null) {
+            console.log('🛑 [VideoWatch] LiveShare ended via update_room_status', {
+              currentMediaType: currentMedia?.type,
+              currentLayout: selectedLiveShareLayout,
+              currentContentMode: liveShareContentMode,
+              hasPodcastConfig: !!podcastConfig
+            });
+            
+            // Clear media if it's LiveShare or screen share
+            if (currentMedia?.type === 'liveshare' || currentMedia?.type === 'screen_share') {
+              console.log('🧹 [VideoWatch] Clearing LiveShare media (any mode)');
+              setCurrentMedia(null);
+              setIsPlaying(false);
+            }
+            
+            // Clear ALL LiveShare layout states (works for all layouts & modes)
+            if (selectedLiveShareLayout || liveShareContentMode || podcastConfig) {
+              console.log('🧹 [VideoWatch] Clearing ALL LiveShare states:', {
+                layout: selectedLiveShareLayout,
+                contentMode: liveShareContentMode,
+                hasPodcastConfig: !!podcastConfig
+              });
+              setSelectedLiveShareLayout(null);
+              setLiveShareContentMode(null);
+              setPodcastConfig(null);
+            }
+            
+            setIsScreenSharingActive(false);
+            setScreenSharerUserId(null);
           }
           
           // 🚨 BACKUP: If host started screen share, immediately search for tracks
@@ -2798,12 +3217,32 @@ export default function VideoWatch() {
           }
           break;
         case "screen_share_stopped":
-          if (currentMedia?.type === 'screen_share') {
+          console.log('🛑 [VideoWatch] screen_share_stopped received!', {
+            currentMediaType: currentMedia?.type,
+            isScreenSharingActive,
+            selectedLiveShareLayout,
+            messageData: message.data
+          });
+          
+          // Clear media for both LiveShare and WatchFrom screen sharing
+          if (currentMedia?.type === 'screen_share' || currentMedia?.type === 'liveshare') {
+            console.log('[VideoWatch] Clearing currentMedia (type:', currentMedia?.type, ')');
             setCurrentMedia(null);
+          } else {
+            console.log('[VideoWatch] currentMedia type mismatch - not clearing. Type:', currentMedia?.type);
           }
+          
           setIsPlaying(false);
           setIsScreenSharingActive(false);
           setScreenSharerUserId(null);
+          
+          // Clear LiveShare layout and mode when host ends LiveShare
+          console.log('[VideoWatch] Clearing LiveShare layout states');
+          setSelectedLiveShareLayout(null);
+          setLiveShareContentMode(null);
+          setPodcastConfig(null);
+          console.log('[VideoWatch MEMBER] LiveShare layout and media cleared on host End Live');
+          
           showNotification('Screen sharing ended', 'info');
           break;
         
@@ -3460,11 +3899,141 @@ export default function VideoWatch() {
             duration: 3000,
           });
           break;
+        
+        case "hand_raised":
+          // Member raised their hand
+          console.log('✋ [VideoWatch] Received hand_raised:', message.data);
+          const raisedUserId = message.data?.userId;
+          const raisedUsername = message.data?.username;
+          
+          if (raisedUserId) {
+            setRaisedHands(prev => {
+              // Don't add duplicate
+              if (prev.some(h => h.userId === raisedUserId)) return prev;
+              
+              const newHand = {
+                userId: raisedUserId,
+                username: raisedUsername || `User ${raisedUserId}`,
+                timestamp: Date.now()
+              };
+              
+              // Show toast notification to host
+              if (isHost) {
+                toast(`✋ ${newHand.username} raised their hand`, {
+                  icon: '✋',
+                  duration: 4000,
+                  position: 'top-right'
+                });
+              }
+              
+              return [...prev, newHand];
+            });
+          }
+          break;
+        
+        case "hand_lowered":
+          // Member lowered their hand
+          console.log('👋 [VideoWatch] Received hand_lowered:', message.data);
+          const loweredUserId = message.data?.userId;
+          
+          if (loweredUserId) {
+            setRaisedHands(prev => prev.filter(h => h.userId !== loweredUserId));
+          }
+          break;
+          
+        case "emote":
+          // Member sent an emote
+          const { userId: emoteUserId, emote: receivedEmote } = message.data || message;
+          
+          console.log('😊 [VideoWatch] Received emote:', { emoteUserId, receivedEmote });
+          
+          // Don't process our own emotes (already shown locally)
+          if (emoteUserId === currentUser?.id) break;
+          
+          // Map emote IDs to emojis
+          const emoteEmojiMap = {
+            'thumbs_up': '👍',
+            'heart': '❤️',
+            'laugh': '😂',
+            'celebrate': '🎉',
+            'fire': '🔥',
+            'clap': '👏',
+          };
+          
+          const emoteEmoji = emoteEmojiMap[receivedEmote] || '✨';
+          
+          // Update member emote for card display (2 seconds)
+          setMemberEmotes(prev => ({
+            ...prev,
+            [emoteUserId]: { emote: emoteEmoji, timestamp: Date.now() }
+          }));
+          
+          // Auto-clear after 2 seconds
+          setTimeout(() => {
+            setMemberEmotes(prev => {
+              const updated = { ...prev };
+              // Only clear if timestamp matches (prevents clearing newer emotes)
+              const current = updated[emoteUserId];
+              if (current && Date.now() - current.timestamp >= 2000) {
+                delete updated[emoteUserId];
+              }
+              return updated;
+            });
+          }, 2000);
+          break;
+          
+        case "liveshare_mode_selected":
+          // Host selected LiveShare mode - broadcast received by all members
+          console.log('🎬 [VideoWatch] Received liveshare_mode_selected:', {
+            mode: message.data?.mode,
+            layout: message.data?.layout
+          });
+          
+          if (message.data?.mode) {
+            const mode = message.data.mode;
+            setLiveShareContentMode(mode);
+            
+            // Set layout if provided
+            if (message.data.layout) {
+              setSelectedLiveShareLayout(message.data.layout);
+            }
+            
+            // If podcast, show, or news mode, extract and set config (all support title + logo)
+            if (mode === 'podcast' || mode === 'show' || mode === 'news') {
+              const configData = {
+                mode: mode,
+                title: message.data.podcastTitle || `Untitled ${mode.charAt(0).toUpperCase() + mode.slice(1)}`,
+                logoUrl: message.data.podcastLogoURL || null,
+                guestUserId: message.data.guestUserId || null,
+                hostUsername: currentUser?.username || 'Host',
+                sessionId: sessionStatus?.id || urlSessionId,
+              };
+              setPodcastConfig(configData);
+            } else {
+              setPodcastConfig(null);
+            }
+          }
+          break;
+          
+        case "liveshare_permission_granted":
+          // Guest received permission from host
+          console.log('✅ [PERMISSION GRANTED] Received permission:', {
+            userId: currentUser?.id,
+            hasPermission: message.data?.hasPermission,
+            messageData: message.data
+          });
+          if (message.data?.hasPermission) {
+            console.log('🎙️ [PERMISSION GRANTED] Setting hasLiveSharePermission = true');
+            setHasLiveSharePermission(true);
+            // Auto-switch to LiveShare tab
+            setForceActiveTab('liveshare');
+            // Clear forced tab after 100ms to allow user control
+            setTimeout(() => setForceActiveTab(null), 100);
+          }
+          break;
           
         case "liveshare_graphics_update":
-          // Graphics updates are handled by separate useEffect (lines 495-520)
-          // Just acknowledge receipt here to avoid "unknown" warning
-          console.log('🎨 [VideoWatch] Graphics update acknowledged:', message.data?.graphic?.type);
+          // Graphics updates are handled by separate useEffect - silent
           break;
           
         case "liveshare_break_started":
@@ -3520,6 +4089,56 @@ export default function VideoWatch() {
             icon: '▶️',
             duration: 3000
           });
+          break;
+          
+        case "liveshare_guest_joined":
+          // Guest joined - auto-switch layout (HOST only)
+          if (isHost && message.data?.suggestedLayout) {
+            console.log('🎙️ [VideoWatch HOST] Guest joined with share type:', message.data.guestShareType);
+            console.log('🎨 [VideoWatch HOST] Auto-switching to layout:', message.data.suggestedLayout);
+            
+            // Save current layout before switching (for reversion when guest leaves)
+            const currentLayout = selectedLiveShareLayout;
+            console.log('💾 [VideoWatch HOST] Saving previous layout:', currentLayout);
+            
+            // Switch to suggested layout
+            setSelectedLiveShareLayout(message.data.suggestedLayout);
+            
+            toast(`Guest joined - switched to ${message.data.suggestedLayout.replace('-', ' ')}`, {
+              icon: '🎙️',
+              duration: 3000
+            });
+          }
+          break;
+          
+        case "liveshare_guest_switched_type":
+          // Guest switched share type - update layout (HOST only)
+          if (isHost && message.data?.suggestedLayout) {
+            console.log('🔄 [VideoWatch HOST] Guest switched to:', message.data.newShareType);
+            console.log('🎨 [VideoWatch HOST] Auto-switching to layout:', message.data.suggestedLayout);
+            
+            setSelectedLiveShareLayout(message.data.suggestedLayout);
+            
+            toast(`Guest switched to ${message.data.newShareType} - layout updated`, {
+              icon: '🔄',
+              duration: 3000
+            });
+          }
+          break;
+          
+        case "liveshare_guest_left":
+          // Guest left - revert to smart default layout (HOST only)
+          if (isHost && message.data?.defaultLayout) {
+            console.log('👋 [VideoWatch HOST] Guest left');
+            console.log('🎨 [VideoWatch HOST] Reverting to layout:', message.data.defaultLayout);
+            
+            setSelectedLiveShareLayout(message.data.defaultLayout);
+            
+            toast(`Guest left - layout restored`, {
+              icon: '👋',
+              duration: 3000
+            });
+          }
           break;
           
         default:
@@ -3898,30 +4517,37 @@ export default function VideoWatch() {
   }, [isAudioActive, isMutedByHost, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage, broadcastPermissions, localParticipant, selectedAudioDeviceId, hasMicPermission]);
 
   // ✅ Host-only: Toggle mute all members (locked mute, requires host approval to unmute)
-  const handleMuteAll = useCallback(() => {
+  const handleMuteAll = useCallback((exemptGuestId = null) => {
     if (!isHost) {
       console.warn('🚫 [VideoWatch] Non-host attempted to toggle mute all');
       return;
     }
 
     const newMuteState = !isMuteAllActive;
-    console.log(`🔇 [VideoWatch] Host toggling mute all: ${newMuteState ? 'ON' : 'OFF'}`);
+    console.log(`🔇 [VideoWatch] Host toggling mute all: ${newMuteState ? 'ON' : 'OFF'}`, { exemptGuestId });
     console.log('🔇 [VideoWatch] sendMessage exists:', !!sendMessage);
     console.log('🔇 [VideoWatch] currentUser.id:', currentUser?.id);
     console.log('🔇 [VideoWatch] sessionStatus?.id:', sessionStatus?.id);
     
     if (newMuteState) {
-      // Muting all members
+      // Muting all members (except exempt guest if provided)
       const message = {
         type: "mute_all_members",
         hostId: currentUser.id,
         sessionId: sessionStatus?.id,
+        exemptGuestId: exemptGuestId, // 🆕 Pass guest ID to backend
       };
       console.log('🔇 [VideoWatch] Sending mute_all_members message:', message);
       sendMessage(message);
 
       setIsMuteAllActive(true);
-      toast.success('All members have been muted', {
+      
+      // Dynamic toast message
+      const toastMsg = exemptGuestId 
+        ? `All members muted except guest`
+        : 'All members have been muted';
+      
+      toast.success(toastMsg, {
         icon: '🔇',
         duration: 3000,
       });
@@ -3942,6 +4568,99 @@ export default function VideoWatch() {
       });
     }
   }, [isHost, isMuteAllActive, sendMessage, currentUser, sessionStatus]);
+
+  // ✅ Handle emote send (sound for sender, broadcast to all)
+  const handleEmoteSend = useCallback((emoteData) => {
+    const emoteId = emoteData.emote;
+    
+    // Map emote IDs to emojis
+    const emoteMap = {
+      'thumbs_up': '👍',
+      'heart': '❤️',
+      'laugh': '😂',
+      'celebrate': '🎉',
+      'fire': '🔥',
+      'clap': '👏',
+    };
+    
+    const emoji = emoteMap[emoteId] || '✨';
+    
+    // Play sound only for sender
+    playEmoteSound(emoteId, 0.6);
+    
+    // Show floating emote for sender
+    setLocalEmotes(prev => [...prev, { id: Date.now(), emoji }]);
+    
+    // Broadcast to all via WebSocket
+    sendMessage({
+      type: 'emote',
+      userId: currentUser.id,
+      username: currentUser.username,
+      emote: emoteId,
+      timestamp: Date.now()
+    });
+  }, [playEmoteSound, sendMessage, currentUser]);
+
+  // ✅ Host-only: Unmute a specific member
+  const handleUnmuteMember = useCallback((targetUserId) => {
+    if (!isHost) {
+      console.warn('🚫 [VideoWatch] Non-host attempted to unmute member');
+      return;
+    }
+
+    console.log(`🔊 [VideoWatch] Host unmuting member: ${targetUserId}`);
+    
+    sendMessage({
+      type: "unmute_member",
+      hostId: currentUser.id,
+      targetUserId: targetUserId
+    });
+
+    // Auto-lower raised hand when unmuted
+    setRaisedHands(prev => prev.filter(h => h.userId !== targetUserId));
+    
+    // Send hand_lowered message to sync with all clients
+    sendMessage({
+      type: "lower_hand",
+      userId: targetUserId
+    });
+
+    toast.success(`Member unmuted`, {
+      icon: '🔊',
+      duration: 2000,
+    });
+  }, [isHost, sendMessage, currentUser]);
+
+  // ✋ Toggle raise/lower hand
+  const handleToggleRaiseHand = useCallback(() => {
+    const newState = !isHandRaised;
+    setIsHandRaised(newState);
+    
+    if (newState) {
+      // Raise hand
+      sendMessage({
+        type: "raise_hand",
+        userId: currentUser.id,
+        username: currentUser.username || currentUser.name
+      });
+      
+      toast('✋ Hand raised', {
+        icon: '✋',
+        duration: 2000,
+      });
+    } else {
+      // Lower hand
+      sendMessage({
+        type: "lower_hand",
+        userId: currentUser.id
+      });
+      
+      toast('Hand lowered', {
+        icon: '👋',
+        duration: 2000,
+      });
+    }
+  }, [isHandRaised, sendMessage, currentUser]);
 
   // detect if user stops sharing via browser controls
   useEffect(() => {
@@ -3989,55 +4708,131 @@ export default function VideoWatch() {
     return count;
   }, [room, remoteParticipants]);
 
+  // 🎥 Track remote SCREEN share separately
   const remoteScreenTrack = React.useMemo(() => {
-    if (!room) {
-      console.log('⚠️ [VideoWatch] No room connected');
-      return null;
-    }
-
-    console.log('🔍 [VideoWatch] Searching for remote screen share in room');
-    console.log('🔍 [VideoWatch] Remote track count:', remoteTrackCount);
+    if (!room) return null;
     
-    // Access participants directly from room for latest state
     const participants = Array.from(room.remoteParticipants.values());
-    console.log('👥 [VideoWatch] Remote participants in room:', participants.length);
     
-    // Log all tracks for debugging
-    participants.forEach(p => {
-      const audioTracks = p?.audioTrackPublications || new Map();
-      const videoTracks = p?.videoTrackPublications || new Map();
-      console.log(`👤 [VideoWatch] Participant ${p.identity}:`, {
-        audioTracks: audioTracks.size,
-        videoTracks: videoTracks.size
+    // Debug: Log all participants and their tracks
+    if (selectedLiveShareLayout === 'split-view') {
+      console.log('🔍 [SCREEN TRACK] Searching for screen share...', {
+        participantCount: participants.length,
+        participants: participants.map(p => ({
+          identity: p.identity,
+          videoTracks: Array.from(p.videoTrackPublications.values()).map(pub => ({
+            source: pub.source,
+            kind: pub.kind,
+            subscribed: pub.isSubscribed
+          }))
+        }))
       });
-    });
+    }
     
     const screenPub = participants
-      .flatMap(p => {
-        console.log('👤 [VideoWatch] Checking participant:', p.identity);
-        console.log('   Participant keys:', Object.keys(p));
-        console.log('   videoTracks:', p.videoTracks);
-        console.log('   videoTrackPublications:', p.videoTrackPublications);
-        
-        const tracks = p?.videoTrackPublications || p?.videoTracks;
-        if (!tracks || tracks.size === 0) {
-          console.log('  ⚠️ No video tracks');
-          return [];
-        }
-        const trackArray = Array.from(tracks.values());
-        console.log('  📹 Video tracks:', trackArray.map(t => ({ source: t.source, track: !!t.track })));
-        return trackArray;
-      })
+      .flatMap(p => Array.from(p?.videoTrackPublications?.values() || []))
       .find(pub => pub?.source === Track.Source.ScreenShare);
     
-    if (screenPub?.track) {
-      console.log('✅ [VideoWatch] Found remote screen share track!');
-      return screenPub.track;
+    if (selectedLiveShareLayout === 'split-view') {
+      console.log('🔍 [SCREEN TRACK] Found:', !!screenPub);
     }
     
-    console.log('⚠️ [VideoWatch] No remote screen share track found');
-    return null;
-  }, [room, remoteParticipants, remoteTrackCount]); // Add remoteTrackCount to force recalculation
+    return screenPub?.track || null;
+  }, [room, remoteParticipants, remoteTrackCount, selectedLiveShareLayout]);
+
+  // 📹 Track remote CAMERA separately
+  const remoteCameraTrack = React.useMemo(() => {
+    if (!room) return null;
+    
+    const participants = Array.from(room.remoteParticipants.values());
+    const cameraPub = participants
+      .flatMap(p => Array.from(p?.videoTrackPublications?.values() || []))
+      .find(pub => pub?.source === Track.Source.Camera);
+    
+    if (selectedLiveShareLayout === 'split-view') {
+      console.log('🔍 [CAMERA TRACK] Found:', !!cameraPub);
+    }
+    
+    return cameraPub?.track || null;
+  }, [room, remoteParticipants, remoteTrackCount, selectedLiveShareLayout]);
+
+  // 🎨 SPLIT-VIEW DEBUG: Log what tracks are detected
+  useEffect(() => {
+    if (selectedLiveShareLayout === 'split-view') {
+      console.log('🎨 [SPLIT-VIEW DEBUG] Track detection:', {
+        layout: selectedLiveShareLayout,
+        hasRemoteScreen: !!remoteScreenTrack,
+        hasRemoteCamera: !!remoteCameraTrack,
+        hasLocalScreen: !!localScreenTrack,
+        hasLocalCamera: !!liveShareMode,
+        mode: liveShareMode,
+        isHost: isHost
+      });
+    }
+  }, [selectedLiveShareLayout, remoteScreenTrack, remoteCameraTrack, localScreenTrack, liveShareMode, isHost]);
+
+  // 🎥 Update currentMedia with BOTH camera and screen streams for split-view rendering
+  useEffect(() => {
+    // Skip if no active LiveShare session
+    if (!liveShareContentMode && !liveShareMode) return;
+    
+    // For MEMBERS/GUESTS
+    if (!isHost && liveShareContentMode) {
+      // CASE 1: Guest is sharing screen (has localScreenTrack) + viewing host camera (remoteCameraTrack)
+      if (localScreenTrack?.track?.mediaStreamTrack && remoteCameraTrack?.mediaStreamTrack) {
+        console.log('✅ [SPLIT-VIEW] Guest using own screen + host camera');
+        // localScreenTrack is a LocalTrackPublication (for guest's own screen)
+        // remoteCameraTrack is a RemoteTrack (for host's camera)
+        const guestScreenStream = new MediaStream([localScreenTrack.track.mediaStreamTrack]);
+        const hostCameraStream = new MediaStream([remoteCameraTrack.mediaStreamTrack]);
+        
+        setCurrentMedia({
+          type: 'liveshare',
+          title: `LiveShare (${liveShareContentMode})`,
+          stream: guestScreenStream,    // Guest's own screen
+          cameraStream: hostCameraStream // Host's camera
+        });
+        return;
+      }
+      
+      // Skip CASE 2 if we're HOST - HOST uses dedicated merge logic below
+      if (isHost) return;
+      
+      // CASE 2: Regular member viewing host streams
+      const screenStream = remoteScreenTrack ? new MediaStream([remoteScreenTrack.mediaStreamTrack]) : null;
+      const cameraStream = remoteCameraTrack ? new MediaStream([remoteCameraTrack.mediaStreamTrack]) : null;
+      
+      console.log('📺 [MEMBER] Viewing host streams:', {
+        hasScreen: !!screenStream,
+        hasCamera: !!cameraStream
+      });
+      
+      // Update currentMedia if we have at least one stream
+      if (screenStream || cameraStream) {
+        setCurrentMedia({
+          type: 'liveshare',
+          title: `LiveShare (${liveShareContentMode})`,
+          stream: screenStream,      // Guest/Host screen share
+          cameraStream: cameraStream  // Host camera
+        });
+      }
+    }
+    
+    // For HOST with active camera and guest screen joined
+    if (isHost && liveShareMode && remoteScreenTrack) {
+      const guestScreenStream = new MediaStream([remoteScreenTrack.mediaStreamTrack]);
+      
+      console.log('🎨 [HOST] Merging guest screen with host camera');
+      
+      // Preserve host's camera stream that was set in handleStartLiveShare
+      setCurrentMedia(prev => ({
+        type: 'liveshare',
+        title: `LiveShare (${liveShareMode})`,
+        stream: guestScreenStream,
+        cameraStream: prev?.cameraStream
+      }));
+    }
+  }, [remoteScreenTrack, remoteCameraTrack, localScreenTrack, liveShareContentMode, liveShareMode, isHost, selectedLiveShareLayout]);
 
   // 📹 Enrich participants with LiveKit camera tracks
   const participantsWithCamera = useMemo(() => {
@@ -4142,7 +4937,16 @@ export default function VideoWatch() {
       {/* ✅ Toast Notifications */}
       <Toaster position="top-center" />
       
-      {/* 🔇 Mute All Banner */}
+      {/* � Floating Emote Overlays (visible to sender only) */}
+      {localEmotes.map(emote => (
+        <FloatingEmoteOverlay
+          key={emote.id}
+          emoji={emote.emoji}
+          onComplete={() => setLocalEmotes(prev => prev.filter(e => e.id !== emote.id))}
+        />
+      ))}
+      
+      {/* �🔇 Mute All Banner */}
       {showMuteAllBanner && (
         <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-50 animate-fade-in">
           <div className="bg-red-600 text-white px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3">
@@ -4197,8 +5001,9 @@ export default function VideoWatch() {
           />
         )}
         
-        {/* � Graphics Canvas Overlay for LiveShare */}
-        {liveShareMode && (
+        {/* 🎨 Graphics Canvas Overlay for LiveShare */}
+        {/* Render canvas for HOST (liveShareMode) or MEMBER (liveShareContentMode) */}
+        {(liveShareMode || liveShareContentMode) && (
           <canvas
             ref={graphicsCanvasRef}
             className="absolute inset-0 pointer-events-none"
@@ -4210,7 +5015,7 @@ export default function VideoWatch() {
           />
         )}
         
-        {/* �🎙️ LiveShare Overlays (for Podcast/News/Show modes) */}
+        {/* 🎙️ LiveShare Overlays (for Podcast/News/Show modes) */}
         {podcastConfig && (podcastConfig.mode === 'podcast' || podcastConfig.mode === 'news' || podcastConfig.mode === 'show') && (
           <div className="absolute inset-0 pointer-events-none">
             {/* Host Name Label (top left) */}
@@ -4549,7 +5354,11 @@ export default function VideoWatch() {
           isSilenceMode={isSilenceMode}
           onToggleSilenceMode={() => setIsSilenceMode(!isSilenceMode)}
           showProgram={isClassroom} // Show Board button for classrooms
-          showEmotes={false}
+          showEmotes={true}
+          onToggleRaiseHand={handleToggleRaiseHand}
+          isHandRaised={isHandRaised}
+          raisedHandsCount={raisedHands.length}
+          onEmoteSend={handleEmoteSend}
           openChat={openChat}
           hasOpenModal={isLiveShareWizardOpen} // ✅ Prevent taskbar from showing during wizard
           onQuizClick={handleQuizClick}
@@ -4699,7 +5508,8 @@ export default function VideoWatch() {
             liveShareContentMode={liveShareContentMode}
             podcastConfig={podcastConfig}
             liveShareGuest={null}
-            hasLiveSharePermission={false}
+            hasLiveSharePermission={hasLiveSharePermission}
+            forceActiveTab={forceActiveTab}
             onLiveShareModeSelect={handleLiveShareModeSelect}
             onLiveShareTypeSelect={handleLiveShareTypeSelect}
             onGrantLiveSharePermission={() => {}}
@@ -4708,6 +5518,9 @@ export default function VideoWatch() {
             cameraShareTrackRef={cameraShareTrackRef}
             graphicsRendererRef={graphicsRendererRef}
             onWizardStateChange={setIsLiveShareWizardOpen} // ✅ Track wizard state
+            availableCameras={availableCameras} // 📹 Pass available cameras
+            selectedCameraId={selectedCameraId} // 📹 Pass current camera
+            onCameraSwitch={switchCamera} // 📹 Pass camera switch handler
           />
         </div>
       )}
@@ -4904,6 +5717,10 @@ export default function VideoWatch() {
         watchType="video_watch"
         onMuteAll={handleMuteAll}
         isMuteAllActive={isMuteAllActive}
+        onUnmuteMember={handleUnmuteMember}
+        raisedHands={raisedHands}
+        liveShareGuestId={liveShareGuestId}
+        memberEmotes={memberEmotes}
       />
       {/* Chat Entry Modals */}
       {showChatHome && (
@@ -4954,13 +5771,14 @@ export default function VideoWatch() {
 
       {/* 🎁 Floating Gift Icon - Only shows for non-hosts */}
       <FloatingGiftIcon
-        hostId={roomHostId}
+        hostId={sessionStatus?.hostId || roomHostId}
         currentUserId={currentUser?.id}
         tokenBalance={tokenBalance}
         isVisible={!showCinemaSeatView}
         isFullscreen={showCinemaSeatView}
         isLeftSidebarOpen={isLeftSidebarOpen}
         onGiftSent={(updatedBalance) => {
+          console.log('🎁 [FloatingGiftIcon] Gift sent! New balance:', updatedBalance);
           // Update local token balance
           setTokenBalance(updatedBalance.token_balance);
         }}

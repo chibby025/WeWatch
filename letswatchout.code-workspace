@@ -1,0 +1,56 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.autoSave": "afterDelay",
+    "terminal.integrated.enablePersistentSessions": true
+  },
+  "extensions": {
+    "recommendations": [
+      "github.copilot",
+      "github.copilot-chat",
+      "dbaeumer.vscode-eslint",
+      "esbenp.prettier-vscode",
+      "golang.go"
+    ]
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Start Backend",
+        "type": "go",
+        "request": "launch",
+        "mode": "auto",
+        "program": "${workspaceFolder}/backend/cmd/main.go"
+      }
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Start Frontend",
+        "type": "shell",
+        "command": "cd frontend && npm run dev",
+        "isBackground": true,
+        "problemMatcher": []
+      },
+      {
+        "label": "Start Backend",
+        "type": "shell",
+        "command": "cd backend && go run cmd/main.go",
+        "isBackground": true,
+        "problemMatcher": []
+      },
+      {
+        "label": "Start All Services",
+        "dependsOn": ["Start Frontend", "Start Backend"],
+        "problemMatcher": []
+      }
+    ]
+  }
+}

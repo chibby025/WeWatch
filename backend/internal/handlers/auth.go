@@ -300,6 +300,7 @@ func GetCurrentUserHandler(c *gin.Context) {
             "bio":        user.Bio,
             "role":       user.Role,
             "created_at": user.CreatedAt,
+            "age":        user.GetAge(), // ✅ Computed age (not raw DOB) for content rating checks
         },
         "room_memberships": roomMemberships,
     }

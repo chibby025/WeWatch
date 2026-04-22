@@ -2322,6 +2322,18 @@ func GetActiveSessionHandler(c *gin.Context) {
 		"early_bird_price_tokens": session.EarlyBirdPriceTokens,
 		"early_bird_price_amount": session.EarlyBirdPriceAmount,
 		"early_bird_active":      session.EarlyBirdActive,
+		// ✅ LIVESHARE STATE: Include for late joiners to restore graphics
+		"liveshare_mode":         session.LiveshareMode,
+		"podcast_title":          session.PodcastTitle,
+		"podcast_logo_url":       session.PodcastLogoURL,
+		"podcast_guest_user_id":  session.PodcastGuestUserID,
+		// Canvas graphics state (JSON strings)
+		"liveshare_banner_text":  session.LiveShareBannerText,
+		"liveshare_ticker_items": session.LiveShareTickerItems,
+		"liveshare_lower_third":  session.LiveShareLowerThird,
+		"liveshare_logo_bug":     session.LiveShareLogoBug,
+		"liveshare_break_screen": session.LiveShareBreakScreen,
+		"liveshare_layout":       session.LiveShareLayout, // Layout selection for display
 	})
 }
 

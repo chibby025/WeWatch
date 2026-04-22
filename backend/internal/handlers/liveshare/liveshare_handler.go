@@ -69,6 +69,12 @@ func (h *LiveShareHandler) HandleMessage(msgType string, data map[string]interfa
 		return h.handleBreakStarted(data, client)
 	case "liveshare_break_ended":
 		return h.handleBreakEnded(data, client)
+	case "liveshare_guest_joined":
+		return h.handleGuestJoined(data, client)
+	case "liveshare_guest_switched_type":
+		return h.handleGuestSwitchedType(data, client)
+	case "liveshare_guest_left":
+		return h.handleGuestLeft(data, client)
 	default:
 		return fmt.Errorf("unknown LiveShare message type: %s", msgType)
 	}
@@ -94,6 +100,15 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 
 	log.Printf("🎬 [LiveShare] Mode selected: %s for session %s", mode, sessionID)
 
+	// Extract layout if provided
+	layout, layoutOk := data["layout"].(string)
+	log.Printf("🔍 [LiveShare] Layout extraction: layout='%s', ok=%v, rawData=%+v", layout, layoutOk, data)
+	if layout != "" {
+		log.Printf("🎨 [LiveShare] Layout specified: %s", layout)
+	} else {
+		log.Printf("⚠️ [LiveShare] No layout in incoming data or layout is empty string")
+	}
+
 	// For podcast mode, extract additional config
 	if mode == "podcast" {
 		podcastTitle, _ := data["podcastTitle"].(string)
@@ -118,6 +133,11 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 		
 		if guestUserID != nil {
 			updateData["podcast_guest_user_id"] = *guestUserID
+		}
+		
+		// Include layout if provided
+		if layout != "" {
+			updateData["liveshare_layout"] = layout
 		}
 
 		result := h.db.Table("watch_sessions").
@@ -160,7 +180,19 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 		}
 	} else {
 		// For non-podcast modes, just update the mode
-		result := h.db.Exec("UPDATE watch_sessions SET liveshare_mode = ? WHERE session_id = ?", mode, sessionID)
+		updateData := map[string]interface{}{
+			"liveshare_mode": mode,
+		}
+		
+		// Include layout if provided
+		if layout != "" {
+			updateData["liveshare_layout"] = layout
+		}
+		
+		result := h.db.Table("watch_sessions").
+			Where("session_id = ?", sessionID).
+			Updates(updateData)
+			
 		if result.Error != nil {
 			return fmt.Errorf("failed to update liveshare_mode: %w", result.Error)
 		}
@@ -174,19 +206,31 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 		},
 	}
 
-	// Include podcast config in broadcast if it's a podcast
-	if mode == "podcast" {
+	// Include config in broadcast for podcast, show, and news modes (all support title + logo)
+	if mode == "podcast" || mode == "show" || mode == "news" {
 		if podcastTitle, ok := data["podcastTitle"].(string); ok {
 			broadcastMsg["data"].(map[string]interface{})["podcastTitle"] = podcastTitle
+			log.Printf("📡 [LiveShare] Including title in %s broadcast: %s", mode, podcastTitle)
 		}
 		if podcastLogoURL, ok := data["podcastLogoURL"].(string); ok {
 			broadcastMsg["data"].(map[string]interface{})["podcastLogoURL"] = podcastLogoURL
+			log.Printf("📡 [LiveShare] Including logo in %s broadcast: %s", mode, podcastLogoURL)
 		}
 		if guestIDFloat, ok := data["guestUserId"].(float64); ok {
 			broadcastMsg["data"].(map[string]interface{})["guestUserId"] = uint(guestIDFloat)
+			log.Printf("📡 [LiveShare] Including guest in %s broadcast: %d", mode, uint(guestIDFloat))
 		}
 	}
-
+	
+	// Include layout in broadcast if provided
+	if layout != "" {
+		broadcastMsg["data"].(map[string]interface{})["layout"] = layout
+		log.Printf("📡 [LiveShare] Layout ADDED to broadcast message: %s", layout)
+	} else {
+		log.Printf("⚠️ [LiveShare] Layout NOT added to broadcast (empty or not provided)")
+	}
+	
+	log.Printf("📡 [LiveShare] Final broadcast message data: %+v", broadcastMsg["data"])
 	msgBytes, _ := json.Marshal(broadcastMsg)
 	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
 		Data:     msgBytes,
@@ -256,7 +300,7 @@ func (h *LiveShareHandler) handleGrantPermission(data map[string]interface{}, cl
 		return fmt.Errorf("no active session")
 	}
 
-	log.Printf("🎬 [LiveShare] Granting permission to user %d in session %s", targetUserID, sessionID)
+	log.Printf("�️ [GRANT PERMISSION] Host %d granting permission to user %d in session %s", client.GetUserID(), targetUserID, sessionID)
 
 	// Insert guest entry with 'granted' status
 	result := h.db.Exec(`
@@ -267,8 +311,11 @@ func (h *LiveShareHandler) handleGrantPermission(data map[string]interface{}, cl
 	`, sessionID, targetUserID)
 
 	if result.Error != nil {
+		log.Printf("❌ [GRANT PERMISSION] Database error: %v", result.Error)
 		return fmt.Errorf("failed to grant permission: %w", result.Error)
 	}
+
+	log.Printf("💾 [GRANT PERMISSION] Database updated - rows affected: %d", result.RowsAffected)
 
 	// Send permission_granted to the specific user
 	grantMsg := map[string]interface{}{
@@ -279,12 +326,15 @@ func (h *LiveShareHandler) handleGrantPermission(data map[string]interface{}, cl
 	}
 
 	msgBytes, _ := json.Marshal(grantMsg)
+	
+	log.Printf("📤 [GRANT PERMISSION] Broadcasting to user %d in room %s", targetUserID, client.GetRoomID())
+	
 	h.hub.BroadcastToUser(targetUserID, client.GetRoomID(), OutgoingMessage{
 		Data:     msgBytes,
 		IsBinary: false,
 	})
 
-	log.Printf("✅ [LiveShare] Permission granted to user %d", targetUserID)
+	log.Printf("✅ [GRANT PERMISSION] Permission granted successfully to user %d", targetUserID)
 	return nil
 }
 
@@ -495,7 +545,52 @@ func (h *LiveShareHandler) handleGraphicsUpdate(data map[string]interface{}, cli
 		return fmt.Errorf("missing or invalid graphic 'type'")
 	}
 	
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+	
 	log.Printf("🎨 [LiveShare] Broadcasting %s graphic update to room %d", graphicType, client.GetRoomID())
+	
+	// ✅ PERSIST GRAPHICS STATE: Save to watch_sessions for late joiners
+	// Convert graphic data to JSON string
+	graphicJSON, err := json.Marshal(graphic)
+	if err != nil {
+		log.Printf("⚠️ [LiveShare] Failed to marshal graphic data: %v", err)
+	} else {
+		// Determine which column to update based on graphic type
+		var updateQuery string
+		switch graphicType {
+		case "banner":
+			updateQuery = "UPDATE watch_sessions SET liveshare_banner_text = $1 WHERE session_id = $2"
+		case "ticker":
+			updateQuery = "UPDATE watch_sessions SET liveshare_ticker_items = $1 WHERE session_id = $2"
+		case "lower_third":
+			updateQuery = "UPDATE watch_sessions SET liveshare_lower_third = $1 WHERE session_id = $2"
+		case "logo_bug":
+			updateQuery = "UPDATE watch_sessions SET liveshare_logo_bug = $1 WHERE session_id = $2"
+		}
+		
+		if updateQuery != "" {
+			// Check if graphic is active or being removed
+			isActive, _ := graphic["active"].(bool)
+			
+			// If inactive (removed), clear the field
+			var valueToSave interface{}
+			if isActive {
+				valueToSave = string(graphicJSON)
+			} else {
+				valueToSave = "" // Clear the field
+			}
+			
+			result := h.db.Exec(updateQuery, valueToSave, sessionID)
+			if result.Error != nil {
+				log.Printf("⚠️ [LiveShare] Failed to persist %s graphic: %v", graphicType, result.Error)
+			} else {
+				log.Printf("💾 [LiveShare] Persisted %s graphic to database (active: %v)", graphicType, isActive)
+			}
+		}
+	}
 	
 	// Broadcast to all room members
 	broadcastMsg := map[string]interface{}{
@@ -521,6 +616,23 @@ func (h *LiveShareHandler) handleGraphicsUpdate(data map[string]interface{}, cli
 func (h *LiveShareHandler) handleBreakStarted(data map[string]interface{}, client Client) error {
 	log.Printf("⏸️ [LiveShare] Break started by user %d", client.GetUserID())
 	
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+	
+	// ✅ PERSIST BREAK STATE: Save to watch_sessions for late joiners
+	breakDataJSON, err := json.Marshal(data)
+	if err == nil {
+		result := h.db.Exec("UPDATE watch_sessions SET liveshare_break_screen = $1 WHERE session_id = $2", 
+			string(breakDataJSON), sessionID)
+		if result.Error != nil {
+			log.Printf("⚠️ [LiveShare] Failed to persist break screen: %v", result.Error)
+		} else {
+			log.Printf("💾 [LiveShare] Persisted break screen to database")
+		}
+	}
+	
 	// Broadcast to all room members
 	broadcastMsg := map[string]interface{}{
 		"type": "liveshare_break_started",
@@ -545,6 +657,19 @@ func (h *LiveShareHandler) handleBreakStarted(data map[string]interface{}, clien
 func (h *LiveShareHandler) handleBreakEnded(data map[string]interface{}, client Client) error {
 	log.Printf("▶️ [LiveShare] Break ended by user %d", client.GetUserID())
 	
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+	
+	// ✅ CLEAR BREAK STATE: Remove from database
+	result := h.db.Exec("UPDATE watch_sessions SET liveshare_break_screen = $1 WHERE session_id = $2", "", sessionID)
+	if result.Error != nil {
+		log.Printf("⚠️ [LiveShare] Failed to clear break screen: %v", result.Error)
+	} else {
+		log.Printf("💾 [LiveShare] Cleared break screen from database")
+	}
+	
 	// Broadcast to all room members
 	broadcastMsg := map[string]interface{}{
 		"type": "liveshare_break_ended",
@@ -562,5 +687,132 @@ func (h *LiveShareHandler) handleBreakEnded(data map[string]interface{}, client 
 	}, client)
 	
 	log.Printf("✅ [LiveShare] Break ended broadcast successfully")
+	return nil
+}
+
+// handleGuestJoined - Guest joined LiveShare, update database and broadcast to host
+func (h *LiveShareHandler) handleGuestJoined(data map[string]interface{}, client Client) error {
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+
+	guestShareType, _ := data["guestShareType"].(string)
+	suggestedLayout, _ := data["suggestedLayout"].(string)
+
+	log.Printf("🎙️ [LiveShare] Guest %d joined with type: %s, suggested layout: %s", client.GetUserID(), guestShareType, suggestedLayout)
+
+	// Update guest status to 'active' in database
+	result := h.db.Exec(`
+		UPDATE liveshare_participants 
+		SET status = 'active', share_type = $1, joined_at = NOW() 
+		WHERE session_id = $2 AND user_id = $3 AND status = 'granted'
+	`, guestShareType, sessionID, client.GetUserID())
+
+	if result.Error != nil {
+		log.Printf("⚠️ [LiveShare] Failed to update guest status: %v", result.Error)
+	}
+
+	// Broadcast to all room members (especially host)
+	broadcastMsg := map[string]interface{}{
+		"type": "liveshare_guest_joined",
+		"data": map[string]interface{}{
+			"userId":          client.GetUserID(),
+			"guestShareType":  guestShareType,
+			"suggestedLayout": suggestedLayout,
+		},
+	}
+
+	msgBytes, _ := json.Marshal(broadcastMsg)
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     msgBytes,
+		IsBinary: false,
+	}, client)
+
+	log.Printf("✅ [LiveShare] Guest joined broadcast sent")
+	return nil
+}
+
+// handleGuestSwitchedType - Guest switched share type mid-stream
+func (h *LiveShareHandler) handleGuestSwitchedType(data map[string]interface{}, client Client) error {
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+
+	newShareType, _ := data["newShareType"].(string)
+	suggestedLayout, _ := data["suggestedLayout"].(string)
+
+	log.Printf("🔄 [LiveShare] Guest %d switched to: %s, suggested layout: %s", client.GetUserID(), newShareType, suggestedLayout)
+
+	// Update guest share_type in database
+	result := h.db.Exec(`
+		UPDATE liveshare_participants 
+		SET share_type = $1 
+		WHERE session_id = $2 AND user_id = $3 AND status = 'active'
+	`, newShareType, sessionID, client.GetUserID())
+
+	if result.Error != nil {
+		log.Printf("⚠️ [LiveShare] Failed to update guest share type: %v", result.Error)
+	}
+
+	// Broadcast to all room members (especially host)
+	broadcastMsg := map[string]interface{}{
+		"type": "liveshare_guest_switched_type",
+		"data": map[string]interface{}{
+			"userId":          client.GetUserID(),
+			"newShareType":    newShareType,
+			"suggestedLayout": suggestedLayout,
+		},
+	}
+
+	msgBytes, _ := json.Marshal(broadcastMsg)
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     msgBytes,
+		IsBinary: false,
+	}, client)
+
+	log.Printf("✅ [LiveShare] Guest switch type broadcast sent")
+	return nil
+}
+
+// handleGuestLeft - Guest left LiveShare, cleanup and broadcast to host
+func (h *LiveShareHandler) handleGuestLeft(data map[string]interface{}, client Client) error {
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+
+	defaultLayout, _ := data["defaultLayout"].(string)
+
+	log.Printf("👋 [LiveShare] Guest %d left, suggested default layout: %s", client.GetUserID(), defaultLayout)
+
+	// Update guest status to 'left' and clear permission
+	result := h.db.Exec(`
+		UPDATE liveshare_participants 
+		SET status = 'left', left_at = NOW() 
+		WHERE session_id = $1 AND user_id = $2
+	`, sessionID, client.GetUserID())
+
+	if result.Error != nil {
+		log.Printf("⚠️ [LiveShare] Failed to update guest status on leave: %v", result.Error)
+	}
+
+	// Broadcast to all room members (especially host)
+	broadcastMsg := map[string]interface{}{
+		"type": "liveshare_guest_left",
+		"data": map[string]interface{}{
+			"userId":        client.GetUserID(),
+			"defaultLayout": defaultLayout,
+		},
+	}
+
+	msgBytes, _ := json.Marshal(broadcastMsg)
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     msgBytes,
+		IsBinary: false,
+	}, client)
+
+	log.Printf("✅ [LiveShare] Guest left broadcast sent, database cleaned up")
 	return nil
 }

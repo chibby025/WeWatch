@@ -29,18 +29,32 @@ export default function LiveShareTypeSelector({
   mode, 
   isGuest,
   showModeContext,
-  embedded = false
+  embedded = false,
+  hasGuestSelected = false, // ✅ NEW: Whether host has selected a guest
+  availableCameras = [], // 📹 NEW: Pre-fetched available cameras from parent
+  initialCameraId = null, // 📹 NEW: Initially selected camera from parent
 }) {
   const [selectedType, setSelectedType] = useState(null);
-  const [cameraDevices, setCameraDevices] = useState([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [cameraDevices, setCameraDevices] = useState(availableCameras); // 📹 Initialize with provided cameras
+  const [selectedDeviceId, setSelectedDeviceId] = useState(initialCameraId || ''); // 📹 Use initial camera
   const [previewStream, setPreviewStream] = useState(null);
   const [permissionError, setPermissionError] = useState(null);
   const videoRef = useRef(null);
 
-  // Enumerate camera devices
+  // ✅ Filter share types - remove 'both' if guest is selected
+  const availableShareTypes = hasGuestSelected 
+    ? SHARE_TYPES.filter(type => type.id !== 'both')
+    : SHARE_TYPES;
+
+  // Enumerate camera devices (only if not provided)
   useEffect(() => {
     const getDevices = async () => {
+      // 📹 Skip enumeration if cameras already provided
+      if (availableCameras.length > 0) {
+        console.log('📹 [LiveShareTypeSelector] Using provided cameras:', availableCameras.length);
+        return;
+      }
+      
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const cameras = devices.filter(device => device.kind === 'videoinput');
@@ -54,7 +68,7 @@ export default function LiveShareTypeSelector({
     };
 
     getDevices();
-  }, []);
+  }, [availableCameras]);
 
   // Setup camera preview when camera or both is selected
   useEffect(() => {
@@ -118,7 +132,7 @@ export default function LiveShareTypeSelector({
     return (
       <div className="w-full flex flex-col h-full">
         <div className="space-y-2.5 mb-4">
-          {SHARE_TYPES.map((type) => {
+          {availableShareTypes.map((type) => {
             const IconComponent = type.icon;
             return (
               <button
@@ -230,7 +244,7 @@ export default function LiveShareTypeSelector({
         <div className="p-4 space-y-4">
           {/* Share Type Selection */}
           <div className="space-y-2">
-            {SHARE_TYPES.map((type) => {
+            {availableShareTypes.map((type) => {
               const IconComponent = type.icon;
               return (
                 <button

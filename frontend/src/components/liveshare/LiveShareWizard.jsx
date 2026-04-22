@@ -14,6 +14,8 @@ export default function LiveShareWizard({
   watchType,
   watchSessionMembers = [],
   currentUser,
+  availableCameras = [], // 📹 NEW: Available camera devices
+  selectedCameraId = null, // 📹 NEW: Currently selected camera
 }) {
   // Wizard state
   const [currentStep, setCurrentStep] = useState(1);
@@ -23,7 +25,7 @@ export default function LiveShareWizard({
   const [selectedMode, setSelectedMode] = useState(null);
   const [setupData, setSetupData] = useState(null);
   const [selectedShareType, setSelectedShareType] = useState(null);
-  const [selectedDeviceId, setSelectedDeviceId] = useState(null);
+  const [selectedDeviceId, setSelectedDeviceId] = useState(selectedCameraId); // 📹 Initialize with current camera
   const [selectedLayout, setSelectedLayout] = useState(null);
 
   // Setup form state
@@ -31,7 +33,7 @@ export default function LiveShareWizard({
   const [setupTitle, setSetupTitle] = useState('');
   const [setupLogo, setSetupLogo] = useState(null);
   const [setupLogoPreview, setSetupLogoPreview] = useState(null);
-  const [selectedGuest, setSelectedGuest] = useState(null);
+  const [selectedGuest, setSelectedGuest] = useState(null); // ✅ Track selected guest
   
   // ✅ Styling state (lifted from SetupForm)
   const [titleColor, setTitleColor] = useState('#FFFFFF');
@@ -167,7 +169,8 @@ export default function LiveShareWizard({
       mode: selectedMode,
       setup: setupData,
       shareType: selectedShareType,
-      deviceId: selectedDeviceId,
+      deviceId: selectedDeviceId, // 📹 Selected camera ID
+      cameraId: selectedDeviceId, // 📹 Explicit camera ID for clarity
       layout: layoutOverride || selectedLayout, // ✅ Use parameter if provided, else fall back to state
     };
     console.log('✅ [LiveShareWizard] Wizard completing with data:', {
@@ -179,6 +182,7 @@ export default function LiveShareWizard({
       setupTitleStyle: wizardData.setup?.titleStyle,
       setupLogoStyle: wizardData.setup?.logoStyle,
       shareType: wizardData.shareType,
+      deviceId: wizardData.deviceId, // 📹 Log selected camera
       layout: wizardData.layout, // ✅ Log the layout value
       fullWizardData: wizardData
     });
@@ -323,6 +327,9 @@ export default function LiveShareWizard({
               mode={selectedMode}
               isGuest={isGuest}
               embedded={true}
+              hasGuestSelected={!!setupData?.guestId || !!selectedGuest}
+              availableCameras={availableCameras} // 📹 Pass available cameras
+              initialCameraId={selectedDeviceId} // 📹 Pass currently selected camera
             />
           )}
           
@@ -513,7 +520,7 @@ function SetupForm({
           <option value="">No guest</option>
           {eligibleGuests.map((member) => (
             <option key={member.id} value={member.id}>
-              {member.username || `User ${member.id}`}
+              {member.name || member.username || `User ${member.id}`}
             </option>
           ))}
         </select>

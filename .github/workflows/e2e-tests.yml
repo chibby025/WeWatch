@@ -1,0 +1,105 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ main, dev ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/e2e-tests.yml'
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: wewatch_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+      
+      - name: Install frontend dependencies
+        run: cd frontend && npm ci
+      
+      - name: Install Playwright browsers
+        run: cd frontend && npx playwright install --with-deps chromium
+      
+      - name: Install backend dependencies
+        run: cd backend && go mod download
+      
+      - name: Start backend server
+        run: |
+          cd backend
+          nohup go run cmd/server/main.go &
+          echo $! > backend.pid
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/wewatch_test
+          JWT_SECRET: test-secret-key
+          ENVIRONMENT: test
+      
+      - name: Wait for backend to be ready
+        run: |
+          timeout 30 bash -c 'until curl -f http://localhost:8080/api/health; do sleep 1; done'
+      
+      - name: Start frontend dev server
+        run: |
+          cd frontend
+          nohup npm run dev &
+          echo $! > frontend.pid
+      
+      - name: Wait for frontend to be ready
+        run: |
+          timeout 30 bash -c 'until curl -f http://localhost:5173; do sleep 1; done'
+      
+      - name: Run E2E tests
+        run: cd frontend && npx playwright test --project=chromium
+        env:
+          CI: true
+      
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 30
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results
+          path: frontend/test-results/
+          retention-days: 30
+      
+      - name: Stop servers
+        if: always()
+        run: |
+          if [ -f backend/backend.pid ]; then kill $(cat backend/backend.pid) || true; fi
+          if [ -f frontend/frontend.pid ]; then kill $(cat frontend/frontend.pid) || true; fi

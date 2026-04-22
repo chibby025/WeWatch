@@ -42,23 +42,23 @@ const SessionRatingModal = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-fade-in">
+    <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-3 sm:p-4">
+      <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-fade-in">
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-6">
-          <div className="flex justify-between items-start">
-            <div>
-              <h2 className="text-2xl font-bold">Rate This Session</h2>
-              <p className="text-purple-100 mt-1 text-sm">
+        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 sm:p-6">
+          <div className="flex justify-between items-start gap-3">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg sm:text-2xl font-bold">Rate This Session</h2>
+              <p className="text-purple-100 mt-1 text-xs sm:text-sm line-clamp-2">
                 How was "{sessionTitle}"?
               </p>
             </div>
             <button
               onClick={onClose}
-              className="text-white hover:text-gray-200 transition-colors"
+              className="text-white hover:text-gray-200 transition-colors flex-shrink-0"
               aria-label="Skip rating"
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
@@ -66,18 +66,18 @@ const SessionRatingModal = ({
         </div>
 
         {/* Content */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4 sm:space-y-6">
           {/* Host Info */}
           <div className="text-center">
-            <p className="text-gray-600 text-sm">
+            <p className="text-gray-600 text-xs sm:text-sm">
               Hosted by <span className="font-semibold text-gray-900">{hostName}</span>
             </p>
           </div>
 
           {/* Star Rating */}
-          <div className="flex flex-col items-center space-y-3">
-            <label className="text-gray-700 font-medium text-lg">Your Rating</label>
-            <div className="flex gap-2">
+          <div className="flex flex-col items-center space-y-2 sm:space-y-3">
+            <label className="text-gray-700 font-medium text-base sm:text-lg">Your Rating</label>
+            <div className="flex gap-1 sm:gap-2">
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
                   key={star}
@@ -88,7 +88,7 @@ const SessionRatingModal = ({
                   className="transition-transform hover:scale-110 active:scale-95"
                 >
                   <svg
-                    className={`w-12 h-12 ${
+                    className={`w-10 h-10 sm:w-12 sm:h-12 ${
                       star <= (hoveredRating || rating)
                         ? 'text-yellow-400 fill-current'
                         : 'text-gray-300'
@@ -107,7 +107,7 @@ const SessionRatingModal = ({
                 </button>
               ))}
             </div>
-            <p className="text-sm text-gray-500">
+            <p className="text-xs sm:text-sm text-gray-500">
               {rating === 0 && 'Click a star to rate'}
               {rating === 1 && '😞 Poor'}
               {rating === 2 && '😐 Below Average'}
@@ -119,14 +119,14 @@ const SessionRatingModal = ({
 
           {/* Review (Optional) */}
           <div>
-            <label className="block text-gray-700 font-medium mb-2">
+            <label className="block text-gray-700 font-medium mb-2 text-sm sm:text-base">
               Review (Optional)
             </label>
             <textarea
               value={review}
               onChange={(e) => setReview(e.target.value)}
               placeholder="Share your thoughts about this session..."
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+              className="w-full px-3 py-2 sm:px-4 sm:py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none text-sm sm:text-base"
               rows={3}
               maxLength={500}
             />
@@ -136,18 +136,18 @@ const SessionRatingModal = ({
           </div>
 
           {/* Actions */}
-          <div className="flex gap-3">
+          <div className="flex gap-2 sm:gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-3 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold rounded-lg transition-colors"
+              className="flex-1 px-3 py-2.5 sm:px-4 sm:py-3 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold rounded-lg transition-colors text-sm sm:text-base"
             >
               Skip
             </button>
             <button
               type="submit"
               disabled={rating === 0 || isSubmitting}
-              className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 px-3 py-2.5 sm:px-4 sm:py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
             >
               {isSubmitting ? 'Submitting...' : 'Submit Rating'}
             </button>

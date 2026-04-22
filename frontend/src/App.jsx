@@ -9,6 +9,7 @@ import PaymentPage from './pages/PaymentPage';
 import AdminDashboard from './pages/AdminDashboard';
 import Login from './components/Login';
 import Register from './components/Register';
+import GoogleAuthCallback from './components/GoogleAuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
 import CreateRoomPage  from './components/CreateRoomPage';
 import RoomsListPage from './components/RoomsListPage';
@@ -113,6 +114,7 @@ function App() {
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/auth/google/success" element={<GoogleAuthCallback />} />
           
           {/* Protected routes */}
           <Route path="/" element={

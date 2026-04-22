@@ -153,6 +153,9 @@ const Taskbar = ({
   onApproveSpeaker,
   onRevokeSpeaker,
   approvedSpeakers = {},
+  onToggleRaiseHand, // ✅ NEW: Toggle raise/lower hand
+  isHandRaised = false, // ✅ NEW: Current user's hand state
+  raisedHandsCount = 0, // ✅ NEW: Total raised hands count for badge
   // Lecture Hall Settings
   showDebugPanels,
   onToggleDebugPanels,
@@ -216,7 +219,6 @@ const Taskbar = ({
   const membersButtonRef = useRef(null);
   // ✅ Use watchSessionMembers directly - API fetch is now stable with hasApiFetchedMembersRef guard
   const memberCount = watchSessionMembers?.length || 0;
-  const raisedHandsCount = raisedHands?.length || 0;
   const hideTimerRef = useRef(null);
   const lastEventTimeRef = useRef(0);
 
@@ -596,10 +598,11 @@ const Taskbar = ({
 
           {showEmotes && (
             <TaskbarButton
-              icon={EmotesIcon}
+              icon={isHandRaised ? '✋' : EmotesIcon}
               label="Emotes"
               onClick={() => setShowEmotePicker(!showEmotePicker)}
               isEmoji={true}
+              notificationCount={isHost ? raisedHandsCount : 0}
             />
           )}
 
@@ -739,6 +742,8 @@ const Taskbar = ({
               });
             }
           }}
+          onToggleRaiseHand={onToggleRaiseHand}
+          isHandRaised={isHandRaised}
         />
       )}
       {/* ✅ Raised Hands Quick Popup (Host Only) - Responsive */}

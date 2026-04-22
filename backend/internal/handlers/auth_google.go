@@ -1,0 +1,189 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"gorm.io/gorm"
+	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
+)
+
+var googleOauthConfig = &oauth2.Config{
+	ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+	ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+	RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
+	Scopes: []string{
+		"https://www.googleapis.com/auth/userinfo.email",
+		"https://www.googleapis.com/auth/userinfo.profile",
+	},
+	Endpoint: google.Endpoint,
+}
+
+// GoogleUser represents the user data from Google
+type GoogleUser struct {
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	VerifiedEmail bool   `json:"verified_email"`
+	Name          string `json:"name"`
+	GivenName     string `json:"given_name"`
+	FamilyName    string `json:"family_name"`
+	Picture       string `json:"picture"`
+	Locale        string `json:"locale"`
+}
+
+// GoogleLoginHandler initiates the Google OAuth flow
+func GoogleLoginHandler(c *gin.Context) {
+	// Generate random state for CSRF protection
+	state := fmt.Sprintf("%d", time.Now().Unix())
+	
+	// Store state in cookie for verification in callback
+	c.SetCookie("oauth_state", state, 300, "/", "", false, true)
+	
+	// Generate OAuth URL
+	url := googleOauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"url": url,
+	})
+}
+
+// GoogleCallbackHandler handles the OAuth callback from Google
+func GoogleCallbackHandler(c *gin.Context) {
+	// Verify state to prevent CSRF
+	stateCookie, err := c.Cookie("oauth_state")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "State cookie not found"})
+		return
+	}
+	
+	stateParam := c.Query("state")
+	if stateParam != stateCookie {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state parameter"})
+		return
+	}
+	
+	// Get authorization code
+	code := c.Query("code")
+	if code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Authorization code not found"})
+		return
+	}
+	
+	// Exchange code for token
+	token, err := googleOauthConfig.Exchange(context.Background(), code)
+	if err != nil {
+		log.Printf("❌ [GoogleCallback] Token exchange failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange token"})
+		return
+	}
+	log.Printf("✅ [GoogleCallback] Token exchange successful")
+	
+	// Fetch user info from Google
+	client := googleOauthConfig.Client(context.Background(), token)
+	log.Printf("🔄 [GoogleCallback] Fetching user info from Google API...")
+	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	if err != nil {
+		log.Printf("❌ [GoogleCallback] Failed to fetch user info: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user info"})
+		return
+	}
+	defer resp.Body.Close()
+	log.Printf("✅ [GoogleCallback] User info response status: %d", resp.StatusCode)
+	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("❌ [GoogleCallback] Failed to read response body: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read user info"})
+		return
+	}
+	
+	var googleUser GoogleUser
+	if err := json.Unmarshal(body, &googleUser); err != nil {
+		log.Printf("❌ [GoogleCallback] Failed to parse user info. Body: %s, Error: %v", string(body), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user info"})
+		return
+	}
+	log.Printf("✅ [GoogleCallback] User info parsed: email=%s, id=%s", googleUser.Email, googleUser.ID)
+	
+	// Find or create user (using global DB variable like other auth handlers)
+	var user models.User
+	result := DB.Where("email = ?", googleUser.Email).First(&user)
+	
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create new user
+		provider := "google"
+		user = models.User{
+			Username:        googleUser.Email, // Use email as username initially
+			Email:           googleUser.Email,
+			PasswordHash:    "", // No password for OAuth users
+			AvatarURL:       googleUser.Picture,
+			Role:            "user",
+			OAuthProvider:   &provider,
+			OAuthProviderID: &googleUser.ID,
+			EmailVerified:   true, // Google verifies emails
+		}
+		
+		if err := DB.Create(&user).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+			return
+		}
+	} else if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	} else {
+		// Update existing user's avatar if changed
+		if user.AvatarURL != googleUser.Picture {
+			DB.Model(&user).Update("avatar_url", googleUser.Picture)
+		}
+		
+		// Link OAuth provider if not already set (enables password + OAuth login)
+		if user.OAuthProvider == nil {
+			provider := "google"
+			DB.Model(&user).Updates(map[string]interface{}{
+				"oauth_provider":    &provider,
+				"oauth_provider_id": &googleUser.ID,
+				"email_verified":    true,
+			})
+		}
+	}
+	
+	// Generate JWT token
+	jwtToken, err := utils.GenerateJWT(user.ID)
+	if err != nil {
+		log.Printf("❌ [GoogleCallback] Failed to generate JWT: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+	
+	// Set HTTP-only cookie (same as traditional login)
+	cookie := &http.Cookie{
+		Name:     "wewatch_token",
+		Value:    jwtToken,
+		Path:     "/",
+		MaxAge:   7 * 24 * 60 * 60, // 7 days
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
+	}
+	http.SetCookie(c.Writer, cookie)
+	log.Printf("✅ [GoogleCallback] JWT cookie set for user ID: %d", user.ID)
+	
+	// Redirect to frontend success page
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:5173"
+	}
+	
+	redirectURL := fmt.Sprintf("%s/auth/google/success", frontendURL)
+	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
+}

@@ -16,7 +16,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   onTimeUpdate, // ⏰ Callback to update playback position
   muted = false, // 👈 NEW: default to false (so 2D mode works unchanged)
   playbackPositionRef, // 🎯 Ref containing adjusted seek time from latency compensation
-  layout = 'screen-share', // 'solo-view' | 'screen-share' | 'split-view' | 'panel-view'
+  layout = 'screen-share', // 'solo-view' | 'screen-share' | 'split-view'
 }, ref) {
   const videoRef = useRef(null);
   const cameraVideoRef = useRef(null); // 📹 Separate ref for PIP camera
@@ -105,6 +105,16 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       return;
     }
 
+    // Only log when mediaItem changes type
+    if (mediaItem?.type) {
+      console.log('📺 [CinemaVideoPlayer] Media type:', {
+        type: mediaItem.type,
+        hasStream: !!mediaItem.stream,
+        hasCameraStream: !!mediaItem.cameraStream,
+        hasUrl: !!mediaItem.mediaUrl
+      });
+    }
+
     let stream = null;
 
     if ((isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && track?.mediaStreamTrack)) {
@@ -164,9 +174,11 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       }
       
       return () => {
-        console.log(`🧹 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Cleanup`, {
+        console.log(`🧹 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Cleanup ENTRY`, {
           currentTrackId,
-          nextTrackId: (isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && track?.mediaStreamTrack) ? (isHost ? localScreenTrack.mediaStreamTrack.id : track.mediaStreamTrack.id) : 'none'
+          hadSrcObject: !!video.srcObject,
+          srcObjectTrackCount: video.srcObject?.getTracks().length || 0,
+          timestamp: new Date().toISOString()
         });
         
         // ✅ Only stop track if it's changing to a different track or component is unmounting
@@ -174,13 +186,22 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         const nextTrack = (isHost && localScreenTrack?.mediaStreamTrack) || (!isHost && track?.mediaStreamTrack);
         const nextTrackId = nextTrack ? (isHost ? localScreenTrack.mediaStreamTrack.id : track.mediaStreamTrack.id) : null;
         
+        console.log(`🔍 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Track comparison`, {
+          currentTrackId,
+          nextTrackId,
+          isSameTrack: nextTrackId === currentTrackId,
+          willStop: video.srcObject && (!nextTrackId || nextTrackId !== currentTrackId)
+        });
+        
         if (video.srcObject) {
           if (nextTrackId && nextTrackId === currentTrackId) {
             console.log(`♻️ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Same track, skipping stop (useMemo recalculation)`);
             // Don't stop the track - it's the same one, just React re-rendering
             video.srcObject = null;
           } else {
-            console.log(`🛑 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Different track or unmount, stopping tracks`);
+            console.log(`🛑 [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Different track or unmount, stopping tracks`, {
+              tracksStopped: video.srcObject.getTracks().map(t => ({ id: t.id, kind: t.kind, readyState: t.readyState }))
+            });
             video.srcObject.getTracks().forEach(t => t.stop());
             video.srcObject = null;
           }
@@ -192,18 +213,38 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
     else if ((mediaItem?.stream && !mediaItem?.cameraStream) || (!mediaItem?.stream && mediaItem?.cameraStream)) {
       const streamToUse = mediaItem.stream || mediaItem.cameraStream;
       const streamType = mediaItem.stream ? 'screen' : 'camera';
-      console.log(`📹 [CinemaVideoPlayer] Attaching LiveShare ${streamType} stream`);
+      console.log(`📹 [CinemaVideoPlayer] Attaching LiveShare ${streamType} stream`, {
+        streamId: streamToUse.id,
+        streamActive: streamToUse.active,
+        trackCount: streamToUse.getTracks().length,
+        willMute: streamType === 'camera' ? true : (muted !== undefined ? muted : false),
+        currentSrcObject: video.srcObject?.id || 'none'
+      });
       video.srcObject = streamToUse;
       video.muted = streamType === 'camera' ? true : (muted !== undefined ? muted : false);
-      video.play().catch(onError);
+      video.play().then(() => {
+        console.log(`✅ [CinemaVideoPlayer] ${streamType} stream playing successfully`);
+      }).catch((err) => {
+        console.error(`❌ [CinemaVideoPlayer] ${streamType} stream play failed:`, err.message);
+        onError(err);
+      });
       return () => {
+        console.log(`🧹 [CinemaVideoPlayer] Cleanup: Removing ${streamType} stream`, {
+          hadSrcObject: !!video.srcObject,
+          streamId: video.srcObject?.id
+        });
         // Don't stop tracks - they're managed by handleEndScreenShare
         video.srcObject = null;
       };
     }
 
     else if (mediaItem?.mediaUrl) {
-      console.log('📁 [CinemaVideoPlayer] Loading uploaded media:', mediaItem.mediaUrl);
+      console.log('📁 [CinemaVideoPlayer] Loading uploaded media:', {
+        url: mediaItem.mediaUrl,
+        type: mediaItem.type,
+        currentSrcObject: video.srcObject?.id || 'none',
+        currentSrc: video.src || 'none'
+      });
       video.srcObject = null;
       video.src = mediaItem.mediaUrl;
       video.muted = muted !== undefined ? muted : false; // ✅ Respect the prop
@@ -237,14 +278,28 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       video.addEventListener('error', handleLoadError, { once: true });
       video.load();
       return () => {
+        console.log('🧹 [CinemaVideoPlayer] Cleanup: URL-based media', {
+          hadSrcObject: !!video.srcObject,
+          hadSrc: !!video.src,
+          willPause: !video.srcObject,
+          reasoning: video.srcObject ? 'Has srcObject (stream), skipping pause' : 'No srcObject, will pause'
+        });
         video.removeEventListener('error', handleLoadError);
-        video.pause();
+        // Only pause URL-based media, not LiveShare streams
+        if (!video.srcObject) {
+          console.log('⏸️ [CinemaVideoPlayer] Pausing URL-based media');
+          video.pause();
+        }
         video.src = '';
       };
     }
 
     else {
-      console.log('⚠️ [CinemaVideoPlayer] No media to display');
+      console.log('⚠️ [CinemaVideoPlayer] No media to display', {
+        hadSrcObject: !!video.srcObject,
+        hadSrc: !!video.src,
+        willClear: true
+      });
       video.srcObject = null;
       video.src = '';
     }
@@ -291,6 +346,13 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
     const video = videoRef.current;
     if (!video || !video.src) return;
     
+    console.log('🎮 [CinemaVideoPlayer isPlaying] Effect triggered', {
+      isPlaying,
+      hasSrc: !!video.src,
+      hasSrcObject: !!video.srcObject,
+      readyState: video.readyState
+    });
+    
     const handleCanPlay = () => {
       if (isPlaying) {
         video.play().catch((err) => {
@@ -304,6 +366,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
     
     if (isPlaying) {
       if (video.readyState >= 3) {
+        console.log('✅ [CinemaVideoPlayer isPlaying] Calling play (readyState >= 3)');
         video.play().catch((err) => {
           if (!err.message.includes('interrupted by a call to pause')) {
             console.warn('⚠️ [CinemaVideoPlayer] Play failed:', err.message);
@@ -311,10 +374,19 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
           }
         });
       } else {
+        console.log('⏳ [CinemaVideoPlayer isPlaying] Waiting for canplay event');
         video.addEventListener('canplay', handleCanPlay, { once: true });
       }
     } else {
-      video.pause();
+      // ⚠️ CRITICAL: Don't pause LiveShare streams (they use srcObject, not src)
+      // This useEffect only runs when video.src exists (URL-based media)
+      // But when transitioning from URL → LiveShare, src might still be set
+      if (!video.srcObject) {
+        console.log('⏸️ [CinemaVideoPlayer isPlaying] Pausing (isPlaying=false, no srcObject)');
+        video.pause();
+      } else {
+        console.log('⏭️ [CinemaVideoPlayer isPlaying] Skipping pause (has srcObject - LiveShare stream)');
+      }
     }
     
     return () => {
@@ -396,9 +468,15 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   // Show volume control only for uploaded media (not LiveShare/screen share)
   const showVolumeControl = mediaItem?.mediaUrl && !muted;
 
+  // 🎨 ADAPTIVE SPLIT-VIEW: Only log state changes (reduced verbosity)
+  // Removed: excessive split-view waiting logs
+
   // 🎨 Render different layouts based on selection
   // Split View: 50/50 side-by-side (desktop) or stacked (mobile)
+  // ADAPTIVE: Show split-view ONLY when both streams are available
+  // If split-view selected but only one stream, fall through to default layout
   if (layout === 'split-view' && hasBothStreams) {
+    console.log('[CinemaVideoPlayer] Rendering split-view with both streams');
     return (
       <div 
         className="w-full h-full relative bg-black"

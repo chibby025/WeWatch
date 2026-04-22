@@ -1585,7 +1585,76 @@ const PositionCalculatorPage = () => {
     };
   }, [isConnected, actualSessionId, finalSessionId, roomId, currentUser?.id, sessionStatus, sendMessage]);
   
-  // 📱 Orientation detection for mobile devices (show once on join if portrait)
+  // � AGE VERIFICATION - Check content rating on mount
+  useEffect(() => {
+    const checkAgeRestriction = async () => {
+      if (!actualRoomId || !currentUser) return;
+      
+      try {
+        const response = await apiClient.get(`/api/rooms/${actualRoomId}/active-session`);
+        const sessionDetails = response.data;
+        
+        if (!sessionDetails) {
+          console.log('❌ [LectureHall] No active session found');
+          return;
+        }
+        
+        const isUserHost = currentUser.id === sessionDetails.host_id;
+        
+        // Only check age for non-hosts
+        if (!isUserHost && sessionDetails.content_rating) {
+          const contentRating = sessionDetails.content_rating;
+          
+          // Check if user has age set (0 = no DOB provided)
+          const userAge = currentUser.age ?? 0;
+          if (userAge === 0) {
+            console.log('❌ [LectureHall] User has no age/DOB - redirecting');
+            toast.error('Please set your date of birth to view this content');
+            navigate(`/rooms/${actualRoomId}`, { replace: true });
+            return;
+          }
+          
+          // Check age requirement based on content rating
+          const ageRequirements = {
+            'G': 0,
+            'PG': 0,
+            '13+': 13,
+            '16+': 16,
+            '18+': 18,
+            'Mature': 18
+          };
+          
+          const requiredAge = ageRequirements[contentRating];
+          
+          if (userAge < requiredAge) {
+            console.log(`❌ [LectureHall] Age verification failed: User is ${userAge}, needs ${requiredAge} for ${contentRating}`);
+            
+            // Dynamic error message based on content rating
+            let errorMessage = `This session is rated ${contentRating}.`;
+            if (contentRating === '13+') {
+              errorMessage += ' You must be 13 or older to view this content.';
+            } else if (contentRating === '16+') {
+              errorMessage += ' You must be 16 or older to view this content.';
+            } else if (contentRating === '18+' || contentRating === 'Mature') {
+              errorMessage += ' You must be 18 or older to view this content.';
+            }
+            
+            toast.error(errorMessage);
+            navigate(`/rooms/${actualRoomId}`, { replace: true });
+            return;
+          }
+          
+          console.log(`✅ [LectureHall] Age verified: User is ${userAge}, ${contentRating} requires ${requiredAge}`);
+        }
+      } catch (err) {
+        console.error('❌ [LectureHall] Failed to check age restriction:', err);
+      }
+    };
+    
+    checkAgeRestriction();
+  }, [actualRoomId, currentUser, navigate]);
+  
+  // �📱 Orientation detection for mobile devices (show once on join if portrait)
   useEffect(() => {
     // Detect mobile device
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
@@ -5794,8 +5863,8 @@ const PositionCalculatorPage = () => {
           },
           // ⚠️ SIMULCAST DISABLED - send ONLY highest quality, no adaptive switching
           simulcast: false,
-          // Higher bitrate for crisp text/code
-          videoBitrate: 3000000 // 3 Mbps
+          // Optimized bitrate for crisp text/code
+          videoBitrate: 2200000 // 2.2 Mbps (reduced from 3 Mbps)
         });
         
         console.log('🎬 [LiveShare] Screen share enabled - HIGH QUALITY ONLY (simulcast disabled)');
@@ -5968,9 +6037,9 @@ const PositionCalculatorPage = () => {
               const cameraPublication = await livekitRoom.localParticipant.publishTrack(localVideoTrack, {
                 source: Track.Source.Camera,
                 name: 'camera-share',
-                simulcast: false,
+                simulcast: false, // Disabled for WSL localhost compatibility
                 videoEncoding: {
-                  maxBitrate: 4000000, // 4 Mbps for Full HD 1080p
+                  maxBitrate: 1800000, // 1.8 Mbps optimal for 720p
                   maxFramerate: 30
                 }
               });

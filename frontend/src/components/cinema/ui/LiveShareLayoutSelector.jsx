@@ -2,7 +2,7 @@
 // Layout selector modal for LiveShare - Choose participant grid layout
 
 import React from 'react';
-import { X, Monitor, Camera, Grid2X2, Grid3x3, Users } from 'lucide-react';
+import { X, Monitor, Camera, Users } from 'lucide-react';
 
 export default function LiveShareLayoutSelector({
   hasGuest, // boolean - is there a guest selected?
@@ -52,18 +52,6 @@ export default function LiveShareLayoutSelector({
       icon: Users,
       disabled: false,
       gridPreview: '50/50'
-    });
-  }
-  
-  // Panel-view: Requires guest AND screen share
-  if (hasGuest && hasScreenShare) {
-    layouts.push({
-      id: 'panel-view',
-      name: 'Panel View',
-      description: 'Host + guest (top), screen (bottom)',
-      icon: Grid3x3,
-      disabled: false,
-      gridPreview: '3-grid'
     });
   }
   
@@ -119,9 +107,7 @@ export default function LiveShareLayoutSelector({
                   {isDisabled && (
                     <p className="text-xs text-gray-700 mt-0.5">
                       {!hasGuest && layout.id.includes('split') && 'Requires guest'}
-                      {!hasGuest && layout.id === 'panel-view' && 'Requires guest'}
                       {!hasScreenShare && layout.id === 'screen-share' && 'Requires screen share'}
-                      {!hasScreenShare && layout.id === 'panel-view' && !hasGuest && 'Requires guest & screen'}
                     </p>
                   )}
                 </div>
@@ -205,9 +191,7 @@ export default function LiveShareLayoutSelector({
                 {isDisabled && (
                   <div className="absolute top-3 right-3 px-2 py-1 bg-gray-800 rounded text-xs text-gray-500">
                     {!hasGuest && layout.id.includes('split') && 'No guest'}
-                    {!hasGuest && layout.id === 'panel-view' && 'No guest'}
                     {!hasScreenShare && layout.id === 'screen-share' && 'No screen'}
-                    {!hasScreenShare && layout.id === 'panel-view' && !hasGuest && 'No guest/screen'}
                   </div>
                 )}
               </button>

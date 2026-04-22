@@ -587,6 +587,52 @@ export default function CinemaScene3DDemo() {
         
         const isUserHost = currentUser.id === sessionDetails.host_id;
         
+        // 🔞 AGE VERIFICATION - Check content rating before ticket check
+        if (!isUserHost && sessionDetails.content_rating) {
+          const contentRating = sessionDetails.content_rating;
+          
+          // Check if user has age set (0 = no DOB provided)
+          const userAge = currentUser.age ?? 0;
+          if (userAge === 0) {
+            console.log('❌ [CinemaScene3D] User has no age/DOB - redirecting');
+            toast.error('Please set your date of birth to view this content');
+            navigate(`/rooms/${roomId}`, { replace: true });
+            return;
+          }
+          
+          // Check age requirement based on content rating
+          const ageRequirements = {
+            'G': 0,
+            'PG': 0,
+            '13+': 13,
+            '16+': 16,
+            '18+': 18,
+            'Mature': 18
+          };
+          
+          const requiredAge = ageRequirements[contentRating];
+          
+          if (userAge < requiredAge) {
+            console.log(`❌ [CinemaScene3D] Age verification failed: User is ${userAge}, needs ${requiredAge} for ${contentRating}`);
+            
+            // Dynamic error message based on content rating
+            let errorMessage = `This session is rated ${contentRating}.`;
+            if (contentRating === '13+') {
+              errorMessage += ' You must be 13 or older to view this content.';
+            } else if (contentRating === '16+') {
+              errorMessage += ' You must be 16 or older to view this content.';
+            } else if (contentRating === '18+' || contentRating === 'Mature') {
+              errorMessage += ' You must be 18 or older to view this content.';
+            }
+            
+            toast.error(errorMessage);
+            navigate(`/rooms/${roomId}`, { replace: true });
+            return;
+          }
+          
+          console.log(`✅ [CinemaScene3D] Age verified: User is ${userAge}, ${contentRating} requires ${requiredAge}`);
+        }
+        
         if (sessionDetails.ticketing_enabled && !isUserHost) {
           console.log('🎟️ [CinemaScene3D] Paid session detected, checking ticket...');
           
@@ -5080,10 +5126,10 @@ export default function CinemaScene3DDemo() {
           const cameraPublication = await localParticipant.publishTrack(localVideoTrack, {
             source: Track.Source.Camera,
             name: 'camera-share',
-            simulcast: false,
+            simulcast: false, // Disabled for WSL localhost compatibility
             // 🎯 Optimized encoding for camera/face video
             videoEncoding: {
-              maxBitrate: 2500000, // 2.5 Mbps - sufficient for face video
+              maxBitrate: 1800000, // 1.8 Mbps optimal for 720p
               maxFramerate: 30
             }
           });

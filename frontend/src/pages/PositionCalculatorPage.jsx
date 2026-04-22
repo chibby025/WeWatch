@@ -5869,9 +5869,9 @@ const PositionCalculatorPage = () => {
               const cameraPublication = await livekitRoom.localParticipant.publishTrack(localVideoTrack, {
                 source: Track.Source.Camera,
                 name: 'camera-share',
-                simulcast: false,
+                simulcast: false, // Disabled for WSL localhost compatibility
                 videoEncoding: {
-                  maxBitrate: 4000000, // 4 Mbps for Full HD 1080p
+                  maxBitrate: 1800000, // 1.8 Mbps optimal for 720p
                   maxFramerate: 30
                 }
               });

@@ -66,6 +66,7 @@ export default function LeftSidebar({
   cameraShareTrackRef, // ✅ NEW: Ref to LiveKit camera track for mute/unmute during breaks
   graphicsRendererRef, // ✅ NEW: Ref to GraphicsRenderer for break screen overlay
   onWizardStateChange, // ✅ NEW: Callback to notify parent when wizard opens/closes
+  forceActiveTab = null, // Force switch to specific tab
 }) {
   // ✅ Host verification state
   const [isHost, setIsHost] = useState(isHostProp);
@@ -111,6 +112,17 @@ export default function LeftSidebar({
       ? ['upload', 'liveshare'] 
       : ['upload'];
   
+  // 🐛 DEBUG: Log permission state changes
+  useEffect(() => {
+    console.log('📊 [LeftSidebar] Permission state:', {
+      isHost,
+      hasLiveSharePermission,
+      availableTabs,
+      currentUserId: currentUser?.id,
+      currentUserName: currentUser?.username
+    });
+  }, [hasLiveSharePermission, isHost, currentUser?.id]);
+  
   // ✅ Persist active tab in sessionStorage (clears on session end)
   const getInitialTab = () => {
     const savedTab = sessionStorage.getItem('wewatch_active_sidebar_tab');
@@ -122,6 +134,13 @@ export default function LeftSidebar({
   };
   
   const [activeTab, setActiveTab] = useState(getInitialTab());
+  
+  // ✅ Force tab switch when requested by parent
+  useEffect(() => {
+    if (forceActiveTab && availableTabs.includes(forceActiveTab)) {
+      setActiveTab(forceActiveTab);
+    }
+  }, [forceActiveTab, availableTabs]);
   
   // ✅ Save tab to sessionStorage when it changes (clears on session end)
   useEffect(() => {
@@ -966,9 +985,14 @@ export default function LeftSidebar({
               onChange={handleTogglePreviewThumbnails}
               className="mt-0.5 w-4 h-4 sm:w-5 sm:h-5 rounded border-gray-600 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 focus:ring-offset-transparent bg-gray-700 cursor-pointer transition-all"
             />
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-xl sm:text-2xl group-hover:scale-110 transition-transform duration-200" role="img" aria-label="ghost">
+                👻
+              </span>
+            </div>
             <div className="flex-1 min-w-0">
               <span className="text-sm sm:text-base font-medium text-white group-hover:text-blue-400 transition-colors">
-                Hide Preview from lobby
+                Ghost Mode
               </span>
               <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 leading-relaxed">
                 content moderation - hide preview from public, use if not suitable for public to view.
@@ -1136,51 +1160,52 @@ export default function LeftSidebar({
             </div>
           )}
 
+          {/* GAME BUTTON (Host Only - All Watch Types) */}
+          {isHost && (onGameClick || onGameClose) && (
+            <button
+              onClick={() => {
+                if (activeGame) {
+                  console.log('🎮 [LeftSidebar] End Game button clicked!');
+                  if (onGameClose) {
+                    onGameClose();
+                    toast.success('Game ended', { icon: '🎮' });
+                  }
+                } else {
+                  console.log('🎮 [LeftSidebar] Start Game button clicked!');
+                  if (onGameClick) {
+                    onGameClick();
+                  }
+                }
+              }}
+              className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg font-semibold text-xs sm:text-sm transition-all mb-3 sm:mb-4 shadow-lg flex items-center justify-center gap-2 ${
+                activeGame
+                  ? 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white'
+                  : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
+              }`}
+            >
+              {activeGame ? (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                  End Game
+                </>
+              ) : (
+                <>
+                  <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                  Start Game
+                </>
+              )}
+            </button>
+          )}
+          {!isHost && onGameClick && (
+            <div className="mb-3 text-xs text-gray-400">
+              (Game button hidden - not host. isHost: {String(isHost)})
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto min-h-0">
             <div className="h-full flex flex-col p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
-              {/* GAME BUTTON (Host Only - All Watch Types) */}
-              {isHost && (onGameClick || onGameClose) && (
-                <button
-                  onClick={() => {
-                    if (activeGame) {
-                      console.log('🎮 [LeftSidebar] End Game button clicked!');
-                      if (onGameClose) {
-                        onGameClose();
-                        toast.success('Game ended', { icon: '🎮' });
-                      }
-                    } else {
-                      console.log('🎮 [LeftSidebar] Start Game button clicked!');
-                      if (onGameClick) {
-                        onGameClick();
-                      }
-                    }
-                  }}
-                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg font-semibold text-xs sm:text-sm transition-all mb-3 sm:mb-4 shadow-lg flex items-center justify-center gap-2 ${
-                    activeGame
-                      ? 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white'
-                      : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
-                  }`}
-                >
-                  {activeGame ? (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                      End Game
-                    </>
-                  ) : (
-                    <>
-                      <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />
-                      Start Game
-                    </>
-                  )}
-                </button>
-              )}
-              {!isHost && onGameClick && (
-                <div className="mb-3 text-xs text-gray-400">
-                  (Game button hidden - not host. isHost: {String(isHost)})
-                </div>
-              )}
 
               {/* QUIZ BUTTON (Lecture Hall Only - Host) */}
               {isHost && watchType === 'classroom' && classType === 'lecture_hall' && onQuizClick && (

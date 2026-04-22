@@ -22,8 +22,56 @@ import {
 } from 'lucide-react';
 import LiveShareLayoutSelector from './LiveShareLayoutSelector';
 import LiveShareWizard from '../../liveshare/LiveShareWizard';
+import GuestInvitationPopup from '../../liveshare/GuestInvitationPopup';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+
+// ✅ Auto-layout calculation based on stream count
+// Note: When guest is selected, host cannot use 'both' (screen+camera) since split-view only supports 2 streams
+function calculateAutoLayout(hostShareType, guestShareType) {
+  let streamCount = 0;
+  
+  // Count host streams
+  if (hostShareType === 'both') {
+    streamCount += 2; // camera + screen
+  } else if (hostShareType === 'camera' || hostShareType === 'screen') {
+    streamCount += 1;
+  }
+  
+  // Count guest streams (guests can only share camera OR screen, not both)
+  if (guestShareType === 'camera' || guestShareType === 'screen') {
+    streamCount += 1;
+  }
+  
+  console.log(`🎨 [Auto-Layout] Total streams: ${streamCount} (host: ${hostShareType}, guest: ${guestShareType})`);
+  
+  // Auto-select layout based on stream count
+  if (streamCount === 2) {
+    return 'split-view'; // 2 streams (e.g., host camera + guest camera)
+  } else if (streamCount === 1) {
+    // Single stream - determine type
+    if (hostShareType === 'screen') {
+      return 'screen-share';
+    } else {
+      return 'solo-view';
+    }
+  }
+  
+  return 'solo-view'; // Fallback
+}
+
+// ✅ Smart default layout when guest leaves (returns to host-only layout)
+function calculateHostOnlyLayout(hostShareType) {
+  if (hostShareType === 'both') {
+    return 'split-view'; // Camera + screen side by side
+  } else if (hostShareType === 'screen') {
+    return 'screen-share'; // Screen with optional PIP camera
+  } else if (hostShareType === 'camera') {
+    return 'solo-view'; // Camera only
+  }
+  
+  return 'solo-view'; // Fallback
+}
 
 export default function LiveShareManager({
   // Session data
@@ -52,16 +100,135 @@ export default function LiveShareManager({
   cameraShareTrackRef, // ✅ Ref to LiveKit camera track for mute/unmute during breaks
   graphicsRendererRef, // ✅ Ref to GraphicsRenderer for break screen overlay
   onWizardStateChange, // ✅ Callback to notify parent when wizard opens/closes
+  availableCameras = [], // 📹 NEW: Available camera devices
+  selectedCameraId = null, // 📹 NEW: Currently selected camera
+  onCameraSwitch = null, // 📹 NEW: Callback to switch camera
 }) {
   // Modal state - now using unified wizard
   const [showLiveShareWizard, setShowLiveShareWizard] = useState(false);
   
+  // ✅ Guest invitation state (simplified flow)
+  const [showGuestInvitation, setShowGuestInvitation] = useState(false);
+  const [guestInvitationData, setGuestInvitationData] = useState(null);
+  const [previousLayoutBeforeGuest, setPreviousLayoutBeforeGuest] = useState(null);
+  const [isGuest, setIsGuest] = useState(false);
+  const [guestShareType, setGuestShareType] = useState(null);
+  const [showGuestSwitchType, setShowGuestSwitchType] = useState(false);
+  
   // ✅ Pass modal state to parent to prevent taskbar from showing
   useEffect(() => {
     if (onWizardStateChange && typeof onWizardStateChange === 'function') {
-      onWizardStateChange(showLiveShareWizard);
+      onWizardStateChange(showLiveShareWizard || showGuestInvitation || showGuestSwitchType);
     }
-  }, [showLiveShareWizard, onWizardStateChange]);
+  }, [showLiveShareWizard, showGuestInvitation, showGuestSwitchType, onWizardStateChange]);
+
+  // ✅ Cleanup studio controls when LiveShare ends (mode changes from active → null)
+  useEffect(() => {
+    console.log('🔍 [LiveShareManager] Cleanup check - liveShareMode:', liveShareMode);
+    
+    if (!liveShareMode) {
+      console.log('🧹 [LiveShareManager] LiveShare ended - starting cleanup');
+      
+      // Check what's in localStorage before clearing
+      const storageKeys = [
+        `liveshare_lower_third_name_${sessionId}`,
+        `liveshare_lower_third_title_${sessionId}`,
+        `liveshare_ticker_text_${sessionId}`,
+        `liveshare_ticker_items_${sessionId}`,
+        `liveshare_banner_text_${sessionId}`,
+        `podcast_logo_style_${sessionId}`
+      ];
+      
+      console.log('📦 [BEFORE CLEANUP] localStorage values:', 
+        storageKeys.reduce((acc, key) => {
+          const value = localStorage.getItem(key);
+          if (value) acc[key.split('_').pop()] = value;
+          return acc;
+        }, {})
+      );
+      
+      // Clear all React state
+      setLowerThirdName('');
+      setLowerThirdTitle('');
+      setLowerThirdActive(false);
+      setLogoBugFile(null);
+      setLogoBugPreview(null);
+      setLogoBugActive(false);
+      setMediaQueue([]);
+      setTickerText('');
+      setTickerActive(false);
+      setTickerItems([]);
+      setBannerText('');
+      setBannerActive(false);
+      setSelectedBreakMedia([]);
+      setIsOnBreak(false);
+      setBreakStartTime(null);
+      setBreakTimeRemaining(0);
+      setBreakCustomImage(null);
+      setBreakCustomImagePreview(null);
+      setPodcastTitle('');
+      setPodcastLogo(null);
+      setPodcastLogoPreview(null);
+      setSelectedGuest(null);
+      
+      // Clear localStorage for this session
+      storageKeys.forEach(key => localStorage.removeItem(key));
+      
+      // Verify localStorage is cleared
+      console.log('🗑️ [AFTER CLEANUP] localStorage values:', 
+        storageKeys.reduce((acc, key) => {
+          const value = localStorage.getItem(key);
+          if (value) acc[key.split('_').pop()] = value;
+          return acc;
+        }, {})
+      );
+      
+      // Remove any active graphics layers from LiveShareManager
+      if (graphicsRendererRef?.current) {
+        graphicsRendererRef.current.removeLayer('lower_third');
+        graphicsRendererRef.current.removeLayer('logo_bug');
+        graphicsRendererRef.current.removeLayer('media_queue');
+        graphicsRendererRef.current.removeLayer('ticker');
+        graphicsRendererRef.current.removeLayer('banner');
+        graphicsRendererRef.current.removeLayer('break_screen');
+        graphicsRendererRef.current.render();
+        console.log('🎨 [CLEANUP] Graphics layers removed');
+      }
+      
+      console.log('✅ [CLEANUP COMPLETE] Studio controls reset');
+    }
+  }, [liveShareMode, sessionId, graphicsRendererRef]);
+
+  // ✅ Detect when guest stops sharing and notify host
+  useEffect(() => {
+    // Only run for guests who were previously sharing
+    if (isGuest && guestShareType && !liveShareContentMode) {
+      console.log('👋 [LiveShareManager GUEST] Guest stopped sharing - notifying host');
+      
+      // Calculate smart default layout for host
+      const hostShareType = liveShareMode || 'camera';
+      const defaultLayout = calculateHostOnlyLayout(hostShareType);
+      
+      console.log('🎨 [LiveShareManager GUEST] Suggesting default layout:', defaultLayout);
+      
+      // Notify host that guest left
+      if (sendMessage) {
+        sendMessage({
+          type: 'liveshare_guest_left',
+          data: {
+            defaultLayout: defaultLayout
+          }
+        });
+      }
+      
+      // Reset guest state
+      setIsGuest(false);
+      setGuestShareType(null);
+      
+      console.log('✅ [LiveShareManager GUEST] Guest state cleared');
+    }
+  }, [liveShareContentMode, isGuest, guestShareType, liveShareMode, sendMessage]);
+
   // Legacy modal states (kept for backward compatibility with existing code)
   const [showModeSelector, setShowModeSelector] = useState(false);
   const [showTypeSelector, setShowTypeSelector] = useState(false);
@@ -239,11 +406,11 @@ export default function LiveShareManager({
   // Helper function to check if control should be visible
   const shouldShowControl = (controlName) => {
     if (!liveShareContentMode || !modeControlsMap[liveShareContentMode]) {
-      console.log(`🎛️ [StudioControls] ${controlName}: mode not set (${liveShareContentMode}), showing all`);
+      // console.log(`🎛️ [StudioControls] ${controlName}: mode not set (${liveShareContentMode}), showing all`);
       return true; // Show all if mode not set or unknown
     }
     const shouldShow = modeControlsMap[liveShareContentMode][controlName] === true;
-    console.log(`🎛️ [StudioControls] ${controlName}: mode=${liveShareContentMode}, show=${shouldShow}`);
+    // console.log(`🎛️ [StudioControls] ${controlName}: mode=${liveShareContentMode}, show=${shouldShow}`);
     return shouldShow;
   };
 
@@ -457,8 +624,20 @@ export default function LiveShareManager({
       setupLogoFileName: wizardData.setup?.logoFile?.name,
       setupGuestId: wizardData.setup?.guestId,
       setupTitleStyle: wizardData.setup?.titleStyle,
-      setupLogoStyle: wizardData.setup?.logoStyle
+      setupLogoStyle: wizardData.setup?.logoStyle,
+      cameraId: wizardData.cameraId, // 📹 Log selected camera
     });
+    
+    // 📹 Switch camera if a different one was selected
+    if (wizardData.cameraId && wizardData.cameraId !== selectedCameraId && onCameraSwitch) {
+      console.log(`📹 [LiveShareManager] Switching camera from ${selectedCameraId} to ${wizardData.cameraId}`);
+      try {
+        await onCameraSwitch(wizardData.cameraId);
+        console.log('✅ [LiveShareManager] Camera switched successfully');
+      } catch (error) {
+        console.error('❌ [LiveShareManager] Failed to switch camera:', error);
+      }
+    }
     
     const { mode, setup, shareType, deviceId, layout } = wizardData;
     
@@ -518,17 +697,18 @@ export default function LiveShareManager({
       
       console.log('📦 [LiveShareManager] Calling onLiveShareModeSelect with:', {
         mode,
-        config: modeConfig
+        config: modeConfig,
+        layout
       });
       
       if (onLiveShareModeSelect) {
-        onLiveShareModeSelect(mode, modeConfig);
+        onLiveShareModeSelect(mode, modeConfig, layout);
       }
     } else if (mode === 'regular') {
       // Regular mode - just set the mode
-      console.log('📺 [LiveShareManager] Setting regular mode (no config)');
+      console.log('📺 [LiveShareManager] Setting regular mode (no config), layout:', layout);
       if (onLiveShareModeSelect) {
-        onLiveShareModeSelect('regular', null);
+        onLiveShareModeSelect('regular', null, layout);
       }
     }
     
@@ -2117,7 +2297,7 @@ export default function LiveShareManager({
             <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors flex items-center justify-between">
               <span className="flex items-center gap-2">
                 <Newspaper size={18} className="text-blue-400" />
-                Ticker / Headlines
+                Headlines
               </span>
               {/* Color palette icon with swatch */}
               <button
@@ -2411,12 +2591,23 @@ export default function LiveShareManager({
                       const guestId = parseInt(e.target.value);
                       const guest = eligibleGuests.find(g => g.id === guestId);
                       if (guest) {
+                        console.log('🎙️ [GRANT PERMISSION] Host selecting guest:', {
+                          guestId: guest.id,
+                          guestUsername: guest.username,
+                          sessionId: sessionId
+                        });
                         setSelectedGuest(guest);
                         if (sendMessage) {
+                          console.log('📤 [GRANT PERMISSION] Sending WebSocket message:', {
+                            type: 'liveshare_grant_permission',
+                            data: { userId: guest.id }
+                          });
                           sendMessage({
                             type: 'liveshare_grant_permission',
                             data: { userId: guest.id }
                           });
+                        } else {
+                          console.error('❌ [GRANT PERMISSION] sendMessage function not available!');
                         }
                       }
                     }}
@@ -2459,17 +2650,44 @@ export default function LiveShareManager({
         </div>
       )}
 
-      {/* Guest Permission Status */}
+      {/* Guest Permission Status - Simplified Invitation */}
       {!isHost && hasLiveSharePermission && (
         <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
           <div className="text-sm text-green-400 mb-2">
-            ✓ You have permission to join
+            ✓ You've been invited as co-host!
           </div>
           <button
-            onClick={onStartScreenShare}
-            className="w-full bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg"
+            onClick={() => {
+              console.log('🎙️ [GUEST JOIN] Button clicked - opening invitation popup');
+              // Show invitation popup instead of wizard
+              const invitationData = {
+                hostUsername: watchSessionMembers.find(m => m.is_host)?.username || 'Host',
+                showTitle: podcastConfig?.title || null,
+                mode: liveShareContentMode || 'podcast'
+              };
+              console.log('📋 [GUEST JOIN] Invitation data:', invitationData);
+              setGuestInvitationData(invitationData);
+              setIsGuest(true);
+              setShowGuestInvitation(true);
+            }}
+            className="w-full bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg transition-colors animate-pulse"
           >
-            Join LiveShare
+            Join as Co-Host 🎙️
+          </button>
+        </div>
+      )}
+
+      {/* Guest Switch Share Type Button (shown when guest is live) */}
+      {isGuest && liveShareContentMode && guestShareType && (
+        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+          <div className="text-sm text-blue-400 mb-2">
+            Currently sharing: {guestShareType === 'camera' ? '📹 Camera' : '🖥️ Screen'}
+          </div>
+          <button
+            onClick={() => setShowGuestSwitchType(true)}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors"
+          >
+            Switch Share Type
           </button>
         </div>
       )}
@@ -2546,7 +2764,8 @@ export default function LiveShareManager({
                 <div className="text-sm text-gray-400">Share your camera only</div>
               </button>
               
-              {/* Screen + Camera */}
+              {/* Screen + Camera (disabled for guests) */}
+              {!(!isHost && hasLiveSharePermission) && (
               <button
                 onClick={() => handleTypeSelect('both')}
                 className="w-full p-4 rounded-lg bg-pink-500/10 border border-pink-500/30 hover:bg-pink-500/20 text-white text-left"
@@ -2557,6 +2776,7 @@ export default function LiveShareManager({
                 </div>
                 <div className="text-sm text-gray-400">Share screen with camera overlay</div>
               </button>
+              )}
             </div>
           </div>
         </div>
@@ -2947,7 +3167,201 @@ export default function LiveShareManager({
           watchType={watchType}
           watchSessionMembers={watchSessionMembers}
           currentUser={currentUser}
+          availableCameras={availableCameras} // 📹 Pass available cameras
+          selectedCameraId={selectedCameraId} // 📹 Pass current camera
         />
+      )}
+
+      {/* ✅ Simplified Guest Invitation Popup */}
+      {showGuestInvitation && guestInvitationData && (
+        <GuestInvitationPopup
+          invitation={guestInvitationData}
+          onAccept={async (shareType) => {
+            console.log(`🎙️ [Guest] Accepting invitation with share type: ${shareType}`);
+            
+            // Auto-select layout based on stream count
+            const hostShareType = liveShareMode || 'camera'; // Get host's current share type
+            const autoLayout = calculateAutoLayout(hostShareType, shareType);
+            
+            console.log(`🎨 [Guest] Auto-selected layout: ${autoLayout}`);
+            
+            // Save guest share type for mid-stream switching
+            setGuestShareType(shareType);
+            
+            // Start LiveShare directly with guest config
+            const guestConfig = {
+              mode: 'regular', // Guest doesn't set content mode, only share type
+              layout: autoLayout,
+              type: shareType,
+              deviceId: null, // Use default device
+            };
+            
+            // Close invitation
+            setShowGuestInvitation(false);
+            setGuestInvitationData(null);
+            
+            // Notify host about guest joining and suggested layout
+            if (sendMessage) {
+              sendMessage({
+                type: 'liveshare_guest_joined',
+                data: {
+                  guestShareType: shareType,
+                  suggestedLayout: autoLayout
+                }
+              });
+            }
+            
+            // Start sharing via type selector handler
+            if (onLiveShareTypeSelect) {
+              // Pass shareType, deviceId (null for screen share), and autoLayout
+              onLiveShareTypeSelect(shareType, null, autoLayout);
+            }
+          }}
+          onDecline={() => {
+            console.log('🎙️ [Guest] Declined invitation');
+            setShowGuestInvitation(false);
+            setGuestInvitationData(null);
+            setIsGuest(false);
+            toast.info('Invitation declined');
+          }}
+        />
+      )}
+
+      {/* ✅ Guest Switch Share Type Modal */}
+      {showGuestSwitchType && guestShareType && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 rounded-lg max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-white">Switch Share Type</h2>
+              <button
+                onClick={() => setShowGuestSwitchType(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-sm text-gray-400">
+                Choose a new share type. Your current stream will stop and restart with the new type.
+              </p>
+
+              <div className="space-y-3">
+                {/* Camera Option */}
+                <button
+                  onClick={async () => {
+                    const newType = 'camera';
+                    console.log(`🔄 [Guest] Switching from ${guestShareType} to ${newType}`);
+                    
+                    // Calculate new layout
+                    const hostShareType = liveShareMode || 'camera';
+                    const newLayout = calculateAutoLayout(hostShareType, newType);
+                    
+                    // Update state
+                    setGuestShareType(newType);
+                    setShowGuestSwitchType(false);
+                    
+                    // Notify host
+                    if (sendMessage) {
+                      sendMessage({
+                        type: 'liveshare_guest_switched_type',
+                        data: {
+                          newShareType: newType,
+                          suggestedLayout: newLayout
+                        }
+                      });
+                    }
+                    
+                    // Restart with new type
+                    const guestConfig = {
+                      mode: 'regular',
+                      layout: newLayout,
+                      type: newType,
+                      deviceId: null,
+                    };
+                    
+                    if (onLiveShareTypeSelect) {
+                      onLiveShareTypeSelect(newType, guestConfig);
+                    }
+                    
+                    toast.success('Switched to camera');
+                  }}
+                  disabled={guestShareType === 'camera'}
+                  className={`w-full p-4 rounded-lg border text-left transition-colors ${
+                    guestShareType === 'camera'
+                      ? 'bg-blue-500/20 border-blue-500/50 cursor-not-allowed'
+                      : 'bg-blue-500/10 border-blue-500/30 hover:bg-blue-500/20'
+                  }`}
+                >
+                  <div className="flex items-center space-x-3 mb-1">
+                    <Camera size={20} className="text-blue-400" />
+                    <div className="font-semibold text-white">Camera</div>
+                    {guestShareType === 'camera' && (
+                      <span className="ml-auto text-xs text-blue-400">Current</span>
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-400">Share your camera feed</div>
+                </button>
+
+                {/* Screen Option */}
+                <button
+                  onClick={async () => {
+                    const newType = 'screen';
+                    console.log(`🔄 [Guest] Switching from ${guestShareType} to ${newType}`);
+                    
+                    // Calculate new layout
+                    const hostShareType = liveShareMode || 'camera';
+                    const newLayout = calculateAutoLayout(hostShareType, newType);
+                    
+                    // Update state
+                    setGuestShareType(newType);
+                    setShowGuestSwitchType(false);
+                    
+                    // Notify host
+                    if (sendMessage) {
+                      sendMessage({
+                        type: 'liveshare_guest_switched_type',
+                        data: {
+                          newShareType: newType,
+                          suggestedLayout: newLayout
+                        }
+                      });
+                    }
+                    
+                    // Restart with new type
+                    const guestConfig = {
+                      mode: 'regular',
+                      layout: newLayout,
+                      type: newType,
+                      deviceId: null,
+                    };
+                    
+                    if (onLiveShareTypeSelect) {
+                      onLiveShareTypeSelect(newType, guestConfig);
+                    }
+                    
+                    toast.success('Switched to screen share');
+                  }}
+                  disabled={guestShareType === 'screen'}
+                  className={`w-full p-4 rounded-lg border text-left transition-colors ${
+                    guestShareType === 'screen'
+                      ? 'bg-purple-500/20 border-purple-500/50 cursor-not-allowed'
+                      : 'bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20'
+                  }`}
+                >
+                  <div className="flex items-center space-x-3 mb-1">
+                    <Monitor size={20} className="text-purple-400" />
+                    <div className="font-semibold text-white">Screen</div>
+                    {guestShareType === 'screen' && (
+                      <span className="ml-auto text-xs text-purple-400">Current</span>
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-400">Share your screen</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
     </>

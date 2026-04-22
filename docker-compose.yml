@@ -1,0 +1,513 @@
+# DevOps for WeWatch - Complete Educational Guide
+
+**Goal**: Understand and implement DevOps practices for WeWatch  
+**Duration**: 3-4 hours learning + implementation  
+**Outcome**: Automated testing, containerized app, professional deployment workflow
+
+---
+
+## 📚 Part 1: Understanding Docker (You Already Use It!)
+
+### What You're Already Doing with LiveKit
+
+When you run:
+```bash
+docker run --rm \
+  -p 7880:7880 \
+  -p 7881:7881 \
+  -p 7882:7882 \
+  -e LIVEKIT_KEYS='{"dev-key":"a77cf9f63f8e47f9fdd9d1550e129731"}' \
+  -e LIVEKIT_DEVELOPMENT=true \
+  livekit/livekit-server
+```
+
+**What's happening:**
+1. `docker run` = "Start a container"
+2. `--rm` = "Delete this container when it stops" (cleanup)
+3. `-p 7880:7880` = "Connect port 7880 inside container to port 7880 on your computer"
+4. `-e LIVEKIT_KEYS='...'` = "Set environment variable inside container"
+5. `livekit/livekit-server` = "Use this pre-built image"
+
+**In plain English:**
+Docker takes the LiveKit server software, packages it with everything it needs (Linux, dependencies, config), and runs it in isolation on your computer. You don't have to install LiveKit directly - Docker handles everything.
+
+---
+
+### Why Docker Solves Real Problems
+
+#### Problem 1: "Works on My Machine" Syndrome
+
+**Without Docker:**
+- Your computer: Go 1.24, Node 20, PostgreSQL 15, Ubuntu 22.04 → **WeWatch works ✅**
+- Your friend's computer: Go 1.22, Node 18, PostgreSQL 14, macOS → **WeWatch breaks ❌**
+- Production server: Go 1.23, Node 19, PostgreSQL 13, CentOS → **WeWatch breaks ❌**
+
+**With Docker:**
+- Your Dockerfile says: "Use Go 1.24, Node 20, PostgreSQL 15, Alpine Linux"
+- Docker builds that exact environment
+- **Everyone** (you, friend, production) runs the SAME environment → **WeWatch works everywhere ✅✅✅**
+
+#### Problem 2: Complex Setup
+
+**Without Docker (manual setup):**
+```bash
+# New developer joining your project must:
+1. Install Go 1.24
+2. Install Node 20
+3. Install PostgreSQL 15
+4. Configure PostgreSQL (create database, set password)
+5. Clone WeWatch repo
+6. Install Go dependencies
+7. Install Node dependencies
+8. Set up .env file
+9. Run migrations
+10. Start backend
+11. Start frontend
+Total time: 2-4 hours (if everything works)
+```
+
+**With Docker:**
+```bash
+# New developer:
+docker-compose up
+
+Total time: 5 minutes
+```
+
+Docker automates ALL the setup steps.
+
+---
+
+### Docker Core Concepts (Simple Explanations)
+
+#### 1. **Container** = Lightweight Virtual Machine
+- Like a mini-computer inside your computer
+- Isolated: Has its own filesystem, network, processes
+- Fast: Starts in 1-2 seconds (vs 30+ seconds for VM)
+- Example: Your LiveKit container runs LiveKit server without affecting your main system
+
+#### 2. **Image** = Blueprint for Container
+- Like a recipe or template
+- Contains: OS (Ubuntu/Alpine), software (Go/Node), your code
+- Read-only: You can't change an image, you create new versions
+- Example: `livekit/livekit-server` is an image someone else built and published
+
+#### 3. **Dockerfile** = Instructions to Build Image
+- Plain text file listing steps to create image
+- Like cooking instructions: "Start with base ingredient, add this, cook that"
+- Example (simple):
+  ```dockerfile
+  FROM golang:1.24          # Start with Go installed
+  COPY . /app               # Copy my code into image
+  RUN go build              # Compile code inside image
+  CMD ["./main"]            # Run this when container starts
+  ```
+
+#### 4. **Docker Compose** = Orchestrator for Multiple Containers
+- Runs multiple containers together (backend + frontend + database)
+- Defines how containers communicate
+- One command to start/stop everything
+- Example: `docker-compose up` starts WeWatch backend, frontend, PostgreSQL, and LiveKit all at once
+
+---
+
+### Visual Analogy: Restaurant Kitchen
+
+**Without Docker:**
+- Chef 1 uses electric stove, Chef 2 uses gas stove, Chef 3 uses induction
+- Recipe says "medium heat" but every stove is different → **Inconsistent food**
+
+**With Docker:**
+- Every chef gets identical portable kitchen (container) with same stove (environment)
+- Recipe works exactly the same for everyone → **Consistent food**
+
+**Dockerfile** = Recipe instructions (how to set up kitchen)  
+**Image** = Portable kitchen kit  
+**Container** = Chef cooking in that kitchen  
+**Docker Compose** = Restaurant manager coordinating all chefs
+
+---
+
+## 📦 Part 2: Dockerizing WeWatch (Step-by-Step)
+
+### Step 1: Understanding Backend Dockerfile
+
+**File**: `backend/Dockerfile`
+
+Let me explain each line:
+
+```dockerfile
+# ============ STAGE 1: Build Stage ============
+FROM golang:1.24-alpine AS builder
+```
+**Translation:** Start with Alpine Linux + Go 1.24 pre-installed. Call this stage "builder".  
+**Why Alpine?** Tiny Linux distro (5MB vs 100MB+ for Ubuntu). Faster builds, smaller images.  
+**AS builder:** We'll use this later - multi-stage build trick.
+
+---
+
+```dockerfile
+WORKDIR /app
+```
+**Translation:** Create `/app` folder inside container and work there.  
+**Why?** Like `cd /app` on Linux. All future commands happen in this folder.
+
+---
+
+```dockerfile
+# Install build dependencies
+RUN apk add --no-cache git
+```
+**Translation:** Install git inside the container using Alpine's package manager (apk).  
+**Why git?** Some Go packages need git to download dependencies.  
+**--no-cache:** Don't save package index, saves space.
+
+---
+
+```dockerfile
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+```
+**Translation:**  
+1. Copy `go.mod` and `go.sum` from your computer into container  
+2. Download all Go dependencies listed in those files
+
+**Why copy FIRST, then download?**  
+Docker caches layers. If `go.mod` doesn't change, Docker reuses cached dependencies. Faster builds!
+
+**Smart caching:**
+- Change code → Rebuild only code layer (fast)
+- Change go.mod → Rebuild dependencies + code (slower, but necessary)
+
+---
+
+```dockerfile
+# Copy source code
+COPY . .
+```
+**Translation:** Copy everything else (your Go code, handlers, models, etc.)
+
+**Why separate from go.mod?**  
+Your code changes often, but dependencies don't. This way:
+- Code change → Fast rebuild (only code layer)
+- Dependency change → Slower rebuild (dependency + code)
+
+---
+
+```dockerfile
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/main.go
+```
+**Translation:** Compile Go code into executable binary called `main`.
+
+**Breaking down the flags:**
+- `CGO_ENABLED=0` - Don't use C libraries (pure Go binary, more portable)
+- `GOOS=linux` - Compile for Linux (even if you're on Windows/Mac)
+- `-a` - Rebuild all packages (ensure clean build)
+- `-installsuffix cgo` - Tag for non-CGO builds
+- `-o main` - Output filename
+- `cmd/main.go` - Entry point
+
+**Result:** Single executable file that contains EVERYTHING (no need for go.mod, dependencies, etc.)
+
+---
+
+```dockerfile
+# ============ STAGE 2: Production Stage ============
+FROM alpine:latest
+```
+**Translation:** Start a NEW, FRESH container with just Alpine Linux (no Go, no build tools).
+
+**Why new container?**  
+Builder container has Go compiler, build tools, source code = 500MB+  
+Production container just needs the compiled binary = 15MB!
+
+**Multi-stage build magic:**
+- Stage 1: Build everything (big container, has compilers)
+- Stage 2: Copy ONLY the binary (tiny container, no bloat)
+
+---
+
+```dockerfile
+RUN apk --no-cache add ca-certificates
+```
+**Translation:** Install SSL certificates for HTTPS requests.
+
+**Why?** Your app makes HTTPS calls (Paystack API, etc.). Without certificates, those fail.
+
+---
+
+```dockerfile
+WORKDIR /root/
+```
+**Translation:** Work in `/root/` folder in this new container.
+
+---
+
+```dockerfile
+# Copy the binary from builder stage
+COPY --from=builder /app/main .
+```
+**Translation:** Copy ONLY the compiled `main` binary from builder container to this container.
+
+**This is the magic line!**  
+- Builder container = 500MB (Go, git, source code)
+- Production container = 15MB (just binary + Alpine)
+
+---
+
+```dockerfile
+# Copy migrations (if needed)
+COPY --from=builder /app/migrations ./migrations
+```
+**Translation:** Also copy database migration files (SQL scripts).
+
+**Why?** Backend needs to run migrations when it starts.
+
+---
+
+```dockerfile
+EXPOSE 8080
+```
+**Translation:** Document that this container uses port 8080.
+
+**NOTE:** This is just documentation. Doesn't actually open port. You still need `-p 8080:8080` when running.
+
+---
+
+```dockerfile
+CMD ["./main"]
+```
+**Translation:** When container starts, run `./main` (your compiled Go binary).
+
+**CMD vs RUN:**
+- `RUN` = Execute during image BUILD (install packages, compile code)
+- `CMD` = Execute when container STARTS (run your app)
+
+---
+
+### Step 2: Understanding Frontend Dockerfile
+
+**File**: `frontend/Dockerfile`
+
+```dockerfile
+# ============ STAGE 1: Build Stage ============
+FROM node:20-alpine AS builder
+```
+**Translation:** Start with Alpine + Node 20 pre-installed.
+
+---
+
+```dockerfile
+WORKDIR /app
+```
+**Translation:** Work in `/app` folder.
+
+---
+
+```dockerfile
+# Copy package files
+COPY package*.json ./
+```
+**Translation:** Copy `package.json` and `package-lock.json` first.
+
+**Why?** Same caching trick as Go:
+- If package.json unchanged → Reuse cached node_modules (fast)
+- If changed → Re-download (necessary)
+
+---
+
+```dockerfile
+# Install dependencies
+RUN npm ci
+```
+**Translation:** Install exact dependencies from package-lock.json.
+
+**npm ci vs npm install:**
+- `npm install` - Flexible, updates lock file
+- `npm ci` - Strict, follows lock file exactly (better for production)
+
+---
+
+```dockerfile
+# Copy source code
+COPY . .
+```
+**Translation:** Copy all React code (src/, public/, vite.config.js, etc.)
+
+---
+
+```dockerfile
+# Build the application
+RUN npm run build
+```
+**Translation:** Run Vite build → Creates optimized static files in `dist/` folder.
+
+**What Vite does:**
+- Bundles React code into JavaScript
+- Minifies CSS/JS (removes whitespace, shortens names)
+- Optimizes images
+- Creates `dist/` folder with production-ready files
+
+---
+
+```dockerfile
+# ============ STAGE 2: Production Stage ============
+FROM nginx:alpine
+```
+**Translation:** Start fresh container with NGINX (web server) installed.
+
+**Why NGINX?**  
+React builds static files (HTML/CSS/JS). You need a web server to serve them. NGINX is:
+- Fast (handles 10,000+ requests/second)
+- Tiny (10MB Alpine image)
+- Industry standard for serving static sites
+
+---
+
+```dockerfile
+# Copy built assets from builder
+COPY --from=builder /app/dist /usr/share/nginx/html
+```
+**Translation:** Copy `dist/` folder from builder stage to NGINX's web root.
+
+**Multi-stage magic again:**
+- Builder stage = 500MB (Node, npm, source code, node_modules)
+- Production stage = 25MB (just NGINX + built files)
+
+---
+
+```dockerfile
+EXPOSE 80
+```
+**Translation:** Document that NGINX serves on port 80 (standard HTTP).
+
+---
+
+```dockerfile
+CMD ["nginx", "-g", "daemon off;"]
+```
+**Translation:** Start NGINX in foreground mode.
+
+**Why "daemon off"?**  
+Docker expects process to run in foreground. NGINX defaults to background → container exits immediately. `-g "daemon off;"` keeps it running.
+
+---
+
+### Step 3: Docker Compose (The Orchestrator)
+
+Now let's create `docker-compose.yml` to run everything together:
+
+<function_calls>
+<invoke name="create_file">
+<parameter name="content">version: '3.8'
+
+services:
+  # ============ PostgreSQL Database ============
+  postgres:
+    image: postgres:15-alpine
+    container_name: wewatch-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: wewatch_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wewatch-network
+
+  # ============ LiveKit Server ============
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: wewatch-livekit
+    command: --config /livekit.yaml
+    ports:
+      - "7880:7880"  # HTTP
+      - "7881:7881"  # WebSocket
+      - "7882:7882"  # RTC (TURN)
+      - "50000-50100:50000-50100/udp"  # RTC port range
+    volumes:
+      - ./livekit.yaml:/livekit.yaml:ro
+    environment:
+      - LIVEKIT_DEVELOPMENT=true
+    networks:
+      - wewatch-network
+    depends_on:
+      - postgres
+
+  # ============ Backend (Go + Gin) ============
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wewatch-backend
+    environment:
+      # Database
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/wewatch_db?sslmode=disable
+      
+      # LiveKit
+      - LIVEKIT_URL=http://livekit:7880
+      - LIVEKIT_API_KEY=dev-key
+      - LIVEKIT_API_SECRET=a77cf9f63f8e47f9fdd9d1550e129731
+      
+      # JWT
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      
+      # Google OAuth (add your credentials)
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      
+      # Paystack
+      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY}
+      
+      # Server
+      - PORT=8080
+      - GIN_MODE=release
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/uploads:/root/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    networks:
+      - wewatch-network
+    restart: unless-stopped
+
+  # ============ Frontend (React + Vite + NGINX) ============
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: wewatch-frontend
+    ports:
+      - "80:80"  # Serve on port 80 (production)
+      # or "5173:80" if you want localhost:5173
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8080
+    depends_on:
+      - backend
+    networks:
+      - wewatch-network
+    restart: unless-stopped
+
+# ============ Persistent Storage ============
+volumes:
+  postgres_data:
+    driver: local
+
+# ============ Network ============
+networks:
+  wewatch-network:
+    driver: bridge

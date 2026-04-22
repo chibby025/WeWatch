@@ -493,6 +493,65 @@ func DeleteMediaQueueItem(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Media deleted successfully"})
 }
 
+// DeleteAllGraphics deletes all graphics for a session (called when LiveShare ends)
+func DeleteAllGraphics(c *gin.Context) {
+	sessionIDStr := c.Param("id")
+	
+	// Verify user is authenticated
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Try parsing as integer first (watch_sessions.id)
+	var sessionID uint
+	if parsedID, err := strconv.ParseUint(sessionIDStr, 10, 32); err == nil {
+		sessionID = uint(parsedID)
+	} else {
+		// Assume it's a UUID (watch_sessions.session_id) - look up the integer ID
+		var session models.WatchSession
+		if err := DB.Where("session_id = ?", sessionIDStr).First(&session).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+			return
+		}
+		sessionID = session.ID
+	}
+
+	// Get session to verify user is host
+	var session models.WatchSession
+	if err := DB.First(&session, sessionID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Session not found"})
+		return
+	}
+
+	// Get room to verify user is host
+	var room models.Room
+	if err := DB.First(&room, session.RoomID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	if room.HostID != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only host can delete graphics"})
+		return
+	}
+
+	// Delete all graphics for this session
+	result := DB.Where("session_id = ?", sessionID).Delete(&LiveShareGraphic{})
+	if result.Error != nil {
+		log.Printf("❌ [DeleteAllGraphics] Failed to delete graphics for session %d: %v", sessionID, result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete graphics"})
+		return
+	}
+
+	log.Printf("🗑️ [DeleteAllGraphics] Deleted %d graphics for session %d (LiveShare ended)", result.RowsAffected, sessionID)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Graphics cleared successfully",
+		"deleted": result.RowsAffected,
+	})
+}
+
 // broadcastGraphicsUpdate sends graphics update to all viewers
 func broadcastGraphicsUpdate(sessionID uint, graphic LiveShareGraphic) {
 	message := map[string]interface{}{

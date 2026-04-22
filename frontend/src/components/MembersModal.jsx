@@ -23,6 +23,10 @@ export default function MembersModal({
   watchType = 'video_watch', // Session watch type ('video_watch' or '3d_cinema')
   onMuteAll = null, // ✅ Callback to toggle mute all students
   isMuteAllActive = false, // ✅ Current mute-all toggle state
+  onUnmuteMember = null, // ✅ Callback to unmute individual member (host only)
+  raisedHands = [], // ✅ Array of {userId, username, timestamp}
+  liveShareGuestId = null, // ✅ Selected guest ID for LiveShare (exempt from mute)
+  memberEmotes = {}, // ✅ Map of userId -> {emote, timestamp} for displaying emotes on cards
 }) {
   // ✅ ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
   const [friendshipStatuses, setFriendshipStatuses] = React.useState({}); // userId -> friendship status
@@ -153,6 +157,17 @@ export default function MembersModal({
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
       <div className="bg-gray-800 p-6 rounded-lg w-full max-w-md">
+        {/* Mute Status Banner (always visible when mute-all is active) */}
+        {isMuteAllActive && isHost && (
+          <div className="mb-4 bg-purple-900/30 border border-purple-500/50 rounded-lg p-3">
+            <div className="text-white text-sm">
+              🔇 {liveShareGuestId 
+                ? `Audience Muted - Only you and ${members.find(m => m.id === liveShareGuestId)?.name || members.find(m => m.id === liveShareGuestId)?.username || 'guest'} can speak`
+                : 'All members muted - Only you can speak'}
+            </div>
+          </div>
+        )}
+        
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-white text-lg font-bold">
             {getModalTitle()} ({members.length})
@@ -220,6 +235,21 @@ export default function MembersModal({
                         <span className="text-white font-medium">
                           {member.username || `User ${member.id}`}
                         </span>
+                        {/* Emote indicator (2 seconds, except raise hand) */}
+                        {memberEmotes[member.id] && (
+                          <span 
+                            className="text-2xl animate-bounce" 
+                            title="Recent emote"
+                          >
+                            {memberEmotes[member.id].emote}
+                          </span>
+                        )}
+                        {/* Raised hand indicator (static until unmuted) */}
+                        {raisedHands.some(h => h.userId === member.id) && (
+                          <span className="text-lg" title="Hand raised">
+                            ✋
+                          </span>
+                        )}
                         {isRoomHost && (
                           <span className="bg-yellow-500 text-black text-xs px-2 py-0.5 rounded-full font-bold">
                             Host
@@ -263,8 +293,19 @@ export default function MembersModal({
                     </div>
                   </div>
                   
-                  {/* Right: Friend Button + Message Icon + Broadcast Toggle */}
+                  {/* Right: Unmute Button + Friend Button + Message Icon + Broadcast Toggle */}
                   <div className="flex items-center gap-2">
+                    {/* Unmute Button (Host only, when mute-all is active and member is muted and not exempt guest) */}
+                    {isHost && onUnmuteMember && isMuteAllActive && isMuted && member.id !== currentUserId && member.id !== liveShareGuestId && (
+                      <button
+                        onClick={() => onUnmuteMember(member.id)}
+                        className="px-3 py-1.5 rounded bg-green-600 hover:bg-green-700 text-white text-xs font-medium transition-all"
+                        title="Unmute this member"
+                      >
+                        🔊 Unmute
+                      </button>
+                    )}
+                    
                     {/* Friend Button (Add Friend / Friends / Accept Request) */}
                     {member.id !== currentUserId && (() => {
                       const friendStatus = friendshipStatuses[member.id];

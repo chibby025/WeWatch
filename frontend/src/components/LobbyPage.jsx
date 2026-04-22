@@ -134,6 +134,11 @@ const LobbyPage = () => {
   // ✅ Date of Birth Prompt Modal State
   const [isDOBPromptOpen, setIsDOBPromptOpen] = useState(false);
   const [isDOBSubmitting, setIsDOBSubmitting] = useState(false);
+  
+  // ✅ Create Button Discovery State (First-time user guidance)
+  const [showCreateButtonPulse, setShowCreateButtonPulse] = useState(
+    !localStorage.getItem('hasSeenCreateButton')
+  );
 
   // WebSocket state for lobby real-time updates
   const wsRef = React.useRef(null);
@@ -407,6 +412,17 @@ const LobbyPage = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [openMenuRoomId]);
+  
+  // ✅ Manage Create Button pulse for new users
+  useEffect(() => {
+    if (showCreateButtonPulse && activeTab === 'rooms') {
+      const timer = setTimeout(() => {
+        localStorage.setItem('hasSeenCreateButton', 'true');
+        setShowCreateButtonPulse(false);
+      }, 5000); // Pulse for 5 seconds
+      return () => clearTimeout(timer);
+    }
+  }, [showCreateButtonPulse, activeTab]);
   
   // ✅ Check if user has provided date of birth on component mount
   useEffect(() => {
@@ -1871,18 +1887,6 @@ const LobbyPage = () => {
                 }
                 break;
                 
-              case 'session_chat_sent':
-                // ✅ Real-time chat count update (for users NOT currently viewing the chat)
-                console.log(`💬 [LobbyPage] Chat sent in session: ${message.session_id}, count: ${message.chat_count}`);
-                // Only update if chat is NOT open (open chat updates from polling)
-                if (activeChatSession?.session_id !== message.session_id) {
-                  setSessionChatCounts(prev => ({
-                    ...prev,
-                    [message.session_id]: message.chat_count
-                  }));
-                }
-                break;
-                
               case 'rating_updated':
             }
           } catch (err) {
@@ -2541,19 +2545,45 @@ const LobbyPage = () => {
       {activeTab === 'rooms' && (
         <div className="mb-4 sm:mb-8 flex justify-center">
           <div className="flex items-center gap-0 w-full max-w-3xl">
-            {/* Create New Button - Seamlessly integrated on left */}
-            <button
-              type="button"
-              onClick={() => setIsCreateNewModalOpen(true)}
-              className="flex-shrink-0 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 border-r-0 rounded-l-lg px-2 py-1.5 sm:px-3 sm:py-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              title="Create New Room or Start Instant Watch"
-            >
-              <img 
-                src="/icons/newRoom.svg" 
-                alt="Create New" 
-                className="h-6 w-6 sm:h-7 sm:w-7"
-              />
-            </button>
+            {/* Create New Button - Enhanced with pulse & glow for discoverability */}
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreateNewModalOpen(true);
+                  if (showCreateButtonPulse) {
+                    localStorage.setItem('hasSeenCreateButton', 'true');
+                    setShowCreateButtonPulse(false);
+                  }
+                }}
+                className={`flex-shrink-0 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 border-r-0 rounded-l-lg px-2 py-1.5 sm:px-3 sm:py-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all hover:scale-105 ${
+                  showCreateButtonPulse ? 'shadow-lg shadow-blue-500/50 dark:shadow-blue-400/50' : ''
+                }`}
+                title="Create New Room or Start Instant Watch"
+              >
+                <img 
+                  src="/icons/newRoom.svg" 
+                  alt="Create New" 
+                  className={`h-8 w-8 sm:h-9 sm:w-9 transition-all ${
+                    showCreateButtonPulse ? 'animate-pulse' : ''
+                  }`}
+                />
+              </button>
+              
+              {/* Notification Dot - First-time indicator */}
+              {showCreateButtonPulse && (
+                <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full animate-ping" />
+              )}
+              
+              {/* Hover Tooltip */}
+              <div className="absolute left-0 top-full mt-2 hidden group-hover:block z-50 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="bg-gray-900 text-white text-xs px-3 py-2 rounded-lg shadow-lg whitespace-nowrap">
+                  <div className="font-semibold">Create Room or Instant Watch</div>
+                  <div className="text-gray-300 text-[10px] mt-0.5">Start watching with friends!</div>
+                  <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45" />
+                </div>
+              </div>
+            </div>
 
             {/* Search Form - Middle & Right */}
             <form onSubmit={handleSearchSubmit} className="flex flex-1">
