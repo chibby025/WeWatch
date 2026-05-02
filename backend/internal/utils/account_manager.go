@@ -17,8 +17,8 @@ import (
 type AccountType string
 
 const (
-	AccountTypeRevenue AccountType = "revenue" // 15% platform profit
-	AccountTypeReserve AccountType = "reserve" // 85% host payouts
+	AccountTypeRevenue AccountType = "revenue" // 25% platform profit
+	AccountTypeReserve AccountType = "reserve" // 75% host payouts
 	AccountTypeMain    AccountType = "main"    // Main collection account
 )
 
@@ -102,8 +102,8 @@ func (am *PaymentAccountManager) GetPaystackKey(accountType AccountType) string 
 // SplitPaymentResult represents the result of splitting a payment
 type SplitPaymentResult struct {
 	TotalAmount        float64 `json:"total_amount"`
-	RevenueAmount      float64 `json:"revenue_amount"`       // 15%
-	ReserveAmount      float64 `json:"reserve_amount"`       // 85%
+	RevenueAmount      float64 `json:"revenue_amount"`       // 25%
+	ReserveAmount      float64 `json:"reserve_amount"`       // 75%
 	RevenueTransferID  string  `json:"revenue_transfer_id"`  // Stripe/Paystack transfer ID
 	ReserveTransferID  string  `json:"reserve_transfer_id"`  // Stripe/Paystack transfer ID
 	Gateway            string  `json:"gateway"`              // "stripe" or "paystack"
@@ -122,7 +122,7 @@ func (am *PaymentAccountManager) SplitStripePayment(amount float64, currency str
 	}
 	
 	// If main account = revenue account, no need to transfer revenue portion
-	// Just transfer 85% to reserve
+	// Just transfer 75% to reserve
 	if am.StripeMainKey == am.StripeRevenueKey {
 		// Only transfer to reserve account
 		stripeAmount := int64(result.ReserveAmount * 100) // Convert to cents
@@ -149,7 +149,7 @@ func (am *PaymentAccountManager) SplitStripePayment(amount float64, currency str
 	}
 	
 	// If using separate main account, transfer both portions
-	// Transfer 15% to revenue account
+	// Transfer 25% to revenue account
 	stripeRevenueAmount := int64(result.RevenueAmount * 100)
 	stripe.Key = am.StripeMainKey
 	
@@ -157,7 +157,7 @@ func (am *PaymentAccountManager) SplitStripePayment(amount float64, currency str
 		Amount:      stripe.Int64(stripeRevenueAmount),
 		Currency:    stripe.String(currency),
 		Destination: stripe.String(am.getStripeAccountID(AccountTypeRevenue)),
-		Description: stripe.String(fmt.Sprintf("Revenue (15%%): %s", description)),
+		Description: stripe.String(fmt.Sprintf("Revenue (25%%): %s", description)),
 	}
 	
 	revenueTransfer, err := transfer.New(revenueParams)
@@ -168,14 +168,14 @@ func (am *PaymentAccountManager) SplitStripePayment(amount float64, currency str
 	}
 	result.RevenueTransferID = revenueTransfer.ID
 	
-	// Transfer 85% to reserve account
+	// Transfer 75% to reserve account
 	stripeReserveAmount := int64(result.ReserveAmount * 100)
 	
 	reserveParams := &stripe.TransferParams{
 		Amount:      stripe.Int64(stripeReserveAmount),
 		Currency:    stripe.String(currency),
 		Destination: stripe.String(am.getStripeAccountID(AccountTypeReserve)),
-		Description: stripe.String(fmt.Sprintf("Reserve (85%%): %s", description)),
+		Description: stripe.String(fmt.Sprintf("Reserve (75%%): %s", description)),
 	}
 	
 	reserveTransfer, err := transfer.New(reserveParams)

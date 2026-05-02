@@ -13,13 +13,13 @@ type PlatformAccounting struct {
 	
 	// Current Balances (Real-time)
 	TotalPlatformRevenue float64 `gorm:"type:decimal(15,2);not null;default:0" json:"total_platform_revenue"` // All NET money that entered platform (never decreases)
-	PlatformProfit       float64 `gorm:"type:decimal(15,2);not null;default:0;check:platform_profit >= 0" json:"platform_profit"` // Platform 15% commission - can withdraw safely
-	HostReserveBalance   float64 `gorm:"type:decimal(15,2);not null;default:0;check:host_reserve_balance >= 0" json:"host_reserve_balance"` // Money owed to hosts (85%)
+	PlatformProfit       float64 `gorm:"type:decimal(15,2);not null;default:0;check:platform_profit >= 0" json:"platform_profit"` // Platform 25% commission - can withdraw safely
+	HostReserveBalance   float64 `gorm:"type:decimal(15,2);not null;default:0;check:host_reserve_balance >= 0" json:"host_reserve_balance"` // Money owed to hosts (75%)
 	TotalGatewayBalance  float64 `gorm:"type:decimal(15,2);not null;default:0" json:"total_gateway_balance"` // Actual money in Stripe/Paystack right now
 	
 	// Lifetime metrics (Historical - never decrease)
 	LifetimeTotalRevenue    float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_total_revenue"`    // All NET money ever entered
-	LifetimePlatformProfit  float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_platform_profit"`  // All 15% commission ever earned
+	LifetimePlatformProfit  float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_platform_profit"`  // All 25% commission ever earned
 	LifetimeHostEarnings    float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_host_earnings"`    // All host earnings ever attributed
 	LifetimePayouts         float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_payouts"`         // Total paid out to hosts
 	LifetimeUserSpend       float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_user_spend"`       // Total GROSS user spending

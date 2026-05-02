@@ -182,7 +182,7 @@ func PurchaseTokens(c *gin.Context) {
 
 		log.Printf("💰 User %d purchased %d tokens (%.2f tokens) for ₦%d via %s", 
 			userID, tokensToAdd, float64(tokensToAdd)/100.0, req.Amount, req.PaymentMethod)
-		log.Printf("   💵 Revenue split: Platform ₦%.2f (15%%), Reserve ₦%.2f (85%%)", 
+		log.Printf("   💵 Revenue split: Platform ₦%.2f (25%%), Reserve ₦%.2f (75%%)", 
 			platformCommission, netAmount)
 		
 		// ✅ AUTOMATIC SPLIT: Payment split handled by Paystack Split Code (SPL_CcDDM4qs7n)

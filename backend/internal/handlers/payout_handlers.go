@@ -169,7 +169,7 @@ func RequestPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 			}
 
 			// Determine if auto-approval is eligible
-			autoApprove := shouldAutoApprovePayout(amountNGN, kycVerified, isFirstTime, req.PayoutMethod)
+			autoApprove := shouldAutoApprovePayout(amountNGN, kycVerified, isFirstTime, req.PayoutMethod, user.Role)
 			
 			initialStatus := string(models.PayoutStatusPending)
 			var processingMessage string
@@ -253,7 +253,7 @@ func RequestPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 			}
 
 			// Determine if auto-approval is eligible
-			autoApprove := shouldAutoApprovePayout(amountNGN, kycVerified, isFirstTime, req.PayoutMethod)
+			autoApprove := shouldAutoApprovePayout(amountNGN, kycVerified, isFirstTime, req.PayoutMethod, user.Role)
 			
 			initialStatus := string(models.PayoutStatusPending)
 			var processingMessage string
@@ -501,7 +501,13 @@ func CancelPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 }
 
 // shouldAutoApprovePayout determines if a payout should be automatically approved
-func shouldAutoApprovePayout(amountNGN float64, kycVerified bool, isFirstTime bool, payoutMethod string) bool {
+func shouldAutoApprovePayout(amountNGN float64, kycVerified bool, isFirstTime bool, payoutMethod string, userRole string) bool {
+	// 👑 Admin/Super Admin bypass - auto-approve regardless of amount or other checks
+	if userRole == "admin" || userRole == "super_admin" {
+		log.Printf("✅ Auto-approve: YES - Admin/Super Admin bypass (role: %s)", userRole)
+		return true
+	}
+
 	// Bank transfers only for now
 	if payoutMethod != string(models.PayoutMethodBankTransfer) {
 		return false

@@ -1,6 +1,6 @@
 // frontend/src/components/liveshare/LiveShareModeSelector.jsx
 import { useState } from 'react';
-import { Mic, Newspaper, Clapperboard, Video } from 'lucide-react';
+import { Mic, Newspaper, Clapperboard, Video, Church } from 'lucide-react';
 
 const MODES = [
   {
@@ -15,6 +15,13 @@ const MODES = [
     name: 'Podcast',
     icon: Mic,
     gradient: 'from-purple-500/20 to-purple-600/20',
+    maxGuests: 1,
+  },
+  {
+    id: 'church',
+    name: 'Church',
+    icon: Church,
+    gradient: 'from-yellow-500/20 to-yellow-600/20',
     maxGuests: 1,
   },
   {

@@ -1,12 +1,27 @@
 // WeWatch/frontend/src/components/AccessModal.jsx
 // Modal to choose between Public or Private access for instant watch + Content Rating
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { GlobeAltIcon, LockClosedIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import ContentRatingSelector from './ContentRatingSelector';
+import { useAuth } from '../contexts/AuthContext';
 
 const AccessModal = ({ isOpen, onClose, onSelectAccess, title = "Choose Room Access" }) => {
+  const { currentUser } = useAuth();
   const [isSessionPrivate, setIsSessionPrivate] = useState(false);
   const [contentRating, setContentRating] = useState('G'); // Default to General
+
+  // Calculate user's age from date_of_birth
+  const userAge = useMemo(() => {
+    if (!currentUser?.date_of_birth) return 0; // Unknown age - allow all ratings
+    const birthDate = new Date(currentUser.date_of_birth);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age;
+  }, [currentUser]);
 
   if (!isOpen) return null;
 
@@ -32,7 +47,8 @@ const AccessModal = ({ isOpen, onClose, onSelectAccess, title = "Choose Room Acc
   ];
 
   const handleSelectAccess = (isPublic) => {
-    console.log('🔐 [AccessModal] Calling onSelectAccess with:', { isPublic, isSessionPrivate, contentRating });
+    console.log('🔐 [AccessModal] User selected access settings:', { isPublic, isSessionPrivate, contentRating });
+    console.log('🔐 [AccessModal] Hide from Lobby is:', isSessionPrivate ? 'ENABLED ✅' : 'DISABLED ❌');
     // Pass access type, session privacy, and content rating to parent
     onSelectAccess(isPublic, isSessionPrivate, contentRating);
   };
@@ -166,6 +182,7 @@ const AccessModal = ({ isOpen, onClose, onSelectAccess, title = "Choose Room Acc
                 value={contentRating}
                 onChange={setContentRating}
                 showLabel={false}
+                userAge={userAge}
               />
             </div>
           </div>

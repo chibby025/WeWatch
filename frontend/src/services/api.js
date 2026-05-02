@@ -227,6 +227,53 @@ export const completeAdminPayout = async (payoutId, transferReference = null, no
     }
 };
 
+/**
+ * Get all KYC submissions (admin only)
+ * @param {string} status - Optional status filter: 'pending', 'approved', 'rejected', or 'all'
+ * @returns {Promise} Axios promise resolving to KYC submissions list
+ */
+export const getAdminKYCs = async (status = 'all') => {
+    try {
+        const endpoint = status === 'pending' ? '/api/admin/kyc/pending' : `/api/admin/kyc?status=${status}`;
+        const response = await apiClient.get(endpoint);
+        return response.data;
+    } catch (error) {
+        console.error('API Error (getAdminKYCs):', error);
+        throw error;
+    }
+};
+
+/**
+ * Approve a KYC submission (admin only)
+ * @param {number} kycId - The KYC submission ID to approve
+ * @returns {Promise} Axios promise resolving to approval result
+ */
+export const approveKYC = async (kycId) => {
+    try {
+        const response = await apiClient.post(`/api/admin/kyc/${kycId}/approve`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error (approveKYC):', error);
+        throw error;
+    }
+};
+
+/**
+ * Reject a KYC submission (admin only)
+ * @param {number} kycId - The KYC submission ID to reject
+ * @param {string} reason - Rejection reason
+ * @returns {Promise} Axios promise resolving to rejection result
+ */
+export const rejectKYC = async (kycId, reason) => {
+    try {
+        const response = await apiClient.post(`/api/admin/kyc/${kycId}/reject`, { reason });
+        return response.data;
+    } catch (error) {
+        console.error('API Error (rejectKYC):', error);
+        throw error;
+    }
+};
+
 // --- Authentication API Calls ---
 /**
  * Register a new user
@@ -1129,6 +1176,11 @@ export const getFriendshipStatus = async (userId) => {
 // Get friend count for a user
 export const getFriendCount = async (userId) => {
   return await apiClient.get(`/api/friendships/count/${userId}`);
+};
+
+// Get followers count for a user (unique members across all hosted rooms)
+export const getFollowersCount = async (userId) => {
+  return await apiClient.get(`/api/friendships/followers/${userId}`);
 };
 
 // Get average watchers for a user (host stats)

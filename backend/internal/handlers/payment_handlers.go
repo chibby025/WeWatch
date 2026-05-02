@@ -190,15 +190,15 @@ func PurchaseTokensHandler(db *gorm.DB) gin.HandlerFunc {
 		// For now, we'll simulate success
 		transaction.Status = models.TransactionStatusCompleted
 
-		// 🎯 AUTO-SPLIT PAYMENT: 85% to reserve, 15% to revenue
+		// 🎯 AUTO-SPLIT PAYMENT: 75% to reserve, 25% to revenue
 		var splitResult *utils.SplitPaymentResult
 		var splitErr error
 		
 		if req.PaymentMethod == "stripe" {
-			log.Printf("💳 Splitting Stripe payment: $%.2f (85%% reserve, 15%% revenue)", usdAmount)
+			log.Printf("💳 Splitting Stripe payment: $%.2f (75%% reserve, 25%% revenue)", usdAmount)
 			splitResult, splitErr = utils.AccountManager.SplitStripePayment(usdAmount, "usd", fmt.Sprintf("Token purchase by user %d", user.ID))
 		} else if req.PaymentMethod == "paystack" {
-			log.Printf("💳 Splitting Paystack payment: ₦%.2f (85%% reserve, 15%% revenue)", usdAmount*1000) // Assuming ₦1000/$1
+			log.Printf("💳 Splitting Paystack payment: ₦%.2f (75%% reserve, 25%% revenue)", usdAmount*1000) // Assuming ₦1000/$1
 			splitResult, splitErr = utils.AccountManager.SplitPaystackPayment(usdAmount*1000, "NGN", fmt.Sprintf("Token purchase by user %d", user.ID))
 		}
 		
@@ -207,8 +207,8 @@ func PurchaseTokensHandler(db *gorm.DB) gin.HandlerFunc {
 			// Don't fail the purchase, just log the error for now
 		} else if splitResult != nil {
 			log.Printf("✅ Payment split successful:")
-			log.Printf("   - Revenue account (15%%): $%.2f (ID: %s)", splitResult.RevenueAmount, splitResult.RevenueTransferID)
-			log.Printf("   - Reserve account (85%%): $%.2f (ID: %s)", splitResult.ReserveAmount, splitResult.ReserveTransferID)
+			log.Printf("   - Revenue account (25%%): $%.2f (ID: %s)", splitResult.RevenueAmount, splitResult.RevenueTransferID)
+			log.Printf("   - Reserve account (75%%): $%.2f (ID: %s)", splitResult.ReserveAmount, splitResult.ReserveTransferID)
 			
 			// 📝 Store both transfer IDs for audit trail
 			transaction.RevenueTransferID = &splitResult.RevenueTransferID
@@ -250,7 +250,7 @@ func PurchaseTokensHandler(db *gorm.DB) gin.HandlerFunc {
 			// Add purchase with fee breakdown
 			accounting.AddTokenPurchaseWithFee(grossAmount, netAmount, gatewayFee)
 			db.Save(accounting)
-			log.Printf("📊 Platform accounting updated: TotalRevenue=%.2f (NET), Profit=%.2f (15%%), Reserve=%.2f (85%%), GatewayFee=%.2f", 
+			log.Printf("📊 Platform accounting updated: TotalRevenue=%.2f (NET), Profit=%.2f (25%%), Reserve=%.2f (75%%), GatewayFee=%.2f", 
 				accounting.TotalPlatformRevenue, accounting.PlatformProfit, accounting.HostReserveBalance, gatewayFee)
 		}
 

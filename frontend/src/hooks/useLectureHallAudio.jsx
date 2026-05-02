@@ -279,22 +279,22 @@ const useLectureHallAudio = ({
    * Returns array of user IDs
    */
   const getAudioRecipients = useCallback(() => {
-    // Discussion mode: everyone speaks to everyone
-    if (discussionMode && isHost) {
+    // ✅ Discussion mode: EVERYONE speaks to EVERYONE (not just host)
+    if (discussionMode) {
       return watchSessionMembers.map(m => m.id.toString());
     }
 
-    // Host always broadcasts to everyone
+    // Host always broadcasts to everyone in lecture mode
     if (isHost) {
       return watchSessionMembers.map(m => m.id.toString());
     }
 
-    // Student with host approval broadcasts to everyone
+    // Student with host approval (LiveShare permission) broadcasts to everyone
     if (hasHostApproval) {
       return watchSessionMembers.map(m => m.id.toString());
     }
 
-    // Default: row AND column for students (isolated groups)
+    // Default lecture mode: row AND column for students (isolated groups)
     const mySeatId = userSeats[authenticatedUserID];
     if (!mySeatId) return [];
 
@@ -662,6 +662,18 @@ const useLectureHallAudio = ({
       }
     };
   }, []);
+
+  /**
+   * ✅ Re-broadcast audio state when discussion mode changes
+   * This ensures already-unmuted users update their recipient list
+   */
+  useEffect(() => {
+    // Only re-broadcast if user is currently unmuted
+    if (isAudioActiveRef.current && sendMessage) {
+      console.log(`🔄 [Discussion Mode Changed] Re-broadcasting audio state (isAudioActive: ${isAudioActiveRef.current}, discussionMode: ${discussionMode})`);
+      broadcastAudioState(true);
+    }
+  }, [discussionMode, broadcastAudioState, sendMessage]);
 
   return {
     hasMicPermission,

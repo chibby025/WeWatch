@@ -1069,6 +1069,7 @@ const PositionCalculatorPage = () => {
   const [screenShareTrackSid, setScreenShareTrackSid] = useState(null);
   const [cameraShareTrackSid, setCameraShareTrackSid] = useState(null);
   const previousBlackboardStateRef = useRef(null); // Store blackboard state before LiveShare
+  const previousDiscussionModeRef = useRef(null); // Store discussion mode state before LiveShare
   
   // Temporary playlist state (for session uploads)
   const [temporaryPlaylist, setTemporaryPlaylist] = useState([]);
@@ -4825,6 +4826,9 @@ const PositionCalculatorPage = () => {
         setLiveShareMode(null);
         setIsScreenSharingActive(false);
         
+        // Note: Discussion mode will be synced via discussion_mode_changed message from backend
+        // Members don't toggle it directly, they receive the state update
+        
         console.log('✅ [LiveShare] Blackboard cleared for member - should show white board now');
         toast('LiveShare ended');
         break;
@@ -6217,6 +6221,16 @@ const PositionCalculatorPage = () => {
       setBlackboardMedia(previousBlackboardStateRef.current);
       previousBlackboardStateRef.current = null; // Clear saved state
       
+      // ✅ AUTO-DISABLE DISCUSSION MODE when LiveShare ends (restore previous state)
+      if (isHost && previousDiscussionModeRef.current !== null) {
+        const shouldRestore = previousDiscussionModeRef.current;
+        if (discussionMode !== shouldRestore) {
+          toggleDiscussionMode();
+          console.log(`🎤 [LiveShare] Discussion mode restored to: ${shouldRestore}`);
+        }
+        previousDiscussionModeRef.current = null; // Clear saved state
+      }
+      
       setIsScreenSharingActive(false);
       setLiveShareMode(null);
       setSharingSource(null); // Clear source
@@ -6302,6 +6316,13 @@ const PositionCalculatorPage = () => {
     if (!mode) {
       handleEndScreenShare();
       return;
+    }
+    
+    // ✅ AUTO-ENABLE DISCUSSION MODE when LiveShare starts (host only)
+    if (isHost && !discussionMode) {
+      previousDiscussionModeRef.current = discussionMode;
+      toggleDiscussionMode();
+      console.log('🎤 [LiveShare] Discussion mode AUTO-ENABLED (everyone can speak during LiveShare)');
     }
     
     // Send mode selection to backend

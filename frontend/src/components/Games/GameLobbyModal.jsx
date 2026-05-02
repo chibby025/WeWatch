@@ -22,46 +22,6 @@ const games = [
     icon: '🪨📄✂️',
     disabled: false,
     type: 'multiplayer'
-  },
-  {
-    id: 'space_impact',
-    name: 'Space Impact',
-    description: 'Classic arcade shooter - Everyone watches!',
-    minPlayers: 1,
-    maxPlayers: 1,
-    icon: '🚀👾',
-    disabled: false,
-    type: 'arcade'
-  },
-  {
-    id: 'snake',
-    name: 'Snake',
-    description: 'Eat apples, grow longer - Don\'t hit walls!',
-    minPlayers: 1,
-    maxPlayers: 1,
-    icon: '🐍🍎',
-    disabled: false,
-    type: 'arcade'
-  },
-  {
-    id: 'tetris',
-    name: 'Tetris',
-    description: 'Stack blocks, clear lines - Classic puzzle!',
-    minPlayers: 1,
-    maxPlayers: 1,
-    icon: '🟦🟨',
-    disabled: false,
-    type: 'arcade'
-  },
-  {
-    id: 'ludo',
-    name: 'Ludo',
-    description: 'Classic board game (Coming Soon)',
-    minPlayers: 2,
-    maxPlayers: 4,
-    icon: '🎲',
-    disabled: true,
-    type: 'multiplayer'
   }
 ];
 

@@ -128,6 +128,18 @@ func StripeWebhookHandler(db *gorm.DB) gin.HandlerFunc {
 
 		log.Printf("📥 Stripe webhook received: Type=%s, ID=%s", event.Type, event.ID)
 
+		// ✅ P0 Security Fix: Check if webhook already processed (idempotency)
+		if models.IsWebhookProcessed(db, event.ID) {
+			log.Printf("✅ Webhook already processed (idempotent): %s", event.ID)
+			c.JSON(http.StatusOK, gin.H{"received": true, "status": "already_processed"})
+			return
+		}
+
+		// ✅ Mark as processed BEFORE handling (prevents race condition)
+		if err := models.MarkWebhookProcessed(db, event.ID, event.Type, "stripe"); err != nil {
+			log.Printf("⚠️ Warning: Failed to mark webhook as processed: %v", err)
+		}
+
 		// Handle different event types
 		switch event.Type {
 		case "payment_intent.succeeded":
@@ -185,6 +197,19 @@ func PaystackWebhookHandler(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		log.Printf("📥 Paystack webhook received: Event=%s, Reference=%s", event.Event, event.Data.Reference)
+
+		// ✅ P0 Security Fix: Check if webhook already processed (idempotency)
+		eventID := event.Data.Reference // Use reference as unique event ID
+		if models.IsWebhookProcessed(db, eventID) {
+			log.Printf("✅ Webhook already processed (idempotent): %s", eventID)
+			c.JSON(http.StatusOK, gin.H{"status": "already_processed"})
+			return
+		}
+
+		// ✅ Mark as processed BEFORE handling (prevents race condition)
+		if err := models.MarkWebhookProcessed(db, eventID, event.Event, "paystack"); err != nil {
+			log.Printf("⚠️ Warning: Failed to mark webhook as processed: %v", err)
+		}
 
 		// Handle different event types
 		switch event.Event {

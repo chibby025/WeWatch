@@ -67,8 +67,8 @@ type TokenTransaction struct {
 	USDValue           *float64          `gorm:"type:decimal(10,2)" json:"usd_value,omitempty"`
 	PaymentMethod      *string           `gorm:"type:varchar(20)" json:"payment_method,omitempty"`
 	PaymentID          *string           `gorm:"type:varchar(255);index" json:"payment_id,omitempty"`
-	RevenueTransferID  *string           `gorm:"type:varchar(255);index" json:"revenue_transfer_id,omitempty"` // 15% platform revenue
-	ReserveTransferID  *string           `gorm:"type:varchar(255);index" json:"reserve_transfer_id,omitempty"` // 85% host reserve
+	RevenueTransferID  *string           `gorm:"type:varchar(255);index" json:"revenue_transfer_id,omitempty"` // 25% platform revenue
+	ReserveTransferID  *string           `gorm:"type:varchar(255);index" json:"reserve_transfer_id,omitempty"` // 75% host reserve
 	Status             TransactionStatus `gorm:"type:varchar(20);not null;default:'pending';index" json:"status"`
 	Metadata           map[string]interface{} `gorm:"type:jsonb" json:"metadata,omitempty"`
 	

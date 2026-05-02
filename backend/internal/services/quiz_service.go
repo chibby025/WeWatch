@@ -150,10 +150,16 @@ func (s *QuizService) GradeAnswers(quiz *models.Quiz, answers []models.Answer) (
 			isCorrect = strings.TrimSpace(answer.Answer) == question.CorrectAnswer
 			
 		case "text_input":
-			// Case-insensitive, trimmed match for text input
-			studentAnswer := strings.TrimSpace(strings.ToLower(answer.Answer))
-			correctAnswer := strings.TrimSpace(strings.ToLower(question.CorrectAnswer))
-			isCorrect = studentAnswer == correctAnswer
+			// Check if exact match (case-sensitive) is required
+			if question.ExactMatch {
+				// Case-sensitive match
+				isCorrect = strings.TrimSpace(answer.Answer) == strings.TrimSpace(question.CorrectAnswer)
+			} else {
+				// Case-insensitive match (default)
+				isCorrect = strings.EqualFold(
+					strings.TrimSpace(answer.Answer),
+					strings.TrimSpace(question.CorrectAnswer))
+			}
 		}
 		
 		if isCorrect {

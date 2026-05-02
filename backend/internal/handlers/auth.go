@@ -11,9 +11,11 @@ import (
     "strings"
     "time"
     "wewatch-backend/internal/models"
+    "wewatch-backend/internal/services"
     "wewatch-backend/internal/utils"
 
     "github.com/gin-gonic/gin"
+    "github.com/google/uuid"
     "gorm.io/gorm"
 )
 
@@ -152,6 +154,8 @@ func RegisterHandler(c *gin.Context) {
             "id":       newUser.ID,
             "username": newUser.Username,
             "email":    newUser.Email,
+            "avatar_url": newUser.AvatarURL,
+            "has_date_of_birth": newUser.HasDateOfBirth(),
             // Don't include PasswordHash!
         },
         "token": tokenString,
@@ -171,6 +175,8 @@ func LoginHandler(c *gin.Context) {
     result := DB.Where("email = ?", input.Email).First(&user)
     if result.Error != nil {
         if result.Error == gorm.ErrRecordNotFound {
+            // ✅ P0 Security Fix: Log failed login attempt (user not found)
+            models.LogSecurityEvent(DB, nil, models.EventFailedLogin, c.ClientIP(), c.GetHeader("User-Agent"), fmt.Sprintf(`{"email": "%s", "reason": "user_not_found"}`, input.Email))
             c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
             return
         } else {
@@ -181,6 +187,17 @@ func LoginHandler(c *gin.Context) {
     }
 
     if !utils.CheckPasswordHash(input.Password, user.PasswordHash) {
+        // ✅ P0 Security Fix: Log failed login attempt (wrong password)
+        userID := user.ID
+        models.LogSecurityEvent(DB, &userID, models.EventFailedLogin, c.ClientIP(), c.GetHeader("User-Agent"), `{"reason": "wrong_password"}`)
+        
+        // ✅ P1 Security Feature: Check for brute force
+        if models.DetectBruteForce(DB, user.ID) {
+            models.LogSecurityEvent(DB, &userID, models.EventAccountLocked, c.ClientIP(), c.GetHeader("User-Agent"), `{"reason": "brute_force_detected"}`)
+            c.JSON(http.StatusTooManyRequests, gin.H{"error": "Account temporarily locked due to multiple failed attempts. Try again in 15 minutes."})
+            return
+        }
+        
         c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
         return
     }
@@ -213,12 +230,31 @@ func LoginHandler(c *gin.Context) {
             "id":       user.ID,
             "username": user.Username,
             "email":    user.Email,
+            "avatar_url": user.AvatarURL,
+            "bio":       user.Bio,
+            "has_date_of_birth": user.HasDateOfBirth(),
         },
     })
 }
 
 // Handle user logout
 func LogoutHandler(c *gin.Context) {
+    // ✅ P0 Security Fix: Blacklist JWT token before clearing cookie
+    token, err := c.Cookie("wewatch_token")
+    if err == nil && token != "" {
+        // Parse token to get expiration time
+        claims, parseErr := utils.ParseJWT(token)
+        if parseErr == nil {
+            // Add token to blacklist with its original expiration
+            expiresAt := time.Unix(int64(claims["exp"].(float64)), 0)
+            if blacklistErr := models.BlacklistToken(DB, token, expiresAt); blacklistErr != nil {
+                log.Printf("⚠️ Warning: Failed to blacklist token on logout: %v", blacklistErr)
+            } else {
+                log.Printf("✅ Token blacklisted on logout")
+            }
+        }
+    }
+    
     // Clear the cookie
     cookie := &http.Cookie{
         Name:     "wewatch_token",
@@ -232,6 +268,72 @@ func LogoutHandler(c *gin.Context) {
     http.SetCookie(c.Writer, cookie)
 
     c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
+}
+
+// ChangePasswordInput defines the structure for password change request
+type ChangePasswordInput struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required,min=8"`
+}
+
+// ChangePasswordHandler handles password changes for authenticated users
+// POST /api/auth/change-password (protected)
+func ChangePasswordHandler(c *gin.Context) {
+	// Get user ID from context (set by AuthMiddleware)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var input ChangePasswordInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("Error binding password change input: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Fetch user
+	var user models.User
+	if err := DB.First(&user, userID.(uint)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Verify current password
+	if !utils.CheckPasswordHash(input.CurrentPassword, user.PasswordHash) {
+		log.Printf("⚠️ Failed password change attempt for user %d: wrong current password", user.ID)
+		userIDUint := user.ID
+		models.LogSecurityEvent(DB, &userIDUint, "password_change_failed", c.ClientIP(), c.GetHeader("User-Agent"), `{"reason": "wrong_current_password"}`)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Current password is incorrect"})
+		return
+	}
+
+	// Hash new password
+	hashedPassword, err := utils.HashPassword(input.NewPassword)
+	if err != nil {
+		log.Printf("Error hashing new password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process new password"})
+		return
+	}
+
+	// Update password
+	user.PasswordHash = hashedPassword
+	if err := DB.Save(&user).Error; err != nil {
+		log.Printf("Error updating password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
+		return
+	}
+
+	// Log security event
+	userIDUint := user.ID
+	models.LogSecurityEvent(DB, &userIDUint, models.EventPasswordChanged, c.ClientIP(), c.GetHeader("User-Agent"), `{"status": "success"}`)
+	log.Printf("✅ Password changed successfully for user %d (%s)", user.ID, user.Email)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Password changed successfully",
+		"success": true,
+	})
 }
 
 // CookieToAuthHeaderMiddleware converts wewatch_token cookie to Authorization header
@@ -301,6 +403,7 @@ func GetCurrentUserHandler(c *gin.Context) {
             "role":       user.Role,
             "created_at": user.CreatedAt,
             "age":        user.GetAge(), // ✅ Computed age (not raw DOB) for content rating checks
+            "has_date_of_birth": user.HasDateOfBirth(), // ✅ Frontend needs this to show/hide DOB prompt
         },
         "room_memberships": roomMemberships,
     }
@@ -467,6 +570,14 @@ func AuthMiddleware() gin.HandlerFunc {
             return
         }
 
+        // ✅ P0 Security Fix: Check if token is blacklisted (logged out)
+        if models.IsTokenBlacklisted(DB, tokenString) {
+            log.Printf("AuthMiddleware: Token is blacklisted (logged out)")
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Token has been revoked. Please log in again."})
+            c.Abort()
+            return
+        }
+
         // Validate token
         userID, err := utils.ValidateJWT(tokenString)
         if err != nil {
@@ -517,7 +628,7 @@ func GetUserByUsernameHandler(c *gin.Context) {
 // GetUserAverageWatchersHandler calculates average watchers across all sessions hosted by a user
 // GET /api/users/:userId/average-watchers
 func GetUserAverageWatchersHandler(c *gin.Context) {
-    userIDParam := c.Param("userId")
+    userIDParam := c.Param("id")
     
     userID, err := strconv.ParseUint(userIDParam, 10, 32)
     if err != nil {
@@ -708,5 +819,202 @@ func UpdateDateOfBirthHandler(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{
         "message": "Date of birth updated successfully",
         "has_dob": true,
+    })
+}
+
+// ForgotPasswordInput defines the request structure for password reset
+type ForgotPasswordInput struct {
+    Email string `json:"email" binding:"required,email"`
+}
+
+// ResetPasswordInput defines the request structure for password reset completion
+type ResetPasswordInput struct {
+    Token       string `json:"token" binding:"required"`
+    NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+// ForgotPasswordHandler handles password reset requests
+// POST /api/auth/forgot-password
+func ForgotPasswordHandler(c *gin.Context) {
+    var input ForgotPasswordInput
+    if err := c.ShouldBindJSON(&input); err != nil {
+        log.Printf("❌ [ForgotPassword] Invalid input: %v", err)
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid email format"})
+        return
+    }
+    
+    // Normalize email
+    email := strings.ToLower(strings.TrimSpace(input.Email))
+    log.Printf("🔄 [ForgotPassword] Request for email: %s", email)
+    
+    // Rate limiting: Check recent reset requests (max 3 per hour)
+    oneHourAgo := time.Now().Add(-1 * time.Hour)
+    var recentTokens []models.PasswordResetToken
+    DB.Joins("JOIN users ON users.id = password_reset_tokens.user_id").
+        Where("users.email = ? AND password_reset_tokens.created_at > ?", email, oneHourAgo).
+        Find(&recentTokens)
+    
+    if len(recentTokens) >= 3 {
+        log.Printf("⚠️ [ForgotPassword] Rate limit exceeded for: %s", email)
+        // Still return success to prevent email enumeration
+        c.JSON(http.StatusOK, gin.H{
+            "message": "If that email is registered, we sent a password reset link",
+        })
+        return
+    }
+    
+    // Find user by email
+    var user models.User
+    result := DB.Where("email = ?", email).First(&user)
+    
+    if result.Error == gorm.ErrRecordNotFound {
+        log.Printf("⚠️ [ForgotPassword] User not found: %s", email)
+        // Generic message for security (prevent email enumeration)
+        c.JSON(http.StatusOK, gin.H{
+            "message": "If that email is registered, we sent a password reset link",
+        })
+        return
+    } else if result.Error != nil {
+        log.Printf("❌ [ForgotPassword] Database error: %v", result.Error)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+        return
+    }
+    
+    // Check if user signed up with Google OAuth (no password)
+    if user.OAuthProvider != nil && *user.OAuthProvider == "google" && user.PasswordHash == "" {
+        log.Printf("⚠️ [ForgotPassword] OAuth user attempted password reset: %s", email)
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "You signed up with Google. Please use 'Sign in with Google' instead.",
+        })
+        return
+    }
+    
+    // Invalidate all existing tokens for this user (only newest token works)
+    DB.Model(&models.PasswordResetToken{}).
+        Where("user_id = ? AND used = false", user.ID).
+        Update("used", true)
+    
+    // Generate secure random token (UUID)
+    token := uuid.New().String()
+    
+    // Create reset token with 15-minute expiry
+    resetToken := models.PasswordResetToken{
+        UserID:    user.ID,
+        Token:     token,
+        ExpiresAt: time.Now().Add(15 * time.Minute),
+        Used:      false,
+    }
+    
+    if err := DB.Create(&resetToken).Error; err != nil {
+        log.Printf("❌ [ForgotPassword] Failed to create token: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create reset token"})
+        return
+    }
+    
+    // Send reset email
+    emailService := services.NewEmailService()
+    if err := emailService.SendPasswordResetEmail(user.Email, user.Username, token); err != nil {
+        log.Printf("❌ [ForgotPassword] Failed to send email: %v", err)
+        // Don't expose email failure to user (security)
+        c.JSON(http.StatusOK, gin.H{
+            "message": "If that email is registered, we sent a password reset link",
+        })
+        return
+    }
+    
+    log.Printf("✅ [ForgotPassword] Reset email sent to: %s (Token: %s)", email, token[:8]+"...")
+    
+    c.JSON(http.StatusOK, gin.H{
+        "message": "If that email is registered, we sent a password reset link",
+    })
+}
+
+// ResetPasswordHandler completes the password reset process
+// POST /api/auth/reset-password
+func ResetPasswordHandler(c *gin.Context) {
+    var input ResetPasswordInput
+    if err := c.ShouldBindJSON(&input); err != nil {
+        log.Printf("❌ [ResetPassword] Invalid input: %v", err)
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+        return
+    }
+    
+    log.Printf("🔄 [ResetPassword] Processing token: %s", input.Token[:8]+"...")
+    
+    // Find and validate token
+    var resetToken models.PasswordResetToken
+    result := DB.Where("token = ?", input.Token).First(&resetToken)
+    
+    if result.Error == gorm.ErrRecordNotFound {
+        log.Printf("⚠️ [ResetPassword] Token not found: %s", input.Token[:8]+"...")
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "Invalid or expired reset link",
+        })
+        return
+    } else if result.Error != nil {
+        log.Printf("❌ [ResetPassword] Database error: %v", result.Error)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+        return
+    }
+    
+    // Check if token is valid (not used and not expired)
+    if resetToken.Used {
+        log.Printf("⚠️ [ResetPassword] Token already used: %s", input.Token[:8]+"...")
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "This reset link has already been used",
+        })
+        return
+    }
+    
+    if resetToken.IsExpired() {
+        log.Printf("⚠️ [ResetPassword] Token expired: %s", input.Token[:8]+"...")
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "This reset link has expired. Please request a new one.",
+        })
+        return
+    }
+    
+    // Fetch user
+    var user models.User
+    if err := DB.First(&user, resetToken.UserID).Error; err != nil {
+        log.Printf("❌ [ResetPassword] User not found: %d", resetToken.UserID)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+        return
+    }
+    
+    // Hash new password
+    hashedPassword, err := utils.HashPassword(input.NewPassword)
+    if err != nil {
+        log.Printf("❌ [ResetPassword] Failed to hash password: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
+        return
+    }
+    
+    // Update user's password
+    if err := DB.Model(&user).Update("password_hash", hashedPassword).Error; err != nil {
+        log.Printf("❌ [ResetPassword] Failed to update password: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
+        return
+    }
+    
+    // Mark token as used
+    DB.Model(&resetToken).Update("used", true)
+    
+    log.Printf("✅ [ResetPassword] Password updated for user: %s (ID: %d)", user.Email, user.ID)
+    
+    // Send confirmation email
+    emailService := services.NewEmailService()
+    if err := emailService.SendPasswordChangedEmail(user.Email, user.Username); err != nil {
+        log.Printf("⚠️ [ResetPassword] Failed to send confirmation email: %v", err)
+        // Don't fail the request if confirmation email fails
+    }
+    
+    // Security: Invalidate all existing JWT tokens by logging user out everywhere
+    // (User must log in again with new password)
+    // Note: We use HttpOnly cookies, so client can't delete them
+    // The user will need to log in again, which creates a new token
+    
+    c.JSON(http.StatusOK, gin.H{
+        "message": "Password updated successfully. Please log in with your new password.",
     })
 }

@@ -1,7 +1,10 @@
 // WeWatch/frontend/src/components/RoomTV.jsx
 // Dynamic content banner - shows sessions, events, announcements, and (future) ads
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PlayIcon, ClockIcon, XMarkIcon, UsersIcon } from '@heroicons/react/24/outline';
+import { useNavigate } from 'react-router-dom';
+import { apiClient } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 // CSS Animations for RoomTV text
 const animations = `
@@ -141,11 +144,21 @@ const RoomTV = ({
   onEndSession,
   isHost = false,
   onCreateContent,
-  onDismissContent
+  onDismissContent,
+  refetchTrigger = 0 // Add this to allow parent to trigger refetch
 }) => {
+  const navigate = useNavigate();
+  const { currentUser } = useAuth();
   const [content, setContent] = useState(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedVideoUrl, setExpandedVideoUrl] = useState(null);
+  const [roomPosts, setRoomPosts] = useState([]);
+  const [currentPostIndex, setCurrentPostIndex] = useState(0);
+  const [adContent, setAdContent] = useState(null);
+  const [adDismissed, setAdDismissed] = useState(false);
+  const adTimeoutRef = useRef(null);
+  const postRotationRef = useRef(null);
+  const postDismissRef = useRef(null);
 
   // Helper: Get animation class based on type and speed
   const getAnimationClass = (animationType, speed = 'medium') => {
@@ -154,11 +167,58 @@ const RoomTV = ({
     return speed === 'medium' ? baseClass : `${baseClass}-${speed}`;
   };
 
-  // Priority logic: Session > Host Content > Upcoming Event > Ad (Phase 2)
+  // Fetch room posts (host posts to this room)
+  useEffect(() => {
+    if (roomId) {
+      fetchRoomPosts();
+    }
+  }, [roomId, refetchTrigger]);
+
+  const fetchRoomPosts = async () => {
+    try {
+      const response = await apiClient.get(`/api/rooms/${roomId}/posts?limit=5`);
+      if (response.data.posts && response.data.posts.length > 0) {
+        setRoomPosts(response.data.posts);
+        setCurrentPostIndex(0);
+      } else {
+        setRoomPosts([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch room posts:', error);
+      setRoomPosts([]);
+    }
+  };
+
+  // Fetch RoomTV ad (when idle)
+  const fetchRoomTVAd = async () => {
+    if (!roomId || !currentUser) return null;
+    
+    try {
+      const response = await apiClient.get('/api/ads/roomtv', {
+        params: { room_id: roomId, user_id: currentUser.id }
+      });
+      return response.data;
+    } catch (error) {
+      // Silently fail - ads are optional
+      console.log('No ads available:', error.response?.data?.error);
+      return null;
+    }
+  };
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
+      if (postRotationRef.current) clearInterval(postRotationRef.current);
+      if (postDismissRef.current) clearTimeout(postDismissRef.current);
+    };
+  }, []);
+
+  // Priority logic: Session > Host Content > Upcoming Event > Room Posts > Ad
   useEffect(() => {
     console.log('🔍 [RoomTV] useEffect triggered, activeSession:', activeSession);
     
-    const determineContent = () => {
+    const determineContent = async () => {
       // Priority 1: Active Watch Session
       if (activeSession) {
         console.log('✅ [RoomTV] Active session detected:', {
@@ -167,6 +227,12 @@ const RoomTV = ({
           members: activeSession.members,
           startedAt: activeSession.started_at
         });
+        
+        // Clear post rotation and ad timers
+        if (postRotationRef.current) clearInterval(postRotationRef.current);
+        if (postDismissRef.current) clearTimeout(postDismissRef.current);
+        if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
+        
         return {
           type: 'session',
           data: activeSession,
@@ -178,6 +244,11 @@ const RoomTV = ({
 
       // Priority 2: Host Content (announcement/media)
       if (hostContent && hostContent.ends_at && new Date(hostContent.ends_at) > new Date()) {
+        // Clear post rotation and ad timers
+        if (postRotationRef.current) clearInterval(postRotationRef.current);
+        if (postDismissRef.current) clearTimeout(postDismissRef.current);
+        if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
+        
         return {
           type: 'host_content',
           data: hostContent,
@@ -194,6 +265,11 @@ const RoomTV = ({
       });
 
       if (upcomingEvent) {
+        // Clear post rotation and ad timers
+        if (postRotationRef.current) clearInterval(postRotationRef.current);
+        if (postDismissRef.current) clearTimeout(postDismissRef.current);
+        if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
+        
         return {
           type: 'event',
           data: upcomingEvent,
@@ -201,33 +277,67 @@ const RoomTV = ({
         };
       }
 
-      // Priority 4: Ads (Phase 2 - Commented out)
-      // if (adsEnabled && !content) {
-      //   return {
-      //     type: 'ad',
-      //     data: adContent,
-      //     duration: 30
-      //   };
-      // }
+      // Priority 4: Room Posts (host posts to this room)
+      if (roomPosts.length > 0) {
+        // Start post rotation: cycle every 10s, dismiss after 2 mins total
+        if (postRotationRef.current) clearInterval(postRotationRef.current);
+        if (postDismissRef.current) clearTimeout(postDismissRef.current);
+        if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
+        
+        // Rotate posts every 10 seconds
+        postRotationRef.current = setInterval(() => {
+          setCurrentPostIndex(prev => (prev + 1) % roomPosts.length);
+        }, 10000);
+        
+        // Auto-dismiss all posts after 2 minutes
+        postDismissRef.current = setTimeout(() => {
+          if (postRotationRef.current) clearInterval(postRotationRef.current);
+          setIsExpanded(false);
+          setTimeout(() => setContent(null), 300);
+        }, 120000); // 2 minutes
+        
+        return {
+          type: 'room_posts',
+          data: roomPosts[currentPostIndex],
+          duration: 120 // 2 minutes total
+        };
+      }
+
+      // Priority 5: Ads (when idle and not dismissed)
+      if (!adDismissed) {
+        const ad = await fetchRoomTVAd();
+        
+        // Only display ads with valid titles
+        if (ad && ad.title && ad.title.trim() !== '') {
+          // Clear any existing ad timeout
+          if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
+          
+          // Auto-dismiss after ad duration
+          const adDuration = ad.duration || 15; // Default 15s
+          adTimeoutRef.current = setTimeout(() => {
+            setAdDismissed(true);
+            setIsExpanded(false);
+            setTimeout(() => setContent(null), 300);
+          }, adDuration * 1000);
+          
+          return {
+            type: 'ad',
+            data: ad,
+            duration: adDuration
+          };
+        }
+      }
 
       return null;
     };
 
-    const newContent = determineContent();
-    console.log('📺 [RoomTV] Content determined:', newContent ? `type: ${newContent.type}` : 'null');
-    setContent(newContent);
-    setIsExpanded(!!newContent);
+    determineContent().then(newContent => {
+      console.log('📺 [RoomTV] Content determined:', newContent ? `type: ${newContent.type}` : 'null');
+      setContent(newContent);
+      setIsExpanded(!!newContent);
+    });
 
-    // Auto-hide after duration (if specified)
-    if (newContent?.duration) {
-      const timer = setTimeout(() => {
-        setIsExpanded(false);
-        setTimeout(() => setContent(null), 300); // Wait for animation
-      }, newContent.duration * 1000);
-
-      return () => clearTimeout(timer);
-    }
-  }, [activeSession, hostContent, upcomingEvents]);
+  }, [activeSession, hostContent, upcomingEvents, roomPosts, currentPostIndex, adDismissed]);
 
   // Render nothing if no content
   if (!content) return null;
@@ -250,57 +360,55 @@ const RoomTV = ({
         {/* Session Content */}
         {content.type === 'session' && (
           <div className="space-y-2">
-            {/* Mobile: Compact 2-line layout, Desktop: Original layout */}
-            <div className="md:hidden">
-              {/* Line 1: Play icon + Title + Join button */}
-              <div className="flex items-center justify-between gap-1.5 mb-1">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <div className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center animate-pulse flex-shrink-0">
-                    <PlayIcon className="w-3 h-3 text-white" />
+            {/* Mobile: Compact single-line layout */}
+            <div className="md:hidden flex items-center justify-between gap-2">
+              {/* Left: Play icon + Title + Info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <div className="w-5 h-5 bg-red-600 rounded-full flex items-center justify-center animate-pulse flex-shrink-0">
+                    <PlayIcon className="w-2.5 h-2.5 text-white" />
                   </div>
-                  <div className="text-white font-semibold text-sm truncate">
+                  <div className="text-white font-semibold text-xs truncate">
                     Watch Session Active
                   </div>
                 </div>
+                <div className="text-[9px] text-gray-300 flex items-center gap-1 ml-6">
+                  <UsersIcon className="w-2.5 h-2.5" />
+                  {content.data.members?.length || 0} watching • {content.data.watch_type === '3d_cinema' ? '3D Cinema' : 'Video'}
+                </div>
+              </div>
+              
+              {/* Right: Buttons with icon above text */}
+              <div className="flex items-center gap-1.5 flex-shrink-0">
                 <button
                   onClick={onJoinSession}
-                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors text-xs flex items-center gap-1 flex-shrink-0"
+                  className="px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex flex-col items-center gap-0.5"
                 >
-                  <PlayIcon className="w-3 h-3" />
-                  Join {content.data.ticketing_enabled && '🪙'}
+                  <PlayIcon className="w-4 h-4" />
+                  <span className="text-[9px] font-medium">Join</span>
                 </button>
+                {isHost && onEndSession && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm('End this watch session for everyone? All participants will be returned to the room lobby.')) {
+                        onEndSession();
+                      }
+                    }}
+                    className="px-2 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors flex flex-col items-center gap-0.5"
+                    title="End Watch Session"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-9a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 004.5 21h9a2.25 2.25 0 002.25-2.25V15M18 12H6m12 0l-3-3m3 3l-3 3" />
+                    </svg>
+                    <span className="text-[9px] font-medium">End</span>
+                  </button>
+                )}
               </div>
-              {/* Line 2: Member count • Watch type */}
-              <div className="text-[10px] text-gray-300 flex items-center gap-1 ml-7">
-                <UsersIcon className="w-3 h-3" />
-                {content.data.members?.length || 0} watching • {content.data.watch_type === '3d_cinema' ? '3D Cinema' : 'Video'}
-              </div>
-              {/* Host: End Session button on separate line */}
-              {isHost && onEndSession && (
-                <button
-                  onClick={() => {
-                    console.log('🔴 [RoomTV] "End Watch Session" button clicked');
-                    console.log('📋 [RoomTV] Current session data:', content.data);
-                    if (window.confirm('End this watch session for everyone? All participants will be returned to the room lobby.')) {
-                      console.log('✅ [RoomTV] User confirmed - calling onEndSession()');
-                      onEndSession();
-                    } else {
-                      console.log('❌ [RoomTV] User cancelled');
-                    }
-                  }}
-                  className="mt-1.5 w-full px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-1 text-xs"
-                  title="End Watch Session"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3 h-3">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-9a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 004.5 21h9a2.25 2.25 0 002.25-2.25V15M18 12H6m12 0l-3-3m3 3l-3 3" />
-                  </svg>
-                  End Watch Session
-                </button>
-              )}
             </div>
             
-            {/* Desktop: Original layout */}
+            {/* Desktop: Single-line layout with icon above text buttons */}
             <div className="hidden md:flex items-center justify-between">
+              {/* Left: Play icon + Title + Info */}
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 bg-red-600 rounded-full flex items-center justify-center animate-pulse">
                   <PlayIcon className="w-6 h-6 text-white" />
@@ -315,33 +423,30 @@ const RoomTV = ({
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              
+              {/* Right: Buttons with icon above text (vertically stacked) */}
+              <div className="flex items-center gap-3">
                 <button
                   onClick={onJoinSession}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex flex-col items-center gap-1"
                 >
-                  <PlayIcon className="w-4 h-4" />
-                  Join Now {content.data.ticketing_enabled && '🪙'}
+                  <PlayIcon className="w-6 h-6" />
+                  <span className="text-xs font-medium whitespace-nowrap">Join Now{content.data.ticketing_enabled && ' 🪙'}</span>
                 </button>
                 {isHost && onEndSession && (
                   <button
                     onClick={() => {
-                      console.log('🔴 [RoomTV] "End Watch Session" button clicked');
-                      console.log('📋 [RoomTV] Current session data:', content.data);
                       if (window.confirm('End this watch session for everyone? All participants will be returned to the room lobby.')) {
-                        console.log('✅ [RoomTV] User confirmed - calling onEndSession()');
                         onEndSession();
-                      } else {
-                        console.log('❌ [RoomTV] User cancelled');
                       }
                     }}
-                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                    className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors flex flex-col items-center gap-1"
                     title="End Watch Session"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-6 h-6">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-9a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 004.5 21h9a2.25 2.25 0 002.25-2.25V15M18 12H6m12 0l-3-3m3 3l-3 3" />
                     </svg>
-                    End Watch Session
+                    <span className="text-xs font-medium whitespace-nowrap">End Session</span>
                   </button>
                 )}
               </div>
@@ -456,28 +561,102 @@ const RoomTV = ({
           </div>
         )}
 
-        {/* Phase 2: Ad Content (Commented out) */}
-        {/* {content.type === 'ad' && (
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <div className="text-xs text-gray-400 mb-1">SPONSORED</div>
-              <div className="text-white font-semibold mb-1">
-                {content.data.title}
-              </div>
-              <div className="text-sm text-gray-300">
-                {content.data.description}
+        {/* Room Posts Content */}
+        {content.type === 'room_posts' && content.data && (
+          <div 
+            className="flex items-center justify-between cursor-pointer hover:bg-gray-700/30 rounded-lg p-2 transition-colors"
+            onClick={() => {
+              // Navigate to Discover page with post
+              navigate('/discover', { 
+                state: { 
+                  openPost: content.data.id, 
+                  autoPlay: true 
+                } 
+              });
+            }}
+          >
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              {/* Thumbnail */}
+              {content.data.thumbnail_url && (
+                <img 
+                  src={content.data.thumbnail_url} 
+                  alt={content.data.title}
+                  className="w-16 h-16 object-cover rounded-lg flex-shrink-0"
+                />
+              )}
+              
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-purple-400 mb-1 flex items-center gap-2">
+                  <PlayIcon className="w-3 h-3" />
+                  NEW POST FROM HOST
+                  {roomPosts.length > 1 && (
+                    <span className="text-gray-400">
+                      ({currentPostIndex + 1}/{roomPosts.length})
+                    </span>
+                  )}
+                </div>
+                <div className="text-white font-semibold mb-1 truncate">
+                  {content.data.title}
+                </div>
+                {content.data.description && (
+                  <div className="text-sm text-gray-300 truncate">
+                    {content.data.description}
+                  </div>
+                )}
               </div>
             </div>
+            
+            {/* Watch Button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate('/discover', { 
+                  state: { 
+                    openPost: content.data.id, 
+                    autoPlay: true 
+                  } 
+                });
+              }}
+              className="ml-4 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 flex-shrink-0"
+            >
+              <PlayIcon className="w-4 h-4" />
+              Watch
+            </button>
+          </div>
+        )}
+
+        {/* Ad Content */}
+        {content.type === 'ad' && content.data && (
+          <div className="flex items-center justify-between">
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-gray-400 mb-1">SPONSORED</div>
+              <div className="text-white font-semibold mb-1 truncate">
+                {content.data.title}
+              </div>
+              {content.data.ad_type === 'text' && content.data.description && (
+                <div className="text-sm text-gray-300 line-clamp-2">
+                  {content.data.description}
+                </div>
+              )}
+              {(content.data.ad_type === 'banner' || content.data.ad_type === 'image') && content.data.media_url && (
+                <img 
+                  src={content.data.media_url} 
+                  alt={content.data.title}
+                  className="mt-2 max-h-20 rounded-lg object-contain"
+                />
+              )}
+            </div>
             <a
-              href={content.data.url}
+              href={content.data.cta_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="ml-4 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+              className="ml-4 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors flex-shrink-0"
             >
-              Learn More
+              {content.data.cta_text || 'Learn More'}
             </a>
           </div>
-        )} */}
+        )}
       </div>
     </div>
 

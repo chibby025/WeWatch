@@ -654,3 +654,72 @@ func CleanupLiveShareAssetsInTransaction(tx *gorm.DB, sessionID uint) {
 	}
 }
 
+// SaveBibleVerse saves the current Bible verse for a watch session (Church mode)
+func SaveBibleVerse(c *gin.Context) {
+	sessionIDStr := c.Param("id")
+	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
+		return
+	}
+
+	var requestBody struct {
+		Verse map[string]interface{} `json:"verse"`
+	}
+
+	if err := c.ShouldBindJSON(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// Marshal verse to JSON string
+	verseJSON, err := json.Marshal(requestBody.Verse)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal verse data"})
+		return
+	}
+
+	// Get database from context
+	db := c.MustGet("db").(*gorm.DB)
+
+	// Update watch_sessions table
+	result := db.Table("watch_sessions").
+		Where("id = ?", uint(sessionID)).
+		Update("current_bible_verse", string(verseJSON))
+
+	if result.Error != nil {
+		log.Printf("❌ [Bible] Failed to save verse: %v", result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save Bible verse"})
+		return
+	}
+
+	log.Printf("✅ [Bible] Saved verse for session %d", sessionID)
+	c.JSON(http.StatusOK, gin.H{"message": "Bible verse saved"})
+}
+
+// ClearBibleVerse clears the current Bible verse for a watch session
+func ClearBibleVerse(c *gin.Context) {
+	sessionIDStr := c.Param("id")
+	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
+		return
+	}
+
+	// Get database from context
+	db := c.MustGet("db").(*gorm.DB)
+
+	// Clear current_bible_verse field
+	result := db.Table("watch_sessions").
+		Where("id = ?", uint(sessionID)).
+		Update("current_bible_verse", nil)
+
+	if result.Error != nil {
+		log.Printf("❌ [Bible] Failed to clear verse: %v", result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear Bible verse"})
+		return
+	}
+
+	log.Printf("✅ [Bible] Cleared verse for session %d", sessionID)
+	c.JSON(http.StatusOK, gin.H{"message": "Bible verse cleared"})
+}

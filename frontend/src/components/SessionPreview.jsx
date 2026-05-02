@@ -1,12 +1,38 @@
 // SessionPreview.jsx - Displays session preview with emoji → spinner → poster → MP4 video fallback
 import React, { useState, useEffect, useRef } from 'react';
-import { FilmIcon, VideoCameraIcon, AcademicCapIcon } from '@heroicons/react/24/solid';
+import { 
+  FilmIcon, 
+  VideoCameraIcon, 
+  AcademicCapIcon,
+  MicrophoneIcon,
+  NewspaperIcon,
+  TvIcon
+} from '@heroicons/react/24/solid';
 
 const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isClearing = false, muted = true }) => {
   const [loadState, setLoadState] = useState('emoji'); // 'emoji' | 'loading' | 'poster' | 'video'
   const [imageError, setImageError] = useState(false);
   const [aspectRatio, setAspectRatio] = useState(null); // width / height
   const videoRef = useRef(null);
+  
+  // Check if Data Saver mode is enabled
+  const isDataSaver = localStorage.getItem('dataSaverMode') === 'true';
+
+  // Get LiveShare mode info
+  const getLiveShareModeInfo = () => {
+    const mode = session.liveshare_mode;
+    if (!mode || mode === 'regular') return null;
+
+    const modeConfig = {
+      podcast: { icon: '🎙️', label: 'Podcast', color: 'from-purple-600 to-purple-800' },
+      show: { icon: '🎬', label: 'Show', color: 'from-green-600 to-green-800' },
+      news: { icon: '📰', label: 'News', color: 'from-red-600 to-red-800' },
+    };
+
+    return modeConfig[mode] || null;
+  };
+
+  const modeInfo = getLiveShareModeInfo();
 
   useEffect(() => {
     console.log('🎬 [SessionPreview] State update:', { isGenerating, isClearing, previewUrl, posterUrl, imageError, session: session.session_id });
@@ -106,7 +132,7 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
   };
 
   return (
-    <div className="w-full h-full bg-gray-100 dark:bg-gray-900 overflow-hidden">
+    <div className="w-full h-full bg-gray-100 dark:bg-gray-900 overflow-hidden relative">
       {/* Emoji State */}
       {loadState === 'emoji' && (
         <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-purple-500 to-blue-600">
@@ -177,6 +203,40 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
             }
           }}
         />
+      )}
+
+      {/* ✨ LiveShare Mode Badge Overlay (shows on all states except loading) */}
+      {loadState !== 'loading' && modeInfo && (
+        <div className="absolute top-2 left-2 z-10">
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r ${modeInfo.color} shadow-lg backdrop-blur-sm`}>
+            <span className="text-lg">{modeInfo.icon}</span>
+            <span className="text-white text-sm font-semibold">{modeInfo.label}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ✨ Podcast/Show Title Overlay (if available) */}
+      {loadState !== 'loading' && session.podcast_title && (
+        <div className="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black/80 via-black/60 to-transparent p-4">
+          <h3 className="text-white text-lg font-bold line-clamp-2 drop-shadow-lg">
+            {session.podcast_title}
+          </h3>
+        </div>
+      )}
+
+      {/* ✨ Logo Bug Overlay (if available) */}
+      {loadState !== 'loading' && session.podcast_logo_url && (
+        <div className="absolute top-2 right-2 z-10">
+          <img
+            src={session.podcast_logo_url}
+            alt="Logo"
+            className="w-12 h-12 rounded-lg object-contain bg-black/30 backdrop-blur-sm p-1 shadow-lg"
+            onError={(e) => {
+              // Hide if logo fails to load
+              e.target.style.display = 'none';
+            }}
+          />
+        </div>
       )}
     </div>
   );

@@ -366,6 +366,8 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
               seating: data.seating || {},
               startTime: data.started_at || data.start_time || null,
               error: data.error || null,
+              isPrivate: data.is_private || false, // ✅ Include session privacy flag
+              hideFromLobby: data.hide_from_lobby || false, // ✅ Include lobby visibility flag
             };
             
             // Update all subscribers

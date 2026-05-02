@@ -100,6 +100,7 @@ const RoomPageNew = () => {
   const [isTVContentModalOpen, setIsTVContentModalOpen] = useState(false);
   const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
   const [isCreatePollModalOpen, setIsCreatePollModalOpen] = useState(false);
+  const [isRoomImageExpanded, setIsRoomImageExpanded] = useState(false);
   
   // Session rating state
   const [showRatingModal, setShowRatingModal] = useState(false);
@@ -133,6 +134,7 @@ const RoomPageNew = () => {
 
   // RoomTV state
   const [hostContent, setHostContent] = useState(null);
+  const [roomTVRefetchTrigger, setRoomTVRefetchTrigger] = useState(0);
   
   // Host stats state
   const [hostAverageWatchers, setHostAverageWatchers] = useState(0);
@@ -315,7 +317,6 @@ const RoomPageNew = () => {
 
   // Fetch room data on mount
   useEffect(() => {
-    // Mark component as mounted
     isMountedRef.current = true;
     
     fetchRoomData();
@@ -324,9 +325,8 @@ const RoomPageNew = () => {
     fetchRoomMessages();
     fetchTVContent();
     fetchScheduledEvents();
-    connectWebSocket(); // Connect immediately - room WebSocket is for chat, not session
+    connectWebSocket();
 
-    // Poll for updates every 10 seconds
     const interval = setInterval(() => {
       fetchActiveSession();
       fetchMembers();
@@ -334,34 +334,18 @@ const RoomPageNew = () => {
     }, 10000);
 
     return () => {
-      console.log(`🧹 [RoomPageNew] Component cleanup initiated for room ${roomId}`);
-      
-      // Mark component as unmounted
       isMountedRef.current = false;
-      console.log('🛑 [RoomPageNew] Component marked as unmounted');
-      
       clearInterval(interval);
-      console.log('⏱️ [RoomPageNew] Polling interval cleared');
       
-      // Clear reconnect timeout
       if (reconnectTimeoutRef.current) {
-        console.log('🧹 [RoomPageNew] Clearing reconnect timeout');
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
       
-      // Close WebSocket properly
       wsConnectedRef.current = false;
       if (wsRef.current) {
-        console.log('🔌 [RoomPageNew] Closing WebSocket connection', {
-          readyState: wsRef.current.readyState,
-          url: wsRef.current.url?.split('?')[0]
-        });
         wsRef.current.close();
         wsRef.current = null;
-        console.log('✅ [RoomPageNew] WebSocket closed and cleared');
-      } else {
-        console.log('ℹ️ [RoomPageNew] No active WebSocket to close');
       }
     };
   }, [roomId]);
@@ -945,6 +929,12 @@ const RoomPageNew = () => {
           console.log('📺 [RoomTV] Received content_removed message:', message);
           setHostContent(null);
           break;
+        case 'room_post_created':
+          console.log('📺 [RoomTV] Received room_post_created notification:', message.data);
+          toast.success(`🎬 New post from ${message.data?.author?.username || 'host'}!`);
+          // Trigger RoomTV to refetch posts
+          setRoomTVRefetchTrigger(prev => prev + 1);
+          break;
         default:
           logger.debug(`⚠️ [RoomPageNew] Unhandled message type: ${message.type}`);
           break;
@@ -1043,6 +1033,12 @@ const RoomPageNew = () => {
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
+
+    // ✅ Check if chat is locked to host-only
+    if (room?.host_only_chat && !isHost) {
+      toast.error('Chat is locked. Only the host can send messages.');
+      return;
+    }
 
     try {
       await apiClient.post(`/api/rooms/${roomId}/messages`, {
@@ -1752,17 +1748,30 @@ const RoomPageNew = () => {
               {/* Single Row with nested room name + info */}
               <div className="flex items-start justify-between gap-1">
                 {/* Left section: Back + Image + Name with info below */}
-                <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div 
+                  className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
+                  onClick={() => setIsEditModalOpen(true)}
+                >
                   {/* Back button - same level as image and name */}
                   <img 
                     src="/icons/backIcon.svg" 
                     alt="Back" 
-                    onClick={() => navigate('/lobby')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate('/lobby');
+                    }}
                     className="h-5 w-5 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
                   />
                   
                   {/* Room Image */}
-                  <div className="w-14 h-14 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-2 ring-gray-600 flex-shrink-0">
+                  <div 
+                    className="w-14 h-14 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-2 ring-gray-600 flex-shrink-0 cursor-pointer hover:ring-purple-500 transition-all"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (room.image_url) setIsRoomImageExpanded(true);
+                    }}
+                    title={room.image_url ? "Click to view full size" : ""}
+                  >
                     {room.image_url ? (
                       <img src={room.image_url} alt={room.name} className="w-full h-full object-cover" />
                     ) : (
@@ -1805,7 +1814,7 @@ const RoomPageNew = () => {
                 </div>
                 
                 {/* Right section: Action Icons + Ellipse */}
-                <div className="flex items-center gap-1 flex-shrink-0">
+                <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                 
                 {/* Begin Watch Icon */}
                 {!activeSession && (
@@ -2004,6 +2013,7 @@ const RoomPageNew = () => {
           onEndSession={handleEndSession}
           isHost={isHost}
           onDismissContent={handleDismissContent}
+          refetchTrigger={roomTVRefetchTrigger}
         />
       </header>
 
@@ -2231,10 +2241,23 @@ const RoomPageNew = () => {
 
       {/* ✅ Message Input - Fixed bottom on mobile */}
       {isMember && (
-        <form onSubmit={handleSendMessage} className={`bg-gray-800 ${
-          isMobile ? 'fixed bottom-0 left-0 right-0 z-40' : 'flex-none'
-        } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
-        <div className="flex items-center gap-0.5 sm:gap-3">
+        <>
+          {/* Chat Locked Banner (for non-host members) */}
+          {room?.host_only_chat && !isHost && (
+            <div className={`bg-yellow-500/10 border-t border-yellow-500/30 ${
+              isMobile ? 'fixed bottom-[52px] left-0 right-0 z-[39]' : 'flex-none'
+            } px-3 py-2`}>
+              <div className="flex items-center gap-2 text-xs text-yellow-300">
+                <span className="text-base">🔒</span>
+                <span>Chat is locked by the host. Only the host can send messages.</span>
+              </div>
+            </div>
+          )}
+          
+          <form onSubmit={handleSendMessage} className={`bg-gray-800 ${
+            isMobile ? 'fixed bottom-0 left-0 right-0 z-40' : 'flex-none'
+          } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
+          <div className="flex items-center gap-0.5 sm:gap-3">
           {/* Left Icons Group - Attach & Voice Note */}
           <div className="flex items-center gap-0 sm:gap-0.5 flex-none">
             {/* Attach Button */}
@@ -2252,11 +2275,15 @@ const RoomPageNew = () => {
             <button
               type="button"
               onClick={handleVoiceNoteClick}
-              disabled={!isMember}
+              disabled={!isMember || (room?.host_only_chat && !isHost)}
               className={`p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative flex-shrink-0 min-w-0 ${
                 isRecording ? 'animate-pulse' : ''
               }`}
-              title={isMember ? (isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note") : "Join room to send voice notes"}
+              title={
+                !isMember ? "Join room to send voice notes" :
+                (room?.host_only_chat && !isHost) ? "Chat is locked (host-only)" :
+                isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note"
+              }
             >
               <img 
                 src="/icons/mic.svg" 
@@ -2283,10 +2310,14 @@ const RoomPageNew = () => {
             <div className="absolute left-1 top-1/2 -translate-y-1/2 z-10" ref={emojiPickerRef}>
               <button
                 type="button"
-                onClick={() => isMember && setShowEmojiPicker(!showEmojiPicker)}
-                disabled={!isMember}
+                onClick={() => isMember && !(room?.host_only_chat && !isHost) && setShowEmojiPicker(!showEmojiPicker)}
+                disabled={!isMember || (room?.host_only_chat && !isHost)}
                 className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
-                title={isMember ? "Emojis & Stickers" : "Join room to use emojis"}
+                title={
+                  !isMember ? "Join room to use emojis" :
+                  (room?.host_only_chat && !isHost) ? "Chat is locked (host-only)" :
+                  "Emojis & Stickers"
+                }
               >
                 <img src="/icons/stickerIcon.svg" alt="Emojis & Stickers" className="h-5 w-5 sm:h-8 sm:w-8" />
               </button>
@@ -2320,8 +2351,8 @@ const RoomPageNew = () => {
               type="text"
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="Message..."
-              disabled={!isMember}
+              placeholder={room?.host_only_chat && !isHost ? "Chat is locked (host-only)" : "Message..."}
+              disabled={!isMember || (room?.host_only_chat && !isHost)}
               className="w-full bg-transparent border-0 focus:outline-none focus:ring-0 text-white placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed pl-9 pr-3 py-1.5 text-sm sm:pl-12 sm:pr-4 sm:py-2.5"
             />
           </div>
@@ -2329,12 +2360,16 @@ const RoomPageNew = () => {
           {/* Send Button - Standalone right */}
           <button
             type="button"
-            onClick={isMember ? handleSendMessage : undefined}
-            disabled={!isMember}
+            onClick={isMember && !(room?.host_only_chat && !isHost) ? handleSendMessage : undefined}
+            disabled={!isMember || (room?.host_only_chat && !isHost)}
             className={`p-0 transition-all flex-none min-w-0 ${
-              isMember ? 'cursor-pointer hover:opacity-80' : 'opacity-40 cursor-not-allowed'
+              (isMember && !(room?.host_only_chat && !isHost)) ? 'cursor-pointer hover:opacity-80' : 'opacity-40 cursor-not-allowed'
             }`}
-            title={isMember ? "Send message" : "Join room to send messages"}
+            title={
+              !isMember ? "Join room to send messages" :
+              (room?.host_only_chat && !isHost) ? "Chat is locked (host-only)" :
+              "Send message"
+            }
           >
             <span className={`text-xl sm:text-3xl leading-none transition-colors ${
               newMessage.trim() ? 'text-white' : 'text-gray-500'
@@ -2342,6 +2377,7 @@ const RoomPageNew = () => {
           </button>
         </div>
         </form>
+        </>
       )}
 
       {/* ✅ Join Room Button - Replaces input area when not a member */}
@@ -2484,6 +2520,28 @@ const RoomPageNew = () => {
       />
 
       {/* ✅ Room Edit Modal */}
+      {isRoomImageExpanded && room?.image_url && (
+        <div 
+          className="fixed inset-0 bg-black/90 z-[70] flex items-center justify-center p-4"
+          onClick={() => setIsRoomImageExpanded(false)}
+        >
+          <div className="relative">
+            <button 
+              onClick={() => setIsRoomImageExpanded(false)}
+              className="absolute -top-8 sm:-top-12 right-0 text-white hover:text-gray-300 text-2xl sm:text-3xl leading-none"
+            >
+              ×
+            </button>
+            <img 
+              src={room.image_url} 
+              alt={room.name}
+              className="max-w-[90vw] sm:max-w-[600px] max-h-[80vh] sm:max-h-[600px] w-auto h-auto object-contain rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
+
       <RoomPageEditModal
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
@@ -2495,6 +2553,7 @@ const RoomPageNew = () => {
         onShare={() => setIsShareModalOpen(true)}
         isHost={isHost}
         membersInRoom={membersInRoom}
+        members={members}
       />
 
       {/* ✅ Room Members Modal */}

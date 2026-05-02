@@ -23,15 +23,25 @@ func NewEmailService() *EmailService {
 		smtpPort:     os.Getenv("SMTP_PORT"),
 		smtpUser:     os.Getenv("SMTP_USER"),
 		smtpPassword: os.Getenv("SMTP_PASSWORD"),
-		fromAddress:  "payments@watchout.com",
+		fromAddress:  "support@letswatchout.com",
 	}
 }
 
 // SendEmail sends an email using SMTP
 func (e *EmailService) SendEmail(to, subject, body string) error {
-	// Validate configuration
-	if e.smtpHost == "" || e.smtpPort == "" || e.smtpUser == "" || e.smtpPassword == "" {
-		return fmt.Errorf("email service not configured: missing SMTP environment variables")
+	// DEV MODE: Log email instead of sending (if SMTP not configured or DEV_MODE=true)
+	devMode := os.Getenv("DEV_MODE") == "true"
+	
+	if devMode || e.smtpHost == "" || e.smtpPort == "" || e.smtpUser == "" || e.smtpPassword == "" {
+		fmt.Println("==================================================")
+		fmt.Printf("📧 [DEV MODE] Email would be sent to: %s\n", to)
+		fmt.Printf("📧 [DEV MODE] Subject: %s\n", subject)
+		fmt.Println("==================================================")
+		fmt.Printf("📧 [DEV MODE] Body:\n%s\n", body)
+		fmt.Println("==================================================")
+		fmt.Println("📧 [DEV MODE] ✅ Email logged (not actually sent)")
+		fmt.Println("==================================================")
+		return nil
 	}
 	
 	// Build email message
@@ -245,4 +255,127 @@ func getCurrencySymbol(currency string) string {
 		return symbol
 	}
 	return currency + " "
+}
+
+// SendPasswordResetEmail sends email with password reset link
+func (e *EmailService) SendPasswordResetEmail(to, username, resetToken string) error {
+	// Build reset URL (frontend URL)
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:5173"
+	}
+	resetURL := fmt.Sprintf("%s/reset-password?token=%s", frontendURL, resetToken)
+	
+	subject := "Reset Your WeWatch Password"
+	
+	body := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { background-color: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; border-top: none; }
+        .button { display: inline-block; background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0; }
+        .button:hover { background-color: #1d4ed8; }
+        .warning-box { background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 style="margin: 0;">🔐 Reset Your Password</h1>
+        </div>
+        <div class="content">
+            <p>Hi %s,</p>
+            
+            <p>We received a request to reset your WeWatch password. Click the button below to choose a new password:</p>
+            
+            <div style="text-align: center;">
+                <a href="%s" class="button" style="color: white;">Reset Password</a>
+            </div>
+            
+            <p style="font-size: 14px; color: #6b7280;">Or copy and paste this link into your browser:</p>
+            <p style="font-size: 12px; color: #2563eb; word-break: break-all;">%s</p>
+            
+            <div class="warning-box">
+                <p style="margin: 0;"><strong>⏰ This link expires in 15 minutes</strong></p>
+                <p style="margin: 10px 0 0 0; font-size: 14px;">For your security, password reset links are only valid for a short time.</p>
+            </div>
+            
+            <p><strong>Didn't request this?</strong> You can safely ignore this email. Your password won't be changed.</p>
+            
+            <div class="footer">
+                <p>Best regards,<br>WeWatch Security Team</p>
+                <p style="font-size: 12px;">This is an automated email. Please do not reply.</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+	`, username, resetURL, resetURL)
+	
+	return e.SendEmail(to, subject, body)
+}
+
+// SendPasswordChangedEmail sends confirmation email after password reset
+func (e *EmailService) SendPasswordChangedEmail(to, username string) error {
+	subject := "Your WeWatch Password Was Changed"
+	
+	currentTime := time.Now().Format("January 2, 2006 at 3:04pm MST")
+	
+	body := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #10b981; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { background-color: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; border-top: none; }
+        .success-box { background-color: #d1fae5; border-left: 4px solid #10b981; padding: 15px; margin: 20px 0; }
+        .alert-box { background-color: #fee2e2; border-left: 4px solid #ef4444; padding: 15px; margin: 20px 0; }
+        .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 style="margin: 0;">✅ Password Changed Successfully</h1>
+        </div>
+        <div class="content">
+            <p>Hi %s,</p>
+            
+            <p>This is a confirmation that your WeWatch password was successfully changed.</p>
+            
+            <div class="success-box">
+                <p style="margin: 0;"><strong>⏰ Changed on:</strong> %s</p>
+                <p style="margin: 10px 0 0 0; font-size: 14px; color: #047857;">
+                    Your account is now secured with your new password.
+                </p>
+            </div>
+            
+            <div class="alert-box">
+                <p style="margin: 0;"><strong>⚠️ Didn't make this change?</strong></p>
+                <p style="margin: 10px 0 0 0; font-size: 14px; color: #991b1b;">
+                    If you didn't reset your password, your account may have been compromised. 
+                    Please contact our support team immediately at support@letswatchout.com
+                </p>
+            </div>
+            
+            <p>If you made this change, no further action is needed. You can now log in with your new password.</p>
+            
+            <div class="footer">
+                <p>Best regards,<br>WeWatch Security Team</p>
+                <p style="font-size: 12px;">This is an automated email. Please do not reply.</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+	`, username, currentTime)
+	
+	return e.SendEmail(to, subject, body)
 }

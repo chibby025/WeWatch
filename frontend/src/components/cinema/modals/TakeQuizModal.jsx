@@ -376,16 +376,24 @@ export default function TakeQuizModal({
 
               {/* Text Input */}
               {question.type === 'text_input' && (
-                <input
-                  type="text"
-                  value={answers[question.id] || ''}
-                  onChange={(e) => handleAnswerChange(question.id, e.target.value)}
-                  disabled={isSubmitting}
-                  className={`w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 ${
-                    isSubmitting ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                  placeholder=""
-                />
+                <div>
+                  <input
+                    type="text"
+                    value={answers[question.id] || ''}
+                    onChange={(e) => handleAnswerChange(question.id, e.target.value)}
+                    disabled={isSubmitting}
+                    className={`w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 ${
+                      isSubmitting ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                    placeholder=""
+                  />
+                  {question.exact_match && (
+                    <p className="mt-1 text-xs text-yellow-400 flex items-center gap-1">
+                      <span>⚠️</span>
+                      <span>Case-sensitive answer required</span>
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           ))}

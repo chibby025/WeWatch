@@ -2,8 +2,10 @@
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { uploadMediaToRoom, uploadChunk, apiClient } from '../../../services/api';
-import { Gamepad2 } from 'lucide-react'; // Game icon
+import { Gamepad2, Video } from 'lucide-react'; // Game and Video icons
 import toast from 'react-hot-toast';
+import useSessionRecording from '../../../hooks/useSessionRecording';
+import RecordingOptionsModal from '../../RecordingOptionsModal';
 import { 
   splitFileIntoChunks, 
   generateUploadId, 
@@ -67,6 +69,8 @@ export default function LeftSidebar({
   graphicsRendererRef, // ✅ NEW: Ref to GraphicsRenderer for break screen overlay
   onWizardStateChange, // ✅ NEW: Callback to notify parent when wizard opens/closes
   forceActiveTab = null, // Force switch to specific tab
+  isSessionPrivate = false, // ✅ NEW: If true, session was created as private (enforces Ghost Mode)
+  sessionStatus = null, // ✅ NEW: Full session status object for self-validation fallback
 }) {
   // ✅ Host verification state
   const [isHost, setIsHost] = useState(isHostProp);
@@ -197,6 +201,23 @@ export default function LeftSidebar({
   const [hasAcceptedTerms, setHasAcceptedTerms] = useState(() => {
     return localStorage.getItem('wewatch_upload_terms_accepted') === 'true';
   });
+
+  // 🔴 Recording state
+  const [showRecordingModal, setShowRecordingModal] = useState(false);
+  const {
+    isRecording,
+    recordingTime,
+    isProcessing: recordingProcessing,
+    uploadProgress: recordingUploadProgress,
+    startRecording,
+    stopRecording,
+    cancelRecording,
+    formatTime,
+    maxDuration,
+  } = useSessionRecording();
+
+  // Alias for display
+  const recordingDuration = recordingTime;
   
   // Check for incomplete uploads on mount
   useEffect(() => {
@@ -348,7 +369,47 @@ export default function LeftSidebar({
   const [tempTitle, setTempTitle] = useState('');
 
   // 🖼️ Preview thumbnails toggle state (content moderation)
-  const [hidePreviewThumbnails, setHidePreviewThumbnails] = useState(false);
+  // ✅ Initialize from isSessionPrivate - if session is private, Ghost Mode is enforced
+  const [hidePreviewThumbnails, setHidePreviewThumbnails] = useState(isSessionPrivate);
+  
+  // � Sync Ghost Mode when session privacy changes OR on mount (handles late-arriving sessionStatus and lazy-loaded sidebar)
+  useEffect(() => {
+    console.log('👻 [LeftSidebar useEffect] Checking Ghost Mode enforcement:', {
+      isSessionPrivate,
+      currentHidePreviewThumbnails: hidePreviewThumbnails
+    });
+    
+    if (isSessionPrivate) {
+      console.log('👻 [LeftSidebar useEffect] ✅ ENFORCING Ghost Mode (setting hidePreviewThumbnails = true)');
+      setHidePreviewThumbnails(true);
+    } else {
+      console.log('👻 [LeftSidebar useEffect] ℹ️ Session is not private, Ghost Mode is optional');
+    }
+  }, [isSessionPrivate]); // Runs on mount AND when isSessionPrivate changes
+  
+  // 🛡️ FALLBACK: Self-checking validation using sessionStatus directly
+  // This runs independently to catch cases where prop arrives late or incorrect
+  useEffect(() => {
+    if (!sessionStatus || !isLeftSidebarOpen) return;
+    
+    const shouldEnforceGhost = sessionStatus.isPrivate || sessionStatus.hideFromLobby;
+    
+    console.log('🛡️ [LeftSidebar] Self-validation Ghost Mode check:', {
+      sessionId: sessionStatus.id,
+      isPrivate: sessionStatus.isPrivate,
+      hideFromLobby: sessionStatus.hideFromLobby,
+      shouldEnforceGhost,
+      currentHidePreviewThumbnails: hidePreviewThumbnails,
+      propValue: isSessionPrivate
+    });
+    
+    // If self-check disagrees with current state, log warning and enforce
+    if (shouldEnforceGhost && !hidePreviewThumbnails) {
+      console.warn('⚠️ [LeftSidebar] Self-validation detected Ghost Mode should be enforced! Correcting state.');
+      console.warn('⚠️ [LeftSidebar] Prop value was:', isSessionPrivate, 'but session data says:', shouldEnforceGhost);
+      setHidePreviewThumbnails(true);
+    }
+  }, [sessionStatus, isLeftSidebarOpen, hidePreviewThumbnails, isSessionPrivate]); // Re-validate when sidebar opens or session changes
 
   // Auto-close sidebar when mouse leaves (unless screen sharing)
   useEffect(() => {
@@ -902,6 +963,17 @@ export default function LeftSidebar({
 
   // 🖼️ Handle toggle preview thumbnails (content moderation)
   const handleTogglePreviewThumbnails = () => {
+    // 🔒 Prevent toggling if session is private OR hidden from lobby (Ghost Mode is enforced)
+    const shouldEnforce = isSessionPrivate || sessionStatus?.isPrivate || sessionStatus?.hideFromLobby;
+    if (shouldEnforce) {
+      console.log('👻 [LeftSidebar] ⛔ Cannot toggle Ghost Mode - session privacy/lobby visibility enforced:', {
+        isSessionPrivate,
+        sessionIsPrivate: sessionStatus?.isPrivate,
+        hideFromLobby: sessionStatus?.hideFromLobby
+      });
+      return;
+    }
+    
     const newValue = !hidePreviewThumbnails;
     setHidePreviewThumbnails(newValue);
     
@@ -977,25 +1049,98 @@ export default function LeftSidebar({
 
       {/* 🖼️ Host Settings - Preview Thumbnails Toggle */}
       {isHost && (
-        <div className="mb-3 p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
+        <div className="mb-3 p-3 sm:p-4 bg-gradient-to-br from-[#D9D9D9]/10 to-[#D9D9D9]/5 rounded-xl border border-purple-500/20 hover:border-purple-500/40 transition-all duration-300">
+          <style jsx>{`
+            @keyframes ghostFloat {
+              0%, 100% { transform: translateY(0px); }
+              50% { transform: translateY(-8px); }
+            }
+            
+            @keyframes ghostEntrance {
+              0% {
+                opacity: 0;
+                transform: translateY(20px) scale(0.8);
+              }
+              60% {
+                transform: translateY(-5px) scale(1.1);
+              }
+              100% {
+                opacity: 1;
+                transform: translateY(0px) scale(1);
+              }
+            }
+            
+            @keyframes ghostGlow {
+              0%, 100% { filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.4)); }
+              50% { filter: drop-shadow(0 0 16px rgba(168, 85, 247, 0.7)); }
+            }
+            
+            .ghost-float {
+              animation: ghostFloat 3s ease-in-out infinite;
+            }
+            
+            .ghost-entrance {
+              animation: ghostEntrance 0.6s ease-out forwards;
+            }
+            
+            .ghost-glow {
+              animation: ghostGlow 2s ease-in-out infinite;
+            }
+            
+            .ghost-icon {
+              font-size: 2.5rem;
+              line-height: 1;
+              filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.4));
+            }
+            
+            @media (min-width: 640px) {
+              .ghost-icon {
+                font-size: 3rem;
+              }
+            }
+          `}</style>
+          
           <label className="flex items-start gap-3 cursor-pointer group">
             <input
               type="checkbox"
               checked={hidePreviewThumbnails}
               onChange={handleTogglePreviewThumbnails}
-              className="mt-0.5 w-4 h-4 sm:w-5 sm:h-5 rounded border-gray-600 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 focus:ring-offset-transparent bg-gray-700 cursor-pointer transition-all"
+              disabled={isSessionPrivate || sessionStatus?.isPrivate || sessionStatus?.hideFromLobby}
+              className="mt-0.5 w-4 h-4 sm:w-5 sm:h-5 rounded border-gray-600 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0 focus:ring-offset-transparent bg-gray-700 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             />
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-xl sm:text-2xl group-hover:scale-110 transition-transform duration-200" role="img" aria-label="ghost">
+            <div className="flex items-center gap-2">
+              <span 
+                className="ghost-icon ghost-float ghost-entrance ghost-glow group-hover:scale-110 transition-transform duration-300" 
+                role="img" 
+                aria-label="ghost"
+                style={{ 
+                  textShadow: '0 0 20px rgba(168, 85, 247, 0.6), 0 0 40px rgba(168, 85, 247, 0.3)',
+                  WebkitTextStroke: '0.5px rgba(168, 85, 247, 0.3)'
+                }}
+              >
                 👻
               </span>
             </div>
             <div className="flex-1 min-w-0">
-              <span className="text-sm sm:text-base font-medium text-white group-hover:text-blue-400 transition-colors">
-                Ghost Mode
-              </span>
-              <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 leading-relaxed">
-                content moderation - hide preview from public, use if not suitable for public to view.
+              <div className="flex items-center gap-2">
+                <span className="text-sm sm:text-base font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 group-hover:from-purple-300 group-hover:via-pink-300 group-hover:to-purple-300 transition-all duration-300">
+                  Ghost Mode
+                </span>
+                {hidePreviewThumbnails && !(isSessionPrivate || sessionStatus?.isPrivate || sessionStatus?.hideFromLobby) && (
+                  <span className="px-2 py-0.5 text-[9px] sm:text-[10px] font-semibold bg-purple-500/20 text-purple-300 rounded-full border border-purple-500/30 animate-pulse">
+                    ACTIVE
+                  </span>
+                )}
+                {(isSessionPrivate || sessionStatus?.isPrivate || sessionStatus?.hideFromLobby) && (
+                  <span className="px-2 py-0.5 text-[9px] sm:text-[10px] font-semibold bg-yellow-500/20 text-yellow-300 rounded-full border border-yellow-500/30">
+                    ENFORCED
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] sm:text-xs text-gray-400 mt-1 leading-relaxed group-hover:text-gray-300 transition-colors">
+                {(isSessionPrivate || sessionStatus?.isPrivate || sessionStatus?.hideFromLobby)
+                  ? '🔒 Hidden from lobby - Session created as private'
+                  : '🔒 Content moderation - Hide from public view. Use for sensitive or private content.'}
               </p>
             </div>
           </label>
@@ -1160,47 +1305,87 @@ export default function LeftSidebar({
             </div>
           )}
 
-          {/* GAME BUTTON (Host Only - All Watch Types) */}
-          {isHost && (onGameClick || onGameClose) && (
-            <button
-              onClick={() => {
-                if (activeGame) {
-                  console.log('🎮 [LeftSidebar] End Game button clicked!');
-                  if (onGameClose) {
-                    onGameClose();
-                    toast.success('Game ended', { icon: '🎮' });
-                  }
-                } else {
-                  console.log('🎮 [LeftSidebar] Start Game button clicked!');
-                  if (onGameClick) {
-                    onGameClick();
-                  }
-                }
-              }}
-              className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg font-semibold text-xs sm:text-sm transition-all mb-3 sm:mb-4 shadow-lg flex items-center justify-center gap-2 ${
-                activeGame
-                  ? 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white'
-                  : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
-              }`}
-            >
-              {activeGame ? (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                  End Game
-                </>
-              ) : (
-                <>
-                  <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Start Game
-                </>
+          {/* START/END GAME & RECORD BUTTONS - Horizontal Layout */}
+          {isHost && (
+            <div className="flex gap-2 mb-3 sm:mb-4">
+              {/* START/END GAME BUTTON (Host Only) */}
+              {(onGameClick || onGameClose) && (
+                <button
+                  onClick={() => {
+                    if (activeGame) {
+                      console.log('🎮 [LeftSidebar] End Game button clicked!');
+                      if (onGameClose) {
+                        onGameClose();
+                        toast.success('Game ended', { icon: '🎮' });
+                      }
+                    } else {
+                      console.log('🎮 [LeftSidebar] Start Game button clicked!');
+                      if (onGameClick) {
+                        onGameClick();
+                      }
+                    }
+                  }}
+                  className={`flex-1 px-2 sm:px-3 py-2 sm:py-2.5 rounded-lg font-semibold text-xs sm:text-sm transition-all shadow-lg flex flex-col items-center justify-center gap-1 ${
+                    activeGame
+                      ? 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white'
+                      : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
+                  }`}
+                >
+                  {activeGame ? (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      <span>End Game</span>
+                    </>
+                  ) : (
+                    <>
+                      <Gamepad2 className="w-5 h-5 sm:w-6 sm:h-6" />
+                      <span>Start Game</span>
+                    </>
+                  )}
+                </button>
               )}
-            </button>
-          )}
-          {!isHost && onGameClick && (
-            <div className="mb-3 text-xs text-gray-400">
-              (Game button hidden - not host. isHost: {String(isHost)})
+
+              {/* RECORD BUTTON (Host Only - All Watch Types) */}
+              <button
+                onClick={() => {
+                  if (isRecording) {
+                    stopRecording();
+                  } else {
+                    setShowRecordingModal(true);
+                  }
+                }}
+                disabled={recordingProcessing}
+                className={`flex-1 px-2 sm:px-3 py-2 sm:py-2.5 rounded-lg font-semibold text-xs sm:text-sm transition-all shadow-lg flex flex-col items-center justify-center gap-1 ${
+                  isRecording
+                    ? 'bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 text-white animate-pulse'
+                    : recordingProcessing
+                    ? 'bg-gray-600 text-gray-300 cursor-not-allowed opacity-60'
+                    : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white'
+                }`}
+              >
+                {recordingProcessing ? (
+                  <>
+                    <svg className="animate-spin h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span className="hidden sm:inline">Uploading</span>
+                    <span>{recordingUploadProgress}%</span>
+                  </>
+                ) : isRecording ? (
+                  <>
+                    <div className="w-4 h-4 sm:w-5 sm:h-5 bg-white rounded-full animate-pulse"></div>
+                    <span className="text-[10px] sm:text-xs">⏱️ {formatTime(recordingDuration)}</span>
+                  </>
+                ) : (
+                  <>
+                    <Video className="w-5 h-5 sm:w-6 sm:h-6" />
+                    <span>Record</span>
+                  </>
+                )}
+              </button>
             </div>
           )}
 
@@ -1428,6 +1613,13 @@ export default function LeftSidebar({
       {activeTab === 'watchfrom' && isHost && (
         <div className="p-3 sm:p-4 h-full flex flex-col">
           <h3 className="text-base sm:text-lg font-semibold text-white mb-3 sm:mb-4">Watch From Platform</h3>
+          
+          {/* Legal Notice */}
+          <div className="mb-3 p-2 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+            <p className="text-blue-300 text-[10px] leading-relaxed">
+              📺 Screen share from legal platforms. You must have a valid account. WeWatch doesn't host content.
+            </p>
+          </div>
 
           {/* ✅ Show End Watch button if WatchFrom is active */}
           {isScreenSharingActive && sharingSource === 'watchfrom' && (
@@ -1698,6 +1890,16 @@ export default function LeftSidebar({
       )}
 
       {/* End of modals */}
+
+      {/* 🔴 Recording Options Modal */}
+      <RecordingOptionsModal
+        isOpen={showRecordingModal}
+        onClose={() => setShowRecordingModal(false)}
+        onStartRecording={(source) => {
+          startRecording(source, roomId);
+        }}
+        roomId={roomId}
+      />
     </div>
   );
 }

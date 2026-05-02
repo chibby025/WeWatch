@@ -7,18 +7,20 @@ import React, { useState, useRef, useEffect } from 'react';
  * @param {string} value - Current selected rating ('G', 'PG', '13+', '16+', '18+', 'Mature')
  * @param {function} onChange - Callback when rating changes
  * @param {boolean} showLabel - Show "Content Rating" label above selector
+ * @param {number} userAge - User's age for filtering age-appropriate ratings (0 = show all)
  */
-const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true }) => {
+const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAge = 0 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
 
-  const ratings = [
+  const allRatings = [
     {
       id: 'G',
       name: 'G - General',
       desc: 'Suitable for all ages',
       icon: '/icons/G Rating Icon.png',
       color: 'from-green-500 to-green-600',
+      minAge: 0
     },
     {
       id: 'PG',
@@ -26,6 +28,23 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true }) => {
       desc: 'May not be suitable for children',
       icon: '/icons/PG Rating Icon.png',
       color: 'from-blue-500 to-blue-600',
+      minAge: 0
+    },
+    {
+      id: 'Educational',
+      name: 'Educational',
+      desc: 'Online classes, tutorials, school & university',
+      icon: '/icons/Educational_Rating_Icon.png',
+      color: 'from-teal-500 to-teal-600',
+      minAge: 0
+    },
+    {
+      id: 'Religious',
+      name: 'Religious',
+      desc: 'Church services, Bible studies, worship',
+      icon: '/icons/Religious Rating.png',
+      color: 'from-yellow-500 to-amber-600',
+      minAge: 0
     },
     {
       id: '13+',
@@ -33,6 +52,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true }) => {
       desc: 'For ages 13 and older',
       icon: '/icons/13_ Rating Icon.png',
       color: 'from-yellow-500 to-yellow-600',
+      minAge: 13
     },
     {
       id: '16+',
@@ -40,6 +60,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true }) => {
       desc: 'For ages 16 and older',
       icon: '/icons/16_ Rating Icon.png',
       color: 'from-orange-500 to-orange-600',
+      minAge: 16
     },
     {
       id: '18+',
@@ -47,15 +68,22 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true }) => {
       desc: 'Adults only',
       icon: '/icons/18_ Rating Icon.png',
       color: 'from-red-500 to-red-600',
+      minAge: 18
     },
     {
       id: 'Mature',
       name: 'Mature - Explicit',
-      desc: 'Explicit adult content',
+      desc: 'Explicit, nude adult content',
       icon: '/icons/Mature Rating Icon.png',
       color: 'from-purple-600 to-purple-700',
+      minAge: 18
     },
   ];
+
+  // Filter ratings based on user age (only show ratings they're eligible to select)
+  const ratings = userAge > 0 
+    ? allRatings.filter(rating => userAge >= rating.minAge)
+    : allRatings; // If age unknown (0), show all ratings
 
   const selected = ratings.find((r) => r.id === value) || ratings[0];
 

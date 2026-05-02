@@ -3,7 +3,6 @@
 // Creates a hidden canvas that can be used as THREE.CanvasTexture
 
 import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 'react';
-import SpaceImpactGame from './SpaceImpactGame';
 
 const GameScreenRenderer = forwardRef(({ 
   activeGame, 
@@ -13,19 +12,11 @@ const GameScreenRenderer = forwardRef(({
   height = 1080
 }, ref) => {
   const canvasRef = useRef(null);
-  const arcadeCanvasRef = useRef(null); // For arcade games
   const animationFrameRef = useRef(null);
-  const [isArcadeActive, setIsArcadeActive] = useState(false);
 
   // Expose canvas ref to parent for THREE.CanvasTexture creation
   useImperativeHandle(ref, () => ({
     getCanvas: () => {
-      // Return arcade canvas if arcade game, otherwise multiplayer canvas
-      if (activeGame?.game_type === 'space_impact' || 
-          activeGame?.game_type === 'snake' || 
-          activeGame?.game_type === 'tetris') {
-        return arcadeCanvasRef.current;
-      }
       return canvasRef.current;
     },
     handleCanvasClick: (normalizedX, normalizedY) => {
@@ -103,22 +94,11 @@ const GameScreenRenderer = forwardRef(({
   }));
 
   useEffect(() => {
-    if (!activeGame) {
-      setIsArcadeActive(false);
-      return;
-    }
+    if (!activeGame) return;
 
     const gameType = activeGame.game_type;
 
-    // Arcade games render themselves
-    if (gameType === 'space_impact' || gameType === 'snake' || gameType === 'tetris') {
-      console.log('🎮 [GameScreenRenderer] Activating arcade game:', gameType, 'Canvas ref:', arcadeCanvasRef.current);
-      setIsArcadeActive(true);
-      return;
-    }
-
     // Multiplayer games use canvas rendering
-    setIsArcadeActive(false);
     if (!canvasRef.current) return;
 
     const canvas = canvasRef.current;
@@ -162,49 +142,10 @@ const GameScreenRenderer = forwardRef(({
   const gameType = activeGame.game_type;
 
   return (
-    <>
-      {/* Multiplayer games canvas */}
-      {gameType !== 'space_impact' && gameType !== 'snake' && gameType !== 'tetris' && (
-        <canvas 
-          ref={canvasRef}
-          style={{ display: 'none' }} // Hidden - used as texture source
-        />
-      )}
-
-      {/* Arcade games */}
-      {gameType === 'space_impact' && (
-        <>
-          <canvas 
-            ref={arcadeCanvasRef}
-            style={{ display: 'none' }}
-          />
-          <SpaceImpactGame
-            canvasRef={arcadeCanvasRef}
-            onGameOver={(score) => {
-              console.log('🎮 Space Impact game over! Score:', score);
-              // Game over handled by overlay
-            }}
-            isActive={isArcadeActive}
-          />
-        </>
-      )}
-
-      {gameType === 'snake' && (
-        <canvas 
-          ref={arcadeCanvasRef}
-          style={{ display: 'none' }}
-        />
-        // TODO: SnakeGame component
-      )}
-
-      {gameType === 'tetris' && (
-        <canvas 
-          ref={arcadeCanvasRef}
-          style={{ display: 'none' }}
-        />
-        // TODO: TetrisGame component
-      )}
-    </>
+    <canvas 
+      ref={canvasRef}
+      style={{ display: 'none' }} // Hidden - used as texture source
+    />
   );
 });
 

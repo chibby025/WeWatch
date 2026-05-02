@@ -28,6 +28,12 @@ type User struct {
 	// Payment-related fields (Phase 3)
 	Country          *string `gorm:"type:varchar(2)" json:"country,omitempty"`           // ISO country code (US, NG, GH, etc.)
 	PreferredGateway *string `gorm:"type:varchar(20)" json:"preferred_gateway,omitempty"` // 'paystack' or 'stripe'
+	
+	// 2FA fields (Security enhancement - P0)
+	TwoFactorSecret  *string `gorm:"type:varchar(255)" json:"-"` // TOTP secret (never expose in JSON)
+	TwoFactorEnabled bool    `gorm:"default:false" json:"two_factor_enabled"` // Is 2FA active
+	BackupCodes      *string `gorm:"type:text" json:"-"` // Encrypted backup codes (never expose)
+	LastLoginIP      *string `gorm:"type:varchar(45)" json:"-"` // Track IP changes (security)
 }
 
 // User role constants

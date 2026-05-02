@@ -463,3 +463,35 @@ func GetFriendCountHandler(c *gin.Context) {
 		"count":   count,
 	})
 }
+
+// GetFollowersCountHandler returns unique member count across all rooms hosted by a user
+func GetFollowersCountHandler(c *gin.Context) {
+	userIDStr := c.Param("userId")
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	db := c.MustGet("db").(*gorm.DB)
+
+	// Count unique members across all rooms hosted by this user
+	// Excludes the host themselves from the count
+	var count int64
+	err = db.Table("user_rooms").
+		Select("COUNT(DISTINCT user_rooms.user_id)").
+		Joins("JOIN rooms ON user_rooms.room_id = rooms.id").
+		Where("rooms.host_id = ? AND user_rooms.user_id != ?", userID, userID).
+		Count(&count).Error
+
+	if err != nil {
+		log.Printf("Error counting followers for user %d: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count followers"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user_id":         userID,
+		"followers_count": count,
+	})
+}

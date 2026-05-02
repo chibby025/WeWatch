@@ -43,6 +43,18 @@ export default function LiveShareWizard({
   const [logoSize, setLogoSize] = useState(100);
   const [logoX, setLogoX] = useState(10);
   const [logoY, setLogoY] = useState(80);
+  
+  // ✅ Mute All Members state (default to true for podcast/church/news/show modes)
+  const [muteAllMembers, setMuteAllMembers] = useState(false);
+  
+  // ✅ Update muteAllMembers default when mode changes
+  useEffect(() => {
+    if (selectedMode) {
+      // Default to enabled for podcast/church/news/show modes
+      const shouldMuteByDefault = ['podcast', 'church', 'news', 'show'].includes(selectedMode);
+      setMuteAllMembers(shouldMuteByDefault);
+    }
+  }, [selectedMode]);
 
   // Determine steps based on mode and user type
   const getSteps = () => {
@@ -55,8 +67,8 @@ export default function LiveShareWizard({
 
     const steps = [{ id: 'mode', name: 'Mode', required: true }];
     
-    // Add setup step for podcast/news/show modes
-    if (selectedMode && ['podcast', 'news', 'show'].includes(selectedMode)) {
+    // Add setup step for podcast/church/news/show modes
+    if (selectedMode && ['podcast', 'church', 'news', 'show'].includes(selectedMode)) {
       steps.push({ id: 'setup', name: 'Setup', required: true });
     }
     
@@ -125,8 +137,8 @@ export default function LiveShareWizard({
     setSelectedMode(mode);
     markStepCompleted('mode');
     
-    // If mode requires setup, show setup form
-    if (['podcast', 'news', 'show'].includes(mode)) {
+    // If mode requires setup, show setup form (podcast, church, news, show)
+    if (['podcast', 'church', 'news', 'show'].includes(mode)) {
       setShowSetupForm(true);
       setCurrentStep(2); // Move to setup
     } else {
@@ -172,6 +184,7 @@ export default function LiveShareWizard({
       deviceId: selectedDeviceId, // 📹 Selected camera ID
       cameraId: selectedDeviceId, // 📹 Explicit camera ID for clarity
       layout: layoutOverride || selectedLayout, // ✅ Use parameter if provided, else fall back to state
+      muteAllMembers, // ✅ Mute all members flag
     };
     console.log('✅ [LiveShareWizard] Wizard completing with data:', {
       mode: wizardData.mode,
@@ -341,6 +354,8 @@ export default function LiveShareWizard({
               mode={selectedMode}
               onSelectLayout={handleLayoutSelect}
               embedded={true}
+              muteAllMembers={muteAllMembers}
+              setMuteAllMembers={setMuteAllMembers}
             />
           )}
         </div>
@@ -411,6 +426,7 @@ function SetupForm({
 
   const modeConfig = {
     podcast: { title: 'Podcast Setup', fieldLabel: 'Episode Title', guestLabel: 'Guest' },
+    church: { title: 'Church Service Setup', fieldLabel: 'Church Name', guestLabel: 'Co-Pastor' },
     news: { title: 'News Setup', fieldLabel: 'Broadcast Title', guestLabel: 'Co-Anchor' },
     show: { title: 'Show Setup', fieldLabel: 'Show Title', guestLabel: 'Co-Host' },
   };

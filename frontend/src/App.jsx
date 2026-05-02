@@ -9,6 +9,8 @@ import PaymentPage from './pages/PaymentPage';
 import AdminDashboard from './pages/AdminDashboard';
 import Login from './components/Login';
 import Register from './components/Register';
+import ForgotPassword from './components/ForgotPassword';
+import ResetPassword from './components/ResetPassword';
 import GoogleAuthCallback from './components/GoogleAuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
 import CreateRoomPage  from './components/CreateRoomPage';
@@ -114,6 +116,8 @@ function App() {
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/auth/google/success" element={<GoogleAuthCallback />} />
           
           {/* Protected routes */}

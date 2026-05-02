@@ -2,8 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests } from '../services/api';
-import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon } from '@heroicons/react/24/solid';
-import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon } from '@heroicons/react/24/outline';
+import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon } from '@heroicons/react/24/solid';
+import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon, FaceSmileIcon as FaceSmileOutlineIcon, MicrophoneIcon as MicrophoneOutlineIcon, PaperClipIcon as PaperClipOutlineIcon, ChartBarSquareIcon as ChartBarSquareOutlineIcon } from '@heroicons/react/24/outline';
+import { Plus } from 'lucide-react';
 import jwtDecodeUtil from '../utils/jwt';
 import apiClient from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
@@ -15,6 +16,9 @@ import LobbyLeftSidebar from './LobbyLeftSidebar';
 import UserProfileModal from './UserProfileModal';
 import SettingsModal from './SettingsModal';
 import CreateNewModal from './CreateNewModal';
+import PostUploadModal from './PostUploadModal';
+import PostViewModal from './PostViewModal';
+import DiscoverFeed from './DiscoverFeed';
 import DeleteRoomModal from './DeleteRoomModal';
 import EventsPreviewModal from './EventsPreviewModal';
 import SessionPreview from './SessionPreview';
@@ -37,10 +41,62 @@ import { checkDateOfBirth, updateDateOfBirth } from '../services/api';
 import SessionChatPreviewModal from './SessionChatPreviewModal';
 import { formatCount } from '../utils/formatCount';
 import TikTokHeartAnimation from './TikTokHeartAnimation';
+import FeedAdCard from './ads/FeedAdCard';
+import { calculateAge } from '../utils/ageUtils';
+
+// CSS for custom pulsing animations
+const pulseAnimationStyles = `
+  @keyframes pulseRed {
+    0%, 100% {
+      color: #ef4444;
+      opacity: 1;
+    }
+    50% {
+      color: #dc2626;
+      opacity: 0.8;
+    }
+  }
+  
+  @keyframes scaleSquare {
+    0%, 100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.1);
+    }
+  }
+  
+  .pulse-red-cross {
+    animation: pulseRed 1.5s ease-in-out infinite;
+  }
+  
+  .scale-square {
+    animation: scaleSquare 1.5s ease-in-out infinite;
+  }
+`;
 
 const LobbyPage = () => {
   // ✅ Tab State
   const [activeTab, setActiveTab] = useState('rooms'); // 'chats', 'rooms', or 'watching' - default to 'rooms'
+  
+  // ✅ Data Saver State
+  const [dataSaverEnabled, setDataSaverEnabled] = React.useState(
+    localStorage.getItem('dataSaverMode') === 'true'
+  );
+  
+  // Listen for localStorage changes (when toggled in sidebar)
+  React.useEffect(() => {
+    const checkDataSaver = () => {
+      setDataSaverEnabled(localStorage.getItem('dataSaverMode') === 'true');
+    };
+    window.addEventListener('storage', checkDataSaver);
+    // Also check periodically since localStorage events don't fire in same tab
+    const interval = setInterval(checkDataSaver, 500);
+    return () => {
+      window.removeEventListener('storage', checkDataSaver);
+      clearInterval(interval);
+    };
+  }, []);
   
   const [searchTerm, setSearchTerm] = useState('');
   const [rooms, setRooms] = useState([]);
@@ -113,12 +169,17 @@ const LobbyPage = () => {
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isCreateNewModalOpen, setIsCreateNewModalOpen] = useState(false);
+  const [isPostUploadModalOpen, setIsPostUploadModalOpen] = useState(false);
   const [openMenuRoomId, setOpenMenuRoomId] = useState(null);
   const [roomToDelete, setRoomToDelete] = useState(null);
   
   // ✅ Events Preview Modal State
   const [isEventsModalOpen, setIsEventsModalOpen] = useState(false);
   const [selectedRoomForEvents, setSelectedRoomForEvents] = useState(null);
+  
+  // ✅ Post View Modal State
+  const [isPostViewModalOpen, setIsPostViewModalOpen] = useState(false);
+  const [selectedPost, setSelectedPost] = useState(null);
 
   // ✅ Ticket Purchase Modal State
   const [isTicketModalOpen, setIsTicketModalOpen] = useState(false);
@@ -181,6 +242,7 @@ const LobbyPage = () => {
   };
   
   // ✅ Infinite Scroll State for "Watching Now"
+  const [watchingSubTab, setWatchingSubTab] = useState('sessions'); // 'sessions' or 'discover'
   const [sessionsPage, setSessionsPage] = useState({ 
     data: [], 
     offset: 0, 
@@ -194,6 +256,10 @@ const LobbyPage = () => {
     loading: false 
   });
   const [isRefreshingWatchingNow, setIsRefreshingWatchingNow] = useState(false);
+  
+  // 🎯 Feed Ads State
+  const [feedAds, setFeedAds] = useState([]);
+  const [fetchingFeedAds, setFetchingFeedAds] = useState(false);
   
   // ✅ Infinite scroll refs
   const watchingNowScrollRef = React.useRef(null);
@@ -394,6 +460,36 @@ const LobbyPage = () => {
       // Clear navigation state to prevent reopening on refresh
       navigate(location.pathname, { replace: true, state: {} });
     }
+
+    // Handle navigation from RoomTV (post click)
+    if (location.state?.openPost && activeTab === 'watching') {
+      const postId = location.state.openPost;
+      const autoPlay = location.state.autoPlay || false;
+      
+      console.log('📺 [LobbyPage] Opening post from RoomTV:', postId);
+      
+      // Switch to discover sub-tab
+      setWatchingSubTab('discover');
+      
+      // Fetch and open the post
+      apiClient.get(`/api/posts/${postId}`)
+        .then(response => {
+          setSelectedPost(response.data.post);
+          setIsPostViewModalOpen(true);
+          
+          // If autoPlay is requested, trigger play (handled by PostViewModal)
+          if (autoPlay) {
+            console.log('▶️ [LobbyPage] Auto-playing post from RoomTV');
+          }
+        })
+        .catch(error => {
+          console.error('Failed to fetch post:', error);
+          toast.error('Failed to load post');
+        });
+      
+      // Clear navigation state
+      navigate(location.pathname, { replace: true, state: {} });
+    }
   }, [location.state]);
   
   // ✅ Chat message ref for auto-scroll
@@ -534,6 +630,7 @@ const LobbyPage = () => {
       };
       
       console.log('🎬 [createInstantWatchSession] Sending request with content_rating:', requestBody.content_rating);
+      console.log('🎬 [createInstantWatchSession] is_private flag:', selectedIsPrivate ? 'TRUE (Hidden from Lobby) ✅' : 'FALSE (Visible in Lobby) ❌');
       console.log('🎬 [createInstantWatchSession] Full request body:', requestBody);
 
       // Add class_type if classroom
@@ -775,6 +872,44 @@ const LobbyPage = () => {
       console.error('❌ [Lobby] Pre-fetch failed:', err);
     }
   };
+  
+  // 🎯 Fetch feed ads
+  const fetchFeedAds = async () => {
+    if (fetchingFeedAds || !currentUser) return;
+    
+    setFetchingFeedAds(true);
+    try {
+      const userAge = currentUser.date_of_birth ? calculateAge(currentUser.date_of_birth) : 0;
+      
+      // Fetch multiple banner ads for feed injection
+      const response = await apiClient.get('/api/ads/in-session', {
+        params: {
+          user_id: currentUser.id,
+          session_id: 'feed', // Special session_id for feed ads
+          ad_type: 'banner',
+          placement: 'feed',
+          user_age: userAge
+        }
+      });
+      
+      if (response.data.ad) {
+        // Store single ad, we'll inject it multiple times
+        console.log('🎯 [Lobby] Feed ad fetched:', response.data.ad);
+        setFeedAds([response.data.ad]);
+      }
+    } catch (err) {
+      console.error('❌ [Lobby] Failed to fetch feed ads:', err);
+    } finally {
+      setFetchingFeedAds(false);
+    }
+  };
+  
+  // Fetch feed ads when lobby loads
+  useEffect(() => {
+    if (currentUser && activeTab === 'watching') {
+      fetchFeedAds();
+    }
+  }, [currentUser, activeTab]);
   
   // ✅ STEP 3: Load next batch of sessions (infinite scroll)
   const loadMoreSessions = async () => {
@@ -1577,12 +1712,9 @@ const LobbyPage = () => {
   // WebSocket connection for real-time lobby updates
   useEffect(() => {
     if (!wsToken) {
-      // Auth still loading, WebSocket will connect when token is ready
       setWsConnected(false);
       return;
     }
-    
-    console.log('🔌 [LobbyPage WS] Connecting with auth token...');
 
     let reconnectAttempts = 0;
     const maxReconnectAttempts = 10;
@@ -2509,6 +2641,13 @@ const LobbyPage = () => {
           onClose={() => setIsCreateNewModalOpen(false)}
           onInstantWatch={handleInstantWatch}
           onCreateRoom={handleCreateRoom}
+          onCreatePost={() => setIsPostUploadModalOpen(true)}
+        />
+
+        {/* ✅ Post Upload Modal */}
+        <PostUploadModal
+          isOpen={isPostUploadModalOpen}
+          onClose={() => setIsPostUploadModalOpen(false)}
         />
 
         {/* Delete Room Modal */}
@@ -2541,58 +2680,18 @@ const LobbyPage = () => {
         </div>
       <p className="text-center mb-6 text-gray-700 dark:text-gray-300">Welcome! Find or create a room to start watching together.</p>
 
-      {/* Search Bar Section with Create New Button - Only show on Rooms tab */}
+      {/* Search Bar Section - Only show on Rooms tab */}
       {activeTab === 'rooms' && (
         <div className="mb-4 sm:mb-8 flex justify-center">
           <div className="flex items-center gap-0 w-full max-w-3xl">
-            {/* Create New Button - Enhanced with pulse & glow for discoverability */}
-            <div className="relative group">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsCreateNewModalOpen(true);
-                  if (showCreateButtonPulse) {
-                    localStorage.setItem('hasSeenCreateButton', 'true');
-                    setShowCreateButtonPulse(false);
-                  }
-                }}
-                className={`flex-shrink-0 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 border-r-0 rounded-l-lg px-2 py-1.5 sm:px-3 sm:py-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all hover:scale-105 ${
-                  showCreateButtonPulse ? 'shadow-lg shadow-blue-500/50 dark:shadow-blue-400/50' : ''
-                }`}
-                title="Create New Room or Start Instant Watch"
-              >
-                <img 
-                  src="/icons/newRoom.svg" 
-                  alt="Create New" 
-                  className={`h-8 w-8 sm:h-9 sm:w-9 transition-all ${
-                    showCreateButtonPulse ? 'animate-pulse' : ''
-                  }`}
-                />
-              </button>
-              
-              {/* Notification Dot - First-time indicator */}
-              {showCreateButtonPulse && (
-                <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full animate-ping" />
-              )}
-              
-              {/* Hover Tooltip */}
-              <div className="absolute left-0 top-full mt-2 hidden group-hover:block z-50 animate-in fade-in slide-in-from-top-1 duration-200">
-                <div className="bg-gray-900 text-white text-xs px-3 py-2 rounded-lg shadow-lg whitespace-nowrap">
-                  <div className="font-semibold">Create Room or Instant Watch</div>
-                  <div className="text-gray-300 text-[10px] mt-0.5">Start watching with friends!</div>
-                  <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45" />
-                </div>
-              </div>
-            </div>
-
-            {/* Search Form - Middle & Right */}
+            {/* Search Form - Full Width */}
             <form onSubmit={handleSearchSubmit} className="flex flex-1">
               <input
                 type="text"
                 placeholder="Search room name or description..."
                 value={searchTerm}
                 onChange={handleSearchChange}
-                className="px-2 py-1.5 sm:px-4 sm:py-2 text-sm border border-gray-300 dark:border-gray-600 border-r-0 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                className="px-2 py-1.5 sm:px-4 sm:py-2 text-sm border border-gray-300 dark:border-gray-600 border-r-0 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 rounded-l-lg"
               />
               <button
                 type="submit"
@@ -2606,6 +2705,15 @@ const LobbyPage = () => {
                 />
               </button>
             </form>
+            
+            {/* Data Saver Indicator Badge */}
+            {dataSaverEnabled && (
+              <div className="ml-2 sm:ml-4 flex items-center gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5 bg-green-600 text-white text-[10px] sm:text-xs font-semibold rounded-full shadow-lg">
+                <span>💾</span>
+                <span className="hidden sm:inline">Data Saver Active</span>
+                <span className="sm:hidden">Data Saver</span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2701,7 +2809,7 @@ const LobbyPage = () => {
                   return (
                   <div 
                     key={room.id} 
-                    className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden hover:shadow-lg transition-shadow duration-300 relative cursor-pointer border border-gray-200 dark:border-gray-700"
+                    className="bg-white dark:bg-gray-800 shadow-md rounded-lg hover:shadow-lg transition-shadow duration-300 relative cursor-pointer border border-gray-200 dark:border-gray-700"
                     onClick={() => navigate(`/rooms/${room.id}`)}
                    >
                     {/* Room Card Content - Horizontal Layout */}
@@ -2821,7 +2929,7 @@ const LobbyPage = () => {
                               e.stopPropagation();
                               setOpenMenuRoomId(openMenuRoomId === room.id ? null : room.id);
                             }}
-                            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
+                            className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
                             title="Room Options"
                           >
                             <EllipsisVerticalIcon className="h-5 w-5 sm:h-6 sm:w-6 text-gray-600 dark:text-gray-400" />
@@ -2905,6 +3013,33 @@ const LobbyPage = () => {
             )}
           </>
         )}
+        
+        {/* Floating Create New Button - Only visible on Rooms tab */}
+        {activeTab === 'rooms' && (
+          <div className="relative">
+            <style>{pulseAnimationStyles}</style>
+            <button
+              onClick={() => {
+                setIsCreateNewModalOpen(true);
+                if (showCreateButtonPulse) {
+                  localStorage.setItem('hasSeenCreateButton', 'true');
+                  setShowCreateButtonPulse(false);
+                }
+              }}
+              className={`fixed bottom-20 left-4 sm:bottom-24 sm:left-6 z-40 w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-110 flex items-center justify-center group ${
+                showCreateButtonPulse ? 'animate-pulse ring-4 ring-blue-400 ring-opacity-50' : ''
+              }`}
+              title="Create New Room or Start Instant Watch"
+            >
+              <Plus className="w-7 h-7 sm:w-8 sm:h-8 text-white" strokeWidth={3} />
+              
+              {/* Notification Dot - First-time indicator */}
+              {showCreateButtonPulse && (
+                <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping" />
+              )}
+            </button>
+          </div>
+        )}
         </div>
       )}
 
@@ -2915,6 +3050,33 @@ const LobbyPage = () => {
           className="overflow-y-auto overflow-x-hidden h-full scrollbar-hide"
           style={{ maxHeight: 'calc(100vh - 200px)', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
         >
+          {/* ✅ Sub-tab Navigation: Watching Now | Discover */}
+          <div className="flex gap-2 mb-6 border-b border-gray-300 dark:border-gray-700 px-4">
+            <button
+              onClick={() => setWatchingSubTab('sessions')}
+              className={`px-4 py-2 font-semibold transition-all ${
+                watchingSubTab === 'sessions'
+                  ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+              }`}
+            >
+              Watching Now
+            </button>
+            <button
+              onClick={() => setWatchingSubTab('discover')}
+              className={`px-4 py-2 font-semibold transition-all ${
+                watchingSubTab === 'discover'
+                  ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+              }`}
+            >
+              Discover
+            </button>
+          </div>
+
+          {/* ✅ WATCHING NOW CONTENT */}
+          {watchingSubTab === 'sessions' && (
+            <>
           {/* ✅ Refresh Button */}
           <div className="flex justify-center mb-4">
             <button
@@ -3029,7 +3191,12 @@ const LobbyPage = () => {
                   // Calculate index for fullscreen (trailers.length + session index)
                   const fullscreenIndex = trailersPage.data.length + index;
                   
+                  // 🎯 Inject ad every 7 items
+                  const shouldShowAd = feedAds.length > 0 && (index + 1) % 7 === 0;
+                  
                   return (
+                    <React.Fragment key={session.session_id}>
+                      {/* Regular Session Card */}
                   <div 
                     key={session.session_id}
                     onClick={() => handleOpenFullscreen(fullscreenIndex)}
@@ -3247,6 +3414,28 @@ const LobbyPage = () => {
                     
                     <div className="absolute inset-0 border-4 border-transparent hover:border-blue-500/50 transition-colors duration-300 rounded-2xl pointer-events-none"></div>
                   </div>
+                  
+                  {/* 🎯 Feed Ad Card (every 7 items) */}
+                  {shouldShowAd && (
+                    <FeedAdCard
+                      key={`ad-${index}`}
+                      ad={feedAds[0]}
+                      onTrackImpression={async (clicked) => {
+                        try {
+                          await apiClient.post(`/api/ads/campaigns/${feedAds[0].id}/track`, {
+                            session_id: 'feed',
+                            room_id: null,
+                            clicked,
+                            view_duration: 5
+                          });
+                          console.log('🎯 [Lobby] Feed ad impression tracked');
+                        } catch (err) {
+                          console.error('❌ [Lobby] Failed to track feed ad:', err);
+                        }
+                      }}
+                    />
+                  )}
+                  </React.Fragment>
                   );
                 })}
               </div>
@@ -3283,6 +3472,29 @@ const LobbyPage = () => {
               <p className="text-gray-600 dark:text-gray-400">Start an instant watch or create a room to begin!</p>
             </div>
           )}
+          </>
+          )}
+
+          {/* ✅ DISCOVER FEED CONTENT */}
+          {watchingSubTab === 'discover' && (
+            <>
+              <DiscoverFeed
+                onPostClick={(post) => {
+                  setSelectedPost(post);
+                  setIsPostViewModalOpen(true);
+                }}
+              />
+              
+              {/* Floating Post Button - Only visible on Discover tab */}
+              <button
+                onClick={() => setIsPostUploadModalOpen(true)}
+                className="fixed bottom-20 left-4 sm:bottom-24 sm:left-6 z-40 w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-110 flex items-center justify-center group"
+                title="Create Post"
+              >
+                <Plus className="w-7 h-7 sm:w-8 sm:h-8 text-white" strokeWidth={3} />
+              </button>
+            </>
+          )}
         </div>
       )}
       
@@ -3296,13 +3508,13 @@ const LobbyPage = () => {
       
       {/* ✅ CHATS TAB CONTENT */}
       {activeTab === 'chats' && (
-        <div className="max-w-5xl mx-auto">
+        <div className={selectedChatUser ? "fixed inset-0 z-50 bg-gray-50 dark:bg-gray-900" : "max-w-5xl mx-auto"}>
           {chatsLoading ? (
-            <div className="flex justify-center items-center h-96">
+            <div className={selectedChatUser ? "flex justify-center items-center h-full" : "flex justify-center items-center h-96"}>
               <p className="text-lg text-gray-700 dark:text-gray-300">Loading chats...</p>
             </div>
           ) : (
-            <div className="h-[calc(100vh-160px)] sm:h-[calc(100vh-200px)]">
+            <div className={selectedChatUser ? "h-full flex flex-col" : "h-[calc(100vh-160px)] sm:h-[calc(100vh-200px)]"}>
               {/* ✅ STACKED SINGLE-VIEW: Friends List OR Messages (Mobile-First) */}
               {chatView === 'friends' ? (
                 /* ========== FRIENDS LIST VIEW ========== */
@@ -3623,7 +3835,7 @@ const LobbyPage = () => {
               ) : (
                 /* ========== MESSAGES VIEW ========== */
                 <div 
-                  className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700 flex flex-col h-full"
+                  className="bg-white dark:bg-gray-800 shadow-lg overflow-hidden flex flex-col h-full"
                   onTouchStart={handleChatTouchStart}
                   onTouchMove={handleChatTouchMove}
                   onTouchEnd={handleChatTouchEnd}
@@ -3704,8 +3916,8 @@ const LobbyPage = () => {
                     {/* Message Input - Enhanced with Voice, Attachments, Stickers, Polls */}
                     {isRecording ? (
                       /* Voice Recording Mode */
-                      <div className="p-4 bg-red-50 dark:bg-red-900/30 border-t-2 border-red-500">
-                        <div className="flex items-center gap-3">
+                      <div className="absolute bottom-0 left-0 right-0">
+                        <div className="m-4 p-4 bg-red-50 dark:bg-red-900/30 border-2 border-red-500 rounded-2xl shadow-lg flex items-center gap-3">
                           <div className="flex-1 flex items-center gap-3">
                             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
                             <div className="flex-1">
@@ -3735,69 +3947,73 @@ const LobbyPage = () => {
                         </div>
                       </div>
                     ) : (
-                      /* Normal Message Input */
-                      <form onSubmit={handleSendChatMessage} className="p-3 sm:p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
-                        {/* Action Buttons Row */}
-                        <div className="flex gap-1 mb-3">
-                          <Button
-                            type="button"
-                            onClick={() => setIsAttachModalOpen(true)}
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
-                            title="Attach file"
-                          >
-                            <PaperClipIcon className="h-5 w-5" />
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={() => setIsStickerPickerOpen(true)}
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
-                            title="Send sticker"
-                          >
-                            <FaceSmileIcon className="h-5 w-5" />
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={() => setIsPollCreatorOpen(true)}
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
-                            title="Create poll"
-                          >
-                            <ChartBarSquareIcon className="h-5 w-5" />
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={startRecording}
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20"
-                            title="Record voice note"
-                          >
-                            <MicrophoneIcon className="h-5 w-5" />
-                          </Button>
-                        </div>
-                        
-                        {/* Text Input Row */}
-                        <div className="flex gap-2">
-                          <Input
-                            type="text"
+                      /* Redesigned Message Input - Modern Chat UI */
+                      <form onSubmit={handleSendChatMessage} className="absolute bottom-0 left-0 right-0">
+                        <div className="mb-2 mx-3 relative bg-white dark:bg-gray-900 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-2">
+                          {/* Text Input */}
+                          <textarea
                             value={newChatMessage}
                             onChange={(e) => setNewChatMessage(e.target.value)}
-                            placeholder="Type a message..."
-                            className="flex-1 h-11 bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 focus-visible:ring-green-500 focus-visible:ring-offset-0"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                handleSendChatMessage(e);
+                              }
+                            }}
+                            placeholder="What do wanna do today?"
+                            rows={1}
+                            className="w-full bg-transparent border-none outline-none resize-none text-gray-900 dark:text-gray-100 placeholder:text-gray-400 text-sm"
+                            style={{ minHeight: '20px', maxHeight: '80px' }}
                           />
-                          <Button
-                            type="submit"
-                            disabled={!newChatMessage.trim()}
-                            className="h-11 px-4 sm:px-6 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            <PaperAirplaneIcon className="h-5 w-5 sm:hidden" />
-                            <span className="hidden sm:inline font-medium">Send</span>
-                          </Button>
+                          
+                          {/* Action Icons Row + Send Button */}
+                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+                            {/* Left: Action Icons */}
+                            <div className="flex items-center gap-0.5">
+                              <button
+                                type="button"
+                                onClick={startRecording}
+                                className="p-1.5 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                                title="Record voice note"
+                              >
+                                <MicrophoneOutlineIcon className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setIsStickerPickerOpen(true)}
+                                className="p-1.5 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                                title="Send emoji/sticker"
+                              >
+                                <FaceSmileOutlineIcon className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setIsAttachModalOpen(true)}
+                                className="p-1.5 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                                title="Attach file"
+                              >
+                                <PaperClipOutlineIcon className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setIsPollCreatorOpen(true)}
+                                className="p-1.5 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                                title="Create poll"
+                              >
+                                <ChartBarSquareOutlineIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                            
+                            {/* Right: Circular Send Button */}
+                            <button
+                              type="submit"
+                              disabled={!newChatMessage.trim()}
+                              className="flex-shrink-0 w-8 h-8 rounded-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white flex items-center justify-center transition-all disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+                              title="Send message"
+                            >
+                              <ArrowUpIcon className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                       </form>
                     )}
@@ -3874,6 +4090,23 @@ const LobbyPage = () => {
           roomUrl={`${window.location.origin}/rooms/${selectedEventForCalendar.room_id}`}
         />
       )}
+
+      {/* ✅ Post View Modal */}
+      <PostViewModal
+        isOpen={isPostViewModalOpen}
+        onClose={() => {
+          setIsPostViewModalOpen(false);
+          setSelectedPost(null);
+        }}
+        post={selectedPost}
+        onLikeToggle={(postId, liked) => {
+          // Update post in discover feed if needed
+          console.log('Post', postId, liked ? 'liked' : 'unliked');
+        }}
+        onCommentAdded={(postId) => {
+          console.log('Comment added to post', postId);
+        }}
+      />
 
       {/* ✅ Call Modals */}
       <OutgoingCallModal

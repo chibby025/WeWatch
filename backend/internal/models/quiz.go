@@ -44,6 +44,7 @@ type Question struct {
 	Question      string   `json:"question"`
 	Options       []string `json:"options,omitempty"`        // For multiple choice
 	CorrectAnswer string   `json:"correct_answer"`           // "A", "B", "C", "D" for MC, text for text_input
+	ExactMatch    bool     `json:"exact_match,omitempty"`    // If true, text_input answers must match case exactly
 }
 
 // Answer represents a student's answer to a question

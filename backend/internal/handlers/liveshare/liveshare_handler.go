@@ -75,6 +75,8 @@ func (h *LiveShareHandler) HandleMessage(msgType string, data map[string]interfa
 		return h.handleGuestSwitchedType(data, client)
 	case "liveshare_guest_left":
 		return h.handleGuestLeft(data, client)
+	case "bible_verse_update":
+		return h.handleBibleVerseUpdate(data, client)
 	default:
 		return fmt.Errorf("unknown LiveShare message type: %s", msgType)
 	}
@@ -109,8 +111,8 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 		log.Printf("⚠️ [LiveShare] No layout in incoming data or layout is empty string")
 	}
 
-	// For podcast mode, extract additional config
-	if mode == "podcast" {
+	// For podcast or church mode, extract additional config (both use same fields: title, logo, guest)
+	if mode == "podcast" || mode == "church" {
 		podcastTitle, _ := data["podcastTitle"].(string)
 		podcastLogoURL, _ := data["podcastLogoURL"].(string)
 		
@@ -121,8 +123,8 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 			guestUserID = &guestID
 		}
 
-		log.Printf("🎙️ [LiveShare] Podcast config - Title: %s, Logo: %s, Guest: %v", 
-			podcastTitle, podcastLogoURL, guestUserID)
+		log.Printf("🎙️ [LiveShare] %s config - Title: %s, Logo: %s, Guest: %v", 
+			mode, podcastTitle, podcastLogoURL, guestUserID)
 
 		// Update watch_sessions with podcast config
 		updateData := map[string]interface{}{
@@ -206,8 +208,8 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 		},
 	}
 
-	// Include config in broadcast for podcast, show, and news modes (all support title + logo)
-	if mode == "podcast" || mode == "show" || mode == "news" {
+	// Include config in broadcast for podcast, show, news, and church modes (all support title + logo)
+	if mode == "podcast" || mode == "show" || mode == "news" || mode == "church" {
 		if podcastTitle, ok := data["podcastTitle"].(string); ok {
 			broadcastMsg["data"].(map[string]interface{})["podcastTitle"] = podcastTitle
 			log.Printf("📡 [LiveShare] Including title in %s broadcast: %s", mode, podcastTitle)
@@ -814,5 +816,65 @@ func (h *LiveShareHandler) handleGuestLeft(data map[string]interface{}, client C
 	}, client)
 
 	log.Printf("✅ [LiveShare] Guest left broadcast sent, database cleaned up")
+	return nil
+}
+
+// handleBibleVerseUpdate - Host shows/hides Bible verse (Church mode)
+func (h *LiveShareHandler) handleBibleVerseUpdate(data map[string]interface{}, client Client) error {
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+
+	verse, _ := data["verse"].(map[string]interface{})
+	active, _ := data["active"].(bool)
+
+	log.Printf("📖 [LiveShare] Bible verse update - Session: %s, Active: %v", sessionID, active)
+
+	// Persist to database (for late joiners)
+	if active && verse != nil {
+		verseJSON, err := json.Marshal(verse)
+		if err != nil {
+			return fmt.Errorf("failed to marshal verse data: %w", err)
+		}
+
+		result := h.db.Table("watch_sessions").
+			Where("session_id = ?", sessionID).
+			Update("current_bible_verse", string(verseJSON))
+
+		if result.Error != nil {
+			return fmt.Errorf("failed to save Bible verse: %w", result.Error)
+		}
+
+		log.Printf("✅ [LiveShare] Bible verse saved to database")
+	} else {
+		// Clear verse from database
+		result := h.db.Table("watch_sessions").
+			Where("session_id = ?", sessionID).
+			Update("current_bible_verse", nil)
+
+		if result.Error != nil {
+			log.Printf("⚠️ [LiveShare] Failed to clear Bible verse: %v", result.Error)
+		}
+
+		log.Printf("✅ [LiveShare] Bible verse cleared from database")
+	}
+
+	// Broadcast to all room members
+	broadcastMsg := map[string]interface{}{
+		"type": "bible_verse_update",
+		"data": map[string]interface{}{
+			"verse":  verse,
+			"active": active,
+		},
+	}
+
+	msgBytes, _ := json.Marshal(broadcastMsg)
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     msgBytes,
+		IsBinary: false,
+	}, client)
+
+	log.Printf("✅ [LiveShare] Bible verse update broadcast sent")
 	return nil
 }

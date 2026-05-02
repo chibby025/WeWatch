@@ -57,26 +57,18 @@ export default function EmotePicker({ isOpen, onClose, onEmoteSelect, onToggleRa
             <button
               key={emote.id}
               onClick={() => handleEmoteClick(emote)}
-              className={`flex flex-col items-center justify-center p-1.5 sm:p-2 md:p-3 rounded-lg transition-colors group ${
+              className={`flex items-center justify-center p-3 sm:p-4 md:p-5 rounded-lg transition-colors group ${
                 emote.isAction && isHandRaised 
                   ? 'bg-yellow-600 hover:bg-yellow-700' 
                   : 'bg-gray-800 hover:bg-gray-700'
               }`}
               title={`${emote.label}${emote.key !== 'R' ? ` (Key: ${emote.key})` : ''}`}
             >
-              <div className="mb-0.5 sm:mb-1 group-hover:scale-110 transition-transform">
-                <EmojiImage emoji={emote.emoji} size={window.innerWidth < 640 ? 32 : 48} />
+              <div className="group-hover:scale-110 transition-transform">
+                <EmojiImage emoji={emote.emoji} size={window.innerWidth < 640 ? 40 : 56} />
               </div>
-              <div className="text-[8px] sm:text-[9px] text-gray-400 text-center leading-tight">{emote.label}</div>
-              {emote.key !== 'R' && (
-                <div className="text-[7px] sm:text-[8px] text-gray-500 mt-0.5 hidden sm:block">Key: {emote.key}</div>
-              )}
             </button>
           ))}
-        </div>
-
-        <div className="mt-2 sm:mt-3 text-center text-[9px] sm:text-[10px] text-gray-500">
-          {isHandRaised ? '✋ Your hand is raised' : 'Use keyboard shortcuts (1-6) for quick reactions'}
         </div>
       </div>
     </>

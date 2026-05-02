@@ -18,6 +18,7 @@ import (
 
 	"wewatch-backend/internal/models"
 	"wewatch-backend/internal/handlers"
+	"wewatch-backend/internal/middleware"
 	"wewatch-backend/internal/utils"
 )
 
@@ -38,9 +39,18 @@ func main() {
 	}
 
 	// --- Database Connection ---
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+	// ✅ Use SSL for production (Railway), disable for local development
+	sslMode := "disable"
+	if os.Getenv("RAILWAY_ENVIRONMENT") != "" || os.Getenv("DB_HOST") != "localhost" {
+		sslMode = "require" // Railway PostgreSQL requires SSL
+		log.Println("🔒 Database SSL Mode: ENABLED (production)")
+	} else {
+		log.Println("🔓 Database SSL Mode: DISABLED (local development)")
+	}
+	
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
 		os.Getenv("DB_HOST"), os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"),
-		os.Getenv("DB_NAME"), os.Getenv("DB_PORT"))
+		os.Getenv("DB_NAME"), os.Getenv("DB_PORT"), sslMode)
 
 	// Open connection to the database using GORM
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
@@ -68,12 +78,20 @@ func main() {
 		// Payment system models (excluding SessionTicket which references WatchSession)
 		&models.UserWallet{}, &models.TokenTransaction{}, &models.GatewayEarning{},
 		&models.Donation{}, &models.InstantWatchEarning{}, 
-		&models.Payout{}, &models.PaymentAccount{}, &models.KYCVerification{}, &models.RefundRequest{})
+		&models.Payout{}, &models.PaymentAccount{}, &models.KYCVerification{}, &models.RefundRequest{},
+		// Security models (P0 fixes - April 25, 2026)
+		&models.TokenBlacklist{}, &models.ProcessedWebhook{}, &models.SecurityEvent{},
+		// Posts system models (Phase 1 - Post & Recording Feature)
+		&models.Post{}, &models.PostLike{}, &models.PostComment{}, &models.PostView{},
+		// Ads system models (Phase 1 - Ad Campaigns & RoomTV Ads)
+		&models.AdSettings{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
 	
 	log.Println("Database schema migrated successfully")
+	log.Println("✅ Security enhancements: Token blacklist, webhook idempotency, security event logging")
+	log.Println("✅ Posts system: User-generated content, recordings, and discovery feed")
 
 	
 	// --- Initialize WebSocket Hub ---
@@ -112,8 +130,14 @@ func main() {
 		log.Println("Payment splitting will not work properly. Please check .env file.")
 	} else {
 		log.Println("✅ Multi-account payment system initialized")
-		log.Println("   - Revenue account (15%) ready")
-		log.Println("   - Reserve account (85%) ready")
+		log.Println("   - Revenue account (25%) ready")
+		log.Println("   - Reserve account (75%) ready")
+	}
+	
+	// --- Validate BunnyCDN Configuration ---
+	if err := utils.ValidateBunnyCDNConfig(); err != nil {
+		log.Printf("⚠️  Warning: BunnyCDN configuration issue: %v", err)
+		log.Println("Using local storage fallback for development. Posts will work but won't be CDN-accelerated.")
 	}
 
 
@@ -129,12 +153,52 @@ func main() {
 		}
 	}()
 	
+	// ✅ NEW: Temporary media cleanup: Every 5 minutes (safety net for all rooms)
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			log.Println("🕗 Running scheduled cleanup of ALL temporary media (safety net)...")
+			handlers.CleanupAllTemporaryMedia()    // ✅ Clean temp files from ALL ended sessions
+			handlers.CleanupOrphanedPreviews()     // ✅ Clean orphaned preview files
+			handlers.CleanupOrphanedPodcastLogos() // ✅ Clean podcast logos from ended sessions
+		}
+	}()
+	
 	// RoomTV cleanup: Every 10 seconds (precise deletion)
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
 			handlers.CleanupExpiredRoomTVContent() // ✅ Event-driven cleanup with 10-sec precision
+		}
+	}()
+	
+	// ✅ P0 Security Fix: Token blacklist cleanup (daily)
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			log.Println("🧹 Running daily cleanup of expired JWT tokens...")
+			if err := models.CleanupExpiredTokens(DB); err != nil {
+				log.Printf("⚠️ Error cleaning up expired tokens: %v", err)
+			} else {
+				log.Println("✅ Expired tokens cleaned successfully")
+			}
+		}
+	}()
+	
+	// ✅ P0 Security Fix: Webhook cleanup (every 7 days, keep 90 days history)
+	go func() {
+		ticker := time.NewTicker(7 * 24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			log.Println("🧹 Running weekly cleanup of old webhook records...")
+			if err := models.CleanupOldWebhooks(DB); err != nil {
+				log.Printf("⚠️ Error cleaning up old webhooks: %v", err)
+			} else {
+				log.Println("✅ Old webhooks cleaned successfully")
+			}
 		}
 	}()
 	
@@ -153,11 +217,27 @@ func main() {
 	r.MaxMultipartMemory = 1 << 30 // 1 GB — allows large file uploads
 	
 	// --- CORS Configuration ---
+	// ✅ P0 Security Fix: Strict CORS for production
 	config := cors.Config{
 		AllowOriginFunc: func(origin string) bool {
 			log.Printf("🔍 CORS Check - Origin: %s", origin) // Debug log
 			
-			// Allow localhost (HTTP)
+			// Production: Only allow specific domains
+			if os.Getenv("ENVIRONMENT") == "production" {
+				allowedOrigins := []string{
+					"https://letswatchout.com",
+					"https://www.letswatchout.com",
+				}
+				for _, allowed := range allowedOrigins {
+					if origin == allowed {
+						return true
+					}
+				}
+				log.Printf("⚠️  CORS REJECTED (production) - Origin: %s", origin)
+				return false
+			}
+			
+			// Development: Allow localhost and tunnels
 			if strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:") {
 				return true
 			}
@@ -169,7 +249,7 @@ func main() {
 			if strings.Contains(origin, ".loca.lt") {
 				return true
 			}
-			// Allow Vercel deployments (HTTPS)
+			// Allow Vercel deployments (HTTPS) - DEVELOPMENT ONLY
 			if strings.Contains(origin, ".vercel.app") {
 				return true
 			}
@@ -273,9 +353,28 @@ func main() {
 
 	// --- Auth Routes ---
 	// Public routes (no auth required)
-	r.POST("/api/auth/register", handlers.RegisterHandler)
-	r.POST("/api/auth/login", handlers.LoginHandler)
+	// ✅ Rate limiting for auth endpoints (5 attempts per minute per IP)
+	authLimiter := handlers.NewRateLimiter(5, time.Minute)
+	
+	// ✅ P0 Security Fix: Rate limiting for payment endpoints (10 req/min per IP)
+	paymentLimiter := middleware.NewRateLimiter(10, time.Minute)
+	r.POST("/api/auth/register", authLimiter, handlers.RegisterHandler)
+	r.POST("/api/auth/login", authLimiter, handlers.LoginHandler)
 	r.POST("/api/auth/logout", handlers.LogoutHandler)
+	
+	// ✅ 2FA Management Routes (protected - require authentication)
+	twoFactorGroup := r.Group("/api/auth")
+	twoFactorGroup.Use(handlers.AuthMiddleware())
+	{
+		twoFactorGroup.POST("/setup-2fa", handlers.Setup2FAHandler)          // Generate QR code
+		twoFactorGroup.POST("/verify-2fa-setup", handlers.Verify2FASetupHandler) // Confirm and enable 2FA
+		twoFactorGroup.POST("/disable-2fa", handlers.Disable2FAHandler)      // Disable 2FA (requires password + code)
+		twoFactorGroup.POST("/change-password", handlers.ChangePasswordHandler) // Change password
+	}
+	
+	// Password reset routes (public)
+	r.POST("/api/auth/forgot-password", handlers.ForgotPasswordHandler)
+	r.POST("/api/auth/reset-password", handlers.ResetPasswordHandler)
 	
 	// Google OAuth routes
 	r.GET("/api/auth/google/login", handlers.GoogleLoginHandler)
@@ -308,7 +407,9 @@ func main() {
 		roomGroup.GET("/:id/livekit-token", handlers.GenerateLiveKitTokenHandler) // ✅ ADD THIS LINE (Generate LiveKit token for a room)
 		// --- Media Item Routes (Permanent) ---
 		roomGroup.GET("/:id/media", handlers.GetMediaItemsForRoomHandler) // GET /api/rooms/:id/media (Get media items for a room)
-		roomGroup.POST("/:id/upload", handlers.UploadMediaHandler)        // POST /api/rooms/:id/upload (Upload media to a room)
+		// ✅ Rate limit: 3 file uploads per 10 minutes per user (chunk-aware)
+		uploadLimiter := handlers.NewUploadRateLimiter(3, 10*time.Minute)
+		roomGroup.POST("/:id/upload", uploadLimiter, handlers.UploadMediaHandler) // POST /api/rooms/:id/upload (Upload media to a room)
 		roomGroup.POST("/:id/media/stream", handlers.HandleStreamURL)     // POST /api/rooms/:id/media/stream (Add stream URL to playlist)
 		roomGroup.GET("/:id/temporary-media", handlers.GetTemporaryMediaItemsForRoomHandler) // GET /api/rooms/:id/temporary-media (Get list of temporary media items)
 		roomGroup.DELETE("/:id/temporary-media", handlers.DeleteTemporaryMediaItemsForRoomHandler) // DELETE /api/rooms/:id/temporary-media (Delete all temporary media items - Host only)
@@ -416,6 +517,8 @@ func main() {
 	sessionGroup.POST("/:id/graphics", handlers.UpdateGraphics)       // POST /api/sessions/:id/graphics (Update graphics state)
 	sessionGroup.GET("/:id/graphics", handlers.GetGraphics)           // GET /api/sessions/:id/graphics (Get all graphics)
 	sessionGroup.DELETE("/:id/graphics", handlers.DeleteAllGraphics)  // DELETE /api/sessions/:id/graphics (Delete all graphics when LiveShare ends)
+	sessionGroup.POST("/:id/bible-verse", handlers.SaveBibleVerse)    // POST /api/sessions/:id/bible-verse (Save current Bible verse for church mode)
+	sessionGroup.DELETE("/:id/bible-verse", handlers.ClearBibleVerse) // DELETE /api/sessions/:id/bible-verse (Clear Bible verse)
 	sessionGroup.GET("/:id/media-queue", handlers.GetMediaQueue)      // GET /api/sessions/:id/media-queue (Get media queue)
 	sessionGroup.DELETE("/media-queue/:itemId", handlers.DeleteMediaQueueItem) // DELETE /api/sessions/media-queue/:itemId (Delete queue item)
 	
@@ -438,6 +541,36 @@ func main() {
 		sessionPublic.GET("/:id/chat-preview", handlers.GetSessionChatPreviewHandler) // GET /api/sessions/:id/chat-preview (Get last 10 messages)
 		sessionPublic.GET("/:id/chat-count", handlers.GetSessionChatCountHandler)   // GET /api/sessions/:id/chat-count (Get total chat messages)
 	}
+
+	// --- POSTS & USER-GENERATED CONTENT ROUTES (Phase 1: Post & Recording Feature) ---
+	// Public routes (discover feed, view single post, read comments)
+	postsPublic := r.Group("/api/posts")
+	{
+		postsPublic.GET("", handlers.GetDiscoverFeed)             // GET /api/posts (Discover feed - randomized public posts)
+		postsPublic.GET("/:id", handlers.GetPost)                 // GET /api/posts/:id (Get single post)
+		postsPublic.POST("/:id/view", handlers.TrackPostView)     // POST /api/posts/:id/view (Track view - no auth required)
+		postsPublic.GET("/:id/comments", handlers.GetPostComments) // GET /api/posts/:id/comments (Get comments)
+	}
+	
+	// Protected routes (create, update, delete, like, comment)
+	postsProtected := r.Group("/api/posts")
+	postsProtected.Use(handlers.AuthMiddleware())
+	{
+		postsProtected.POST("", handlers.CreatePost)                       // POST /api/posts (Create post)
+		postsProtected.POST("/:id/upload", handlers.UploadPostMedia)       // POST /api/posts/:id/upload (Upload media to BunnyCDN)
+		postsProtected.PUT("/:id", handlers.UpdatePost)                    // PUT /api/posts/:id (Update post - owner only)
+		postsProtected.DELETE("/:id", handlers.DeletePost)                 // DELETE /api/posts/:id (Delete post - owner only)
+		postsProtected.POST("/:id/like", handlers.LikePost)                // POST /api/posts/:id/like (Like post)
+		postsProtected.DELETE("/:id/unlike", handlers.UnlikePost)          // DELETE /api/posts/:id/unlike (Unlike post)
+		postsProtected.POST("/:id/comments", handlers.CreatePostComment)   // POST /api/posts/:id/comments (Add comment)
+		postsProtected.DELETE("/comments/:id", handlers.DeletePostComment) // DELETE /api/posts/comments/:id (Delete comment)
+	}
+	
+	// User posts routes (public)
+	r.GET("/api/users/:id/posts", handlers.GetUserPosts)      // GET /api/users/:id/posts (Get user's posts)
+	
+	// Room posts routes (public)
+	r.GET("/api/rooms/:id/posts", handlers.GetRoomPosts)      // GET /api/rooms/:id/posts (Get posts created in room context)
 
 	theaterGroup := r.Group("/api/theaters")
 	theaterGroup.Use(handlers.AuthMiddleware())
@@ -488,8 +621,10 @@ func main() {
 
 	// --- SESSION PAYMENT ROUTES (Protected) ---
 	// These routes are nested under sessions for ticket purchases and donations
+	// ✅ P0 Security Fix: Apply rate limiting to prevent spam
 	paymentGroup := r.Group("/api/sessions")
 	paymentGroup.Use(handlers.AuthMiddleware())
+	paymentGroup.Use(paymentLimiter.Middleware()) // 10 req/min
 	{
 		// Ticket management
 		paymentGroup.POST("/:id/tickets/purchase", handlers.PurchaseSessionTicketHandler(DB))  // POST /api/sessions/:id/tickets/purchase
@@ -503,18 +638,22 @@ func main() {
 	}
 
 	// --- DONATION ROUTES (Protected) - Wallet-to-Wallet Gifts ---
+	// ✅ P0 Security Fix: Apply rate limiting
 	donationsGroup := r.Group("/api/donations")
 	donationsGroup.Use(handlers.AuthMiddleware())
+	donationsGroup.Use(paymentLimiter.Middleware()) // 10 req/min
 	{
 		donationsGroup.POST("/gift", handlers.GiftTokensHandler(DB))                           // POST /api/donations/gift (Gift tokens to any room member)
 		donationsGroup.GET("/top-donors", handlers.GetTopDonorsHandler(DB))                    // GET /api/donations/top-donors (Global leaderboard)
 	}
 
 	// --- PAYOUT ROUTES (Protected) ---
+	// ✅ P0 Security Fix: Stricter rate limiting for payouts (3 per hour)
+	payoutLimiter := middleware.NewRateLimiter(3, time.Hour)
 	payoutGroup := r.Group("/api/payouts")
 	payoutGroup.Use(handlers.AuthMiddleware())
 	{
-		payoutGroup.POST("/request", handlers.RequestPayoutHandler(DB))                        // POST /api/payouts/request (Request payout)
+		payoutGroup.POST("/request", payoutLimiter.Middleware(), handlers.RequestPayoutHandler(DB)) // POST /api/payouts/request (3/hr limit)
 		payoutGroup.GET("/:userId", handlers.GetUserPayoutsHandler(DB))                        // GET /api/payouts/:userId (Get payout history)
 		payoutGroup.GET("/details/:id", handlers.GetPayoutDetailsHandler(DB))                  // GET /api/payouts/details/:id (Get payout details)
 		payoutGroup.POST("/:id/cancel", handlers.CancelPayoutHandler(DB))                      // POST /api/payouts/:id/cancel (Cancel pending payout)
@@ -631,6 +770,9 @@ func main() {
 		adminGroup.GET("/accounting", handlers.GetPlatformAccountingHandler(DB))               // GET /api/admin/accounting (Platform accounting summary)
 		adminGroup.GET("/accounting/history", handlers.GetAccountingHistoryHandler(DB))        // GET /api/admin/accounting/history (Transaction history)
 		adminGroup.GET("/accounting/export", handlers.GetAccountingExportHandler(DB))          // GET /api/admin/accounting/export (Export to CSV)
+		
+		// 📋 Admin audit logs
+		adminGroup.GET("/audit-logs", handlers.GetAdminAuditLogsHandler(DB))                   // GET /api/admin/audit-logs (View audit trail)
 	}
 	
 	// --- LOBBY CHATS ROUTES (Protected) ---
@@ -669,6 +811,13 @@ func main() {
 		lobbyChatsGroup.GET("/block-status/:userId", handlers.CheckIfBlockedHandler)   // GET /api/lobby-chats/block-status/:userId
 	}
 
+	// --- LOBBY CALL HISTORY ROUTE (Protected) ---
+	lobbyGroup := r.Group("/api/lobby")
+	lobbyGroup.Use(handlers.AuthMiddleware())
+	{
+		lobbyGroup.GET("/call-history", handlers.GetCallHistoryHandler) // GET /api/lobby/call-history
+	}
+
 	// --- FRIENDSHIPS ROUTES (Protected) ---
 	friendshipsGroup := r.Group("/api/friendships")
 	friendshipsGroup.Use(handlers.AuthMiddleware())
@@ -686,6 +835,8 @@ func main() {
 		friendshipsGroup.DELETE("/remove/:userId", handlers.RemoveFriendHandler)          // DELETE /api/friendships/remove/:userId (Remove friend)
 		friendshipsGroup.GET("/status/:userId", handlers.GetFriendshipStatusHandler)      // GET /api/friendships/status/:userId (Check friendship status)
 		friendshipsGroup.GET("/count/:userId", handlers.GetFriendCountHandler)            // GET /api/friendships/count/:userId (Get friend count)
+		friendshipsGroup.GET("/followers/:userId", handlers.GetFollowersCountHandler)     // GET /api/friendships/followers/:userId (Get followers count)
+		friendshipsGroup.POST("/check-contacts", handlers.CheckContactsHandler)           // POST /api/friendships/check-contacts (Check imported contacts)
 	}
 	
 	// --- USER STATS ROUTES (Protected) ---
@@ -696,14 +847,14 @@ func main() {
 		c.Next()
 	})
 	{
-		userStatsGroup.GET("/:userId/average-watchers", handlers.GetUserAverageWatchersHandler) // GET /api/users/:userId/average-watchers (Get average session watchers)
+		userStatsGroup.GET("/:id/average-watchers", handlers.GetUserAverageWatchersHandler) // GET /api/users/:id/average-watchers (Get average session watchers)
 	}
 
 	// --- PRIVATE MESSAGES ROUTES (Protected) ---
 	privateMessagesGroup := r.Group("/api/private-messages")
 	privateMessagesGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
 	{
-		privateMessagesGroup.GET("/:userId", handlers.GetPrivateMessagesHandler) // GET /api/private-messages/:userId (Get private messages with user)
+		privateMessagesGroup.GET("/:id", handlers.GetPrivateMessagesHandler) // GET /api/private-messages/:id (Get private messages with user)
 	}
 
 	// --- SUPER ADMIN ANALYTICS ROUTES (Protected + Super Admin Only) ---
@@ -728,6 +879,42 @@ func main() {
 		// Manual processing payouts (for starter account workaround)
 		superAdminGroup.GET("/payouts/processing", handlers.GetProcessingPayoutsHandler(DB))   // GET /api/admin/payouts/processing (List processing payouts)
 		superAdminGroup.POST("/payouts/:id/complete", handlers.MarkPayoutCompletedHandler(DB)) // POST /api/admin/payouts/:id/complete (Mark manually transferred payout as completed)
+		
+		// Ad Inquiry Management
+		superAdminGroup.GET("/ad-inquiries", handlers.GetAdInquiries)                          // GET /api/admin/ad-inquiries (List all ad inquiries)
+		superAdminGroup.PATCH("/ad-inquiries/:id/status", handlers.UpdateAdInquiryStatus)      // PATCH /api/admin/ad-inquiries/:id/status (Update inquiry status)
+		superAdminGroup.DELETE("/ad-inquiries/:id", handlers.DeleteAdInquiry)                  // DELETE /api/admin/ad-inquiries/:id (Delete inquiry)
+		
+		// Ad Campaign Management (Super Admin)
+		superAdminGroup.GET("/campaigns", handlers.GetAllCampaigns)                            // GET /api/admin/campaigns (List all campaigns)
+		superAdminGroup.PATCH("/campaigns/:id/status", handlers.UpdateCampaignStatus)          // PATCH /api/admin/campaigns/:id/status (Approve/reject campaign)
+	}
+
+	// --- PUBLIC AD INQUIRY SUBMISSION ---
+	r.POST("/api/ads/inquiries", handlers.SubmitAdInquiry) // POST /api/ads/inquiries (Public form submission)
+	
+	// --- AD CAMPAIGN ROUTES (Protected) ---
+	adGroup := r.Group("/api/ads")
+	adGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
+	{
+		adGroup.POST("/campaigns", handlers.CreateAdCampaign)                                  // POST /api/ads/campaigns (Create campaign)
+		adGroup.GET("/campaigns", handlers.GetUserCampaigns)                                   // GET /api/ads/campaigns (List user's campaigns)
+		adGroup.POST("/upload/ad-media", handlers.UploadAdMedia)                               // POST /api/ads/upload/ad-media (Upload ad creative)
+	}
+	
+	// --- PUBLIC AD SERVING ROUTES ---
+	r.GET("/api/ads/active", handlers.GetActiveCampaigns)                                      // GET /api/ads/active (Get active ads for display)
+	r.GET("/api/ads/check-eligibility", handlers.CheckAdEligibility)                           // GET /api/ads/check-eligibility?user_id=X&session_id=Y (Check 1-hour frequency cap)
+	r.GET("/api/ads/in-session", handlers.GetInSessionAd)                                      // GET /api/ads/in-session?user_id=X&session_id=Y (Get highest CPM ad for 80-20 split)
+	r.GET("/api/ads/roomtv", handlers.GetRoomTVAd)                                             // GET /api/ads/roomtv?room_id=X&user_id=Y (Get text/banner ad for RoomTV)
+	r.GET("/api/ads/settings", handlers.GetAdSettingsHandler)                                  // GET /api/ads/settings (Get ad system config - global switch)
+	r.POST("/api/ads/campaigns/:id/track", handlers.TrackAdImpression)                         // POST /api/ads/campaigns/:id/track (Track impression/click)
+	
+	// --- AD SETTINGS ROUTES (Super Admin Only) ---
+	adSettingsGroup := r.Group("/api/ads")
+	adSettingsGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
+	{
+		adSettingsGroup.PUT("/settings", handlers.UpdateAdSettingsHandler)                     // PUT /api/ads/settings (Update ad system config - super admin only)
 	}
 
 	// --- REFUND ROUTES (Protected) ---

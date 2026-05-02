@@ -61,9 +61,10 @@ const useCinemaAudio = ({
    * @returns {string[]} Array of user IDs
    */
   const getAudioRecipients = useCallback(() => {
-    // ✅ Host broadcasting: speak to everyone
+    // ✅ Host broadcasting: speak to everyone (all theaters)
+    // ✅ ASYMMETRIC AUDIO: Host broadcasts to all, but only hears their row
     if (isHost && isHostBroadcasting) {
-      console.log('[useCinemaAudio] Host broadcasting - all users will hear');
+      console.log('[useCinemaAudio] Host broadcasting - all users will hear (host hears row only)');
       return Object.keys(userSeats);
     }
 

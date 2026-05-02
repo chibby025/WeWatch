@@ -1,6 +1,8 @@
 // frontend/src/components/UserProfileModal.jsx
 import React, { useState, useRef, useEffect } from 'react';
-import { getFriendCount, getUserAverageWatchers } from '../services/api';
+import { getFriendCount, getFollowersCount, getUserAverageWatchers } from '../services/api';
+import PostsGrid from './PostsGrid';
+import PostViewModal from './PostViewModal';
 
 export default function UserProfileModal({ 
   user, 
@@ -45,9 +47,14 @@ export default function UserProfileModal({
   const [isAvatarExpanded, setIsAvatarExpanded] = useState(false); // ✅ NEW: Expandable avatar
   const [friendCount, setFriendCount] = useState(0); // ✅ NEW: Friend count
   const [loadingFriendCount, setLoadingFriendCount] = useState(true);
+  const [followersCount, setFollowersCount] = useState(0); // ✅ NEW: Followers count
+  const [loadingFollowersCount, setLoadingFollowersCount] = useState(true);
   const [averageWatchers, setAverageWatchers] = useState(0); // ✅ NEW: Average watchers
   const [loadingWatchers, setLoadingWatchers] = useState(true);
   const [isHost, setIsHost] = useState(false);
+  const [activeTab, setActiveTab] = useState('info'); // 'info' or 'posts'
+  const [selectedPost, setSelectedPost] = useState(null);
+  const [isPostViewModalOpen, setIsPostViewModalOpen] = useState(false);
   const fileInputRef = useRef(null);
 
   // Update state when user prop changes (after profile update)
@@ -79,6 +86,23 @@ export default function UserProfileModal({
         })
         .finally(() => {
           setLoadingFriendCount(false);
+        });
+      
+      // Fetch followers count
+      setLoadingFollowersCount(true);
+      console.log('👥 [UserProfileModal] Fetching followers count for user:', userId);
+      
+      getFollowersCount(userId)
+        .then(response => {
+          console.log('👥 [UserProfileModal] Followers count response:', response.data);
+          setFollowersCount(response.data.followers_count || 0);
+        })
+        .catch(error => {
+          console.error('❌ [UserProfileModal] Failed to fetch followers count:', error);
+          setFollowersCount(0);
+        })
+        .finally(() => {
+          setLoadingFollowersCount(false);
         });
       
       // Fetch average watchers (host stats)
@@ -142,26 +166,59 @@ export default function UserProfileModal({
   const currentAvatar = previewImage || user.avatar_url || '/icons/user1avatar.svg';
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-2 sm:p-4">
       {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-pulse"></div>
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
       </div>
       
-      <div className="relative bg-gradient-to-br from-gray-900/95 via-gray-800/95 to-gray-900/95 backdrop-blur-xl rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden border border-white/10 shadow-2xl">
+      <div className="relative bg-gradient-to-br from-gray-900/95 via-gray-800/95 to-gray-900/95 backdrop-blur-xl rounded-lg sm:rounded-2xl w-full max-w-2xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden border border-white/10 shadow-2xl">
         {/* Close Button - Top Right */}
         <button 
           onClick={onClose}
-          className="absolute top-4 right-4 z-20 text-gray-400 hover:text-white hover:bg-white/10 rounded-full w-10 h-10 flex items-center justify-center transition-all text-2xl leading-none shadow-lg"
+          className="absolute top-2 right-2 sm:top-4 sm:right-4 z-20 text-gray-400 hover:text-white hover:bg-white/10 rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center transition-all text-xl sm:text-2xl leading-none shadow-lg"
         >
           ✕
         </button>
 
-        {/* Split Layout Container */}
-        <div className="flex flex-col md:flex-row h-full min-h-[500px] max-h-[90vh]">
+        {/* Tab Navigation */}
+        {!isEditing && (
+          <div className="flex border-b border-white/10 bg-gray-800/50">
+            <button
+              onClick={() => setActiveTab('info')}
+              className={`flex items-center justify-center gap-1 sm:gap-2 flex-1 px-3 sm:px-6 py-3 text-xs sm:text-sm font-medium transition-colors ${
+                activeTab === 'info'
+                  ? 'text-purple-400 border-b-2 border-purple-400'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>Info</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('posts')}
+              className={`flex items-center justify-center gap-1 sm:gap-2 flex-1 px-3 sm:px-6 py-3 text-xs sm:text-sm font-medium transition-colors ${
+                activeTab === 'posts'
+                  ? 'text-purple-400 border-b-2 border-purple-400'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+              </svg>
+              <span>Posts</span>
+            </button>
+          </div>
+        )}
+
+        {/* Split Layout Container (Info Tab) */}
+        {activeTab === 'info' && (
+        <div className="flex flex-col md:flex-row h-full min-h-[400px] sm:min-h-[500px] max-h-[95vh] sm:max-h-[90vh]">
           {/* LEFT SIDE - User Info */}
-          <div className="flex-1 p-6 md:p-8 flex flex-col justify-between overflow-y-auto">
+          <div className="flex-1 p-4 sm:p-6 md:p-8 flex flex-col justify-between overflow-y-auto">
             {/* User Info Section */}
             <div className="space-y-4">
               {/* Username */}
@@ -178,7 +235,7 @@ export default function UserProfileModal({
                     />
                   </div>
                 ) : (
-                  <h2 className="text-3xl md:text-4xl font-bold text-white mb-1 break-words">
+                  <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white mb-1 break-words">
                     {user.username}
                   </h2>
                 )}
@@ -198,7 +255,7 @@ export default function UserProfileModal({
                       placeholder="Tell us about yourself..."
                     />
                   ) : (
-                    <p className="text-gray-300 text-base leading-relaxed">
+                    <p className="text-gray-300 text-sm sm:text-base leading-relaxed">
                       {user.bio}
                     </p>
                   )}
@@ -219,41 +276,42 @@ export default function UserProfileModal({
                 </div>
               )}
 
-              {/* Friend Count */}
+              {/* Friend Count & Followers Count */}
               {!isEditing && (
                 <div>
-                  <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-1 block">Friends</label>
-                  {loadingFriendCount ? (
+                  <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-1 block">Friends & Followers</label>
+                  {loadingFriendCount || loadingFollowersCount ? (
                     <p className="text-gray-400 text-sm">Loading...</p>
                   ) : (
                     <p className="text-gray-300 text-lg font-semibold">
                       {friendCount} {friendCount === 1 ? 'Friend' : 'Friends'}
+                      {' • '}
+                      {followersCount} {followersCount === 1 ? 'Follower' : 'Followers'}
                     </p>
                   )}
                 </div>
               )}
 
-              {/* Average Watchers - Show if user has hosted any sessions */}
+              {/* Audience - Show if user has hosted any sessions */}
               {!isEditing && (
                 <div>
                   <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-1 block">
-                    Average Watchers
+                    Audience
                   </label>
                   {loadingWatchers ? (
                     <p className="text-gray-400 text-sm">Loading...</p>
                   ) : averageWatchers > 0 ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-2xl">👥</span>
+                      <svg className="w-6 h-6" fill="none" stroke="white" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
                       <p className="text-gray-300 text-lg font-semibold">
-                        {averageWatchers.toFixed(1)} {averageWatchers === 1 ? 'Watcher' : 'Watchers'}
+                        {averageWatchers.toFixed(1)} avg per session
                       </p>
                     </div>
                   ) : (
                     <p className="text-gray-500 text-sm italic">Not a host yet</p>
                   )}
-                  <p className="text-gray-500 text-xs mt-1">
-                    Per session average
-                  </p>
                 </div>
               )}
             </div>
@@ -287,7 +345,7 @@ export default function UserProfileModal({
                     onClick={() => setIsEditing(true)}
                     className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 py-3 rounded-lg text-white font-medium transition-all shadow-lg hover:shadow-purple-500/50 transform hover:scale-105 flex items-center justify-center gap-2"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5" fill="none" stroke="white" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                     </svg>
                     Edit Profile
@@ -314,14 +372,14 @@ export default function UserProfileModal({
                     >
                       {friendshipStatus === 'pending' ? (
                         <>
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-5 h-5" fill="none" stroke="white" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
                           {isRequester ? 'Sent' : 'Pending'}
                         </>
                       ) : (
                         <>
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-5 h-5" fill="none" stroke="white" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
                           </svg>
                           Add Friend
@@ -337,7 +395,7 @@ export default function UserProfileModal({
                       className="flex-1 bg-purple-600 hover:bg-purple-700 py-3 rounded-lg text-white font-medium transition-all shadow-lg hover:shadow-purple-500/50 transform hover:scale-105 flex items-center justify-center gap-2"
                       title="Message"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-5 h-5" fill="none" stroke="white" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                       </svg>
                       Message
@@ -349,7 +407,7 @@ export default function UserProfileModal({
           </div>
 
           {/* RIGHT SIDE - Avatar Image */}
-          <div className="relative w-full md:w-2/5 min-h-[300px] md:min-h-full bg-gradient-to-br from-purple-900/30 to-blue-900/30">
+          <div className="relative w-full md:w-2/5 min-h-[200px] sm:min-h-[300px] md:min-h-full bg-gradient-to-br from-purple-900/30 to-blue-900/30">
             {/* Avatar Image - Full Height */}
             <img 
               src={currentAvatar} 
@@ -370,10 +428,10 @@ export default function UserProfileModal({
             {isEditing && (
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="absolute bottom-4 right-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-full p-3 text-white shadow-lg transform hover:scale-110 transition-all"
+                className="absolute bottom-2 right-2 sm:bottom-4 sm:right-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-full p-2 sm:p-3 text-white shadow-lg transform hover:scale-110 transition-all"
                 title="Change avatar"
               >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
@@ -389,18 +447,31 @@ export default function UserProfileModal({
             />
           </div>
         </div>
-      </div>
+        )}
+
+        {/* 📹 Posts Tab - Instagram-style Grid */}
+        {activeTab === 'posts' && (
+        <div className="p-3 sm:p-6 overflow-y-auto max-h-[95vh] sm:max-h-[90vh]">
+          <PostsGrid 
+            userId={user?.id || user?.ID} 
+            onPostClick={(post) => {
+              setSelectedPost(post);
+              setIsPostViewModalOpen(true);
+            }}
+          />
+        </div>
+      )}
 
       {/* ✅ Expanded Avatar Overlay */}
       {isAvatarExpanded && (
         <div 
-          className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-2 sm:p-4"
           onClick={() => setIsAvatarExpanded(false)}
         >
           <div className="relative">
             <button 
               onClick={() => setIsAvatarExpanded(false)}
-              className="absolute -top-12 right-0 text-white hover:text-gray-300 text-3xl leading-none"
+              className="absolute -top-8 sm:-top-12 right-0 text-white hover:text-gray-300 text-2xl sm:text-3xl leading-none"
             >
               ×
             </button>
@@ -411,12 +482,25 @@ export default function UserProfileModal({
                 e.target.onerror = null;
                 e.target.src = '/avatars/default.png';
               }}
-              className="max-w-[600px] max-h-[600px] w-auto h-auto object-contain rounded-lg"
+              className="max-w-[90vw] sm:max-w-[600px] max-h-[80vh] sm:max-h-[600px] w-auto h-auto object-contain rounded-lg"
               onClick={(e) => e.stopPropagation()}
             />
           </div>
         </div>
       )}
+
+      {/* Post View Modal */}
+      {selectedPost && (
+        <PostViewModal 
+          isOpen={isPostViewModalOpen}
+          onClose={() => {
+            setIsPostViewModalOpen(false);
+            setSelectedPost(null);
+          }}
+          post={selectedPost}
+        />
+      )}
+      </div>
     </div>
   );
 }

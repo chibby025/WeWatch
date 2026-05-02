@@ -6,6 +6,8 @@
 # Binary files
 main
 server
+backend
+test_server
 *.exe
 *.exe~
 *.test

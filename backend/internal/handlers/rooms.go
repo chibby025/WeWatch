@@ -8,6 +8,8 @@ import (
     "fmt"
     "time"
     "encoding/json"
+    "strings"
+    "path/filepath"
     "github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
@@ -526,6 +528,42 @@ func EndWatchSessionHandler(c *gin.Context) {
 			log.Printf("✅ Deleted DB record: ID=%d", item.ID)
 		}
 	}
+	
+	// ✅ Delete preview files for this session (prevent accumulation)
+	log.Printf("🗑️ [EndWatchSessionHandler] Deleting preview files for session %s", sessionID)
+	previewsDeleted := 0
+	
+	// Check temp folder for session previews
+	if entries, err := os.ReadDir("./uploads/temp"); err == nil {
+		for _, entry := range entries {
+			if strings.Contains(entry.Name(), "_preview") {
+				filePath := filepath.Join("./uploads/temp", entry.Name())
+				if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+					log.Printf("⚠️ Failed to delete preview %s: %v", filePath, err)
+				} else {
+					previewsDeleted++
+				}
+			}
+		}
+	}
+	
+	// Check uploads folder for session previews
+	if entries, err := os.ReadDir("./uploads"); err == nil {
+		for _, entry := range entries {
+			if strings.Contains(entry.Name(), "_preview") {
+				filePath := filepath.Join("./uploads", entry.Name())
+				if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+					log.Printf("⚠️ Failed to delete preview %s: %v", filePath, err)
+				} else {
+					previewsDeleted++
+				}
+			}
+		}
+	}
+	
+	if previewsDeleted > 0 {
+		log.Printf("✅ Deleted %d preview files for session %s", previewsDeleted, sessionID)
+	}
 
 	// ✅ Mark all session members as inactive
 	result := tx.Model(&models.WatchSessionMember{}).
@@ -708,6 +746,21 @@ func EndWatchSessionHandler(c *gin.Context) {
 			log.Printf("🪑 [EndWatchSessionHandler] Cleared seating assignments for room %d", session.RoomID)
 		}
 		hub.seatingMutex.Unlock()
+	}
+	
+	// ✅ DELETE PODCAST LOGO if this was a podcast session
+	if session.PodcastLogoURL != "" {
+		// Extract filename from URL (e.g., "/uploads/podcast-logos/abc123.png" -> "abc123.png")
+		logoFilename := filepath.Base(session.PodcastLogoURL)
+		logoPath := filepath.Join("./uploads/podcast-logos", logoFilename)
+		
+		if err := os.Remove(logoPath); err != nil {
+			if !os.IsNotExist(err) {
+				log.Printf("⚠️ [EndWatchSessionHandler] Failed to delete podcast logo %s: %v", logoPath, err)
+			}
+		} else {
+			log.Printf("✅ [EndWatchSessionHandler] Deleted podcast logo: %s", logoPath)
+		}
 	}
 
 	// ✅ BROADCAST SESSION_ENDED TO ALL PARTICIPANTS
@@ -1085,6 +1138,180 @@ func cleanupSession(sessionID string, roomID uint) {
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("cleanupSession: Transaction commit failed: %v", err)
 	}
+}
+
+// CleanupOrphanedPodcastLogos deletes podcast logos from ended sessions
+// Safety net for logos missed during session end (crashes, errors, etc.)
+func CleanupOrphanedPodcastLogos() {
+	log.Println("🧹 [CleanupPodcastLogos] Starting cleanup of orphaned podcast logos...")
+	
+	// Find all ended sessions with podcast logos
+	var endedPodcastSessions []models.WatchSession
+	result := DB.Where("ended_at IS NOT NULL AND podcast_logo_url != '' AND podcast_logo_url IS NOT NULL").
+		Find(&endedPodcastSessions)
+	
+	if result.Error != nil {
+		log.Printf("❌ [CleanupPodcastLogos] Database query failed: %v", result.Error)
+		return
+	}
+	
+	if len(endedPodcastSessions) == 0 {
+		log.Println("✅ [CleanupPodcastLogos] No orphaned podcast logos found")
+		return
+	}
+	
+	log.Printf("🗑️ [CleanupPodcastLogos] Found %d ended sessions with podcast logos to clean", len(endedPodcastSessions))
+	
+	deletedLogos := 0
+	for _, session := range endedPodcastSessions {
+		// Extract filename from URL
+		logoFilename := filepath.Base(session.PodcastLogoURL)
+		logoPath := filepath.Join("./uploads/podcast-logos", logoFilename)
+		
+		// Delete physical file
+		if err := os.Remove(logoPath); err != nil {
+			if os.IsNotExist(err) {
+				log.Printf("ℹ️ [CleanupPodcastLogos] Logo already deleted: %s", logoPath)
+			} else {
+				log.Printf("⚠️ [CleanupPodcastLogos] Failed to delete %s: %v", logoPath, err)
+				continue
+			}
+		} else {
+			deletedLogos++
+			log.Printf("✅ [CleanupPodcastLogos] Deleted: %s (session %s ended)", logoPath, session.SessionID)
+		}
+		
+		// Clear logo URL in database (prevent re-scanning)
+		DB.Model(&session).Update("podcast_logo_url", "")
+	}
+	
+	log.Printf("✅ [CleanupPodcastLogos] Cleanup complete: %d logos deleted", deletedLogos)
+}
+
+// CleanupAllTemporaryMedia deletes temp files from ALL ended sessions (instant + regular)
+// This is the safety net that catches files missed by immediate cleanup
+func CleanupAllTemporaryMedia() {
+	log.Println("🧹 [CleanupTempMedia] Starting cleanup of temporary media from ALL ended sessions...")
+	
+	// Find all temporary media items where session has ended
+	var orphanedMedia []models.TemporaryMediaItem
+	result := DB.
+		Joins("JOIN watch_sessions ON watch_sessions.session_id = temporary_media_items.session_id").
+		Where("watch_sessions.ended_at IS NOT NULL").
+		Find(&orphanedMedia)
+	
+	if result.Error != nil {
+		log.Printf("❌ [CleanupTempMedia] Database query failed: %v", result.Error)
+		return
+	}
+	
+	if len(orphanedMedia) == 0 {
+		log.Println("✅ [CleanupTempMedia] No orphaned temporary media found")
+		return
+	}
+	
+	log.Printf("🗑️ [CleanupTempMedia] Found %d orphaned temporary media items to delete", len(orphanedMedia))
+	
+	// Delete files and database records
+	deletedFiles := 0
+	deletedRecords := 0
+	failedFiles := 0
+	
+	for _, item := range orphanedMedia {
+		// Delete physical file
+		if err := os.Remove(item.FilePath); err != nil {
+			if os.IsNotExist(err) {
+				log.Printf("ℹ️ [CleanupTempMedia] File already deleted: %s", item.FilePath)
+			} else {
+				log.Printf("⚠️ [CleanupTempMedia] Failed to delete file %s: %v", item.FilePath, err)
+				failedFiles++
+				continue
+			}
+		} else {
+			deletedFiles++
+			log.Printf("✅ [CleanupTempMedia] Deleted file: %s", item.FilePath)
+		}
+		
+		// Delete database record
+		if err := DB.Delete(&item).Error; err != nil {
+			log.Printf("⚠️ [CleanupTempMedia] Failed to delete DB record for %s: %v", item.FilePath, err)
+		} else {
+			deletedRecords++
+		}
+	}
+	
+	log.Printf("✅ [CleanupTempMedia] Cleanup complete: %d files deleted, %d DB records removed, %d failures", 
+		deletedFiles, deletedRecords, failedFiles)
+}
+
+// CleanupOrphanedPreviews deletes preview files that are no longer referenced
+// Handles both temp and permanent previews in uploads/temp/ and uploads/ folders
+func CleanupOrphanedPreviews() {
+	log.Println("🧹 [CleanupPreviews] Starting cleanup of orphaned preview files...")
+	
+	// Check temp folder for orphaned previews
+	tempPreviewsPath := "./uploads/temp"
+	if entries, err := os.ReadDir(tempPreviewsPath); err == nil {
+		orphanedCount := 0
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.Contains(entry.Name(), "_preview") {
+				continue
+			}
+			
+			// Check if this preview is still referenced in temporary_media_items
+			filePath := filepath.Join(tempPreviewsPath, entry.Name())
+			var count int64
+			DB.Model(&models.TemporaryMediaItem{}).
+				Where("preview_url LIKE ?", "%"+entry.Name()+"%").
+				Count(&count)
+			
+			if count == 0 {
+				// Preview not referenced, delete it
+				if err := os.Remove(filePath); err != nil {
+					log.Printf("⚠️ [CleanupPreviews] Failed to delete %s: %v", filePath, err)
+				} else {
+					orphanedCount++
+					log.Printf("🗑️ [CleanupPreviews] Deleted orphaned preview: %s", entry.Name())
+				}
+			}
+		}
+		if orphanedCount > 0 {
+			log.Printf("✅ [CleanupPreviews] Deleted %d orphaned temp previews", orphanedCount)
+		}
+	}
+	
+	// Check uploads folder for orphaned previews
+	uploadsPath := "./uploads"
+	if entries, err := os.ReadDir(uploadsPath); err == nil {
+		orphanedCount := 0
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.Contains(entry.Name(), "_preview") {
+				continue
+			}
+			
+			// Check if this preview is still referenced in media_items
+			filePath := filepath.Join(uploadsPath, entry.Name())
+			var count int64
+			DB.Model(&models.MediaItem{}).
+				Where("preview_url LIKE ?", "%"+entry.Name()+"%").
+				Count(&count)
+			
+			if count == 0 {
+				// Preview not referenced, delete it
+				if err := os.Remove(filePath); err != nil {
+					log.Printf("⚠️ [CleanupPreviews] Failed to delete %s: %v", filePath, err)
+				} else {
+					orphanedCount++
+					log.Printf("🗑️ [CleanupPreviews] Deleted orphaned preview: %s", entry.Name())
+				}
+			}
+		}
+		if orphanedCount > 0 {
+			log.Printf("✅ [CleanupPreviews] Deleted %d orphaned permanent previews", orphanedCount)
+		}
+	}
+	
+	log.Println("✅ [CleanupPreviews] Preview cleanup complete")
 }
 
 // CleanupExpiredSessions removes watch sessions and temp media older than 5 minutes.
@@ -1557,15 +1784,13 @@ func GetRoomsHandler(c *gin.Context) {
 			CASE 
 				WHEN watch_sessions.id IS NOT NULL 
 					AND watch_sessions.ended_at IS NULL 
-					AND watch_sessions.is_active = true 
 				THEN true 
 				ELSE false 
 			END AS is_active_session
 		`).
 		Joins("LEFT JOIN users ON rooms.host_id = users.id").
 		Joins(`LEFT JOIN watch_sessions ON rooms.id = watch_sessions.room_id 
-			   AND watch_sessions.ended_at IS NULL 
-			   AND watch_sessions.is_active = true`).
+			   AND watch_sessions.ended_at IS NULL`).
 		Where("rooms.deleted_at IS NULL") // ✅ Exclude soft-deleted rooms
 	
 	if userExists && userID > 0 {
@@ -2553,15 +2778,16 @@ func GetRoomHandler(c *gin.Context) {
 	roomIDUint := uint(roomID)
 
 
-	// Query the database for the specific room by ID with host username
+	// Query the database for the specific room by ID with host username and avatar
 	type RoomWithUsername struct {
 		models.Room
-		HostUsername string `gorm:"column:host_username"`
+		HostUsername  string `gorm:"column:host_username"`
+		HostAvatarURL string `gorm:"column:host_avatar_url"`
 	}
 	
 	var roomData RoomWithUsername
 	result := DB.Table("rooms").
-		Select("rooms.*, users.username as host_username").
+		Select("rooms.*, users.username as host_username, users.avatar_url as host_avatar_url").
 		Joins("LEFT JOIN users ON rooms.host_id = users.id").
 		Where("rooms.id = ? AND rooms.deleted_at IS NULL", roomIDUint).
 		Scan(&roomData)
@@ -2594,6 +2820,7 @@ func GetRoomHandler(c *gin.Context) {
 			"description":     roomData.Room.Description,
 			"host_id":         roomData.Room.HostID,
 			"host_username":   hostDisplay,
+			"host_avatar_url": roomData.HostAvatarURL,
 			"media_file_name": roomData.Room.MediaFileName,
 			"playback_state":  roomData.Room.PlaybackState,
 			"playback_time":   roomData.Room.PlaybackTime,

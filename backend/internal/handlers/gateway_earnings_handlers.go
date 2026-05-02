@@ -22,7 +22,7 @@ func GetMyGatewayEarnings(c *gin.Context) {
 	// Get database connection from context
 	db := c.MustGet("db").(*gorm.DB)
 
-	// Fetch ticket sales earnings (85% to host, from session_tickets table)
+	// Fetch ticket sales earnings (75% to host, from session_tickets table)
 	var ticketEarnings []struct {
 		SessionID       uint    `json:"session_id"`
 		RoomID          uint    `json:"room_id"`
@@ -30,8 +30,8 @@ func GetMyGatewayEarnings(c *gin.Context) {
 		EventTitle      string  `json:"event_title"`
 		TicketsSold     int     `json:"tickets_sold"`
 		TotalRevenue    float64 `json:"total_revenue"`    // Gross (before split)
-		NetAmount       float64 `json:"net_amount"`       // 85% to host
-		PlatformFee     float64 `json:"platform_fee"`     // 15% to platform
+		NetAmount       float64 `json:"net_amount"`       // 75% to host
+		PlatformFee     float64 `json:"platform_fee"`     // 25% to platform
 		Currency        string  `json:"currency"`
 		IsWithdrawn     bool    `json:"is_withdrawn"`
 		LastSaleAt      string  `json:"last_sale_at"`

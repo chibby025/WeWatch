@@ -6,12 +6,12 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
-// Test configuration - simulates 10 users watching content
+// Test configuration - simulates 20 users watching content
 export const options = {
   stages: [
-    { duration: '1m', target: 10 },  // Ramp up to 10 users over 1 minute
-    { duration: '3m', target: 10 },  // Stay at 10 users for 3 minutes
-    { duration: '1m', target: 0 },   // Ramp down to 0 users over 1 minute
+    { duration: '30s', target: 20 }, // Ramp up to 20 users over 30 seconds
+    { duration: '2m', target: 20 },  // Stay at 20 users for 2 minutes
+    { duration: '30s', target: 0 },  // Ramp down to 0 users over 30 seconds
   ],
   thresholds: {
     http_req_duration: ['p(95)<500'],    // 95% of requests under 500ms

@@ -285,7 +285,7 @@ func PurchaseSessionTicketHandler(db *gorm.DB) gin.HandlerFunc {
 
 			// Calculate commission (15%)
 			grossAmount := ticketPriceAmount
-			commission := grossAmount * 0.25
+			commission := grossAmount * 0.15
 			netAmount := grossAmount - commission
 
 			// Create gateway earning record

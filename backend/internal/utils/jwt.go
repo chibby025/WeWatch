@@ -122,3 +122,19 @@ func ValidateJWT(tokenString string) (uint, error) {
 	// Return the user ID extracted from the claims
 	return claims.UserId, nil
 }
+
+// ParseJWT extracts claims from a JWT token without full validation
+// Used for getting expiration time when blacklisting tokens
+func ParseJWT(tokenString string) (jwt.MapClaims, error) {
+	// Parse token without validation (we just need the claims)
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
+	if err != nil {
+		return nil, err
+	}
+	
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		return claims, nil
+	}
+	
+	return nil, fmt.Errorf("invalid token claims")
+}

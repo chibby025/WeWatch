@@ -1,10 +1,15 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 /**
  * SessionEarningsModal - Shows host's earnings from paid session
  * Displays after ending a paid session with earnings > 0
  */
 const SessionEarningsModal = ({ isOpen, onClose, sessionData }) => {
+  const [animatedTokens, setAnimatedTokens] = useState(0);
+  const [animatedNGN, setAnimatedNGN] = useState(0);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [coins, setCoins] = useState([]);
+
   if (!isOpen || !sessionData) return null;
 
   // Convert cents to tokens (100 cents = 1 token)
@@ -14,9 +19,93 @@ const SessionEarningsModal = ({ isOpen, onClose, sessionData }) => {
   const withdrawalRate = 122;
   const totalNGN = totalTokens * withdrawalRate;
 
+  // 🎉 Trigger animations when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      // Start confetti burst
+      setShowConfetti(true);
+      
+      // Generate falling coins
+      const coinElements = Array.from({ length: 20 }, (_, i) => ({
+        id: i,
+        left: Math.random() * 100,
+        delay: Math.random() * 0.5,
+        duration: 2 + Math.random() * 1,
+        rotation: Math.random() * 360,
+      }));
+      setCoins(coinElements);
+
+      // Number counting animation
+      const duration = 2000; // 2 seconds
+      const steps = 60;
+      const tokenIncrement = totalTokens / steps;
+      const ngnIncrement = totalNGN / steps;
+      let currentStep = 0;
+
+      const timer = setInterval(() => {
+        currentStep++;
+        setAnimatedTokens(Math.min(tokenIncrement * currentStep, totalTokens));
+        setAnimatedNGN(Math.min(ngnIncrement * currentStep, totalNGN));
+
+        if (currentStep >= steps) {
+          clearInterval(timer);
+          setAnimatedTokens(totalTokens);
+          setAnimatedNGN(totalNGN);
+        }
+      }, duration / steps);
+
+      // Stop confetti after 4 seconds
+      const confettiTimer = setTimeout(() => setShowConfetti(false), 4000);
+      
+      // Clear coins after animation
+      const coinsTimer = setTimeout(() => setCoins([]), 3000);
+
+      return () => {
+        clearInterval(timer);
+        clearTimeout(confettiTimer);
+        clearTimeout(coinsTimer);
+      };
+    }
+  }, [isOpen, totalTokens, totalNGN]);
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-fade-in">
+      {/* 💰 Falling Coins Animation */}
+      {coins.map((coin) => (
+        <div
+          key={coin.id}
+          className="absolute text-4xl pointer-events-none animate-fall"
+          style={{
+            left: `${coin.left}%`,
+            animationDelay: `${coin.delay}s`,
+            animationDuration: `${coin.duration}s`,
+            transform: `rotate(${coin.rotation}deg)`,
+          }}
+        >
+          🪙
+        </div>
+      ))}
+
+      {/* 🎊 Confetti Burst */}
+      {showConfetti && (
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          {Array.from({ length: 50 }).map((_, i) => (
+            <div
+              key={i}
+              className="absolute w-2 h-2 animate-confetti"
+              style={{
+                left: `${50 + (Math.random() - 0.5) * 30}%`,
+                top: '10%',
+                backgroundColor: ['#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8'][i % 6],
+                animationDelay: `${Math.random() * 0.5}s`,
+                animationDuration: `${2 + Math.random() * 1}s`,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-fade-in relative">
         {/* Header */}
         <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-6">
           <div className="flex justify-between items-center">
@@ -51,19 +140,22 @@ const SessionEarningsModal = ({ isOpen, onClose, sessionData }) => {
           </div>
 
           {/* Earnings Breakdown */}
-          <div className="bg-gradient-to-br from-yellow-50 to-amber-50 rounded-xl p-6 space-y-4">
+          <div className="bg-gradient-to-br from-yellow-50 to-amber-50 rounded-xl p-6 space-y-4 relative overflow-hidden">
+            {/* ✨ Shimmer Effect */}
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-shimmer" />
+            
             {/* Token Balance */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between relative z-10">
               <div className="flex items-center space-x-2">
-                <span className="text-2xl">🪙</span>
+                <span className="text-2xl animate-bounce">🪙</span>
                 <span className="text-gray-700 font-medium">Token Balance</span>
               </div>
               <div className="text-right">
-                <div className="text-2xl font-bold text-gray-900">
-                  {totalTokens.toFixed(2)} tokens
+                <div className="text-2xl font-bold text-gray-900 animate-pulse-glow">
+                  {animatedTokens.toFixed(2)} tokens
                 </div>
                 <div className="text-sm text-gray-500">
-                  ≈ ₦{totalNGN.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  ≈ ₦{animatedNGN.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
             </div>
@@ -95,6 +187,65 @@ const SessionEarningsModal = ({ isOpen, onClose, sessionData }) => {
           </p>
         </div>
       </div>
+
+      {/* CSS Animations */}
+      <style jsx>{`
+        @keyframes fall {
+          0% {
+            transform: translateY(-100vh) rotate(0deg);
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(100vh) rotate(720deg);
+            opacity: 0;
+          }
+        }
+
+        @keyframes confetti {
+          0% {
+            transform: translateY(0) rotateZ(0deg);
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(100vh) rotateZ(360deg);
+            opacity: 0;
+          }
+        }
+
+        @keyframes shimmer {
+          0% {
+            transform: translateX(-100%);
+          }
+          100% {
+            transform: translateX(100%);
+          }
+        }
+
+        @keyframes pulse-glow {
+          0%, 100% {
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+          }
+          50% {
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.8), 0 0 30px rgba(255, 215, 0, 0.6);
+          }
+        }
+
+        .animate-fall {
+          animation: fall 2s ease-in forwards;
+        }
+
+        .animate-confetti {
+          animation: confetti 3s ease-out forwards;
+        }
+
+        .animate-shimmer {
+          animation: shimmer 2s infinite;
+        }
+
+        .animate-pulse-glow {
+          animation: pulse-glow 1.5s ease-in-out infinite;
+        }
+      `}</style>
     </div>
   );
 };

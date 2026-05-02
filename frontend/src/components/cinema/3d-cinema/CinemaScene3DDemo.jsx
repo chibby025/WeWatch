@@ -2160,6 +2160,7 @@ export default function CinemaScene3DDemo() {
 
     /**
      * Determine if current user should subscribe to a speaker's audio
+     * ✅ ASYMMETRIC AUDIO: Broadcasting users (host/LiveShare guest) hear only their row
      */
     const shouldSubscribeToSpeaker = (speakerUserId) => {
       // Party mode: subscribe to everyone
@@ -2185,9 +2186,19 @@ export default function CinemaScene3DDemo() {
       const member = roomMembers.find(m => m.id === speakerUserIdNum);
       const speakerIsHost = member && room.metadata?.host_id === member.id;
       
+      // ✅ ASYMMETRIC AUDIO: Everyone hears broadcasting host
       if (speakerIsHost && isHostBroadcasting) {
         console.log(`🎯 [Sub Check] Host (${speakerUserId}) is broadcasting - SUBSCRIBE`);
         return true;
+      }
+      
+      // ✅ ASYMMETRIC AUDIO: If I'm broadcasting (host or LiveShare guest), only hear my row
+      // This prevents host from being overwhelmed by 100+ users in all theaters
+      const imHost = room.metadata?.host_id === myUserId;
+      if (imHost && isHostBroadcasting) {
+        const shouldSubscribe = myRow === speakerRow;
+        console.log(`🎯 [Sub Check - ASYMMETRIC] I'm broadcasting host, speaker in ${shouldSubscribe ? 'SAME' : 'DIFFERENT'} row - ${shouldSubscribe ? 'SUBSCRIBE' : 'SKIP'}`);
+        return shouldSubscribe;
       }
 
       const shouldSubscribe = myRow === speakerRow;
@@ -5253,6 +5264,12 @@ export default function CinemaScene3DDemo() {
   const handleEndLiveShare = () => {
     console.log('🛑 [LiveShare] Ending all shares');
     
+    // ✅ AUTO-DISABLE HOST BROADCASTING when LiveShare ends
+    if (isHost && isHostBroadcasting) {
+      setIsHostBroadcasting(false);
+      console.log('🎤 [LiveShare] Host broadcasting AUTO-DISABLED (LiveShare ended, returning to seat mode)');
+    }
+    
     // Stop screen share
     if (localParticipant && screenShareTrackRef.current) {
       localParticipant.setScreenShareEnabled(false);
@@ -5324,6 +5341,12 @@ export default function CinemaScene3DDemo() {
     if (mode === null) {
       handleEndLiveShare();
       return;
+    }
+    
+    // ✅ AUTO-ENABLE HOST BROADCASTING when LiveShare starts (3D Cinema only)
+    if (isHost && !isHostBroadcasting) {
+      setIsHostBroadcasting(true);
+      console.log('🎤 [LiveShare] Host broadcasting AUTO-ENABLED (speaks to all theaters, hears row only)');
     }
     
     // Store podcast config for overlay rendering

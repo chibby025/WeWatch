@@ -238,7 +238,7 @@ export default function MembersModal({
                         {/* Emote indicator (2 seconds, except raise hand) */}
                         {memberEmotes[member.id] && (
                           <span 
-                            className="text-2xl animate-bounce" 
+                            className="text-3xl animate-bounce" 
                             title="Recent emote"
                           >
                             {memberEmotes[member.id].emote}
@@ -246,7 +246,7 @@ export default function MembersModal({
                         )}
                         {/* Raised hand indicator (static until unmuted) */}
                         {raisedHands.some(h => h.userId === member.id) && (
-                          <span className="text-lg" title="Hand raised">
+                          <span className="text-2xl" title="Hand raised">
                             ✋
                           </span>
                         )}
@@ -285,7 +285,7 @@ export default function MembersModal({
                           </>
                         ) : (
                           <>
-                            <span className="text-xl">🔇</span>
+                            <span className="text-2xl">🔇</span>
                             <span className="text-xs text-gray-400">Muted</span>
                           </>
                         )}

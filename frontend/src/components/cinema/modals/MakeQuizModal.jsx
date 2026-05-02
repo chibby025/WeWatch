@@ -72,6 +72,22 @@ const QuestionEditor = ({ question, index, updateQuestion, updateOption, removeQ
         maxLength={question.type === 'multiple_choice' ? 1 : undefined}
       />
     </div>
+
+    {/* Exact Match Option (text_input only) */}
+    {question.type === 'text_input' && (
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id={`exact-match-${question.id}`}
+          checked={question.exact_match || false}
+          onChange={(e) => updateQuestion(question.id, 'exact_match', e.target.checked)}
+          className="w-4 h-4 text-blue-600 bg-gray-800 border-gray-600 rounded focus:ring-blue-500"
+        />
+        <label htmlFor={`exact-match-${question.id}`} className="text-gray-400 text-sm">
+          Require exact match (case-sensitive)
+        </label>
+      </div>
+    )}
   </div>
 );
 
@@ -108,6 +124,7 @@ export default function MakeQuizModal({
       question: '',
       correct_answer: '',
       options: type === 'multiple_choice' ? ['', '', '', ''] : null, // A, B, C, D
+      exact_match: false, // Default to case-insensitive for text_input
     };
     setQuestions([...questions, newQuestion]);
   };
@@ -189,6 +206,7 @@ export default function MakeQuizModal({
         question: q.question.trim(),
         correct_answer: q.type === 'multiple_choice' ? q.correct_answer.toUpperCase() : q.correct_answer.trim(),
         options: q.type === 'multiple_choice' ? q.options.filter(opt => opt.trim()) : null,
+        exact_match: q.type === 'text_input' ? (q.exact_match || false) : undefined,
       })),
       timer_enabled: timerEnabled,
       timer_seconds: timerEnabled ? timerMinutes * 60 : null,

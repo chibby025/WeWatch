@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -708,6 +710,7 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                 "is_screen_sharing_active": session.IsScreenSharingActive,
                 "sharing_source": session.SharingSource,
                 "session_title": session.SessionTitle,
+                "is_private":    watchSession.IsPrivate, // ✅ Include session privacy flag
             },
         }
         if statusBytes, err := json.Marshal(statusMsg); err == nil {
@@ -2039,6 +2042,7 @@ func WebSocketHandler(c *gin.Context) {
 					"started_at": watchSession.StartedAt,
 					"seating":    seatingMap, // Include current seating assignments
 					"session_title": watchSession.SessionTitle,
+					"is_private":    watchSession.IsPrivate, // ✅ Include session privacy flag
 				},
 			}
 			if msgBytes, err := json.Marshal(statusMsg); err == nil {
@@ -5232,6 +5236,54 @@ func (client *Client) handleMessage(message []byte) {
             if err := DB.Where("id IN ?", userIDs).Find(&users).Error; err == nil {
                 for _, user := range users {
                     userMap[user.ID] = user.Username
+                }
+            }
+            
+            // ✅ Hook 1: Check if last user left - auto-cleanup if session is now empty
+            if len(activeMembers) == 0 {
+                log.Printf("🔴 [leave_session] Last user left session %s - auto-cleaning temporary files and previews", activeSession.SessionID)
+                
+                // Clean temporary media files
+                var tempItems []models.TemporaryMediaItem
+                if err := DB.Where("session_id = ?", activeSession.SessionID).Find(&tempItems).Error; err == nil {
+                    deletedFiles := 0
+                    for _, item := range tempItems {
+                        if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+                            log.Printf("⚠️ Failed to delete temp file %s: %v", item.FilePath, err)
+                        } else {
+                            deletedFiles++
+                        }
+                        DB.Delete(&item) // Delete DB record
+                    }
+                    if deletedFiles > 0 {
+                        log.Printf("✅ [leave_session] Deleted %d temporary files", deletedFiles)
+                    }
+                }
+                
+                // Clean preview files
+                previewsDeleted := 0
+                if entries, err := os.ReadDir("./uploads/temp"); err == nil {
+                    for _, entry := range entries {
+                        if strings.Contains(entry.Name(), "_preview") {
+                            filePath := filepath.Join("./uploads/temp", entry.Name())
+                            if err := os.Remove(filePath); err == nil {
+                                previewsDeleted++
+                            }
+                        }
+                    }
+                }
+                if entries, err := os.ReadDir("./uploads"); err == nil {
+                    for _, entry := range entries {
+                        if strings.Contains(entry.Name(), "_preview") {
+                            filePath := filepath.Join("./uploads", entry.Name())
+                            if err := os.Remove(filePath); err == nil {
+                                previewsDeleted++
+                            }
+                        }
+                    }
+                }
+                if previewsDeleted > 0 {
+                    log.Printf("✅ [leave_session] Deleted %d preview files", previewsDeleted)
                 }
             }
             

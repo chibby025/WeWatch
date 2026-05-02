@@ -5,6 +5,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { loginUser, getCurrentUser } from '../services/api'; // Adjust path if needed
 import { cacheUserData } from '../utils/cinemaCache';
 import GoogleLoginButton from './GoogleLoginButton';
+import { useAuth } from '../contexts/AuthContext'; // ✅ Import auth context
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -14,6 +15,7 @@ const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const { refreshUser } = useAuth(); // ✅ Get refreshUser from context
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,26 +29,17 @@ const Login = () => {
 
       const { user } = loginData;
       if (user) {
-        // ✅ Save user
-        localStorage.setItem('user', JSON.stringify(user));
-
-        // ✅ FETCH CURRENT USER TO SYNC AUTH STATE
-        try {
-          const currentUser = await getCurrentUser();
-          localStorage.setItem('user', JSON.stringify(currentUser));
-          
-          // 💾 Cache user data for instant cinema loading
-          cacheUserData(currentUser);
-          console.log('💾 [Cache] User data cached on login');
-        } catch (err) {
-          console.warn("Failed to fetch current user after login:", err);
-          // Still proceed — cookie is valid, cache what we have
-          cacheUserData(user);
-        }
-
-        console.log("User stored in localStorage");
+        console.log('✅ [Login] Login successful, refreshing auth state...');
         
-        // ✅ NOW NAVIGATE — auth state is ready
+        // ✅ REFRESH AUTH STATE BEFORE NAVIGATING
+        // This ensures AuthContext has latest user data + room memberships
+        await refreshUser();
+        
+        // 💾 Cache user data for instant cinema loading
+        cacheUserData(user);
+        console.log('💾 [Cache] User data cached on login');
+        
+        // ✅ NOW NAVIGATE — auth state is fully synced
         navigate('/lobby');
       } else {
         throw new Error("Login successful, but missing user data.");

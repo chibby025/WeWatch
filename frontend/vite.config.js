@@ -22,6 +22,12 @@ export default defineConfig({
   define: {
     global: 'globalThis', // Polyfill 'global' with 'globalThis' (standard browser global)
   },
+  test: {
+    globals: true,
+    environment: 'happy-dom', // Use happy-dom instead of jsdom (lighter, no CSS module issues)
+    setupFiles: './tests/setup.js',
+    css: false,
+  },
    resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

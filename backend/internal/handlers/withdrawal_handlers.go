@@ -487,12 +487,12 @@ func processWithdrawal(db *gorm.DB, payoutID uint, paymentAccount models.Payment
 	payout.MarkAsProcessing()
 	db.Save(&payout)
 	
-	// 💰 Withdraw from RESERVE account (85% host money)
+	// 💰 Withdraw from RESERVE account (75% host money)
 	var transferID string
 	var err error
 	
 	if paymentAccount.IsPaystack() {
-		// Use Reserve Subaccount (OPay - 85% split) for Paystack withdrawals
+		// Use Reserve Subaccount (OPay - 75% split) for Paystack withdrawals
 		fmt.Printf("💳 Withdrawing ₦%.2f from Reserve Subaccount (OPay) for payout %d\n", payoutAmount, payoutID)
 		transferID, err = initiatePaystackTransfer(db, &payout, &paymentAccount)
 	} else if paymentAccount.IsStripe() {
@@ -725,7 +725,7 @@ func initiatePaystackTransfer(db *gorm.DB, payout *models.Payout, paymentAccount
 
 // initiateStripeTransfer sends money via Stripe Transfer API
 func initiateStripeTransfer(db *gorm.DB, payout *models.Payout, paymentAccount *models.PaymentAccount) (string, error) {
-	// 🔒 CRITICAL: Use RESERVE account key (85% host money - NOT revenue account!)
+	// 🔒 CRITICAL: Use RESERVE account key (75% host money - NOT revenue account!)
 	stripeSecretKey := os.Getenv("STRIPE_RESERVE_SECRET_KEY")
 	if stripeSecretKey == "" {
 		// Fallback to main key for backward compatibility

@@ -139,11 +139,11 @@ func (pq *PreviewQueue) generateUploadPreview(req PreviewRequest) {
 		return
 	}
 	
-	// Generate preview filename
+	// Generate preview filename (FIXED - no timestamp to prevent accumulation)
 	baseName := filepath.Base(req.MediaPath)
 	ext := filepath.Ext(baseName)
 	nameWithoutExt := strings.TrimSuffix(baseName, ext)
-	previewFilename := fmt.Sprintf("%s_preview_%d.mp4", nameWithoutExt, time.Now().Unix())
+	previewFilename := fmt.Sprintf("%s_preview.mp4", nameWithoutExt) // ✅ Fixed filename, no timestamp
 	
 	var previewPath string
 	var previewURL string
@@ -154,6 +154,15 @@ func (pq *PreviewQueue) generateUploadPreview(req PreviewRequest) {
 	} else {
 		previewPath = filepath.Join("./uploads", previewFilename)
 		previewURL = fmt.Sprintf("/uploads/%s", previewFilename)
+	}
+	
+	// ✅ Delete old preview before generating new one (prevents accumulation)
+	if _, err := os.Stat(previewPath); err == nil {
+		if removeErr := os.Remove(previewPath); removeErr != nil {
+			log.Printf("⚠️ [PreviewQueue] Failed to delete old preview %s: %v", previewPath, removeErr)
+		} else {
+			log.Printf("🗑️ [PreviewQueue] Deleted old preview: %s", previewPath)
+		}
 	}
 	
 	// Generate preview starting from current timestamp

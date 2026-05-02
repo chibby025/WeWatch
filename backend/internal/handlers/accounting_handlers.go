@@ -48,7 +48,7 @@ func GetPlatformAccountingHandler(db *gorm.DB) gin.HandlerFunc {
 				"available_for_payouts": availableReserve,
 				"lifetime_paid_out":     accounting.LifetimePayouts,
 				"lifetime_earned":       accounting.LifetimeHostEarnings,
-				"explanation":           "This is HOST money (85%) - DO NOT TOUCH!",
+				"explanation":           "This is HOST money (75%) - DO NOT TOUCH!",
 			},
 			"gateway_accounts": gin.H{
 				"total_balance":         accounting.TotalGatewayBalance,

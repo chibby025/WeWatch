@@ -51,7 +51,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		return nil, fmt.Errorf("room %d already has an active game (ID: %d)", roomID, existingGameID)
 	}
 
-	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" && gameType != "ludo" {
+	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
 	}
 
@@ -123,8 +123,6 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processTicTacToeMove(gameState, playerID, moveData)
 	case "rock_paper_scissors":
 		gameOver, winnerID, err = gm.processRockPaperScissorsMove(gameState, playerID, moveData)
-	case "ludo":
-		gameOver, winnerID, err = gm.processLudoMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}

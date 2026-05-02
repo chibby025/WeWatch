@@ -1,13 +1,28 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { useAuth } from '../contexts/AuthContext';
 
 /**
  * PricingModal - Let host choose between Free or Paid session + Content Rating
  * Shows after watch type selection, before session creation
  */
 const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
+  const { currentUser } = useAuth();
   const [contentRating, setContentRating] = useState('G'); // Default to General
   const [scrollIndex, setScrollIndex] = useState(0);
+
+  // Calculate user's age from date_of_birth
+  const userAge = useMemo(() => {
+    if (!currentUser?.date_of_birth) return 0; // Unknown age - allow all ratings
+    const birthDate = new Date(currentUser.date_of_birth);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age;
+  }, [currentUser]);
 
   const ratings = [
     {
@@ -24,6 +39,22 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       desc: 'Parental Guidance - Some material may not be suitable for children',
       icon: '/icons/PG Rating Icon.png',
       gradient: 'from-blue-400 to-blue-600',
+      minAge: 0
+    },
+    {
+      id: 'Educational',
+      name: 'Educational',
+      desc: 'Educational Content - Online classes, tutorials, school & university material',
+      icon: '/icons/Educational_Rating_Icon.png',
+      gradient: 'from-teal-400 to-teal-600',
+      minAge: 0
+    },
+    {
+      id: 'Religious',
+      name: 'Religious',
+      desc: 'Religious & Spiritual Content - Church services, Bible studies, worship',
+      icon: '/icons/Religious Rating.png',
+      gradient: 'from-yellow-400 to-amber-600',
       minAge: 0
     },
     {
@@ -53,12 +84,18 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
     {
       id: 'Mature',
       name: 'Mature',
-      desc: 'Mature Content - Explicit content for adults 18+',
+      desc: 'Mature Content - Explicit, nude content for adults 18+',
       icon: '/icons/Mature Rating Icon.png',
       gradient: 'from-purple-400 to-purple-600',
       minAge: 18
     }
   ];
+
+  // Filter ratings based on user age (only show ratings they're eligible to select)
+  const availableRatings = useMemo(() => {
+    if (userAge === 0) return ratings; // Unknown age - show all
+    return ratings.filter(rating => userAge >= rating.minAge);
+  }, [userAge]);
 
   const pricingOptions = [
     {
@@ -93,7 +130,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
 
   const scrollToCard = (index) => {
     setScrollIndex(index);
-    setContentRating(ratings[index].id);
+    setContentRating(availableRatings[index].id);
   };
 
   const handlePrevious = () => {
@@ -102,7 +139,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
   };
 
   const handleNext = () => {
-    const newIndex = Math.min(ratings.length - 1, scrollIndex + 1);
+    const newIndex = Math.min(availableRatings.length - 1, scrollIndex + 1);
     scrollToCard(newIndex);
   };
 
@@ -113,7 +150,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
 
   if (!isOpen) return null;
 
-  const currentRating = ratings[scrollIndex];
+  const currentRating = availableRatings[scrollIndex];
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
@@ -224,118 +261,78 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
                 <ChevronLeftIcon className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
               </button>
 
-              {/* 3-Card Display Container */}
-              <div className="flex items-center justify-center gap-3 py-2 px-12 sm:px-16 min-h-[140px] sm:min-h-[160px]">
-                {/* Extra Left Card (when at end, show 2 left cards) */}
-                {scrollIndex === ratings.length - 1 && scrollIndex > 1 && (
-                  <div
-                    className="w-16 sm:w-20 flex-shrink-0 cursor-pointer"
-                    onClick={() => scrollToCard(scrollIndex - 2)}
-                  >
-                    <div className="transition-all duration-300 opacity-50 scale-90">
-                      <div className={`bg-gradient-to-br ${ratings[scrollIndex - 2].gradient} rounded-lg p-2 shadow-lg hover:scale-105 transition-all`}>
-                        <img
-                          src={ratings[scrollIndex - 2].icon}
-                          alt={ratings[scrollIndex - 2].name}
-                          className="w-full h-auto rounded"
-                        />
-                        <p className="text-white font-bold text-center mt-1 text-[10px] sm:text-xs">
-                          {ratings[scrollIndex - 2].name}
-                        </p>
+              {/* 4-Card Display Container - Always shows 4 cards */}
+              <div className="flex items-center justify-center gap-3 py-2 px-8 sm:px-12 min-h-[140px] sm:min-h-[160px]">
+                {/* Calculate which 4 cards to show */}
+                {(() => {
+                  let startIndex, selectedPosition;
+                  const totalCards = availableRatings.length;
+                  
+                  if (totalCards <= 4) {
+                    // Show all cards if 4 or fewer
+                    startIndex = 0;
+                    selectedPosition = scrollIndex;
+                  } else if (scrollIndex === 0) {
+                    // At start: show first 4 cards
+                    startIndex = 0;
+                    selectedPosition = 0;
+                  } else if (scrollIndex === totalCards - 1) {
+                    // At end: show last 4 cards
+                    startIndex = totalCards - 4;
+                    selectedPosition = 3;
+                  } else if (scrollIndex === 1) {
+                    // Second position: show first 4 cards with second selected
+                    startIndex = 0;
+                    selectedPosition = 1;
+                  } else {
+                    // Middle positions: 1 left + selected + 2 right
+                    startIndex = scrollIndex - 1;
+                    selectedPosition = 1;
+                  }
+                  
+                  const visibleCards = availableRatings.slice(startIndex, startIndex + 4);
+                  
+                  return visibleCards.map((rating, idx) => {
+                    const actualIndex = startIndex + idx;
+                    const isSelected = actualIndex === scrollIndex;
+                    
+                    return (
+                      <div
+                        key={actualIndex}
+                        className={`flex-shrink-0 cursor-pointer transition-all duration-300 ${
+                          isSelected ? 'w-24 sm:w-32' : 'w-14 sm:w-16 opacity-50 scale-90'
+                        }`}
+                        onClick={() => scrollToCard(actualIndex)}
+                      >
+                        <div className={`bg-gradient-to-br ${rating.gradient} rounded-lg ${
+                          isSelected ? 'p-2 sm:p-3 shadow-lg ring-4 ring-purple-500 ring-offset-2' : 'p-1.5 shadow-lg hover:scale-105'
+                        } transition-all`}>
+                          <img
+                            src={rating.icon}
+                            alt={rating.name}
+                            className="w-full h-auto rounded"
+                          />
+                          <p className={`text-white font-bold text-center ${
+                            isSelected ? 'mt-1.5 text-xs sm:text-sm' : 'mt-0.5 text-[9px] sm:text-[10px]'
+                          }`}>
+                            {rating.name}
+                          </p>
+                          {isSelected && rating.minAge > 0 && (
+                            <p className="text-white text-opacity-90 text-center text-[10px] sm:text-xs">
+                              {rating.minAge}+
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Left Card (if exists) */}
-                {scrollIndex > 0 && (
-                  <div
-                    className="w-16 sm:w-20 flex-shrink-0 cursor-pointer"
-                    onClick={() => scrollToCard(scrollIndex - 1)}
-                  >
-                    <div className="transition-all duration-300 opacity-50 scale-90">
-                      <div className={`bg-gradient-to-br ${ratings[scrollIndex - 1].gradient} rounded-lg p-2 shadow-lg hover:scale-105 transition-all`}>
-                        <img
-                          src={ratings[scrollIndex - 1].icon}
-                          alt={ratings[scrollIndex - 1].name}
-                          className="w-full h-auto rounded"
-                        />
-                        <p className="text-white font-bold text-center mt-1 text-[10px] sm:text-xs">
-                          {ratings[scrollIndex - 1].name}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Center Card (selected) */}
-                <div className="w-24 sm:w-32 flex-shrink-0">
-                  <div className="transition-all duration-300">
-                    <div className={`bg-gradient-to-br ${ratings[scrollIndex].gradient} rounded-lg p-2 sm:p-3 shadow-lg ring-4 ring-purple-500 ring-offset-2`}>
-                      <img
-                        src={ratings[scrollIndex].icon}
-                        alt={ratings[scrollIndex].name}
-                        className="w-full h-auto rounded"
-                      />
-                      <p className="text-white font-bold text-center mt-1.5 text-xs sm:text-sm">
-                        {ratings[scrollIndex].name}
-                      </p>
-                      {ratings[scrollIndex].minAge > 0 && (
-                        <p className="text-white text-opacity-90 text-center text-[10px] sm:text-xs">
-                          {ratings[scrollIndex].minAge}+
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Card (if exists) */}
-                {scrollIndex < ratings.length - 1 && (
-                  <div
-                    className="w-16 sm:w-20 flex-shrink-0 cursor-pointer"
-                    onClick={() => scrollToCard(scrollIndex + 1)}
-                  >
-                    <div className="transition-all duration-300 opacity-50 scale-90">
-                      <div className={`bg-gradient-to-br ${ratings[scrollIndex + 1].gradient} rounded-lg p-2 shadow-lg hover:scale-105 transition-all`}>
-                        <img
-                          src={ratings[scrollIndex + 1].icon}
-                          alt={ratings[scrollIndex + 1].name}
-                          className="w-full h-auto rounded"
-                        />
-                        <p className="text-white font-bold text-center mt-1 text-[10px] sm:text-xs">
-                          {ratings[scrollIndex + 1].name}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Extra Right Card (when at start, show 2 right cards) */}
-                {scrollIndex === 0 && ratings.length > 2 && (
-                  <div
-                    className="w-16 sm:w-20 flex-shrink-0 cursor-pointer"
-                    onClick={() => scrollToCard(scrollIndex + 2)}
-                  >
-                    <div className="transition-all duration-300 opacity-50 scale-90">
-                      <div className={`bg-gradient-to-br ${ratings[scrollIndex + 2].gradient} rounded-lg p-2 shadow-lg hover:scale-105 transition-all`}>
-                        <img
-                          src={ratings[scrollIndex + 2].icon}
-                          alt={ratings[scrollIndex + 2].name}
-                          className="w-full h-auto rounded"
-                        />
-                        <p className="text-white font-bold text-center mt-1 text-[10px] sm:text-xs">
-                          {ratings[scrollIndex + 2].name}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                    );
+                  });
+                })()}
               </div>
 
               {/* Right Arrow */}
               <button
                 onClick={handleNext}
-                disabled={scrollIndex === ratings.length - 1}
+                disabled={scrollIndex === availableRatings.length - 1}
                 className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white shadow-lg rounded-full p-1.5 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 transition-all"
               >
                 <ChevronRightIcon className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
@@ -343,14 +340,14 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
 
               {/* Pagination Dots */}
               <div className="flex justify-center gap-1 sm:gap-2 mt-2 sm:mt-3">
-                {ratings.map((_, index) => (
+                {availableRatings.map((_, index) => (
                   <button
                     key={index}
                     onClick={() => scrollToCard(index)}
                     className={`transition-all ${
                       index === scrollIndex
-                        ? 'w-4 h-1 sm:w-8 sm:h-2.5 bg-purple-500'
-                        : 'w-1 h-1 sm:w-2.5 sm:h-2.5 bg-gray-300 hover:bg-gray-400'
+                        ? 'w-4 h-1 sm:w-8 sm:h-2 bg-purple-500'
+                        : 'w-1 h-1 sm:w-2 sm:h-2 bg-gray-300 hover:bg-gray-400'
                     } rounded-full`}
                     aria-label={`Go to rating ${index + 1}`}
                   />

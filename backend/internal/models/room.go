@@ -2,6 +2,7 @@
 package models
 
 import (
+	"time"
 	"gorm.io/gorm"
 )
 
@@ -39,6 +40,9 @@ type Room struct {
 	
 	// Content moderation (age-based filtering)
 	ContentRating string `gorm:"type:varchar(10);default:'G';not null" json:"content_rating"` // 'G', 'PG', '13+', '16+', '18+', 'Mature'
+	
+	// Ad tracking (for RoomTV ad frequency capping)
+	LastAdShownAt *time.Time `gorm:"type:timestamp" json:"last_ad_shown_at,omitempty"` // Last time ad shown in RoomTV
 	// Add more fields later like MaxViewers, Password, etc.
 }
 

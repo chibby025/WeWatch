@@ -11,9 +11,16 @@ import {
   QuestionMarkCircleIcon,
   XMarkIcon,
   ChartBarIcon,
-  ArrowRightOnRectangleIcon
+  ArrowRightOnRectangleIcon,
+  ShieldCheckIcon,
+  SignalIcon,
+  MegaphoneIcon
 } from '@heroicons/react/24/outline';
 import HelpSupportModal from './HelpSupportModal';
+import SecurityModal from './SecurityModal';
+import CallHistoryModal from './CallHistoryModal';
+import ContactsModal from './ContactsModal';
+import AdsManagementModal from './AdsManagementModal';
 import { useNavigate } from 'react-router-dom';
 import { clearAllCaches } from '../utils/cinemaCache';
 
@@ -22,15 +29,31 @@ const LobbyLeftSidebar = ({
   onClose, 
   currentUser,
   onMyProfileClick,
-  onSettingsClick
+  onSettingsClick,
+  onCallUser // Function to initiate a call to a user
 }) => {
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
+  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
+  const [isCallHistoryModalOpen, setIsCallHistoryModalOpen] = useState(false);
+  const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
+  const [isAdsManagementModalOpen, setIsAdsManagementModalOpen] = useState(false);
+  const [dataSaverEnabled, setDataSaverEnabled] = useState(
+    localStorage.getItem('dataSaverMode') === 'true'
+  );
   const navigate = useNavigate();
 
   if (!isOpen) return null;
 
   // Check if user is super admin
   const isSuperAdmin = currentUser?.role === 'super_admin';
+
+  // Handle Data Saver toggle
+  const handleDataSaverToggle = () => {
+    const newValue = !dataSaverEnabled;
+    setDataSaverEnabled(newValue);
+    localStorage.setItem('dataSaverMode', newValue ? 'true' : 'false');
+    console.log('💾 [Data Saver]', newValue ? 'Enabled' : 'Disabled');
+  };
 
   // Handle logout
   const handleLogout = () => {
@@ -85,46 +108,57 @@ const LobbyLeftSidebar = ({
       enabled: true,
       badge: 'ADMIN',
       highlight: true
-    }] : []),
-    {
-      id: 'groups',
-      label: 'My Groups',
-      icon: UserGroupIcon,
-      onClick: () => alert('My Groups - Coming Soon!'),
-      enabled: false,
-      badge: 'Coming Soon'
     },
+    {
+      id: 'ads_management',
+      label: 'Ads Management',
+      icon: MegaphoneIcon,
+      onClick: () => {
+        setIsAdsManagementModalOpen(true);
+      },
+      enabled: true,
+      badge: 'ADS',
+      highlight: true
+    }] : []),
     {
       id: 'contacts',
       label: 'My Contacts',
       icon: UserPlusIcon,
-      onClick: () => alert('My Contacts - Coming Soon!'),
-      enabled: false,
-      badge: 'Coming Soon'
+      onClick: () => {
+        setIsContactsModalOpen(true);
+      },
+      enabled: true
     },
     {
       id: 'calls',
       label: 'Calls',
       icon: PhoneIcon,
-      onClick: () => alert('Calls - Coming Soon!'),
-      enabled: false,
-      badge: 'Coming Soon'
+      onClick: () => {
+        setIsCallHistoryModalOpen(true);
+      },
+      enabled: true
     },
     {
-      id: 'saved',
-      label: 'Saved Messages',
-      icon: BookmarkIcon,
-      onClick: () => alert('Saved Messages - Coming Soon!'),
-      enabled: false,
-      badge: 'Coming Soon'
+      id: 'security',
+      label: 'Security',
+      icon: ShieldCheckIcon,
+      onClick: () => {
+        setIsSecurityModalOpen(true);
+      },
+      enabled: true,
+      badge: currentUser?.two_factor_enabled ? '2FA ✓' : null,
+      highlight: !currentUser?.two_factor_enabled
     },
     {
-      id: 'invite',
-      label: 'Invite Friends',
-      icon: UserPlusIcon,
-      onClick: () => alert('Invite Friends - Coming Soon!'),
-      enabled: false,
-      badge: 'Coming Soon'
+      id: 'data_saver',
+      label: 'Data Saver Mode',
+      icon: SignalIcon,
+      onClick: handleDataSaverToggle,
+      enabled: true,
+      toggle: true,
+      toggleValue: dataSaverEnabled,
+      badge: dataSaverEnabled ? 'ON' : 'OFF',
+      description: 'Reduces bandwidth (480p sessions, no autoplay)'
     },
     {
       id: 'settings',
@@ -158,24 +192,6 @@ const LobbyLeftSidebar = ({
       <div className="fixed left-0 top-0 h-full w-[280px] sm:w-[320px] md:w-[375px] max-w-[85vw] bg-[#2B2B2B] z-50 shadow-2xl transform transition-transform duration-300 ease-in-out overflow-y-auto custom-sleek-scrollbar">
         {/* Header Section */}
         <div className="relative pt-6 pb-4 px-4 sm:pt-8 sm:pb-6 sm:px-6 border-b border-gray-700">
-          {/* Close Button */}
-          <button
-            onClick={onClose}
-            className="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-white transition-colors"
-            aria-label="Close sidebar"
-          >
-            <XMarkIcon className="h-5 w-5 sm:h-6 sm:w-6" />
-          </button>
-
-          {/* Help & Support Button */}
-          <button
-            onClick={() => setIsHelpModalOpen(true)}
-            className="absolute top-3 right-11 sm:top-4 sm:right-14 text-gray-400 hover:text-white transition-colors"
-            aria-label="Help and Support"
-          >
-            <QuestionMarkCircleIcon className="h-5 w-5 sm:h-6 sm:w-6" />
-          </button>
-
           {/* User Avatar */}
           <div className="flex flex-col items-center">
             <div className="relative">
@@ -220,14 +236,23 @@ const LobbyLeftSidebar = ({
                     `}
                   >
                     <IconComponent className="h-5 w-5 sm:h-6 sm:w-6 flex-shrink-0" />
-                    <span className="text-sm sm:text-base font-medium flex-1 truncate">
-                      {item.label}
-                    </span>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm sm:text-base font-medium block truncate">
+                        {item.label}
+                      </span>
+                      {item.description && (
+                        <span className="text-[10px] sm:text-xs text-gray-400 block truncate">
+                          {item.description}
+                        </span>
+                      )}
+                    </div>
                     {item.badge && (
                       <span className={`text-[10px] sm:text-xs px-1.5 py-0.5 sm:px-2 sm:py-1 rounded font-semibold flex-shrink-0 ${
                         item.highlight 
-                          ? 'bg-yellow-400 text-purple-900' 
-                          : 'text-gray-400 bg-gray-700'
+                          ? 'bg-yellow-400 text-purple-900'
+                          : item.toggleValue
+                            ? 'bg-green-600 text-white'
+                            : 'text-gray-400 bg-gray-700'
                       }`}>
                         {item.badge}
                       </span>
@@ -257,6 +282,41 @@ const LobbyLeftSidebar = ({
         onClose={() => setIsHelpModalOpen(false)}
         currentUser={currentUser}
       />
+
+      {/* Security Modal */}
+      <SecurityModal 
+        isOpen={isSecurityModalOpen}
+        onClose={() => setIsSecurityModalOpen(false)}
+        currentUser={currentUser}
+      />
+
+      {/* Call History Modal */}
+      <CallHistoryModal 
+        isOpen={isCallHistoryModalOpen}
+        onClose={() => setIsCallHistoryModalOpen(false)}
+        currentUser={currentUser}
+        onCallUser={onCallUser}
+      />
+
+      {/* Contacts Modal */}
+      <ContactsModal 
+        isOpen={isContactsModalOpen}
+        onClose={() => setIsContactsModalOpen(false)}
+        currentUser={currentUser}
+        onCallUser={onCallUser}
+        onChatUser={(user) => {
+          // Navigate to lobby chats with this user
+          console.log('Open chat with:', user);
+        }}
+      />
+
+      {/* Ads Management Modal (Super Admin Only) */}
+      {isSuperAdmin && (
+        <AdsManagementModal 
+          isOpen={isAdsManagementModalOpen}
+          onClose={() => setIsAdsManagementModalOpen(false)}
+        />
+      )}
     </>
   );
 };

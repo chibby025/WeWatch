@@ -23,6 +23,9 @@ import {
 import LiveShareLayoutSelector from './LiveShareLayoutSelector';
 import LiveShareWizard from '../../liveshare/LiveShareWizard';
 import GuestInvitationPopup from '../../liveshare/GuestInvitationPopup';
+import InSessionAdPanel from '../../ads/InSessionAdPanel';
+import BibleControl from '../../liveshare/BibleControl';
+import { calculateAge } from '../../../utils/ageUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
@@ -298,6 +301,9 @@ export default function LiveShareManager({
     return localStorage.getItem('liveshare_banner_layout') || 'bn';
   });
   
+  // Bible verse state (Church mode)
+  const [currentBibleVerse, setCurrentBibleVerse] = useState(null);
+  
   // Media queue break options
   const [breakMediaMode, setBreakMediaMode] = useState('one'); // 'one' or 'all'
   const [selectedBreakMedia, setSelectedBreakMedia] = useState([]);
@@ -340,6 +346,10 @@ export default function LiveShareManager({
   const [breakCustomImage, setBreakCustomImage] = useState(null);
   const [breakCustomImagePreview, setBreakCustomImagePreview] = useState(null);
   const breakImageInputRef = useRef(null);
+  
+  // Break screen ad state
+  const [breakAdData, setBreakAdData] = useState(null);
+  const [fetchingBreakAd, setFetchingBreakAd] = useState(false);
   
   // Color presets
   const colorPresets = [
@@ -1049,6 +1059,57 @@ export default function LiveShareManager({
     console.log('🎨 [LiveShareManager] Banner toggle broadcast:', graphicData);
   };
   
+  // Bible verse handlers (Church mode)
+  const handleShowBibleVerse = (verseData) => {
+    console.log('📖 [Bible] Showing verse:', verseData);
+    setCurrentBibleVerse(verseData);
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'bible_verse_update',
+        data: { 
+          verse: verseData,
+          active: true
+        }
+      });
+    }
+    
+    // Save to backend (persist current verse)
+    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/bible-verse`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verse: verseData })
+    }).catch(err => console.error('Bible verse save error:', err));
+    
+    toast.success(`Displaying ${verseData.reference}`);
+  };
+  
+  const handleHideBibleVerse = () => {
+    console.log('📖 [Bible] Hiding verse');
+    setCurrentBibleVerse(null);
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'bible_verse_update',
+        data: { 
+          verse: null,
+          active: false
+        }
+      });
+    }
+    
+    // Clear from backend
+    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/bible-verse`, {
+      method: 'DELETE',
+      credentials: 'include',
+    }).catch(err => console.error('Bible verse clear error:', err));
+    
+    toast.success('Bible verse hidden');
+  };
+  
   const handleStopMedia = () => {
     console.log('⏹️ [MediaQueue] Stopping media overlay');
     
@@ -1356,7 +1417,7 @@ export default function LiveShareManager({
   };
   
   // Break mode handlers
-  const handleStartBreak = () => {
+  const handleStartBreak = async () => {
     if (!isHost) {
       toast.error('Only the host can start a break');
       return;
@@ -1370,6 +1431,43 @@ export default function LiveShareManager({
       }
       if (selectedBreakMedia.length === 0) {
         toast.error('Please select at least one media item to play');
+        return;
+      }
+    }
+    
+    // Fetch video ad if ad break is selected
+    if (breakScreenSource === 'ad') {
+      setFetchingBreakAd(true);
+      try {
+        const userAge = currentUser?.date_of_birth ? calculateAge(currentUser.date_of_birth) : null;
+        const params = new URLSearchParams({
+          user_id: currentUser?.id,
+          session_id: sessionId,
+          ad_type: 'video',
+          placement: 'break_screen'
+        });
+        
+        if (userAge) params.append('user_age', userAge);
+        
+        const response = await fetch(`${API_BASE_URL}/api/ads/in-session?${params}`);
+        const adData = await response.json();
+        
+        if (!adData.ad) {
+          toast.error('No ads available right now. Try another break option.');
+          setFetchingBreakAd(false);
+          return;
+        }
+        
+        // Store ad data and update duration to match ad
+        setBreakAdData(adData.ad);
+        setBreakDuration(Math.ceil(adData.ad.duration / 60) || 1); // Convert seconds to minutes
+        setFetchingBreakAd(false);
+        
+        console.log('📺 [LiveShareManager] Fetched break ad:', adData.ad);
+      } catch (error) {
+        console.error('Failed to fetch break ad:', error);
+        toast.error('Failed to load ad. Try another break option.');
+        setFetchingBreakAd(false);
         return;
       }
     }
@@ -1431,7 +1529,9 @@ export default function LiveShareManager({
       mediaMode: breakMediaMode,
       mediaItems: breakScreenSource === 'media'
         ? selectedBreakMedia.map(index => mediaQueue[index])
-        : []
+        : [],
+      // Ad data for viewers
+      adData: breakScreenSource === 'ad' ? breakAdData : null
     };
     
     if (sendMessage) {
@@ -1457,10 +1557,33 @@ export default function LiveShareManager({
     console.log('⏸️ [LiveShareManager] Break started:', breakData);
   };
   
-  const handleEndBreak = () => {
+  const handleEndBreak = async () => {
     if (!isHost) {
       toast.error('Only the host can end the break');
       return;
+    }
+    
+    // Track ad impression if ad was shown
+    if (breakScreenSource === 'ad' && breakAdData) {
+      try {
+        await fetch(`${API_BASE_URL}/api/ads/campaigns/${breakAdData.id}/track`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: sessionId,
+            room_id: parseInt(window.location.pathname.split('/')[2]), // Extract room ID from URL
+            clicked: false,
+            view_duration: breakAdData.duration || 0
+          })
+        });
+        console.log('✅ [LiveShareManager] Ad impression tracked');
+      } catch (error) {
+        console.error('Failed to track ad impression:', error);
+      }
+      
+      // Clear ad data
+      setBreakAdData(null);
     }
     
     setIsOnBreak(false);
@@ -1768,10 +1891,20 @@ export default function LiveShareManager({
                       className="w-full px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
                     >
                       <option value="static">Static Text ("We'll Be Right Back!")</option>
+                      <option value="ad">🎬 Show Ad (Earn Revenue)</option>
                       <option value="media">Media Queue</option>
                       <option value="upload">Custom Image</option>
                       <option value="animation">Loading Animation</option>
                     </select>
+                    
+                    {/* Ad Revenue Info */}
+                    {breakScreenSource === 'ad' && (
+                      <div className="mt-2 p-2 bg-green-900/20 border border-green-600/30 rounded text-xs text-green-400">
+                        💰 Premium placement: $5-10 CPM
+                        <br />
+                        <span className="text-green-300">Duration: 15-30 seconds (auto)</span>
+                      </div>
+                    )}
                   </div>
                   
                   {/* Media Queue Selection */}
@@ -2527,6 +2660,15 @@ export default function LiveShareManager({
               </p>
             </div>
           </details>
+          )}
+          
+          {/* Bible Verse Control (Church mode only) */}
+          {liveShareContentMode === 'church' && (
+            <BibleControl 
+              onShowVerse={handleShowBibleVerse}
+              onHideVerse={handleHideBibleVerse}
+              currentVerse={currentBibleVerse}
+            />
           )}
             </>
           )}

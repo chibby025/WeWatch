@@ -30,6 +30,7 @@ require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/bytedance/sonic v1.13.3 // indirect
 	github.com/bytedance/sonic/loader v0.2.4 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -89,6 +90,7 @@ require (
 	github.com/pion/turn/v4 v4.1.2 // indirect
 	github.com/pion/webrtc/v4 v4.1.6 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/pquerna/otp v1.4.0 // indirect
 	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/redis/go-redis/v9 v9.16.0 // indirect
 	github.com/stoewer/go-strcase v1.3.1 // indirect

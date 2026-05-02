@@ -45,11 +45,18 @@ const Register = () => {
       const data = await registerUser(userData);
       console.log("Registration successful:", data);
 
-      // Show success and redirect
+      const { user } = data;
+      if (user) {
+        // ✅ Save user data immediately
+        localStorage.setItem('user', JSON.stringify(user));
+        console.log('✅ User data saved on registration:', user);
+      }
+
+      // Show success and redirect to lobby (user is auto-logged in)
       setSuccess(true);
       setTimeout(() => {
-        navigate('/login');
-      }, 2000);
+        navigate('/lobby');
+      }, 1500);
     } catch (err) {
       console.error("Registration failed:", err);
       

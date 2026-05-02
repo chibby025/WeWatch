@@ -330,6 +330,13 @@ func ApproveKYCHandler(db *gorm.DB) gin.HandlerFunc {
 
 		log.Printf("✅ KYC approved: ID %d, User %d, Admin %d", kycID, kyc.UserID, admin.ID)
 
+		// 📋 Log admin action to audit trail
+		LogAdminAction(db, c, "approve_kyc", "kyc", uint(kycID), gin.H{
+			"user_id": kyc.UserID,
+			"id_type": kyc.IDType,
+			"id_number": kyc.IDNumber,
+		}, true, "")
+
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"kyc":     kyc,

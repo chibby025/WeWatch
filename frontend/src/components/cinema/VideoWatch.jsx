@@ -43,10 +43,14 @@ import GameLobbyModal from '../Games/GameLobbyModal';
 import GameOverlay from '../Games/GameOverlay';
 // Graphics renderer for LiveShare overlays
 import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
+import BibleOverlay from '../liveshare/BibleOverlay';
 import TikTokHeartAnimation from '../TikTokHeartAnimation';
 import { HeartIcon } from '@heroicons/react/24/solid';
 import useEmoteSounds from '../../hooks/useEmoteSounds';
 import FloatingEmoteOverlay from './ui/FloatingEmoteOverlay';
+import AdVideoPreroll from '../AdVideoPreroll';
+import InSessionAdPanel from '../ads/InSessionAdPanel';
+import { calculateAge } from '../../utils/ageUtils';
 
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
@@ -389,6 +393,15 @@ export default function VideoWatch() {
   const [sessionLikesCount, setSessionLikesCount] = useState(0);
   const [showHeartAnimation, setShowHeartAnimation] = useState(false);
   const lastLikeTimeRef = useRef(0);
+  
+  // 📺 Ad pre-roll state
+  const [showAdPreroll, setShowAdPreroll] = useState(true); // Show ad before video starts
+  
+  // 🎯 Banner ad state (80-20 split)
+  const [bannerAdData, setBannerAdData] = useState(null);
+  const [adEligible, setAdEligible] = useState(false);
+  const [fetchingBannerAd, setFetchingBannerAd] = useState(false);
+  
   const [isLiveShareWizardOpen, setIsLiveShareWizardOpen] = useState(false); // ✅ Track wizard modal state for taskbar
   const [isVideoSidebarOpen, setIsVideoSidebarOpen] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
@@ -420,6 +433,7 @@ export default function VideoWatch() {
   const [isHostBroadcasting, setIsHostBroadcasting] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
+  const [roomData, setRoomData] = useState(null); // Store room data including is_public
   
   // Breaking News Banner state (DOM-based)
   const [bannerState, setBannerState] = useState(null);
@@ -454,6 +468,50 @@ export default function VideoWatch() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+  
+  // 🎯 Fetch banner ad after preroll completes
+  useEffect(() => {
+    const fetchBannerAd = async () => {
+      // Only fetch if preroll is done and we don't have an ad yet
+      if (showAdPreroll || bannerAdData || fetchingBannerAd || !currentUser || !sessionStatus?.id) return;
+      
+      setFetchingBannerAd(true);
+      
+      try {
+        // Calculate user age
+        const userAge = currentUser.date_of_birth ? calculateAge(currentUser.date_of_birth) : 0;
+        
+        // Fetch banner/GIF ad
+        const response = await apiClient.get('/api/ads/in-session', {
+          params: {
+            user_id: currentUser.id,
+            session_id: sessionStatus.id,
+            ad_type: 'banner', // GIF/image ads only
+            placement: 'in_session',
+            user_age: userAge
+          }
+        });
+        
+        if (response.data.ad) {
+          console.log('🎯 [VideoWatch] Banner ad fetched:', response.data.ad);
+          setBannerAdData(response.data.ad);
+          setAdEligible(true);
+        } else {
+          console.log('🎯 [VideoWatch] No banner ad available');
+          setAdEligible(false);
+        }
+      } catch (err) {
+        console.error('❌ [VideoWatch] Failed to fetch banner ad:', err);
+        setAdEligible(false);
+      } finally {
+        setFetchingBannerAd(false);
+      }
+    };
+    
+    // Fetch ad after a delay to avoid overlapping with other UI
+    const timer = setTimeout(fetchBannerAd, 2000);
+    return () => clearTimeout(timer);
+  }, [showAdPreroll, currentUser, sessionStatus?.id, bannerAdData, fetchingBannerAd]);
   
   // 📰 Banner text line cycling effect
   useEffect(() => {
@@ -631,6 +689,8 @@ export default function VideoWatch() {
   const [forceActiveTab, setForceActiveTab] = useState(null); // Force LeftSidebar to specific tab
   const [podcastConfig, setPodcastConfig] = useState(null); // { title, logoUrl, guestUserId, guestUsername, hostUsername, sessionId }
   const [liveShareGuestId, setLiveShareGuestId] = useState(null); // Selected guest ID for LiveShare (for mute exemption)
+  const [currentBibleVerse, setCurrentBibleVerse] = useState(null); // Current Bible verse for church mode
+  const [isBibleVerseActive, setIsBibleVerseActive] = useState(false); // Bible verse visibility
   const screenShareTrackRef = useRef(null);
   const cameraShareTrackRef = useRef(null);
   const liveShareVideoRef = useRef(null); // Separate ref for LiveShare main video
@@ -920,6 +980,29 @@ export default function VideoWatch() {
       }
     }
   }, [messages, liveShareMode]);
+  
+  // 📖 Listen for Bible verse updates (Church mode)
+  useEffect(() => {
+    if (!messages || messages.length === 0) return;
+    
+    const lastMessage = messages[messages.length - 1];
+    
+    if (lastMessage.type === 'bible_verse_update') {
+      console.log('📖 [VideoWatch] Bible verse update received:', lastMessage.data);
+      
+      const { verse, active } = lastMessage.data;
+      
+      if (active && verse) {
+        console.log('✅ [Bible] Showing verse:', verse.reference);
+        setCurrentBibleVerse(verse);
+        setIsBibleVerseActive(true);
+      } else {
+        console.log('🚫 [Bible] Hiding verse');
+        setCurrentBibleVerse(null);
+        setIsBibleVerseActive(false);
+      }
+    }
+  }, [messages]);
   
   // 🎨 Update break screen countdown timer every second
   useEffect(() => {
@@ -2221,6 +2304,11 @@ export default function VideoWatch() {
     if (!roomId || !currentUser) return;
     const joinRoomIfNeeded = async () => {
       try {
+        // ✅ Fetch room data (includes is_public for Ghost Mode logic)
+        const room = await getRoom(roomId);
+        setRoomData(room);
+        console.log('🏠 [VideoWatch] Room data fetched:', { is_public: room.is_public });
+        
         // ✅ Only check membership, don't fetch all members
         // Session members will be populated via session_member_joined WebSocket events
         const members = await getRoomMembers(roomId);
@@ -2960,7 +3048,7 @@ export default function VideoWatch() {
         case "session_status":
           const data = message.data;
           console.log('📊 [VideoWatch] session_status received - FULL DATA:', data);
-          console.log('📊 [VideoWatch] session_status members field:', data.members);
+      console.log('📊 [VideoWatch] ✨ is_private flag:', data.is_private ? 'TRUE (Ghost Mode should be enforced) ✅' : 'FALSE (Ghost Mode is optional) ❌');
           console.log('📊 [VideoWatch] session_status members type:', typeof data.members, 'isArray:', Array.isArray(data.members));
 
           // ✅ SESSION MEMBERS from WebSocket (active watch participants)
@@ -3686,41 +3774,35 @@ export default function VideoWatch() {
           break;
         
         case "session_ended":
-          // Session ended by host - cleanup and navigate to RoomPage
-          console.log('🛑 [WebSocket] Session ended by host');
-          console.log('📋 Session data:', message.data);
-          
-          // ✅ Clear private messages and unread counts
+          // Clear private messages and unread counts
           setPrivateMessages({});
           setUnreadMessages({});
           
-          // ✅ Clear compression state from LeftSidebar
+          // Clear compression state from LeftSidebar
           if (leftSidebarCleanupRef.current) {
-            console.log('🧹 [VideoWatch] Calling LeftSidebar cleanup...');
             leftSidebarCleanupRef.current();
           }
           
           // Clear ticket cache for this session
           if (urlSessionId) {
             clearTicketCache(message.data?.session_id || urlSessionId);
-            console.log('🗑️ [VideoWatch] Cleared ticket cache for ended session');
           }
           
-          // ✅ Store session data for rating modal (if not the host)
+          // Store session data for rating modal (if not the host)
           const isCurrentUserHost = currentUser?.id === message.data?.host_id;
           if (!isCurrentUserHost && message.data?.session_id) {
-            console.log('⭐ [VideoWatch] Storing session data for rating modal');
-            sessionStorage.setItem(`pending_rating_${roomId}`, JSON.stringify({
+            const sessionData = {
               sessionId: message.data.session_id,
               hostId: message.data.host_id,
               hostName: message.data.host_name || 'Unknown Host',
               sessionTitle: message.data.session_title || 'Untitled Session',
               watchType: message.data.watch_type,
               isTemporary: message.data.is_temporary || false,
-            }));
+            };
+            sessionStorage.setItem(`pending_rating_${roomId}`, JSON.stringify(sessionData));
           }
           
-          // ✅ Show toast notification with appropriate message
+          // Show toast notification
           const reason = message.data?.reason;
           if (reason === 'host_timeout') {
             toast('Session ended - Host disconnected for over 10 minutes', {
@@ -3734,8 +3816,12 @@ export default function VideoWatch() {
             });
           }
           
-          // Perform cleanup and navigate
-          performCleanupAndExit();
+          // Perform cleanup only for members (host already cleaned up in handleLeaveRoom)
+          if (isCurrentUserHost) {
+            break;
+          }
+          
+          performCleanupAndExit(message.data?.is_temporary);
           break;
         case 'ticket_required':
           // Backend rejected connection - no ticket for paid session
@@ -3900,11 +3986,12 @@ export default function VideoWatch() {
           });
           break;
         
-        case "hand_raised":
+        case "raise_hand":
           // Member raised their hand
-          console.log('✋ [VideoWatch] Received hand_raised:', message.data);
-          const raisedUserId = message.data?.userId;
-          const raisedUsername = message.data?.username;
+          console.log('✋ [VideoWatch] Received raise_hand:', message.data || message);
+          const raisedUserId = message.userId || message.data?.userId;
+          const raisedUsername = message.username || message.data?.username;
+          const raisedSeatId = message.seatId || message.data?.seatId;
           
           if (raisedUserId) {
             setRaisedHands(prev => {
@@ -3914,6 +4001,7 @@ export default function VideoWatch() {
               const newHand = {
                 userId: raisedUserId,
                 username: raisedUsername || `User ${raisedUserId}`,
+                seatId: raisedSeatId,
                 timestamp: Date.now()
               };
               
@@ -3931,10 +4019,10 @@ export default function VideoWatch() {
           }
           break;
         
-        case "hand_lowered":
+        case "lower_hand":
           // Member lowered their hand
-          console.log('👋 [VideoWatch] Received hand_lowered:', message.data);
-          const loweredUserId = message.data?.userId;
+          console.log('👋 [VideoWatch] Received lower_hand:', message.data || message);
+          const loweredUserId = message.userId || message.data?.userId;
           
           if (loweredUserId) {
             setRaisedHands(prev => prev.filter(h => h.userId !== loweredUserId));
@@ -3998,8 +4086,8 @@ export default function VideoWatch() {
               setSelectedLiveShareLayout(message.data.layout);
             }
             
-            // If podcast, show, or news mode, extract and set config (all support title + logo)
-            if (mode === 'podcast' || mode === 'show' || mode === 'news') {
+            // If podcast, show, news, or church mode, extract and set config (all support title + logo)
+            if (mode === 'podcast' || mode === 'show' || mode === 'news' || mode === 'church') {
               const configData = {
                 mode: mode,
                 title: message.data.podcastTitle || `Untitled ${mode.charAt(0).toUpperCase() + mode.slice(1)}`,
@@ -4009,6 +4097,13 @@ export default function VideoWatch() {
                 sessionId: sessionStatus?.id || urlSessionId,
               };
               setPodcastConfig(configData);
+              
+              // For church mode, load current Bible verse if exists (late joiner support)
+              if (mode === 'church' && message.data.currentBibleVerse) {
+                console.log('📖 [VideoWatch] Loading current Bible verse for late joiner:', message.data.currentBibleVerse);
+                setCurrentBibleVerse(message.data.currentBibleVerse);
+                setIsBibleVerseActive(true);
+              }
             } else {
               setPodcastConfig(null);
             }
@@ -4089,6 +4184,12 @@ export default function VideoWatch() {
             icon: '▶️',
             duration: 3000
           });
+          break;
+          
+        case "bible_verse_update":
+          console.log('📖 [VideoWatch] Bible verse update:', message.data);
+          // Bible overlay is handled in VideoWatch separately (not GraphicsRenderer)
+          // This will trigger the BibleOverlay component to show/hide
           break;
           
         case "liveshare_guest_joined":
@@ -4245,51 +4346,43 @@ export default function VideoWatch() {
 
   // Handle Leave Room
   const handleLeaveRoom = async () => {
-    // � Get the current session ID (prioritize WebSocket over API state)
     const finalSessionId = sessionStatus?.id || urlSessionId || activeSessionId;
 
+    // Determine if this is an instant watch BEFORE any cleanup changes the URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const isInstantWatch = urlParams.get('instant') === 'true';
+
     if (isHost) {
-      // Host: Show confirmation dialog
       const confirmed = window.confirm(
         "End watch session for everyone? All participants will be returned to the lobby."
       );
 
       if (!confirmed) {
-        return; // User canceled, stay in session
+        return;
       }
 
-      // Host confirmed: End the session
       try {
         if (finalSessionId) {
           await apiClient.post(`/api/rooms/${roomId}/sessions/${finalSessionId}/end`);
-          
-          // ✅ Set flag to prevent showing stale session UI on RoomPage
           sessionStorage.setItem(`session_ended_${roomId}`, 'true');
-          
-          // Small delay to ensure backend broadcasts before navigation
           await new Promise(resolve => setTimeout(resolve, 300));
         }
       } catch (error) {
-        console.error('❌ [VideoWatch] Failed to end session:', error);
-        // Continue with cleanup even if API call fails
+        console.error('Failed to end session:', error);
       }
     }
     
-    // Cleanup and exit (both host and members)
-    await performCleanupAndExit();
+    await performCleanupAndExit(isInstantWatch);
   };
 
   // Cleanup and navigate helper
-  const performCleanupAndExit = async () => {
-    console.log('🧹 Performing cleanup and exit...');
-
+  const performCleanupAndExit = async (isTemporaryRoom = null) => {
     // 1. Disconnect LiveKit
     if (disconnectLiveKit) {
       try {
         await disconnectLiveKit();
-        console.log('✅ LiveKit disconnected');
       } catch (error) {
-        console.error('⚠️ Error disconnecting LiveKit:', error);
+        console.error('Error disconnecting LiveKit:', error);
       }
     }
 
@@ -4297,52 +4390,54 @@ export default function VideoWatch() {
     if (cameraPreviewStream) {
       cameraPreviewStream.getTracks().forEach(track => track.stop());
       setCameraPreviewStream(null);
-      console.log('✅ Camera stream stopped');
     }
 
     // 3. Clear chat messages
     setSessionChatMessages([]);
     setNewSessionMessage('');
     setIsChatOpen(false);
-    console.log('✅ Chat cleared');
 
     // 4. WebSocket cleanup happens automatically via useWebSocket cleanup
 
-    // 5. Force navigation: if this was a temporary room (instant watch), go back to lobby; otherwise go to room page
+    // 5. Navigate: if temporary room (instant watch), go to lobby; otherwise go to room page
     try {
-      console.log('🔍 [VideoWatch] Checking session data for redirect...');
-      const sessionDataStr = sessionStorage.getItem(`pending_rating_${roomId}`);
-      let isTemporary = false;
+      let isTemporary = isTemporaryRoom;
       
-      // Try to get is_temporary from session data if available
-      if (sessionDataStr) {
-        try {
-          const sessionData = JSON.parse(sessionDataStr);
-          isTemporary = sessionData.isTemporary || false;
-          console.log('🔍 [VideoWatch] is_temporary from session data:', isTemporary);
-        } catch (e) {
-          console.error('⚠️ [VideoWatch] Error parsing session data:', e);
+      // If not passed as parameter, try to determine from session data
+      if (isTemporary === null) {
+        const sessionDataStr = sessionStorage.getItem(`pending_rating_${roomId}`);
+        
+        if (sessionDataStr) {
+          try {
+            const sessionData = JSON.parse(sessionDataStr);
+            isTemporary = sessionData.isTemporary || false;
+          } catch (e) {
+            console.error('Error parsing session data:', e);
+          }
+        }
+        
+        // Fallback: check URL parameter
+        if (isTemporary === null || isTemporary === false) {
+          const urlParams = new URLSearchParams(window.location.search);
+          const instantParam = urlParams.get('instant');
+          if (instantParam === 'true') {
+            isTemporary = true;
+          }
+        }
+        
+        // Additional fallback: check roomData
+        if (isTemporary === null && roomData?.is_temporary !== undefined) {
+          isTemporary = roomData.is_temporary;
         }
       }
       
-      // Fallback: check URL parameter (for backwards compatibility)
-      if (!isTemporary) {
-        const urlParams = new URLSearchParams(window.location.search);
-        const instantParam = urlParams.get('instant');
-        isTemporary = instantParam === 'true';
-        console.log('🔍 [VideoWatch] is_temporary from URL fallback:', isTemporary);
-      }
-      
       if (isTemporary) {
-        console.log('✅ [VideoWatch] Temporary room detected - navigating to Lobby...');
         navigate('/lobby', { replace: true });
       } else {
-        console.log('✅ [VideoWatch] Persistent room - navigating to RoomPage...');
         navigate(`/rooms/${roomId}`, { replace: true });
       }
     } catch (err) {
-      console.error('⚠️ [VideoWatch] Error checking room type:', err);
-      console.log('🏠 [VideoWatch] Navigating to RoomPage (fallback)...');
+      console.error('Navigation error:', err);
       navigate(`/rooms/${roomId}`, { replace: true });
     }
   };
@@ -4638,10 +4733,12 @@ export default function VideoWatch() {
     
     if (newState) {
       // Raise hand
+      const userSeatId = userSeats[currentUser.id] || 'N/A';
       sendMessage({
         type: "raise_hand",
         userId: currentUser.id,
-        username: currentUser.username || currentUser.name
+        username: currentUser.username || currentUser.name,
+        seatId: userSeatId
       });
       
       toast('✋ Hand raised', {
@@ -4655,12 +4752,15 @@ export default function VideoWatch() {
         userId: currentUser.id
       });
       
+      // ✅ Clear from local raised hands array to update notification count
+      setRaisedHands(prev => prev.filter(h => h.userId !== currentUser.id));
+      
       toast('Hand lowered', {
         icon: '👋',
         duration: 2000,
       });
     }
-  }, [isHandRaised, sendMessage, currentUser]);
+  }, [isHandRaised, sendMessage, currentUser, userSeats, setRaisedHands]);
 
   // detect if user stops sharing via browser controls
   useEffect(() => {
@@ -4976,43 +5076,102 @@ export default function VideoWatch() {
         className="relative w-full h-full"
         onDoubleClick={handleDoubleClickLike}
       >
-        <CinemaVideoPlayer
-          ref={videoPlayerRef}
-          mediaItem={currentMedia}
-          isPlaying={isPlaying}
-          isHost={isHost}
-          track={remoteScreenTrack}
-          localScreenTrack={localScreenTrack}
-          layout={selectedLiveShareLayout}
-          playbackPositionRef={playbackPositionRef}
-          onPlay={handlePlay}
-          onPause={handlePause}
-          onEnded={handleVideoEnd}
-          onError={handleError}
-          onPauseBroadcast={handlePauseBroadcast}
-          onTimeUpdate={handleTimeUpdate}
-          // ❌ REMOVED: onBinaryHandlerReady, onScreenShareReady (not needed with LiveKit)
-        />
-        
-        {/* ❤️ TikTok Heart Animation */}
-        {showHeartAnimation && (
-          <TikTokHeartAnimation 
-            onComplete={() => setShowHeartAnimation(false)}
+        {/* 📺 Ad Pre-roll Video (shows before main content) */}
+        {showAdPreroll && (
+          <AdVideoPreroll
+            roomId={roomId}
+            contentRating={room?.content_rating || 'general'}
+            onComplete={() => setShowAdPreroll(false)}
           />
         )}
-        
-        {/* 🎨 Graphics Canvas Overlay for LiveShare */}
-        {/* Render canvas for HOST (liveShareMode) or MEMBER (liveShareContentMode) */}
-        {(liveShareMode || liveShareContentMode) && (
-          <canvas
-            ref={graphicsCanvasRef}
-            className="absolute inset-0 pointer-events-none"
-            style={{ 
-              zIndex: 25,
-              width: '100%',
-              height: '100%'
-            }}
-          />
+
+        {/* Main content (video player) - only show after ad completes */}
+        {!showAdPreroll && (
+          <>
+            {/* 🎯 80-20 Split: Video (80%) + Banner Ad (20%) */}
+            <div className="flex flex-col h-full w-full">
+              {/* Video Player: 80% of screen height when ad is showing */}
+              <div className={`relative ${bannerAdData ? 'h-[80%]' : 'h-full'} w-full transition-all duration-300`}>
+                <CinemaVideoPlayer
+                  ref={videoPlayerRef}
+                  mediaItem={currentMedia}
+                  isPlaying={isPlaying}
+                  isHost={isHost}
+                  track={remoteScreenTrack}
+                  localScreenTrack={localScreenTrack}
+                  layout={selectedLiveShareLayout}
+                  playbackPositionRef={playbackPositionRef}
+                  onPlay={handlePlay}
+                  onPause={handlePause}
+                  onEnded={handleVideoEnd}
+                  onError={handleError}
+                  onPauseBroadcast={handlePauseBroadcast}
+                  onTimeUpdate={handleTimeUpdate}
+                  // ❌ REMOVED: onBinaryHandlerReady, onScreenShareReady (not needed with LiveKit)
+                />
+              </div>
+              
+              {/* Banner Ad: 20% of screen height */}
+              {bannerAdData && (
+                <div className="h-[20%] w-full bg-black">
+                  <InSessionAdPanel
+                    ad={bannerAdData}
+                    fullscreen={false}
+                    onComplete={() => {
+                      console.log('🎯 [VideoWatch] Banner ad completed');
+                      setBannerAdData(null);
+                    }}
+                    onTrackImpression={async (clicked) => {
+                      try {
+                        await apiClient.post(`/api/ads/campaigns/${bannerAdData.id}/track`, {
+                          session_id: sessionStatus?.id,
+                          room_id: roomId,
+                          clicked,
+                          view_duration: 15
+                        });
+                        console.log('🎯 [VideoWatch] Banner ad impression tracked');
+                      } catch (err) {
+                        console.error('❌ [VideoWatch] Failed to track impression:', err);
+                      }
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+            
+            {/* ❤️ TikTok Heart Animation */}
+            {showHeartAnimation && (
+              <TikTokHeartAnimation 
+                onComplete={() => setShowHeartAnimation(false)}
+              />
+            )}
+            
+            {/* 📖 Bible Verse Overlay (Church mode) */}
+            {isBibleVerseActive && currentBibleVerse && (
+              <BibleOverlay 
+                verse={currentBibleVerse}
+                isActive={isBibleVerseActive}
+                onDismiss={isHost ? () => {
+                  setIsBibleVerseActive(false);
+                  setCurrentBibleVerse(null);
+                } : undefined}
+              />
+            )}
+            
+            {/* 🎨 Graphics Canvas Overlay for LiveShare */}
+            {/* Render canvas for HOST (liveShareMode) or MEMBER (liveShareContentMode) */}
+            {(liveShareMode || liveShareContentMode) && (
+              <canvas
+                ref={graphicsCanvasRef}
+                className="absolute inset-0 pointer-events-none"
+                style={{ 
+                  zIndex: 25,
+                  width: '100%',
+                  height: '100%'
+                }}
+              />
+            )}
+          </>
         )}
         
         {/* 🎙️ LiveShare Overlays (for Podcast/News/Show modes) */}
@@ -5521,7 +5680,11 @@ export default function VideoWatch() {
             availableCameras={availableCameras} // 📹 Pass available cameras
             selectedCameraId={selectedCameraId} // 📹 Pass current camera
             onCameraSwitch={switchCamera} // 📹 Pass camera switch handler
+            isSessionPrivate={sessionStatus?.is_private || false} // ✅ Pass session privacy flag
+            sessionStatus={sessionStatus} // ✅ Pass full session status for self-validation fallback
           />
+          {/* 🔍 Debug: Log when passing isSessionPrivate to LeftSidebar */}
+          {console.log('🔍 [VideoWatch → LeftSidebar] Passing isSessionPrivate:', sessionStatus?.is_private || false, sessionStatus?.is_private ? '(Ghost Mode ENFORCED)' : '(Ghost Mode optional)')}
         </div>
       )}
 

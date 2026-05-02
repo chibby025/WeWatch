@@ -280,12 +280,30 @@ export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true
         console.error('   3. Test on desktop browser (not mobile emulator)');
       }
       
+      // Check if Data Saver mode is active
+      const isDataSaver = localStorage.getItem('dataSaverMode') === 'true';
+      if (isDataSaver) {
+        console.log('💾 [LiveKit] Data Saver mode active - capping video quality at 480p');
+      }
+      
       await newRoom.connect(url, token, {
         autoSubscribe: autoSubscribe,  // ✅ Conditional: false for lecture halls (selective subscription), true for others
         dynacast: true, // 🎯 Adaptive streaming - only encode layers being consumed
         publishDefaults: {
           audioBitrate: 96000,
+          videoEncoding: isDataSaver ? {
+            maxBitrate: 800_000, // 800 Kbps for 480p
+            maxFramerate: 24,
+          } : undefined,
         },
+        // 🚀 Cap incoming video quality when Data Saver is active
+        videoCaptureDefaults: isDataSaver ? {
+          resolution: {
+            width: 854,
+            height: 480,
+            frameRate: 24,
+          },
+        } : undefined,
         // 🚀 OPTIMIZE: ICE configuration for faster connection
         rtcConfig: {
           iceTransportPolicy: 'all', // Use all available candidates (STUN + TURN)

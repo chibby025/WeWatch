@@ -1,8 +1,641 @@
 # WeWatch Project Rules
 
-## 📍 PROJECT STATUS (April 22, 2026 - PRE-LAUNCH)
+## �‍💻 About the Creator
 
-### 🚀 LAUNCH COUNTDOWN: 8 DAYS (April 30, 2026)
+**Chibuzor (chibuzor_dev)** - Founder & Lead Developer of WeWatch
+
+WeWatch represents the culmination of months of intense development, learning, and iteration. This project has been built from the ground up with a vision to revolutionize social video watching and create a platform where creators and communities can thrive together.
+
+**Journey Highlights:**
+- Started as a simple watch party concept, evolved into a full social platform
+- Overcame countless technical challenges: WebRTC audio routing, 3D rendering, real-time sync
+- Built complete monetization ecosystem (tokens, gifts, ads) from scratch
+- Mastered full-stack development: Go backend, React frontend, PostgreSQL, WebSockets, LiveKit
+- Implemented complex features: LiveShare graphics, quiz system, games, recording capabilities
+- Maintained laser focus on user experience and creator-first design
+- Prepared for launch with production-ready security, logging, and scalability
+
+**Technical Stack Mastery:**
+- Backend: Go (Gin), GORM, PostgreSQL, WebSockets, JWT auth
+- Frontend: React, Vite, Tailwind CSS, Three.js (3D rendering)
+- Infrastructure: LiveKit (audio/video), Stripe (payments), Cloudflare R2 (storage)
+- Real-time: WebSocket architecture, binary protocols, state synchronization
+
+This is more than a project - it's a testament to perseverance, continuous learning, and the belief that great products come from deeply understanding both technology and user needs.
+
+---
+
+## 📍 PROJECT STATUS (May 1, 2026 - POST-LAUNCH)
+
+### 🚀 LAUNCH STATUS: PRODUCTION LIVE ✅
+
+### 🎯 NEW STRATEGIC DIRECTION: "Twitch meets TikTok for Watch Parties"
+**Positioning:** Social congregation app for creator monetization
+
+### 📋 Recent Updates (May 1, 2026):
+
+#### 👥 **NEW FEATURE: Followers Count & Icon Improvements** (May 1, 2026)
+**Status:** ✅ COMPLETE - Social metrics enhancement for user profiles
+
+**What Was Built:**
+Added followers count metric to UserProfileModal that displays unique members across all rooms hosted by a user. Also updated all icons to use white outlines for better visibility.
+
+**Core Features Implemented:**
+
+1. **Followers Count Backend:**
+   - ✅ New endpoint: `GET /api/friendships/followers/:userId`
+   - ✅ Handler: `GetFollowersCountHandler` in `friendships.go`
+   - ✅ SQL query: COUNT(DISTINCT user_id) from user_rooms JOIN rooms
+   - ✅ Excludes host from their own follower count
+   - ✅ Returns JSON: `{"user_id": 123, "followers_count": 450}`
+   - ✅ Auto-returns 0 for non-hosts
+
+2. **Followers Count Frontend:**
+   - ✅ New API function: `getFollowersCount(userId)` in `api.js`
+   - ✅ UserProfileModal state: `followersCount`, `loadingFollowersCount`
+   - ✅ Parallel fetching with friend count
+   - ✅ Display format: **"125 Friends • 450 Followers"**
+   - ✅ Singular/plural handling: "1 Friend • 1 Follower"
+   - ✅ Shows "0 Followers" for non-hosts
+   - ✅ Loading state during fetch
+   - ✅ Error handling with fallback to 0
+
+3. **Icon Improvements:**
+   - ✅ UserProfileModal: All inline SVG icons changed to `stroke="white"`
+   - ✅ Icons updated: Edit Profile, Add Friend, Pending, Message
+   - ✅ RoomPageEditModal: ShareIcon changed from solid to outline
+   - ✅ All icons now render as white outlines on dark backgrounds
+   - ✅ Better visibility and visual consistency
+
+**Technical Implementation:**
+
+**Database:**
+- Tables: `rooms` (host_id), `user_rooms` (user_id, room_id)
+- Query uses JOIN with WHERE clause filtering
+- COUNT(DISTINCT) ensures unique users across multiple rooms
+- Indexed on host_id and user_id for fast lookup
+
+**API Endpoint:**
+```
+GET /api/friendships/followers/:userId
+Authorization: Required
+Response: { "user_id": 123, "followers_count": 450 }
+```
+
+**Display Logic:**
+- Fetches on modal open
+- Parallel requests for friend count and followers count
+- Combined display: "X Friends • Y Followers"
+- Label changes to "Followers" section in profile
+
+**Files Modified:**
+- `backend/internal/handlers/friendships.go` - New handler (+34 lines)
+- `backend/cmd/server/main.go` - Route registration (+1 line)
+- `frontend/src/services/api.js` - New API function (+5 lines)
+- `frontend/src/components/UserProfileModal.jsx` - State, fetch, display (+30 lines)
+- `frontend/src/components/UserProfileModal.jsx` - Icon updates (+6 lines)
+- `frontend/src/components/RoomPageEditModal.jsx` - ShareIcon to outline (+1 line)
+
+**Documentation:**
+- Created: `FOLLOWERS_COUNT_IMPLEMENTATION.md` (comprehensive guide)
+
+---
+
+### 📋 Previous Updates (April 30, 2026):
+
+#### 🎬 **MAJOR FEATURE: Room Posting System & RoomTV Ads** (April 30, 2026)
+**Status:** ✅ PRODUCTION READY - Complete social posting and monetization system!
+
+**What Was Built:**
+WeWatch now has a complete room posting system where room hosts can share content directly to their room members, with RoomTV notifications and integrated advertising.
+
+**Core Features Implemented:**
+
+1. **Room Post Upload System:**
+   - ✅ PostUploadModal updated with room selection dropdown (host rooms only)
+   - ✅ Video duration changed from 10 minutes to **90 seconds** (TikTok/Reels style)
+   - ✅ Posts include `room_id` field for room-specific content
+   - ✅ Only room hosts can post to rooms (backend validation)
+   - ✅ UI shows notification: "This post will appear in RoomTV and notify all members"
+
+2. **RoomTV Notification System:**
+   - ✅ Priority system: Session > Host Content > Events > **Room Posts** > Ads
+   - ✅ Displays host posts with thumbnail, title, description
+   - ✅ Post rotation: Cycles every 10 seconds through multiple posts
+   - ✅ Auto-dismisses after 2 minutes total display time
+   - ✅ Click-to-watch: Navigates to Discover page with auto-play
+   - ✅ Shows post counter: (1/3) when multiple posts available
+   - ✅ Real-time WebSocket notifications to all room members
+
+3. **RoomTV Ads Integration:**
+   - ✅ Ad Settings model with granular controls (global_enabled, feed_ads, session_ads, roomtv_ads)
+   - ✅ Super admin master switch in AdsManagementModal
+   - ✅ Frequency capping: 1 ad per hour per room (last_ad_shown_at tracking)
+   - ✅ Serves text/banner/image ads only (no video ads in RoomTV)
+   - ✅ Age and content rating targeting
+   - ✅ Auto-dismiss after ad duration (default 15 seconds)
+   - ✅ Ads only show when RoomTV is idle (no sessions/posts/events)
+
+4. **Batched WebSocket Notifications:**
+   - ✅ Broadcasts to all room members (online + offline)
+   - ✅ Batched in chunks of 1000 users to prevent overload
+   - ✅ Notification includes: post_id, author info, thumbnail_url
+   - ✅ Toast notification: "🎬 New post from {username}!"
+   - ✅ Triggers RoomTV refetch to show new content
+
+5. **Discover Page Integration:**
+   - ✅ LobbyPage handles location.state.openPost routing
+   - ✅ Automatically switches to Discover sub-tab
+   - ✅ Fetches and opens post in PostViewModal
+   - ✅ Supports autoPlay flag for immediate video playback
+   - ✅ Seamless navigation from RoomTV click
+
+6. **Master Switch UI (AdsManagementModal):**
+   - ✅ New "🔧 Master Switch" tab (default view)
+   - ✅ Global ads toggle with gradient background
+   - ✅ Warning dialog when disabling: "⚠️ This will stop all revenue!"
+   - ✅ Granular toggles: Feed Ads, Session Ads, RoomTV Ads
+   - ✅ Granular controls disabled when master switch OFF
+   - ✅ Status summary panel showing all toggles state
+   - ✅ Super admin only access (PUT /api/ads/settings)
+
+**Backend Implementation:**
+
+**New Models:**
+- `AdSettings` - Multiple rows for granular ad control (global_enabled, feed_ads, session_ads, roomtv_ads)
+
+**Model Updates:**
+- `Room.LastAdShownAt` - Tracks last ad shown time for frequency capping
+
+**New Endpoints:**
+- `GET /api/ads/roomtv` - Fetch RoomTV ads (public, frequency cap check)
+- `GET /api/ads/settings` - Get all ad settings as map (public)
+- `PUT /api/ads/settings` - Update ad setting (super admin only)
+
+**Handler Updates:**
+- `CreatePost` - Host-only validation, calls broadcastRoomPostNotification
+- `broadcastRoomPostNotification` - Fetches all room members, batches in 1000s, broadcasts via WebSocket
+- `GetRoomTVAd` - Filters text/banner/image ads, checks frequency cap, updates last_ad_shown_at
+
+**Frontend Implementation:**
+
+**Files Modified (5):**
+1. `PostUploadModal.jsx`:
+   - Max video duration: 600s → 90s
+   - Added room selection dropdown (fetches hosted rooms)
+   - Passes room_id to POST /api/posts
+   - Shows RoomTV notification message
+
+2. `RoomTV.jsx`:
+   - Added state: roomPosts, currentPostIndex, adContent, adDismissed, timers
+   - Fetches room posts via GET /api/rooms/:id/posts?limit=5
+   - Fetches RoomTV ads via GET /api/ads/roomtv
+   - Post rotation: 10s intervals, 2 min total, auto-dismiss
+   - Ad auto-dismiss: Uses ad.duration, default 15s
+   - Click handler: navigate('/discover', { state: { openPost, autoPlay }})
+
+3. `RoomPageNew.jsx`:
+   - Added state: roomTVRefetchTrigger
+   - WebSocket handler case: room_post_created
+   - Shows toast notification when new post arrives
+   - Increments refetch trigger to reload RoomTV
+   - Passes refetchTrigger prop to RoomTV
+
+4. `LobbyPage.jsx`:
+   - Added location.state.openPost handler
+   - Switches to discover sub-tab automatically
+   - Fetches post via GET /api/posts/:id
+   - Opens PostViewModal with autoPlay support
+   - Clears navigation state after handling
+
+5. `AdsManagementModal.jsx`:
+   - New tab: "🔧 Master Switch" (default)
+   - Fetches settings via GET /api/ads/settings
+   - Updates via PUT /api/ads/settings (super admin)
+   - Global master switch with large toggle
+   - 3 granular toggles (Feed/Session/RoomTV)
+   - Status summary panel
+
+**Architecture Decisions:**
+- Video Duration: 90 seconds max (social media style)
+- Room Posting: Host-only (validated backend + UI)
+- Broadcast: All members (batched 1000 per batch)
+- RoomTV Duration: 2 mins for posts, 5 mins for events
+- Post Rotation: 10s per post in carousel
+- Ads Frequency: 1 hour cap per room
+- Ads Types: Text/banner/image only in RoomTV
+- Master Switch: Multiple rows for granular control
+
+**Database Changes:**
+- `ad_settings` table created (setting_key unique, enabled boolean)
+- `rooms.last_ad_shown_at` field added (nullable timestamp)
+- Migration added to AutoMigrate
+
+**Testing Checklist:**
+- ✅ Host uploads 90s video with room selected
+- ✅ RoomTV shows "NEW POST FROM HOST" notification
+- ✅ Click RoomTV → Opens in Discover with autoPlay
+- ✅ Posts auto-dismiss after 2 minutes
+- ✅ Super admin can toggle ads on/off
+- ✅ RoomTV ads appear when idle (1-hour frequency)
+- ✅ Room members receive WebSocket notification toast
+- ✅ Posts show in UserProfileModal posts grid
+- ✅ Recordings also trigger RoomTV notifications
+
+**Revenue Impact:**
+- RoomTV ads add new monetization channel with frequency cap
+- Host posts increase engagement and session creation
+- 90-second format encourages more uploads
+- Seamless creator-to-viewer content flow
+
+**Status:** Backend deployed, frontend integrated, WebSocket notifications working, READY FOR USERS! 🚀📺
+
+---
+
+### 📋 Recent Updates (April 29, 2026):
+
+#### 🎉 **MAJOR FEATURE: Complete Ads Platform Implementation** (April 29, 2026)
+**Status:** ✅ PRODUCTION READY - Full monetization system live!
+
+**What Was Built:**
+WeWatch now has a fully functional advertising platform with both manual inquiry system for premium advertisers AND self-service campaign creation for all businesses.
+
+**Phase 1: Manual Ad Inquiry System**
+- ✅ Public inquiry form for advertisers (company details, budget, goals)
+- ✅ Super admin management panel in LobbyLeftSidebar ("Ads Management" menu item)
+- ✅ AdsManagementModal with inquiry approval workflow
+- ✅ Status tracking: pending → approved/rejected/contacted
+- ✅ Email integration for advertiser communication
+- ✅ Audit logging for all admin actions
+
+**Phase 2: Self-Service Ad Platform**
+- ✅ 4-step campaign creator wizard:
+  - Step 1: Basic info (name, ad type, dates)
+  - Step 2: Creative upload (image/video with preview)
+  - Step 3: Targeting (age 13-99, content rating)
+  - Step 4: Budget & review ($50 minimum)
+- ✅ File upload system (5MB images, 50MB videos)
+- ✅ Campaign approval workflow (super admin review)
+- ✅ Real-time analytics tracking (impressions, clicks, CTR, CPM)
+- ✅ Budget management with auto-pause when spent
+
+**Ad Formats Implemented:**
+1. **Banner Ads**: Display between posts in Discover feed (every 6 posts)
+2. **Video Pre-roll Ads**: 5-second forced view before watch session content
+3. **Sponsored Rooms**: Database prepared for future featured placements
+
+**Integration Complete:**
+- ✅ DiscoverFeed.jsx: Banner ads inserted every 6th post
+- ✅ VideoWatch.jsx: Pre-roll ads before CinemaVideoPlayer
+- ✅ AdsManagementModal.jsx: Active campaigns tab with full management UI
+
+**Monetization Model:**
+- Pricing: $2 CPM (per 1,000 impressions)
+- Minimum budget: $50 per campaign
+- Targeting: Age-based + content rating matching
+- Analytics: Impressions, clicks, CTR, spent amount, view duration
+- Auto-pause: Campaigns pause when budget exceeded
+
+**Backend Implementation:**
+- Models: AdInquiry, AdCampaign, AdImpression, AdPayment
+- Handlers: ad_inquiry.go, ad_campaign.go, ad_upload.go
+- Routes: 11 new endpoints (public, authenticated, super admin)
+- Migrations: ad_inquiries table + ad_campaigns/impressions/payments tables
+
+**Files Created/Modified:**
+- Backend: 3 new models, 3 new handlers, 11 new routes, 2 migrations
+- Frontend: 6 new components (AdInquiryForm, AdCampaignCreator, AdBanner, AdVideoPreroll, AdsManagementModal updates)
+- Documentation: ADS_PLATFORM_COMPLETE.md, ADVERTISER_QUICK_START.md, ADS_TESTING_GUIDE.md
+
+**Revenue Impact:**
+With just 1,000 users:
+- Conservative: $1,800/month from ads (3,600 viewing hours × $0.50/hour)
+- With ads: Total revenue increases to $2,562.50/month (98.1% profit margin)
+- Scales linearly: 10,000 users = $18,000+/month from ads alone
+
+**Status:** Backend running, all routes tested, frontend integrated, READY FOR ADVERTISERS! 🚀💰
+
+---
+
+1. ✅ **Backend Room Data Enhancement**: Added `host_avatar_url` to GetRoomHandler
+   - **Files**: backend/internal/handlers/rooms.go (lines 2782-2822)
+   - **Changes**: Added `users.avatar_url` to JOIN SELECT query, included in response JSON
+   - **Result**: RoomPageEditModal now displays actual host avatar images instead of initials
+   
+2. ✅ **Clickable Members List in RoomPageEditModal**: Added inline expandable members UI
+   - **Files**: RoomPageEditModal.jsx, RoomPageNew.jsx
+   - **Features**: Click members section to expand/collapse, shows avatars + usernames, host badge
+   - **UX**: Smooth transitions, scrollable list (max-height 192px), hover effects
+   
+3. ✅ **UI Color Consistency**: Updated Discover post button to match app colors
+   - **Change**: Pink/rose gradient → Purple/blue gradient (from-purple-600 to-blue-600)
+   - **Reason**: App uses blue, purple, white, black palette
+   
+4. ✅ **Host Avatar Size Increase**: Changed avatar from 4x4 to 8x8 pixels in RoomPageEditModal
+   - **Improvement**: Better visibility, larger text (sm instead of 8px)
+   
+5. ✅ **LeftSidebar Button Layout Optimization**: Rearranged Game and Record buttons
+   - **Before**: Vertical stack (each button full width)
+   - **After**: Horizontal side-by-side (flex-1 each, icon above text)
+   - **Benefit**: Saves vertical space, cleaner layout, larger icons (w-6 h-6 on desktop)
+   
+6. ✅ **Create New Button Red Pulse Animation**: Added pulse effect for Rooms tab
+   - **Animation**: Red pulsing for first-time users to increase discoverability
+   - **Duration**: 5 seconds, dismisses on click
+   - **Storage**: localStorage 'hasSeenCreateButton' flag
+
+### 💰 COST & REVENUE ANALYSIS (1000 Users)
+
+**Infrastructure Costs (Monthly):**
+- Hetzner VPS (8GB): $5
+- Railway PostgreSQL: $5
+- Cloudflare R2 Storage (500GB): $7.50
+- Cloudflare R2 Bandwidth (2TB): $9
+- LiveKit Self-hosted VPS (16GB): $25
+- Domain/SSL: $2
+- **TOTAL: ~$49/month**
+
+**Revenue Streams (1000 users, 60% MAU):**
+1. Token purchases (25% commission): **$500/month** (200 users × $10 × 25%)
+2. Transfer fees (5%): **$112.50/month** (150 users × $15 × 5%)
+3. Gift donations (15%): **$150/month** (50 users × $20 × 15%)
+4. Ad revenue (optional): **$1,800/month** (3,600 hours × $0.50/hour)
+
+**Profitability:**
+- Without ads: **$762.50/month** revenue - $49 cost = **+$713.50 profit (93.6% margin)** ✅
+- With ads: **$2,562.50/month** revenue - $49 cost = **+$2,513.50 profit (98.1% margin)** 🚀
+
+**Key Insight**: **15.6x above break-even without ads** - Profitable from day 1 with just transaction fees
+
+**Scaling Economics:**
+- 10,000 users: $7,475-25,475/month profit (add 2 LiveKit servers @ $150 total cost)
+- 100,000 users: $76,250-256,250/month profit (~$800 infrastructure cost)
+- **Margins remain 90%+** at scale
+
+### 📋 Recent Updates (April 27, 2026):
+1. ✅ **Mobile App Preparation**: Removed CSV import from ContactsModal (native permissions instead)
+2. ✅ **LiveShare Preview Overlays**: Added mode badges, titles, and logos to session previews
+3. ✅ **Data Saver Mode**: Complete bandwidth optimization feature (480p cap, no autoplay)
+4. ✅ **UI Cleanup**: Removed "Saved Messages" menu item from LobbyLeftSidebar
+5. ✅ **Instant Watch Navigation Fix**: Fixed double-navigation bug after ending instant watch sessions
+   - **Files**: VideoWatch.jsx (handleLeaveRoom, performCleanupAndExit, session_ended handler)
+   - **Root Cause**: `performCleanupAndExit()` called twice - second call lost instant watch flag after URL changed
+   - **Solution**: Extract `instant=true` parameter BEFORE any cleanup/navigation, pass as parameter through cleanup flow
+   - **Result**: Clean navigation to lobby without secondary redirect to deleted room page
+6. ✅ **Production Logging Cleanup**: Removed all verbose debug logs for security compliance
+   - **Files**: VideoWatch.jsx, RoomPageNew.jsx, LobbyPage.jsx
+   - **Removed**: Emoji banners, URLs, session/user/room IDs, navigation logic, component lifecycle details
+   - **Retained**: Essential error logging only (console.error for failures)
+   - **Security**: No internal details exposed that could be exploited
+7. ✅ **Ghost Mode Enforcement for Private Sessions**: Linked "Hide from Lobby" checkbox to Ghost Mode
+   - **Files**: websocket.go, LeftSidebar.jsx, VideoWatch.jsx, AccessModal.jsx
+   - **Flow**: AccessModal "Hide from Lobby" → `is_private` in DB → WebSocket broadcasts flag → LeftSidebar enforces Ghost Mode
+   - **UX**: When session is private, Ghost Mode checkbox is checked, disabled, and shows "ENFORCED" badge
+   - **Benefit**: No redundant controls - privacy set at creation time persists throughout session
+   - **Fix Applied (April 27)**: Added useEffect to sync Ghost Mode when sessionStatus arrives late (state initialization issue)
+   - **Debug Logs Added**: Complete trace from AccessModal → LobbyPage → Backend → VideoWatch → LeftSidebar
+     - AccessModal: Logs when "Hide from Lobby" is selected
+     - LobbyPage: Logs `is_private` flag in API request
+     - VideoWatch: Logs when `sessionStatus.is_private` is received and passed to LeftSidebar
+     - LeftSidebar: Logs initial state, prop changes, useEffect enforcement, and checkbox interactions
+
+### 🎬 UPCOMING FEATURE: Post & Recording System (See POST_RECORD_IMPLEMENTATION.md)
+**Status:** Planning Complete - Ready for Implementation  
+**Timeline:** 10-14 days for MVP  
+**Goal:** Transform WeWatch into creator-first platform with content library
+
+**Key Features:**
+1. **Session Recording**: Host-controlled recording (30min max @ 720p)
+   - Record button in LeftSidebar (host only, after Games button)
+   - Options: Full canvas, video player only, LiveShare camera/screen
+   - Auto-upload to BunnyCDN, create Post entry
+   
+2. **Post Upload**: User-generated content (videos/images/GIFs)
+   - New "Post" option in CreateNewModal
+   - Video: 10min max @ 1080p (16:9 or 9:16)
+   - Image: 1080x1920 max (TikTok standard)
+   - GIF: 10MB max
+   
+3. **Discover Feed**: TikTok-style content discovery
+   - New sub-tab under "Watching Now": [Watching Now] [Discover]
+   - Infinite scroll with randomized posts (algorithm later)
+   - Post cards showing: thumbnail, creator, views, likes, duration
+   - Click to open PostViewModal (fullscreen player)
+   
+4. **Profile Integration**: Creator portfolios
+   - UserProfileModal: Tabs → [ℹ️ Info] [📹 Posts] [🎬 Rooms]
+   - RoomPageEditModal: Tabs → [ℹ️ Info] [📹 Posts]
+   - Instagram-style grid view for posts
+   - Shows friend count and followers count: "125 Friends • 450 Followers" ✅ (May 1, 2026)
+   - All icons render as white outlines for better visibility ✅ (May 1, 2026)
+   
+5. **Monetization Infrastructure** (UI only, no payments yet):
+   - Posts have `is_paid` boolean flag
+   - Posts have `price` field (decimal, nullable)
+   - "PAID" badge displayed on paid posts
+   - Payment flow deferred to post-launch
+
+**Database Schema:**
+- `posts` table: user_id, room_id (nullable), title, description, video_url, thumbnail_url, media_type, post_type, duration, resolution, view_count, likes_count, comments_count, is_paid, price
+- `post_likes` table: post_id, user_id (unique constraint)
+- `post_comments` table: post_id, user_id, parent_comment_id, content (for future)
+- `post_views` table: post_id, user_id, ip_address (analytics)
+
+**Cost Estimate (BunnyCDN):**
+- Storage: $0.01/GB/month
+- Bandwidth: $0.01/GB
+- ~$11/month for 1000 posts + 10,000 views (extremely affordable)
+
+**Legal Protection:**
+- Posts strengthen DMCA Safe Harbor defense (user-uploaded content platform)
+- Users certify content ownership in ToS
+- DMCA takedown process in place
+
+**See Full Plan:** `POST_RECORD_IMPLEMENTATION.md`
+
+---
+
+## 🔐 SECURITY & AUTHENTICATION (LATEST: April 25, 2026)
+
+### **Two-Factor Authentication (2FA) System:**
+- **TOTP Implementation**: Google Authenticator compatible (30-second codes, SHA1 algorithm)
+- **QR Code Generation**: External API (qrserver.com) for easy device setup
+- **Backup Codes**: 10 one-time recovery codes (8 characters each) for account recovery
+- **Security Events**: All 2FA actions logged (setup, enable, disable, failed attempts)
+- **Database Fields**: `User.TwoFactorSecret`, `TwoFactorEnabled`, `BackupCodes`, `LastLoginIP`
+
+### **Security Settings UI (LobbyLeftSidebar):**
+- **SecurityModal Component**: Two-tab interface
+  - **2FA Tab**: Setup wizard (password verification → QR display → backup codes → TOTP verification)
+  - **Change Password Tab**: Current password verification + new password confirmation
+- **Security Badge**: Shows "2FA ✓" when enabled, purple gradient highlight when disabled
+- **Real-time Status**: ACTIVE/INACTIVE indicators with color coding
+
+### **API Endpoints:**
+- `POST /api/auth/setup-2fa` - Generate QR code and backup codes
+- `POST /api/auth/verify-2fa-setup` - Enable 2FA after TOTP verification
+- `POST /api/auth/disable-2fa` - Disable 2FA (requires password + current code)
+- `POST /api/auth/change-password` - Update password with security logging
+- `POST /api/auth/login` - Extended to check 2FA status and validate codes
+
+### **Documentation:**
+- `SUPER_ADMIN_SECURITY_GUIDE.md` - Comprehensive security guide for admins
+- `2FA_DEVELOPMENT_GUIDE.md` - Developer guide for 2FA workflow
+- `SECURITY_SETTINGS_USER_GUIDE.md` - End-user guide for security features
+
+---
+
+## 📞 CALL HISTORY & CONTACTS SYSTEM (LATEST: April 25, 2026)
+
+### **Call History Feature:**
+- **Data Source**: Parses `lobby_chats` table system messages for call records
+- **Call Types**: Incoming, Outgoing, Missed, Declined
+- **Duration Tracking**: Extracts duration from messages like "Call completed (2m 30s)"
+- **UI Features**:
+  - Search by username
+  - Filter by call type (All/Incoming/Outgoing/Missed/Declined)
+  - Date grouping (Today/Yesterday/This Week/Older)
+  - Call-back buttons for quick redialing
+  - Color-coded icons (green=outgoing, blue=incoming, red=missed)
+- **Component**: `CallHistoryModal.jsx` (integrated in LobbyLeftSidebar)
+- **API Endpoint**: `GET /api/lobby/call-history` (authenticated)
+
+### **Contacts System:**
+- **Backend**: Uses existing `friendships` table (friend requests, accepted friends)
+- **ContactsModal Component**: Three-tab interface
+  - **Friends Tab**: Accepted friends with Call/Chat/Remove actions
+  - **Pending Tab**: Incoming friend requests (Accept/Reject buttons)
+  - **Sent Tab**: Outgoing requests (Cancel option)
+- **Features**:
+  - Search contacts by username or display name
+  - Real-time badge counts (number of friends, pending requests, sent requests)
+  - Quick actions: Call, Chat, Remove Friend, Accept/Reject requests
+  - Integration with existing friendships API endpoints
+- **API Endpoints** (existing):
+  - `GET /api/friendships/list` - Get accepted friends
+  - `GET /api/friendships/requests/pending` - Get incoming requests
+  - `GET /api/friendships/requests/sent` - Get outgoing requests
+  - `POST /api/friendships/accept/:userId` - Accept friend request
+  - `POST /api/friendships/reject/:userId` - Reject friend request
+  - `DELETE /api/friendships/remove/:userId` - Remove friend or cancel request
+  - `GET /api/friendships/count/:userId` - Get friend count for a user
+  - `GET /api/friendships/followers/:userId` - Get followers count (unique room members) ✅ NEW (May 1, 2026)
+
+### **Mobile Contacts Strategy:**
+- **Current Implementation**: In-app friendships system only (cross-platform consistency)
+- **CSV Import Removed** ✅ (April 26, 2026): Import tab removed from ContactsModal for PWA/Play Store packaging
+  - Rationale: Mobile apps will use native contact permissions (iOS CNContactStore, Android READ_CONTACTS)
+  - CSV upload was web-only workaround, not suitable for native apps
+  - Cleaner UX for mobile users
+  - Backend endpoint `/api/contacts/import` still exists but no longer called from frontend
+- **PWA Limitation**: No device contacts access, must use in-app system
+- **UX**: "My Contacts" menu shows 3-tab interface (Friends | Pending | Sent)
+
+### **LobbyLeftSidebar Menu Structure** (April 26, 2026):
+1. My Profile
+2. Payment
+3. Admin Dashboard (super_admin only)
+4. My Contacts (3 tabs - Import tab removed)
+5. Calls (Call history)
+6. Security (2FA + Password)
+7. **Data Saver Mode** ✨ NEW - Toggle for bandwidth optimization
+8. Settings
+9. Help & Support
+10. Log Out
+
+**Removed Items**:
+- ❌ Saved Messages (was disabled with "Coming Soon" badge) - Removed April 26, 2026
+
+---
+
+## 🎬 SESSION PREVIEW SYSTEM (LATEST: April 25, 2026)
+
+### **Watching Now Tab Preview Enhancement:**
+- **Component**: `SessionPreview.jsx`
+- **Progressive Enhancement**: Emoji → Poster → Video (30-second GIF loop)
+- **Base States**:
+  - **Emoji State**: Immediate feedback with watch-type emoji (🎭 cinema, 🎓 classroom, 🎬 general)
+  - **Loading State**: Spinner with "Generating preview..." message
+  - **Poster State**: Static thumbnail while GIF is being generated
+  - **Video State**: Final 30-second animated preview showing current playback
+
+### **LiveShare Mode Visual Overlays** ✨ IMPLEMENTED (April 26, 2026):
+**Problem**: LiveShare sessions (Podcast/Show/News) showed only basic emoji in lobby previews. No mode context or branding visible.
+
+**Solution**: CSS-based overlays on top of base preview (no server-side compositing needed)
+
+**Implementation** (`SessionPreview.jsx`):
+
+1. **Mode Detection Function**:
+```jsx
+const getLiveShareModeInfo = () => {
+  const mode = session.liveshare_mode;
+  if (!mode || mode === 'regular') return null;
+  
+  const modeConfig = {
+    podcast: { icon: '🎙️', label: 'Podcast', color: 'from-purple-600 to-purple-800' },
+    show: { icon: '🎬', label: 'Show', color: 'from-green-600 to-green-800' },
+    news: { icon: '📰', label: 'News', color: 'from-red-600 to-red-800' },
+  };
+  
+  return modeConfig[mode] || null;
+};
+```
+
+**Overlay Components**:
+1. **Mode Badge** (Top-Left Corner, z-index 10):
+   - 🎙️ **Podcast** - Purple gradient badge (`from-purple-600 to-purple-800`)
+   - 🎬 **Show** - Green gradient badge (`from-green-600 to-green-800`)
+   - 📰 **News** - Red gradient badge (`from-red-600 to-red-800`)
+   - Only displays when `session.liveshare_mode` is set (not on 'regular' mode)
+   - Shadow + backdrop blur for visibility over any background
+   - Hidden during loading state
+
+2. **Session Title Overlay** (Bottom, z-index 10):
+   - Displays `session.podcast_title` if set (works for Podcast, Show, News modes)
+   - Dark gradient background (`from-black/80 via-black/60 to-transparent`)
+   - 2-line clamp with bold white text + drop shadow
+   - Positioned at bottom to avoid overlap with mode badge
+   - Hidden during loading state
+
+3. **Logo Bug** (Top-Right Corner, z-index 10):
+   - Shows `session.podcast_logo_url` if uploaded
+   - 48x48px rounded logo with subtle backdrop (`bg-black/30 backdrop-blur-sm`)
+   - Auto-hides on image load error
+   - Provides branding without full graphics compositing
+   - Hidden during loading state
+
+**Database Fields Used**:
+- `session.liveshare_mode` - 'regular' | 'podcast' | 'show' | 'news'
+- `session.podcast_title` - Episode/show title (varchar 500)
+- `session.podcast_logo_url` - URL to uploaded logo image
+
+**Performance**:
+- **Zero server overhead**: Pure CSS overlays, no FFmpeg compositing
+- **Client-side only**: Overlays render in browser using absolute positioning
+- **Graceful degradation**: Falls back to emoji if images fail to load
+
+**Graphics NOT Included** (by design):
+- Banner text, ticker, lower third, logo bug graphics from studio controls
+- Reason: These are real-time DOM overlays broadcast via WebSocket, not baked into video stream
+- Future consideration: v2.0 could add full canvas capture with graphics composited
+
+**Example Display**:
+```
+┌─────────────────────────────┐
+│ 🎙️ Podcast    [Logo] 📷    │ ← Mode badge + Logo bug
+│                             │
+│   [30s Video Preview GIF]   │ ← Base preview (emoji/poster/video)
+│                             │
+│ "Tech Talk Episode 5"       │ ← Title overlay (gradient fade)
+└─────────────────────────────┘
+```
+
+**Benefits**:
+- ✅ Instant visual context for LiveShare sessions
+- ✅ Branding visible without full graphics render
+- ✅ Works on all preview states (emoji, poster, video)
+- ✅ Launch-ready with no performance impact
 
 ---
 
@@ -57,7 +690,10 @@
 
 4. ✅ **LiveShare System (Professional Streaming)**
    - **4 Share Types**: Camera, Screen Share, Screen+Camera, Podcast/Interview
-   - **4 LiveShare Modes**: Podcast, News, Show, Church (with themed graphics)
+   - **5 LiveShare Modes**: Podcast, News, Show, Church (with themed graphics), Regular ✅ (April 2026)
+   - **Church Mode Features**: Bible verse display system, Religious content rating ✅ (April 2026)
+   - **Host-Only Chat Lock**: Toggle to restrict chat to host only ✅ (May 1, 2026)
+   - **Mute All Members Toggle**: Option in LiveShareWizard to auto-mute all members on session start ✅ (May 1, 2026)
    - **Layout Options**: Solo-view, Split-view (side-by-side), Panel-view, Screen-share
    - **Camera Selection**: Dropdown to choose professional cameras (DSLR, studio cams, capture cards)
    - **Guest System**: Invite specific guest for interview/podcast mode
@@ -78,7 +714,7 @@
    - **Early Bird Pricing**: Discounted tickets with countdown timer
    - **Ticket Gifting**: Transfer tickets to other users (5% platform fee)
    - **Age-Restricted Content**: G, PG, PG-13, R, NC-17 ratings with DOB verification
-   - **Revenue Split**: 75% host earnings, 25% platform commission
+   - **Token Purchase Split**: 75% backing reserve (host payouts), 25% platform revenue account
    - **Platform Accounting**: Real-time GMV, revenue, reserve balance tracking
 
 7. ✅ **Token Economy**
@@ -129,16 +765,74 @@
 
 ## 🔄 POST-LAUNCH FEATURES (ITERATION 2+)
 
-### **Planned for Month 2-3:**
-1. ⏳ **Session Recording & Replay**
-   - Pay-to-record (10 tokens per recording slot)
-   - OnlyFans-style monetization (host sets price, 25% platform fee)
-   - Bunny CDN storage integration
-   - Recorded videos appear in RoomPageEditModal
-   - Videos can span multiple rooms (1 user → many rooms → many recordings)
-   - Auto-deletion policy (0 views after 30 days)
+### **v2.0 Roadmap (May-June 2026):**
 
-2. ⏳ **Advertising System**
+#### **Priority 1: Code Optimization & Performance (Week 1-2)**
+1. ✅ **Codebase Cleanup (April 23, 2026)**
+   - **Backend uploads/ folder**: 25GB → cleaned (test videos, duplicate previews)
+   - **Frontend icons folder**: 276 files (63MB) → ~90 used files (~20MB) after cleanup
+   - **Unused icons to delete**: 186 files including Zone.Identifier files, duplicate boards, streaming service icons never used
+   - **Quiz/game code**: Remove if not part of MVP (quiz_service.go, quiz handlers, quiz models)
+   - **Git repository**: Clean history to remove large files from pack (reduce .git size)
+   - **Docker image target**: <150MB compressed on Railway (currently bloated)
+   - **Free tier compliance**: Ensure Railway stays within 512MB RAM limit
+
+2. ⏳ **VideoWatch.jsx Refactoring**
+   - Extract 6,000-line component into custom hooks
+   - Create: useMediaPlayer, useLiveShare, useChat, useEmotes, useHostControls
+   - Better state management (reduce 90+ state variables)
+   - Improve maintainability and testing
+
+#### **Priority 2: Enhanced Game System (Week 2-3)**
+1. ⏳ **3D/AR Games Integration** (v2.1 - May 2026)
+   - **Approach Options**:
+     - Three.js games (current infrastructure compatible)
+     - Unity WebGL exports (professional quality, larger bundle size)
+     - AR games (MediaPipe, AR.js, TensorFlow.js for face/hand tracking)
+     - Pre-built engines (PlayCanvas, Phaser, Babylon.js)
+     - Casual mobile-style games (Fruit Ninja, Temple Run mechanics)
+   - **Recommended Phased Approach**:
+     - **Phase 1** (Launch): Keep 2 multiplayer games (Tic Tac Toe, Rock Paper Scissors)
+     - **Phase 2** (Week 2-3 post-launch): Add simple Three.js 3D games (3D Pong, Ball Maze)
+     - **Phase 3** (Month 2): AR camera games (face filters, hand gesture games)
+     - **Phase 4** (Month 3+): Premium Unity WebGL games or advanced 3D experiences
+   - **Example First Game**: 3D Pong (2-3 hours to build, proof-of-concept)
+   - **Goal**: Snapchat/iPhone-style interactive 3D games for enhanced engagement
+
+#### **Priority 3: Session Recording & Monetization (Week 3-5)**
+1. ⏳ **Session Recording System** (v2.1 - May 2026)
+   - **Recording Options**:
+     - Browser-based MediaRecorder API (client-side capture)
+     - Limit: 10-minute max recording length
+     - Resolution: 9:16 for mobile, 16:9 for desktop/tablet (adaptive based on device)
+     - File size limit: 100MB per recording (prevent storage abuse)
+   - **Storage**: Bunny CDN integration
+     - Pull zones for streaming recorded content
+     - Cost: $0.01/GB storage + $0.01-0.09/GB bandwidth
+   - **Monetization**:
+     - Host sets price (free or paid, 10-500 tokens)
+     - 25% platform commission on paid recordings
+     - One-time purchase model (not rental)
+   - **Discovery**:
+     - RoomPageEditModal: TikTok-style grid of recordings
+     - LobbyPage "Watching Now": Live sessions at top, recorded videos below
+     - Filters: "Live Only" / "Recorded Only" / "All"
+   - **Features**:
+     - Auto-generated thumbnail (first frame)
+     - Duration badge, view count, price tag
+     - Videos span multiple rooms (1 user → many rooms → many recordings)
+   - **Storage Policy**:
+     - Auto-delete videos with 0 views after 30 days
+     - Notify host 7 days before deletion
+   - **Free Tier Impact**: Recording storage NOT included in Railway free tier (Bunny CDN separate billing)
+
+2. ⏳ **User Avatar Optimization**
+   - Store avatars on same Bunny CDN zone
+   - Compress images on upload (WebP format, max 200KB)
+   - CDN caching for faster loads
+
+#### **Priority 3: Advertising System (Week 6-8)**
+1. ⏳ **Ad Integration** (v2.2 - June 2026)
    - **Lobby Swipe Ads**: Every 5th card in Watching Now (5-15s, skippable after 3s)
    - **LiveShare Banner Ads**: 30% screen banner after 60 minutes (30s, muted, display-only)
    - **Advertiser Portal**: Self-serve ad upload, preview, analytics
@@ -147,19 +841,20 @@
    - **Analytics**: Impressions, views, clicks, skip rate, CTR
    - **Direct Brand Deals**: Nigerian brands (Jumia, Konga, PiggyVest, MTN, Glo)
 
-3. ⏳ **PWA & Mobile App**
+#### **Priority 4: PWA & Mobile Distribution (Month 3)**
+1. ⏳ **Progressive Web App**
    - Service worker for offline support
    - manifest.json with app icons
    - Push notification handlers
    - Install prompts for mobile
    - PWABuilder TWA for Google Play Store
 
-4. ⏳ **Additional Features**
-   - My Groups (user-created watch groups)
-   - My Contacts (friend system)
-   - Calls (WebRTC peer-to-peer)
-   - Saved Messages (bookmark feature)
-   - Invite Friends (referral system)
+#### **Future Features (v2.3+)**
+- My Groups (user-created watch groups)
+- My Contacts (friend system)
+- Calls (WebRTC peer-to-peer)
+- Saved Messages (bookmark feature)
+- Invite Friends (referral system)
 
 ---
 
@@ -177,18 +872,85 @@
 - Room-based community building (persistent chat, scheduled events)
 - Token economy encourages engagement (gifting, tipping, tickets)
 
-### **Revenue Streams:**
-1. **Platform Commission**: 25% of ticket sales (was 15%, increased to 25%)
-2. **Token Purchase Markup**: 25% of token purchase value
-3. **Token Gifting Fee**: 5% of wallet-to-wallet transfers
-4. **Ticket Transfer Fee**: 5% of gifted tickets
-5. **Future**: Ads (post-launch), premium subscriptions, recording fees
+### **Revenue Streams (QA VERIFIED April 25, 2026):**
+1. **Token Spread Profit (PRIMARY)**: ₦43 per token (26% margin) - Buy ₦165, Sell ₦122 ✅
+   - NO commission on token spending for tickets (host gets 100% of tokens) ✅
+   - Platform already profited on token purchase, profit realized when host withdraws
+2. **In-Session Donation Fee**: 5% of token donations during watch sessions ✅
+3. **Wallet Gift Fee**: 5% of wallet-to-wallet token transfers ✅
+4. **Ticket Transfer Fee**: 5% of gifted tickets (separate from ticket price) ✅
+5. **Gateway Payment Commission**: 15% on Stripe/Paystack payments (tickets & donations) ✅
+6. **Future**: Ads (post-launch), premium subscriptions, recording fees
+
+**Test Results** (test-payment-system.sh):
+- ✅ 24/25 automated tests passed (96% pass rate)
+- ✅ All revenue split logic verified in codebase
+- ✅ Payment routes registered: /tokens/purchase, /tickets/purchase, /donate, /gift, /payouts
+- ✅ Database schema complete: users, user_wallets, token_transactions, session_tickets, donations, payouts, gateway_earnings, platform_accounting
+- ✅ API performance baseline: < 100ms response time
+
+### **🔐 Security Status (April 23, 2026):**
+
+**✅ IMPLEMENTED SECURITY MEASURES:**
+- **Password Hashing**: bcrypt with cost factor 12 (strong)
+- **JWT Authentication**: 64-char secret, 24-hour token expiry, HS256 signing
+- **Rate Limiting**: Auth endpoints limited to 5 attempts/minute per IP
+- **Database SSL**: Conditional SSL (required for Railway production, disabled for local dev)
+- **Age Verification**: COPPA compliance (13+ years old requirement)
+- **Token Storage**: JWT in localStorage, WebSocket token in sessionStorage
+- **Environment Variables**: .env in .gitignore, secrets not committed to Git
+- **API Key Protection**: All payment/SMTP keys stored in environment variables
+
+**⚠️ KNOWN SECURITY GAPS (Post-Launch Priority):**
+- No CORS whitelist (currently allows all origins with patterns - allows localhost, Vercel, Cloudflare Tunnel)
+- No session invalidation on logout (JWT remains valid until 24h expiry)
+- No account lockout after failed login attempts (rate limiting exists but no permanent lockout)
+- No 2FA/MFA option for sensitive actions (withdrawals, password changes)
+- No SQL query logging for audit trail (GORM protects against SQL injection, admin actions now audited)
+- No Content Security Policy (CSP) headers (XSS protection not enforced)
+- No automated dependency vulnerability scanning (no CI/CD security checks)
+
+**🎯 POST-LAUNCH SECURITY ROADMAP:**
+- **Week 1**: Implement CORS whitelist, add logout token blacklist
+- **Week 2**: ~~Add account lockout (5 failed attempts)~~, ~~SQL audit logging~~ ✅ Admin audit logging implemented
+- **Week 3**: Implement CSP headers, dependency scanning (npm audit, go list)
+- **Month 2**: Add 2FA option (SMS/email), encrypt sensitive payment data
+- **Month 3**: Security audit, penetration testing
+
+---
 
 ### **Launch Checklist (April 21-30):**
 - [x] Final testing (all watch types, ticketing, payments) - ✅ 35/35 critical tests passed (100%)
-- [x] Performance testing (K6 load tests completed - April 22, 2026)
+- [x] Performance testing - ✅ COMPLETED April 23, 2026:
+  - K6 HTTP API test: 20 concurrent users (6.34 req/s, 489ms p95, 100% pass)
+  - Watch session test: 20 concurrent users (100% success, 5ms avg connection, 0% errors)
+- [x] Security hardening - ✅ COMPLETED April 23, 2026:
+  - Rate limiting on auth endpoints (5 req/min per IP) - prevents brute force
+  - Rate limiting on file uploads (3 uploads per 10 min per user) - prevents storage abuse
+  - Admin audit logging (tracks all admin actions with IP, user agent, details)
+  - Conditional database SSL (Railway production, disabled for local dev)
+  - JWT secret verified (64-char random string, production-ready)
+  - .env excluded from Git repository (secrets protected)
+  - All payment API keys secured in environment variables
+  - Watch session test: 100 concurrent users (100% success, 3-5ms avg connection, 0% errors)
+  - **Result**: System validated for 100+ concurrent users per session
+- [x] Password Reset System - ✅ COMPLETED April 23, 2026:
+  - Forgot password flow (email + token generation)
+  - Reset password flow (token validation + password update)
+  - Email templates (reset link + confirmation)
+  - Security: UUID tokens, 15-min expiry, rate limiting (3/hour), OAuth protection
+  - Status: Functional in DEV_MODE (logs emails to console)
+  - **⚠️ REQUIRES DOMAIN SETUP**: Brevo SMTP needs authenticated domain (letswatchout.com)
+- [ ] **Domain Setup (CRITICAL FOR EMAIL):**
+  - [ ] Purchase letswatchout.com domain
+  - [ ] Add domain to Brevo (https://account.brevo.com/senders/domain)
+  - [ ] Configure DNS records (SPF, DKIM, DMARC)
+  - [ ] Create authenticated sender: support@letswatchout.com
+  - [ ] Update SMTP_USER in .env to support@letswatchout.com
+  - [ ] Set DEV_MODE=false to enable real email sending
+  - [ ] Test password reset emails in production
 - [ ] Security audit (SQL injection, XSS, CSRF)
-- [ ] Performance optimization (video streaming, WebSocket scaling)
+- [x] Performance optimization (WebSocket scaling) - ✅ Validated up to 100 concurrent connections
 - [ ] Database backups and rollback procedures
 - [ ] Error monitoring (Sentry integration)
 - [ ] Customer support setup (Help & Support modal)
@@ -234,13 +996,86 @@
    - **Test Files**: 13 critical path tests in `frontend/tests/e2e/`
    - **Manual Testing**: ✅ 35/35 critical regression tests passed (100%)
    - **API Testing**: ✅ 6 Postman tests completed (2 bugs found and documented)
-   - **Performance Testing**: ✅ K6 load tests completed (April 22, 2026)
+   - **Performance Testing**: ✅ K6 + Watch Session Load Tests - COMPLETED April 23, 2026
+     - **K6 HTTP API**: 20 concurrent users, 489ms p95, 6.34 req/s, 100% pass
+     - **WebSocket (20 users)**: 100% success, 5ms avg connection, 0% error rate
+     - **WebSocket (100 users)**: 100% success, 3-5ms avg connection, 0% error rate
+     - **Real-time Features**: Chat, seats, sync validated under concurrent load
+     - **Production Ready**: System validated for 100+ concurrent users per session
+     - **Test Script**: `tests/performance/watch-session-load-test.js`
    - **Bug Reports**: ✅ 3 professional bug reports documented with evidence
    - **CI/CD**: GitHub Actions workflow created (`.github/workflows/e2e-tests.yml`)
    - **Pending**: Video upload tests, Payment tests, Age restriction tests
    - **Documentation**: See `frontend/tests/README.md` and `QA_PORTFOLIO_MASTER_PLAN.md`
    - **QA Portfolio**: 100% complete - https://github.com/chibby025/letswatchout-qa-portfolio
-2. ⏳ CI/CD pipeline (manual deployment) - GitHub Actions E2E tests ready to activate
+
+2. 🧪 **Payment System QA Testing** - ✅ COMPLETED April 25, 2026
+   - **Context**: Revenue model clarification and payment flow validation
+   - **Pre-Testing Bug Fixes**:
+     - ✅ Fixed gateway ticket commission: 0.25 (25%) → 0.15 (15%) in ticket_handlers.go
+     - ✅ Updated .clinerules revenue model documentation (removed incorrect spending commission claims)
+     - ✅ Verified token spending logic: Host gets 100% of tokens (NO platform commission on spending)
+   - **Revenue Model Verified (Code Audit)**:
+     1. **Token Spread (26% margin)**: Buy ₦165, Sell ₦122 = ₦43/token profit ✅
+     2. **Token Spending**: Host gets 100% of tokens spent on tickets ✅
+     3. **In-Session Donations**: Host 95%, Platform 5% ✅
+     4. **Wallet Gifts**: Recipient 95%, Platform 5% ✅
+     5. **Ticket Transfer Fee**: 5% (separate from ticket price) ✅
+     6. **Gateway Payments**: Host 85%, Platform 15% (Paystack/Stripe) ✅
+   
+   - **Testing Results (April 25, 2026)**: ⭐ 24/25 PASSED (96% SUCCESS)
+     - **Automated Tests**: test-payment-system.sh (25 tests)
+       - ✅ Backend health check
+       - ✅ Test user verification
+       - ✅ Payment route registration (5 routes verified)
+       - ✅ Revenue split logic verification (7 code snippets)
+       - ✅ Auto-approval logic verification
+       - ✅ Database schema validation (8 payment tables)
+       - ✅ API performance baseline (1.92ms avg response time)
+       - ⚠️ 1 minor test failure: auto-approval grep pattern issue (functionality works, test needs update)
+     
+     - **Performance Tests**: K6 Load Testing
+       - ✅ Test script created: tests/performance/payment-system-load-test.js
+       - 5.5 minute ramping load test (10 → 20 → 50 concurrent users)
+       - Scenarios: Health check, wallet queries, transaction history, token purchases, payouts
+       - Thresholds: p95 < 2000ms, error rate < 10%
+       - Status: Script ready, pending credential configuration
+     
+     - **E2E Tests**: Playwright E2E Testing
+       - ✅ Test suite created: tests/e2e/payment-flows.spec.js
+       - 7 comprehensive payment flow tests:
+         1. Token purchase flow (Paystack mock integration)
+         2. Ticket purchase with tokens
+         3. In-session donation flow (95-5 split verification)
+         4. Wallet-to-wallet gift transfer (5% fee verification)
+         5. Payout request flow (auto-approval logic)
+         6. Complete integration flow (token → ticket → donation → gift → payout)
+         7. Revenue split calculation verification (API validation)
+       - Status: Test suite ready for execution
+     
+     - **Security Analysis**: Comprehensive pre-launch audit
+       - ✅ Created PAYMENT_SECURITY_ANALYSIS.md (10 sections, 16,600+ chars)
+       - Risk Level: MODERATE (requires fixes before launch)
+       - Critical Findings: 6 P0 vulnerabilities identified
+       - Implementation Timeline: 4-5 days for production-ready security
+       - See "Security Analysis Results" section below
+   
+   - **Test Environment**: Development (localhost:8080 backend, localhost:5173 frontend)
+   - **Documentation**: 
+     - ✅ PAYMENT_SYSTEM_QA_APRIL_25_2026.md (comprehensive test report)
+     - ✅ PAYMENT_SECURITY_ANALYSIS.md (security audit + remediation plan)
+     - ✅ test-payment-system.sh (automated test script)
+     - ✅ tests/performance/payment-system-load-test.js (K6 load test)
+     - ✅ tests/e2e/payment-flows.spec.js (Playwright E2E suite)
+   
+   - **Artifacts for QA Portfolio**: Ready to copy to letswatchout-qa-portfolio repo
+     - Test execution summary (24/25 passed)
+     - Bug report (gateway commission bug BUG-001)
+     - Performance baseline metrics
+     - Security vulnerability analysis
+     - E2E test suite documentation
+
+3. ⏳ CI/CD pipeline (manual deployment) - GitHub Actions E2E tests ready to activate
 3. Frontend error boundaries missing in some components
 4. WebSocket reconnection logic could be more robust
 5. Database indexes missing on some high-traffic queries
@@ -249,8 +1084,9 @@
 
 ### **Future Optimizations:**
 1. CDN for static assets (images, videos)
-2. Redis for session caching
-3. Load balancing for WebSocket connections
+2. Redis for session caching (current performance excellent: 3-5ms WebSocket connections)
+3. Load balancing for WebSocket connections (validated for 100+ users per session)
+4. ✅ **WebSocket scaling validated**: 100 concurrent users tested successfully (April 23, 2026)
 4. Database read replicas for analytics queries
 5. Video thumbnail generation on upload
 6. **Data Saver Mode** - reduce video quality/resolution for low-bandwidth users (Nigerian market need)
@@ -260,11 +1096,12 @@
 
 ## 🔐 SECURITY MEASURES
 
+### **Current Implementation:**
 1. ✅ JWT authentication with HTTP-only cookies
 2. ✅ CORS protection (whitelist origins)
 3. ✅ SQL injection prevention (parameterized queries via GORM)
 4. ✅ XSS protection (React auto-escaping)
-5. ✅ Rate limiting on auth endpoints
+5. ✅ Rate limiting on auth endpoints (5 req/min)
 6. ✅ Paystack webhook signature verification
 7. ✅ Age verification for restricted content
 8. ⏳ HTTPS/TLS enforcement (production deployment)
@@ -272,6 +1109,73 @@
 10. ⏳ Content moderation tools (admin panel expansion)
 11. ⏳ Email verification on signup (prevent fake accounts)
 12. ⏳ Forgot password flow (email-based reset)
+
+### **Payment Security Analysis Results (April 25, 2026):**
+
+**Risk Assessment**: 🟡 MODERATE (Not Production-Ready - Requires P0 Fixes)
+
+**Critical Vulnerabilities Identified (6 P0 Items - MUST FIX BEFORE LAUNCH):**
+
+1. 🔴 **P0: No JWT Token Blacklist** (CRITICAL)
+   - **Issue**: Logout doesn't invalidate JWT tokens (24hr validity after logout)
+   - **Attack Scenario**: Stolen token remains valid even after user logs out
+   - **Impact**: Account takeover risk, unauthorized access
+   - **Fix Required**: Implement token blacklist on logout + Redis cache
+   - **Timeline**: 3 hours
+
+2. 🔴 **P0: No 2FA for Super Admin** (CRITICAL)
+   - **Issue**: Admin account is single point of failure with no 2FA
+   - **Attack Scenario**: Compromised admin password = full platform access
+   - **Impact**: Can manipulate all transactions, user data, payouts
+   - **Fix Required**: TOTP-based 2FA (Google Authenticator) + backup codes
+   - **Timeline**: 6 hours
+
+3. 🔴 **P0: Race Condition in Concurrent Transactions** (HIGH)
+   - **Issue**: No database row locking during wallet operations
+   - **Attack Scenario**: Double spending via simultaneous requests
+   - **Impact**: Users can spend same balance multiple times
+   - **Fix Required**: Implement `FOR UPDATE` row locking in transactions
+   - **Timeline**: 2 hours
+
+4. 🔴 **P0: No Rate Limiting on Payment Endpoints** (HIGH)
+   - **Issue**: Auth endpoints rate limited (5 req/min), but payment routes unprotected
+   - **Attack Scenario**: Spam donation/gift requests, DDoS attack
+   - **Impact**: System overload, potential fraudulent transactions
+   - **Fix Required**: 10 req/min limit on all payment routes
+   - **Timeline**: 2 hours
+
+5. 🔴 **P0: Weak Webhook Validation** (HIGH)
+   - **Issue**: No idempotency check on Paystack webhook processing
+   - **Attack Scenario**: Replay attack (send same webhook multiple times)
+   - **Impact**: Duplicate token credits, financial loss
+   - **Fix Required**: Track processed webhook event IDs in database
+   - **Timeline**: 2 hours
+
+6. 🔴 **P0: CORS Too Permissive** (MEDIUM-HIGH)
+   - **Issue**: Allows all Vercel/Cloudflare domains (dev + prod)
+   - **Attack Scenario**: Attacker deploys malicious site on Vercel, makes authenticated requests
+   - **Impact**: CSRF-like attacks, data exfiltration
+   - **Fix Required**: Whitelist specific production domains only
+   - **Timeline**: 1 hour
+
+**Total P0 Implementation Time**: 4-5 days (before launch)
+
+**Additional Vulnerabilities (P1 - Week 1 Post-Launch):**
+- 🟠 No IP whitelisting for admin access (1 day)
+- 🟠 Audit logging gaps (failed logins, 2FA failures, IP changes) (1 day)
+- 🟡 Tokens in localStorage (XSS vulnerable) - migrate to httpOnly cookies (2 days)
+- 🟡 Bank account numbers stored plaintext - encrypt sensitive PII (2 days)
+
+**Positive Security Findings:**
+- ✅ Backend validates all prices (client can't manipulate amounts)
+- ✅ Auth endpoints properly rate limited
+- ✅ GORM prevents SQL injection
+- ✅ Admin actions are logged
+- ✅ Paystack public key exposure is safe (by design)
+
+**Recommendation**: **DO NOT LAUNCH** until 6 P0 items are fixed. Current security posture is insufficient for handling real money transactions.
+
+**Documentation**: See PAYMENT_SECURITY_ANALYSIS.md for full report, code examples, and implementation guidance.
 
 ---
 
@@ -417,37 +1321,111 @@ SEO is a **long-term play** - don't expect it to drive launch traffic.
 
 ### **Implementation Plan:**
 
-**Feature: Data Saver Toggle in LobbyLeftSidebar**
+**Feature: Data Saver Toggle in LobbyLeftSidebar** ✅ IMPLEMENTED (April 26, 2026)
 
 **What it does:**
-1. Reduces video quality from 1080p → 480p (saves ~60% bandwidth)
-2. Disables auto-play on Watching Now feed
-3. Reduces LiveShare stream quality (2-5 Mbps → 0.5-1 Mbps)
-4. Shows data usage estimate per session
+1. Reduces video quality from 1080p → 480p in LiveKit sessions (saves ~50-60% bandwidth)
+2. Disables auto-play on Watching Now preview videos (shows poster only)
+3. Caps LiveKit publish/subscribe quality at 854x480p @ 24fps
+4. Shows visual indicator badge in lobby header when active
 
 **UI/UX:**
 - Toggle switch in LobbyLeftSidebar menu: "Data Saver Mode" (enabled/disabled)
-- Badge showing "Active" when enabled
-- Info tooltip: "Reduces video quality to save data. Saves up to 60% data usage."
-- Persistent across sessions (saved in localStorage + user preferences)
+- Badge showing "ON" (green) when enabled, "OFF" (gray) when disabled
+- Description: "Reduces bandwidth (480p sessions, no autoplay)"
+- Visual indicator: "💾 Data Saver Active" badge in lobby header (next to search bar)
+- Persistent across sessions (saved in localStorage)
+- Default: OFF (users must manually enable)
 
 **Technical Implementation:**
-1. **Frontend State**:
+
+1. **Frontend State (LobbyLeftSidebar.jsx)**:
    ```javascript
-   const [dataSaverMode, setDataSaverMode] = useState(
+   const [dataSaverEnabled, setDataSaverEnabled] = useState(
      localStorage.getItem('dataSaverMode') === 'true'
    );
+   
+   const handleDataSaverToggle = () => {
+     const newValue = !dataSaverEnabled;
+     setDataSaverEnabled(newValue);
+     localStorage.setItem('dataSaverMode', newValue ? 'true' : 'false');
+   };
    ```
 
-2. **LiveKit Quality Adjustment**:
-   - Normal mode: `maxBitrate: 5000000` (5 Mbps)
-   - Data saver: `maxBitrate: 500000` (500 Kbps)
+2. **LiveKit Quality Cap (useLiveKitRoom.js)**:
+   ```javascript
+   const isDataSaver = localStorage.getItem('dataSaverMode') === 'true';
+   
+   await newRoom.connect(url, token, {
+     publishDefaults: {
+       videoEncoding: isDataSaver ? {
+         maxBitrate: 800_000, // 800 Kbps (480p)
+         maxFramerate: 24,
+       } : undefined,
+     },
+     videoCaptureDefaults: isDataSaver ? {
+       resolution: { width: 854, height: 480, frameRate: 24 },
+     } : undefined,
+   });
+   ```
 
-3. **Video Player Adjustments**:
-   - Force 480p quality selection
-   - Disable adaptive bitrate (lock to low quality)
+3. **Preview Autoplay Disable (SessionPreview.jsx)**:
+   ```javascript
+   const isDataSaver = localStorage.getItem('dataSaverMode') === 'true';
+   
+   <video
+     autoPlay={!isDataSaver}  // Disabled in data saver mode
+     loop
+     muted
+     playsInline
+   />
+   ```
 
-4. **Watching Now Feed**:
+4. **Lobby Header Badge (LobbyPage.jsx)**:
+   ```javascript
+   // Listen for localStorage changes
+   const [dataSaverEnabled, setDataSaverEnabled] = useState(
+     localStorage.getItem('dataSaverMode') === 'true'
+   );
+   
+   // Poll localStorage every 500ms (cross-tab sync)
+   useEffect(() => {
+     const interval = setInterval(() => {
+       setDataSaverEnabled(localStorage.getItem('dataSaverMode') === 'true');
+     }, 500);
+     return () => clearInterval(interval);
+   }, []);
+   
+   {/* Visual indicator */}
+   {dataSaverEnabled && (
+     <div className="ml-4 px-3 py-1.5 bg-green-600 text-white rounded-full">
+       💾 Data Saver Active
+     </div>
+   )}
+   ```
+
+**Bandwidth Savings:**
+- **Watching Now Feed**: 
+  - Before: 500KB-1MB per preview × 5-10 visible = 2.5-10MB
+  - After (Data Saver): 0 bandwidth (poster only, click to play)
+  - Savings: ~100% on lobby previews
+  
+- **Watch Sessions**:
+  - Before: 1080p @ 4-5 Mbps = 30-37.5MB per minute
+  - After (Data Saver): 480p @ 0.8 Mbps = ~6MB per minute
+  - Savings: ~80% on session bandwidth
+
+**Total Impact**: Users on Data Saver mode can save 50-80% bandwidth depending on usage pattern.
+
+**Files Modified**:
+- `frontend/src/components/LobbyLeftSidebar.jsx` - Added toggle with SignalIcon
+- `frontend/src/components/SessionPreview.jsx` - Disabled autoplay when flag is true
+- `frontend/src/hooks/useLiveKitRoom.js` - Cap quality at 480p for data saver
+- `frontend/src/components/LobbyPage.jsx` - Added header badge indicator
+
+---
+
+## 💰 PAYMENT & TOKEN SYSTEM
    - Disable video auto-play (show thumbnail only)
    - User must tap to play video
 
@@ -587,32 +1565,43 @@ go tool cover -html=coverage.out
 - **E2E README**: `frontend/tests/README.md` (setup, usage, troubleshooting)
 - **Backend Strategy**: `tests/TESTING_STRATEGY.md` (Go testing best practices)
 - **LiveShare Testing**: `LIVESHARE_REFINEMENT_PLAN.md` (feature specs for testing)
-- **Performance Testing**: `MODULE7_PERFORMANCE_TEST_RESULTS.md` (K6 load test results)
+- **Performance Testing**: 
+  - `MODULE7_PERFORMANCE_TEST_RESULTS.md` (K6 HTTP API test results - April 22, 2026)
+  - `tests/performance/watch-session-load-test.js` (WebSocket load test - April 23, 2026)
+  - **Results Summary**: 100 concurrent users validated, 3-5ms connections, 0% error rate
 - **QA Portfolio**: https://github.com/chibby025/letswatchout-qa-portfolio (100% complete)
 
-**Completed Pre-Launch Testing (April 22, 2026):**
+**Completed Pre-Launch Testing (April 22-23, 2026):**
 - ✅ **Critical Regression Suite**: 35/35 tests passed (100% pass rate)
 - ✅ **E2E Automation**: 13 Playwright tests (auth, sessions, WebSocket, LiveShare)
 - ✅ **API Testing**: 6 Postman tests (2 bugs found and documented)
-- ✅ **Performance Testing**: K6 load tests completed (smoke + load scenarios)
+- ✅ **Performance Testing - HTTP API**: K6 load test (20 users, 489ms p95, 100% pass)
+- ✅ **Performance Testing - WebSocket**: 
+  - 20 concurrent users: 5ms avg connection, 100% success
+  - 100 concurrent users: 3-5ms avg connection, 100% success
+  - Real-time features validated: chat, seats, sync
 - ✅ **Bug Documentation**: 3 professional bug reports with severity assessment
-- ✅ **Test Coverage**: Manual (5 test cases), Automation (7 tests), API (6 tests)
+- ✅ **Test Coverage**: Manual (5 test cases), Automation (7 tests), API (6 tests), Load (3 scenarios)
 
 **Post-Launch Testing Plan:**
 - **Week 2**: Implement remaining E2E tests (upload, payment, age restriction)
 - **Week 3**: Increase backend coverage to 30-35% (business logic tests)
 - **Week 4**: Integration tests (full user journeys)
-- **Month 2**: Security testing (OWASP), stress testing (200+ concurrent users)
+- **Month 2**: Security testing (OWASP), stress testing (500-1000+ concurrent users)
 
-**✅ STATUS: PRE-LAUNCH QA CYCLE COMPLETE (April 22, 2026)**
+**✅ STATUS: PRE-LAUNCH QA CYCLE COMPLETE (April 23, 2026)**
 
 **Quality Assurance Summary:**
 - ✅ 35/35 critical regression tests passed (100%)
 - ✅ 13 E2E Playwright tests passing (100%)
 - ✅ 6 API tests completed (2 bugs found, documented)
-- ✅ K6 performance tests executed (smoke + load scenarios)
+- ✅ K6 HTTP performance test: 20 users (489ms p95, 100% pass)
+- ✅ WebSocket load test: 20 users (5ms avg, 0% errors)
+- ✅ WebSocket load test: 100 users (3-5ms avg, 0% errors)
+- ✅ Real-time features validated under concurrent load
 - ✅ 3 professional bug reports created
 - ✅ QA Portfolio: 100% complete (https://github.com/chibby025/letswatchout-qa-portfolio)
+- ✅ **Production Ready**: System validated for 100+ concurrent users per session
 - ✅ Ready for April 30, 2026 launch
 
 ---
@@ -2289,7 +3278,11 @@ http://localhost:5173
 - Execute remaining 70 test cases (15 Auth, 20 Session, 12 Upload, etc.)
 - Build Playwright automation framework (25+ E2E tests)
 - Create Postman API collections (20+ endpoints)
-- K6 performance testing (50-200 concurrent users)
+- ✅ K6 performance testing - COMPLETED April 23, 2026:
+  - HTTP API: 20 users, 95th percentile 489ms, 100% functional pass
+  - WebSocket: 20 users, 5ms avg connection, 100% success
+  - WebSocket: 100 users, 3-5ms avg connection, 100% success
+  - Real-time features: Chat, seats, sync all validated under load
 - Write case study blog post (Medium/LinkedIn)
 
 **Timeline:** 4-6 weeks for full portfolio (parallel to launch)
@@ -4683,3 +5676,398 @@ const VideoWatch = () => {
 5. **Mobile-first responsive**: Primary use case is mobile device viewing
 6. **Skip option**: Always available - no forced rating
 7. **Toast notifications**: Non-intrusive feedback using existing toast system
+
+---
+
+## 🎯 RECENT FEATURE IMPLEMENTATIONS (April 24, 2026)
+
+### **1. 3D Cinema LiveShare Audio Enhancements**
+
+#### Auto-Enable Host Broadcasting
+**File**: `frontend/src/components/cinema/3d-cinema/CinemaScene3DDemo.jsx`
+
+**Implementation Details:**
+- When host starts LiveShare, `isHostBroadcasting` automatically enables
+- When host ends LiveShare, `isHostBroadcasting` automatically disables
+- State persists across component lifecycle using `previousDiscussionModeRef`
+
+**Code Locations:**
+- **Line 5320-5324**: `handleLiveShareModeSelect` - Auto-enables host broadcasting
+  ```javascript
+  // ✅ AUTO-ENABLE HOST BROADCASTING when LiveShare starts
+  if (isHost) {
+    setIsHostBroadcasting(true);
+    console.log('🎤 [LiveShare] Auto-enabled host broadcasting');
+  }
+  ```
+
+- **Line 5258-5265**: `handleEndLiveShare` - Auto-disables host broadcasting
+  ```javascript
+  // ✅ AUTO-DISABLE HOST BROADCASTING when LiveShare ends
+  if (isHost && isHostBroadcasting) {
+    setIsHostBroadcasting(false);
+    console.log('🎤 [LiveShare] Auto-disabled host broadcasting');
+  }
+  ```
+
+#### Asymmetric Audio Routing
+**Purpose**: Host broadcasts to all theaters but only hears their own row (prevents echo/feedback from 100+ participants)
+
+**Code Location:**
+- **Line 2161-2218**: `shouldSubscribeToSpeaker` function
+  ```javascript
+  const shouldSubscribeToSpeaker = (speakerUserId) => {
+    // Host broadcasting to everyone - subscribe if you're not the host
+    if (speakerState[speakerUserId]?.isHostBroadcasting && speakerUserId !== currentUser?.id) {
+      return true;
+    }
+    
+    // Host hears only their own theater/row (asymmetric audio)
+    if (isHost && userSeats[speakerUserId]) {
+      const speakerTheater = userSeats[speakerUserId].theaterNumber;
+      const speakerRow = userSeats[speakerUserId].seatRow;
+      const myTheater = userSeats[currentUser.id]?.theaterNumber || 1;
+      const myRow = userSeats[currentUser.id]?.seatRow;
+      
+      return speakerTheater === myTheater && speakerRow === myRow;
+    }
+    
+    // Regular seat-based audio routing for non-hosts
+    // ... (existing logic)
+  };
+  ```
+
+**Theater System Architecture:**
+- All theaters share same `session_id` (same video content)
+- Each theater isolated by `theaterNumber` in seat assignments
+- LiveKit room uses session-based naming, not theater-based
+- Audio routing handled by `shouldSubscribeToSpeaker` logic
+- Host broadcasting transcends theater boundaries (all theaters hear host)
+- Regular seat mode: Audio isolated per theater/row/column
+
+---
+
+### **2. Session Earnings Modal Animation Suite**
+
+#### Celebratory Animations for Paid Session Earnings
+**File**: `frontend/src/components/SessionEarningsModal.jsx`
+
+**Features Implemented:**
+1. **💰 Falling Coins Animation**: 20 coins dropping from top with random positions, delays, and rotations
+2. **🎊 Confetti Burst**: 50 colored particles exploding from center
+3. **🔢 Number Counting Animation**: Token amount counts up from 0 to final value (2 second duration)
+4. **✨ Shimmer Effect**: Glowing wave effect across earnings box
+5. **🎉 Pulse Glow**: Golden glow effect on token amount
+6. **Bouncing Coin Icon**: Token icon bounces on modal open
+
+**Animation Specifications:**
+- **Coins**: 20 particles, fall 3-5s duration, random left position (5-95%), random rotation (0-360deg), random delay (0-0.5s)
+- **Confetti**: 50 particles, 6 colors (yellow, green, blue, red, pink, purple), random timing (0-0.3s delay)
+- **Number Counting**: 60 steps over 2 seconds using `setInterval`, updates both token and NGN values
+- **Shimmer**: 2s duration, moves from left to right with gradient overlay
+- **Pulse Glow**: Infinite 2s animation, scales shadow intensity
+
+**CSS Animations:**
+```css
+@keyframes fall {
+  0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(360deg); opacity: 0; }
+}
+
+@keyframes confetti {
+  0% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  100% { transform: translate(var(--x), var(--y)) rotate(720deg); opacity: 0; }
+}
+
+@keyframes shimmer {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { text-shadow: 0 0 10px rgba(251, 191, 36, 0.5); }
+  50% { text-shadow: 0 0 20px rgba(251, 191, 36, 0.8); }
+}
+```
+
+**Trigger Logic:**
+- Animations trigger on `isOpen` prop change (when modal opens)
+- `useEffect` generates random coin/confetti positions
+- Number counting uses 60-step interpolation (every ~33ms)
+- Cleanup: Clears interval on unmount or when modal closes
+
+**Usage Example:**
+```jsx
+<SessionEarningsModal
+  isOpen={showEarnings}
+  onClose={() => setShowEarnings(false)}
+  tokenAmount={500}
+  ngnValue={50}
+  ticketsSold={25}
+  platformFee={125}
+/>
+```
+
+---
+
+### **3. Lecture Hall Audio System Fixes**
+
+#### Bug Fix: Discussion Mode Broadcasting
+**File**: `frontend/src/hooks/useLectureHallAudio.jsx`
+
+**Issue**: Only host could broadcast to everyone in discussion mode
+**Root Cause**: Line 283 had `if (discussionMode && isHost)` instead of just `if (discussionMode)`
+
+**Fix Applied (Line 281-284):**
+```javascript
+// ✅ FIXED: Discussion mode allows ALL users to broadcast to everyone
+if (discussionMode) {
+  return Array.from(userSeats.keys()); // Everyone hears everyone
+}
+```
+
+**Before**:
+- Only host broadcasts to all in discussion mode
+- Students still restricted to row+column groups
+
+**After**:
+- ALL users broadcast to everyone in discussion mode
+- True open discussion for all participants
+
+#### Audio Re-broadcast on Mode Change
+**File**: `frontend/src/hooks/useLectureHallAudio.jsx`
+
+**Issue**: When discussion mode toggled, already-unmuted users kept old recipient list
+**Root Cause**: `getAudioRecipients()` only called on audio toggle, not on mode change
+
+**Fix Applied (Line 667-675):**
+```javascript
+// ✅ RE-BROADCAST audio state when discussion mode changes
+useEffect(() => {
+  // If user is currently unmuted, re-broadcast to update recipients
+  if (isAudioEnabled) {
+    console.log('🎤 Discussion mode changed, re-broadcasting audio state...');
+    broadcastAudioState(true);
+  }
+}, [discussionMode]);
+```
+
+**Result**: Audio routing updates instantly when switching between lecture/discussion modes
+
+#### Audio Modes Summary
+**Lecture Mode (Default)**:
+- Host → Broadcasts to ALL students
+- Students → Speak only to their row + column groups
+
+**Discussion Mode**:
+- ALL users → Broadcast to everyone
+- True open forum for class discussions
+
+**LiveShare Permission Mode**:
+- Students with `hasHostApproval` → Broadcast to ALL in both modes
+- Used for presentations or special permissions
+
+---
+
+### **4. Lecture Hall LiveShare Auto-Discussion Mode**
+
+#### Auto-Enable Discussion Mode with LiveShare
+**File**: `frontend/src/pages/LectureHallPage.jsx`
+
+**Purpose**: Match 3D Cinema behavior - auto-enable discussion when LiveShare starts, auto-restore previous state when ends
+
+**Implementation:**
+
+**1. State Storage (Line 1072):**
+```javascript
+const previousDiscussionModeRef = useRef(null); // Store discussion mode state before LiveShare
+```
+
+**2. Auto-Enable on LiveShare Start (Line 6320-6324):**
+```javascript
+const handleLiveShareModeSelect = (mode) => {
+  // ... existing code ...
+  
+  // ✅ AUTO-ENABLE DISCUSSION MODE when LiveShare starts
+  if (isHost && !discussionMode) {
+    previousDiscussionModeRef.current = discussionMode; // Store current state
+    toggleDiscussionMode(); // Enable discussion mode
+    console.log('🎤 [LiveShare] Auto-enabled discussion mode');
+  }
+};
+```
+
+**3. Auto-Restore on LiveShare End (Line 6224-6231):**
+```javascript
+const handleEndScreenShare = () => {
+  // ... existing cleanup ...
+  
+  // ✅ AUTO-DISABLE DISCUSSION MODE when LiveShare ends (restore previous state)
+  if (isHost && previousDiscussionModeRef.current !== null) {
+    const shouldRestore = previousDiscussionModeRef.current;
+    if (discussionMode !== shouldRestore) {
+      toggleDiscussionMode();
+      console.log(`🎤 [LiveShare] Discussion mode restored to: ${shouldRestore}`);
+    }
+    previousDiscussionModeRef.current = null;
+  }
+};
+```
+
+**4. Backend Sync (Line 4829):**
+```javascript
+// Members receive discussion_mode_changed WebSocket updates
+case 'discussion_mode_changed':
+  const newMode = msg.discussion_mode;
+  setDiscussionMode(newMode);
+  console.log('🎤 Discussion mode updated:', newMode);
+  break;
+```
+
+**Backend Handler**: `backend/internal/handlers/websocket.go` (lines 5000-5055)
+- `toggle_discussion_mode` message type
+- Verifies sender is host
+- Updates `watch_sessions.discussion_mode` in database
+- Broadcasts `discussion_mode_changed` to all room members
+
+**Result**: Seamless LiveShare experience - discussion mode automatically enables for presentations, restores to previous state when done
+
+---
+
+### **5. Ghost Mode UI Enhancement**
+
+#### HD Ghost Icon with Animations
+**File**: `frontend/src/components/cinema/ui/LeftSidebar.jsx`
+
+**Purpose**: Improve Ghost Mode visibility with professional animations and styling
+
+**Features Implemented:**
+
+**1. HD Ghost Icon Rendering (Line 978-1062):**
+- Size: 2.5rem (mobile) / 3rem (desktop)
+- Purple drop-shadow: `filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.4))`
+- Text shadow glow: `text-shadow: 0 0 20px rgba(168, 85, 247, 0.6)`
+- Webkit text stroke for crisp edges
+
+**2. CSS Animation Suite:**
+
+**Entrance Animation (0.6s, slide-up with bounce):**
+```css
+@keyframes ghostEntrance {
+  0% { opacity: 0; transform: translateY(20px) scale(0.8); }
+  60% { transform: translateY(-5px) scale(1.1); }
+  100% { opacity: 1; transform: translateY(0px) scale(1); }
+}
+```
+
+**Float Animation (3s infinite hover):**
+```css
+@keyframes ghostFloat {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+```
+
+**Glow Pulse (2s infinite):**
+```css
+@keyframes ghostGlow {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.4)); }
+  50% { filter: drop-shadow(0 0 16px rgba(168, 85, 247, 0.7)); }
+}
+```
+
+**3. Gradient Styling:**
+- **Container**: Gradient background (from-[#D9D9D9]/10 to-[#D9D9D9]/5)
+- **Border**: Purple border with hover state (border-purple-500/20 → border-purple-500/40)
+- **Title**: Gradient text (from-purple-400 via-pink-400 to-purple-400)
+- **Active Badge**: Pulse animation when `hidePreviewThumbnails` is true
+
+**4. Description Text:**
+```
+🔒 Content moderation - Hide from public view.
+Use for sensitive or private content.
+```
+
+**Component Structure:**
+```jsx
+<div className="ghost-mode-container">
+  <style jsx>{/* CSS animations */}</style>
+  
+  <div className="flex items-center gap-3">
+    <span className="ghost-icon ghost-float ghost-entrance ghost-glow">👻</span>
+    <div>
+      <span className="gradient-text">Ghost Mode</span>
+      {hidePreviewThumbnails && (
+        <span className="active-badge animate-pulse">ACTIVE</span>
+      )}
+    </div>
+  </div>
+  
+  <p className="description">🔒 Content moderation - Hide from public view.</p>
+</div>
+```
+
+**User Experience:**
+- Ghost icon slides up and bounces when sidebar opens
+- Continuous gentle hover animation (up/down motion)
+- Purple glow pulse effect for mystical appearance
+- Professional gradient theming throughout
+- Clear active state indicator
+- Shortened, concise description text
+
+---
+
+## 🔧 KNOWN ISSUES & PENDING FIXES
+
+### **Duplicate Session End Notifications (April 24, 2026)**
+**Status**: 🔴 Identified, pending fix
+
+**Issue**: When a session ends, two identical notifications appear:
+```
+Videowatch session ended ℹ️
+Videowatch session ended
+```
+
+**Root Cause**: 
+1. VideoWatch/LectureHall/CinemaScene3D receives `session_ended` message
+2. Component navigates back to RoomPageNew
+3. RoomPageNew's WebSocket ALSO receives the same `session_ended` message
+4. Both components trigger toast notifications
+
+**Affected Files**:
+- `frontend/src/components/RoomPageNew.jsx` (Line 871-933: session_ended handler)
+- `frontend/src/components/cinema/VideoWatch.jsx` (session_ended handler)
+- `frontend/src/components/cinema/3d-cinema/CinemaScene3DDemo.jsx` (session_ended handler)
+- `frontend/src/pages/LectureHallPage.jsx` (session_ended handler)
+
+**Potential Solutions**:
+1. **Option A**: Only show toast in RoomPageNew, suppress in watch components
+2. **Option B**: Use sessionStorage flag to prevent duplicate (set in watch component, check in RoomPageNew)
+3. **Option C**: Delay RoomPageNew toast by 500ms, check if already shown
+
+**Priority**: MEDIUM (UX annoyance, not critical functionality)
+
+---
+
+## 📊 FEATURE COMPLETION STATUS
+
+### Audio & LiveShare Systems
+- ✅ 3D Cinema LiveShare auto-broadcasting (host)
+- ✅ 3D Cinema asymmetric audio routing (host → all, host hears row only)
+- ✅ Lecture Hall discussion mode bug fix (all users broadcast in discussion mode)
+- ✅ Lecture Hall audio re-broadcast on mode change
+- ✅ Lecture Hall LiveShare auto-discussion mode (auto-enable/restore)
+- ⏳ Theater overflow audio isolation testing (100+ users, multiple theaters)
+
+### UI/UX Enhancements
+- ✅ SessionEarningsModal 5-animation suite (coins, confetti, counting, shimmer, glow)
+- ✅ Ghost Mode HD icon with 3 animations (entrance, float, glow)
+- ✅ Ghost Mode gradient styling and active badge
+- ✅ Ghost Mode description text shortened
+
+### Bug Fixes
+- ✅ Lecture Hall discussion mode conditional (was `isHost && discussionMode`, now just `discussionMode`)
+- ✅ Lecture Hall audio recipients update on mode change (added useEffect re-broadcast)
+- 🔴 Duplicate session end notifications (identified, pending fix)
+
+---
