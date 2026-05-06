@@ -45,7 +45,7 @@ const RoomPageLeftSidebar = ({
           title="Main Chat"
         >
           {room?.image_url ? (
-            <img src={room.image_url} alt={room.name} className="w-full h-full object-cover" />
+            <img src={room.image_url.startsWith('http') ? room.image_url : `${import.meta.env.VITE_API_BASE_URL}${room.image_url.startsWith('/') ? room.image_url : '/' + room.image_url}`} alt={room.name} className="w-full h-full object-cover" />
           ) : (
             <span className="text-2xl text-white">💬</span>
           )}

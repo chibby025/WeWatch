@@ -2917,7 +2917,7 @@ const LobbyPage = () => {
                         }`}>
                           {room.image_url ? (
                             <img 
-                              src={room.image_url} 
+                              src={room.image_url.startsWith('http') ? room.image_url : `${import.meta.env.VITE_API_BASE_URL}${room.image_url.startsWith('/') ? room.image_url : '/' + room.image_url}`} 
                               alt={room.name}
                               className="w-full h-full object-cover"
                             />

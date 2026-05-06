@@ -32,6 +32,304 @@ This is more than a project - it's a testament to perseverance, continuous learn
 ### 🎯 NEW STRATEGIC DIRECTION: "Twitch meets TikTok for Watch Parties"
 **Positioning:** Social congregation app for creator monetization
 
+---
+
+## 📱 DEPLOYMENT ROADMAP: PWA + MOBILE APP STRATEGY
+
+### **Current Infrastructure (May 6, 2026):**
+- **Frontend:** Vercel (https://wewatch.vercel.app) - Vite + React
+- **Backend:** Railway (https://wewatch-production.up.railway.app) - Go + PostgreSQL
+- **Storage:** Cloudflare R2 - Media files (videos, images, thumbnails)
+- **Real-time:** LiveKit - Audio/video streaming + WebRTC
+
+### **Production Domain Setup Plan:**
+
+**Phase 1: Custom Domain Setup (IMMEDIATE - Next 2 Weeks)**
+```
+Target Production URLs:
+├── wewatch.com (or your-domain.com) → Frontend on Vercel
+├── api.wewatch.com → Backend on Railway
+└── cdn.wewatch.com → Cloudflare R2 (optional, can use R2 direct URL)
+
+Action Items:
+1. ✅ Purchase domain (recommendations: wewatch.tv, wewatch.app, getonwewatch.com)
+2. ✅ Add custom domain to Vercel (Dashboard → Domain Settings - FREE)
+3. ✅ Add custom subdomain to Railway (api.your-domain.com)
+4. ✅ Update all hardcoded URLs in code:
+   - frontend/src/services/api.js → API_BASE_URL detection
+   - OAuth redirect URIs (Google, Stripe, etc.)
+   - CORS configuration in backend
+   - JWT issuer/audience claims
+5. ✅ Test everything on new production domain
+```
+
+**Why Custom Domain is Essential:**
+- ✅ PWA requires HTTPS + custom domain for better "Add to Home Screen" experience
+- ✅ Mobile app stores (Google Play, App Store) require domain verification
+- ✅ Deep links for app-to-web require your domain
+- ✅ Privacy policy/terms must be hosted on your domain
+- ✅ User trust: "wewatch.com" > "wewatch.vercel.app"
+
+**Keep Vercel + Railway Infrastructure Because:**
+- ✅ CDN global edge network (faster than most VPS)
+- ✅ Automatic HTTPS with custom domains
+- ✅ Preview deployments for testing
+- ✅ Zero config deployments (push to GitHub → auto deploy)
+- ✅ PostgreSQL included with Railway
+- ✅ WebSocket support built-in
+- ✅ Scales automatically
+- ❌ **DON'T** move to AWS/GCP/Azure (overkill for MVP)
+- ❌ **DON'T** self-host on VPS (more maintenance, less reliable)
+
+---
+
+**Phase 2: PWA Implementation (2-4 Weeks After Domain)**
+```javascript
+// Progressive Web App Setup
+
+1. manifest.json (Check if exists, update if needed)
+{
+  "name": "WeWatch",
+  "short_name": "WeWatch",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1f2937",
+  "theme_color": "#7c3aed",
+  "description": "Social watch parties for creators",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
+
+2. Service Worker (For offline support)
+   - Check if Vite PWA plugin is configured
+   - Add Workbox for caching strategies
+   - Cache API responses, images, video thumbnails
+
+3. Install Prompt UI
+   - Add "Install App" button in UI (lobby, profile)
+   - Detect iOS Safari vs Android Chrome
+   - Show platform-specific install instructions
+
+4. Testing Checklist:
+   ✅ Test "Add to Home Screen" on Android Chrome
+   ✅ Test "Add to Home Screen" on iOS Safari
+   ✅ Verify standalone mode works (no browser chrome)
+   ✅ Test offline functionality
+   ✅ Verify icons display correctly
+```
+
+**PWA Action Items:**
+1. ✅ Review Vite PWA configuration in vite.config.js
+2. ✅ Generate app icons (192x192, 512x512, maskable versions)
+3. ✅ Add install prompt UI component
+4. ✅ Test PWA on mobile devices (Android + iOS)
+5. ✅ Optimize for mobile performance (already done with responsive design)
+
+---
+
+**Phase 3: Mobile App Packaging (1-2 Months After PWA)**
+
+**Recommended: Capacitor (Cross-Platform)**
+```bash
+# Setup Capacitor in existing Vite project
+npm install @capacitor/core @capacitor/cli
+npx cap init
+
+# Add platforms
+npm install @capacitor/android @capacitor/ios
+npx cap add android
+npx cap add ios
+
+# Build and sync
+npm run build
+npx cap sync
+npx cap open android  # Opens Android Studio
+npx cap open ios      # Opens Xcode (macOS only)
+
+# Native plugins to add:
+- @capacitor/push-notifications  # For push notifications
+- @capacitor/share               # Native share functionality
+- @capacitor/camera              # Camera access for uploads
+- @capacitor/app                 # App lifecycle events
+- @capacitor/status-bar          # Status bar styling
+```
+
+**Why Capacitor (NOT React Native):**
+- ✅ Uses 100% of existing web codebase (no rewrite)
+- ✅ Wraps your Vite/React app in native container
+- ✅ Access to native features (push, camera, share)
+- ✅ Single codebase for web, Android, iOS
+- ✅ Can publish to Google Play + App Store
+- ❌ React Native would require months of rebuilding entire app
+
+**Alternative: TWA (Trusted Web Activity) - Android Only, Fastest MVP**
+- Packages PWA as native Android app using Chrome Custom Tabs
+- ~90% less work than full Capacitor setup
+- Can publish to Google Play
+- Best for quick Android-only launch
+- Limitations: No native features, Android only
+
+**Mobile App Action Items:**
+1. ✅ Install Capacitor dependencies
+2. ✅ Configure capacitor.config.json
+3. ✅ Test on Android emulator
+4. ✅ Test on real Android device
+5. ✅ Prepare Google Play Store listing (screenshots, description, privacy policy)
+6. ✅ Submit to Play Store (review time: 1-3 days)
+7. ✅ iOS version after Android validated (requires macOS + $99/year Apple Developer account)
+
+---
+
+**Phase 4: App Store Optimization (Post-Launch)**
+```
+Google Play Store Requirements:
+├── App name and description
+├── Privacy policy URL (your-domain.com/privacy)
+├── Terms of service URL (your-domain.com/terms)
+├── App icon (512x512 PNG)
+├── Feature graphic (1024x500)
+├── Screenshots (phone + tablet)
+├── Content rating questionnaire
+├── Target age group
+└── Domain verification (Search Console)
+
+Apple App Store Requirements:
+├── All above + App Preview video (optional but recommended)
+├── Apple Developer Account ($99/year)
+├── macOS with Xcode for builds
+├── App Store Connect account
+├── App Review Guidelines compliance
+└── Privacy nutrition label
+```
+
+---
+
+### **Cost Breakdown (Monthly/Annual):**
+
+```
+Infrastructure (Current):
+├── Domain: $12-15/year (~$1-2/month)
+├── Vercel: FREE (Pro plan $20/mo if needed for team features)
+├── Railway: $10-50/month (scales with usage, includes PostgreSQL)
+├── Cloudflare R2: ~$5-20/month (storage + bandwidth)
+├── LiveKit: Cloud plan varies by usage (check current spend)
+└── Stripe: 2.9% + 30¢ per transaction
+
+Mobile App Publishing:
+├── Google Play: $25 one-time fee
+├── Apple Developer: $99/year ($8/month) - only if doing iOS
+└── Total Initial: $25-124
+
+Monthly Estimate: $20-80/month for full production + mobile apps
+```
+
+---
+
+### **Timeline & Milestones:**
+
+**Week 1-2: Domain Setup** ⏰ CURRENT PRIORITY
+- [ ] Purchase domain
+- [ ] Configure Vercel custom domain
+- [ ] Configure Railway API subdomain
+- [ ] Update all URLs in codebase
+- [ ] Update OAuth providers with new redirect URIs
+- [ ] Test production domain end-to-end
+
+**Week 3-4: PWA Polish**
+- [ ] Review/update manifest.json
+- [ ] Configure service worker (Workbox)
+- [ ] Generate app icons (all sizes)
+- [ ] Add install prompt UI
+- [ ] Test PWA installation (Android + iOS)
+
+**Month 2: Android App (Capacitor)**
+- [ ] Setup Capacitor
+- [ ] Build Android app
+- [ ] Test on devices
+- [ ] Prepare Play Store assets
+- [ ] Submit to Google Play
+
+**Month 3-4: iOS App (if needed)**
+- [ ] Setup iOS build (requires macOS)
+- [ ] Test on iOS devices
+- [ ] Prepare App Store assets
+- [ ] Submit to App Store
+
+---
+
+### **Code Changes Required for Domain Migration:**
+
+**Files to Update:**
+```javascript
+// 1. frontend/src/services/api.js
+// Current smart detection should work, but verify:
+const API_BASE_URL = 
+  window.location.hostname.includes('cloudflare') ? 'https://wewatch-production.up.railway.app' :
+  window.location.hostname.includes('loca.lt') ? 'https://wewatch-production.up.railway.app' :
+  window.location.hostname === 'localhost' ? 'http://localhost:8080' :
+  'https://api.your-domain.com';  // ← UPDATE THIS
+
+// 2. backend OAuth redirect URIs
+// Google Cloud Console → Credentials → OAuth 2.0 Client
+// Add: https://your-domain.com/auth/google/callback
+// Add: https://your-domain.com (authorized origin)
+
+// 3. backend CORS configuration (backend/cmd/server/main.go)
+AllowOrigins: []string{
+  "https://your-domain.com",  // ← ADD THIS
+  "https://wewatch.vercel.app",
+  "http://localhost:5173",
+},
+
+// 4. Stripe webhook endpoints (if using)
+// Update webhook URL to: https://api.your-domain.com/api/webhooks/stripe
+
+// 5. LiveKit webhook URLs (if configured)
+// Update to: https://api.your-domain.com/api/webhooks/livekit
+```
+
+---
+
+### **Testing Checklist After Domain Setup:**
+
+- [ ] Homepage loads on new domain
+- [ ] Login/signup works
+- [ ] Google OAuth redirect works
+- [ ] API calls succeed (check Network tab)
+- [ ] WebSocket connections work
+- [ ] Image uploads work
+- [ ] Video playback works
+- [ ] LiveKit audio/video works
+- [ ] Stripe payments work (if enabled)
+- [ ] Mobile responsive still works
+- [ ] PWA manifest detected
+- [ ] HTTPS working (green lock icon)
+
+---
+
+### **Resources & References:**
+
+**PWA:**
+- Vite PWA Plugin: https://vite-pwa-org.netlify.app/
+- Web.dev PWA Guide: https://web.dev/progressive-web-apps/
+- Workbox (Service Worker): https://developers.google.com/web/tools/workbox
+
+**Capacitor:**
+- Official Docs: https://capacitorjs.com/docs
+- Vite Integration: https://capacitorjs.com/docs/guides/vite
+- Android Guide: https://capacitorjs.com/docs/android
+- iOS Guide: https://capacitorjs.com/docs/ios
+
+**App Stores:**
+- Google Play Console: https://play.google.com/console
+- App Store Connect: https://appstoreconnect.apple.com/
+
+---
+
 ### 📋 Recent Updates (May 6, 2026):
 
 
@@ -70,19 +368,32 @@ Previously, users with hundreds of live sessions had no way to filter by content
 
 ---
 
-#### � **ROOM GROUPS SYSTEM (Phase 2 Complete)** (May 6, 2026)
-**Status:** ✅ COMPLETE - Discord-style chat segmentation within rooms
+#### 🔍 **ROOM GROUPS SYSTEM (Phase 2 Complete)** (May 6, 2026)
+**Status:** ✅ COMPLETE - Discord-style chat segmentation with full UI integration
 
 **Overview:**
-Implemented a Discord-style groups system for room chat organization. Each room can now have multiple chat groups (channels) allowing hosts to segment conversations (e.g., "General", "Spoilers", "Memes", "VIP") while maintaining a single unified watch session. This solves the audience fragmentation problem and enables better privacy control.
+Implemented a complete Discord-style groups system for room chat organization. Each room can now have multiple chat groups (channels) allowing hosts to segment conversations (e.g., "General", "Spoilers", "Memes", "VIP") while maintaining a single unified watch session. Includes image upload, member management modal, and context-aware header display.
+
+**Phase 2 Updates (Latest - May 6, 2026):**
+- ✅ **RoomGroupEditModal Component:** Full-featured modal with Details/Members/Settings tabs
+- ✅ **Image Upload Support:** Groups can now have uploaded images (not just emojis)
+- ✅ **Context-Aware Header:** Shows group name, image, and member count when viewing group
+- ✅ **Conditional Action Buttons:** Begin Watch/Schedule/RoomTV only visible in main chat
+- ✅ **Wider Sidebar:** Increased from w-16/20 to w-20/24 for better text visibility  
+- ✅ **Member Management UI:** Add member icons, join/leave functionality, invite links
+- ✅ **Right-Click to Edit:** Context menu on group icons opens edit modal
+- ✅ **Mobile Support:** Group context properly displayed in mobile header
+- ✅ **Fixed Backend Routes:** All use consistent `:id` parameter (not `:roomId`)
 
 **Key Features:**
-- **Discord-Style Sidebar:** Vertical channel list with emoji icons, tooltips, active state indicators
-- **Main Chat + Groups:** Default main chat (💬) + custom groups with emoji icons
-- **Host Controls:** Create/edit/delete groups in Room Settings → Groups tab
-- **Member Management:** Join/leave groups, view member counts
-- **Smart Filtering:** Messages filtered by selected group (WebSocket + REST API)
-- **Conditional UI:** Sidebar auto-hides when no groups exist
+- **Discord-Style Sidebar:** Vertical channel list with image/emoji icons, tooltips, active state indicators (width: w-20/24)
+- **Main Chat + Groups:** Default main chat (💬 with room image) + custom groups with uploaded images or emoji icons
+- **Host Controls:** Create/edit/delete groups in Room Settings → Groups tab (emoji picker removed, image upload only)
+- **Member Management:** Join/leave groups, view member lists with avatars/join dates, copy invite links
+- **Smart Context Switching:** Header dynamically shows room OR group info (image, name, member count) based on `selectedGroupId`
+- **Action Button Filtering:** Room-level actions (Begin Watch, Schedule, RoomTV) hidden when viewing groups
+- **Image Upload:** Upload custom images for group icons (max 5MB, uses /api/rooms/:id/upload endpoint)
+- **Delete Protection:** Confirmation required before deletion (in modal settings tab)
 - **Delete Protection:** Double-click confirmation to prevent accidents
 
 **Implementation Details:**
@@ -128,27 +439,78 @@ Implemented a Discord-style groups system for room chat organization. Each room 
      - Delete button (host-only, double-click confirmation)
      - Conditional rendering (returns null if no groups)
    - **RoomPageNew.jsx Integration:**
-     - State: `roomGroups`, `selectedGroupId`, `loadingGroups`
-     - Functions: `fetchRoomGroups`, `handleGroupSelect`, `handleDeleteGroupFromSidebar`, `fetchMessagesForGroup`
-     - Layout: Flex container with sidebar + chat area
-     - Message sending: Includes `room_group_id` in payload
-     - WebSocket filtering: Only shows messages matching `selectedGroupId`
+     - **State:** 
+       - `roomGroups`, `selectedGroupId`, `loadingGroups`
+       - `isGroupEditModalOpen`, `selectedGroup`, `isUserGroupMember`
+     - **Functions:** 
+       - `fetchRoomGroups`, `handleGroupSelect`, `handleDeleteGroupFromSidebar`
+       - `handleGroupEdit`, `handleGroupUpdate`, `handleGroupDelete`
+       - `handleGroupJoin`, `handleGroupLeave`, `fetchMessagesForGroup`
+     - **Header (Desktop & Mobile - Lines ~1890-2060):**
+       - Dynamically shows group image when `selectedGroupId !== null`
+       - Shows group name instead of room name when in group
+       - Shows group member count instead of room member count
+       - Hides host info when viewing group (only shows in main chat)
+       - Uses `roomGroups.find(g => g.ID === selectedGroupId)` to get active group
+     - **Conditional Actions (Lines ~1942-1990, ~2052-2116):**
+       - Begin Watch, Schedule Event, RoomTV wrapped in `{!selectedGroupId && (...)}`
+       - These buttons only appear in main chat, hidden in group chats
+       - Prevents confusion (can't start watch sessions from group chats)
+     - **Layout:** Flex container with RoomPageLeftSidebar + chat area
+     - **Message sending:** Includes `room_group_id` in WebSocket payload
+     - **WebSocket filtering:** Only displays messages matching `selectedGroupId`
+     - **Modal Integration:** Renders RoomGroupEditModal with all necessary props
 
 6. **User Flow:**
-   - Host creates groups in Room Settings → Groups tab
-   - Sidebar appears automatically when groups exist
-   - Click group button → filters chat to that group only
-   - Send message → goes to selected group
-   - Double-click delete → removes group (host only)
-   - No groups → sidebar hidden
+   - **Creating Groups:**
+     - Host opens Room Settings → Groups tab
+     - Clicks "Create New Group" (only visible to host)
+     - Uploads image or keeps emoji, enters name/description
+     - Group appears in sidebar automatically
+   - **Navigating Groups:**
+     - Click group icon in sidebar → switches to that group
+     - Header updates to show group image, name, member count
+     - Begin Watch/Schedule/RoomTV buttons disappear
+     - Chat only shows messages for that group
+   - **Managing Groups:**
+     - Right-click group icon OR click group name → opens RoomGroupEditModal
+     - Non-members: See join button in Details tab
+     - Members: See leave button, can view Members tab
+     - Host: Can edit all details, view members, delete in Settings tab
+   - **Messaging:**
+     - Send message → includes current `room_group_id`
+     - Messages only visible when that group is selected
+     - Switch back to main chat → see main room messages
 
 **Technical Architecture:**
-- **Phase 1 (✅):** Room sorting (owned rooms first)
-- **Phase 2 (✅):** Groups as chat filters (not mini-rooms, keeps complexity low)
+- **Phase 1 (✅):** Room sorting, backend endpoints, database models
+- **Phase 2 (✅):** Complete UI integration, image upload, member management, context-aware display
 - **Phase 3 (Planned):** Follow system + 1-room-per-creator limit
 
+**API Client (frontend/src/services/api.js - Lines 607-641):**
+```javascript
+export const createRoomGroup = async (roomId, groupData) // POST with icon URL
+export const getRoomGroups = async (roomId)              // GET with member_count
+export const updateRoomGroup = async (roomId, groupId, groupData) // PUT
+export const deleteRoomGroup = async (roomId, groupId)   // DELETE
+export const joinRoomGroup = async (roomId, groupId)     // POST
+export const leaveRoomGroup = async (roomId, groupId)    // POST (not DELETE)
+export const getRoomGroupMembers = async (roomId, groupId) // GET with user details
+```
+
+**Dependencies Installed:**
+- `@headlessui/react@^2.2.0` - Modal component library (Dialog, Transition) for RoomGroupEditModal
+- Installed via: `npm install @headlessui/react`
+
+**Bug Fixes:**
+- ✅ Fixed 400 Bad Request on `/api/rooms/108/groups` - Changed handlers to use global `DB` variable instead of `c.MustGet("db")`
+- ✅ Fixed route parameter inconsistency - All routes now use `:id` instead of mixed `:roomId`/:id`
+- ✅ Fixed image upload in edit modal - Properly initializes `imagePreview` from group icon URL
+- ✅ Fixed duplicate code causing syntax errors during implementation
+- ✅ Backend server restarted successfully after route fixes
+
 **Why This Matters:**
-Previously, creators needed multiple rooms to segment audiences (spoiler-free vs spoilers, members vs VIP, etc.), causing fragmentation. Now they can organize all conversations in ONE room with focused channels, similar to Discord servers. This keeps communities unified while enabling privacy control and topic organization.
+Previously, creators needed multiple rooms to segment audiences (spoiler-free vs spoilers, members vs VIP, etc.), causing fragmentation. Now they can organize all conversations in ONE room with focused channels, similar to Discord servers. The context-aware UI ensures users always know which group they're in (header shows group info), and conditional action buttons prevent confusion (can't start watch sessions from group chats). Image upload support allows for professional branding of groups beyond simple emojis.
 
 ---
 

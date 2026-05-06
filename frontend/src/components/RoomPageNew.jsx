@@ -627,10 +627,14 @@ const RoomPageNew = () => {
     
     try {
       setLoadingGroups(true);
+      console.log('[Room Groups] Fetching groups for room:', roomId);
       const response = await getRoomGroups(roomId);
+      console.log('[Room Groups] Received response:', response.data);
       setRoomGroups(response.data.groups || []);
+      console.log('[Room Groups] Set groups count:', response.data.groups?.length || 0);
     } catch (err) {
-      console.error('Failed to fetch room groups:', err);
+      console.error('[Room Groups] Failed to fetch:', err);
+      console.error('[Room Groups] Error details:', err.response?.data || err.message);
       // Silent fail - groups are optional feature
     } finally {
       setLoadingGroups(false);
@@ -2038,7 +2042,7 @@ const RoomPageNew = () => {
                         );
                       })()
                     ) : room.image_url ? (
-                      <img src={room.image_url} alt={room.name} className="w-full h-full object-cover" />
+                      <img src={room.image_url.startsWith('http') ? room.image_url : `${import.meta.env.VITE_API_BASE_URL}${room.image_url.startsWith('/') ? room.image_url : '/' + room.image_url}`} alt={room.name} className="w-full h-full object-cover" />
                     ) : (
                       <FilmIcon className="w-6 h-6 text-white opacity-80" />
                     )}
@@ -2777,7 +2781,7 @@ const RoomPageNew = () => {
               ×
             </button>
             <img 
-              src={room.image_url} 
+              src={room.image_url.startsWith('http') ? room.image_url : `${import.meta.env.VITE_API_BASE_URL}${room.image_url.startsWith('/') ? room.image_url : '/' + room.image_url}`} 
               alt={room.name}
               className="max-w-[90vw] sm:max-w-[600px] max-h-[80vh] sm:max-h-[600px] w-auto h-auto object-contain rounded-lg"
               onClick={(e) => e.stopPropagation()}
