@@ -2,6 +2,7 @@
 // Discord-style vertical sidebar showing room groups for chat segmentation
 import React, { useState } from 'react';
 import { TrashIcon } from '@heroicons/react/24/outline';
+import { getAssetUrl } from '../services/api';
 
 const RoomPageLeftSidebar = ({ 
   room,
@@ -45,7 +46,7 @@ const RoomPageLeftSidebar = ({
           title="Main Chat"
         >
           {room?.image_url ? (
-            <img src={room.image_url.startsWith('http') ? room.image_url : `${import.meta.env.VITE_API_BASE_URL}${room.image_url.startsWith('/') ? room.image_url : '/' + room.image_url}`} alt={room.name} className="w-full h-full object-cover" />
+            <img src={getAssetUrl(room.image_url)} alt={room.name} className="w-full h-full object-cover" />
           ) : (
             <span className="text-2xl text-white">💬</span>
           )}

@@ -15,7 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
 import { useMobile } from '../hooks/useMobile';
-import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup } from '../services/api';
+import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup, getAssetUrl } from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
 import WatchTypeInfoModal from './WatchTypeInfoModal';
 import ClassTypeModal from './modals/ClassTypeModal';
@@ -2042,7 +2042,7 @@ const RoomPageNew = () => {
                         );
                       })()
                     ) : room.image_url ? (
-                      <img src={room.image_url.startsWith('http') ? room.image_url : `${import.meta.env.VITE_API_BASE_URL}${room.image_url.startsWith('/') ? room.image_url : '/' + room.image_url}`} alt={room.name} className="w-full h-full object-cover" />
+                      <img src={getAssetUrl(room.image_url)} alt={room.name} className="w-full h-full object-cover" />
                     ) : (
                       <FilmIcon className="w-6 h-6 text-white opacity-80" />
                     )}
@@ -2781,7 +2781,7 @@ const RoomPageNew = () => {
               ×
             </button>
             <img 
-              src={room.image_url.startsWith('http') ? room.image_url : `${import.meta.env.VITE_API_BASE_URL}${room.image_url.startsWith('/') ? room.image_url : '/' + room.image_url}`} 
+              src={getAssetUrl(room.image_url)} 
               alt={room.name}
               className="max-w-[90vw] sm:max-w-[600px] max-h-[80vh] sm:max-h-[600px] w-auto h-auto object-contain rounded-lg"
               onClick={(e) => e.stopPropagation()}

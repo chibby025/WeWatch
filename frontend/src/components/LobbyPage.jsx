@@ -1,7 +1,7 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests } from '../services/api';
+import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl } from '../services/api';
 import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon } from '@heroicons/react/24/solid';
 import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon, FaceSmileIcon as FaceSmileOutlineIcon, MicrophoneIcon as MicrophoneOutlineIcon, PaperClipIcon as PaperClipOutlineIcon, ChartBarSquareIcon as ChartBarSquareOutlineIcon } from '@heroicons/react/24/outline';
 import { Plus } from 'lucide-react';
@@ -2917,7 +2917,7 @@ const LobbyPage = () => {
                         }`}>
                           {room.image_url ? (
                             <img 
-                              src={room.image_url.startsWith('http') ? room.image_url : `${import.meta.env.VITE_API_BASE_URL}${room.image_url.startsWith('/') ? room.image_url : '/' + room.image_url}`} 
+                              src={getAssetUrl(room.image_url)} 
                               alt={room.name}
                               className="w-full h-full object-cover"
                             />

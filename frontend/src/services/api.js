@@ -62,8 +62,25 @@ export const apiClient = axios.create({
     headers: getDefaultHeaders(),
 });
 
+// Export API_BASE_URL for components to use when constructing image URLs
+export { API_BASE_URL };
 
-
+/**
+ * Helper function to get full URL for uploaded assets
+ * Handles both relative paths (/uploads/...) and absolute URLs (http/https)
+ * @param {string} url - The URL or path to resolve
+ * @returns {string} - The fully qualified URL
+ */
+export const getAssetUrl = (url) => {
+  if (!url) return '';
+  // If already a full URL, return as-is
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  // Otherwise, prepend API_BASE_URL
+  const cleanPath = url.startsWith('/') ? url : '/' + url;
+  return `${API_BASE_URL}${cleanPath}`;
+};
 
 /**
  * Send a reaction to a room
