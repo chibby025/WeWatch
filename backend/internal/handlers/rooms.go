@@ -10,6 +10,7 @@ import (
     "encoding/json"
     "strings"
     "path/filepath"
+    "io"
     "github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
@@ -295,47 +296,54 @@ func UpdateRoomImageHandler(c *gin.Context) {
 		return
 	}
 
-	// Create uploads directory if not exists
-	uploadDir := "uploads/room_images"
-	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
-		log.Printf("UpdateRoomImageHandler: Failed to create upload directory: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save image"})
+	// Read file data into memory
+	fileReader, err := file.Open()
+	if err != nil {
+		log.Printf("UpdateRoomImageHandler: Failed to open file: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read image"})
+		return
+	}
+	defer fileReader.Close()
+
+	fileData, err := io.ReadAll(fileReader)
+	if err != nil {
+		log.Printf("UpdateRoomImageHandler: Failed to read file data: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read image"})
 		return
 	}
 
-	// Generate unique filename
+	// Generate unique filename for BunnyCDN
 	filename := fmt.Sprintf("room_%d_%d%s", roomIDUint, time.Now().Unix(), ext)
-	filepath := fmt.Sprintf("%s/%s", uploadDir, filename)
+	contentType := file.Header.Get("Content-Type")
 
-	// Save file
-	if err := c.SaveUploadedFile(file, filepath); err != nil {
-		log.Printf("UpdateRoomImageHandler: Failed to save file: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save image"})
+	// Upload to BunnyCDN (or fallback to local storage)
+	imageURL, err := utils.UploadToBunnyCDN(fileData, filename, contentType)
+	if err != nil {
+		log.Printf("UpdateRoomImageHandler: Failed to upload to BunnyCDN: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload image"})
 		return
 	}
 
-	// Delete old image if exists
-	if room.ImageURL != "" {
-		// Remove leading slash if present for file system path
-		oldPath := room.ImageURL
-		if oldPath[0] == '/' {
-			oldPath = oldPath[1:] // Remove leading slash
-		}
-		if _, err := os.Stat(oldPath); err == nil {
-			if err := os.Remove(oldPath); err != nil {
-				log.Printf("UpdateRoomImageHandler: Failed to delete old image: %v", err)
-			} else {
-				log.Printf("UpdateRoomImageHandler: Deleted old image: %s", oldPath)
+	// Delete old image if exists (only if it's a BunnyCDN URL)
+	if room.ImageURL != "" && strings.Contains(room.ImageURL, ".b-cdn.net") {
+		// Extract filename from BunnyCDN URL
+		parts := strings.Split(room.ImageURL, "/")
+		if len(parts) > 0 {
+			oldFilename := parts[len(parts)-1]
+			if err := utils.DeleteFromBunnyCDN(oldFilename); err != nil {
+				log.Printf("UpdateRoomImageHandler: Failed to delete old image from BunnyCDN: %v", err)
+				// Continue anyway - not critical
 			}
 		}
 	}
 
-	// Update database with new image URL
-	imageURL := fmt.Sprintf("/uploads/room_images/%s", filename)
+	// Update database with new image URL (full CDN URL)
 	if err := DB.Model(&room).Update("image_url", imageURL).Error; err != nil {
 		log.Printf("UpdateRoomImageHandler: Failed to update database: %v", err)
-		// Try to clean up uploaded file
-		os.Remove(filepath)
+		// Try to clean up uploaded file from BunnyCDN
+		if strings.Contains(imageURL, ".b-cdn.net") {
+			utils.DeleteFromBunnyCDN(filename)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update image"})
 		return
 	}
