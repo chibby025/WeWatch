@@ -265,6 +265,39 @@ func GetPlatformAnalytics(c *gin.Context) {
 		WHERE status = 'completed' AND created_at >= ?
 	`, startOfMonth).Scan(&tokensMonth)
 
+	// ==== POST DOWNLOAD METRICS ====
+	var totalDownloads int64
+	var downloadsToday int64
+	var downloadsWeek int64
+	var downloadsMonth int64
+	
+	db.Model(&struct{ ID uint }{}).Table("post_downloads").Count(&totalDownloads)
+	db.Model(&struct{ ID uint }{}).Table("post_downloads").Where("downloaded_at >= ?", startOfToday).Count(&downloadsToday)
+	db.Model(&struct{ ID uint }{}).Table("post_downloads").Where("downloaded_at >= ?", startOfWeek).Count(&downloadsWeek)
+	db.Model(&struct{ ID uint }{}).Table("post_downloads").Where("downloaded_at >= ?", startOfMonth).Count(&downloadsMonth)
+
+	// Top downloaded posts (all time)
+	type TopDownloadedPost struct {
+		PostID         uint   `json:"post_id"`
+		Title          string `json:"title"`
+		Username       string `json:"username"`
+		DownloadsCount int    `json:"downloads_count"`
+	}
+	
+	var topDownloadedPosts []TopDownloadedPost
+	db.Raw(`
+		SELECT 
+			p.id AS post_id,
+			p.title,
+			u.username,
+			p.downloads_count
+		FROM posts p
+		INNER JOIN users u ON u.id = p.user_id
+		WHERE p.downloads_count > 0 AND p.deleted_at IS NULL
+		ORDER BY p.downloads_count DESC
+		LIMIT 10
+	`).Scan(&topDownloadedPosts)
+
 	// ==== SCHEDULED EVENTS ====
 	var totalEvents int64
 	var upcomingEvents int64
@@ -367,6 +400,82 @@ func GetPlatformAnalytics(c *gin.Context) {
 			"total_early_bird_savings":     accounting.TotalEarlyBirdSavings,
 		}
 	}
+
+	// ==== AD CAMPAIGN METRICS ====
+	type AdMetrics struct {
+		TotalCampaigns    int64
+		ActiveCampaigns   int64
+		TotalImpressions  int64
+		TotalClicks       int64
+		CTR               float64
+		EstimatedRevenue  float64
+		ImpressionsToday  int64
+		ClicksToday       int64
+		ImpressionsWeek   int64
+		ClicksWeek        int64
+		PendingInquiries  int64
+		ApprovedInquiries int64
+	}
+
+	var adMetrics AdMetrics
+
+	// Total and active campaigns
+	db.Model(&struct{ ID uint }{}).Table("ad_campaigns").Count(&adMetrics.TotalCampaigns)
+	db.Model(&struct{ ID uint }{}).Table("ad_campaigns").Where("status = ?", "active").Count(&adMetrics.ActiveCampaigns)
+
+	// Total impressions and clicks
+	db.Model(&struct{ ID uint }{}).Table("ad_impressions").Count(&adMetrics.TotalImpressions)
+	db.Model(&struct{ ID uint }{}).Table("ad_impressions").Where("clicked = ?", true).Count(&adMetrics.TotalClicks)
+
+	// Calculate CTR
+	if adMetrics.TotalImpressions > 0 {
+		adMetrics.CTR = (float64(adMetrics.TotalClicks) / float64(adMetrics.TotalImpressions)) * 100
+	}
+
+	// Impressions and clicks today
+	db.Model(&struct{ ID uint }{}).Table("ad_impressions").Where("DATE(created_at) = CURRENT_DATE").Count(&adMetrics.ImpressionsToday)
+	db.Model(&struct{ ID uint }{}).Table("ad_impressions").Where("DATE(created_at) = CURRENT_DATE AND clicked = ?", true).Count(&adMetrics.ClicksToday)
+
+	// Impressions and clicks this week
+	db.Model(&struct{ ID uint }{}).Table("ad_impressions").Where("created_at >= ?", startOfWeek).Count(&adMetrics.ImpressionsWeek)
+	db.Model(&struct{ ID uint }{}).Table("ad_impressions").Where("created_at >= ? AND clicked = ?", startOfWeek, true).Count(&adMetrics.ClicksWeek)
+
+	// Calculate estimated revenue (sum of spent_amount from campaigns)
+	db.Raw("SELECT COALESCE(SUM(spent_amount), 0) FROM ad_campaigns").Scan(&adMetrics.EstimatedRevenue)
+
+	// Inquiry metrics
+	db.Model(&struct{ ID uint }{}).Table("ad_inquiries").Where("status = ?", "pending").Count(&adMetrics.PendingInquiries)
+	db.Model(&struct{ ID uint }{}).Table("ad_inquiries").Where("status = ?", "approved").Count(&adMetrics.ApprovedInquiries)
+
+	// Top campaigns by impressions
+	type TopCampaign struct {
+		ID            uint
+		CampaignName  string
+		Impressions   int64
+		Clicks        int64
+		CTR           float64
+		SpentAmount   float64
+		CPM           float64
+	}
+
+	var topCampaigns []TopCampaign
+	db.Raw(`
+		SELECT 
+			c.id,
+			c.campaign_name,
+			c.impressions_count AS impressions,
+			c.clicks_count AS clicks,
+			CASE 
+				WHEN c.impressions_count > 0 THEN (c.clicks_count::float / c.impressions_count::float * 100)
+				ELSE 0 
+			END AS ctr,
+			c.spent_amount,
+			c.cpm
+		FROM ad_campaigns c
+		WHERE c.status = 'active'
+		ORDER BY c.impressions_count DESC
+		LIMIT 5
+	`).Scan(&topCampaigns)
 
 	c.JSON(http.StatusOK, gin.H{
 		"users": gin.H{
@@ -506,11 +615,33 @@ func GetPlatformAnalytics(c *gin.Context) {
 			"upcoming": upcomingEvents,
 			"past":     pastEvents,
 		},
+		"downloads": gin.H{
+			"total":             totalDownloads,
+			"today":             downloadsToday,
+			"week":              downloadsWeek,
+			"month":             downloadsMonth,
+			"top_posts":         topDownloadedPosts,
+		},
 		"payouts": gin.H{
 			"total_withdrawn":        totalWithdrawn,
 			"pending_amount":         pendingPayouts,
 			"completed_count":        completedPayoutsCount,
 			"pending_count":          pendingPayoutsCount,
+		},
+		"ads": gin.H{
+			"total_campaigns":     adMetrics.TotalCampaigns,
+			"active_campaigns":    adMetrics.ActiveCampaigns,
+			"total_impressions":   adMetrics.TotalImpressions,
+			"total_clicks":        adMetrics.TotalClicks,
+			"ctr":                 adMetrics.CTR,
+			"estimated_revenue":   adMetrics.EstimatedRevenue,
+			"impressions_today":   adMetrics.ImpressionsToday,
+			"clicks_today":        adMetrics.ClicksToday,
+			"impressions_week":    adMetrics.ImpressionsWeek,
+			"clicks_week":         adMetrics.ClicksWeek,
+			"pending_inquiries":   adMetrics.PendingInquiries,
+			"approved_inquiries":  adMetrics.ApprovedInquiries,
+			"top_campaigns":       topCampaigns,
 		},
 		"platform_accounting": platformAccountingData,
 		"top_hosts": topHosts,

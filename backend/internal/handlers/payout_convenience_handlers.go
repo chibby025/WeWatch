@@ -63,8 +63,70 @@ func GetMyPayouts(c *gin.Context) {
 		}
 	}
 
+	// Convert payouts to safe response format with masked account data
+	type PayoutResponse struct {
+		ID                uint                            `json:"id"`
+		UserID            uint                            `json:"user_id"`
+		PayoutType        string                          `json:"payout_type"`
+		PayoutMethod      string                          `json:"payout_method"`
+		AmountTokens      *int                            `json:"amount_tokens,omitempty"`
+		AmountCurrency    *string                         `json:"amount_currency,omitempty"`
+		AmountValue       *float64                        `json:"amount_value,omitempty"`
+		Status            string                          `json:"status"`
+		PayoutDetails     interface{}                     `json:"payout_details,omitempty"`
+		ProcessedAt       *string                         `json:"processed_at,omitempty"`
+		CreatedAt         string                          `json:"created_at"`
+		UpdatedAt         string                          `json:"updated_at"`
+		GatewayTransferID string                          `json:"gateway_transfer_id,omitempty"`
+		PaymentAccountID  uint                            `json:"payment_account_id,omitempty"`
+		PaymentAccount    *models.PaymentAccountResponse  `json:"payment_account,omitempty"`
+	}
+
+	payoutResponses := make([]PayoutResponse, len(payouts))
+	for i, payout := range payouts {
+		var paymentAccountResp *models.PaymentAccountResponse
+		if payout.PaymentAccount != nil {
+			resp := payout.PaymentAccount.ToResponse()
+			paymentAccountResp = &resp
+		}
+		
+		var processedAtStr *string
+		if payout.ProcessedAt != nil {
+			t := payout.ProcessedAt.Format("2006-01-02T15:04:05.999999Z07:00")
+			processedAtStr = &t
+		}
+
+		var gatewayTransferID string
+		if payout.GatewayTransferID != nil {
+			gatewayTransferID = *payout.GatewayTransferID
+		}
+		
+		var paymentAccountID uint
+		if payout.PaymentAccountID != nil {
+			paymentAccountID = *payout.PaymentAccountID
+		}
+
+		payoutResponses[i] = PayoutResponse{
+			ID:                payout.ID,
+			UserID:            payout.UserID,
+			PayoutType:        payout.PayoutType,
+			PayoutMethod:      payout.PayoutMethod,
+			AmountTokens:      payout.AmountTokens,
+			AmountCurrency:    payout.AmountCurrency,
+			AmountValue:       payout.AmountValue,
+			Status:            payout.Status,
+			PayoutDetails:     payout.PayoutDetails,
+			ProcessedAt:       processedAtStr,
+			CreatedAt:         payout.CreatedAt.Format("2006-01-02T15:04:05.999999Z07:00"),
+			UpdatedAt:         payout.UpdatedAt.Format("2006-01-02T15:04:05.999999Z07:00"),
+			GatewayTransferID: gatewayTransferID,
+			PaymentAccountID:  paymentAccountID,
+			PaymentAccount:    paymentAccountResp,
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"payouts": payouts,
+		"payouts": payoutResponses,
 		"summary": gin.H{
 			"total_requested": totalRequested,
 			"total_completed": totalCompleted,

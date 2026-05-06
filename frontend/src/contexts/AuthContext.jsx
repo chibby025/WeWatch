@@ -87,6 +87,34 @@ export const AuthProvider = ({ children }) => {
     fetchUser();
   }, []);
 
+  // 🔄 Sync auth state across tabs
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'user' && e.newValue !== e.oldValue) {
+        if (e.newValue) {
+          // Another tab logged in
+          try {
+            const user = JSON.parse(e.newValue);
+            setCurrentUser(user);
+            console.log('🔄 [AuthContext] Synced login from another tab:', user.username);
+          } catch (err) {
+            console.error('❌ [AuthContext] Failed to parse user from storage:', err);
+          }
+        } else {
+          // Another tab logged out
+          setCurrentUser(null);
+          setWsToken(null);
+          setRoomMemberships([]);
+          sessionStorage.removeItem('wewatch_ws_token');
+          console.log('🔄 [AuthContext] Synced logout from another tab');
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
   return (
     <AuthContext.Provider value={{ 
       currentUser, 

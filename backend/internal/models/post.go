@@ -19,13 +19,15 @@ type Post struct {
 	PostType      string         `gorm:"type:varchar(20);not null" json:"post_type"`  // 'recording', 'upload'
 	Duration      *int           `json:"duration,omitempty"`                           // Seconds (for videos)
 	Resolution    string         `gorm:"type:varchar(10)" json:"resolution,omitempty"` // '720p', '1080p', etc.
-	ViewCount     int            `gorm:"default:0;not null" json:"view_count"`
-	LikesCount    int            `gorm:"default:0;not null" json:"likes_count"`
-	CommentsCount int            `gorm:"default:0;not null" json:"comments_count"`
-	IsPaid        bool           `gorm:"default:false;not null" json:"is_paid"`
-	Price         *float64       `gorm:"type:decimal(10,2)" json:"price,omitempty"`
-	IsPublic      bool           `gorm:"default:true;not null" json:"is_public"`
-	CreatedAt     time.Time      `json:"created_at"`
+	ViewCount      int            `gorm:"default:0;not null" json:"view_count"`
+	LikesCount     int            `gorm:"default:0;not null" json:"likes_count"`
+	CommentsCount  int            `gorm:"default:0;not null" json:"comments_count"`
+	DownloadsCount int            `gorm:"default:0;not null" json:"downloads_count"`
+	IsPaid         bool           `gorm:"default:false;not null" json:"is_paid"`
+	Price          *float64       `gorm:"type:decimal(10,2)" json:"price,omitempty"`
+	IsPublic       bool           `gorm:"default:true;not null" json:"is_public"`
+	AllowDownloads bool           `gorm:"default:true;not null" json:"allow_downloads"`
+	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 	

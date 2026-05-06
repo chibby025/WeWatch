@@ -671,6 +671,18 @@ export const joinRoom = async (roomId) => {
   }
 };
 
+// Leave a room
+export const leaveRoom = async (roomId) => {
+  try {
+    const response = await apiClient.post(`/api/rooms/${roomId}/leave`);
+    devLog('✅ [API] Left room:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('❌ [API] Leave room error:', error.response || error.message);
+    throw error;
+  }
+};
+
 /**
  * Fetches the list of temporary media items for a specific room
  * @param {string|number} roomId - The ID of the room

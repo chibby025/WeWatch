@@ -257,6 +257,9 @@ const LobbyPage = () => {
   });
   const [isRefreshingWatchingNow, setIsRefreshingWatchingNow] = useState(false);
   
+  // 🔍 Discover Search State
+  const [discoverSearch, setDiscoverSearch] = useState('');
+  
   // 🎯 Feed Ads State
   const [feedAds, setFeedAds] = useState([]);
   const [fetchingFeedAds, setFetchingFeedAds] = useState(false);
@@ -264,6 +267,7 @@ const LobbyPage = () => {
   // ✅ Infinite scroll refs
   const watchingNowScrollRef = React.useRef(null);
   const loadMoreTriggerRef = React.useRef(null);
+  const discoverFeedRef = React.useRef(null);
   
   // ✅ Get current user from Auth Context
   const { currentUser, wsToken, refreshUser } = useAuth();
@@ -462,13 +466,14 @@ const LobbyPage = () => {
     }
 
     // Handle navigation from RoomTV (post click)
-    if (location.state?.openPost && activeTab === 'watching') {
+    if (location.state?.openPost) {
       const postId = location.state.openPost;
       const autoPlay = location.state.autoPlay || false;
       
       console.log('📺 [LobbyPage] Opening post from RoomTV:', postId);
       
-      // Switch to discover sub-tab
+      // Switch to watching tab and discover sub-tab
+      setActiveTab('watching');
       setWatchingSubTab('discover');
       
       // Fetch and open the post
@@ -873,7 +878,7 @@ const LobbyPage = () => {
     }
   };
   
-  // 🎯 Fetch feed ads
+  // 🎯 Fetch feed ads (for live sessions feed)
   const fetchFeedAds = async () => {
     if (fetchingFeedAds || !currentUser) return;
     
@@ -881,13 +886,13 @@ const LobbyPage = () => {
     try {
       const userAge = currentUser.date_of_birth ? calculateAge(currentUser.date_of_birth) : 0;
       
-      // Fetch multiple banner ads for feed injection
+      // Fetch banner ads for live sessions feed injection
       const response = await apiClient.get('/api/ads/in-session', {
         params: {
           user_id: currentUser.id,
           session_id: 'feed', // Special session_id for feed ads
           ad_type: 'banner',
-          placement: 'feed',
+          placement: 'feed', // Uses feed_ads setting
           user_age: userAge
         }
       });
@@ -2310,6 +2315,12 @@ const LobbyPage = () => {
 
   // ✅ Generate session preview (poster + GIF)
   const generateSessionPreview = async (sessionId) => {
+    // ✅ Skip only if already generating (prevent concurrent API calls)
+    if (sessionPreviews[sessionId]?.isGenerating) {
+      console.log(`⏳ [LobbyPage] Already generating preview for ${sessionId}`);
+      return;
+    }
+
     try {
       console.log(`🎬 [LobbyPage] Generating preview: ${sessionId}`);
       
@@ -2648,6 +2659,18 @@ const LobbyPage = () => {
         <PostUploadModal
           isOpen={isPostUploadModalOpen}
           onClose={() => setIsPostUploadModalOpen(false)}
+          onSuccess={() => {
+            // Switch to discover tab and refresh feed
+            setActiveTab('watching');
+            setWatchingSubTab('discover');
+            // Refresh discover feed after a short delay to ensure backend processed upload
+            setTimeout(() => {
+              if (discoverFeedRef.current?.refresh) {
+                discoverFeedRef.current.refresh();
+              }
+            }, 500);
+            setIsPostUploadModalOpen(false);
+          }}
         />
 
         {/* Delete Room Modal */}
@@ -2806,10 +2829,15 @@ const LobbyPage = () => {
             {filteredRooms && filteredRooms.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
                 {filteredRooms.map((room) => {
+                  const isOwnRoom = authenticatedUserID === room.host_id;
                   return (
                   <div 
                     key={room.id} 
-                    className="bg-white dark:bg-gray-800 shadow-md rounded-lg hover:shadow-lg transition-shadow duration-300 relative cursor-pointer border border-gray-200 dark:border-gray-700"
+                    className={`bg-white dark:bg-gray-800 shadow-md rounded-lg hover:shadow-lg transition-shadow duration-300 relative cursor-pointer ${
+                      isOwnRoom 
+                        ? 'ring-2 ring-purple-500 dark:ring-purple-400' 
+                        : 'border border-gray-200 dark:border-gray-700'
+                    }`}
                     onClick={() => navigate(`/rooms/${room.id}`)}
                    >
                     {/* Room Card Content - Horizontal Layout */}
@@ -2862,6 +2890,16 @@ const LobbyPage = () => {
                           <h2 className="text-base sm:text-xl font-semibold text-blue-600 dark:text-blue-400 hover:underline truncate">
                             {room.name}
                           </h2>
+                          {/* ✅ "Your Room" Badge */}
+                          {isOwnRoom && (
+                            <span className="flex items-center gap-1 text-xs font-bold text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/40 px-2 py-0.5 rounded-full flex-shrink-0 w-fit" title="You own this room">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                                <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+                              </svg>
+                              Your Room
+                            </span>
+                          )}
                           {/* ✅ Room Rating Badge - Desktop: inline, Mobile: below name */}
                           {room.average_rating > 0 && (
                             <span className="flex items-center gap-1 text-xs sm:text-sm font-medium text-yellow-600 bg-yellow-50 dark:bg-yellow-900/30 px-1.5 sm:px-2 py-0.5 rounded-full flex-shrink-0 w-fit mt-1 sm:mt-0" title={`${room.total_ratings} rating${room.total_ratings !== 1 ? 's' : ''}`}>
@@ -3050,32 +3088,117 @@ const LobbyPage = () => {
           className="overflow-y-auto overflow-x-hidden h-full scrollbar-hide"
           style={{ maxHeight: 'calc(100vh - 200px)', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
         >
-          {/* ✅ Sub-tab Navigation: Watching Now | Discover */}
-          <div className="flex gap-2 mb-6 border-b border-gray-300 dark:border-gray-700 px-4">
-            <button
-              onClick={() => setWatchingSubTab('sessions')}
-              className={`px-4 py-2 font-semibold transition-all ${
-                watchingSubTab === 'sessions'
-                  ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              Watching Now
-            </button>
-            <button
-              onClick={() => setWatchingSubTab('discover')}
-              className={`px-4 py-2 font-semibold transition-all ${
-                watchingSubTab === 'discover'
-                  ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              Discover
-            </button>
+          {/* ✅ Sub-tab Navigation: Watching Live | Discover */}
+          <div className="border-b border-gray-300 dark:border-gray-700 mb-6">
+            {/* Desktop: Tabs and search on same line */}
+            <div className="hidden md:flex items-center justify-between gap-4 px-4">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setWatchingSubTab('sessions')}
+                  className={`px-4 py-2 font-semibold transition-all ${
+                    watchingSubTab === 'sessions'
+                      ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                  }`}
+                >
+                  Watching Live
+                </button>
+                <button
+                  onClick={() => setWatchingSubTab('discover')}
+                  className={`px-4 py-2 font-semibold transition-all ${
+                    watchingSubTab === 'discover'
+                      ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                  }`}
+                >
+                  Discover
+                </button>
+              </div>
+              
+              {/* 🔍 Search input (desktop) */}
+              <div className="relative flex-1 max-w-xs">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  placeholder={watchingSubTab === 'discover' ? 'Search posts...' : 'Search sessions...'}
+                  value={discoverSearch}
+                  onChange={(e) => setDiscoverSearch(e.target.value)}
+                  className="w-full pl-10 pr-10 py-1.5 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
+                />
+                {discoverSearch && (
+                  <button
+                    onClick={() => setDiscoverSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Mobile: Tabs on top, search below */}
+            <div className="md:hidden">
+              <div className="flex gap-2 px-4">
+                <button
+                  onClick={() => setWatchingSubTab('sessions')}
+                  className={`px-4 py-2 font-semibold transition-all ${
+                    watchingSubTab === 'sessions'
+                      ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                  }`}
+                >
+                  Watching Live
+                </button>
+                <button
+                  onClick={() => setWatchingSubTab('discover')}
+                  className={`px-4 py-2 font-semibold transition-all ${
+                    watchingSubTab === 'discover'
+                      ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                  }`}
+                >
+                  Discover
+                </button>
+              </div>
+              
+              {/* 🔍 Search input (mobile - below tabs) */}
+              <div className="px-4 pt-3 pb-2">
+                <div className="relative w-full">
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder={watchingSubTab === 'discover' ? 'Search posts...' : 'Search sessions...'}
+                    value={discoverSearch}
+                    onChange={(e) => setDiscoverSearch(e.target.value)}
+                    className="w-full pl-10 pr-10 py-2 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
+                  />
+                  {discoverSearch && (
+                    <button
+                      onClick={() => setDiscoverSearch('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* ✅ WATCHING NOW CONTENT */}
-          {watchingSubTab === 'sessions' && (
+          {/* ✅ WATCHING NOW CONTENT - Keep both mounted for instant switching */}
+          <div className={watchingSubTab === 'sessions' ? 'block' : 'hidden'}>
             <>
           {/* ✅ Refresh Button */}
           <div className="flex justify-center mb-4">
@@ -3473,13 +3596,20 @@ const LobbyPage = () => {
             </div>
           )}
           </>
-          )}
+          </div>
 
-          {/* ✅ DISCOVER FEED CONTENT */}
-          {watchingSubTab === 'discover' && (
+          {/* ✅ DISCOVER FEED CONTENT - Keep mounted for instant switching */}
+          <div className={watchingSubTab === 'discover' ? 'block' : 'hidden'}>
             <>
               <DiscoverFeed
+                ref={discoverFeedRef}
+                searchQuery={discoverSearch}
                 onPostClick={(post) => {
+                  console.log('🎬 [LobbyPage] Opening post modal:', {
+                    postId: post.ID,
+                    title: post.title,
+                    currentModalState: isPostViewModalOpen,
+                  });
                   setSelectedPost(post);
                   setIsPostViewModalOpen(true);
                 }}
@@ -3494,7 +3624,7 @@ const LobbyPage = () => {
                 <Plus className="w-7 h-7 sm:w-8 sm:h-8 text-white" strokeWidth={3} />
               </button>
             </>
-          )}
+          </div>
         </div>
       )}
       

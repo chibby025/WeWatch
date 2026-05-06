@@ -128,6 +128,7 @@ func GetRoomMessages(c *gin.Context) {
 
 	var messages []models.RoomMessage
 	if err := DB.Where("room_id = ?", uint(roomID)).
+		Preload("ReplyTo").
 		Order("created_at ASC").
 		Find(&messages).Error; err != nil {
 		log.Printf("Error fetching room messages: %v", err)
@@ -140,6 +141,13 @@ func GetRoomMessages(c *gin.Context) {
 		var user models.User
 		if err := DB.Select("username").Where("id = ?", messages[i].UserID).First(&user).Error; err == nil {
 			messages[i].Username = user.Username
+		}
+		// Populate username for replied-to message
+		if messages[i].ReplyTo != nil {
+			var replyUser models.User
+			if err := DB.Select("username").Where("id = ?", messages[i].ReplyTo.UserID).First(&replyUser).Error; err == nil {
+				messages[i].ReplyTo.Username = replyUser.Username
+			}
 		}
 	}
 
@@ -163,7 +171,8 @@ func CreateRoomMessage(c *gin.Context) {
 	}
 
 	var input struct {
-		Message string `json:"message" binding:"required"`
+		Message   string `json:"message" binding:"required"`
+		ReplyToID *uint  `json:"reply_to_id"` // Optional: ID of message being replied to
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -183,6 +192,7 @@ func CreateRoomMessage(c *gin.Context) {
 		UserID:    userID.(uint),
 		Username:  user.Username,
 		Message:   input.Message,
+		ReplyToID: input.ReplyToID, // Store reply reference
 		CreatedAt: time.Now(),
 	}
 
@@ -190,6 +200,19 @@ func CreateRoomMessage(c *gin.Context) {
 		log.Printf("Error creating room message: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create message"})
 		return
+	}
+
+	// Load reply_to data if exists
+	if message.ReplyToID != nil {
+		var replyToMsg models.RoomMessage
+		if err := DB.Select("id, user_id, message").Where("id = ?", *message.ReplyToID).First(&replyToMsg).Error; err == nil {
+			// Populate username for replied message
+			var replyUser models.User
+			if err := DB.Select("username").Where("id = ?", replyToMsg.UserID).First(&replyUser).Error; err == nil {
+				replyToMsg.Username = replyUser.Username
+			}
+			message.ReplyTo = &replyToMsg
+		}
 	}
 
 	// Broadcast message via WebSocket to all room members
@@ -200,6 +223,7 @@ func CreateRoomMessage(c *gin.Context) {
 			"user_id":    message.UserID,
 			"username":   message.Username,
 			"message":    message.Message,
+			"reply_to":   message.ReplyTo, // Include reply context
 			"created_at": message.CreatedAt,
 		},
 	}

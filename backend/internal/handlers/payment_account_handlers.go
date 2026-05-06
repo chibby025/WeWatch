@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -450,6 +451,10 @@ func SetPrimaryPaymentAccount(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update payment account"})
 		return
 	}
+
+	// 🔐 AUDIT LOG: Primary account changed
+	log.Printf("🔐 AUDIT: User %d set payment account %d as primary (Gateway: %s, Currency: %s)", 
+		userID, account.ID, account.Gateway, account.Currency)
 	
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Primary payment account updated",
@@ -501,6 +506,10 @@ func DeletePaymentAccount(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete payment account"})
 		return
 	}
+
+	// 🔐 AUDIT LOG: Payment account deleted
+	log.Printf("🔐 AUDIT: User %d deleted payment account %d (Gateway: %s, Currency: %s)", 
+		userID, account.ID, account.Gateway, account.Currency)
 	
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Payment account deleted successfully",

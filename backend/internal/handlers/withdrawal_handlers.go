@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -331,6 +332,10 @@ func RequestWithdrawal(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
 		return
 	}
+
+	// 🔐 AUDIT LOG: Withdrawal requested
+	log.Printf("🔐 AUDIT: User %d requested withdrawal (Payout ID: %d, Amount: %.2f %s, Source: %s, Account: %d)", 
+		userID, payout.ID, req.Amount, req.Currency, req.SourceType, req.PaymentAccountID)
 	
 	// ✅ Send withdrawal confirmation email (async)
 	go func() {

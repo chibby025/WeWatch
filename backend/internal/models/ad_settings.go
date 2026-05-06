@@ -28,4 +28,5 @@ const (
 	AdSettingFeedAds        = "feed_ads"
 	AdSettingSessionAds     = "session_ads"
 	AdSettingRoomTVAds      = "roomtv_ads"
+	AdSettingDiscoverAds    = "discover_ads"
 )

@@ -423,6 +423,12 @@ const AdminDashboard = () => {
     { name: 'Year', gmv: analytics.revenue.year.gmv, platform: analytics.revenue.year.platform_revenue },
   ];
 
+  const adImpressionChartData = analytics.ads ? [
+    { name: 'Today', impressions: analytics.ads.impressions_today, clicks: analytics.ads.clicks_today },
+    { name: 'Week', impressions: analytics.ads.impressions_week, clicks: analytics.ads.clicks_week },
+    { name: 'All Time', impressions: analytics.ads.total_impressions, clicks: analytics.ads.total_clicks },
+  ] : [];
+
   const sessionChartData = [
     { name: 'Today', sessions: analytics.sessions.today },
     { name: 'Week', sessions: analytics.sessions.week },
@@ -558,6 +564,76 @@ const AdminDashboard = () => {
             <TodayMetric label="Platform Revenue" value={`₦${analytics.revenue.today.platform_revenue.toLocaleString()}`} />
           </div>
         </div>
+
+        {/* Download Analytics Section */}
+        {analytics.downloads && (
+          <div className="bg-gradient-to-r from-cyan-600/20 to-blue-600/20 backdrop-blur-lg rounded-xl p-6 border-2 border-cyan-500/50">
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+              📥 Video Downloads Analytics
+            </h2>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <MetricCard 
+                title="Total Downloads" 
+                value={analytics.downloads.total.toLocaleString()} 
+                subtitle="All-time" 
+                color="bg-gradient-to-br from-cyan-500 to-blue-600 text-white"
+              />
+              <MetricCard 
+                title="Today" 
+                value={analytics.downloads.today.toLocaleString()} 
+                subtitle="Last 24 hours" 
+                color="bg-gradient-to-br from-blue-500 to-indigo-600 text-white"
+              />
+              <MetricCard 
+                title="This Week" 
+                value={analytics.downloads.week.toLocaleString()} 
+                subtitle="Last 7 days" 
+                color="bg-gradient-to-br from-indigo-500 to-purple-600 text-white"
+              />
+              <MetricCard 
+                title="This Month" 
+                value={analytics.downloads.month.toLocaleString()} 
+                subtitle="Last 30 days" 
+                color="bg-gradient-to-br from-purple-500 to-pink-600 text-white"
+              />
+            </div>
+
+            {/* Top Downloaded Videos */}
+            {analytics.downloads.top_posts && analytics.downloads.top_posts.length > 0 && (
+              <div className="bg-white/5 rounded-lg p-4">
+                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                  🏆 Top Downloaded Videos
+                </h3>
+                <div className="space-y-2">
+                  {analytics.downloads.top_posts.slice(0, 10).map((post, index) => (
+                    <div 
+                      key={post.post_id} 
+                      className="flex items-center gap-3 p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
+                    >
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                        index === 0 ? 'bg-yellow-500 text-black' :
+                        index === 1 ? 'bg-gray-400 text-black' :
+                        index === 2 ? 'bg-amber-700 text-white' :
+                        'bg-gray-600 text-white'
+                      }`}>
+                        {index + 1}
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-semibold text-white truncate">{post.title}</div>
+                        <div className="text-xs text-gray-400">by @{post.username}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-lg font-bold text-cyan-400">{post.downloads_count.toLocaleString()}</div>
+                        <div className="text-xs text-gray-400">downloads</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Platform Accounting - Critical Section */}
         <div className="bg-gradient-to-r from-yellow-600/20 to-red-600/20 backdrop-blur-lg rounded-xl p-6 border-2 border-yellow-500/50">
@@ -1673,6 +1749,130 @@ const AdminDashboard = () => {
               )}
             </div>
           </>
+        )}
+
+        {/* Ad Campaign Analytics Section */}
+        {analytics.ads && (
+          <div className="bg-gradient-to-r from-purple-600/20 to-pink-600/20 backdrop-blur-lg rounded-xl p-6 border-2 border-purple-500/50 mb-8">
+            <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+              📢 Ad Campaign Analytics
+            </h2>
+            
+            {/* Ad Overview Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <MetricCard
+                title="Active Campaigns"
+                value={analytics.ads.active_campaigns}
+                subtitle={`${analytics.ads.total_campaigns} total campaigns`}
+                color="bg-gradient-to-br from-purple-500/20 to-purple-700/20"
+              />
+              <MetricCard
+                title="Total Impressions"
+                value={analytics.ads.total_impressions.toLocaleString()}
+                subtitle={`${analytics.ads.impressions_today} today`}
+                color="bg-gradient-to-br from-blue-500/20 to-blue-700/20"
+              />
+              <MetricCard
+                title="Total Clicks"
+                value={analytics.ads.total_clicks.toLocaleString()}
+                subtitle={`${analytics.ads.clicks_today} today`}
+                color="bg-gradient-to-br from-green-500/20 to-green-700/20"
+              />
+              <MetricCard
+                title="Click-Through Rate"
+                value={`${analytics.ads.ctr.toFixed(2)}%`}
+                subtitle="Overall CTR"
+                color="bg-gradient-to-br from-yellow-500/20 to-yellow-700/20"
+              />
+            </div>
+
+            {/* Ad Performance Chart */}
+            {adImpressionChartData.length > 0 && (
+              <div className="bg-white/5 rounded-lg p-6 mb-6">
+                <h3 className="text-lg font-semibold mb-4">Ad Performance Trends</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={adImpressionChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="name" stroke="#9ca3af" />
+                    <YAxis stroke="#9ca3af" />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                      labelStyle={{ color: '#f3f4f6' }}
+                    />
+                    <Legend />
+                    <Bar dataKey="impressions" fill="#8b5cf6" name="Impressions" />
+                    <Bar dataKey="clicks" fill="#10b981" name="Clicks" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Ad Inquiries & Revenue */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <Card className="bg-white/10 backdrop-blur-lg border-white/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold opacity-90">Pending Inquiries</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-3xl font-bold mb-1">{analytics.ads.pending_inquiries}</p>
+                  <p className="text-sm opacity-75">{analytics.ads.approved_inquiries} approved</p>
+                </CardContent>
+              </Card>
+              
+              <Card className="bg-white/10 backdrop-blur-lg border-white/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold opacity-90">Estimated Revenue</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-3xl font-bold mb-1">₦{analytics.ads.estimated_revenue.toFixed(2)}</p>
+                  <p className="text-sm opacity-75">From ad spends</p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-white/10 backdrop-blur-lg border-white/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold opacity-90">This Week</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xl font-bold mb-1">{analytics.ads.impressions_week.toLocaleString()} impressions</p>
+                  <p className="text-sm opacity-75">{analytics.ads.clicks_week} clicks</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Top Performing Campaigns */}
+            {analytics.ads.top_campaigns && analytics.ads.top_campaigns.length > 0 && (
+              <div className="bg-white/5 rounded-lg p-6">
+                <h3 className="text-lg font-semibold mb-4">Top Performing Campaigns</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="border-b border-gray-700">
+                      <tr>
+                        <th className="pb-3 text-gray-400 font-medium">Campaign</th>
+                        <th className="pb-3 text-gray-400 font-medium">Impressions</th>
+                        <th className="pb-3 text-gray-400 font-medium">Clicks</th>
+                        <th className="pb-3 text-gray-400 font-medium">CTR</th>
+                        <th className="pb-3 text-gray-400 font-medium">CPM</th>
+                        <th className="pb-3 text-gray-400 font-medium">Spent</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analytics.ads.top_campaigns.map((campaign, index) => (
+                        <tr key={index} className="border-b border-gray-800">
+                          <td className="py-3 font-medium">{campaign.CampaignName}</td>
+                          <td className="py-3">{campaign.Impressions.toLocaleString()}</td>
+                          <td className="py-3">{campaign.Clicks}</td>
+                          <td className="py-3">{campaign.CTR.toFixed(2)}%</td>
+                          <td className="py-3">₦{campaign.CPM.toFixed(2)}</td>
+                          <td className="py-3">₦{campaign.SpentAmount.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Event Analytics Section */}

@@ -4242,6 +4242,17 @@ export default function VideoWatch() {
           }
           break;
           
+        case "room_post_created":
+          // Room host created a new post (recording or upload)
+          if (message.data) {
+            console.log('📝 [VideoWatch] Room post created:', message.data);
+            toast.success(`${message.data.author_username} posted a ${message.data.media_type}!`, {
+              icon: '🎬',
+              duration: 4000,
+            });
+          }
+          break;
+          
         default:
           // Known informational message types that don't need action
           if (message.type === 'session_preview_updated' || message.type === 'media_state_changed') {
@@ -5683,8 +5694,6 @@ export default function VideoWatch() {
             isSessionPrivate={sessionStatus?.is_private || false} // ✅ Pass session privacy flag
             sessionStatus={sessionStatus} // ✅ Pass full session status for self-validation fallback
           />
-          {/* 🔍 Debug: Log when passing isSessionPrivate to LeftSidebar */}
-          {console.log('🔍 [VideoWatch → LeftSidebar] Passing isSessionPrivate:', sessionStatus?.is_private || false, sessionStatus?.is_private ? '(Ghost Mode ENFORCED)' : '(Ghost Mode optional)')}
         </div>
       )}
 

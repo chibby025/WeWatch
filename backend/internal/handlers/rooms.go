@@ -2177,18 +2177,33 @@ func DeleteRoomHandler(c *gin.Context) {
         }
         
         // 6. Delete watch sessions
+        // Get all session IDs for this room (needed for broadcast request cleanup)
+        var sessionIDs []string
+        if err := tx.Model(&models.WatchSession{}).Where("room_id = ?", roomIDUint).Pluck("session_id", &sessionIDs).Error; err != nil {
+            return err
+        }
+        
+        // Delete watch sessions
         if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.WatchSession{}).Error; err != nil {
             return err
         }
         
-        // 7. Delete broadcast requests
-        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.BroadcastRequest{}).Error; err != nil {
-            return err
-        }
-        
-        // 8. Delete broadcast permissions
-        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.BroadcastPermission{}).Error; err != nil {
-            return err
+        // 7. Delete broadcast requests and permissions (both linked via watch_session_id, not room_id)
+        if len(sessionIDs) > 0 {
+            // First, get the numeric IDs of sessions (both models use uint watch_session_id)
+            var sessionNumericIDs []uint
+            if err := tx.Model(&models.WatchSession{}).Where("session_id IN ?", sessionIDs).Pluck("id", &sessionNumericIDs).Error; err != nil {
+                log.Printf("Warning: Failed to get session IDs for broadcast cleanup: %v", err)
+            } else if len(sessionNumericIDs) > 0 {
+                // Delete broadcast requests
+                if err := tx.Where("watch_session_id IN ?", sessionNumericIDs).Delete(&models.BroadcastRequest{}).Error; err != nil {
+                    log.Printf("Warning: Failed to delete broadcast requests: %v", err)
+                }
+                // Delete broadcast permissions
+                if err := tx.Where("watch_session_id IN ?", sessionNumericIDs).Delete(&models.BroadcastPermission{}).Error; err != nil {
+                    log.Printf("Warning: Failed to delete broadcast permissions: %v", err)
+                }
+            }
         }
         
         // 9. Delete user room memberships

@@ -78,6 +78,10 @@ const animations = `
     from { width: 0; }
     to { width: 100%; }
   }
+  @keyframes marquee {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+  }
   @keyframes typewriterSlow {
     from { width: 0; }
     to { width: 100%; }
@@ -160,6 +164,23 @@ const RoomTV = ({
   const postRotationRef = useRef(null);
   const postDismissRef = useRef(null);
 
+  // Helper: Get random gradient for jumbotron
+  const getRandomGradient = () => {
+    const gradients = [
+      'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+      'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+      'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+      'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+      'linear-gradient(135deg, #30cfd0 0%, #330867 100%)',
+      'linear-gradient(135deg, #a8edea 0%, #fed6e3 100%)',
+      'linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%)',
+      'linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)',
+      'linear-gradient(135deg, #ff6e7f 0%, #bfe9ff 100%)',
+    ];
+    return gradients[Math.floor(Math.random() * gradients.length)];
+  };
+
   // Helper: Get animation class based on type and speed
   const getAnimationClass = (animationType, speed = 'medium') => {
     if (!animationType) return '';
@@ -170,17 +191,41 @@ const RoomTV = ({
   // Fetch room posts (host posts to this room)
   useEffect(() => {
     if (roomId) {
+      console.log('🔄 [RoomTV] Refetch triggered - fetching room posts (trigger:', refetchTrigger, ')');
       fetchRoomPosts();
     }
   }, [roomId, refetchTrigger]);
 
   const fetchRoomPosts = async () => {
     try {
+      console.log('📡 [RoomTV] Fetching room posts for room', roomId);
       const response = await apiClient.get(`/api/rooms/${roomId}/posts?limit=5`);
+      console.log('📬 [RoomTV] Received posts response:', {
+        count: response.data.posts?.length || 0,
+        posts: response.data.posts?.map(p => ({ id: p.id, title: p.title, created_at: p.created_at }))
+      });
+      
       if (response.data.posts && response.data.posts.length > 0) {
-        setRoomPosts(response.data.posts);
-        setCurrentPostIndex(0);
+        // Filter posts: only show posts created within last 5 minutes
+        const now = new Date();
+        const recentPosts = response.data.posts.filter(post => {
+          const postCreatedAt = new Date(post.created_at);
+          const ageInMinutes = (now - postCreatedAt) / (1000 * 60);
+          return ageInMinutes <= 5; // Only show posts less than 5 minutes old
+        });
+        
+        console.log('⏱️ [RoomTV] After age filter (< 5 min):', recentPosts.length, 'posts remain');
+        
+        if (recentPosts.length > 0) {
+          console.log('✅ [RoomTV] Setting room posts:', recentPosts.map(p => p.title));
+          setRoomPosts(recentPosts);
+          setCurrentPostIndex(0);
+        } else {
+          console.log('⚠️ [RoomTV] No recent posts found (all older than 5 minutes)');
+          setRoomPosts([]);
+        }
       } else {
+        console.log('ℹ️ [RoomTV] No posts found for room');
         setRoomPosts([]);
       }
     } catch (error) {
@@ -189,18 +234,51 @@ const RoomTV = ({
     }
   };
 
+  // Track ad impression or click
+  const trackAdEvent = async (campaignId, clicked = false) => {
+    try {
+      await apiClient.post(`/api/ads/campaigns/${campaignId}/track`, {
+        clicked,
+        user_id: currentUser?.id
+      });
+      console.log(`✅ [RoomTV Ad] Tracked ${clicked ? 'click' : 'impression'} for campaign ${campaignId}`);
+    } catch (error) {
+      console.error('❌ [RoomTV Ad] Failed to track:', error);
+    }
+  };
+
   // Fetch RoomTV ad (when idle)
   const fetchRoomTVAd = async () => {
-    if (!roomId || !currentUser) return null;
+    if (!roomId || !currentUser) {
+      console.log('🚫 [RoomTV Ad] Cannot fetch: missing roomId or currentUser');
+      return null;
+    }
     
     try {
+      console.log('🎯 [RoomTV Ad] Fetching ad for room', roomId, 'user', currentUser.id);
       const response = await apiClient.get('/api/ads/roomtv', {
         params: { room_id: roomId, user_id: currentUser.id }
       });
-      return response.data;
+      console.log('📥 [RoomTV Ad] Response:', response.data);
+      
+      // Backend returns { ad: {...}, message: "..." }
+      if (response.data && response.data.ad) {
+        console.log('✅ [RoomTV Ad] Ad found:', response.data.ad);
+        const ad = response.data.ad;
+        
+        // Track impression immediately
+        if (ad.id) {
+          trackAdEvent(ad.id, false);
+        }
+        
+        return ad;
+      } else {
+        console.log('⚠️ [RoomTV Ad] No ad in response:', response.data);
+        return null;
+      }
     } catch (error) {
       // Silently fail - ads are optional
-      console.log('No ads available:', error.response?.data?.error);
+      console.log('❌ [RoomTV Ad] Error fetching:', error.response?.data?.message || error.message);
       return null;
     }
   };
@@ -279,22 +357,29 @@ const RoomTV = ({
 
       // Priority 4: Room Posts (host posts to this room)
       if (roomPosts.length > 0) {
-        // Start post rotation: cycle every 10s, dismiss after 2 mins total
-        if (postRotationRef.current) clearInterval(postRotationRef.current);
-        if (postDismissRef.current) clearTimeout(postDismissRef.current);
+        // Only set up timers if they don't already exist (prevents resetting on rotation)
+        if (!postRotationRef.current) {
+          // Rotate posts every 10 seconds
+          postRotationRef.current = setInterval(() => {
+            setCurrentPostIndex(prev => (prev + 1) % roomPosts.length);
+          }, 10000);
+        }
+        
+        if (!postDismissRef.current) {
+          // Auto-dismiss all posts after 2 minutes
+          postDismissRef.current = setTimeout(() => {
+            if (postRotationRef.current) {
+              clearInterval(postRotationRef.current);
+              postRotationRef.current = null;
+            }
+            setRoomPosts([]); // Clear posts array
+            setIsExpanded(false);
+            setTimeout(() => setContent(null), 300);
+          }, 120000); // 2 minutes
+        }
+        
+        // Clear ad timeout if it exists
         if (adTimeoutRef.current) clearTimeout(adTimeoutRef.current);
-        
-        // Rotate posts every 10 seconds
-        postRotationRef.current = setInterval(() => {
-          setCurrentPostIndex(prev => (prev + 1) % roomPosts.length);
-        }, 10000);
-        
-        // Auto-dismiss all posts after 2 minutes
-        postDismissRef.current = setTimeout(() => {
-          if (postRotationRef.current) clearInterval(postRotationRef.current);
-          setIsExpanded(false);
-          setTimeout(() => setContent(null), 300);
-        }, 120000); // 2 minutes
         
         return {
           type: 'room_posts',
@@ -337,7 +422,7 @@ const RoomTV = ({
       setIsExpanded(!!newContent);
     });
 
-  }, [activeSession, hostContent, upcomingEvents, roomPosts, currentPostIndex, adDismissed]);
+  }, [activeSession, hostContent, upcomingEvents, roomPosts, adDismissed]); // Removed currentPostIndex to prevent timer resets
 
   // Render nothing if no content
   if (!content) return null;
@@ -561,13 +646,17 @@ const RoomTV = ({
           </div>
         )}
 
-        {/* Room Posts Content */}
+        {/* Room Posts Content - Jumbotron Style */}
         {content.type === 'room_posts' && content.data && (
           <div 
-            className="flex items-center justify-between cursor-pointer hover:bg-gray-700/30 rounded-lg p-2 transition-colors"
+            className="cursor-pointer hover:opacity-90 transition-opacity rounded-lg overflow-hidden"
+            style={{
+              background: getRandomGradient(),
+              padding: window.innerWidth < 768 ? '8px 12px' : '10px 16px',
+            }}
             onClick={() => {
-              // Navigate to Discover page with post
-              navigate('/discover', { 
+              // Navigate to Lobby page with post
+              navigate('/lobby', { 
                 state: { 
                   openPost: content.data.id, 
                   autoPlay: true 
@@ -575,87 +664,46 @@ const RoomTV = ({
               });
             }}
           >
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              {/* Thumbnail */}
-              {content.data.thumbnail_url && (
-                <img 
-                  src={content.data.thumbnail_url} 
-                  alt={content.data.title}
-                  className="w-16 h-16 object-cover rounded-lg flex-shrink-0"
-                />
-              )}
-              
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-purple-400 mb-1 flex items-center gap-2">
-                  <PlayIcon className="w-3 h-3" />
-                  NEW POST FROM HOST
-                  {roomPosts.length > 1 && (
-                    <span className="text-gray-400">
-                      ({currentPostIndex + 1}/{roomPosts.length})
-                    </span>
-                  )}
-                </div>
-                <div className="text-white font-semibold mb-1 truncate">
-                  {content.data.title}
-                </div>
-                {content.data.description && (
-                  <div className="text-sm text-gray-300 truncate">
-                    {content.data.description}
-                  </div>
-                )}
-              </div>
-            </div>
-            
-            {/* Watch Button */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                navigate('/discover', { 
-                  state: { 
-                    openPost: content.data.id, 
-                    autoPlay: true 
-                  } 
-                });
-              }}
-              className="ml-4 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 flex-shrink-0"
+            <div 
+              className="font-semibold text-sm sm:text-base animate-fade-pulse truncate"
+              style={{ color: '#FFFFFF' }}
             >
-              <PlayIcon className="w-4 h-4" />
-              Watch
-            </button>
+              🎬 New Post Available: {content.data.title}
+            </div>
           </div>
         )}
 
-        {/* Ad Content */}
+        {/* Ad Content - BILLBOARD JUMBOTRON STYLE */}
         {content.type === 'ad' && content.data && (
-          <div className="flex items-center justify-between">
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-gray-400 mb-1">SPONSORED</div>
-              <div className="text-white font-semibold mb-1 truncate">
+          <a
+            href={content.data.click_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block relative rounded-lg overflow-hidden py-3 sm:py-4 cursor-pointer hover:opacity-90 transition-opacity"
+            style={{
+              background: getRandomGradient(),
+              minHeight: window.innerWidth < 768 ? '60px' : '70px',
+            }}
+            onClick={(e) => {
+              // Track click before opening URL
+              if (content.data.id) {
+                trackAdEvent(content.data.id, true);
+              }
+            }}
+          >
+            {/* Sponsored label - bottom right */}
+            <div className="absolute bottom-2 right-2 bg-black/30 backdrop-blur-sm px-2 py-1 rounded text-[10px] text-white/80 font-medium">
+              SPONSORED
+            </div>
+            
+            {/* Centered content */}
+            <div className="flex items-center justify-center text-center px-4 h-full">
+              {/* Title with pulse animation */}
+              <div className="text-white font-bold animate-fade-pulse max-w-full text-sm sm:text-base md:text-lg leading-tight">
                 {content.data.title}
               </div>
-              {content.data.ad_type === 'text' && content.data.description && (
-                <div className="text-sm text-gray-300 line-clamp-2">
-                  {content.data.description}
-                </div>
-              )}
-              {(content.data.ad_type === 'banner' || content.data.ad_type === 'image') && content.data.media_url && (
-                <img 
-                  src={content.data.media_url} 
-                  alt={content.data.title}
-                  className="mt-2 max-h-20 rounded-lg object-contain"
-                />
-              )}
             </div>
-            <a
-              href={content.data.cta_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-4 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors flex-shrink-0"
-            >
-              {content.data.cta_text || 'Learn More'}
-            </a>
-          </div>
+          </a>
         )}
       </div>
     </div>

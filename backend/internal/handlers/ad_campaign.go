@@ -165,7 +165,7 @@ func UpdateCampaignStatus(c *gin.Context) {
 		return
 	}
 
-	approvedByID := uint(userID.(float64))
+	approvedByID := userID.(uint)
 	now := time.Now()
 	
 	campaign.Status = input.Status
@@ -196,6 +196,7 @@ func TrackAdImpression(c *gin.Context) {
 	campaignID := c.Param("id")
 
 	var input struct {
+		UserID       *uint  `json:"user_id"`
 		RoomID       *uint  `json:"room_id"`
 		SessionID    string `json:"session_id"`
 		Clicked      bool   `json:"clicked"`
@@ -220,10 +221,12 @@ func TrackAdImpression(c *gin.Context) {
 		return
 	}
 
-	// Get user ID if authenticated
+	// Get user ID from request body or auth middleware
 	var userID *uint
-	if uid, exists := c.Get("user_id"); exists {
-		id := uint(uid.(float64))
+	if input.UserID != nil {
+		userID = input.UserID
+	} else if uid, exists := c.Get("user_id"); exists {
+		id := uid.(uint)
 		userID = &id
 	}
 
@@ -276,6 +279,17 @@ func TrackAdImpression(c *gin.Context) {
 
 // GetActiveCampaigns retrieves active campaigns for ad display
 func GetActiveCampaigns(c *gin.Context) {
+	// ✅ CHECK AD SETTINGS FIRST
+	var globalEnabled, discoverEnabled bool
+	DB.Model(&models.AdSettings{}).Where("setting_key = ?", "global_enabled").Pluck("is_enabled", &globalEnabled)
+	DB.Model(&models.AdSettings{}).Where("setting_key = ?", "discover_ads").Pluck("is_enabled", &discoverEnabled)
+	
+	// If global ads or discover ads are disabled, return empty
+	if !globalEnabled || !discoverEnabled {
+		c.JSON(http.StatusOK, gin.H{"campaigns": []models.AdCampaign{}})
+		return
+	}
+
 	adType := c.Query("ad_type")     // 'banner', 'video_preroll', 'sponsored_room'
 	_ = c.Query("room_id")           // Reserved for future room-specific targeting
 	userAge := c.Query("user_age")
@@ -368,6 +382,28 @@ func GetInSessionAd(c *gin.Context) {
 	contentRating := c.Query("content_rating")
 	userIDStr := c.Query("user_id")
 	sessionID := c.Query("session_id")
+	placement := c.Query("placement") // 'feed' or 'discover'
+
+	// ✅ CHECK AD SETTINGS BASED ON PLACEMENT
+	if placement == "feed" {
+		if !IsAdTypeEnabled(DB, models.AdSettingFeedAds) {
+			c.JSON(http.StatusOK, gin.H{
+				"ad":      nil,
+				"eligible": false,
+				"message":  "Feed ads disabled",
+			})
+			return
+		}
+	} else if placement == "discover" {
+		if !IsAdTypeEnabled(DB, models.AdSettingDiscoverAds) {
+			c.JSON(http.StatusOK, gin.H{
+				"ad":      nil,
+				"eligible": false,
+				"message":  "Discover ads disabled",
+			})
+			return
+		}
+	}
 
 	// Check frequency cap first
 	if userIDStr != "" && sessionID != "" {
@@ -472,7 +508,8 @@ func GetRoomTVAd(c *gin.Context) {
 		return
 	}
 	
-	// Check 1-hour frequency cap for this room
+	// TEMPORARILY DISABLED FOR TESTING - Check 1-hour frequency cap for this room
+	/*
 	if room.LastAdShownAt != nil {
 		timeSinceLastAd := time.Since(*room.LastAdShownAt)
 		if timeSinceLastAd < time.Hour {
@@ -485,6 +522,7 @@ func GetRoomTVAd(c *gin.Context) {
 			return
 		}
 	}
+	*/
 	
 	// Get user age for targeting (if provided)
 	var userAge int

@@ -55,6 +55,8 @@ type RoomMessage struct {
 	Duration      *int       `gorm:"type:int" json:"duration,omitempty"` // Voice note duration in seconds
 	MessageType   string     `gorm:"type:varchar(20);default:'text'" json:"message_type"` // text, voice_note, poll, etc.
 	PollData      *PollData  `gorm:"type:jsonb" json:"poll_data,omitempty"` // Poll data (PostgreSQL JSONB)
+	ReplyToID     *uint      `gorm:"index" json:"reply_to_id,omitempty"` // Message being replied to
+	ReplyTo       *RoomMessage `gorm:"foreignKey:ReplyToID;constraint:OnDelete:SET NULL" json:"reply_to,omitempty"` // Populated reply context
 	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	
 	// Relationships

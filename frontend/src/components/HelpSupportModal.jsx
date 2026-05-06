@@ -1,13 +1,15 @@
 // frontend/src/components/HelpSupportModal.jsx
 import React, { useState } from 'react';
-import { XMarkIcon, PaperAirplaneIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, PaperAirplaneIcon, ChevronDownIcon, ChevronUpIcon, MegaphoneIcon } from '@heroicons/react/24/outline';
+import AdInquiryForm from './AdInquiryForm';
 
 const HelpSupportModal = ({ isOpen, onClose, currentUser }) => {
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('contact'); // 'contact' or 'faq'
+  const [activeTab, setActiveTab] = useState('contact'); // 'contact', 'faq', or 'advertise'
   const [expandedFaq, setExpandedFaq] = useState(null);
+  const [advertiseModalOpen, setAdvertiseModalOpen] = useState(false);
 
   if (!isOpen) return null;
 
@@ -207,6 +209,16 @@ const HelpSupportModal = ({ isOpen, onClose, currentUser }) => {
           >
             ✉️ Contact Us
           </button>
+          <button
+            onClick={() => setActiveTab('advertise')}
+            className={`flex-1 px-4 py-3 text-sm sm:text-base font-medium transition-colors ${
+              activeTab === 'advertise'
+                ? 'text-purple-600 border-b-2 border-purple-600 bg-white'
+                : 'text-gray-600 hover:text-gray-800'
+            }`}
+          >
+            📢 Advertise
+          </button>
         </div>
 
         {/* FAQ Tab Content */}
@@ -358,7 +370,99 @@ const HelpSupportModal = ({ isOpen, onClose, currentUser }) => {
         </div>
           </>
         )}
+
+        {/* Advertise Tab Content */}
+        {activeTab === 'advertise' && (
+          <div className="p-4 sm:p-6">
+            {/* Header */}
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                <MegaphoneIcon className="w-8 h-8 text-white" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">
+                Reach Thousands of Engaged Viewers
+              </h3>
+              <p className="text-gray-600 max-w-xl mx-auto">
+                Advertise on LetsWatchOut and connect with our community of movie lovers, gamers, and content enthusiasts watching together in real-time.
+              </p>
+            </div>
+
+            {/* Benefits Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+              <div className="bg-gradient-to-br from-purple-50 to-blue-50 p-4 rounded-lg border border-purple-200">
+                <div className="text-3xl mb-2">🎯</div>
+                <h4 className="font-semibold text-gray-900 mb-1">Targeted Placement</h4>
+                <p className="text-sm text-gray-600">
+                  Ads appear in live sessions and discover feed, reaching viewers at peak engagement moments.
+                </p>
+              </div>
+              
+              <div className="bg-gradient-to-br from-blue-50 to-purple-50 p-4 rounded-lg border border-blue-200">
+                <div className="text-3xl mb-2">📊</div>
+                <h4 className="font-semibold text-gray-900 mb-1">Real-Time Analytics</h4>
+                <p className="text-sm text-gray-600">
+                  Track impressions, clicks, and CTR with our comprehensive analytics dashboard.
+                </p>
+              </div>
+              
+              <div className="bg-gradient-to-br from-pink-50 to-purple-50 p-4 rounded-lg border border-pink-200">
+                <div className="text-3xl mb-2">💰</div>
+                <h4 className="font-semibold text-gray-900 mb-1">Flexible Budgets</h4>
+                <p className="text-sm text-gray-600">
+                  Campaign budgets from $500 to $10,000+. Pay only for verified impressions delivered.
+                </p>
+              </div>
+              
+              <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-4 rounded-lg border border-purple-200">
+                <div className="text-3xl mb-2">🎬</div>
+                <h4 className="font-semibold text-gray-900 mb-1">Rich Media Support</h4>
+                <p className="text-sm text-gray-600">
+                  Display video ads, banners, or sponsored content. Full creative control over your campaigns.
+                </p>
+              </div>
+            </div>
+
+            {/* CTA */}
+            <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl p-6 text-center text-white">
+              <h4 className="text-xl font-bold mb-2">Ready to Get Started?</h4>
+              <p className="text-purple-100 mb-4 text-sm">
+                Submit an inquiry and our team will reach out within 2 business days to discuss your campaign goals.
+              </p>
+              <button
+                onClick={() => setAdvertiseModalOpen(true)}
+                className="bg-white text-purple-600 px-8 py-3 rounded-full font-semibold hover:bg-gray-100 transition-all transform hover:scale-105 shadow-lg"
+              >
+                Submit Advertising Inquiry
+              </button>
+            </div>
+
+            {/* FAQ */}
+            <div className="mt-8 pt-6 border-t border-gray-200">
+              <h4 className="font-semibold text-gray-900 mb-3">Common Questions</h4>
+              <div className="space-y-3 text-sm">
+                <div>
+                  <p className="font-medium text-gray-900">What ad formats do you support?</p>
+                  <p className="text-gray-600 mt-1">Banner images, video ads, and sponsored posts in the Discover feed.</p>
+                </div>
+                <div>
+                  <p className="font-medium text-gray-900">How long does campaign approval take?</p>
+                  <p className="text-gray-600 mt-1">Most campaigns are reviewed and approved within 1-2 business days.</p>
+                </div>
+                <div>
+                  <p className="font-medium text-gray-900">Can I target specific demographics?</p>
+                  <p className="text-gray-600 mt-1">Yes! Target by age range and content rating to reach your ideal audience.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Ad Inquiry Modal (nested) */}
+      <AdInquiryForm 
+        isOpen={advertiseModalOpen} 
+        onClose={() => setAdvertiseModalOpen(false)} 
+      />
     </div>
   );
 };

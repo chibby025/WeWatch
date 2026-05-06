@@ -25,7 +25,7 @@ var DB *gorm.DB // This will be set from main.go
 
 // RegisterInput defines the expected structure of the request body for registration.
 type RegisterInput struct {
-    Username    string  `json:"username" binding:"required,min=3,max=50"`
+    Username    string  `json:"username" binding:"required,min=1,max=50"`
     Email       string  `json:"email" binding:"required,email"`
     Password    string  `json:"password" binding:"required,min=6"`
     DateOfBirth *string `json:"date_of_birth"` // Optional: "YYYY-MM-DD" format

@@ -61,7 +61,7 @@ const useSessionRecording = () => {
   }, []);
 
   // Start recording
-  const startRecording = useCallback(async (source, roomId) => {
+  const startRecording = useCallback(async (source, roomId, title) => {
     try {
       let stream = null;
 
@@ -133,7 +133,7 @@ const useSessionRecording = () => {
       // Handle stop event (create blob and upload)
       mediaRecorder.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-        await handleUpload(blob, roomId);
+        await handleUpload(blob, roomId, title);
       };
 
       // Start recording with 10 second chunks
@@ -171,18 +171,18 @@ const useSessionRecording = () => {
   }, [isRecording, stopTimer]);
 
   // Upload recording and create post
-  const handleUpload = async (blob, roomId) => {
+  const handleUpload = async (blob, roomId, title) => {
     setIsProcessing(true);
     setUploadProgress(0);
 
     try {
       // Step 1: Create post entry
       const postData = {
-        title: `Watch Party Recording - ${new Date().toLocaleDateString()}`,
+        title: title || `Watch Party Recording - ${new Date().toLocaleDateString()}`,
         description: 'Recorded live watch party session',
         media_type: 'video',
         post_type: 'recording',
-        room_id: roomId || null,
+        room_id: roomId ? parseInt(roomId, 10) : null, // ✅ Convert to integer
         is_public: true,
       };
 
@@ -195,7 +195,7 @@ const useSessionRecording = () => {
       const filename = `recording_${post.id}_${Date.now()}.webm`;
       formData.append('file', blob, filename);
 
-      await apiClient.post(`/api/posts/${post.id}/upload`, formData, {
+      const uploadResponse = await apiClient.post(`/api/posts/${post.id}/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round(
@@ -205,7 +205,14 @@ const useSessionRecording = () => {
         },
       });
 
-      console.log('✅ [Recording] Upload complete');
+      // Update post with video URLs from upload response
+      const updatedPost = {
+        ...post,
+        video_url: uploadResponse.data.video_url,
+        thumbnail_url: uploadResponse.data.thumbnail_url,
+      };
+
+      console.log('✅ [Recording] Upload complete:', uploadResponse.data);
       toast.success('🎉 Recording posted successfully!');
 
       // Reset state
@@ -214,7 +221,7 @@ const useSessionRecording = () => {
       setRecordingTime(0);
       chunksRef.current = [];
 
-      return post;
+      return updatedPost;
     } catch (error) {
       console.error('❌ [Recording] Upload failed:', error);
       toast.error(error.response?.data?.error || 'Failed to upload recording');

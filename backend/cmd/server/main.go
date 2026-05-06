@@ -550,6 +550,7 @@ func main() {
 		postsPublic.GET("/:id", handlers.GetPost)                 // GET /api/posts/:id (Get single post)
 		postsPublic.POST("/:id/view", handlers.TrackPostView)     // POST /api/posts/:id/view (Track view - no auth required)
 		postsPublic.GET("/:id/comments", handlers.GetPostComments) // GET /api/posts/:id/comments (Get comments)
+		postsPublic.GET("/:id/download", handlers.DownloadPost)   // GET /api/posts/:id/download (Download post video)
 	}
 	
 	// Protected routes (create, update, delete, like, comment)
@@ -896,6 +897,10 @@ func main() {
 	// --- AD CAMPAIGN ROUTES (Protected) ---
 	adGroup := r.Group("/api/ads")
 	adGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
+	adGroup.Use(func(c *gin.Context) {
+		c.Set("db", DB)
+		c.Next()
+	})
 	{
 		adGroup.POST("/campaigns", handlers.CreateAdCampaign)                                  // POST /api/ads/campaigns (Create campaign)
 		adGroup.GET("/campaigns", handlers.GetUserCampaigns)                                   // GET /api/ads/campaigns (List user's campaigns)
@@ -903,16 +908,27 @@ func main() {
 	}
 	
 	// --- PUBLIC AD SERVING ROUTES ---
-	r.GET("/api/ads/active", handlers.GetActiveCampaigns)                                      // GET /api/ads/active (Get active ads for display)
-	r.GET("/api/ads/check-eligibility", handlers.CheckAdEligibility)                           // GET /api/ads/check-eligibility?user_id=X&session_id=Y (Check 1-hour frequency cap)
-	r.GET("/api/ads/in-session", handlers.GetInSessionAd)                                      // GET /api/ads/in-session?user_id=X&session_id=Y (Get highest CPM ad for 80-20 split)
-	r.GET("/api/ads/roomtv", handlers.GetRoomTVAd)                                             // GET /api/ads/roomtv?room_id=X&user_id=Y (Get text/banner ad for RoomTV)
-	r.GET("/api/ads/settings", handlers.GetAdSettingsHandler)                                  // GET /api/ads/settings (Get ad system config - global switch)
-	r.POST("/api/ads/campaigns/:id/track", handlers.TrackAdImpression)                         // POST /api/ads/campaigns/:id/track (Track impression/click)
+	publicAdGroup := r.Group("/api/ads")
+	publicAdGroup.Use(func(c *gin.Context) {
+		c.Set("db", DB)
+		c.Next()
+	})
+	{
+		publicAdGroup.GET("/active", handlers.GetActiveCampaigns)                              // GET /api/ads/active (Get active ads for display)
+		publicAdGroup.GET("/check-eligibility", handlers.CheckAdEligibility)                   // GET /api/ads/check-eligibility?user_id=X&session_id=Y (Check 1-hour frequency cap)
+		publicAdGroup.GET("/in-session", handlers.GetInSessionAd)                              // GET /api/ads/in-session?user_id=X&session_id=Y (Get highest CPM ad for 80-20 split)
+		publicAdGroup.GET("/roomtv", handlers.GetRoomTVAd)                                     // GET /api/ads/roomtv?room_id=X&user_id=Y (Get text/banner ad for RoomTV)
+		publicAdGroup.GET("/settings", handlers.GetAdSettingsHandler)                          // GET /api/ads/settings (Get ad system config - global switch)
+		publicAdGroup.POST("/campaigns/:id/track", handlers.TrackAdImpression)                 // POST /api/ads/campaigns/:id/track (Track impression/click)
+	}
 	
 	// --- AD SETTINGS ROUTES (Super Admin Only) ---
 	adSettingsGroup := r.Group("/api/ads")
 	adSettingsGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
+	adSettingsGroup.Use(func(c *gin.Context) {
+		c.Set("db", DB)
+		c.Next()
+	})
 	{
 		adSettingsGroup.PUT("/settings", handlers.UpdateAdSettingsHandler)                     // PUT /api/ads/settings (Update ad system config - super admin only)
 	}

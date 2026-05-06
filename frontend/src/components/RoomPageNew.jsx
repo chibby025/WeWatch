@@ -73,6 +73,7 @@ const RoomPageNew = () => {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const lastVisibleMessageIndexRef = useRef(null); // Track last visible message when scrolling away
+  const [replyingTo, setReplyingTo] = useState(null); // Track message being replied to
 
   // Voice note state
   const [isRecording, setIsRecording] = useState(false);
@@ -438,12 +439,11 @@ const RoomPageNew = () => {
 
   const fetchActiveSession = async () => {
     // ✅ ALWAYS check for pending rating (even if no session_ended flag)
-    console.log('🔍 [RoomPageNew] Checking for pending rating...');
     const pendingRating = sessionStorage.getItem(`pending_rating_${roomId}`);
     if (pendingRating) {
       try {
         const ratingData = JSON.parse(pendingRating);
-        console.log('⭐ [RoomPageNew] Found pending rating - showing modal:', ratingData);
+        console.log('⭐ [RoomPageNew] Found pending rating - showing modal');
         setSessionToRate(ratingData);
         setShowRatingModal(true);
         sessionStorage.removeItem(`pending_rating_${roomId}`);
@@ -451,8 +451,6 @@ const RoomPageNew = () => {
         console.error('❌ [RoomPageNew] Failed to parse pending rating:', error);
         sessionStorage.removeItem(`pending_rating_${roomId}`);
       }
-    } else {
-      console.log('ℹ️ [RoomPageNew] No pending rating found');
     }
     
     // ✅ Check if session was just ended via "Leave Call" button
@@ -468,18 +466,12 @@ const RoomPageNew = () => {
     
     try {
       setSessionLoading(true);
-      console.log(`🔍 [RoomPageNew] Fetching active session for room ${roomId}`);
       
       const response = await apiClient.get(`/api/rooms/${roomId}/active-session`);
       
       // Backend returns session data at root level
       if (response.data.session_id) {
-        console.log('✅ [RoomPageNew] Active session found:', {
-          sessionId: response.data.session_id,
-          watchType: response.data.watch_type,
-          memberCount: response.data.members?.length || 0,
-          startedAt: response.data.started_at
-        });
+        console.log('✅ [RoomPageNew] Active session found:', response.data.session_id);
         
         // ✅ Validate session age - reject sessions older than 4 hours
         const sessionStartTime = new Date(response.data.started_at);
@@ -530,21 +522,14 @@ const RoomPageNew = () => {
       
       // ✅ Check if current user is a member (validates auth context)
       if (currentUser && currentUser.id) {
-        console.log('🔍 [RoomPageNew] fetchMembers - Validating membership:');
-        console.log('  currentUser.id:', currentUser.id, 'type:', typeof currentUser.id);
-        console.log('  isHost:', isHost);
-        console.log('  membersList:', membersList.map(m => ({ id: m.id, type: typeof m.id, username: m.username })));
-        
         const userIsMember = membersList.some(member => member.id === currentUser.id);
-        console.log('  userIsMember result:', userIsMember);
         
         // ✅ Only update if different from current state (avoids unnecessary re-renders)
         setIsMember(prev => {
           if (prev !== userIsMember) {
-            console.log('  📝 Updating isMember from', prev, 'to', userIsMember);
+            console.log('📝 [RoomPageNew] Membership changed:', userIsMember);
             return userIsMember;
           }
-          console.log('  ✓ isMember already correct:', prev);
           return prev;
         });
       }
@@ -557,8 +542,10 @@ const RoomPageNew = () => {
     try {
       const response = await apiClient.get(`/api/rooms/${roomId}/messages`);
       const msgs = response.data.messages || [];
-      // console.log('📨 Fetched messages:', msgs);
-      // console.log('📨 First message structure:', msgs[0]);
+      console.log('📨 [Reply Debug] Fetched messages:', msgs);
+      console.log('📨 [Reply Debug] First message structure:', msgs[0]);
+      const msgsWithReply = msgs.filter(m => m.reply_to);
+      console.log('📨 [Reply Debug] Messages with reply_to:', msgsWithReply.length, msgsWithReply);
       setMessages(msgs);
       scrollToBottom();
     } catch (err) {
@@ -761,7 +748,7 @@ const RoomPageNew = () => {
       // This prevents zombie reconnects when user navigates to 3D cinema
       if (!isMountedRef.current) {
         console.log('🛑 [RoomPageNew] Component unmounted, skipping WebSocket reconnect');
-        console.log('✅ [RoomPageNew] Successfully prevented zombie reconnection');
+        // console.log('✅ [RoomPageNew] Successfully prevented zombie reconnection');
         return;
       }
 
@@ -784,19 +771,9 @@ const RoomPageNew = () => {
       }
       
       // Attempt reconnect after 5 seconds (increased from 3 for stability)
-      console.log('⏱️ [RoomPageNew] Scheduling reconnect in 5 seconds...');
       reconnectTimeoutRef.current = setTimeout(() => {
-        // Double-check component is still mounted before reconnecting
         if (isMountedRef.current) {
-          console.log('🔄 [RoomPageNew] Reconnect timeout fired - attempting to reconnect WebSocket...');
-          console.log('📊 [RoomPageNew] Pre-reconnect state:', {
-            componentMounted: isMountedRef.current,
-            wsConnected: wsConnectedRef.current,
-            hasWsRef: !!wsRef.current
-          });
           connectWebSocket();
-        } else {
-          console.log('🛑 [RoomPageNew] Component unmounted during reconnect wait - aborting reconnection');
         }
       }, 5000);
     };
@@ -833,10 +810,21 @@ const RoomPageNew = () => {
 
   const handleWebSocketMessage = (message) => {
     try {
+      // ✅ Log ALL incoming messages for debugging
+      console.log('📬 [RoomPageNew] WebSocket message received:', {
+        type: message.type,
+        hasData: !!message.data,
+        fullMessage: message
+      });
+      
       logger.debug(`📬 [RoomPageNew] Handling message type: ${message.type}`);
       
       switch (message.type) {
         case 'room_chat':
+          console.log('📨 [Reply Debug] WebSocket room_chat data:', message.data);
+          if (message.data.reply_to) {
+            console.log('📨 [Reply Debug] Message has reply_to:', message.data.reply_to);
+          }
           setMessages(prev => [...prev, message.data]);
           
           // Check if user is scrolled up - if so, increment unread count
@@ -930,7 +918,13 @@ const RoomPageNew = () => {
           setHostContent(null);
           break;
         case 'room_post_created':
-          console.log('📺 [RoomTV] Received room_post_created notification:', message.data);
+          console.log('🎬 [POST NOTIFICATION] Received:', {
+            room_id: message.room_id,
+            post_id: message.data?.post_id,
+            author: message.data?.author?.username,
+            title: message.data?.title,
+            timestamp: message.timestamp
+          });
           toast.success(`🎬 New post from ${message.data?.author?.username || 'host'}!`);
           // Trigger RoomTV to refetch posts
           setRoomTVRefetchTrigger(prev => prev + 1);
@@ -1043,8 +1037,10 @@ const RoomPageNew = () => {
     try {
       await apiClient.post(`/api/rooms/${roomId}/messages`, {
         message: newMessage,
+        reply_to_id: replyingTo?.id || null, // Include reply reference
       });
       setNewMessage('');
+      setReplyingTo(null); // Clear reply context
       setShowEmojiPicker(false); // Close picker after sending
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -1116,6 +1112,13 @@ const RoomPageNew = () => {
     setEditingMessageId(msg.id);
     setEditText(msg.message);
     setOpenMenuIndex(null);
+  };
+
+  const startReply = (msg) => {
+    setReplyingTo(msg);
+    setOpenMenuIndex(null);
+    // Focus on input (optional)
+    document.querySelector('input[placeholder="Message..."]')?.focus();
   };
 
   const cancelEditing = () => {
@@ -2070,10 +2073,66 @@ const RoomPageNew = () => {
                 key={index}
                 data-message-index={index}
                 className={`flex group ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
+                onTouchStart={(e) => {
+                  // Store touch start position for swipe detection
+                  const touch = e.touches[0];
+                  e.currentTarget.dataset.touchStartX = touch.clientX;
+                  e.currentTarget.dataset.touchStartY = touch.clientY;
+                }}
+                onTouchMove={(e) => {
+                  const touch = e.touches[0];
+                  const startX = parseFloat(e.currentTarget.dataset.touchStartX);
+                  const startY = parseFloat(e.currentTarget.dataset.touchStartY);
+                  const deltaX = touch.clientX - startX;
+                  const deltaY = touch.clientY - startY;
+                  
+                  // Swipe right on message (horizontal swipe)
+                  if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX > 50) {
+                    e.currentTarget.style.transform = `translateX(${Math.min(deltaX, 100)}px)`;
+                  }
+                }}
+                onTouchEnd={(e) => {
+                  const startX = parseFloat(e.currentTarget.dataset.touchStartX);
+                  const touch = e.changedTouches[0];
+                  const deltaX = touch.clientX - startX;
+                  
+                  // If swiped right more than 80px, trigger reply
+                  if (deltaX > 80) {
+                    startReply(msg);
+                  }
+                  
+                  // Reset transform
+                  e.currentTarget.style.transform = '';
+                }}
               >
-                <div className="relative">
+                <div className="relative max-w-xs">
+                  {/* Replied-to message preview - shown above the reply */}
+                  {msg.reply_to && (
+                    <div className="mb-1 ml-3">
+                      <div className="relative">
+                        {/* Connecting line */}
+                        <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-gradient-to-b from-gray-500 to-transparent" />
+                        
+                        {/* Replied message preview */}
+                        <div className={`ml-2 px-2.5 py-1 rounded-lg text-xs ${
+                          isOwnMessage 
+                            ? 'bg-blue-900/40 text-blue-200 border border-blue-700/30'
+                            : 'bg-gray-700/50 text-gray-300 border border-gray-600/30'
+                        }`}>
+                          <div className="font-medium text-[10px] opacity-70 mb-0.5">
+                            @{msg.reply_to.username}
+                          </div>
+                          <div className="opacity-80 truncate max-w-[200px]">
+                            {msg.reply_to.message}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Main message bubble */}
                   <div
-                    className={`max-w-xs px-3 py-1.5 rounded-lg shadow-sm ${
+                    className={`px-3 py-1.5 rounded-lg shadow-sm ${
                       isOwnMessage
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-800 text-gray-100'
@@ -2182,6 +2241,12 @@ const RoomPageNew = () => {
 
                       {openMenuIndex === index && (
                         <div className="absolute right-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg py-1 min-w-[120px] z-10">
+                          <button
+                            onClick={() => startReply(msg)}
+                            className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700"
+                          >
+                            Reply
+                          </button>
                           {canEdit && (
                             <button
                               onClick={() => startEditing(msg)}
@@ -2257,6 +2322,24 @@ const RoomPageNew = () => {
           <form onSubmit={handleSendMessage} className={`bg-gray-800 ${
             isMobile ? 'fixed bottom-0 left-0 right-0 z-40' : 'flex-none'
           } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
+          {/* Reply Context Banner */}
+          {replyingTo && (
+            <div className="flex items-center justify-between bg-gray-700 px-3 py-2 mb-2 rounded-lg">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-gray-400">Replying to {replyingTo.username}</div>
+                <div className="text-sm text-white truncate">{replyingTo.message}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                className="ml-2 text-gray-400 hover:text-white transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
           <div className="flex items-center gap-0.5 sm:gap-3">
           {/* Left Icons Group - Attach & Voice Note */}
           <div className="flex items-center gap-0 sm:gap-0.5 flex-none">

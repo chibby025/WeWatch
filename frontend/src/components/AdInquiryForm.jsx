@@ -79,7 +79,7 @@ const AdInquiryForm = ({ isOpen, onClose }) => {
             <div className="flex items-center gap-4 mb-2">
               <MegaphoneIcon className="w-10 h-10 text-purple-400" />
               <div>
-                <h2 className="text-3xl font-bold text-white">Advertise on WeWatch</h2>
+                <h2 className="text-3xl font-bold text-white">Advertise on LetsWatchOut</h2>
                 <p className="text-gray-300 text-sm mt-1">Reach thousands of engaged viewers watching content together</p>
               </div>
             </div>
@@ -239,7 +239,7 @@ const AdInquiryForm = ({ isOpen, onClose }) => {
 
             {/* Info Note */}
             <p className="mt-4 text-xs text-gray-400 text-center">
-              By submitting this form, you agree to be contacted by WeWatch regarding advertising opportunities.
+              By submitting this form, you agree to be contacted by LetsWatchOut regarding advertising opportunities.
               We typically respond within 2 business days.
             </p>
           </form>

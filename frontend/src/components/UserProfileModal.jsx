@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { getFriendCount, getFollowersCount, getUserAverageWatchers } from '../services/api';
 import PostsGrid from './PostsGrid';
 import PostViewModal from './PostViewModal';
+import EmojiPicker from 'emoji-picker-react';
 
 export default function UserProfileModal({ 
   user, 
@@ -56,6 +57,8 @@ export default function UserProfileModal({
   const [selectedPost, setSelectedPost] = useState(null);
   const [isPostViewModalOpen, setIsPostViewModalOpen] = useState(false);
   const fileInputRef = useRef(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojiPickerRef = useRef(null);
 
   // Update state when user prop changes (after profile update)
   useEffect(() => {
@@ -64,6 +67,23 @@ export default function UserProfileModal({
       setEditedBio(user.bio || '');
     }
   }, [user]);
+
+  // Close emoji picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target)) {
+        setShowEmojiPicker(false);
+      }
+    };
+
+    if (showEmojiPicker) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showEmojiPicker]);
 
   // Fetch friend count and average watchers when modal opens
   useEffect(() => {
@@ -226,13 +246,38 @@ export default function UserProfileModal({
                 {isEditing ? (
                   <div>
                     <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-2 block">Username</label>
-                    <input
-                      type="text"
-                      value={editedUsername}
-                      onChange={(e) => setEditedUsername(e.target.value)}
-                      className="w-full bg-white/5 backdrop-blur-sm border border-white/20 text-white px-4 py-3 rounded-lg focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all text-xl font-bold"
-                      maxLength={50}
-                    />
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={editedUsername}
+                        onChange={(e) => setEditedUsername(e.target.value)}
+                        className="w-full bg-white/5 backdrop-blur-sm border border-white/20 text-white px-4 py-3 pr-12 rounded-lg focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all text-xl font-bold"
+                        maxLength={50}
+                      />
+                      {/* Emoji Picker Button */}
+                      <button
+                        type="button"
+                        onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl hover:scale-110 transition-transform"
+                        title="Add emoji"
+                      >
+                        😊
+                      </button>
+                      {/* Emoji Picker */}
+                      {showEmojiPicker && (
+                        <div ref={emojiPickerRef} className="absolute left-0 top-full mt-2 z-50">
+                          <EmojiPicker
+                            onEmojiClick={(emojiData) => {
+                              setEditedUsername(prev => prev + emojiData.emoji);
+                              setShowEmojiPicker(false);
+                            }}
+                            theme="dark"
+                            width={300}
+                            height={400}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white mb-1 break-words">

@@ -18,7 +18,7 @@ const AdBanner = ({ placement = 'lobby_sidebar' }) => {
         : null;
 
       const params = new URLSearchParams({
-        ad_type: 'banner',
+        // Accept both banner and video ads for Discover feed
         ...(userAge && { user_age: userAge })
       });
 
@@ -26,9 +26,15 @@ const AdBanner = ({ placement = 'lobby_sidebar' }) => {
       if (response.ok) {
         const data = await response.json();
         if (data.campaigns && data.campaigns.length > 0) {
-          setAd(data.campaigns[0]);
-          // Track impression
-          trackImpression(data.campaigns[0].id);
+          // Filter for banner or video_preroll ads (suitable for feed display)
+          const suitableAd = data.campaigns.find(ad => 
+            ad.ad_type === 'banner' || ad.ad_type === 'video_preroll'
+          );
+          if (suitableAd) {
+            setAd(suitableAd);
+            // Track impression
+            trackImpression(suitableAd.id);
+          }
         }
       }
     } catch (error) {
@@ -87,16 +93,29 @@ const AdBanner = ({ placement = 'lobby_sidebar' }) => {
   }
 
   return (
-    <div className="w-full mb-4">
+    <div className="w-full h-full">
       <div 
         onClick={handleClick}
-        className="relative cursor-pointer group overflow-hidden rounded-lg border border-gray-700 hover:border-purple-500 transition-all"
+        className="relative w-full h-full cursor-pointer group overflow-hidden rounded-lg border border-gray-700 hover:border-purple-500 transition-all"
       >
-        <img 
-          src={ad.media_url} 
-          alt={ad.campaign_name}
-          className="w-full h-auto object-cover group-hover:scale-105 transition-transform duration-300"
-        />
+        {/* Render video for video_preroll ads, image for banner ads */}
+        {ad.ad_type === 'video_preroll' && ad.media_url ? (
+          <video
+            src={ad.media_url}
+            poster={ad.thumbnail_url}
+            className="w-full h-full object-cover"
+            muted
+            autoPlay
+            loop
+            playsInline
+          />
+        ) : (
+          <img 
+            src={ad.media_url} 
+            alt={ad.campaign_name}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          />
+        )}
         
         {/* Sponsored label */}
         <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded text-xs text-gray-300">

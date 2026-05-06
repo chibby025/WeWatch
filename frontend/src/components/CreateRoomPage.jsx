@@ -1,8 +1,9 @@
 // WeWatch/frontend/src/components/CreateRoomPage.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom'; // For navigation after creation
 import { createRoom } from '../services/api'; // Assume you'll create this function in api.js
 import PersistentRoomInfoModal from './PersistentRoomInfoModal';
+import EmojiPicker from 'emoji-picker-react';
 
 const CreateRoomPage = () => {
   const [name, setName] = useState('');
@@ -11,6 +12,8 @@ const CreateRoomPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showInfoModal, setShowInfoModal] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const emojiPickerRef = useRef(null);
   const navigate = useNavigate(); // Hook for programmatic navigation
 
   useEffect(() => {
@@ -20,6 +23,23 @@ const CreateRoomPage = () => {
       setShowInfoModal(true);
     }
   }, []);
+
+  // Close emoji picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target)) {
+        setShowEmojiPicker(false);
+      }
+    };
+
+    if (showEmojiPicker) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showEmojiPicker]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -110,16 +130,42 @@ const CreateRoomPage = () => {
               <label htmlFor="roomName" className="block text-gray-900 text-sm font-bold mb-2">
                 Room Name <span className="text-red-500">*</span>
               </label>
-              <input
-                type="text"
-                id="roomName"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                disabled={loading}
-                placeholder="e.g., Comedy Night Live, Bible Study Hall, Gaming Arena"
-                className="w-full px-4 py-3 text-gray-900 bg-gray-50 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:opacity-50 transition-all text-sm sm:text-base"
-              />
+              <div className="relative">
+                <input
+                  type="text"
+                  id="roomName"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  disabled={loading}
+                  placeholder="e.g., Comedy Night Live, Bible Study Hall, Gaming Arena"
+                  className="w-full px-4 py-3 pr-12 text-gray-900 bg-gray-50 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:opacity-50 transition-all text-sm sm:text-base"
+                />
+                {/* Emoji Picker Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                  disabled={loading}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl hover:scale-110 transition-transform disabled:opacity-50"
+                  title="Add emoji"
+                >
+                  😊
+                </button>
+                {/* Emoji Picker */}
+                {showEmojiPicker && (
+                  <div ref={emojiPickerRef} className="absolute left-0 top-full mt-2 z-50">
+                    <EmojiPicker
+                      onEmojiClick={(emojiData) => {
+                        setName(prev => prev + emojiData.emoji);
+                        setShowEmojiPicker(false);
+                      }}
+                      theme="light"
+                      width={300}
+                      height={400}
+                    />
+                  </div>
+                )}
+              </div>
               <p className="text-xs text-gray-500 mt-1.5">Give your room a unique and memorable name</p>
             </div>
             

@@ -86,18 +86,39 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
 
   // Get thumbnail URL
   const getThumbnailUrl = (post) => {
-    if (post.thumbnail_url) {
+    // Check if thumbnail_url is actually a video file with query params (not a real thumbnail)
+    const isVideoThumbnail = post.thumbnail_url && post.thumbnail_url.match(/\.(webm|mp4|mov)\?/);
+    
+    if (post.thumbnail_url && !isVideoThumbnail) {
       if (post.thumbnail_url.startsWith('http')) {
         return post.thumbnail_url;
       }
-      return `${import.meta.env.VITE_API_BASE_URL}/${post.thumbnail_url}`;
+      // Remove leading slash if it exists to avoid double slashes
+      const cleanPath = post.thumbnail_url.startsWith('/') ? post.thumbnail_url.slice(1) : post.thumbnail_url;
+      return `${import.meta.env.VITE_API_BASE_URL}/${cleanPath}`;
     }
     
     if (post.media_type === 'image' && post.video_url) {
       if (post.video_url.startsWith('http')) {
         return post.video_url;
       }
-      return `${import.meta.env.VITE_API_BASE_URL}/${post.video_url}`;
+      // Remove leading slash if it exists to avoid double slashes
+      const cleanPath = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
+      return `${import.meta.env.VITE_API_BASE_URL}/${cleanPath}`;
+    }
+    
+    // For videos without thumbnails, use the video itself (browser will show first frame)
+    if (post.media_type === 'video' && post.video_url) {
+      let videoUrl;
+      if (post.video_url.startsWith('http')) {
+        videoUrl = post.video_url;
+      } else {
+        // Remove leading slash if it exists to avoid double slashes
+        const cleanPath = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
+        videoUrl = `${import.meta.env.VITE_API_BASE_URL}/${cleanPath}`;
+      }
+      // Add time fragment to seek 1 second into the video for thumbnail
+      return `${videoUrl}#t=1`;
     }
     
     return '/icons/video-placeholder.svg';
@@ -160,17 +181,26 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
       <div className="grid grid-cols-3 gap-1 sm:gap-2">
         {posts.map((post) => (
           <div
-            key={post.ID}
+            key={post.id || post.ID}
             onClick={() => onPostClick && onPostClick(post)}
             className="relative aspect-square bg-gray-200 dark:bg-gray-800 cursor-pointer group overflow-hidden"
           >
-            {/* Thumbnail */}
-            <img
-              src={getThumbnailUrl(post)}
-              alt={post.title}
-              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
-              loading="lazy"
-            />
+            {/* Thumbnail - use video element for videos without proper image thumbnails */}
+            {post.media_type === 'video' && (!post.thumbnail_url || post.thumbnail_url.match(/\.(webm|mp4|mov)\?/)) ? (
+              <video
+                src={getThumbnailUrl(post)}
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
+                preload="metadata"
+                muted
+              />
+            ) : (
+              <img
+                src={getThumbnailUrl(post)}
+                alt={post.title}
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
+                loading="lazy"
+              />
+            )}
             
             {/* Video indicator (top-left) */}
             {post.media_type === 'video' && (

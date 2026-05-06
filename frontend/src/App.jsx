@@ -13,6 +13,7 @@ import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 import GoogleAuthCallback from './components/GoogleAuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
+import PostRedirect from './components/PostRedirect';
 import CreateRoomPage  from './components/CreateRoomPage';
 import RoomsListPage from './components/RoomsListPage';
 // import RoomPage from './components/RoomPage'; // ⚠️ DEPRECATED: Legacy component not in routing table
@@ -127,6 +128,11 @@ function App() {
           
           <Route path="/lobby" element={
             <ProtectedRoute><LobbyPage /></ProtectedRoute>
+          } />
+          
+          {/* Post sharing route - redirects to lobby with post modal */}
+          <Route path="/post/:id" element={
+            <ProtectedRoute><PostRedirect /></ProtectedRoute>
           } />
           
           <Route path="/payment" element={

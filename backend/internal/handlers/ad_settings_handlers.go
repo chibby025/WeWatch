@@ -41,18 +41,22 @@ func GetAdSettingsHandler(c *gin.Context) {
 	if _, exists := settingsMap[models.AdSettingRoomTVAds]; !exists {
 		settingsMap[models.AdSettingRoomTVAds] = true
 	}
+	if _, exists := settingsMap[models.AdSettingDiscoverAds]; !exists {
+		settingsMap[models.AdSettingDiscoverAds] = true
+	}
 	
 	c.JSON(http.StatusOK, gin.H{
 		"global_enabled":  settingsMap[models.AdSettingGlobalEnabled],
 		"feed_ads":        settingsMap[models.AdSettingFeedAds],
 		"session_ads":     settingsMap[models.AdSettingSessionAds],
 		"roomtv_ads":      settingsMap[models.AdSettingRoomTVAds],
+		"discover_ads":    settingsMap[models.AdSettingDiscoverAds],
 	})
 }
 
 // UpdateAdSettingsRequest represents the request body
 type UpdateAdSettingsRequest struct {
-	SettingKey string `json:"setting_key" binding:"required,oneof=global_enabled feed_ads session_ads roomtv_ads"`
+	SettingKey string `json:"setting_key" binding:"required,oneof=global_enabled feed_ads session_ads roomtv_ads discover_ads"`
 	Enabled    bool   `json:"enabled"`
 }
 

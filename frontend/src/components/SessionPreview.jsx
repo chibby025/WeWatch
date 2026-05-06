@@ -35,7 +35,7 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
   const modeInfo = getLiveShareModeInfo();
 
   useEffect(() => {
-    console.log('🎬 [SessionPreview] State update:', { isGenerating, isClearing, previewUrl, posterUrl, imageError, session: session.session_id });
+    console.log('🎬 [SessionPreview] State update:', { isGenerating, isClearing, previewUrl, posterUrl, imageError, isDataSaver, session: session.session_id });
     
     // ✅ If clearing (session ended), go to emoji immediately without spinner
     if (isClearing) {
@@ -49,6 +49,19 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
       return;
     }
 
+    // 📊 Data Saver Mode: Skip video, use poster or emoji instead
+    if (isDataSaver) {
+      if (posterUrl && !imageError) {
+        console.log('💾 [SessionPreview] Data saver ON: Using poster instead of video');
+        setLoadState('poster');
+      } else {
+        console.log('💾 [SessionPreview] Data saver ON: Using emoji (no poster available)');
+        setLoadState('emoji');
+      }
+      return;
+    }
+
+    // Normal mode: Use video if available
     if (previewUrl && !imageError) {
       console.log('✅ [SessionPreview] Switching to video state:', previewUrl);
       setLoadState('video');
@@ -59,7 +72,7 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
       console.log('😀 [SessionPreview] Switching to emoji state');
       setLoadState('emoji');
     }
-  }, [previewUrl, posterUrl, isGenerating, isClearing, imageError]);
+  }, [previewUrl, posterUrl, isGenerating, isClearing, imageError, isDataSaver]);
 
   // Detect video aspect ratio for TikTok-style rendering
   useEffect(() => {

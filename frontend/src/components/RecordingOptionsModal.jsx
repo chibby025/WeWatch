@@ -6,6 +6,7 @@ import { Video, Monitor, Camera, Tv } from 'lucide-react';
 
 const RecordingOptionsModal = ({ isOpen, onClose, onStartRecording, roomId }) => {
   const [selectedSource, setSelectedSource] = useState('full_canvas');
+  const [recordingTitle, setRecordingTitle] = useState('');
 
   if (!isOpen) return null;
 
@@ -35,7 +36,8 @@ const RecordingOptionsModal = ({ isOpen, onClose, onStartRecording, roomId }) =>
   ];
 
   const handleStart = () => {
-    onStartRecording(selectedSource, roomId);
+    const title = recordingTitle.trim() || `Watch Party Recording - ${new Date().toLocaleDateString()}`;
+    onStartRecording(selectedSource, roomId, title);
     onClose();
   };
 
@@ -63,6 +65,25 @@ const RecordingOptionsModal = ({ isOpen, onClose, onStartRecording, roomId }) =>
 
         {/* Recording Sources */}
         <div className="p-6 space-y-4">
+          {/* Title Input */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Recording Title (optional)
+            </label>
+            <input
+              type="text"
+              value={recordingTitle}
+              onChange={(e) => setRecordingTitle(e.target.value)}
+              placeholder="e.g., Epic Watch Party with Friends"
+              className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              maxLength={100}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Leave empty to use default: "Watch Party Recording - {new Date().toLocaleDateString()}"
+            </p>
+          </div>
+
+          {/* Source Selection */}
           {recordingSources.map((source) => {
             const Icon = source.icon;
             const isSelected = selectedSource === source.id;

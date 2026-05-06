@@ -19,16 +19,17 @@ import (
 
 // CreatePostRequest represents the request body for creating a post
 type CreatePostRequest struct {
-	Title         string   `json:"title" binding:"required,max=255"`
-	Description   string   `json:"description"`
-	RoomID        *uint    `json:"room_id"`
-	MediaType     string   `json:"media_type" binding:"required,oneof=video image gif"`
-	PostType      string   `json:"post_type" binding:"required,oneof=recording upload"`
-	Duration      *int     `json:"duration"`
-	Resolution    string   `json:"resolution"`
-	IsPaid        bool     `json:"is_paid"`
-	Price         *float64 `json:"price"`
-	IsPublic      bool     `json:"is_public"`
+	Title          string   `json:"title" binding:"required,max=255"`
+	Description    string   `json:"description"`
+	RoomID         *uint    `json:"room_id"`
+	MediaType      string   `json:"media_type" binding:"required,oneof=video image gif"`
+	PostType       string   `json:"post_type" binding:"required,oneof=recording upload"`
+	Duration       *int     `json:"duration"`
+	Resolution     string   `json:"resolution"`
+	IsPaid         bool     `json:"is_paid"`
+	Price          *float64 `json:"price"`
+	IsPublic       bool     `json:"is_public"`
+	AllowDownloads bool     `json:"allow_downloads"`
 }
 
 // UpdatePostRequest represents the request body for updating a post
@@ -79,17 +80,18 @@ func CreatePost(c *gin.Context) {
 
 	// Create post
 	post := models.Post{
-		UserID:      userID,
-		RoomID:      req.RoomID,
-		Title:       req.Title,
-		Description: req.Description,
-		MediaType:   req.MediaType,
-		PostType:    req.PostType,
-		Duration:    req.Duration,
-		Resolution:  req.Resolution,
-		IsPaid:      req.IsPaid,
-		Price:       req.Price,
-		IsPublic:    req.IsPublic,
+		UserID:         userID,
+		RoomID:         req.RoomID,
+		Title:          req.Title,
+		Description:    req.Description,
+		MediaType:      req.MediaType,
+		PostType:       req.PostType,
+		Duration:       req.Duration,
+		Resolution:     req.Resolution,
+		IsPaid:         req.IsPaid,
+		Price:          req.Price,
+		IsPublic:       req.IsPublic,
+		AllowDownloads: req.AllowDownloads,
 	}
 
 	if err := DB.Create(&post).Error; err != nil {
@@ -98,15 +100,16 @@ func CreatePost(c *gin.Context) {
 		return
 	}
 
-	// Load user association
-	DB.Preload("User").First(&post, post.ID)
-
-	// ✅ If posted to room, broadcast notification to all room members
-	if req.RoomID != nil {
-		go broadcastRoomPostNotification(post, *req.RoomID, userID)
+	// Reload post with associations
+	if err := DB.Preload("User").Preload("Room").First(&post, post.ID).Error; err != nil {
+		log.Printf("⚠️ [CreatePost] Failed to reload post associations: %v", err)
 	}
 
-	log.Printf("✅ [CreatePost] Post %d created by user %d (room_id: %v)", post.ID, userID, req.RoomID)
+	log.Printf("✅ [CreatePost] Post %d created by user %d (%s) - Title: '%s'", post.ID, userID, post.User.Username, post.Title)
+
+	// ✅ Broadcast notification to all rooms where user is the host
+	go broadcastRoomPostNotificationToAllHostRooms(post, userID)
+
 	c.JSON(http.StatusCreated, gin.H{"post": post})
 }
 
@@ -189,22 +192,46 @@ func GetDiscoverFeed(c *gin.Context) {
 	// Pagination parameters
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	searchQuery := c.Query("search")
 	
 	if limit > 100 {
 		limit = 100 // Max 100 posts per request
 	}
 
 	var posts []models.Post
-	query := DB.Where("is_public = ? AND deleted_at IS NULL", true).
+	query := DB.Where("posts.is_public = ? AND posts.deleted_at IS NULL", true).
 		Preload("User").
-		Order("RANDOM()"). // Randomized feed
+		Preload("Room"). // ✅ Preload room association for recordings
+		Order("posts.created_at DESC"). // Newest first (chronological feed)
 		Limit(limit).
 		Offset(offset)
+	
+	// 🔍 Search filter (title, description, or username)
+	if searchQuery != "" {
+		searchPattern := "%" + searchQuery + "%"
+		query = query.Joins("LEFT JOIN users ON posts.user_id = users.id").
+			Where("posts.title ILIKE ? OR posts.description ILIKE ? OR users.username ILIKE ?",
+				searchPattern, searchPattern, searchPattern)
+		log.Printf("🔍 [GetDiscoverFeed] Searching for: '%s'", searchQuery)
+	}
+	
+	log.Printf("📊 [GetDiscoverFeed] Fetching posts - limit: %d, offset: %d, search: '%s'", limit, offset, searchQuery)
 
 	if err := query.Find(&posts).Error; err != nil {
 		log.Printf("❌ [GetDiscoverFeed] Database error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch posts"})
 		return
+	}
+
+	// Debug log for posts without user data
+	for _, post := range posts {
+		log.Printf("🔍 [GetDiscoverFeed] Post %d - UserID: %d, User.ID: %d, User.Username: '%s', HasUser: %v",
+			post.ID, post.UserID, post.User.ID, post.User.Username, post.User.ID != 0)
+		
+		if post.User.ID == 0 || post.User.Username == "" {
+			log.Printf("⚠️ [GetDiscoverFeed] Post %d missing user data - UserID: %d, User.ID: %d, User.Username: '%s', RoomID: %v",
+				post.ID, post.UserID, post.User.ID, post.User.Username, post.RoomID)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -792,8 +819,11 @@ func GetRoomPosts(c *gin.Context) {
 	// Optional filter by media type
 	mediaType := c.Query("media_type") // 'video', 'image', 'gif'
 
-	// Build query - only public posts for room context
-	query := DB.Where("room_id = ? AND is_public = ?", roomID, true)
+	// ✅ NEW LOGIC: Fetch posts where author (user_id) is the room's host
+	// This supports "Room = Following" model where host posts appear in ALL their rooms
+	query := DB.Where("user_id = ? AND is_public = ?", room.HostID, true)
+	
+	log.Printf("📡 [GetRoomPosts] Fetching posts for room %d (host_id: %d)", roomID, room.HostID)
 
 	// Apply media type filter if provided
 	if mediaType != "" && (mediaType == models.MediaTypeVideo || mediaType == models.MediaTypeImage || mediaType == models.MediaTypeGIF) {
@@ -818,18 +848,9 @@ func GetRoomPosts(c *gin.Context) {
 }
 
 // ✅ broadcastRoomPostNotification sends WebSocket notification to all room members (batched)
-func broadcastRoomPostNotification(post models.Post, roomID uint, authorID uint) {
-	// Get all room members
-	var members []models.UserRoom
-	if err := DB.Where("room_id = ?", roomID).Find(&members).Error; err != nil {
-		log.Printf("❌ [BroadcastRoomPost] Failed to fetch room members: %v", err)
-		return
-	}
-	
-	if len(members) == 0 {
-		return
-	}
-	
+// broadcastRoomPostNotificationToAllHostRooms efficiently broadcasts post notification to all rooms where user is the host
+// Uses Hub.BroadcastToRoom which automatically distributes to all connected clients in each room
+func broadcastRoomPostNotificationToAllHostRooms(post models.Post, authorID uint) {
 	// Get author info
 	var author models.User
 	if err := DB.First(&author, authorID).Error; err != nil {
@@ -837,24 +858,19 @@ func broadcastRoomPostNotification(post models.Post, roomID uint, authorID uint)
 		return
 	}
 	
-	// Build notification message
-	notification := map[string]interface{}{
-		"type":      "room_post_created",
-		"room_id":   roomID,
-		"post_id":   post.ID,
-		"author_id": authorID,
-		"author_username": author.Username,
-		"title":     post.Title,
-		"thumbnail": post.ThumbnailURL,
-		"media_type": post.MediaType,
-		"timestamp": time.Now().Unix(),
-	}
-	
-	notificationJSON, err := json.Marshal(notification)
-	if err != nil {
-		log.Printf("❌ [BroadcastRoomPost] Failed to marshal notification: %v", err)
+	// Query all rooms where user is the host
+	var hostRooms []models.Room
+	if err := DB.Where("host_id = ?", authorID).Find(&hostRooms).Error; err != nil {
+		log.Printf("❌ [BroadcastRoomPost] Failed to fetch host rooms: %v", err)
 		return
 	}
+	
+	if len(hostRooms) == 0 {
+		log.Printf("ℹ️ [BroadcastRoomPost] No rooms found for host %d (%s)", authorID, author.Username)
+		return
+	}
+	
+	log.Printf("🎬 [BroadcastRoomPost] Post %d by %s - broadcasting to %d host rooms", post.ID, author.Username, len(hostRooms))
 	
 	// Get WebSocket hub
 	hub := GetWebSocketManager()
@@ -863,29 +879,39 @@ func broadcastRoomPostNotification(post models.Post, roomID uint, authorID uint)
 		return
 	}
 	
-	// Batch broadcast in chunks of 1000 users
-	batchSize := 1000
-	memberIDs := make([]uint, len(members))
-	for i, member := range members {
-		memberIDs[i] = member.UserID
-	}
-	
-	for i := 0; i < len(memberIDs); i += batchSize {
-		end := i + batchSize
-		if end > len(memberIDs) {
-			end = len(memberIDs)
+	// Broadcast to each room (Hub automatically distributes to all room clients)
+	for _, room := range hostRooms {
+		// Build notification message (matches frontend expectations)
+		notification := map[string]interface{}{
+			"type":    "room_post_created",
+			"room_id": room.ID,
+			"data": map[string]interface{}{
+				"post_id": post.ID,
+				"author": map[string]interface{}{
+					"id":       authorID,
+					"username": author.Username,
+				},
+				"title":      post.Title,
+				"thumbnail":  post.ThumbnailURL,
+				"media_type": post.MediaType,
+			},
+			"timestamp": time.Now().Unix(),
 		}
-		batch := memberIDs[i:end]
 		
-		// Broadcast to this batch
-		hub.BroadcastToUsers(batch, OutgoingMessage{
+		notificationJSON, err := json.Marshal(notification)
+		if err != nil {
+			log.Printf("❌ [BroadcastRoomPost] Failed to marshal notification for room %d: %v", room.ID, err)
+			continue
+		}
+		
+		// Broadcast to room - Hub handles distribution to all connected clients
+		hub.BroadcastToRoom(room.ID, OutgoingMessage{
 			Data:     notificationJSON,
 			IsBinary: false,
-		})
+		}, nil)
 		
-		log.Printf("✅ [BroadcastRoomPost] Sent notification to batch of %d users (batch %d/%d)", 
-			len(batch), (i/batchSize)+1, (len(memberIDs)+batchSize-1)/batchSize)
+		log.Printf("✅ [BroadcastRoomPost] Sent notification to room %d (%s)", room.ID, room.Name)
 	}
 	
-	log.Printf("✅ [BroadcastRoomPost] Post %d notification sent to %d room members", post.ID, len(memberIDs))
+	log.Printf("🎉 [BroadcastRoomPost] Post %d notification broadcast complete - reached %d rooms", post.ID, len(hostRooms))
 }

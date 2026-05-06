@@ -15,7 +15,8 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
     global_enabled: false,
     feed_ads: false,
     session_ads: false,
-    roomtv_ads: false
+    roomtv_ads: false,
+    discover_ads: false
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
 
@@ -93,14 +94,14 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
     setLoading(true);
     try {
       const response = await fetch('/api/admin/ad-inquiries', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
+        credentials: 'include'
       });
       
       if (response.ok) {
         const data = await response.json();
         setInquiries(data.inquiries || []);
+      } else {
+        console.error('Failed to fetch inquiries:', response.status);
       }
     } catch (error) {
       console.error('Failed to fetch ad inquiries:', error);
@@ -137,16 +138,15 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
   const fetchCampaigns = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8080/api/admin/ad-campaigns', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      const response = await fetch('/api/admin/campaigns', {
+        credentials: 'include'
       });
 
       if (response.ok) {
         const data = await response.json();
-        setCampaigns(data);
+        setCampaigns(data.campaigns || []);
+      } else {
+        console.error('Failed to fetch campaigns:', response.status);
       }
     } catch (error) {
       console.error('Failed to fetch campaigns:', error);
@@ -157,11 +157,10 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
 
   const handleCampaignStatusUpdate = async (campaignId, newStatus) => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8080/api/admin/ad-campaigns/${campaignId}/status`, {
+      const response = await fetch(`/api/admin/campaigns/${campaignId}/status`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ status: newStatus })
@@ -283,8 +282,8 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
                   <>
                     {/* Global Master Switch */}
                     <div className="bg-gradient-to-r from-purple-900/30 via-blue-900/30 to-purple-900/30 border border-purple-500/50 rounded-xl p-6">
-                      <div className="flex items-center justify-between">
-                        <div>
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <div className="flex-1">
                           <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
                             🌐 Global Ads Master Switch
                           </h3>
@@ -300,7 +299,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
                         <button
                           onClick={() => handleToggleSetting('global_enabled', adSettings.global_enabled)}
                           disabled={settingsLoading}
-                          className={`relative inline-flex h-12 w-24 items-center rounded-full transition-colors disabled:opacity-50 ${
+                          className={`relative inline-flex h-12 w-24 min-w-[96px] flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
                             adSettings.global_enabled ? 'bg-green-600' : 'bg-gray-700'
                           }`}
                         >
@@ -319,15 +318,15 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
                       
                       {/* Feed Ads */}
                       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                           <div className="flex-1">
                             <h5 className="text-white font-medium mb-1">📰 Feed Ads</h5>
-                            <p className="text-gray-400 text-sm">Show ads in user discovery feeds and timelines</p>
+                            <p className="text-gray-400 text-sm">Show ads in Live Sessions feed in Watching Now tab (every 7th session)</p>
                           </div>
                           <button
                             onClick={() => handleToggleSetting('feed_ads', adSettings.feed_ads)}
                             disabled={settingsLoading || !adSettings.global_enabled}
-                            className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors disabled:opacity-50 ${
+                            className={`relative inline-flex h-8 w-16 min-w-[64px] flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
                               adSettings.feed_ads ? 'bg-purple-600' : 'bg-gray-700'
                             }`}
                           >
@@ -342,7 +341,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
 
                       {/* Session Ads */}
                       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                           <div className="flex-1">
                             <h5 className="text-white font-medium mb-1">🎬 Session Ads</h5>
                             <p className="text-gray-400 text-sm">Show ads during watch sessions (pre-roll, mid-roll)</p>
@@ -350,7 +349,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
                           <button
                             onClick={() => handleToggleSetting('session_ads', adSettings.session_ads)}
                             disabled={settingsLoading || !adSettings.global_enabled}
-                            className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors disabled:opacity-50 ${
+                            className={`relative inline-flex h-8 w-16 min-w-[64px] flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
                               adSettings.session_ads ? 'bg-purple-600' : 'bg-gray-700'
                             }`}
                           >
@@ -365,7 +364,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
 
                       {/* RoomTV Ads */}
                       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                           <div className="flex-1">
                             <h5 className="text-white font-medium mb-1">📺 RoomTV Ads</h5>
                             <p className="text-gray-400 text-sm">Show ads in room TV banners when idle (1-hour frequency cap per room)</p>
@@ -373,13 +372,36 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
                           <button
                             onClick={() => handleToggleSetting('roomtv_ads', adSettings.roomtv_ads)}
                             disabled={settingsLoading || !adSettings.global_enabled}
-                            className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors disabled:opacity-50 ${
+                            className={`relative inline-flex h-8 w-16 min-w-[64px] flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
                               adSettings.roomtv_ads ? 'bg-purple-600' : 'bg-gray-700'
                             }`}
                           >
                             <span
                               className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
                                 adSettings.roomtv_ads ? 'translate-x-9' : 'translate-x-1'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Discover Ads (NEW) */}
+                      <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div className="flex-1">
+                            <h5 className="text-white font-medium mb-1">🔍 Discover Ads</h5>
+                            <p className="text-gray-400 text-sm">Show sponsored posts in Discover subtab (every 6th post - Instagram-style feed)</p>
+                          </div>
+                          <button
+                            onClick={() => handleToggleSetting('discover_ads', adSettings.discover_ads)}
+                            disabled={settingsLoading || !adSettings.global_enabled}
+                            className={`relative inline-flex h-8 w-16 min-w-[64px] flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                              adSettings.discover_ads ? 'bg-purple-600' : 'bg-gray-700'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                                adSettings.discover_ads ? 'translate-x-9' : 'translate-x-1'
                               }`}
                             />
                           </button>
@@ -406,6 +428,10 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
                         <div className="text-gray-300">RoomTV Ads:</div>
                         <div className={adSettings.roomtv_ads ? 'text-green-400' : 'text-gray-500'}>
                           {adSettings.roomtv_ads ? '✅ Active' : '⚪ Inactive'}
+                        </div>
+                        <div className="text-gray-300">Discover Ads:</div>
+                        <div className={adSettings.discover_ads ? 'text-green-400' : 'text-gray-500'}>
+                          {adSettings.discover_ads ? '✅ Active' : '⚪ Inactive'}
                         </div>
                       </div>
                     </div>
@@ -570,25 +596,25 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
                       <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
                         <div>
                           <span className="text-gray-500">Budget:</span>
-                          <span className="text-white font-semibold ml-2">${campaign.budget}</span>
+                          <span className="text-white font-semibold ml-2">${campaign.budget || 0}</span>
                         </div>
                         <div>
                           <span className="text-gray-500">Spent:</span>
-                          <span className="text-green-400 font-semibold ml-2">${campaign.spent_amount.toFixed(2)}</span>
+                          <span className="text-green-400 font-semibold ml-2">${(campaign.spent_amount || 0).toFixed(2)}</span>
                         </div>
                         <div>
                           <span className="text-gray-500">Impressions:</span>
-                          <span className="text-blue-400 font-semibold ml-2">{campaign.impressions_count.toLocaleString()}</span>
+                          <span className="text-blue-400 font-semibold ml-2">{(campaign.impressions_count || 0).toLocaleString()}</span>
                         </div>
                         <div>
                           <span className="text-gray-500">Clicks:</span>
-                          <span className="text-purple-400 font-semibold ml-2">{campaign.clicks_count}</span>
+                          <span className="text-purple-400 font-semibold ml-2">{campaign.clicks_count || 0}</span>
                         </div>
                         <div>
                           <span className="text-gray-500">CTR:</span>
                           <span className="text-yellow-400 font-semibold ml-2">
-                            {campaign.impressions_count > 0 
-                              ? ((campaign.clicks_count / campaign.impressions_count) * 100).toFixed(2) 
+                            {(campaign.impressions_count || 0) > 0 
+                              ? (((campaign.clicks_count || 0) / campaign.impressions_count) * 100).toFixed(2) 
                               : '0.00'}%
                           </span>
                         </div>

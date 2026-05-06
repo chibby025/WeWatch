@@ -148,7 +148,7 @@ const PaymentPage = () => {
       
       // Load payment accounts (required)
       const accountsData = await getPaymentAccounts();
-      console.log('🏦 [PaymentPage] Loaded accounts:', accountsData.accounts);
+      // Security: Account data should not be logged (contains masked but still sensitive info)
       setPaymentAccounts(accountsData.accounts || []);
       
       // Load optional data (may not be implemented yet)
@@ -175,8 +175,7 @@ const PaymentPage = () => {
       
       try {
         const payoutsData = await getMyPayouts();
-        console.log('💰 [PaymentPage] Raw payouts data:', payoutsData);
-        console.log('💰 [PaymentPage] First payout details:', JSON.stringify(payoutsData.payouts?.[0], null, 2));
+        // Security: Do not log payout data as it contains sensitive account information
         setPayouts(payoutsData.payouts || []);
       } catch (err) {
         // Payouts history not implemented yet
@@ -922,7 +921,7 @@ const PaymentPage = () => {
                         )}
                       </div>
                       
-                      <div className="flex items-center space-x-2">
+                      <div className="flex flex-col items-end space-y-2">
                         {!account.is_primary && account.is_verified && (
                           <button
                             onClick={() => handleSetPrimary(account.id)}
