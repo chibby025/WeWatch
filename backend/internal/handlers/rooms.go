@@ -1765,48 +1765,113 @@ func GetRoomsHandler(c *gin.Context) {
 		userID, _ = userIDValue.(uint)
 	}
 
-	// Query the database for rooms with host username and active session status
+	// ✅ Parse pagination parameters
+	limit := 20 // Default limit
+	offset := 0 // Default offset
+	
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 && parsedLimit <= 100 {
+			limit = parsedLimit
+		}
+	}
+	
+	if offsetParam := c.Query("offset"); offsetParam != "" {
+		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	// Query the database for rooms with host username, active session status, and membership status
 	// Use LEFT JOIN to include username even if user is deleted
 	// Use LEFT JOIN to check if room has an active watch session
+	// Use LEFT JOIN to check if user is a member
 	type RoomWithUsername struct {
 		models.Room
 		HostUsername    string `gorm:"column:host_username"`
 		IsActiveSession bool   `gorm:"column:is_active_session"`
+		IsMember        bool   `gorm:"column:is_member"`
 	}
 	
 	var roomsWithUsername []RoomWithUsername
 	
 	// Build query based on authentication
-	query := DB.Table("rooms").
-		Select(`
-			rooms.*, 
-			users.username as host_username,
-			CASE 
-				WHEN watch_sessions.id IS NOT NULL 
-					AND watch_sessions.ended_at IS NULL 
-				THEN true 
-				ELSE false 
-			END AS is_active_session
-		`).
-		Joins("LEFT JOIN users ON rooms.host_id = users.id").
-		Joins(`LEFT JOIN watch_sessions ON rooms.id = watch_sessions.room_id 
-			   AND watch_sessions.ended_at IS NULL`).
-		Where("rooms.deleted_at IS NULL") // ✅ Exclude soft-deleted rooms
-	
+	var query *gorm.DB
 	if userExists && userID > 0 {
-		// Authenticated user: Show public rooms OR private rooms where user is a member
-		query = query.Where(
-			"rooms.is_public = ? OR rooms.id IN (SELECT room_id FROM user_rooms WHERE user_id = ?)",
-			true, userID,
-		)
+		// Authenticated user: Include membership status in query
+		query = DB.Table("rooms").
+			Select(`
+				rooms.*, 
+				users.username as host_username,
+				CASE 
+					WHEN watch_sessions.id IS NOT NULL 
+						AND watch_sessions.ended_at IS NULL 
+					THEN true 
+					ELSE false 
+				END AS is_active_session,
+				CASE 
+					WHEN user_rooms.user_id IS NOT NULL 
+					THEN true 
+					ELSE false 
+				END AS is_member
+			`).
+			Joins("LEFT JOIN users ON rooms.host_id = users.id").
+			Joins(`LEFT JOIN watch_sessions ON rooms.id = watch_sessions.room_id 
+				   AND watch_sessions.ended_at IS NULL`).
+			Joins(fmt.Sprintf("LEFT JOIN user_rooms ON user_rooms.room_id = rooms.id AND user_rooms.user_id = %d", userID)).
+			Where("rooms.deleted_at IS NULL"). // ✅ Exclude soft-deleted rooms
+			Where(
+				"rooms.is_public = ? OR rooms.id IN (SELECT room_id FROM user_rooms WHERE user_id = ?)",
+				true, userID,
+			)
 	} else {
-		// Unauthenticated user: Show only public rooms
-		query = query.Where("rooms.is_public = ?", true)
+		// Unauthenticated user: No membership status
+		query = DB.Table("rooms").
+			Select(`
+				rooms.*, 
+				users.username as host_username,
+				CASE 
+					WHEN watch_sessions.id IS NOT NULL 
+						AND watch_sessions.ended_at IS NULL 
+					THEN true 
+					ELSE false 
+				END AS is_active_session,
+				false AS is_member
+			`).
+			Joins("LEFT JOIN users ON rooms.host_id = users.id").
+			Joins(`LEFT JOIN watch_sessions ON rooms.id = watch_sessions.room_id 
+				   AND watch_sessions.ended_at IS NULL`).
+			Where("rooms.deleted_at IS NULL"). // ✅ Exclude soft-deleted rooms
+			Where("rooms.is_public = ?", true)
 	}
 	
-	result := query.Order("rooms.created_at DESC").
-		Limit(10).
-		Scan(&roomsWithUsername)
+	// ✅ Get total count before pagination
+	var totalCount int64
+	countQuery := query
+	if err := countQuery.Count(&totalCount).Error; err != nil {
+		log.Printf("GetRoomsHandler: Error counting rooms: %v", err)
+		totalCount = 0
+	}
+
+	// ✅ Sort: User's owned rooms first (0), then member rooms (1), then other rooms (2)
+	var result *gorm.DB
+	if userExists && userID > 0 {
+		result = query.
+			Order(fmt.Sprintf(`
+				CASE 
+					WHEN rooms.host_id = %d THEN 0 
+					WHEN user_rooms.user_id IS NOT NULL THEN 1 
+					ELSE 2 
+				END`, userID)).
+			Order("rooms.created_at DESC").
+			Limit(limit).
+			Offset(offset).
+			Scan(&roomsWithUsername)
+	} else {
+		result = query.Order("rooms.created_at DESC").
+			Limit(limit).
+			Offset(offset).
+			Scan(&roomsWithUsername)
+	}
 	
 	if result.Error != nil {
 		log.Printf("GetRoomsHandler: Error fetching rooms from the database: %v", result.Error)
@@ -1857,15 +1922,20 @@ func GetRoomsHandler(c *gin.Context) {
 			"total_ratings":       roomData.Room.TotalRatings,       // ✅ Number of ratings
 			"member_count":        memberCount,                      // ✅ Room member count
 			"is_active_session":   roomData.IsActiveSession,         // ✅ Active session flag
+			"is_member":           roomData.IsMember,                // ✅ User membership flag
 		}
 	}
 
-	// Respond with the list of rooms.
-	log.Printf("GetRoomsHandler: Fetched %d rooms", len(roomsWithUsername))
+	// Respond with the list of rooms and pagination info.
+	log.Printf("GetRoomsHandler: Fetched %d rooms (offset: %d, limit: %d, total: %d)", len(roomsWithUsername), offset, limit, totalCount)
 	c.JSON(http.StatusOK, gin.H {
-		"message": "Rooms fetched successfully",
-		"count":   len(roomsWithUsername),
-		"rooms":   roomsResponse,
+		"message":     "Rooms fetched successfully",
+		"count":       len(roomsWithUsername),
+		"total_count": totalCount,
+		"offset":      offset,
+		"limit":       limit,
+		"has_more":    offset + len(roomsWithUsername) < int(totalCount),
+		"rooms":       roomsResponse,
 	})
 }
 

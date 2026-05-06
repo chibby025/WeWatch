@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
-import EmojiPicker from 'emoji-picker-react';
+import EmojiPicker from './EmojiPicker';
 
 const ChatPanel = ({ 
   roomId, 
@@ -135,12 +135,10 @@ const ChatPanel = ({
         {showEmojiPicker && (
           <div className="absolute bottom-full left-0 mb-2 z-10">
             <EmojiPicker 
-              onEmojiClick={(emojiObject) => {
-                setNewMessage(prev => prev + emojiObject.emoji);
+              onEmojiSelect={(emoji) => {
+                setNewMessage(prev => prev + emoji);
                 setShowEmojiPicker(false);
               }}
-              theme="light"
-              previewConfig={{ showPreview: false }}
             />
           </div>
         )}

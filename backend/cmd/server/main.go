@@ -75,6 +75,8 @@ func main() {
 	log.Println("Migrating models (WatchSession-related models managed via manual migrations)...")
 	err = DB.AutoMigrate(&models.User{}, &models.Room{}, &models.MediaItem{}, &models.TemporaryMediaItem{}, &models.UserRoom{}, &models.ScheduledEvent{}, &models.ChatMessage{},&models.Reaction{}, 
 		&models.RoomMessage{}, &models.RoomTVContent{},
+		// Room groups models (Discord-style channels for chat segmentation)
+		&models.RoomGroup{}, &models.UserRoomGroup{},
 		// Payment system models (excluding SessionTicket which references WatchSession)
 		&models.UserWallet{}, &models.TokenTransaction{}, &models.GatewayEarning{},
 		&models.Donation{}, &models.InstantWatchEarning{}, 
@@ -444,6 +446,15 @@ func main() {
 		// --- Poll routes ---
 		roomGroup.POST("/:id/polls/:pollId/vote", handlers.VotePoll)          // POST /api/rooms/:id/polls/:pollId/vote (Vote on poll)
 		roomGroup.DELETE("/:id/polls/:pollId/vote", handlers.RemoveVote)      // DELETE /api/rooms/:id/polls/:pollId/vote (Remove vote)
+		
+		// --- Room Groups routes (Discord-style channels for chat segmentation) ---
+		roomGroup.POST("/:id/groups", handlers.CreateRoomGroupHandler)                    // POST /api/rooms/:id/groups (Create group - host only)
+		roomGroup.GET("/:id/groups", handlers.GetRoomGroupsHandler)                       // GET /api/rooms/:id/groups (List all groups)
+		roomGroup.PUT("/:id/groups/:groupId", handlers.UpdateRoomGroupHandler)            // PUT /api/rooms/:id/groups/:groupId (Update group - host only)
+		roomGroup.DELETE("/:id/groups/:groupId", handlers.DeleteRoomGroupHandler)         // DELETE /api/rooms/:id/groups/:groupId (Delete group - host only)
+		roomGroup.POST("/:id/groups/:groupId/join", handlers.JoinRoomGroupHandler)        // POST /api/rooms/:id/groups/:groupId/join (Join group)
+		roomGroup.POST("/:id/groups/:groupId/leave", handlers.LeaveRoomGroupHandler)      // POST /api/rooms/:id/groups/:groupId/leave (Leave group)
+		roomGroup.GET("/:id/groups/:groupId/members", handlers.GetRoomGroupMembersHandler)// GET /api/rooms/:id/groups/:groupId/members (List group members)
 		
 		// --- RoomTV content routes (new) ---
 		roomGroup.GET("/:id/tv-content", handlers.GetRoomTVContent)           // GET /api/rooms/:id/tv-content (Get active TV content)

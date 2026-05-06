@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
-import EmojiPicker from 'emoji-picker-react';
+import EmojiPicker from './EmojiPicker';
 import logger from '../utils/logger';
 import { hasTicketCache } from '../utils/ticketCache';
 import {
@@ -15,7 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
 import { useMobile } from '../hooks/useMobile';
-import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers } from '../services/api';
+import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup } from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
 import WatchTypeInfoModal from './WatchTypeInfoModal';
 import ClassTypeModal from './modals/ClassTypeModal';
@@ -34,6 +34,8 @@ import PollMessage from './PollMessage';
 import SessionRatingModal from './SessionRatingModal';
 import SessionEarningsModal from './SessionEarningsModal';
 import DateOfBirthPromptModal from './DateOfBirthPromptModal';
+import RoomPageLeftSidebar from './RoomPageLeftSidebar';
+import RoomGroupEditModal from './RoomGroupEditModal';
 import { checkDateOfBirth, updateDateOfBirth } from '../services/api';
 // TODO: Review MediaBanner integration later - currently commented out for future use
 // import MediaBanner from './MediaBanner';
@@ -145,6 +147,14 @@ const RoomPageNew = () => {
   const [showDOBModal, setShowDOBModal] = useState(false);
   const [dobSubmitting, setDobSubmitting] = useState(false);
   const [pendingJoinAfterDOB, setPendingJoinAfterDOB] = useState(false);
+
+  // Room Groups state (Discord-style channels for chat segmentation)
+  const [roomGroups, setRoomGroups] = useState([]);
+  const [selectedGroupId, setSelectedGroupId] = useState(null); // null = main chat
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [isGroupEditModalOpen, setIsGroupEditModalOpen] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [isUserGroupMember, setIsUserGroupMember] = useState(false);
 
   // TODO: Review media state later - currently commented out for future use
   // const [mediaItems, setMediaItems] = useState([]);
@@ -326,6 +336,7 @@ const RoomPageNew = () => {
     fetchRoomMessages();
     fetchTVContent();
     fetchScheduledEvents();
+    fetchRoomGroups(); // ✅ Fetch room groups for sidebar
     connectWebSocket();
 
     const interval = setInterval(() => {
@@ -610,6 +621,102 @@ const RoomPageNew = () => {
     }
   };
 
+  // Fetch room groups for chat segmentation
+  const fetchRoomGroups = async () => {
+    if (!roomId) return;
+    
+    try {
+      setLoadingGroups(true);
+      const response = await getRoomGroups(roomId);
+      setRoomGroups(response.data.groups || []);
+    } catch (err) {
+      console.error('Failed to fetch room groups:', err);
+      // Silent fail - groups are optional feature
+    } finally {
+      setLoadingGroups(false);
+    }
+  };
+
+  // Handle group selection
+  const handleGroupSelect = (groupId) => {
+    setSelectedGroupId(groupId);
+    // Clear messages and refetch for selected group
+    setMessages([]);
+    fetchMessagesForGroup(groupId);
+  };
+
+  // Handle group deletion from sidebar
+  const handleDeleteGroupFromSidebar = async (groupId) => {
+    try {
+      await deleteRoomGroup(roomId, groupId);
+      toast.success('Group deleted');
+      // Refetch groups
+      fetchRoomGroups();
+      // If deleted group was selected, switch to main chat
+      if (selectedGroupId === groupId) {
+        setSelectedGroupId(null);
+        fetchMessagesForGroup(null);
+      }
+    } catch (err) {
+      console.error('Failed to delete group:', err);
+      toast.error('Failed to delete group');
+    }
+  };
+
+  // Handle opening group edit modal
+  const handleGroupEdit = (group) => {
+    setSelectedGroup(group);
+    // Check if user is a member of this group
+    const isMember = group.is_member || false;
+    setIsUserGroupMember(isMember);
+    setIsGroupEditModalOpen(true);
+  };
+
+  // Handle group updates
+  const handleGroupUpdate = () => {
+    fetchRoomGroups();
+  };
+
+  // Handle group deletion from modal
+  const handleGroupDelete = () => {
+    fetchRoomGroups();
+    if (selectedGroupId === selectedGroup?.id) {
+      setSelectedGroupId(null);
+      fetchMessagesForGroup(null);
+    }
+  };
+
+  // Handle joining a group
+  const handleGroupJoin = () => {
+    setIsUserGroupMember(true);
+    fetchRoomGroups();
+  };
+
+  // Handle leaving a group
+  const handleGroupLeave = () => {
+    setIsUserGroupMember(false);
+    fetchRoomGroups();
+    if (selectedGroupId === selectedGroup?.id) {
+      setSelectedGroupId(null);
+      fetchMessagesForGroup(null);
+    }
+  };
+
+  // Fetch messages for specific group (or main chat if null)
+  const fetchMessagesForGroup = async (groupId) => {
+    try {
+      const url = groupId 
+        ? `/api/rooms/${roomId}/messages?room_group_id=${groupId}`
+        : `/api/rooms/${roomId}/messages?room_group_id=null`;
+      
+      const response = await apiClient.get(url);
+      setMessages(response.data.messages || []);
+    } catch (err) {
+      console.error('Failed to fetch messages:', err);
+      toast.error('Failed to load messages');
+    }
+  };
+
   const connectWebSocket = () => {
     console.log(`🔌 [RoomPageNew] connectWebSocket called for room ${roomId}`);
     
@@ -825,6 +932,20 @@ const RoomPageNew = () => {
           if (message.data.reply_to) {
             console.log('📨 [Reply Debug] Message has reply_to:', message.data.reply_to);
           }
+          
+          // ✅ Filter messages by selected group
+          const messageGroupId = message.data.room_group_id || null;
+          const shouldShowMessage = selectedGroupId === messageGroupId;
+          
+          if (!shouldShowMessage) {
+            console.log('🚫 [Groups] Filtering out message from different group:', {
+              messageGroupId,
+              selectedGroupId,
+              messageText: message.data.message?.substring(0, 50)
+            });
+            break; // Don't add message to display
+          }
+          
           setMessages(prev => [...prev, message.data]);
           
           // Check if user is scrolled up - if so, increment unread count
@@ -1038,6 +1159,7 @@ const RoomPageNew = () => {
       await apiClient.post(`/api/rooms/${roomId}/messages`, {
         message: newMessage,
         reply_to_id: replyingTo?.id || null, // Include reply reference
+        room_group_id: selectedGroupId || null, // ✅ Include selected group (null = main chat)
       });
       setNewMessage('');
       setReplyingTo(null); // Clear reply context
@@ -1048,8 +1170,8 @@ const RoomPageNew = () => {
     }
   };
 
-  const handleEmojiClick = (emojiData) => {
-    setNewMessage(prev => prev + emojiData.emoji);
+  const handleEmojiClick = (emoji) => {
+    setNewMessage(prev => prev + emoji);
   };
 
   // Close emoji picker when clicking outside
@@ -1771,28 +1893,41 @@ const RoomPageNew = () => {
                     className="w-14 h-14 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-2 ring-gray-600 flex-shrink-0 cursor-pointer hover:ring-purple-500 transition-all"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (room.image_url) setIsRoomImageExpanded(true);
+                      if (!selectedGroupId && room.image_url) setIsRoomImageExpanded(true);
                     }}
-                    title={room.image_url ? "Click to view full size" : ""}
+                    title={(!selectedGroupId && room.image_url) ? "Click to view full size" : ""}
                   >
-                    {room.image_url ? (
+                    {selectedGroupId ? (
+                      // Show group image when in group
+                      (() => {
+                        const selectedGroup = roomGroups.find(g => g.ID === selectedGroupId);
+                        return selectedGroup?.icon?.startsWith('http') ? (
+                          <img src={selectedGroup.icon} alt={selectedGroup.name} className="w-full h-full object-cover" />
+                        ) : selectedGroup?.icon ? (
+                          <span className="text-2xl">{selectedGroup.icon}</span>
+                        ) : (
+                          <span className="text-2xl">💬</span>
+                        );
+                      })()
+                    ) : room.image_url ? (
                       <img src={room.image_url} alt={room.name} className="w-full h-full object-cover" />
                     ) : (
                       <FilmIcon className="w-7 h-7 text-white opacity-80" />
                     )}
                   </div>
                   
-                  {/* Room Name + Host/Member Info Column */}
+                  {/* Room/Group Name + Info Column */}
                   <div className="flex-1 min-w-0">
                     <h1 className={`font-bold text-white truncate ${
                       (() => {
-                        const length = room.name.length;
+                        const displayName = selectedGroupId ? (roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name) : room.name;
+                        const length = displayName.length;
                         if (length <= 8) return 'text-2xl';
                         if (length <= 12) return 'text-xl';
                         return 'text-lg';
                       })()
                     }`}>
-                      {room.name}
+                      {selectedGroupId ? (roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name) : room.name}
                     </h1>
                     
                     {/* Host/Member Info below room name (only when no session) */}
@@ -1819,49 +1954,53 @@ const RoomPageNew = () => {
                 {/* Right section: Action Icons + Ellipse */}
                 <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                 
-                {/* Begin Watch Icon */}
-                {!activeSession && (
-                  <img 
-                    src="/icons/beginWatchIcon.svg"
-                    alt="Begin Watch"
-                    onClick={isHost ? handleBeginWatch : undefined}
-                    className={`h-12 w-12 flex-shrink-0 ${
-                      isHost ? 'cursor-pointer hover:opacity-80 transition-opacity' : 'opacity-30 cursor-not-allowed'
-                    }`}
-                    title={isHost ? "Begin Watch" : "Only the host can start a watch session"}
-                  />
-                )}
-                
-                {/* Schedule Watch Icon */}
-                {!activeSession && (isHost || scheduledEventsCount > 0) && (
-                  <div className="relative flex-shrink-0">
-                    <img 
-                      src="/icons/scheduleWatchIcon.svg" 
-                      alt="Schedule" 
-                      onClick={() => {
-                        setScheduleModalTab(isHost ? 'create' : 'upcoming');
-                        setIsScheduleModalOpen(true);
-                      }}
-                      className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity"
-                    />
-                    {scheduledEventsCount > 0 && (
-                      <div className={`absolute -top-1 -right-1 min-w-[18px] h-5 flex items-center justify-center rounded-full text-white text-[10px] font-bold px-1 shadow-lg ${
-                        hasEventStartingSoon ? 'bg-red-500 animate-pulse' : 'bg-purple-500'
-                      }`}>
-                        {scheduledEventsCount}
+                {!selectedGroupId && (
+                  <>
+                    {/* Begin Watch Icon */}
+                    {!activeSession && (
+                      <img 
+                        src="/icons/beginWatchIcon.svg"
+                        alt="Begin Watch"
+                        onClick={isHost ? handleBeginWatch : undefined}
+                        className={`h-12 w-12 flex-shrink-0 ${
+                          isHost ? 'cursor-pointer hover:opacity-80 transition-opacity' : 'opacity-30 cursor-not-allowed'
+                        }`}
+                        title={isHost ? "Begin Watch" : "Only the host can start a watch session"}
+                      />
+                    )}
+                    
+                    {/* Schedule Watch Icon */}
+                    {!activeSession && (isHost || scheduledEventsCount > 0) && (
+                      <div className="relative flex-shrink-0">
+                        <img 
+                          src="/icons/scheduleWatchIcon.svg" 
+                          alt="Schedule" 
+                          onClick={() => {
+                            setScheduleModalTab(isHost ? 'create' : 'upcoming');
+                            setIsScheduleModalOpen(true);
+                          }}
+                          className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity"
+                        />
+                        {scheduledEventsCount > 0 && (
+                          <div className={`absolute -top-1 -right-1 min-w-[18px] h-5 flex items-center justify-center rounded-full text-white text-[10px] font-bold px-1 shadow-lg ${
+                            hasEventStartingSoon ? 'bg-red-500 animate-pulse' : 'bg-purple-500'
+                          }`}>
+                            {scheduledEventsCount}
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
-                )}
-                
-                {/* RoomTV Icon (Host only) */}
-                {!activeSession && isHost && (
-                  <img 
-                    src="/icons/roomTvIcon.svg" 
-                    alt="RoomTV" 
-                    onClick={() => setIsTVContentModalOpen(true)}
-                    className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
-                  />
+                    
+                    {/* RoomTV Icon (Host only) */}
+                    {!activeSession && isHost && (
+                      <img 
+                        src="/icons/roomTvIcon.svg" 
+                        alt="RoomTV" 
+                        onClick={() => setIsTVContentModalOpen(true)}
+                        className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
+                      />
+                    )}
+                  </>
                 )}
                 
                   {/* Ellipse */}
@@ -1886,27 +2025,41 @@ const RoomPageNew = () => {
                   />
                   
                   <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-2 ring-gray-600 flex-shrink-0">
-                    {room.image_url ? (
+                    {selectedGroupId ? (
+                      // Show group image when in group
+                      (() => {
+                        const selectedGroup = roomGroups.find(g => g.ID === selectedGroupId);
+                        return selectedGroup?.icon?.startsWith('http') ? (
+                          <img src={selectedGroup.icon} alt={selectedGroup.name} className="w-full h-full object-cover" />
+                        ) : selectedGroup?.icon ? (
+                          <span className="text-2xl">{selectedGroup.icon}</span>
+                        ) : (
+                          <span className="text-2xl">💬</span>
+                        );
+                      })()
+                    ) : room.image_url ? (
                       <img src={room.image_url} alt={room.name} className="w-full h-full object-cover" />
                     ) : (
                       <FilmIcon className="w-6 h-6 text-white opacity-80" />
                     )}
                   </div>
                   
-                  {/* Room Name + Host/Member Info Column */}
+                  {/* Room/Group Name + Info Column */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h1 className="text-2xl font-bold text-white">{room.name}</h1>
+                      <h1 className="text-2xl font-bold text-white">
+                        {selectedGroupId ? roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name : room.name}
+                      </h1>
                       {wsConnected && (
                         <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" title="Connected" />
                       )}
                     </div>
                     
-                    {/* Host/Member Info below room name (only when no session) */}
+                    {/* Host/Member Info below name (only when no session) */}
                     {!activeSession && (
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-4 text-sm text-gray-300">
-                          {room.show_host !== false && (
+                          {!selectedGroupId && room.show_host !== false && (
                             <span className="flex items-center gap-1">
                               <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4" />
                               Host: {room.host_username || `User ${room.host_id}`}
@@ -1918,8 +2071,11 @@ const RoomPageNew = () => {
                             title="View members"
                           >
                             <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4" />
-                            {membersInRoom} in room
-                            {membersInSessionCount > 0 && `, ${membersInSessionCount} watching`}
+                            {selectedGroupId ? (
+                              `${roomGroups.find(g => g.ID === selectedGroupId)?.member_count || 0} in group`
+                            ) : (
+                              `${membersInRoom} in room${membersInSessionCount > 0 ? `, ${membersInSessionCount} watching` : ''}`
+                            )}
                           </span>
                         </div>
                       </div>
@@ -1928,64 +2084,68 @@ const RoomPageNew = () => {
                 </div>
                 
                 <div className="flex items-center gap-4">
-                  {!activeSession && (
+                  {!selectedGroupId && (
                     <>
-                      {/* Begin Watch Button - Host: clickable, Members: greyed out */}
-                      {isHost ? (
+                      {!activeSession && (
+                        <>
+                          {/* Begin Watch Button - Host: clickable, Members: greyed out */}
+                          {isHost ? (
+                            <img 
+                              src="/icons/beginWatchIcon.svg"
+                              alt="Begin Watch"
+                              onClick={handleBeginWatch}
+                              className="h-20 w-20 cursor-pointer hover:opacity-80 transition-opacity"
+                              title="Begin Watch"
+                            />
+                          ) : (
+                            <img 
+                              src="/icons/beginWatchIcon.svg"
+                              alt="Begin Watch"
+                              className="h-20 w-20 opacity-30 cursor-not-allowed"
+                              title="Only the host can start a watch session"
+                            />
+                          )}
+                        </>
+                      )}
+                      {/* Schedule icon: Always visible to host, visible to members only if events exist */}
+                      {(isHost || scheduledEventsCount > 0) && (
+                        <div className="relative">
+                          <img 
+                            src="/icons/scheduleWatchIcon.svg" 
+                            alt="Schedule Watch" 
+                            onClick={() => {
+                              // Host opens to 'create' tab, members open to 'upcoming' tab
+                              setScheduleModalTab(isHost ? 'create' : 'upcoming');
+                              setIsScheduleModalOpen(true);
+                            }}
+                            className="h-20 w-20 cursor-pointer hover:opacity-80 transition-opacity"
+                            title={isHost ? "Schedule Watch" : "View Scheduled Events"}
+                          />
+                          {/* Badge with event count */}
+                          {scheduledEventsCount > 0 && (
+                            <div 
+                              className={`absolute top-1 right-1 min-w-[24px] h-6 flex items-center justify-center rounded-full text-white text-xs font-bold px-2 shadow-lg ${
+                                hasEventStartingSoon
+                                  ? 'bg-red-500 animate-pulse'
+                                  : 'bg-purple-500'
+                              }`}
+                              title={`${scheduledEventsCount} scheduled event${scheduledEventsCount !== 1 ? 's' : ''}`}
+                            >
+                              {scheduledEventsCount}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {isHost && (
                         <img 
-                          src="/icons/beginWatchIcon.svg"
-                          alt="Begin Watch"
-                          onClick={handleBeginWatch}
-                          className="h-20 w-20 cursor-pointer hover:opacity-80 transition-opacity"
-                          title="Begin Watch"
-                        />
-                      ) : (
-                        <img 
-                          src="/icons/beginWatchIcon.svg"
-                          alt="Begin Watch"
-                          className="h-20 w-20 opacity-30 cursor-not-allowed"
-                          title="Only the host can start a watch session"
+                          src="/icons/roomTvIcon.svg" 
+                          alt="Post to RoomTV" 
+                          onClick={() => setIsTVContentModalOpen(true)}
+                          className="h-24 w-24 cursor-pointer hover:opacity-80 transition-opacity -mt-2"
+                          title="Post to RoomTV"
                         />
                       )}
                     </>
-                  )}
-                  {/* Schedule icon: Always visible to host, visible to members only if events exist */}
-                  {(isHost || scheduledEventsCount > 0) && (
-                    <div className="relative">
-                      <img 
-                        src="/icons/scheduleWatchIcon.svg" 
-                        alt="Schedule Watch" 
-                        onClick={() => {
-                          // Host opens to 'create' tab, members open to 'upcoming' tab
-                          setScheduleModalTab(isHost ? 'create' : 'upcoming');
-                          setIsScheduleModalOpen(true);
-                        }}
-                        className="h-20 w-20 cursor-pointer hover:opacity-80 transition-opacity"
-                        title={isHost ? "Schedule Watch" : "View Scheduled Events"}
-                      />
-                      {/* Badge with event count */}
-                      {scheduledEventsCount > 0 && (
-                        <div 
-                          className={`absolute top-1 right-1 min-w-[24px] h-6 flex items-center justify-center rounded-full text-white text-xs font-bold px-2 shadow-lg ${
-                            hasEventStartingSoon
-                              ? 'bg-red-500 animate-pulse'
-                              : 'bg-purple-500'
-                          }`}
-                          title={`${scheduledEventsCount} scheduled event${scheduledEventsCount !== 1 ? 's' : ''}`}
-                        >
-                          {scheduledEventsCount}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {isHost && (
-                    <img 
-                      src="/icons/roomTvIcon.svg" 
-                      alt="Post to RoomTV" 
-                      onClick={() => setIsTVContentModalOpen(true)}
-                      className="h-24 w-24 cursor-pointer hover:opacity-80 transition-opacity -mt-2"
-                      title="Post to RoomTV"
-                    />
                   )}
                   
                   <EllipsisVerticalIcon 
@@ -2020,13 +2180,26 @@ const RoomPageNew = () => {
         />
       </header>
 
-      {/* ✅ Chat Messages - Fills remaining space */}
-      <div 
-        ref={messagesContainerRef}
-        className={`flex-1 overflow-y-auto bg-gray-900 px-4 space-y-1.5 scrollbar-hide relative ${
-          isMobile ? 'pt-[240px] pb-[70px]' : 'py-2'
-        }`}
-      >
+      {/* ✅ Main content area: Sidebar + Chat */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* ✅ Left Sidebar - Room Groups (Discord-style channels) */}
+        <RoomPageLeftSidebar
+          room={room}
+          groups={roomGroups}
+          selectedGroupId={selectedGroupId}
+          onGroupSelect={handleGroupSelect}
+          onDeleteGroup={handleDeleteGroupFromSidebar}
+          onGroupEdit={handleGroupEdit}
+          isHost={isHost}
+        />
+
+        {/* ✅ Chat Messages - Fills remaining space */}
+        <div 
+          ref={messagesContainerRef}
+          className={`flex-1 overflow-y-auto bg-gray-900 px-4 space-y-1.5 scrollbar-hide relative ${
+            isMobile ? 'pt-[240px] pb-[70px]' : 'py-2'
+          }`}
+        >
         {messages.length === 0 ? (
           <div className="text-center text-gray-400 py-8">
             <FilmIcon className="w-12 h-12 mx-auto mb-3 opacity-30" />
@@ -2303,6 +2476,8 @@ const RoomPageNew = () => {
           </button>
         )}
       </div>
+      {/* Close sidebar + chat wrapper */}
+      </div>
 
       {/* ✅ Message Input - Fixed bottom on mobile */}
       {isMember && (
@@ -2409,21 +2584,7 @@ const RoomPageNew = () => {
               {showEmojiPicker && isMember && (
                 <div className="absolute bottom-full left-0 mb-2 z-50">
                   <EmojiPicker
-                    onEmojiClick={handleEmojiClick}
-                    theme="dark"
-                    width={280}
-                    height={400}
-                    searchPlaceholder="Search emoji..."
-                    categories={[
-                      { name: 'Smileys & People', category: 'smileys_people' },
-                      { name: 'Animals & Nature', category: 'animals_nature' },
-                      { name: 'Food & Drink', category: 'food_drink' },
-                      { name: 'Travel & Places', category: 'travel_places' },
-                      { name: 'Activities', category: 'activities' },
-                      { name: 'Objects', category: 'objects' },
-                      { name: 'Symbols', category: 'symbols' },
-                      { name: 'Flags', category: 'flags' },
-                    ]}
+                    onEmojiSelect={handleEmojiClick}
                   />
                 </div>
               )}
@@ -2637,6 +2798,24 @@ const RoomPageNew = () => {
         isHost={isHost}
         membersInRoom={membersInRoom}
         members={members}
+      />
+
+      {/* ✅ Room Group Edit Modal */}
+      <RoomGroupEditModal
+        isOpen={isGroupEditModalOpen}
+        onClose={() => {
+          setIsGroupEditModalOpen(false);
+          setSelectedGroup(null);
+        }}
+        group={selectedGroup}
+        roomId={roomId}
+        isHost={isHost}
+        currentUserId={currentUser?.id}
+        onUpdate={handleGroupUpdate}
+        onDelete={handleGroupDelete}
+        isMember={isUserGroupMember}
+        onJoin={handleGroupJoin}
+        onLeave={handleGroupLeave}
       />
 
       {/* ✅ Room Members Modal */}

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom'; // For navigation after creation
 import { createRoom } from '../services/api'; // Assume you'll create this function in api.js
 import PersistentRoomInfoModal from './PersistentRoomInfoModal';
-import EmojiPicker from 'emoji-picker-react';
+import EmojiPicker from './EmojiPicker';
 
 const CreateRoomPage = () => {
   const [name, setName] = useState('');
@@ -155,13 +155,10 @@ const CreateRoomPage = () => {
                 {showEmojiPicker && (
                   <div ref={emojiPickerRef} className="absolute left-0 top-full mt-2 z-50">
                     <EmojiPicker
-                      onEmojiClick={(emojiData) => {
-                        setName(prev => prev + emojiData.emoji);
+                      onEmojiSelect={(emoji) => {
+                        setName(prev => prev + emoji);
                         setShowEmojiPicker(false);
                       }}
-                      theme="light"
-                      width={300}
-                      height={400}
                     />
                   </div>
                 )}

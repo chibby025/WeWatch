@@ -384,9 +384,11 @@ export const createRoom = async (roomData) => {
  * Get a list of rooms
  * @returns {Promise} Axios promise resolving to the response
  */
-export const getRooms = async () => {
+export const getRooms = async (limit = 20, offset = 0) => {
     try {
-        const response = await apiClient.get('/api/rooms');
+        const response = await apiClient.get('/api/rooms', {
+            params: { limit, offset }
+        });
         console.log('API Response (getRooms):', response.data);
         return response.data;
     } catch (error) {
@@ -597,6 +599,43 @@ export const updateScheduledEvent = async (eventId, eventData) => {
   } catch (error) {
     throw error;
   }
+};
+
+// --- Room Groups API (Discord-style channels for chat segmentation) ---
+
+// Create a new room group (host only)
+export const createRoomGroup = async (roomId, groupData) => {
+  return await apiClient.post(`/api/rooms/${roomId}/groups`, groupData);
+};
+
+// Get all groups in a room
+export const getRoomGroups = async (roomId) => {
+  return await apiClient.get(`/api/rooms/${roomId}/groups`);
+};
+
+// Update a room group (host only)
+export const updateRoomGroup = async (roomId, groupId, groupData) => {
+  return await apiClient.put(`/api/rooms/${roomId}/groups/${groupId}`, groupData);
+};
+
+// Delete a room group (host only)
+export const deleteRoomGroup = async (roomId, groupId) => {
+  return await apiClient.delete(`/api/rooms/${roomId}/groups/${groupId}`);
+};
+
+// Join a room group
+export const joinRoomGroup = async (roomId, groupId) => {
+  return await apiClient.post(`/api/rooms/${roomId}/groups/${groupId}/join`);
+};
+
+// Leave a room group
+export const leaveRoomGroup = async (roomId, groupId) => {
+  return await apiClient.post(`/api/rooms/${roomId}/groups/${groupId}/leave`);
+};
+
+// Get members of a room group
+export const getRoomGroupMembers = async (roomId, groupId) => {
+  return await apiClient.get(`/api/rooms/${roomId}/groups/${groupId}/members`);
 };
 
 // Download iCal file

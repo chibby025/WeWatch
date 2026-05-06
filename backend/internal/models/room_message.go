@@ -48,6 +48,7 @@ type RoomMessage struct {
 	ID            uint       `gorm:"primaryKey" json:"id"`
 	RoomID        uint       `gorm:"not null;index" json:"room_id"`
 	UserID        uint       `gorm:"not null" json:"user_id"`
+	RoomGroupID   *uint      `gorm:"index" json:"room_group_id,omitempty"` // Optional: which group this message belongs to
 	Username      string     `gorm:"-" json:"username"` // Not stored, populated from User
 	Message       string     `gorm:"type:text;not null" json:"message"`
 	DeletedByHost bool       `gorm:"default:false" json:"deleted_by_host"` // Track if deleted by host
@@ -60,8 +61,9 @@ type RoomMessage struct {
 	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	
 	// Relationships
-	Room Room `gorm:"foreignKey:RoomID;constraint:OnDelete:CASCADE" json:"-"`
-	User User `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	Room      Room       `gorm:"foreignKey:RoomID;constraint:OnDelete:CASCADE" json:"-"`
+	User      User       `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	RoomGroup *RoomGroup `gorm:"foreignKey:RoomGroupID;constraint:OnDelete:SET NULL" json:"room_group,omitempty"`
 }
 
 // TableName specifies the table name for GORM

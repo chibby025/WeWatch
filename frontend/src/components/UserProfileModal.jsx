@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { getFriendCount, getFollowersCount, getUserAverageWatchers } from '../services/api';
 import PostsGrid from './PostsGrid';
 import PostViewModal from './PostViewModal';
-import EmojiPicker from 'emoji-picker-react';
+import EmojiPicker from './EmojiPicker';
 
 export default function UserProfileModal({ 
   user, 
@@ -267,13 +267,10 @@ export default function UserProfileModal({
                       {showEmojiPicker && (
                         <div ref={emojiPickerRef} className="absolute left-0 top-full mt-2 z-50">
                           <EmojiPicker
-                            onEmojiClick={(emojiData) => {
-                              setEditedUsername(prev => prev + emojiData.emoji);
+                            onEmojiSelect={(emoji) => {
+                              setEditedUsername(prev => prev + emoji);
                               setShowEmojiPicker(false);
                             }}
-                            theme="dark"
-                            width={300}
-                            height={400}
                           />
                         </div>
                       )}

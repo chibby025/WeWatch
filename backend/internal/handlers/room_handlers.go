@@ -126,9 +126,31 @@ func GetRoomMessages(c *gin.Context) {
 		return
 	}
 
+	// Optional: Filter by room group (query parameter)
+	roomGroupIDStr := c.Query("room_group_id")
+	
+	query := DB.Where("room_id = ?", uint(roomID))
+	
+	if roomGroupIDStr != "" {
+		if roomGroupIDStr == "null" || roomGroupIDStr == "main" {
+			// Main chat (no group) - only messages where room_group_id IS NULL
+			query = query.Where("room_group_id IS NULL")
+		} else {
+			// Specific group
+			roomGroupID, err := strconv.ParseUint(roomGroupIDStr, 10, 64)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room_group_id"})
+				return
+			}
+			query = query.Where("room_group_id = ?", uint(roomGroupID))
+		}
+	}
+	// If no room_group_id parameter, return ALL messages (backward compatibility)
+
 	var messages []models.RoomMessage
-	if err := DB.Where("room_id = ?", uint(roomID)).
+	if err := query.
 		Preload("ReplyTo").
+		Preload("RoomGroup").
 		Order("created_at ASC").
 		Find(&messages).Error; err != nil {
 		log.Printf("Error fetching room messages: %v", err)
@@ -171,8 +193,9 @@ func CreateRoomMessage(c *gin.Context) {
 	}
 
 	var input struct {
-		Message   string `json:"message" binding:"required"`
-		ReplyToID *uint  `json:"reply_to_id"` // Optional: ID of message being replied to
+		Message     string `json:"message" binding:"required"`
+		ReplyToID   *uint  `json:"reply_to_id"`   // Optional: ID of message being replied to
+		RoomGroupID *uint  `json:"room_group_id"` // Optional: Group this message belongs to
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -188,12 +211,13 @@ func CreateRoomMessage(c *gin.Context) {
 	}
 
 	message := models.RoomMessage{
-		RoomID:    uint(roomID),
-		UserID:    userID.(uint),
-		Username:  user.Username,
-		Message:   input.Message,
-		ReplyToID: input.ReplyToID, // Store reply reference
-		CreatedAt: time.Now(),
+		RoomID:      uint(roomID),
+		UserID:      userID.(uint),
+		Username:    user.Username,
+		Message:     input.Message,
+		ReplyToID:   input.ReplyToID,   // Store reply reference
+		RoomGroupID: input.RoomGroupID, // Store group reference
+		CreatedAt:   time.Now(),
 	}
 
 	if err := DB.Create(&message).Error; err != nil {
@@ -219,12 +243,13 @@ func CreateRoomMessage(c *gin.Context) {
 	broadcastMsg := map[string]interface{}{
 		"type": "room_chat",
 		"data": map[string]interface{}{
-			"id":         message.ID,
-			"user_id":    message.UserID,
-			"username":   message.Username,
-			"message":    message.Message,
-			"reply_to":   message.ReplyTo, // Include reply context
-			"created_at": message.CreatedAt,
+			"id":            message.ID,
+			"user_id":       message.UserID,
+			"username":      message.Username,
+			"message":       message.Message,
+			"reply_to":      message.ReplyTo,      // Include reply context
+			"room_group_id": message.RoomGroupID,  // Include group ID for filtering
+			"created_at":    message.CreatedAt,
 		},
 	}
 	if msgBytes, err := json.Marshal(broadcastMsg); err == nil {

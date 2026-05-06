@@ -34,7 +34,125 @@ This is more than a project - it's a testament to perseverance, continuous learn
 
 ### 📋 Recent Updates (May 6, 2026):
 
-#### 🚀 **DATA SAVER MODE FIX & PERFORMANCE OPTIMIZATION** (May 6, 2026)
+
+#### 🔍 **WATCHING LIVE SEARCH ENHANCEMENT** (May 6, 2026)
+**Status:** ✅ COMPLETE - Multi-field search with content rating support
+
+**Overview:**
+Fixed missing search filter implementation in "Watching Live" tab and extended search functionality to support content rating filtering. The search input UI existed but wasn't actually filtering sessions - now it searches across 5 fields.
+
+**What Was Fixed:**
+1. **Bug Fix:** Search input (`discoverSearch`) was displayed but not filtering sessions
+2. **Enhancement:** Added content rating to searchable fields
+3. **UX:** Added "No results" state when search returns no matches
+
+**Search Fields:**
+- ✅ Room name (`session.room_name`)
+- ✅ Host username (`session.host_username`)
+- ✅ **Content rating** (`session.content_rating`) - G, PG, 13+, 16+, 18+, Mature
+- ✅ Session title (`session.session_title`)
+- ✅ Watch type (`session.watch_type`) - video, classroom, 3d_cinema
+
+**Technical Implementation:**
+- **File:** `frontend/src/components/LobbyPage.jsx` (lines 3299-3349)
+- **Method:** Filter sessions before `.map()` using case-insensitive `.includes()`
+- **Empty State:** Shows search icon with "No sessions found" message when filter returns empty
+- **Search Input:** Lines 3118-3197 (desktop and mobile layouts)
+
+**User Flow:**
+1. User types in search box on "Watching Live" tab
+2. Sessions instantly filter by: room name, host, rating, title, or watch type
+3. Can search "18+" to find mature content, "classroom" for educational sessions, etc.
+4. Empty state appears if no matches found
+
+**Why This Matters:**
+Previously, users with hundreds of live sessions had no way to filter by content rating or other criteria. Now they can quickly find age-appropriate content or specific session types without scrolling endlessly.
+
+---
+
+#### � **ROOM GROUPS SYSTEM (Phase 2 Complete)** (May 6, 2026)
+**Status:** ✅ COMPLETE - Discord-style chat segmentation within rooms
+
+**Overview:**
+Implemented a Discord-style groups system for room chat organization. Each room can now have multiple chat groups (channels) allowing hosts to segment conversations (e.g., "General", "Spoilers", "Memes", "VIP") while maintaining a single unified watch session. This solves the audience fragmentation problem and enables better privacy control.
+
+**Key Features:**
+- **Discord-Style Sidebar:** Vertical channel list with emoji icons, tooltips, active state indicators
+- **Main Chat + Groups:** Default main chat (💬) + custom groups with emoji icons
+- **Host Controls:** Create/edit/delete groups in Room Settings → Groups tab
+- **Member Management:** Join/leave groups, view member counts
+- **Smart Filtering:** Messages filtered by selected group (WebSocket + REST API)
+- **Conditional UI:** Sidebar auto-hides when no groups exist
+- **Delete Protection:** Double-click confirmation to prevent accidents
+
+**Implementation Details:**
+
+1. **Database Models (backend/internal/models/):**
+   - `RoomGroup`: id, room_id, name, description, icon, created_by, is_public, display_order
+   - `UserRoomGroup`: Junction table for many-to-many user-group membership
+   - `RoomMessage.room_group_id`: Nullable FK for message filtering (null = main chat)
+
+2. **Backend Handlers (backend/internal/handlers/room_groups.go - 486 lines):**
+   - `CreateRoomGroupHandler`: Host creates groups with validation
+   - `GetRoomGroupsHandler`: Lists groups with member counts
+   - `UpdateRoomGroupHandler`: Host edits group properties
+   - `DeleteRoomGroupHandler`: Host deletes groups (cascades to messages)
+   - `JoinRoomGroupHandler`: Users join groups
+   - `LeaveRoomGroupHandler`: Users leave groups
+   - `GetRoomGroupMembersHandler`: Lists group members
+
+3. **API Routes (7 endpoints registered in main.go):**
+   ```go
+   POST   /api/rooms/:roomId/groups              // Create group
+   GET    /api/rooms/:roomId/groups              // List groups
+   PUT    /api/rooms/:roomId/groups/:groupId     // Update group
+   DELETE /api/rooms/:roomId/groups/:groupId     // Delete group
+   POST   /api/rooms/:roomId/groups/:groupId/join    // Join group
+   DELETE /api/rooms/:roomId/groups/:groupId/leave   // Leave group
+   GET    /api/rooms/:roomId/groups/:groupId/members // Get members
+   ```
+
+4. **Message Filtering:**
+   - `GET /api/rooms/:roomId/messages?room_group_id=123` → Group messages
+   - `GET /api/rooms/:roomId/messages?room_group_id=null` → Main chat only
+   - `GET /api/rooms/:roomId/messages` → All messages (no filter)
+   - WebSocket broadcasts include `room_group_id` field
+
+5. **Frontend Components:**
+   - **RoomPageEditModal.jsx → Groups Tab:** Full CRUD UI with emoji picker (16 common emojis), name/description inputs, public/private toggle, inline editing, member counts
+   - **RoomPageLeftSidebar.jsx (NEW - 114 lines):** Discord-style vertical sidebar with:
+     - Main chat button (💬 icon)
+     - Group buttons with custom emojis
+     - Active state indicator (purple background + left border)
+     - Hover tooltips with member counts
+     - Delete button (host-only, double-click confirmation)
+     - Conditional rendering (returns null if no groups)
+   - **RoomPageNew.jsx Integration:**
+     - State: `roomGroups`, `selectedGroupId`, `loadingGroups`
+     - Functions: `fetchRoomGroups`, `handleGroupSelect`, `handleDeleteGroupFromSidebar`, `fetchMessagesForGroup`
+     - Layout: Flex container with sidebar + chat area
+     - Message sending: Includes `room_group_id` in payload
+     - WebSocket filtering: Only shows messages matching `selectedGroupId`
+
+6. **User Flow:**
+   - Host creates groups in Room Settings → Groups tab
+   - Sidebar appears automatically when groups exist
+   - Click group button → filters chat to that group only
+   - Send message → goes to selected group
+   - Double-click delete → removes group (host only)
+   - No groups → sidebar hidden
+
+**Technical Architecture:**
+- **Phase 1 (✅):** Room sorting (owned rooms first)
+- **Phase 2 (✅):** Groups as chat filters (not mini-rooms, keeps complexity low)
+- **Phase 3 (Planned):** Follow system + 1-room-per-creator limit
+
+**Why This Matters:**
+Previously, creators needed multiple rooms to segment audiences (spoiler-free vs spoilers, members vs VIP, etc.), causing fragmentation. Now they can organize all conversations in ONE room with focused channels, similar to Discord servers. This keeps communities unified while enabling privacy control and topic organization.
+
+---
+
+#### �🚀 **DATA SAVER MODE FIX & PERFORMANCE OPTIMIZATION** (May 6, 2026)
 **Status:** ✅ COMPLETE - Data saver works correctly with video thumbnails, instant tab switching
 
 **What Was Fixed:**

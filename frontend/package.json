@@ -20,6 +20,7 @@
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@headlessui/react": "^2.2.10",
     "@hello-pangea/dnd": "^18.0.1",
     "@heroicons/react": "^2.2.0",
     "@radix-ui/react-avatar": "^1.1.11",
@@ -34,7 +35,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-    "emoji-picker-react": "^4.13.2",
+    "emoji-picker-element": "^1.29.1",
     "flowbite": "^3.1.2",
     "flowbite-react": "^0.12.7",
     "jwt-decode": "^4.0.0",

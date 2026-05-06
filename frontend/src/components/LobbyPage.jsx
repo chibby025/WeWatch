@@ -106,6 +106,13 @@ const LobbyPage = () => {
   const [error, setError] = useState(null);
   const [filteredRooms, setFilteredRooms] = useState([]);
   const [filteredSessions, setFilteredSessions] = useState([]); // ✅ Filtered sessions
+  
+  // ✅ Infinite Scroll State
+  const [roomsPage, setRoomsPage] = useState(0);
+  const [hasMoreRooms, setHasMoreRooms] = useState(true);
+  const [loadingMoreRooms, setLoadingMoreRooms] = useState(false);
+  const roomsObserverTarget = React.useRef(null);
+  
   const navigate = useNavigate();
   const location = useLocation();
   const [currentDisplay, setCurrentDisplay] = useState('current'); // 'current' or 'next'
@@ -724,13 +731,45 @@ const LobbyPage = () => {
     }
   }, [rooms, sessions, searchTerm]);
 
+  // ✅ Infinite scroll observer for rooms
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // Load more when sentinel is visible and we have more rooms to load
+        if (entries[0].isIntersecting && hasMoreRooms && !loadingMoreRooms && activeTab === 'rooms') {
+          console.log('📜 [LobbyPage] Loading more rooms...');
+          fetchRoomsData(roomsPage + 1, true);
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' } // Trigger 100px before reaching the end
+    );
+
+    const currentTarget = roomsObserverTarget.current;
+    if (currentTarget) {
+      observer.observe(currentTarget);
+    }
+
+    return () => {
+      if (currentTarget) {
+        observer.unobserve(currentTarget);
+      }
+    };
+  }, [hasMoreRooms, loadingMoreRooms, roomsPage, activeTab]);
+
   // Fetch rooms function (moved outside useEffect so it can be reused)
-  const fetchRoomsData = async () => {
-    setLoading(true);
+  // Fetch rooms function with pagination support
+  const fetchRoomsData = async (page = 0, append = false) => {
+    if (!append) {
+      setLoading(true);
+    } else {
+      setLoadingMoreRooms(true);
+    }
     setError(null);
 
     try {
-      const data = await getRooms();
+      const limit = 20;
+      const offset = page * limit;
+      const data = await getRooms(limit, offset);
       
       const roomsList = data.rooms || [];
       
@@ -756,14 +795,26 @@ const LobbyPage = () => {
         return false;
       });
       
-      setRooms(filteredForRooms);
+      if (append) {
+        setRooms(prevRooms => [...prevRooms, ...filteredForRooms]);
+      } else {
+        setRooms(filteredForRooms);
+      }
+      
+      // Update pagination state
+      setHasMoreRooms(data.has_more || false);
+      setRoomsPage(page);
+      
     } catch (err) {
       console.error("❌ [LobbyPage] Error fetching rooms:", err);
       setError('Failed to load rooms. Please try again later.');
-      setRooms([]);
-      setFilteredRooms([]);
+      if (!append) {
+        setRooms([]);
+        setFilteredRooms([]);
+      }
     } finally {
       setLoading(false);
+      setLoadingMoreRooms(false);
     }
   };
 
@@ -2827,15 +2878,19 @@ const LobbyPage = () => {
         {!loading && !error && (
           <>
             {filteredRooms && filteredRooms.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
-                {filteredRooms.map((room) => {
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
+                  {filteredRooms.map((room) => {
                   const isOwnRoom = authenticatedUserID === room.host_id;
+                  const isMember = room.is_member && !isOwnRoom; // Member but not owner
                   return (
                   <div 
                     key={room.id} 
                     className={`bg-white dark:bg-gray-800 shadow-md rounded-lg hover:shadow-lg transition-shadow duration-300 relative cursor-pointer ${
                       isOwnRoom 
                         ? 'ring-2 ring-purple-500 dark:ring-purple-400' 
+                        : isMember
+                        ? 'ring-2 ring-blue-500 dark:ring-blue-400'
                         : 'border border-gray-200 dark:border-gray-700'
                     }`}
                     onClick={() => navigate(`/rooms/${room.id}`)}
@@ -2898,6 +2953,15 @@ const LobbyPage = () => {
                                 <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
                               </svg>
                               Your Room
+                            </span>
+                          )}
+                          {/* ✅ "Member" Badge */}
+                          {isMember && (
+                            <span className="flex items-center gap-1 text-xs font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 px-2 py-0.5 rounded-full flex-shrink-0 w-fit" title="You are a member of this room">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
+                              </svg>
+                              Member
                             </span>
                           )}
                           {/* ✅ Room Rating Badge - Desktop: inline, Mobile: below name */}
@@ -3024,6 +3088,22 @@ const LobbyPage = () => {
                   );
                 })}
               </div>
+              
+              {/* ✅ Infinite Scroll Sentinel & Loading Indicator */}
+              <div ref={roomsObserverTarget} className="w-full py-4">
+                {loadingMoreRooms && (
+                  <div className="flex justify-center items-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                    <span className="ml-3 text-gray-600 dark:text-gray-400">Loading more rooms...</span>
+                  </div>
+                )}
+                {!hasMoreRooms && rooms.length > 0 && (
+                  <p className="text-center text-gray-500 dark:text-gray-400 text-sm">
+                    No more rooms to load
+                  </p>
+                )}
+              </div>
+              </>
             ) : (
               <div className="text-center py-10">
                 {searchTerm ? (
@@ -3297,10 +3377,37 @@ const LobbyPage = () => {
           )}
 
           {/* ✅ Active Sessions Section */}
-          {sessionsPage.data.length > 0 && (
+          {sessionsPage.data.length > 0 && (() => {
+            // 🔍 Filter sessions by search term (room name, host username, content rating, session title, watch type)
+            const filteredSessions = sessionsPage.data.filter(session => {
+              if (!discoverSearch.trim()) return true; // No search = show all
+              
+              const searchLower = discoverSearch.toLowerCase();
+              return (
+                (session.room_name && session.room_name.toLowerCase().includes(searchLower)) ||
+                (session.host_username && session.host_username.toLowerCase().includes(searchLower)) ||
+                (session.content_rating && session.content_rating.toLowerCase().includes(searchLower)) ||
+                (session.session_title && session.session_title.toLowerCase().includes(searchLower)) ||
+                (session.watch_type && session.watch_type.toLowerCase().includes(searchLower))
+              );
+            });
+            
+            if (filteredSessions.length === 0) {
+              return (
+                <div className="text-center py-12 text-gray-400">
+                  <svg className="w-16 h-16 mx-auto mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <p className="text-lg font-medium">No sessions found</p>
+                  <p className="text-sm mt-1">Try a different search term</p>
+                </div>
+              );
+            }
+            
+            return (
             <div>
               <div className="space-y-6">
-                {sessionsPage.data.map((session, index) => {
+                {filteredSessions.map((session, index) => {
                   const preview = sessionPreviews[session.session_id] || {};
                   
                   // Determine watch type display
@@ -3563,7 +3670,8 @@ const LobbyPage = () => {
                 })}
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* ✅ Infinite scroll trigger (invisible element) */}
           <div 

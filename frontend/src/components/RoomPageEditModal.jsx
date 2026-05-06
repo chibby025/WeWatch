@@ -1,12 +1,13 @@
 // WeWatch/frontend/src/components/RoomPageEditModal.jsx
 // Modal for editing room settings and preferences
 import React, { useState, useEffect } from 'react';
-import { XMarkIcon, FilmIcon, PhotoIcon, TrashIcon, PencilIcon, ShareIcon } from '@heroicons/react/24/outline';
-import apiClient from '../services/api';
+import { XMarkIcon, FilmIcon, PhotoIcon, TrashIcon, PencilIcon, ShareIcon, PlusIcon, UserPlusIcon } from '@heroicons/react/24/outline';
+import apiClient, { createRoomGroup, getRoomGroups, updateRoomGroup, deleteRoomGroup } from '../services/api';
 import toast from 'react-hot-toast';
 import PostsGrid from './PostsGrid';
 import PostViewModal from './PostViewModal';
 import UserProfileModal from './UserProfileModal';
+import EmojiPicker from './EmojiPicker';
 import { useAuth } from '../contexts/AuthContext';
 
 const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = true, membersInRoom = 0, members = [] }) => {
@@ -32,6 +33,20 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
   const [isHostProfileModalOpen, setIsHostProfileModalOpen] = useState(false);
   const [expandedMemberAvatar, setExpandedMemberAvatar] = useState(null);
 
+  // Groups state
+  const [groups, setGroups] = useState([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [newGroup, setNewGroup] = useState({ name: '', description: '', icon: '💬', is_public: true });
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [emojiPickerType, setEmojiPickerType] = useState(null); // 'icon', 'title', 'edit-icon', or 'edit-title'
+  const [selectedGroupForEmoji, setSelectedGroupForEmoji] = useState(null);
+  const [groupImageFile, setGroupImageFile] = useState(null); // For new group image upload
+  const [groupImagePreview, setGroupImagePreview] = useState(null); // Preview URL for new group
+  const [editGroupImageFile, setEditGroupImageFile] = useState(null); // For editing group image
+  const [editGroupImagePreview, setEditGroupImagePreview] = useState(null); // Preview for editing
+
   // Initialize form data when room changes
   useEffect(() => {
     if (room) {
@@ -53,6 +68,124 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
       setImageFile(null);
     }
   }, [room]);
+
+  // Fetch groups when modal opens and Groups tab is active
+  useEffect(() => {
+    if (isOpen && room?.id && activeTab === 'groups' && isHost) {
+      fetchGroups();
+    }
+  }, [isOpen, room?.id, activeTab, isHost]);
+
+  const fetchGroups = async () => {
+    try {
+      setLoadingGroups(true);
+      const response = await getRoomGroups(room.id);
+      setGroups(response.data.groups || []);
+    } catch (error) {
+      console.error('Error fetching groups:', error);
+      toast.error('Failed to load groups');
+    } finally {
+      setLoadingGroups(false);
+    }
+  };
+
+  const handleCreateGroup = async () => {
+    if (!newGroup.name.trim()) {
+      toast.error('Group name is required');
+      return;
+    }
+
+    try {
+      setCreatingGroup(true);
+      
+      let groupData = { ...newGroup };
+      
+      // If there's an image file, upload it first and use the URL
+      if (groupImageFile) {
+        const formData = new FormData();
+        formData.append('file', groupImageFile);
+        formData.append('type', 'group_icon'); // Distinguish from other uploads
+        
+        try {
+          const uploadRes = await apiClient.post(`/api/rooms/${room.id}/upload`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          
+          // Use the uploaded file URL as the icon
+          if (uploadRes.data.url) {
+            groupData.icon = uploadRes.data.url;
+          }
+        } catch (uploadErr) {
+          console.error('Error uploading group image:', uploadErr);
+          toast.error('Failed to upload group image');
+          setCreatingGroup(false);
+          return;
+        }
+      }
+      
+      await createRoomGroup(room.id, groupData);
+      toast.success('Group created successfully');
+      setNewGroup({ name: '', description: '', icon: '💬', is_public: true });
+      setGroupImageFile(null);
+      setGroupImagePreview(null);
+      fetchGroups();
+    } catch (error) {
+      console.error('Error creating group:', error);
+      toast.error('Failed to create group');
+    } finally {
+      setCreatingGroup(false);
+    }
+  };
+
+  const handleUpdateGroup = async (groupId, updates) => {
+    try {
+      let groupData = { ...updates };
+      
+      // If there's an image file to upload, upload it first
+      if (editGroupImageFile) {
+        const formData = new FormData();
+        formData.append('file', editGroupImageFile);
+        formData.append('type', 'group_icon');
+        
+        try {
+          const uploadRes = await apiClient.post(`/api/rooms/${room.id}/upload`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          
+          if (uploadRes.data.url) {
+            groupData.icon = uploadRes.data.url;
+          }
+        } catch (uploadErr) {
+          console.error('Error uploading group image:', uploadErr);
+          toast.error('Failed to upload group image');
+          return;
+        }
+      }
+      
+      await updateRoomGroup(room.id, groupId, groupData);
+      toast.success('Group updated successfully');
+      setEditingGroup(null);
+      setEditGroupImageFile(null);
+      setEditGroupImagePreview(null);
+      fetchGroups();
+    } catch (error) {
+      console.error('Error updating group:', error);
+      toast.error('Failed to update group');
+    }
+  };
+
+  const handleDeleteGroup = async (groupId) => {
+    if (!confirm('Are you sure? Messages will remain but group filter will be removed.')) return;
+
+    try {
+      await deleteRoomGroup(room.id, groupId);
+      toast.success('Group deleted successfully');
+      fetchGroups();
+    } catch (error) {
+      console.error('Error deleting group:', error);
+      toast.error('Failed to delete group');
+    }
+  };
 
   const handleImageSelect = (e) => {
     const file = e.target.files?.[0];
@@ -397,6 +530,19 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
             </svg>
             <span>Posts</span>
           </button>
+          {isHost && (
+            <button
+              onClick={() => setActiveTab('groups')}
+              className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
+                activeTab === 'groups' 
+                  ? 'text-purple-400 border-b-2 border-purple-400' 
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <span>👥</span>
+              <span>Groups</span>
+            </button>
+          )}
         </div>
 
         {/* ℹ️ Info Tab - Room Settings & Stats */}
@@ -586,6 +732,321 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 setIsPostViewModalOpen(true);
               }}
             />
+          </div>
+        )}
+
+        {/* 👥 Groups Tab - Discord-style channels */}
+        {activeTab === 'groups' && (
+          <div className="p-6 overflow-y-auto flex-1">
+            {/* Create New Group - Host Only */}
+            {isHost && (
+            <div className="bg-gray-800/50 rounded-lg p-4 mb-4 border border-gray-700/50">
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                <PlusIcon className="w-4 h-4" />
+                Create New Group
+              </h3>
+              <div className="space-y-3">
+                {/* Group Image (Emoji or Upload) */}
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1.5">Group Image</label>
+                  <div className="flex items-center gap-3">
+                    {/* Display uploaded image */}
+                    <div className="w-16 h-16 bg-gray-700/50 rounded-lg flex items-center justify-center overflow-hidden">
+                      {groupImagePreview ? (
+                        <img src={groupImagePreview} alt="Group" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="text-gray-500 text-xs text-center">No image</div>
+                      )}
+                    </div>
+                    {/* Buttons for file upload */}
+                    <div className="flex flex-col gap-2">
+                      <label className="px-4 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/50 rounded-lg transition-colors text-xs font-medium cursor-pointer text-center">
+                        Upload Image
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (file) {
+                              setGroupImageFile(file);
+                              setGroupImagePreview(URL.createObjectURL(file));
+                              setNewGroup(prev => ({ ...prev, icon: '' }));
+                            }
+                          }}
+                        />
+                      </label>
+                      {groupImagePreview && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGroupImageFile(null);
+                            setGroupImagePreview(null);
+                            setNewGroup(prev => ({ ...prev, icon: '' }));
+                          }}
+                          className="px-4 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/50 rounded-lg transition-colors text-xs font-medium"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Group Name with Emoji Support */}
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1.5">Name *</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newGroup.name}
+                      onChange={(e) => setNewGroup(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="e.g. General, Announcements, Random"
+                      maxLength={100}
+                      className="flex-1 px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmojiPickerType('title');
+                        setShowEmojiPicker(!showEmojiPicker);
+                      }}
+                      className="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 border border-gray-600 rounded-lg transition-colors text-lg"
+                      title="Add emoji to title"
+                    >
+                      😀
+                    </button>
+                  </div>
+                  
+                  {/* Emoji Picker for Title */}
+                  {showEmojiPicker && emojiPickerType === 'title' && (
+                    <div className="mt-3 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                      <EmojiPicker
+                        onEmojiSelect={(emoji) => {
+                          setNewGroup(prev => ({ ...prev, name: prev.name + emoji }));
+                          setShowEmojiPicker(false);
+                          setEmojiPickerType(null);
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Group Description */}
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1.5">Description</label>
+                  <input
+                    type="text"
+                    value={newGroup.description}
+                    onChange={(e) => setNewGroup(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="Optional description"
+                    maxLength={500}
+                    className="w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+
+                {/* Visibility */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="group-public"
+                    checked={newGroup.is_public}
+                    onChange={(e) => setNewGroup(prev => ({ ...prev, is_public: e.target.checked }))}
+                    className="w-4 h-4 text-purple-600 bg-gray-700 border-gray-600 rounded focus:ring-purple-500"
+                  />
+                  <label htmlFor="group-public" className="text-sm text-gray-300">
+                    Public (visible to all room members)
+                  </label>
+                </div>
+
+                {/* Create Button */}
+                <button
+                  onClick={handleCreateGroup}
+                  disabled={creatingGroup || !newGroup.name.trim()}
+                  className="w-full py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {creatingGroup ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <PlusIcon className="w-4 h-4" />
+                      Create Group
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+            )}
+
+            {/* Existing Groups List */}
+            <div>
+              <h3 className="text-sm font-semibold text-white mb-3">
+                Existing Groups ({groups.length})
+              </h3>
+              
+              {loadingGroups ? (
+                <div className="text-center py-8 text-gray-400">
+                  <svg className="animate-spin h-8 w-8 mx-auto mb-2" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Loading groups...
+                </div>
+              ) : groups.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <span className="text-4xl mb-2 block">👥</span>
+                  <p>No groups yet</p>
+                  <p className="text-xs mt-1">Create your first group above</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {groups.map((group) => (
+                    <div
+                      key={group.ID}
+                      className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50 hover:border-gray-600 transition-colors"
+                    >
+                      {editingGroup?.ID === group.ID ? (
+                        // Edit Mode
+                        <div className="space-y-2">
+                          {/* Edit Icon/Image */}
+                          <div>
+                            <div className="flex items-center gap-3 mb-2">
+                              <div className="w-12 h-12 bg-gray-700/50 rounded overflow-hidden flex items-center justify-center">
+                                {editGroupImagePreview ? (
+                                  <img src={editGroupImagePreview} alt="Group" className="w-full h-full object-cover" />
+                                ) : editingGroup.icon && editingGroup.icon.startsWith('http') ? (
+                                  <img src={editingGroup.icon} alt="Group" className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="text-gray-500 text-xs text-center">No image</div>
+                                )}
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <label className="px-3 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/50 rounded text-xs cursor-pointer text-center">
+                                  Upload Image
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const file = e.target.files[0];
+                                      if (file) {
+                                        setEditGroupImageFile(file);
+                                        setEditGroupImagePreview(URL.createObjectURL(file));
+                                        setEditingGroup(prev => ({ ...prev, icon: '' }));
+                                      }
+                                    }}
+                                  />
+                                </label>
+                                {(editGroupImagePreview || (editingGroup.icon && editingGroup.icon.startsWith('http'))) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditGroupImageFile(null);
+                                      setEditGroupImagePreview(null);
+                                      setEditingGroup(prev => ({ ...prev, icon: '' }));
+                                    }}
+                                    className="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/50 rounded text-xs"
+                                  >
+                                    Clear
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Edit Name */}
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={editingGroup.name}
+                              onChange={(e) => setEditingGroup(prev => ({ ...prev, name: e.target.value }))}
+                              className="flex-1 px-2 py-1 bg-gray-900/50 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            />
+                          </div>
+                          
+                          <input
+                            type="text"
+                            value={editingGroup.description}
+                            onChange={(e) => setEditingGroup(prev => ({ ...prev, description: e.target.value }))}
+                            placeholder="Description"
+                            className="w-full px-2 py-1 bg-gray-900/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleUpdateGroup(group.ID, editingGroup)}
+                              className="flex-1 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setEditingGroup(null)}
+                              className="flex-1 py-1.5 bg-gray-600 hover:bg-gray-700 text-white text-sm rounded transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        // View Mode
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 flex-shrink-0 rounded overflow-hidden flex items-center justify-center bg-gray-700/30">
+                            {group.icon && group.icon.startsWith('http') ? (
+                              <img src={group.icon} alt={group.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="text-2xl">{group.icon}</span>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-medium text-white truncate">{group.name}</h4>
+                              {!group.is_public && (
+                                <span className="text-xs px-1.5 py-0.5 bg-gray-700 text-gray-300 rounded">Private</span>
+                              )}
+                            </div>
+                            {group.description && (
+                              <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{group.description}</p>
+                            )}
+                            <p className="text-xs text-gray-500 mt-1">{group.member_count || 0} members</p>
+                          </div>
+                          <div className="flex gap-1 flex-shrink-0">
+                            <button
+                              onClick={() => {
+                                // TODO: Implement add member functionality
+                                toast.success('Add member feature coming soon');
+                              }}
+                              className="p-1.5 hover:bg-purple-600/20 rounded transition-colors"
+                              title="Add members"
+                            >
+                              <UserPlusIcon className="w-4 h-4 text-purple-400" />
+                            </button>
+                            <button
+                              onClick={() => setEditingGroup(group)}
+                              className="p-1.5 hover:bg-gray-700 rounded transition-colors"
+                              title="Edit group"
+                            >
+                              <PencilIcon className="w-4 h-4 text-gray-400" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteGroup(group.ID)}
+                              className="p-1.5 hover:bg-red-600/20 rounded transition-colors"
+                              title="Delete group"
+                            >
+                              <TrashIcon className="w-4 h-4 text-red-400" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

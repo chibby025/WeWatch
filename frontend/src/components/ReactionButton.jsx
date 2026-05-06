@@ -1,13 +1,13 @@
 
 import React, { useState } from 'react';
-import EmojiPicker from 'emoji-picker-react';
+import EmojiPicker from './EmojiPicker';
 
 const ReactionButton = ({ onReaction, disabled }) => {
   const [showPicker, setShowPicker] = useState(false);
 
-  const handleReaction = (emojiData) => {
+  const handleReaction = (emoji) => {
     if (onReaction && !disabled) {
-      onReaction(emojiData.emoji);
+      onReaction(emoji);
       setShowPicker(false);
     }
   };
@@ -30,9 +30,7 @@ const ReactionButton = ({ onReaction, disabled }) => {
       {showPicker && (
         <div className="absolute bottom-full left-0 mb-2 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-40">
           <EmojiPicker 
-            onEmojiClick={handleReaction}
-            theme="light"
-            previewConfig={{ showPreview: false }}
+            onEmojiSelect={handleReaction}
           />
         </div>
       )}
