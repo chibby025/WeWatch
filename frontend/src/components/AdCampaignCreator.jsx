@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { XMarkIcon, CloudArrowUpIcon, PlayIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { API_BASE_URL } from '../services/api';
 
 const AdCampaignCreator = ({ isOpen, onClose, onCampaignCreated }) => {
   const [step, setStep] = useState(1); // 1: Basic Info, 2: Creative Upload, 3: Targeting, 4: Budget & Review
@@ -67,7 +68,7 @@ const AdCampaignCreator = ({ isOpen, onClose, onCampaignCreated }) => {
       uploadFormData.append('file', formData.media_file);
       uploadFormData.append('type', 'ad_media');
 
-      const uploadResponse = await fetch('/api/upload/ad-media', {
+      const uploadResponse = await fetch(`${API_BASE_URL}/api/upload/ad-media`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -97,7 +98,7 @@ const AdCampaignCreator = ({ isOpen, onClose, onCampaignCreated }) => {
         status: 'pending_review'
       };
 
-      const response = await fetch('/api/ads/campaigns', {
+      const response = await fetch(`${API_BASE_URL}/api/ads/campaigns`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,

@@ -1,7 +1,6 @@
-
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { uploadMediaToRoom, uploadChunk, apiClient } from '../../../services/api';
+import { uploadMediaToRoom, uploadChunk, apiClient, API_BASE_URL } from '../../../services/api';
 import { Gamepad2, Video } from 'lucide-react'; // Game and Video icons
 import toast from 'react-hot-toast';
 import useSessionRecording from '../../../hooks/useSessionRecording';
@@ -584,7 +583,7 @@ export default function LeftSidebar({
         try {
           console.log('🎨 [Poster Retry] Fetching updated media items for poster...');
           const token = localStorage.getItem('token');
-          const response = await fetch(`/api/rooms/${roomId}/temporary-media`, {
+          const response = await fetch(`${API_BASE_URL}/api/rooms/${roomId}/temporary-media`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           

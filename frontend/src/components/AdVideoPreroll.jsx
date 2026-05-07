@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
+import { API_BASE_URL } from '../services/api';
 
 const AdVideoPreroll = ({ onComplete, roomId, contentRating }) => {
   const { currentUser } = useAuth();
@@ -28,7 +29,7 @@ const AdVideoPreroll = ({ onComplete, roomId, contentRating }) => {
         ...(contentRating && { content_rating: contentRating })
       });
 
-      const response = await fetch(`/api/ads/active?${params}`);
+      const response = await fetch(`${API_BASE_URL}/api/ads/active?${params}`);
       if (response.ok) {
         const data = await response.json();
         if (data.campaigns && data.campaigns.length > 0) {
@@ -55,7 +56,7 @@ const AdVideoPreroll = ({ onComplete, roomId, contentRating }) => {
         ? Math.floor((Date.now() - viewStartTime.current) / 1000)
         : 0;
 
-      await fetch(`/api/ads/campaigns/${campaignId}/track`, {
+      await fetch(`${API_BASE_URL}/api/ads/campaigns/${campaignId}/track`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

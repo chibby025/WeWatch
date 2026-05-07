@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { XMarkIcon, MegaphoneIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { API_BASE_URL } from '../services/api';
 
 const AdsManagementModal = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState('master_switch'); // 'master_switch', 'inquiries' or 'active_ads'
@@ -35,7 +36,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
   const fetchAdSettings = async () => {
     setSettingsLoading(true);
     try {
-      const response = await fetch('/api/ads/settings', {
+      const response = await fetch(`${API_BASE_URL}/api/ads/settings`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -63,7 +64,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
 
     setSettingsLoading(true);
     try {
-      const response = await fetch('/api/ads/settings', {
+      const response = await fetch(`${API_BASE_URL}/api/ads/settings`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -93,7 +94,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
   const fetchInquiries = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/admin/ad-inquiries', {
+      const response = await fetch(`${API_BASE_URL}/api/admin/ad-inquiries`, {
         credentials: 'include'
       });
       
@@ -113,7 +114,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
 
   const handleUpdateStatus = async (inquiryId, status, notes = '') => {
     try {
-      const response = await fetch(`/api/admin/ad-inquiries/${inquiryId}/status`, {
+      const response = await fetch(`${API_BASE_URL}/api/admin/ad-inquiries/${inquiryId}/status`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -138,7 +139,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
   const fetchCampaigns = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/admin/campaigns', {
+      const response = await fetch(`${API_BASE_URL}/api/admin/campaigns`, {
         credentials: 'include'
       });
 
@@ -157,7 +158,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
 
   const handleCampaignStatusUpdate = async (campaignId, newStatus) => {
     try {
-      const response = await fetch(`/api/admin/campaigns/${campaignId}/status`, {
+      const response = await fetch(`${API_BASE_URL}/api/admin/campaigns/${campaignId}/status`, {
         method: 'PATCH',
         credentials: 'include',
         headers: {

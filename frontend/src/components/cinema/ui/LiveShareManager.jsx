@@ -583,7 +583,7 @@ export default function LiveShareManager({
       formData.append('logo', podcastLogo);
       
       try {
-        const response = await fetch(`/api/sessions/${sessionId}/podcast-logo`, {
+        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/podcast-logo`, {
           method: 'POST',
           credentials: 'include', // Use cookies instead of Bearer token
           body: formData
@@ -667,7 +667,7 @@ export default function LiveShareManager({
         formData.append('logo', setup.logoFile);
         
         try {
-          const response = await fetch(`/api/sessions/${sessionId}/podcast-logo`, {
+          const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/podcast-logo`, {
             method: 'POST',
             credentials: 'include',
             body: formData

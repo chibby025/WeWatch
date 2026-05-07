@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { MegaphoneIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import { API_BASE_URL } from '../services/api';
 
 const AdInquiryForm = ({ isOpen, onClose }) => {
   const [formData, setFormData] = useState({
@@ -21,7 +22,7 @@ const AdInquiryForm = ({ isOpen, onClose }) => {
     setLoading(true);
 
     try {
-      const response = await fetch('/api/ads/inquiries', {
+      const response = await fetch(`${API_BASE_URL}/api/ads/inquiries`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

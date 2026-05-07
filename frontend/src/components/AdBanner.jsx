@@ -1,6 +1,7 @@
 // frontend/src/components/AdBanner.jsx
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { API_BASE_URL } from '../services/api';
 
 const AdBanner = ({ placement = 'lobby_sidebar' }) => {
   const { currentUser } = useAuth();
@@ -22,7 +23,7 @@ const AdBanner = ({ placement = 'lobby_sidebar' }) => {
         ...(userAge && { user_age: userAge })
       });
 
-      const response = await fetch(`/api/ads/active?${params}`);
+      const response = await fetch(`${API_BASE_URL}/api/ads/active?${params}`);
       if (response.ok) {
         const data = await response.json();
         if (data.campaigns && data.campaigns.length > 0) {
@@ -46,7 +47,7 @@ const AdBanner = ({ placement = 'lobby_sidebar' }) => {
 
   const trackImpression = async (campaignId) => {
     try {
-      await fetch(`/api/ads/campaigns/${campaignId}/track`, {
+      await fetch(`${API_BASE_URL}/api/ads/campaigns/${campaignId}/track`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -64,7 +65,7 @@ const AdBanner = ({ placement = 'lobby_sidebar' }) => {
 
     // Track click
     try {
-      await fetch(`/api/ads/campaigns/${ad.id}/track`, {
+      await fetch(`${API_BASE_URL}/api/ads/campaigns/${ad.id}/track`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

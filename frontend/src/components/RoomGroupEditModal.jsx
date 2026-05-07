@@ -7,7 +7,8 @@ import {
   deleteRoomGroup, 
   getRoomGroupMembers, 
   leaveRoomGroup,
-  joinRoomGroup 
+  joinRoomGroup,
+  API_BASE_URL
 } from '../services/api';
 import toast from 'react-hot-toast';
 
@@ -95,7 +96,7 @@ export default function RoomGroupEditModal({
         const formData = new FormData();
         formData.append('image', imageFile);
         
-        const uploadResponse = await fetch(`/api/rooms/${roomId}/upload`, {
+        const uploadResponse = await fetch(`${API_BASE_URL}/api/rooms/${roomId}/upload`, {
           method: 'POST',
           body: formData,
           credentials: 'include',

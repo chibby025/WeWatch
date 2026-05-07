@@ -28,7 +28,7 @@ import MembersModal from '../../components/MembersModal.jsx';
 import RemoteAudioPlayer from './ui/RemoteAudioPlayer';
 import FloatingGiftIcon from '../FloatingGiftIcon';
 import DonationNotification from '../DonationNotification';
-import axios from 'axios';
+import { apiClient } from '../../services/api';
 // Import sounds
 import { playSeatSound, playMicOnSound, playMicOffSound } from '../../utils/audio';
 import ChatHomeModal from '../ChatHomeModal.jsx';
@@ -153,9 +153,7 @@ export default function VideoWatch() {
   useEffect(() => {
     const fetchWallet = async () => {
       try {
-        const response = await axios.get('/api/wallets/me', {
-          withCredentials: true
-        });
+        const response = await apiClient.get('/api/wallets/me');
         setTokenBalance(response.data?.wallet?.token_balance || 0);
       } catch (err) {
         console.error('Error fetching wallet:', err);
