@@ -161,11 +161,26 @@ func DeleteLobbyChatMessageHandler(c *gin.Context) {
 
 	// If both users deleted, soft delete completely
 	if chat.DeletedBySender && chat.DeletedByRecipient {
+		// ✅ Delete attachment from BunnyCDN before deleting record (async to not block)
+		attachmentURL := chat.AttachmentURL
+		
 		if err := db.Delete(&chat).Error; err != nil {
 			log.Printf("DeleteLobbyChatMessageHandler: Failed to delete message: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete message"})
 			return
 		}
+		
+		// Delete attachment from BunnyCDN asynchronously
+		if attachmentURL != nil && *attachmentURL != "" {
+			go func(url string) {
+				if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+					if err := utils.DeleteFromBunnyCDN(url); err != nil {
+						log.Printf("⚠️  [DeleteLobbyChat] Failed to delete attachment from BunnyCDN: %v", err)
+					}
+				}
+			}(*attachmentURL)
+		}
+		
 		log.Printf("DeleteLobbyChatMessageHandler: Message %d permanently deleted (both users)", messageID)
 	} else {
 		if err := db.Save(&chat).Error; err != nil {

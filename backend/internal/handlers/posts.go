@@ -384,8 +384,19 @@ func DeletePost(c *gin.Context) {
 		return
 	}
 
-	// Optionally: Delete from BunnyCDN (async job recommended)
-	// go utils.DeleteFromBunnyCDN(post.VideoURL)
+	// ✅ Delete media from BunnyCDN (async to not block response)
+	go func() {
+		if post.VideoURL != "" && (strings.HasPrefix(post.VideoURL, "http://") || strings.HasPrefix(post.VideoURL, "https://")) {
+			if err := utils.DeleteFromBunnyCDN(post.VideoURL); err != nil {
+				log.Printf("⚠️  [DeletePost] Failed to delete video from BunnyCDN: %v", err)
+			}
+		}
+		if post.ThumbnailURL != "" && (strings.HasPrefix(post.ThumbnailURL, "http://") || strings.HasPrefix(post.ThumbnailURL, "https://")) {
+			if err := utils.DeleteFromBunnyCDN(post.ThumbnailURL); err != nil {
+				log.Printf("⚠️  [DeletePost] Failed to delete thumbnail from BunnyCDN: %v", err)
+			}
+		}
+	}()
 
 	log.Printf("✅ [DeletePost] Post %d deleted by user %d", post.ID, userID)
 	c.JSON(http.StatusOK, gin.H{"message": "Post deleted successfully"})
