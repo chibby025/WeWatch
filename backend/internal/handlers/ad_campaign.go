@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
 )
 
@@ -105,9 +106,10 @@ func GetUserCampaigns(c *gin.Context) {
 // GetAllCampaigns retrieves all campaigns (super admin only)
 func GetAllCampaigns(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	db := c.MustGet("db").(*gorm.DB)
 
 	var user models.User
-	if err := DB.First(&user, userID).Error; err != nil {
+	if err := db.First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 		return
 	}
@@ -119,7 +121,7 @@ func GetAllCampaigns(c *gin.Context) {
 
 	status := c.Query("status")
 	var campaigns []models.AdCampaign
-	query := DB.Order("created_at DESC").Preload("Advertiser").Preload("ApprovedBy")
+	query := db.Order("created_at DESC").Preload("Advertiser").Preload("ApprovedBy")
 
 	if status != "" {
 		query = query.Where("status = ?", status)

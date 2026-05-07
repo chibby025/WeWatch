@@ -4,13 +4,25 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 	"wewatch-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// GetBackendURL returns the backend base URL (for profile images)
+func GetBackendURL() string {
+	// Check if RAILWAY_ENVIRONMENT is set (production)
+	if os.Getenv("RAILWAY_ENVIRONMENT") != "" {
+		return "https://letswatchout-production.up.railway.app"
+	}
+	// Local development
+	return "http://localhost:8080"
+}
 
 // SendFriendRequestHandler sends a friend request to another user
 func SendFriendRequestHandler(c *gin.Context) {
@@ -327,13 +339,35 @@ func GetFriendsListHandler(c *gin.Context) {
 		return
 	}
 
-	friends := make([]models.User, 0, len(friendships))
+	friends := make([]gin.H, 0, len(friendships))
 	for _, friendship := range friendships {
+		var friend models.User
 		if friendship.RequesterID == currentUserID {
-			friends = append(friends, friendship.Recipient)
+			friend = friendship.Recipient
 		} else {
-			friends = append(friends, friendship.Requester)
+			friend = friendship.Requester
 		}
+		
+		// ✅ Generate full URL for profile picture
+		profilePictureURL := ""
+		if friend.AvatarURL != "" {
+			if strings.HasPrefix(friend.AvatarURL, "http") {
+				// Already a full URL (Bunny CDN)
+				profilePictureURL = friend.AvatarURL
+			} else {
+				// Railway backend path - construct full URL
+				profilePictureURL = GetBackendURL() + "/" + strings.TrimPrefix(friend.AvatarURL, "/")
+			}
+		}
+		
+		friends = append(friends, gin.H{
+			"id":              friend.ID,
+			"username":        friend.Username,
+			"display_name":    friend.Username, // Use Username as display name
+			"email":           friend.Email,
+			"profile_picture": profilePictureURL,
+			"created_at":      friend.CreatedAt,
+		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{

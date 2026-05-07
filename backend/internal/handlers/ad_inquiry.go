@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
 )
 
@@ -55,10 +56,11 @@ func SubmitAdInquiry(c *gin.Context) {
 // GetAdInquiries retrieves all ad inquiries (super admin only)
 func GetAdInquiries(c *gin.Context) {
 	userID, _ := c.Get("user_id")
+	db := c.MustGet("db").(*gorm.DB)
 	
 	// Check if user is super admin
 	var user models.User
-	if err := DB.First(&user, userID).Error; err != nil {
+	if err := db.First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 		return
 	}
@@ -69,7 +71,7 @@ func GetAdInquiries(c *gin.Context) {
 	}
 
 	var inquiries []models.AdInquiry
-	if err := DB.Order("created_at DESC").Preload("ReviewedBy").Find(&inquiries).Error; err != nil {
+	if err := db.Order("created_at DESC").Preload("ReviewedBy").Find(&inquiries).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch inquiries"})
 		return
 	}

@@ -22,6 +22,11 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  
+  // ✅ Fullscreen image modal state
+  const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [selectedUserName, setSelectedUserName] = useState('');
 
   useEffect(() => {
     if (isOpen) {
@@ -256,7 +261,12 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
                             <img
                               src={friend.profile_picture || `https://ui-avatars.com/api/?name=${friend.username}&background=random`}
                               alt={friend.username}
-                              className="w-12 h-12 rounded-full border-2 border-purple-500"
+                              onClick={() => {
+                                setSelectedImage(friend.profile_picture || `https://ui-avatars.com/api/?name=${friend.username}&background=random`);
+                                setSelectedUserName(friend.display_name || friend.username);
+                                setIsImageModalOpen(true);
+                              }}
+                              className="w-12 h-12 rounded-full border-2 border-purple-500 cursor-pointer hover:border-purple-300 transition-all"
                             />
                             <div>
                               <h3 className="text-white font-semibold">
@@ -410,6 +420,37 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
           )}
         </div>
       </div>
+      
+      {/* ✅ Fullscreen Image Modal */}
+      {isImageModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/95 z-[100] flex items-center justify-center p-4"
+          onClick={() => setIsImageModalOpen(false)}
+        >
+          <div className="relative max-w-4xl w-full">
+            {/* Close Button */}
+            <button
+              onClick={() => setIsImageModalOpen(false)}
+              className="absolute top-4 right-4 bg-gray-800/80 hover:bg-gray-700 text-white p-3 rounded-full transition-colors z-10"
+            >
+              <XMarkIcon className="h-6 w-6" />
+            </button>
+            
+            {/* User Name */}
+            <div className="absolute top-4 left-4 bg-gray-800/80 px-4 py-2 rounded-lg z-10">
+              <p className="text-white font-semibold">{selectedUserName}</p>
+            </div>
+            
+            {/* Image */}
+            <img
+              src={selectedImage}
+              alt={selectedUserName}
+              className="w-full h-auto max-h-[85vh] object-contain rounded-lg shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
