@@ -140,16 +140,9 @@ export const getReactions = async (roomId) => {
 
 
 // --- Response Interceptor ---
-// Runs after each response is recieved success/error
+// Runs after each response is received success/error
 apiClient.interceptors.response.use(
     (response) => {
-        // Debug: Log CORS headers in development
-        if (isDevelopment && response.config.url?.includes('/auth/')) {
-            console.log('🔍 CORS Headers for', response.config.url, {
-                origin: response.headers['access-control-allow-origin'],
-                credentials: response.headers['access-control-allow-credentials']
-            });
-        }
         return response;
     },
     (error) => {

@@ -79,7 +79,7 @@ func GetAdminAuditLogsHandler(db *gorm.DB) gin.HandlerFunc {
 		offset := (page - 1) * limit
 
 		// Build query
-		query := db.Model(&models.AdminAuditLog{}).Preload("Admin")
+		query := db.Model(&models.AdminAuditLog{}).Preload("Admin", "deleted_at IS NULL")
 
 		// Filter by admin ID
 		if adminIDStr := c.Query("admin_id"); adminIDStr != "" {

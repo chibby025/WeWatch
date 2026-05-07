@@ -54,6 +54,7 @@ type KYCVerification struct {
 	ID                   uint                   `gorm:"primaryKey" json:"id"`
 	UserID               uint                   `gorm:"not null;uniqueIndex" json:"user_id"`
 	User                 *User                  `gorm:"foreignKey:UserID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"user,omitempty"`
+	FullName             string                 `gorm:"type:varchar(255);not null" json:"full_name"` // User's legal name (must match ID)
 	IDType               string                 `gorm:"type:varchar(20);not null" json:"id_type"`
 	IDNumber             string                 `gorm:"type:varchar(100);not null" json:"id_number"`
 	IDDocumentURL        string                 `gorm:"type:varchar(500);not null" json:"id_document_url"`

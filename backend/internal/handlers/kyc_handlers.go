@@ -17,6 +17,7 @@ import (
 
 // SubmitKYCRequest represents KYC submission data
 type SubmitKYCRequest struct {
+	FullName    string                 `form:"full_name" binding:"required,min=2,max=255"` // User's legal name
 	IDType      string                 `form:"id_type" binding:"required,oneof=national_id passport drivers_license voters_card"`
 	IDNumber    string                 `form:"id_number" binding:"required"`
 	BankDetails map[string]interface{} `form:"bank_details"` // Will parse from JSON string
@@ -128,15 +129,22 @@ func SubmitKYCHandler(db *gorm.DB) gin.HandlerFunc {
 			bankDetails = req.BankDetails
 		}
 
-		// Create or update KYC record
+		// Create or update KYC record with AUTO-APPROVAL
+		now := time.Now()
+		expiresAt := now.AddDate(2, 0, 0) // KYC valid for 2 years
+		
 		kycData := models.KYCVerification{
-			UserID:        user.ID,
-			IDType:        req.IDType,
-			IDNumber:      req.IDNumber,
-			IDDocumentURL: fmt.Sprintf("/uploads/kyc/%s", idDocFilename),
-			SelfieURL:     fmt.Sprintf("/uploads/kyc/%s", selfieFilename),
-			BankDetails:   bankDetails,
-			Status:        string(models.KYCStatusPending),
+			UserID:             user.ID,
+			FullName:           req.FullName, // User's legal name from form
+			IDType:             req.IDType,
+			IDNumber:           req.IDNumber,
+			IDDocumentURL:      fmt.Sprintf("/uploads/kyc/%s", idDocFilename),
+			SelfieURL:          fmt.Sprintf("/uploads/kyc/%s", selfieFilename),
+			BankDetails:        bankDetails,
+			Status:             string(models.KYCStatusApproved), // AUTO-APPROVE
+			VerifiedAt:         &now,
+			ExpiresAt:          &expiresAt,
+			VerifiedByUserID:   nil, // System auto-approved (not by admin)
 		}
 
 		if result.Error == gorm.ErrRecordNotFound {
@@ -156,12 +164,77 @@ func SubmitKYCHandler(db *gorm.DB) gin.HandlerFunc {
 			}
 		}
 
-		log.Printf("✅ KYC submitted: User %d, ID Type %s", user.ID, req.IDType)
+		// Update user KYC status to approved (denormalized for fast access)
+		if err := db.Model(&models.User{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+			"kyc_status":      "approved",
+			"kyc_verified_at": now,
+			"kyc_expires_at":  expiresAt,
+		}).Error; err != nil {
+			log.Printf("⚠️ Failed to update user KYC status: %v", err)
+		}
+
+		log.Printf("✅ KYC auto-approved: User %d (%s), Name: %s, ID Type %s", user.ID, user.Username, req.FullName, req.IDType)
 
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"kyc":     kycData,
-			"message": "KYC documents submitted successfully. We'll review them within 24-48 hours.",
+			"message": "KYC verified successfully! You can now withdraw funds from your wallet.",
+		})
+	}
+}
+
+// UpdateKYCHandler allows users to update their KYC full_name
+// PUT /api/kyc/:kycId
+func UpdateKYCHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		kycIDStr := c.Param("kycId")
+		kycID, err := strconv.ParseUint(kycIDStr, 10, 32)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid KYC ID"})
+			return
+		}
+
+		// Get authenticated user
+		authUser, exists := c.Get("user")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+		user := authUser.(*models.User)
+
+		// Parse request body
+		var req struct {
+			FullName string `json:"full_name" binding:"required,min=2,max=255"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Get KYC record
+		var kyc models.KYCVerification
+		if err := db.Where("id = ? AND user_id = ?", uint(kycID), user.ID).First(&kyc).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": "KYC not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			}
+			return
+		}
+
+		// Update full_name
+		if err := db.Model(&kyc).Update("full_name", req.FullName).Error; err != nil {
+			log.Printf("❌ Error updating KYC full_name: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update KYC"})
+			return
+		}
+
+		log.Printf("✅ KYC full_name updated: User %d, KYC ID %d, New name: %s", user.ID, kycID, req.FullName)
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"kyc":     kyc,
+			"message": "Full name updated successfully",
 		})
 	}
 }
@@ -221,25 +294,59 @@ func GetUserKYCHandler(db *gorm.DB) gin.HandlerFunc {
 
 // Admin-only KYC approval endpoints
 
-// GetPendingKYCsHandler retrieves all pending KYC verifications (admin only)
-// GET /api/admin/kyc/pending
-func GetPendingKYCsHandler(db *gorm.DB) gin.HandlerFunc {
+// GetKYCsHandler retrieves KYC verifications filtered by status (admin only)
+// GET /api/admin/kyc?status=all|pending|approved|rejected
+func GetKYCsHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// TODO: Add admin role check
-		// Get authenticated user
-		authUser, exists := c.Get("user")
+		// Admin role is already verified by AdminMiddleware
+		// Admin user is available in context as "admin_user"
+		authUser, exists := c.Get("admin_user")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
-		user := authUser.(*models.User)
+		_ = authUser.(models.User) // Admin user (unused but validated by middleware)
 
-		// Check if user is admin (you'll need to add an IsAdmin field to User model)
-		// For now, we'll allow any authenticated user (remove this in production)
-		_ = user
+		// Get status from query parameter (default to "pending")
+		status := c.DefaultQuery("status", "pending")
 
 		var kycs []models.KYCVerification
-		if err := db.Preload("User").Where("status = ?", "pending").Order("created_at ASC").Find(&kycs).Error; err != nil {
+		query := db.Preload("User", "deleted_at IS NULL")
+
+		// Filter by status unless "all" is requested
+		if status != "all" {
+			query = query.Where("status = ?", status)
+		}
+
+		if err := query.Order("created_at DESC").Find(&kycs).Error; err != nil {
+			log.Printf("❌ Error fetching KYCs with status %s: %v", status, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch KYCs"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"kycs":   kycs,
+			"count":  len(kycs),
+			"status": status,
+		})
+	}
+}
+
+// GetPendingKYCsHandler retrieves all pending KYC verifications (admin only)
+// GET /api/admin/kyc/pending
+func GetPendingKYCsHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Admin role is already verified by AdminMiddleware
+		// Admin user is available in context as "admin_user"
+		authUser, exists := c.Get("admin_user")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+		_ = authUser.(models.User) // Admin user (unused but validated by middleware)
+
+		var kycs []models.KYCVerification
+		if err := db.Preload("User", "deleted_at IS NULL").Where("status = ?", "pending").Order("created_at ASC").Find(&kycs).Error; err != nil {
 			log.Printf("❌ Error fetching pending KYCs: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending KYCs"})
 			return
@@ -263,15 +370,13 @@ func ApproveKYCHandler(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Get authenticated admin user
-		authUser, exists := c.Get("user")
+		// Get authenticated admin user (validated by AdminMiddleware)
+		authUser, exists := c.Get("admin_user")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
-		admin := authUser.(*models.User)
-
-		// TODO: Check admin role
+		admin := authUser.(models.User)
 
 		var kyc models.KYCVerification
 		if err := db.First(&kyc, kycID).Error; err != nil {
@@ -310,10 +415,11 @@ func ApproveKYCHandler(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Update user's KYC status
+		// Update user's KYC status (denormalized fields for fast access)
 		if err := tx.Model(&models.User{}).Where("id = ?", kyc.UserID).Updates(map[string]interface{}{
-			"is_kyc_verified": true,
-			"kyc_verified_at": time.Now(),
+			"kyc_status":      "approved",
+			"kyc_verified_at": kyc.VerifiedAt,
+			"kyc_expires_at":  kyc.ExpiresAt,
 		}).Error; err != nil {
 			tx.Rollback()
 			log.Printf("❌ Error updating user KYC status: %v", err)
@@ -356,13 +462,13 @@ func RejectKYCHandler(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Get authenticated admin user
-		authUser, exists := c.Get("user")
+		// Get authenticated admin user (validated by AdminMiddleware)
+		authUser, exists := c.Get("admin_user")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
-		admin := authUser.(*models.User)
+		admin := authUser.(models.User)
 
 		// Parse rejection reason
 		var reqBody struct {
@@ -399,6 +505,11 @@ func RejectKYCHandler(db *gorm.DB) gin.HandlerFunc {
 			log.Printf("❌ Error rejecting KYC: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject KYC"})
 			return
+		}
+
+		// Update user's KYC status to rejected
+		if err := db.Model(&models.User{}).Where("id = ?", kyc.UserID).Update("kyc_status", "rejected").Error; err != nil {
+			log.Printf("⚠️ Failed to update user KYC status: %v", err)
 		}
 
 		log.Printf("✅ KYC rejected: ID %d, User %d, Admin %d, Reason: %s", kycID, kyc.UserID, admin.ID, reqBody.Reason)

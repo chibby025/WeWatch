@@ -90,7 +90,9 @@ func main() {
 		// Friendship and lobby chat models
 		&models.Friendship{}, &models.LobbyChat{},
 		// User settings model (notifications & privacy)
-		&models.UserSettings{})
+		&models.UserSettings{},
+		// Admin audit log model (compliance & security)
+		&models.AdminAuditLog{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -772,14 +774,20 @@ func main() {
 	kycGroup.Use(handlers.AuthMiddleware())
 	{
 		kycGroup.POST("/submit", handlers.SubmitKYCHandler(DB))                                // POST /api/kyc/submit (Submit KYC documents)
+		kycGroup.PUT("/:kycId", handlers.UpdateKYCHandler(DB))                                 // PUT /api/kyc/:kycId (Update KYC full_name)
 		kycGroup.GET("/:userId", handlers.GetUserKYCHandler(DB))                               // GET /api/kyc/:userId (Get KYC status)
 	}
 
 	// --- ADMIN KYC ROUTES (Protected + Admin Only) ---
 	adminGroup := r.Group("/api/admin")
 	adminGroup.Use(handlers.AuthMiddleware())
+	adminGroup.Use(func(c *gin.Context) {
+		c.Set("db", DB)
+		c.Next()
+	})
 	adminGroup.Use(handlers.RequireAdmin()) // Admin role required
 	{
+		adminGroup.GET("/kyc", handlers.GetKYCsHandler(DB))                                    // GET /api/admin/kyc?status=all|pending|approved|rejected (Get KYC submissions by status)
 		adminGroup.GET("/kyc/pending", handlers.GetPendingKYCsHandler(DB))                     // GET /api/admin/kyc/pending (Get all pending KYC submissions)
 		adminGroup.POST("/kyc/:id/approve", handlers.ApproveKYCHandler(DB))                    // POST /api/admin/kyc/:id/approve (Approve KYC)
 		adminGroup.POST("/kyc/:id/reject", handlers.RejectKYCHandler(DB))                      // POST /api/admin/kyc/:id/reject (Reject KYC)

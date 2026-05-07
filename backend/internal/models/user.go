@@ -34,6 +34,11 @@ type User struct {
 	TwoFactorEnabled bool    `gorm:"default:false" json:"two_factor_enabled"` // Is 2FA active
 	BackupCodes      *string `gorm:"type:text" json:"-"` // Encrypted backup codes (never expose)
 	LastLoginIP      *string `gorm:"type:varchar(45)" json:"-"` // Track IP changes (security)
+	
+	// KYC Status (denormalized from kyc_verifications for quick access)
+	KYCStatus     string     `gorm:"type:varchar(20);default:'none';index" json:"kyc_status"` // 'none', 'pending', 'approved', 'rejected', 'expired'
+	KYCVerifiedAt *time.Time `json:"kyc_verified_at,omitempty"` // When KYC was approved
+	KYCExpiresAt  *time.Time `gorm:"index" json:"kyc_expires_at,omitempty"` // When it expires (2 years from approval)
 }
 
 // User role constants
@@ -100,5 +105,15 @@ func (u *User) CanViewContent(contentRating string) bool {
 // HasDateOfBirth checks if user has provided their date of birth
 func (u *User) HasDateOfBirth() bool {
 	return u.DateOfBirth != nil
+}
+
+// IsKYCVerified checks if user has approved KYC that hasn't expired
+func (u *User) IsKYCVerified() bool {
+	return u.KYCStatus == "approved" && (u.KYCExpiresAt == nil || time.Now().Before(*u.KYCExpiresAt))
+}
+
+// CanWithdraw checks if user is allowed to withdraw funds
+func (u *User) CanWithdraw() bool {
+	return u.IsKYCVerified()
 }
 
