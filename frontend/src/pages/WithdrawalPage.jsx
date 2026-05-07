@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { apiClient } from '../services/api';
 import { ChevronLeft, AlertCircle, CheckCircle, Clock, Loader } from 'lucide-react';
 
 const WithdrawalPage = () => {
@@ -30,7 +30,7 @@ const WithdrawalPage = () => {
 
   const fetchBalance = async () => {
     try {
-      const response = await axios.get('/api/user/wallet');
+      const response = await apiClient.get('/api/user/wallet');
       setBalance(response.data.gateway_earnings || 0);
     } catch (err) {
       console.error('Failed to fetch balance:', err);
@@ -39,7 +39,7 @@ const WithdrawalPage = () => {
 
   const fetchWithdrawalHistory = async () => {
     try {
-      const response = await axios.get('/api/payouts/me');
+      const response = await apiClient.get('/api/payouts/me');
       setWithdrawalHistory(response.data.payouts || []);
     } catch (err) {
       console.error('Failed to fetch withdrawal history:', err);
@@ -48,7 +48,7 @@ const WithdrawalPage = () => {
 
   const fetchBankAccounts = async () => {
     try {
-      const response = await axios.get('/api/user/bank-accounts');
+      const response = await apiClient.get('/api/user/bank-accounts');
       setBankAccounts(response.data.accounts || []);
     } catch (err) {
       console.error('Failed to fetch bank accounts:', err);
@@ -97,7 +97,7 @@ const WithdrawalPage = () => {
         ? bankAccounts.find(acc => acc.id === selectedAccount)
         : newAccount;
 
-      const response = await axios.post('/api/payouts/request', {
+      const response = await apiClient.post('/api/payouts/request', {
         payout_type: 'gateway_earnings',
         payout_method: 'bank_transfer',
         amount: parseInt(amount),
