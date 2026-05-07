@@ -88,7 +88,9 @@ func main() {
 		// Ads system models (Phase 1 - Ad Campaigns & RoomTV Ads)
 		&models.AdSettings{},
 		// Friendship and lobby chat models
-		&models.Friendship{}, &models.LobbyChat{})
+		&models.Friendship{}, &models.LobbyChat{},
+		// User settings model (notifications & privacy)
+		&models.UserSettings{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -863,6 +865,8 @@ func main() {
 	})
 	{
 		userStatsGroup.GET("/:id/average-watchers", handlers.GetUserAverageWatchersHandler) // GET /api/users/:id/average-watchers (Get average session watchers)
+		userStatsGroup.GET("/settings", handlers.GetUserSettings)                           // GET /api/users/settings (Get user notification & privacy settings)
+		userStatsGroup.PUT("/settings", handlers.UpdateUserSettings)                        // PUT /api/users/settings (Update user settings)
 	}
 
 	// --- PRIVATE MESSAGES ROUTES (Protected) ---
