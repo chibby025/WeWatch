@@ -835,7 +835,7 @@ func main() {
 
 	// --- FRIENDSHIPS ROUTES (Protected) ---
 	friendshipsGroup := r.Group("/api/friendships")
-	friendshipsGroup.Use(handlers.AuthMiddleware())
+	friendshipsGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
 	friendshipsGroup.Use(func(c *gin.Context) {
 		c.Set("db", DB)
 		c.Next()
