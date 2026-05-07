@@ -86,7 +86,9 @@ func main() {
 		// Posts system models (Phase 1 - Post & Recording Feature)
 		&models.Post{}, &models.PostLike{}, &models.PostComment{}, &models.PostView{},
 		// Ads system models (Phase 1 - Ad Campaigns & RoomTV Ads)
-		&models.AdSettings{})
+		&models.AdSettings{},
+		// Friendship and lobby chat models
+		&models.Friendship{}, &models.LobbyChat{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -94,6 +96,7 @@ func main() {
 	log.Println("Database schema migrated successfully")
 	log.Println("✅ Security enhancements: Token blacklist, webhook idempotency, security event logging")
 	log.Println("✅ Posts system: User-generated content, recordings, and discovery feed")
+	log.Println("✅ Friendships & lobby chat: Direct messaging and friend requests")
 
 	
 	// --- Initialize WebSocket Hub ---
