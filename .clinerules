@@ -330,6 +330,173 @@ AllowOrigins: []string{
 
 ---
 
+### 📋 Recent Updates (May 7, 2026):
+
+#### �️ **VERCEL DISCOVER FEED IMAGE DISPLAY FIX** (May 7, 2026)
+**Status:** ✅ COMPLETE - Image posts now display correctly on production
+
+**Overview:**
+Fixed two critical issues on the Vercel production deployment affecting the Discover feed functionality and ad display.
+
+**Issues Fixed:**
+
+1. **Image Posts Not Showing:**
+   - **Problem:** Image posts weren't displaying on Vercel, only recorded session videos showed
+   - **Root Cause:** `getThumbnailUrl()` function wasn't properly handling Bunny CDN URLs for image posts
+   - **Fix:** Updated priority logic in `getThumbnailUrl()` to properly detect and use Bunny CDN URLs (`http/https` prefixed) for image posts
+   - **File:** `frontend/src/components/DiscoverFeed.jsx`
+   - **Logic Flow:**
+     1. Check `thumbnail_url` first (for videos with generated thumbnails)
+     2. Check `video_url` with `#t=1` for videos without thumbnails
+     3. **NEW:** Check `video_url` for image posts (this field contains Bunny CDN image URLs)
+     4. Fallback to placeholder icon
+   
+2. **Empty Ad Card Showing When Ads Disabled:**
+   - **Problem:** Empty "Sponsored content" card was showing even though ads were disabled in Ads Management
+   - **Root Cause:** `AdBanner` component was showing loading skeleton indefinitely when ads endpoint returned 404
+   - **Console Errors:** `/api/ads/active?: Failed to load resource: the server responded with a status of 404`
+   - **Fix:** Updated `AdBanner.jsx` to:
+     - Detect 404 responses and immediately set `ad = null`
+     - Remove loading skeleton entirely (returns `null` while loading)
+     - Prevents empty card from rendering when ads are disabled
+   - **File:** `frontend/src/components/AdBanner.jsx`
+
+**Technical Details:**
+
+**Before (Broken):**
+```javascript
+// getThumbnailUrl() didn't prioritize Bunny CDN detection correctly
+if (post.video_url) {
+  if (post.video_url.startsWith('http')) {
+    return post.video_url; // This worked
+  }
+  // But non-http URLs were incorrectly prepended with Railway backend URL
+  return `${VITE_API_BASE_URL}/${post.video_url}`; // ❌ Wrong for Bunny CDN
+}
+```
+
+**After (Fixed):**
+```javascript
+// Priority 3: For image posts, video_url contains Bunny CDN URL
+if (post.video_url) {
+  // ✅ Properly detect Bunny CDN URLs (always start with https://)
+  if (post.video_url.startsWith('http')) {
+    return post.video_url; // Use Bunny CDN URL directly
+  }
+  // Only use Railway backend for local dev or legacy posts
+  const cleanUrl = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
+  return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
+}
+```
+
+**Ad Banner Fix:**
+```javascript
+// Before: Showed loading skeleton indefinitely on 404
+if (loading) {
+  return <div className="animate-pulse">...</div>; // ❌ Never stopped loading
+}
+
+// After: Returns null immediately on 404 or no ad
+if (response.status === 404 || !response.ok) {
+  setAd(null);
+  setLoading(false);
+  return; // ✅ Exit early, no card shown
+}
+
+// Loading returns null instead of skeleton
+if (loading || !ad) {
+  return null; // ✅ No card at all
+}
+```
+
+**Why Image Posts Use `video_url` Field:**
+- The `video_url` field is a misnomer - it stores ANY media URL (videos, images, etc.)
+- For image posts (`media_type: 'image'`), this field contains the Bunny CDN image URL
+- For video posts (`media_type: 'video'`), this field contains the Bunny CDN video URL
+- The `thumbnail_url` field is specifically for generated video thumbnails
+
+**Testing Results:**
+- ✅ Image posts now display correctly on Vercel (Bunny CDN URLs)
+- ✅ Video posts continue to work (both recorded sessions and trailers)
+- ✅ No empty "Sponsored content" cards when ads are disabled
+- ✅ Ad banner only appears when ads are globally enabled + active campaigns exist
+- ✅ Console shows no 404 errors when ads are properly disabled
+
+**Files Modified (2):**
+1. `frontend/src/components/DiscoverFeed.jsx` - Fixed `getThumbnailUrl()` Bunny CDN detection
+2. `frontend/src/components/AdBanner.jsx` - Fixed 404 handling and removed loading skeleton
+
+---
+
+#### �📞 **WHATSAPP-STYLE CALL LOGGING IN LOBBY CHATS** (May 7, 2026)
+**Status:** ✅ COMPLETE - Call history integrated into direct message chats
+
+**Overview:**
+Enhanced the lobby chat system to display call logs (missed, declined, and completed calls) directly in the chat conversation between two users, similar to WhatsApp's call notification system. Previously, calls were being logged to the database but not displayed in the chat UI.
+
+**What Was Fixed:**
+1. **Bug Fix:** System call messages (`message_type: 'system_call'`) were being stored in database but not rendered in chat
+2. **UI Enhancement:** Added WhatsApp-style centered call notifications with icons
+3. **Message Clarity:** Updated backend to include usernames in call logs (e.g., "Missed call from test025")
+
+**System Call Types:**
+- ✅ **Missed Calls:** "📞 Missed call from [username]" - Red X icon
+- ✅ **Declined Calls:** "📞 [username] declined your call" - Orange X icon  
+- ✅ **Completed Calls:** "📞 Call ended" - Green phone icon
+
+**Technical Implementation:**
+
+**Backend Changes:**
+- **File:** `backend/internal/handlers/lobby_calls.go`
+- **Updated Functions:**
+  - `logMissedCall()` - Now fetches caller username and includes in message
+  - `logDeclinedCall()` - Now fetches recipient username and includes in message
+  - `logCompletedCall()` - Simplified to "Call ended" (duration tracking planned for future)
+- **Database:** All call logs stored in `lobby_chats` table with `message_type = 'system_call'`
+
+**Frontend Changes:**
+- **File:** `frontend/src/components/lobby/LobbyMessageBubble.jsx`
+- **New Message Type:** Added `system_call` case with centered layout
+- **Visual Design:**
+  - Centered gray bubble (not left/right aligned like regular messages)
+  - Icon-based indicators: PhoneXMarkIcon (missed/declined), PhoneIcon (completed)
+  - Color-coded: Red (missed), Orange (declined), Green (completed)
+  - Timestamp included in compact format
+- **Layout:** Uses `justify-center` instead of `justify-start/justify-end`
+
+**Call History Integration:**
+- **File:** `backend/internal/handlers/call_history.go`
+- **Updated Query:** Changed from `message_type = 'system'` to `message_type = 'system_call'` for accurate filtering
+- **CallHistoryModal:** Displays all call types with filtering by incoming/outgoing/missed/declined
+
+**User Experience:**
+1. User makes/receives a call in lobby
+2. Call event (missed/declined/completed) automatically appears in chat thread
+3. Message appears centered with icon and timestamp
+4. Both users see the same call log in their conversation
+5. Call history modal aggregates all calls for quick review
+
+**Database Schema:**
+```sql
+-- Example entries in lobby_chats table:
+INSERT INTO lobby_chats (sender_id, recipient_id, message, message_type, created_at)
+VALUES 
+  (7, 5, '📞 Missed call from chibi', 'system_call', NOW()),
+  (7, 5, '📞 test025 declined your call', 'system_call', NOW()),
+  (7, 5, '📞 Call ended', 'system_call', NOW());
+```
+
+**Why This Matters:**
+Similar to WhatsApp, users can now see their complete call history directly in their chat conversations. This provides context for missed connections and helps users remember when they last spoke. The persistent logs also serve as receipts for call attempts.
+
+**Future Enhancements (Planned):**
+- [ ] Call duration tracking (start time → end time calculation)
+- [ ] Display actual duration in completed call messages (e.g., "Call ended (2m 30s)")
+- [ ] Voice message integration with call logs
+- [ ] Call again button directly from call log
+
+---
+
 ### 📋 Recent Updates (May 6, 2026):
 
 

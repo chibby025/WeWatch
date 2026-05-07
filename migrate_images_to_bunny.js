@@ -28,7 +28,7 @@ const localhostDB = new Pool({
   host: 'localhost',
   port: 5432,
   user: 'postgres',
-  password: 'postgres',
+  password: 'Chibby',
   database: 'wewatch_db',
 });
 
@@ -36,7 +36,7 @@ const railwayDB = new Pool({
   host: 'ballast.proxy.rlwy.net',
   port: 33527,
   user: 'postgres',
-  password: 'MgzPuAqEYXNxqxvwEFFqBvjkpgHnwOLW',
+  password: 'RkEIczcIWgoXeWxINbNlNpBeMEUKxhnw',
   database: 'railway',
 });
 

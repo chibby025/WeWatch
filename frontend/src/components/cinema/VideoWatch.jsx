@@ -28,7 +28,6 @@ import MembersModal from '../../components/MembersModal.jsx';
 import RemoteAudioPlayer from './ui/RemoteAudioPlayer';
 import FloatingGiftIcon from '../FloatingGiftIcon';
 import DonationNotification from '../DonationNotification';
-import { apiClient } from '../../services/api';
 // Import sounds
 import { playSeatSound, playMicOnSound, playMicOffSound } from '../../utils/audio';
 import ChatHomeModal from '../ChatHomeModal.jsx';

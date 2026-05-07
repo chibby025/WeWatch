@@ -31,7 +31,6 @@ import useEmoteSounds from '../../../hooks/useEmoteSounds';
 import RemoteAudioPlayer from '../ui/RemoteAudioPlayer';
 import FloatingGiftIcon from '../../FloatingGiftIcon';
 import DonationNotification from '../../DonationNotification';
-import { apiClient } from '../../../services/api';
 import { useMobile } from '../../../hooks/useMobile';
 import TouchViewControls from './TouchViewControls';
 import MobileCinemaTutorial from './MobileCinemaTutorial';

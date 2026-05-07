@@ -35,9 +35,8 @@ func GetCallHistoryHandler(c *gin.Context) {
 	// System messages contain call info in the Message field
 	var messages []models.LobbyChat
 	err := DB.Where(
-		"(sender_id = ? OR recipient_id = ?) AND message_type = ? AND (message LIKE ? OR message LIKE ? OR message LIKE ?)",
-		currentUserID, currentUserID, "system",
-		"%call%", "%Call%", "%CALL%",
+		"(sender_id = ? OR recipient_id = ?) AND message_type = ?",
+		currentUserID, currentUserID, "system_call",
 	).Order("created_at DESC").Limit(100).Find(&messages).Error
 
 	if err != nil {

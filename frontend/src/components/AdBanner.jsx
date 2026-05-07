@@ -24,6 +24,14 @@ const AdBanner = ({ placement = 'lobby_sidebar' }) => {
       });
 
       const response = await fetch(`${API_BASE_URL}/api/ads/active?${params}`);
+      
+      // If 404 or ads disabled, don't show anything
+      if (response.status === 404 || !response.ok) {
+        setAd(null);
+        setLoading(false);
+        return;
+      }
+      
       if (response.ok) {
         const data = await response.json();
         if (data.campaigns && data.campaigns.length > 0) {
@@ -35,11 +43,16 @@ const AdBanner = ({ placement = 'lobby_sidebar' }) => {
             setAd(suitableAd);
             // Track impression
             trackImpression(suitableAd.id);
+          } else {
+            setAd(null);
           }
+        } else {
+          setAd(null);
         }
       }
     } catch (error) {
       console.error('Failed to fetch ad:', error);
+      setAd(null);
     } finally {
       setLoading(false);
     }
@@ -81,16 +94,10 @@ const AdBanner = ({ placement = 'lobby_sidebar' }) => {
     window.open(ad.click_url, '_blank', 'noopener,noreferrer');
   };
 
-  if (loading) {
-    return (
-      <div className="w-full bg-gray-800/50 rounded-lg p-4 animate-pulse">
-        <div className="h-40 bg-gray-700 rounded"></div>
-      </div>
-    );
-  }
-
-  if (!ad) {
-    return null; // No ad to display
+  // Don't show loading skeleton - return null immediately if loading or no ad
+  // This prevents empty ad cards from appearing when ads are disabled
+  if (loading || !ad) {
+    return null;
   }
 
   return (

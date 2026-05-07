@@ -541,10 +541,17 @@ func CleanupUserCalls(userID uint) {
 
 // logMissedCall creates a system message in chat for missed calls
 func logMissedCall(callerID, recipientID uint) {
+	// Get caller username for more context
+	var caller models.User
+	if err := DB.First(&caller, callerID).Error; err != nil {
+		log.Printf("❌ [Call] Failed to fetch caller info: %v", err)
+		caller.Username = "Someone"
+	}
+
 	chatMsg := models.LobbyChat{
 		SenderID:    callerID,
 		RecipientID: recipientID,
-		Message:     "� Missed call",
+		Message:     fmt.Sprintf("📞 Missed call from %s", caller.Username),
 		MessageType: "system_call",
 	}
 
@@ -558,10 +565,17 @@ func logMissedCall(callerID, recipientID uint) {
 
 // logDeclinedCall creates a system message in chat for declined calls
 func logDeclinedCall(callerID, recipientID uint) {
+	// Get recipient username for more context
+	var recipient models.User
+	if err := DB.First(&recipient, recipientID).Error; err != nil {
+		log.Printf("❌ [Call] Failed to fetch recipient info: %v", err)
+		recipient.Username = "Someone"
+	}
+
 	chatMsg := models.LobbyChat{
 		SenderID:    callerID,
 		RecipientID: recipientID,
-		Message:     "� Call declined",
+		Message:     fmt.Sprintf("📞 %s declined your call", recipient.Username),
 		MessageType: "system_call",
 	}
 
@@ -574,10 +588,13 @@ func logDeclinedCall(callerID, recipientID uint) {
 }
 // logCompletedCall creates a system message in chat for completed calls
 func logCompletedCall(callerID, recipientID uint) {
+	// Note: We don't have actual call duration tracking yet
+	// This would require tracking when call started vs ended
+	// For now, just log that call was completed
 	chatMsg := models.LobbyChat{
 		SenderID:    callerID,
 		RecipientID: recipientID,
-		Message:     "📞 Call completed",
+		Message:     "📞 Call ended",
 		MessageType: "system_call",
 	}
 

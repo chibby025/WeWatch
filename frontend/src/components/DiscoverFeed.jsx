@@ -198,17 +198,18 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
 
   // Get thumbnail URL
   const getThumbnailUrl = (post) => {
+    // Priority 1: Explicit thumbnail_url (for videos with generated thumbnails)
     if (post.thumbnail_url) {
-      // BunnyCDN or local storage URL
+      // BunnyCDN or external URL
       if (post.thumbnail_url.startsWith('http')) {
         return post.thumbnail_url;
       }
-      // Remove leading slash to avoid double slash
+      // Railway backend URL (fallback for local dev)
       const cleanUrl = post.thumbnail_url.startsWith('/') ? post.thumbnail_url.slice(1) : post.thumbnail_url;
       return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
     }
     
-    // For videos without explicit thumbnail, use video URL with #t=1 to show first frame
+    // Priority 2: For videos without explicit thumbnail, use video URL with #t=1 to show first frame
     if (post.media_type === 'video' && post.video_url) {
       const videoUrl = post.video_url.startsWith('http') 
         ? post.video_url
@@ -217,12 +218,14 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
       return `${videoUrl}#t=1`;
     }
     
-    // For images/text posts without thumbnail, use video_url (which contains the image)
+    // Priority 3: For image posts, video_url actually contains the image URL
+    // This is the standard field for post images (Bunny CDN URLs)
     if (post.video_url) {
+      // Check if it's a Bunny CDN URL or external URL (starts with http/https)
       if (post.video_url.startsWith('http')) {
         return post.video_url;
       }
-      // Remove leading slash to avoid double slash
+      // Railway backend URL (fallback for local dev or legacy posts)
       const cleanUrl = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
       return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
     }

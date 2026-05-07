@@ -1,6 +1,6 @@
 // WeWatch/frontend/src/components/lobby/LobbyMessageBubble.jsx
 import React, { useState, useRef, useEffect } from 'react';
-import { EllipsisVerticalIcon, PencilIcon, TrashIcon, PlayIcon, PauseIcon, CheckIcon } from '@heroicons/react/24/solid';
+import { EllipsisVerticalIcon, PencilIcon, TrashIcon, PlayIcon, PauseIcon, CheckIcon, PhoneIcon, PhoneArrowUpRightIcon, PhoneArrowDownLeftIcon, PhoneXMarkIcon } from '@heroicons/react/24/solid';
 
 const LobbyMessageBubble = ({ 
   message, 
@@ -109,14 +109,44 @@ const LobbyMessageBubble = ({
   };
 
   return (
-    <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex ${messageType === 'system_call' ? 'justify-center' : isOwn ? 'justify-end' : 'justify-start'}`}>
       <div
         className={`max-w-[75%] sm:max-w-md rounded-lg shadow-md ${
-          isOwn
+          messageType === 'system_call'
+            ? 'bg-gray-100 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-700'
+            : isOwn
             ? 'bg-green-600 text-white'
             : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
         }`}
       >
+        {/* Message Type: SYSTEM CALL (Missed/Declined/Completed Calls) */}
+        {messageType === 'system_call' && (
+          <div className="px-3 py-2 sm:px-4 sm:py-2.5 flex items-center gap-2 justify-center">
+            {/* Call Icon */}
+            {message.message.toLowerCase().includes('missed') ? (
+              <PhoneXMarkIcon className="w-4 h-4 sm:w-5 sm:h-5 text-red-500" />
+            ) : message.message.toLowerCase().includes('declined') ? (
+              <PhoneXMarkIcon className="w-4 h-4 sm:w-5 sm:h-5 text-orange-500" />
+            ) : (
+              <PhoneIcon className="w-4 h-4 sm:w-5 sm:h-5 text-green-500" />
+            )}
+            
+            {/* Call Message */}
+            <p className="text-xs sm:text-sm font-medium text-center">
+              {message.message}
+            </p>
+            
+            {/* Timestamp */}
+            <p className="text-[10px] text-gray-500 dark:text-gray-400">
+              {new Date(message.created_at).toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+              })}
+            </p>
+          </div>
+        )}
+
         {/* Message Type: TEXT */}
         {messageType === 'text' && (
           <div className="px-3 py-1.5 sm:px-4 sm:py-2">
