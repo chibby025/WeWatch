@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 )
 
 // EditLobbyChatMessageRequest defines the request body for editing a message
