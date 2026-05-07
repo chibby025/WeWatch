@@ -95,6 +95,24 @@ func handleCallInitiate(client *Client, msg WebSocketMessage) {
 		return
 	}
 
+	// ✅ Check recipient's privacy settings for calls
+	var recipientSettings models.UserSettings
+	err = DB.Where("user_id = ?", recipientID).First(&recipientSettings).Error
+	if err == nil {
+		switch recipientSettings.WhoCanCall {
+		case "nobody":
+			log.Printf("🔒 [Call] User %d has disabled all incoming calls", recipientID)
+			sendCallMessage(client, "call_declined", map[string]interface{}{
+				"reason": "User has disabled incoming calls",
+			})
+			return
+		case "friends":
+			// Already verified friendship above, so this is OK
+		case "everyone":
+			// No restriction
+		}
+	}
+
 	// Priority check: if both users initiate simultaneously, lower ID wins
 	activeCallsMutex.Lock()
 	

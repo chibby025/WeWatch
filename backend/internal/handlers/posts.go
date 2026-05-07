@@ -198,6 +198,9 @@ func GetDiscoverFeed(c *gin.Context) {
 		limit = 100 // Max 100 posts per request
 	}
 
+	// Get current user ID (may be 0 if not authenticated)
+	currentUserID := c.GetUint("user_id")
+
 	var posts []models.Post
 	query := DB.Where("posts.is_public = ? AND posts.deleted_at IS NULL", true).
 		Preload("User").
@@ -223,8 +226,45 @@ func GetDiscoverFeed(c *gin.Context) {
 		return
 	}
 
-	// Debug log for posts without user data
+	// ✅ Filter posts based on user privacy settings
+	var filteredPosts []models.Post
 	for _, post := range posts {
+		// Get post author's privacy settings
+		var authorSettings models.UserSettings
+		err := DB.Where("user_id = ?", post.UserID).First(&authorSettings).Error
+		
+		// If no settings found, default to "public" (allow post)
+		if err == nil {
+			switch authorSettings.WhoCanSeePosts {
+			case "only_me":
+				// Only show to post author
+				if post.UserID != currentUserID {
+					continue // Skip this post
+				}
+			case "friends":
+				// Only show to friends
+				if post.UserID != currentUserID {
+					// Check if current user is friends with post author
+					var friendship models.Friendship
+					err := DB.Where(
+						"((requester_id = ? AND recipient_id = ?) OR (requester_id = ? AND recipient_id = ?)) AND status = ?",
+						currentUserID, post.UserID, post.UserID, currentUserID, "accepted",
+					).First(&friendship).Error
+					
+					if err != nil {
+						continue // Not friends, skip this post
+					}
+				}
+			// "public" - show to everyone (no filtering)
+			}
+		}
+		
+		// Post passed privacy check
+		filteredPosts = append(filteredPosts, post)
+	}
+
+	// Debug log for posts without user data
+	for _, post := range filteredPosts {
 		log.Printf("🔍 [GetDiscoverFeed] Post %d - UserID: %d, User.ID: %d, User.Username: '%s', HasUser: %v",
 			post.ID, post.UserID, post.User.ID, post.User.Username, post.User.ID != 0)
 		
@@ -235,7 +275,7 @@ func GetDiscoverFeed(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"posts":  posts,
+		"posts":  filteredPosts,
 		"limit":  limit,
 		"offset": offset,
 	})

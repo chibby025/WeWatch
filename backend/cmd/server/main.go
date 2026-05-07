@@ -618,7 +618,8 @@ func main() {
 		protected.GET("/users/me/event-tickets", handlers.GetUserEventTicketsHandler)           // GET /api/users/me/event-tickets (Get user's tickets & RSVPs)
 		
 		// --- USER PROFILE ROUTES ---
-		protected.PUT("/users/profile", handlers.UpdateProfileHandler) // Update current user's profile
+		protected.GET("/users/:id", handlers.GetUserProfileHandler)              // GET /api/users/:id (Get user profile with privacy)
+		protected.PUT("/users/profile", handlers.UpdateProfileHandler)           // Update current user's profile
 		protected.GET("/users/by-username/:username", handlers.GetUserByUsernameHandler) // GET /api/users/by-username/:username (Lookup user for gifting)
 		
 		// --- SUPPORT ROUTES ---

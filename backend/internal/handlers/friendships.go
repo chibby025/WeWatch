@@ -66,6 +66,40 @@ func SendFriendRequestHandler(c *gin.Context) {
 		return
 	}
 
+	// ✅ Check recipient's privacy settings for friend requests
+	var recipientSettings models.UserSettings
+	err = db.Where("user_id = ?", recipientID).First(&recipientSettings).Error
+	if err == nil {
+		// Privacy enforcement
+		switch recipientSettings.WhoCanFriendRequest {
+		case "nobody":
+			c.JSON(http.StatusForbidden, gin.H{"error": "This user is not accepting friend requests"})
+			return
+		case "friends_of_friends":
+			// Check if requester is a friend of any of recipient's friends
+			var mutualFriendsCount int64
+			db.Raw(`
+				SELECT COUNT(DISTINCT f1.requester_id) + COUNT(DISTINCT f1.recipient_id)
+				FROM friendships f1
+				INNER JOIN friendships f2 ON (
+					(f1.requester_id = f2.requester_id OR f1.requester_id = f2.recipient_id OR 
+					 f1.recipient_id = f2.requester_id OR f1.recipient_id = f2.recipient_id)
+					AND f1.status = 'accepted' AND f2.status = 'accepted'
+				)
+				WHERE ((f1.requester_id = ? OR f1.recipient_id = ?) AND f1.status = 'accepted')
+				AND ((f2.requester_id = ? OR f2.recipient_id = ?) AND f2.status = 'accepted')
+				AND f1.requester_id != f2.requester_id AND f1.requester_id != f2.recipient_id
+				AND f1.recipient_id != f2.requester_id AND f1.recipient_id != f2.recipient_id
+			`, recipientID, recipientID, requesterID, requesterID).Scan(&mutualFriendsCount)
+			
+			if mutualFriendsCount == 0 {
+				c.JSON(http.StatusForbidden, gin.H{"error": "You need mutual friends to send a request to this user"})
+				return
+			}
+		// "everyone" - no restriction
+		}
+	}
+
 	var existingFriendship models.Friendship
 	err = db.Where(
 		"(requester_id = ? AND recipient_id = ?) OR (requester_id = ? AND recipient_id = ?)",
