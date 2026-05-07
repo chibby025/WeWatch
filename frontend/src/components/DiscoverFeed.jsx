@@ -198,39 +198,40 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
 
   // Get thumbnail URL
   const getThumbnailUrl = (post) => {
-    // Priority 1: Explicit thumbnail_url (for videos with generated thumbnails)
-    if (post.thumbnail_url) {
-      // BunnyCDN or external URL
-      if (post.thumbnail_url.startsWith('http')) {
-        return post.thumbnail_url;
-      }
-      // Railway backend URL (fallback for local dev)
-      const cleanUrl = post.thumbnail_url.startsWith('/') ? post.thumbnail_url.slice(1) : post.thumbnail_url;
-      return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
-    }
-    
-    // Priority 2: For videos without explicit thumbnail, use video URL with #t=1 to show first frame
-    if (post.media_type === 'video' && post.video_url) {
-      const videoUrl = post.video_url.startsWith('http') 
-        ? post.video_url
-        : `${import.meta.env.VITE_API_BASE_URL}/${post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url}`;
-      // Add #t=1 fragment to show first frame
-      return `${videoUrl}#t=1`;
-    }
-    
-    // Priority 3: For image posts, video_url actually contains the image URL
-    // This is the standard field for post images (Bunny CDN URLs)
-    if (post.video_url) {
-      // Check if it's a Bunny CDN URL or external URL (starts with http/https)
+    // 🎯 Priority 1: For IMAGE posts, ALWAYS use video_url directly
+    // The video_url field contains the actual Bunny CDN image URL
+    // The thumbnail_url field often has legacy Railway local paths that don't work
+    if (post.media_type === 'image' && post.video_url) {
       if (post.video_url.startsWith('http')) {
-        return post.video_url;
+        return post.video_url; // Bunny CDN URL
       }
-      // Railway backend URL (fallback for local dev or legacy posts)
       const cleanUrl = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
       return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
     }
     
-    // Fallback placeholder
+    // 🎥 Priority 2: For VIDEO posts, use thumbnail_url ONLY if it's a valid CDN URL
+    if (post.media_type === 'video' && post.thumbnail_url && post.thumbnail_url.startsWith('http')) {
+      return post.thumbnail_url; // Valid CDN thumbnail
+    }
+    
+    // 🎥 Priority 3: For videos without CDN thumbnail, use video URL with #t=1 to show first frame
+    if (post.media_type === 'video' && post.video_url) {
+      const videoUrl = post.video_url.startsWith('http') 
+        ? post.video_url
+        : `${import.meta.env.VITE_API_BASE_URL}/${post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url}`;
+      return `${videoUrl}#t=1`;
+    }
+    
+    // 🔄 Fallback: Use video_url for any other media type
+    if (post.video_url) {
+      if (post.video_url.startsWith('http')) {
+        return post.video_url;
+      }
+      const cleanUrl = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
+      return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
+    }
+    
+    // ❌ Fallback placeholder
     return '/icons/video-placeholder.svg';
   };
 
