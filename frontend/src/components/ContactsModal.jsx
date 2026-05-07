@@ -1,6 +1,6 @@
 // frontend/src/components/ContactsModal.jsx
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import apiClient from '../services/api';
 import {
   XMarkIcon,
   MagnifyingGlassIcon,
@@ -34,13 +34,13 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
     setError('');
     try {
       if (activeTab === 'friends') {
-        const response = await axios.get('/api/friendships/list');
+        const response = await apiClient.get('/api/friendships/list');
         setFriends(response.data.friends || []);
       } else if (activeTab === 'pending') {
-        const response = await axios.get('/api/friendships/requests/pending');
+        const response = await apiClient.get('/api/friendships/requests/pending');
         setPendingRequests(response.data.requests || []);
       } else if (activeTab === 'sent') {
-        const response = await axios.get('/api/friendships/requests/sent');
+        const response = await apiClient.get('/api/friendships/requests/sent');
         setSentRequests(response.data.requests || []);
       }
     } catch (err) {
@@ -53,7 +53,7 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
 
   const handleAcceptRequest = async (userId) => {
     try {
-      await axios.post(`/api/friendships/accept/${userId}`);
+      await apiClient.post(`/api/friendships/accept/${userId}`);
       setSuccessMessage('Friend request accepted!');
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchData();
@@ -65,7 +65,7 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
 
   const handleRejectRequest = async (userId) => {
     try {
-      await axios.post(`/api/friendships/reject/${userId}`);
+      await apiClient.post(`/api/friendships/reject/${userId}`);
       setSuccessMessage('Friend request rejected');
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchData();
@@ -79,7 +79,7 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
     if (!confirm('Are you sure you want to remove this friend?')) return;
     
     try {
-      await axios.delete(`/api/friendships/remove/${userId}`);
+      await apiClient.delete(`/api/friendships/remove/${userId}`);
       setSuccessMessage('Friend removed');
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchData();
@@ -91,7 +91,7 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
 
   const handleCancelRequest = async (userId) => {
     try {
-      await axios.delete(`/api/friendships/remove/${userId}`);
+      await apiClient.delete(`/api/friendships/remove/${userId}`);
       setSuccessMessage('Request cancelled');
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchData();
