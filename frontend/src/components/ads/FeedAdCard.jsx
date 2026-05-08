@@ -15,7 +15,15 @@ export default function FeedAdCard({ ad, onTrackImpression }) {
     }
   }, [ad?.id]);
 
-  if (!ad) return null;
+  // Don't render if no ad or missing required fields
+  if (!ad || !ad.media_url || !ad.advertiser_name) {
+    console.log('🎯 [FeedAdCard] Not rendering - missing required ad data:', { 
+      hasAd: !!ad, 
+      hasMedia: !!ad?.media_url, 
+      hasAdvertiser: !!ad?.advertiser_name 
+    });
+    return null;
+  }
 
   // Handle click - open advertiser URL and track click
   const handleClick = () => {
