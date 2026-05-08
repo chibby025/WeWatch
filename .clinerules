@@ -34,6 +34,56 @@ This is more than a project - it's a testament to perseverance, continuous learn
 
 ### ✅ LATEST UPDATES (May 8, 2026):
 
+**Notification Enforcement Implemented:**
+- ✅ **Settings Now Enforced**: Notification preferences checked before sending WebSocket messages
+- ✅ **Master Toggle**: `push_enabled` blocks ALL notifications when disabled
+- ✅ **Individual Toggles Respected**: friend_requests_notif, messages_notif, calls_notif now actually work
+- ✅ **Privacy vs Notifications**: Privacy settings control access (who_can_*), notification settings control pings
+- ✅ **Clear Logging**: Backend logs "🔕 User X has Y notifications disabled" when blocked
+- ✅ **Call Cleanup**: If calls_notif disabled, call state cleaned up and caller notified
+- ✅ **Zero Breaking Changes**: Uses existing user_settings table, no migration needed
+- ✅ **Immediate Effect**: Changes take effect instantly (no app restart)
+
+**Enforced Notification Types:**
+1. **Friend Requests** - `friend_requests_notif` checked in friendships.go (2 locations)
+2. **Friend Request Accepted** - Same check for acceptance notifications
+3. **Incoming Calls** - `calls_notif` checked in lobby_calls.go (prevents wasted call attempts)
+4. **Private Messages** - `messages_notif` checked in websocket.go (sender still sees message)
+
+**Not Yet Enforced (Pending Implementation):**
+- Session Invites (`session_invites_notif`) - will add when session invite feature is built
+- Likes & Comments (`likes_comments_notif`) - will add when post activity notifications are built
+
+**Technical Implementation:**
+```go
+// Before: Always sent notifications (settings ignored)
+hub.BroadcastToUsers([]uint{recipientID}, OutgoingMessage{...})
+
+// After: Checks settings first
+var settings models.UserSettings
+if err := DB.Where("user_id = ?", recipientID).First(&settings).Error; err == nil {
+    if settings.PushEnabled && settings.FriendRequestsNotif {
+        hub.BroadcastToUsers([]uint{recipientID}, OutgoingMessage{...})
+    } else {
+        log.Printf("🔕 User %d has notifications disabled", recipientID)
+    }
+}
+```
+
+**Files Modified (3):**
+1. `backend/internal/handlers/friendships.go` - Added friend_requests_notif checks
+2. `backend/internal/handlers/lobby_calls.go` - Added calls_notif check with call cleanup
+3. `backend/internal/handlers/websocket.go` - Added messages_notif check for private messages
+4. `NOTIFICATION_ENFORCEMENT.md` - Full documentation and testing guide
+
+**Benefits:**
+- Users can disable notifications without losing functionality
+- Better battery life (fewer WebSocket messages)
+- Respects user preferences (app store compliance)
+- Clear debugging logs (know exactly why notifications aren't arriving)
+
+---
+
 **KYC Auto-Approval System Implemented:**
 - ✅ **Auto-Approval on Submission**: KYC instantly approved when user submits documents - no manual review needed
 - ✅ **Full Name Field Added**: Users enter legal name (e.g., "Chibuzor") - displayed in admin dashboard
