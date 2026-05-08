@@ -271,6 +271,12 @@ const LobbyPage = () => {
   const [feedAds, setFeedAds] = useState([]);
   const [fetchingFeedAds, setFetchingFeedAds] = useState(false);
   
+  // 🔇 Video Mute State (persistent across sessions)
+  const [videoMuted, setVideoMuted] = useState(() => {
+    const saved = localStorage.getItem('videoAutoplayMuted');
+    return saved === null ? true : saved === 'true'; // Default muted
+  });
+  
   // ✅ Infinite scroll refs
   const watchingNowScrollRef = React.useRef(null);
   const loadMoreTriggerRef = React.useRef(null);
@@ -281,6 +287,17 @@ const LobbyPage = () => {
   
   // Use currentUser.id for authenticated user ID
   const authenticatedUserID = currentUser?.id || null;
+  
+  // 🔇 Toggle video mute state and save to localStorage
+  const toggleVideoMute = (e) => {
+    e.stopPropagation(); // Prevent card click
+    setVideoMuted(prev => {
+      const newMuted = !prev;
+      localStorage.setItem('videoAutoplayMuted', String(newMuted));
+      console.log('🔇 Video mute toggled:', newMuted ? 'MUTED' : 'UNMUTED');
+      return newMuted;
+    });
+  };
   
   // ❤️ Handle session like/unlike (single click to toggle)
   const handleSessionLike = async (sessionId, e) => {
@@ -3441,9 +3458,28 @@ const LobbyPage = () => {
                         posterUrl={preview.posterUrl}
                         isGenerating={preview.isGenerating}
                         isClearing={preview.isClearing || false}
-                        muted={false}
+                        muted={videoMuted}
                       />
                     </div>
+                    
+                    {/* Mute/Unmute Button - Top Left Overlay */}
+                    <button
+                      onClick={toggleVideoMute}
+                      className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm p-2 rounded-full hover:bg-black/80 transition-colors z-20"
+                      title={videoMuted ? 'Unmute' : 'Mute'}
+                    >
+                      {videoMuted ? (
+                        // Muted Icon (X through speaker)
+                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        // Unmuted Icon (speaker with sound waves)
+                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </button>
                     
                     {/* Dark Gradient Overlay for readability */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none"></div>
