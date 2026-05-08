@@ -969,6 +969,10 @@ const LobbyPage = () => {
         // Store single ad, we'll inject it multiple times
         console.log('🎯 [Lobby] Feed ad fetched:', response.data.ad);
         setFeedAds([response.data.ad]);
+      } else {
+        // No ad returned (ads disabled or frequency cap) - clear feedAds
+        console.log('🎯 [Lobby] No feed ad returned:', response.data.message || 'Ads disabled');
+        setFeedAds([]);
       }
     } catch (err) {
       console.error('❌ [Lobby] Failed to fetch feed ads:', err);
