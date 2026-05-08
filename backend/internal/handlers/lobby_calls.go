@@ -168,6 +168,24 @@ func handleCallInitiate(client *Client, msg WebSocketMessage) {
 
 	log.Printf("📞 [Call] Caller info: ID=%d, Username=%s, Avatar=%s", caller.ID, caller.Username, caller.AvatarURL)
 
+	// Check notification settings before sending incoming call
+	var settings models.UserSettings
+	if err := DB.Where("user_id = ?", recipientID).First(&settings).Error; err == nil {
+		if !settings.PushEnabled || !settings.CallsNotif {
+			log.Printf("🔕 User %d has call notifications disabled", recipientID)
+			// Clean up call state since user won't be notified
+			activeCallsMutex.Lock()
+			delete(activeCalls, callID)
+			delete(userCalls, client.userID)
+			delete(userCalls, recipientID)
+			activeCallsMutex.Unlock()
+			sendCallMessage(client, "call_declined", map[string]interface{}{
+				"reason": "User has call notifications disabled",
+			})
+			return
+		}
+	}
+
 	// Send incoming call to recipient
 	callData := map[string]interface{}{
 		"call_id":      callID,

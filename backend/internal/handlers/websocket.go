@@ -4446,13 +4446,20 @@ func (client *Client) handleMessage(message []byte) {
 
         enrichedJSON, _ := json.Marshal(enrichedMessage)
         
-        // ✅ Only deliver to receiver (sender already has optimistic update)
-        client.hub.BroadcastToUsers([]uint{data.ToUserID}, OutgoingMessage{
-            Data: enrichedJSON,
-            IsBinary: false,
-        })
-        
-        log.Printf("📤 Private message sent to user %d", data.ToUserID)
+        // Check notification settings before sending
+        var settings models.UserSettings
+        if err := DB.Where("user_id = ?", data.ToUserID).First(&settings).Error; err == nil {
+            if settings.PushEnabled && settings.MessagesNotif {
+                // ✅ Only deliver to receiver (sender already has optimistic update)
+                client.hub.BroadcastToUsers([]uint{data.ToUserID}, OutgoingMessage{
+                    Data: enrichedJSON,
+                    IsBinary: false,
+                })
+                log.Printf("📤 Private message sent to user %d", data.ToUserID)
+            } else {
+                log.Printf("🔕 User %d has message notifications disabled", data.ToUserID)
+            }
+        }
         return
     }
 

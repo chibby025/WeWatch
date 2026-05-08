@@ -150,18 +150,26 @@ func SendFriendRequestHandler(c *gin.Context) {
 	// ✅ Broadcast to recipient via lobby WebSocket
 	hub := GetWebSocketManager()
 	if hub != nil {
-		notification := map[string]interface{}{
-			"type":          "friend_request_received",
-			"from_user_id":  requesterID,
-			"from_username": currentUser.Username,
-			"timestamp":     time.Now().Unix(),
+		// Check notification settings
+		var settings models.UserSettings
+		if err := db.Where("user_id = ?", recipientID).First(&settings).Error; err == nil {
+			if settings.PushEnabled && settings.FriendRequestsNotif {
+				notification := map[string]interface{}{
+					"type":          "friend_request_received",
+					"from_user_id":  requesterID,
+					"from_username": currentUser.Username,
+					"timestamp":     time.Now().Unix(),
+				}
+				data, _ := json.Marshal(notification)
+				hub.BroadcastToUsers([]uint{uint(recipientID)}, OutgoingMessage{
+					Data:     data,
+					IsBinary: false,
+				})
+				log.Printf("✅ Sent friend request notification to user %d", recipientID)
+			} else {
+				log.Printf("🔕 User %d has friend request notifications disabled", recipientID)
+			}
 		}
-		data, _ := json.Marshal(notification)
-		hub.BroadcastToUsers([]uint{uint(recipientID)}, OutgoingMessage{
-			Data:     data,
-			IsBinary: false,
-		})
-		log.Printf("✅ Sent friend request notification to user %d", recipientID)
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -219,18 +227,26 @@ func AcceptFriendRequestHandler(c *gin.Context) {
 		// Get recipient user info
 		var recipient models.User
 		if err := db.First(&recipient, recipientID).Error; err == nil {
-			notification := map[string]interface{}{
-				"type":          "friend_request_accepted",
-				"from_user_id":  recipientID,
-				"from_username": recipient.Username,
-				"timestamp":     time.Now().Unix(),
+			// Check notification settings
+			var settings models.UserSettings
+			if err := db.Where("user_id = ?", requesterID).First(&settings).Error; err == nil {
+				if settings.PushEnabled && settings.FriendRequestsNotif {
+					notification := map[string]interface{}{
+						"type":          "friend_request_accepted",
+						"from_user_id":  recipientID,
+						"from_username": recipient.Username,
+						"timestamp":     time.Now().Unix(),
+					}
+					data, _ := json.Marshal(notification)
+					hub.BroadcastToUsers([]uint{uint(requesterID)}, OutgoingMessage{
+						Data:     data,
+						IsBinary: false,
+					})
+					log.Printf("✅ Sent friend request acceptance notification to user %d", requesterID)
+				} else {
+					log.Printf("🔕 User %d has friend request notifications disabled", requesterID)
+				}
 			}
-			data, _ := json.Marshal(notification)
-			hub.BroadcastToUsers([]uint{uint(requesterID)}, OutgoingMessage{
-				Data:     data,
-				IsBinary: false,
-			})
-			log.Printf("✅ Sent friend request acceptance notification to user %d", requesterID)
 		}
 	}
 
