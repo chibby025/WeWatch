@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { XMarkIcon, MegaphoneIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
-import { API_BASE_URL } from '../services/api';
+import { apiClient, API_BASE_URL } from '../services/api';
 
 const AdsManagementModal = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState('master_switch'); // 'master_switch', 'inquiries' or 'active_ads'
@@ -36,16 +36,8 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
   const fetchAdSettings = async () => {
     setSettingsLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/ads/settings`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setAdSettings(data);
-      }
+      const response = await apiClient.get('/api/ads/settings');
+      setAdSettings(response.data);
     } catch (error) {
       console.error('Failed to fetch ad settings:', error);
       toast.error('Failed to load ad settings');
@@ -64,28 +56,17 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
 
     setSettingsLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/ads/settings`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          setting_key: settingKey,
-          enabled: !currentValue
-        })
+      const response = await apiClient.put('/api/ads/settings', {
+        setting_key: settingKey,
+        enabled: !currentValue
       });
       
-      if (response.ok) {
-        toast.success(`${settingKey.replace('_', ' ')} ${!currentValue ? 'enabled' : 'disabled'}`);
-        fetchAdSettings();
-      } else {
-        const errorData = await response.json();
-        toast.error(errorData.error || 'Failed to update setting');
-      }
+      toast.success(`${settingKey.replace('_', ' ')} ${!currentValue ? 'enabled' : 'disabled'}`);
+      fetchAdSettings();
     } catch (error) {
       console.error('Failed to update ad setting:', error);
-      toast.error('Failed to update setting');
+      const errorMessage = error.response?.data?.error || 'Failed to update setting';
+      toast.error(errorMessage);
     } finally {
       setSettingsLoading(false);
     }
