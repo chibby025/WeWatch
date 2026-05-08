@@ -3,27 +3,29 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"wewatch-backend/internal/utils"
 )
 
-// UploadAdMedia handles ad creative uploads (images/videos)
+// UploadAdMedia handles ad creative uploads (images/videos) to BunnyCDN
 func UploadAdMedia(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
-	file, err := c.FormFile("file")
+	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
 		return
 	}
+	defer file.Close()
 
 	// Validate file type
-	ext := strings.ToLower(filepath.Ext(file.Filename))
+	ext := strings.ToLower(filepath.Ext(header.Filename))
 	validExtensions := map[string]bool{
 		".jpg":  true,
 		".jpeg": true,
@@ -44,7 +46,7 @@ func UploadAdMedia(c *gin.Context) {
 		maxSize = 50 * 1024 * 1024 // 50MB for videos
 	}
 
-	if file.Size > maxSize {
+	if header.Size > maxSize {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("File too large. Max size: %dMB", maxSize/(1024*1024)),
 		})
@@ -55,32 +57,32 @@ func UploadAdMedia(c *gin.Context) {
 	timestamp := time.Now().Unix()
 	filename := fmt.Sprintf("ad_%d_%d%s", userID, timestamp, ext)
 
-	// Create ad media directory if it doesn't exist
-	uploadDir := "./uploads/ads"
-	if err := os.MkdirAll(uploadDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+	log.Printf("📤 [UploadAdMedia] Uploading ad creative to BunnyCDN: %s (size: %d bytes)", filename, header.Size)
+
+	// Upload to BunnyCDN
+	cdnURL, err := utils.UploadMultipartFileToBunnyCDN(file, header)
+	if err != nil {
+		log.Printf("❌ [UploadAdMedia] BunnyCDN upload failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload file to CDN"})
 		return
 	}
 
-	// Save file
-	filepath := filepath.Join(uploadDir, filename)
-	if err := c.SaveUploadedFile(file, filepath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
-		return
+	// For videos, we could generate thumbnails (TODO)
+	// For now, return the same URL for both media and thumbnail
+	thumbnailURL := cdnURL
+	if ext == ".mp4" || ext == ".webm" {
+		// TODO: Generate video thumbnail using FFmpeg
+		thumbnailURL = cdnURL // Placeholder
 	}
 
-	// Generate URLs
-	mediaURL := fmt.Sprintf("/uploads/ads/%s", filename)
-	thumbnailURL := mediaURL // For now, use same URL. TODO: Generate video thumbnails
-
-	// If it's a video, we could generate a thumbnail here
-	// For now, we'll just return the video URL as both
+	log.Printf("✅ [UploadAdMedia] Ad media uploaded successfully: %s", cdnURL)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":       "File uploaded successfully",
-		"media_url":     mediaURL,
+		"message":       "File uploaded successfully to BunnyCDN",
+		"media_url":     cdnURL,
 		"thumbnail_url": thumbnailURL,
 		"filename":      filename,
-		"size":          file.Size,
+		"size":          header.Size,
+		"cdn_provider":  "BunnyCDN",
 	})
 }
