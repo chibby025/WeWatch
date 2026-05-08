@@ -22,7 +22,7 @@ func setupTestDB() *gorm.DB {
     }
     
     // Auto-migrate all models
-    db.AutoMigrate(&models.User{}, &models.UserWallet{})
+    db.AutoMigrate(&models.User{}, &models.UserWallet{}, &models.UserSettings{})
     
     return db
 }
