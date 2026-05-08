@@ -106,7 +106,9 @@ func RequestWithdrawal(c *gin.Context) {
 	if req.SourceType == "tokens" {
 		// Withdraw from token wallet
 		var wallet models.UserWallet
-		if err := tx.Where("user_id = ?", userID).First(&wallet).Error; err != nil {
+		// 🔒 P0 SECURITY FIX: Add pessimistic lock to prevent race condition
+		// Multiple simultaneous withdrawals could pass balance check before any deducts
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("user_id = ?", userID).First(&wallet).Error; err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusNotFound, gin.H{"error": "Wallet not found"})
 			return
@@ -150,9 +152,9 @@ func RequestWithdrawal(c *gin.Context) {
 		
 		if wallet.TokenBalance < requiredTokens {
 			tx.Rollback()
+			// 🔒 P0 SECURITY FIX: Don't reveal exact balance (information disclosure)
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Insufficient token balance. Required: %d tokens, Available: %d tokens", 
-					requiredTokens, wallet.TokenBalance),
+				"error": "Insufficient token balance to complete this withdrawal",
 			})
 			return
 		}
@@ -188,7 +190,8 @@ func RequestWithdrawal(c *gin.Context) {
 	} else if req.SourceType == "gateway_earnings" {
 		// Withdraw from gateway earnings (ticket sales, donations)
 		var totalEarnings float64
-		if err := tx.Model(&models.GatewayEarning{}).
+		// 🔒 P0 SECURITY FIX: Lock gateway earnings rows to prevent concurrent withdrawals
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Model(&models.GatewayEarning{}).
 			Where("host_id = ? AND currency = ? AND is_withdrawn = ?", userID, req.Currency, false).
 			Select("COALESCE(SUM(net_amount), 0)").
 			Scan(&totalEarnings).Error; err != nil {
@@ -199,9 +202,9 @@ func RequestWithdrawal(c *gin.Context) {
 		
 		if totalEarnings < req.Amount {
 			tx.Rollback()
+			// 🔒 P0 SECURITY FIX: Don't reveal exact earnings (information disclosure)
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Insufficient earnings. Available: %.2f %s, Requested: %.2f %s", 
-					totalEarnings, req.Currency, req.Amount, req.Currency),
+				"error": "Insufficient earnings balance to complete this withdrawal",
 			})
 			return
 		}

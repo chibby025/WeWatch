@@ -733,6 +733,8 @@ func main() {
 		c.Set("db", DB)
 		c.Next()
 	})
+	// 🔒 P0 SECURITY FIX: Rate limit withdrawals to prevent spam/abuse (5 per hour)
+	withdrawalGroup.Use(middleware.RateLimitWithdrawals())
 	{
 		withdrawalGroup.POST("/request", handlers.RequestWithdrawal)                           // POST /api/withdrawals/request (Request withdrawal)
 	}
