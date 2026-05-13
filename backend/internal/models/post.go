@@ -10,7 +10,7 @@ import (
 type Post struct {
 	ID            uint           `gorm:"primaryKey" json:"id"`
 	UserID        uint           `gorm:"not null;index" json:"user_id"`
-	RoomID        *uint          `gorm:"index" json:"room_id,omitempty"`
+	RoomID        *uint          `gorm:"index" json:"room_id"`
 	Title         string         `gorm:"type:varchar(255);not null" json:"title"`
 	Description   string         `gorm:"type:text" json:"description"`
 	VideoURL      string         `gorm:"type:text" json:"video_url,omitempty"`
@@ -19,11 +19,13 @@ type Post struct {
 	PostType      string         `gorm:"type:varchar(20);not null" json:"post_type"`  // 'recording', 'upload'
 	Duration      *int           `json:"duration,omitempty"`                           // Seconds (for videos)
 	Resolution    string         `gorm:"type:varchar(10)" json:"resolution,omitempty"` // '720p', '1080p', etc.
+	ContentRating string         `gorm:"type:varchar(20);default:'G';not null" json:"content_rating"` // 'G', 'PG', 'Educational', 'Religious', '13+', '16+', '18+', 'Mature'
 	ViewCount      int            `gorm:"default:0;not null" json:"view_count"`
 	LikesCount     int            `gorm:"default:0;not null" json:"likes_count"`
 	CommentsCount  int            `gorm:"default:0;not null" json:"comments_count"`
 	DownloadsCount int            `gorm:"default:0;not null" json:"downloads_count"`
 	IsPaid         bool           `gorm:"default:false;not null" json:"is_paid"`
+	// Price is in tokens (e.g. 50.0 = 50 tokens). Convert to cents at purchase time: int(price * 100)
 	Price          *float64       `gorm:"type:decimal(10,2)" json:"price,omitempty"`
 	IsPublic       bool           `gorm:"default:true;not null" json:"is_public"`
 	AllowDownloads bool           `gorm:"default:true;not null" json:"allow_downloads"`

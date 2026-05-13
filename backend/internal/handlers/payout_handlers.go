@@ -70,9 +70,9 @@ func RequestPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 		var amountNGN float64
 		if req.PayoutType == "tokens" {
 			// Tokens are stored in cents: 121 = 1.21 tokens
-			// Convert to naira: (tokens_in_cents / 100) * 165 = naira
-			// Or simplified: tokens_in_cents * 165 / 100 = naira
-			amountNGN = float64(*req.AmountTokens) * 165.0 / 100.0
+			// Convert to naira at withdrawal rate: (tokens_in_cents / 100) * 122 = naira
+			// Or simplified: tokens_in_cents * 122 / 100 = naira
+			amountNGN = float64(*req.AmountTokens) * 122.0 / 100.0
 			amountUSD = amountNGN / 1650.0 // ₦1,650 = $1 USD
 		} else {
 			// Convert to USD if needed
@@ -222,7 +222,7 @@ func RequestPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 			
 			// Process auto-approval if applicable
 			if autoApprove && req.PayoutMethod == string(models.PayoutMethodBankTransfer) {
-				go autoProcessPayout(db, payout.ID, user.ID, float64(*req.AmountTokens)*165.0/100.0, "NGN", req.Details)
+				go autoProcessPayout(db, payout.ID, user.ID, float64(*req.AmountTokens)*122.0/100.0, "NGN", req.Details)
 			}
 
 			c.JSON(http.StatusOK, gin.H{

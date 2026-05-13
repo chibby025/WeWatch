@@ -1,6 +1,7 @@
 // frontend/src/components/PrivateChatModal.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { getPrivateMessages } from '../services/api';
+import Avatar from './Avatar';
 
 export default function PrivateChatModal({ 
   otherUser, 
@@ -96,13 +97,12 @@ export default function PrivateChatModal({
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-      <div className="bg-gray-800 rounded-xl flex flex-col h-[70vh] w-80 max-w-[90vw]">
+      <div className="bg-gray-800 rounded-xl flex flex-col h-[70vh] w-full sm:w-96 md:w-[400px] max-w-[90vw]">
         <div className="p-4 border-b border-gray-700 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {otherUser?.avatar_url && (
-              <img 
-                src={otherUser.avatar_url.startsWith('http') ? otherUser.avatar_url : `http://localhost:8080${otherUser.avatar_url}`}
-                alt={otherUser.username}
+            {otherUser && (
+              <Avatar
+                user={otherUser}
                 className="w-10 h-10 rounded-full object-cover"
               />
             )}

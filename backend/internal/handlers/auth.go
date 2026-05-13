@@ -115,6 +115,16 @@ func RegisterHandler(c *gin.Context) {
         return
     }
 
+    // If DOB was provided at registration, compute age flags immediately.
+    if dob != nil {
+        now := time.Now()
+        regAge := now.Year() - dob.Year()
+        if now.Month() < dob.Month() || (now.Month() == dob.Month() && now.Day() < dob.Day()) {
+            regAge--
+        }
+        saveAgeFlagsForUser(DB, newUser.ID, regAge)
+    }
+
     // Create wallet for new user
     wallet := models.UserWallet{
         UserID:         newUser.ID,
@@ -813,9 +823,12 @@ func UpdateDateOfBirthHandler(c *gin.Context) {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update date of birth"})
         return
     }
-    
+
+    // Compute and persist age-based content visibility flags immediately.
+    saveAgeFlagsForUser(DB, userID, age)
+
     log.Printf("✅ Date of birth updated for user %d: age %d", userID, age)
-    
+
     c.JSON(http.StatusOK, gin.H{
         "message": "Date of birth updated successfully",
         "has_dob": true,

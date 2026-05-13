@@ -51,7 +51,7 @@ type WatchSession struct {
 	PreviewEnabled        bool    `gorm:"default:true" json:"preview_enabled"`                    // If false, no preview thumbnails generated for lobby
 	
 	// Content moderation (age-based filtering)
-	ContentRating         string  `gorm:"type:varchar(10);default:'G';not null" json:"content_rating"` // 'G', 'PG', '13+', '16+', '18+', 'Mature'
+	ContentRating         string  `gorm:"type:varchar(20);default:'G';not null" json:"content_rating"` // 'G', 'PG', 'Educational', 'Religious', '13+', '16+', '18+', 'Mature'
 	
 	// Engagement metrics (added via migration 008)
 	LikesCount            int     `gorm:"default:0" json:"likes_count"`                           // Cached count of likes (updated on like/unlike)
@@ -76,6 +76,11 @@ type WatchSession struct {
 	LiveShareLogoBug      string  `gorm:"type:text" json:"liveshare_logo_bug,omitempty"`              // JSON object: {imageUrl, position, size}
 	LiveShareBreakScreen  string  `gorm:"type:text" json:"liveshare_break_screen,omitempty"`          // JSON object: {screenSource, customImage, duration, keepAudio}
 	LiveShareLayout       string  `gorm:"column:liveshare_layout;type:text" json:"liveshare_layout,omitempty"` // Layout: solo-view, screen-share, split-view, panel-view
+	
+	// Religious content state (for church mode late joiners)
+	CurrentBibleVerse     *string `gorm:"type:text" json:"current_bible_verse,omitempty"`             // JSON string of current Bible verse (reference, text, textStyle)
+	CurrentHymn           *string `gorm:"type:text" json:"current_hymn,omitempty"`                    // JSON string of current hymn (title, verses, textStyle, author)
+	CurrentHymnVerse      *int    `gorm:"default:1" json:"current_hymn_verse,omitempty"`              // Current verse number being displayed (1-based index)
 	
 	// Scheduled event integration
 	ScheduledEventID      *uint   `gorm:"index" json:"scheduled_event_id,omitempty"`                  // Link to scheduled event (if auto-created)

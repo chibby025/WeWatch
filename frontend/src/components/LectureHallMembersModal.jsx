@@ -1,5 +1,6 @@
 // frontend/src/components/LectureHallMembersModal.jsx
 import React from 'react';
+import Avatar from './Avatar';
 
 export default function LectureHallMembersModal({ 
   isOpen, 
@@ -107,13 +108,8 @@ export default function LectureHallMembersModal({
             <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-lg p-2 sm:p-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
-                  <img 
-                    src={hostMember.avatar_url || '/icons/user1avatar.svg'}
-                    alt={hostMember.username}
-                    onError={(e) => {
-                      e.target.onerror = null;
-                      e.target.src = '/icons/user1avatar.svg';
-                    }}
+                  <Avatar
+                    user={hostMember}
                     className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover border-2 border-yellow-500 flex-shrink-0"
                   />
                   <div className="flex-1 min-w-0">
@@ -153,13 +149,8 @@ export default function LectureHallMembersModal({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
-                      <img 
-                        src={member.avatar_url || '/icons/user1avatar.svg'}
-                        alt={member.username}
-                        onError={(e) => {
-                          e.target.onerror = null;
-                          e.target.src = '/icons/user1avatar.svg';
-                        }}
+                      <Avatar
+                        user={member}
                         className="w-8 h-8 sm:w-10 sm:h-10 rounded-full object-cover border-2 border-gray-600 flex-shrink-0"
                       />
                       <div className="flex-1 min-w-0">

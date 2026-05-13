@@ -25,6 +25,8 @@ import LiveShareWizard from '../../liveshare/LiveShareWizard';
 import GuestInvitationPopup from '../../liveshare/GuestInvitationPopup';
 import InSessionAdPanel from '../../ads/InSessionAdPanel';
 import BibleControl from '../../liveshare/BibleControl';
+import PresentationControl from '../../liveshare/PresentationControl';
+import HymnsControl from '../../liveshare/HymnsControl';
 import { calculateAge } from '../../../utils/ageUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
@@ -304,6 +306,17 @@ export default function LiveShareManager({
   // Bible verse state (Church mode)
   const [currentBibleVerse, setCurrentBibleVerse] = useState(null);
   
+  // ⛪ Presentation state (Church mode)
+  const [presentationFile, setPresentationFile] = useState(null);
+  const [presentationUrl, setPresentationUrl] = useState(null);
+  const [presentationTotalSlides, setPresentationTotalSlides] = useState(0);
+  const [currentPresentationSlide, setCurrentPresentationSlide] = useState(1);
+  const [presentationActive, setPresentationActive] = useState(false);
+  
+  // 🎵 Hymn state (Church mode)
+  const [currentHymn, setCurrentHymn] = useState(null);
+  const [currentHymnVerse, setCurrentHymnVerse] = useState(1);
+  
   // Media queue break options
   const [breakMediaMode, setBreakMediaMode] = useState('one'); // 'one' or 'all'
   const [selectedBreakMedia, setSelectedBreakMedia] = useState([]);
@@ -374,6 +387,9 @@ export default function LiveShareManager({
       mediaQueue: false,
       ticker: false,
       banner: false,
+      bible: false,
+      presentation: false,
+      hymns: false,
     },
     podcast: {
       takeABreak: true,
@@ -383,6 +399,21 @@ export default function LiveShareManager({
       mediaQueue: true,     // For ads, promos, or visual aids
       ticker: false,
       banner: false,
+      bible: false,
+      presentation: false,
+      hymns: false,
+    },
+    church: {
+      takeABreak: true,
+      graphics: true,
+      lowerThird: true,
+      logoBug: true,
+      mediaQueue: true,
+      ticker: false,
+      banner: false,
+      bible: true,          // ✅ Bible verses for Church
+      presentation: true,   // ⛪ Presentation slides
+      hymns: true,          // 🎵 NEW: Hymn lyrics
     },
     news: {
       takeABreak: true,
@@ -392,6 +423,8 @@ export default function LiveShareManager({
       mediaQueue: true,     // For breaking footage, graphics
       ticker: true,         // For headlines ticker
       banner: true,         // For breaking news banners
+      bible: false,
+      presentation: false,
     },
     show: {
       takeABreak: true,
@@ -401,6 +434,8 @@ export default function LiveShareManager({
       mediaQueue: true,     // Focus on visual media and graphics
       ticker: false,        // Shows don't need news tickers
       banner: false,        // Shows don't need breaking news
+      bible: false,
+      presentation: false,
     },
     standup: {
       takeABreak: true,
@@ -410,6 +445,8 @@ export default function LiveShareManager({
       mediaQueue: false,
       ticker: false,
       banner: false,
+      bible: false,
+      presentation: false,
     },
   };
 
@@ -636,6 +673,7 @@ export default function LiveShareManager({
       setupTitleStyle: wizardData.setup?.titleStyle,
       setupLogoStyle: wizardData.setup?.logoStyle,
       cameraId: wizardData.cameraId, // 📹 Log selected camera
+      muteAllMembers: wizardData.muteAllMembers, // 🔇 Log mute flag
     });
     
     // 📹 Switch camera if a different one was selected
@@ -649,7 +687,7 @@ export default function LiveShareManager({
       }
     }
     
-    const { mode, setup, shareType, deviceId, layout } = wizardData;
+    const { mode, setup, shareType, deviceId, layout, muteAllMembers } = wizardData;
     
     // Store layout preference
     if (layout) {
@@ -708,17 +746,18 @@ export default function LiveShareManager({
       console.log('📦 [LiveShareManager] Calling onLiveShareModeSelect with:', {
         mode,
         config: modeConfig,
-        layout
+        layout,
+        muteAllMembers
       });
       
       if (onLiveShareModeSelect) {
-        onLiveShareModeSelect(mode, modeConfig, layout);
+        onLiveShareModeSelect(mode, modeConfig, layout, muteAllMembers);
       }
     } else if (mode === 'regular') {
       // Regular mode - just set the mode
       console.log('📺 [LiveShareManager] Setting regular mode (no config), layout:', layout);
       if (onLiveShareModeSelect) {
-        onLiveShareModeSelect('regular', null, layout);
+        onLiveShareModeSelect('regular', null, layout, false);
       }
     }
     
@@ -1064,7 +1103,7 @@ export default function LiveShareManager({
     console.log('📖 [Bible] Showing verse:', verseData);
     setCurrentBibleVerse(verseData);
     
-    // Broadcast via WebSocket
+    // ✅ FIX: Broadcast via WebSocket FIRST so host receives it too
     if (sendMessage) {
       sendMessage({
         type: 'bible_verse_update',
@@ -1108,6 +1147,156 @@ export default function LiveShareManager({
     }).catch(err => console.error('Bible verse clear error:', err));
     
     toast.success('Bible verse hidden');
+  };
+  
+  // ⛪ Presentation handlers (Church mode)
+  const handlePresentationSlideChange = (slideNumber) => {
+    console.log('📄 [Presentation] Changing to slide:', slideNumber);
+    setCurrentPresentationSlide(slideNumber);
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'presentation_update',
+        data: {
+          slideNumber,
+          active: presentationActive
+        }
+      });
+    }
+    
+    // Update graphics renderer
+    if (graphicsRendererRef?.current && presentationActive) {
+      graphicsRendererRef.current.updateLayer('presentation', {
+        type: 'presentation_slide',
+        slideUrl: `${presentationUrl}?slide=${slideNumber}`,
+        slideNumber,
+        totalSlides: presentationTotalSlides
+      });
+      graphicsRendererRef.current.render();
+    }
+  };
+  
+  const handleTogglePresentation = () => {
+    const newActive = !presentationActive;
+    setPresentationActive(newActive);
+    
+    console.log('📄 [Presentation] Toggle:', newActive);
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'presentation_update',
+        data: {
+          active: newActive,
+          slideNumber: currentPresentationSlide,
+          totalSlides: presentationTotalSlides,
+          url: presentationUrl
+        }
+      });
+    }
+    
+    // Update graphics renderer
+    if (graphicsRendererRef?.current) {
+      if (newActive) {
+        graphicsRendererRef.current.addLayer('presentation', {
+          type: 'presentation_slide',
+          slideUrl: `${presentationUrl}?slide=${currentPresentationSlide}`,
+          slideNumber: currentPresentationSlide,
+          totalSlides: presentationTotalSlides,
+          zIndex: 100 // Above other graphics
+        });
+      } else {
+        graphicsRendererRef.current.removeLayer('presentation');
+      }
+      graphicsRendererRef.current.render();
+    }
+    
+    toast.success(newActive ? 'Presentation visible' : 'Presentation hidden');
+  };
+  
+  // 🎵 Hymn handlers (Church mode)
+  const handleShowHymn = (hymnData) => {
+    console.log('🎵 [Hymn] Showing hymn:', hymnData);
+    setCurrentHymn(hymnData);
+    setCurrentHymnVerse(hymnData.currentVerse || 1);
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'hymn_update',
+        data: {
+          hymn: hymnData,
+          verse: hymnData.currentVerse || 1,
+          active: true
+        }
+      });
+    }
+    
+    // Update graphics renderer
+    if (graphicsRendererRef?.current) {
+      graphicsRendererRef.current.addLayer('hymn', {
+        type: 'hymn_overlay',
+        hymn: hymnData,
+        currentVerse: hymnData.currentVerse || 1,
+        zIndex: 100 // Above other graphics
+      });
+      graphicsRendererRef.current.render();
+    }
+    
+    toast.success(`Displaying ${hymnData.title}`);
+  };
+  
+  const handleHideHymn = () => {
+    console.log('🎵 [Hymn] Hiding hymn');
+    setCurrentHymn(null);
+    setCurrentHymnVerse(1);
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'hymn_update',
+        data: {
+          hymn: null,
+          active: false
+        }
+      });
+    }
+    
+    // Update graphics renderer
+    if (graphicsRendererRef?.current) {
+      graphicsRendererRef.current.removeLayer('hymn');
+      graphicsRendererRef.current.render();
+    }
+    
+    toast.success('Hymn hidden');
+  };
+  
+  const handleChangeHymnVerse = (verseNumber) => {
+    if (!currentHymn) return;
+    
+    console.log('🎵 [Hymn] Changing to verse:', verseNumber);
+    setCurrentHymnVerse(verseNumber);
+    
+    // Broadcast via WebSocket
+    if (sendMessage) {
+      sendMessage({
+        type: 'hymn_update',
+        data: {
+          hymn: currentHymn,
+          verse: verseNumber,
+          active: true
+        }
+      });
+    }
+    
+    // Update graphics renderer
+    if (graphicsRendererRef?.current) {
+      graphicsRendererRef.current.updateLayer('hymn', {
+        currentVerse: verseNumber
+      });
+      graphicsRendererRef.current.render();
+    }
   };
   
   const handleStopMedia = () => {
@@ -2670,6 +2859,28 @@ export default function LiveShareManager({
               currentVerse={currentBibleVerse}
             />
           )}
+          
+          {/* ⛪ Presentation Control (Church mode only) */}
+          {shouldShowControl('presentation') && presentationUrl && (
+            <PresentationControl
+              presentationUrl={presentationUrl}
+              totalSlides={presentationTotalSlides}
+              currentSlide={currentPresentationSlide}
+              isActive={presentationActive}
+              onSlideChange={handlePresentationSlideChange}
+              onTogglePresentation={handleTogglePresentation}
+            />
+          )}
+          
+          {/* 🎵 Hymns Control (Church mode only) */}
+          {shouldShowControl('hymns') && (
+            <HymnsControl
+              onShowHymn={handleShowHymn}
+              onHideHymn={handleHideHymn}
+              currentHymn={currentHymn}
+              currentVerse={currentHymnVerse}
+            />
+          )}
             </>
           )}
         </div>
@@ -2784,9 +2995,12 @@ export default function LiveShareManager({
                 }}
                 className="w-full bg-[#444AF7]/20 hover:bg-[#444AF7]/30 text-white py-2 px-4 rounded-full flex items-center justify-center space-x-2 font-medium text-sm sm:text-[15px] transition-colors"
               >
-                <img src="/icons/LiveIcon.svg" alt="Live" className="w-5 h-5" />
+                <img src="/icons/LiveIcon.svg" alt="Live" className="w-7 h-7 sm:w-8 sm:h-8" />
                 <span>Go Live</span>
               </button>
+              <p className="text-gray-400 text-[10px] sm:text-xs text-center mt-2 leading-relaxed">
+                Present your screen or share your camera in real-time with your audience
+              </p>
             </div>
           ) : null}
         </div>

@@ -656,12 +656,7 @@ func CleanupLiveShareAssetsInTransaction(tx *gorm.DB, sessionID uint) {
 
 // SaveBibleVerse saves the current Bible verse for a watch session (Church mode)
 func SaveBibleVerse(c *gin.Context) {
-	sessionIDStr := c.Param("id")
-	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
-		return
-	}
+	sessionID := c.Param("id") // UUID string, not numeric
 
 	var requestBody struct {
 		Verse map[string]interface{} `json:"verse"`
@@ -682,9 +677,9 @@ func SaveBibleVerse(c *gin.Context) {
 	// Get database from context
 	db := c.MustGet("db").(*gorm.DB)
 
-	// Update watch_sessions table
+	// Update watch_sessions table using session_id (UUID) to match WebSocket handler
 	result := db.Table("watch_sessions").
-		Where("id = ?", uint(sessionID)).
+		Where("session_id = ?", sessionID).
 		Update("current_bible_verse", string(verseJSON))
 
 	if result.Error != nil {
@@ -693,25 +688,20 @@ func SaveBibleVerse(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ [Bible] Saved verse for session %d", sessionID)
+	log.Printf("✅ [Bible] Saved verse for session %s", sessionID)
 	c.JSON(http.StatusOK, gin.H{"message": "Bible verse saved"})
 }
 
 // ClearBibleVerse clears the current Bible verse for a watch session
 func ClearBibleVerse(c *gin.Context) {
-	sessionIDStr := c.Param("id")
-	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
-		return
-	}
+	sessionID := c.Param("id") // UUID string, not numeric
 
 	// Get database from context
 	db := c.MustGet("db").(*gorm.DB)
 
-	// Clear current_bible_verse field
+	// Clear current_bible_verse field using session_id (UUID) to match WebSocket handler
 	result := db.Table("watch_sessions").
-		Where("id = ?", uint(sessionID)).
+		Where("session_id = ?", sessionID).
 		Update("current_bible_verse", nil)
 
 	if result.Error != nil {
@@ -720,6 +710,6 @@ func ClearBibleVerse(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ [Bible] Cleared verse for session %d", sessionID)
+	log.Printf("✅ [Bible] Cleared verse for session %s", sessionID)
 	c.JSON(http.StatusOK, gin.H{"message": "Bible verse cleared"})
 }

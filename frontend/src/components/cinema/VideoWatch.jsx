@@ -43,6 +43,7 @@ import GameOverlay from '../Games/GameOverlay';
 // Graphics renderer for LiveShare overlays
 import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
 import BibleOverlay from '../liveshare/BibleOverlay';
+import HymnOverlay from '../liveshare/HymnOverlay';
 import TikTokHeartAnimation from '../TikTokHeartAnimation';
 import { HeartIcon } from '@heroicons/react/24/solid';
 import useEmoteSounds from '../../hooks/useEmoteSounds';
@@ -688,6 +689,9 @@ export default function VideoWatch() {
   const [liveShareGuestId, setLiveShareGuestId] = useState(null); // Selected guest ID for LiveShare (for mute exemption)
   const [currentBibleVerse, setCurrentBibleVerse] = useState(null); // Current Bible verse for church mode
   const [isBibleVerseActive, setIsBibleVerseActive] = useState(false); // Bible verse visibility
+  const [currentHymn, setCurrentHymn] = useState(null); // Current hymn for church mode
+  const [isHymnActive, setIsHymnActive] = useState(false); // Hymn visibility
+  const [currentHymnVerse, setCurrentHymnVerse] = useState(1); // Current verse of hymn
   const screenShareTrackRef = useRef(null);
   const cameraShareTrackRef = useRef(null);
   const liveShareVideoRef = useRef(null); // Separate ref for LiveShare main video
@@ -997,6 +1001,24 @@ export default function VideoWatch() {
         console.log('🚫 [Bible] Hiding verse');
         setCurrentBibleVerse(null);
         setIsBibleVerseActive(false);
+      }
+    }
+    
+    if (lastMessage.type === 'hymn_update') {
+      console.log('🎵 [VideoWatch] Hymn update received:', lastMessage.data);
+      
+      const { hymn, verse, active } = lastMessage.data;
+      
+      if (active && hymn) {
+        console.log('✅ [Hymn] Showing hymn:', hymn.title, 'verse:', verse);
+        setCurrentHymn(hymn);
+        setCurrentHymnVerse(verse || 1);
+        setIsHymnActive(true);
+      } else {
+        console.log('🚫 [Hymn] Hiding hymn');
+        setCurrentHymn(null);
+        setCurrentHymnVerse(1);
+        setIsHymnActive(false);
       }
     }
   }, [messages]);
@@ -2785,6 +2807,34 @@ export default function VideoWatch() {
       liveShareCameraVideoRef.current = null;
     }
     
+    // ✅ Clear Bible verse and Hymn overlays (Church mode cleanup)
+    if (isBibleVerseActive || currentBibleVerse) {
+      console.log('📖 [VideoWatch] Clearing Bible verse on End Live');
+      sendMessage({
+        type: 'bible_verse_update',
+        data: { 
+          verse: null,
+          active: false
+        }
+      });
+      setCurrentBibleVerse(null);
+      setIsBibleVerseActive(false);
+    }
+    
+    if (isHymnActive || currentHymn) {
+      console.log('🎵 [VideoWatch] Clearing hymn on End Live');
+      sendMessage({
+        type: 'hymn_update',
+        data: {
+          hymn: null,
+          active: false
+        }
+      });
+      setCurrentHymn(null);
+      setCurrentHymnVerse(1);
+      setIsHymnActive(false);
+    }
+    
     setLiveShareMode(null);
     setSharingSource(null);
     setIsScreenSharingActive(false);
@@ -2828,12 +2878,13 @@ export default function VideoWatch() {
   };
   
   // 🎙️ Handle LiveShare mode selection (for Podcast/News/Show modes)
-  const handleLiveShareModeSelect = (mode, config = null, layout = null) => {
-    console.log('🎙️ [VideoWatch HOST] LiveShare mode selected:', mode, config, 'layout:', layout);
+  const handleLiveShareModeSelect = (mode, config = null, layout = null, muteAllMembers = false) => {
+    console.log('🎙️ [VideoWatch HOST] LiveShare mode selected:', mode, config, 'layout:', layout, 'muteAllMembers:', muteAllMembers);
     console.log('📊 [VideoWatch HOST] Mode select tracking:', {
       mode,
       hasConfig: !!config,
       layout,
+      muteAllMembers,
       willBroadcast: !!sendMessage,
       timestamp: new Date().toISOString()
     });
@@ -2844,6 +2895,7 @@ export default function VideoWatch() {
       titleStyle: config?.titleStyle,
       logoStyle: config?.logoStyle,
       guestId: config?.guestId,
+      muteAllMembers,
       fullConfig: config
     });
     
@@ -2896,6 +2948,15 @@ export default function VideoWatch() {
       };
       console.log('📦 [VideoWatch] Setting podcastConfig to:', podcastConfigData);
       setPodcastConfig(podcastConfigData);
+      
+      // 🔇 Auto-mute all members if requested (podcast/church/news/show modes)
+      if (muteAllMembers && isHost) {
+        console.log('🔇 [VideoWatch] Auto-muting all members for mode:', mode, 'exemptGuestId:', config.guestId);
+        // Use setTimeout to ensure state is ready
+        setTimeout(() => {
+          handleMuteAll(config.guestId || null);
+        }, 100);
+      }
     } else {
       console.log('ℹ️ [VideoWatch] No config provided, clearing podcastConfig');
       setPodcastConfig(null);
@@ -4095,11 +4156,19 @@ export default function VideoWatch() {
               };
               setPodcastConfig(configData);
               
-              // For church mode, load current Bible verse if exists (late joiner support)
-              if (mode === 'church' && message.data.currentBibleVerse) {
-                console.log('📖 [VideoWatch] Loading current Bible verse for late joiner:', message.data.currentBibleVerse);
-                setCurrentBibleVerse(message.data.currentBibleVerse);
-                setIsBibleVerseActive(true);
+              // For church mode, load current Bible verse and hymn if exists (late joiner support)
+              if (mode === 'church') {
+                if (message.data.currentBibleVerse) {
+                  console.log('📖 [VideoWatch] Loading current Bible verse for late joiner:', message.data.currentBibleVerse);
+                  setCurrentBibleVerse(message.data.currentBibleVerse);
+                  setIsBibleVerseActive(true);
+                }
+                if (message.data.currentHymn) {
+                  console.log('🎵 [VideoWatch] Loading current hymn for late joiner:', message.data.currentHymn);
+                  setCurrentHymn(message.data.currentHymn);
+                  setCurrentHymnVerse(message.data.currentHymnVerse || 1);
+                  setIsHymnActive(true);
+                }
               }
             } else {
               setPodcastConfig(null);
@@ -4805,6 +4874,86 @@ export default function VideoWatch() {
     }
   }, [showPrivateChat, privateChatUser, sendMessage, privateMessages]);
 
+  // ✅ IMMEDIATE TRACK SUBSCRIPTION: Listen for LiveKit tracks (camera/screen) - like LectureHall
+  useEffect(() => {
+    if (!room || !isLiveKitConnected) return;
+
+    const handleTrackSubscribed = (track, publication, participant) => {
+      console.log('🟢 [trackSubscribed] Track received:', {
+        source: publication.source,
+        kind: track.kind,
+        participant: participant.identity
+      });
+
+      // Only handle video tracks for LiveShare
+      if (track.kind !== 'video') return;
+
+      // Handle screen share tracks
+      if (publication.source === Track.Source.ScreenShare) {
+        console.log('🖥️ [LiveShare] Screen share track subscribed from:', participant.identity);
+        
+        const screenStream = new MediaStream([track.mediaStreamTrack]);
+        
+        // Check if host also has camera track
+        const cameraTrackPub = participant.getTrackPublication(Track.Source.Camera);
+        let cameraStream = null;
+        
+        if (cameraTrackPub && cameraTrackPub.track) {
+          cameraStream = new MediaStream([cameraTrackPub.track.mediaStreamTrack]);
+          console.log('📹 [LiveShare] Host camera track also available');
+        }
+        
+        setCurrentMedia({
+          type: 'liveshare',
+          title: `LiveShare (${liveShareContentMode || 'Screen Share'})`,
+          stream: screenStream,
+          cameraStream: cameraStream
+        });
+        
+        return;
+      }
+      
+      // Handle camera tracks for LiveShare
+      if (publication.source === Track.Source.Camera) {
+        console.log('✅ [LiveShare] Camera track subscribed from:', participant.identity);
+        
+        const cameraStream = new MediaStream([track.mediaStreamTrack]);
+        
+        // Check if host also has screen share track
+        const screenTrackPub = participant.getTrackPublication(Track.Source.ScreenShare);
+        let screenStream = null;
+        
+        if (screenTrackPub && screenTrackPub.track) {
+          screenStream = new MediaStream([screenTrackPub.track.mediaStreamTrack]);
+          console.log('🖥️ [LiveShare] Host screen share track also available');
+        }
+        
+        // Determine mode based on what tracks are available
+        const mode = screenStream && cameraStream ? 'both' : screenStream ? 'screen' : 'camera';
+        
+        console.log('🎬 [LiveShare] Displaying camera, mode:', mode);
+        
+        setCurrentMedia({
+          type: 'liveshare',
+          title: `LiveShare (${mode})`,
+          stream: screenStream,
+          cameraStream: cameraStream
+        });
+        
+        setLiveShareMode(mode);
+        setIsScreenSharingActive(true);
+        
+        return;
+      }
+    };
+
+    room.on('trackSubscribed', handleTrackSubscribed);
+    
+    return () => {
+      room.off('trackSubscribed', handleTrackSubscribed);
+    };
+  }, [room, isLiveKitConnected, liveShareContentMode]);
+
   // ✅ FIND SCREEN SHARE TRACK FROM LIVEKIT (MUST BE BEFORE EARLY RETURN)
   // Force useMemo recalculation when track count changes
   const remoteTrackCount = React.useMemo(() => {
@@ -4881,11 +5030,11 @@ export default function VideoWatch() {
 
   // 🎥 Update currentMedia with BOTH camera and screen streams for split-view rendering
   useEffect(() => {
-    // Skip if no active LiveShare session
-    if (!liveShareContentMode && !liveShareMode) return;
+    // ✅ Skip if no active sharing session (LiveShare OR screen share)
+    if (!liveShareContentMode && !liveShareMode && !isScreenSharingActive) return;
     
     // For MEMBERS/GUESTS
-    if (!isHost && liveShareContentMode) {
+    if (!isHost && (liveShareContentMode || isScreenSharingActive)) {
       // CASE 1: Guest is sharing screen (has localScreenTrack) + viewing host camera (remoteCameraTrack)
       if (localScreenTrack?.track?.mediaStreamTrack && remoteCameraTrack?.mediaStreamTrack) {
         console.log('✅ [SPLIT-VIEW] Guest using own screen + host camera');
@@ -4896,7 +5045,7 @@ export default function VideoWatch() {
         
         setCurrentMedia({
           type: 'liveshare',
-          title: `LiveShare (${liveShareContentMode})`,
+          title: `LiveShare (${liveShareContentMode || 'Camera'})`,
           stream: guestScreenStream,    // Guest's own screen
           cameraStream: hostCameraStream // Host's camera
         });
@@ -4906,22 +5055,23 @@ export default function VideoWatch() {
       // Skip CASE 2 if we're HOST - HOST uses dedicated merge logic below
       if (isHost) return;
       
-      // CASE 2: Regular member viewing host streams
+      // CASE 2: Regular member viewing host streams (camera-only, screen-only, or both)
       const screenStream = remoteScreenTrack ? new MediaStream([remoteScreenTrack.mediaStreamTrack]) : null;
       const cameraStream = remoteCameraTrack ? new MediaStream([remoteCameraTrack.mediaStreamTrack]) : null;
       
       console.log('📺 [MEMBER] Viewing host streams:', {
         hasScreen: !!screenStream,
-        hasCamera: !!cameraStream
+        hasCamera: !!cameraStream,
+        mode: liveShareContentMode || 'screen_share'
       });
       
-      // Update currentMedia if we have at least one stream
+      // ✅ Update currentMedia if we have at least one stream (works for camera/screen/both)
       if (screenStream || cameraStream) {
         setCurrentMedia({
           type: 'liveshare',
-          title: `LiveShare (${liveShareContentMode})`,
-          stream: screenStream,      // Guest/Host screen share
-          cameraStream: cameraStream  // Host camera
+          title: `LiveShare (${liveShareContentMode || 'Camera'})`,
+          stream: screenStream,      // null if camera-only ✅
+          cameraStream: cameraStream  // null if screen-only ✅
         });
       }
     }
@@ -4940,7 +5090,7 @@ export default function VideoWatch() {
         cameraStream: prev?.cameraStream
       }));
     }
-  }, [remoteScreenTrack, remoteCameraTrack, localScreenTrack, liveShareContentMode, liveShareMode, isHost, selectedLiveShareLayout]);
+  }, [remoteScreenTrack, remoteCameraTrack, localScreenTrack, liveShareContentMode, liveShareMode, isHost, isScreenSharingActive, selectedLiveShareLayout]);
 
   // 📹 Enrich participants with LiveKit camera tracks
   const participantsWithCamera = useMemo(() => {
@@ -5159,9 +5309,27 @@ export default function VideoWatch() {
               <BibleOverlay 
                 verse={currentBibleVerse}
                 isActive={isBibleVerseActive}
+                sendMessage={sendMessage}
+                sessionId={urlSessionId}
                 onDismiss={isHost ? () => {
                   setIsBibleVerseActive(false);
                   setCurrentBibleVerse(null);
+                } : undefined}
+              />
+            )}
+            
+            {/* 🎵 Hymn Overlay (Church mode) */}
+            {isHymnActive && currentHymn && (
+              <HymnOverlay 
+                hymn={currentHymn}
+                isActive={isHymnActive}
+                currentVerse={currentHymnVerse}
+                sendMessage={sendMessage}
+                sessionId={urlSessionId}
+                onDismiss={isHost ? () => {
+                  setIsHymnActive(false);
+                  setCurrentHymn(null);
+                  setCurrentHymnVerse(1);
                 } : undefined}
               />
             )}

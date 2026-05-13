@@ -98,7 +98,7 @@ const Login = () => {
           <div className="text-center max-w-2xl">
             <img 
               src="/icons/LetsWatchOutLogo.png" 
-              alt="WeWatch Logo" 
+              alt="LetsWatchOut Logo" 
               className="w-64 h-64 md:w-80 md:h-80 lg:w-96 lg:h-96 mx-auto mb-0 drop-shadow-2xl hover:scale-105 transition-transform duration-300"
             />
             <p className="text-lg md:text-xl lg:text-xl text-gray-300 mb-1">Watch together, anywhere</p>
@@ -269,7 +269,7 @@ const Login = () => {
 
             {/* Footer */}
             <div className="text-center mt-4 text-gray-500 text-xs">
-              <p>© 2026 WeWatch. Watch together, anywhere.</p>
+              <p>© 2026 LetsWatchOut. Watch together, anywhere.</p>
             </div>
           </div>
         </div>

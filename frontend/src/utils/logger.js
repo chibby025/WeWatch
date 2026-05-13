@@ -1,5 +1,5 @@
 /**
- * Centralized logging utility for WeWatch
+ * Centralized logging utility for LetsWatchOut
  * Set DEBUG_MODE to true to enable verbose logging
  */
 

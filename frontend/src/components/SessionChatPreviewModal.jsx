@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { XMarkIcon, ChatBubbleLeftIcon } from '@heroicons/react/24/outline';
 import axios from 'axios';
+import Avatar from './Avatar';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
@@ -147,17 +148,10 @@ const SessionChatPreviewModal = ({ isOpen, onClose, sessionId, sessionTitle }) =
                 <div key={msg.id || index} className="flex gap-3 items-start">
                   {/* Avatar */}
                   <div className="flex-shrink-0">
-                    {msg.user?.avatar_url ? (
-                      <img
-                        src={msg.user.avatar_url}
-                        alt={msg.username}
-                        className="w-10 h-10 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold">
-                        {msg.username?.charAt(0).toUpperCase()}
-                      </div>
-                    )}
+                    <Avatar
+                      user={msg.user || { username: msg.username }}
+                      className="w-10 h-10 rounded-full object-cover"
+                    />
                   </div>
                   
                   {/* Message Content */}

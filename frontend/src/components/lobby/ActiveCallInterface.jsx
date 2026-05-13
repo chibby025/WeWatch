@@ -1,6 +1,7 @@
 // frontend/src/components/lobby/ActiveCallInterface.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Track } from 'livekit-client';
+import Avatar from '../Avatar';
 
 const ActiveCallInterface = ({ 
   isOpen,
@@ -99,21 +100,7 @@ const ActiveCallInterface = ({
     return (
       <div className="fixed top-4 right-4 z-[9999] bg-gray-900 rounded-full shadow-2xl border-2 border-green-500 px-4 py-2 flex items-center gap-3 animate-pulse">
         {/* Avatar */}
-        {friend?.avatar_url ? (
-          <img 
-            src={friend.avatar_url.startsWith('http') ? friend.avatar_url : `http://localhost:8080${friend.avatar_url}`}
-            alt={friend.username}
-            className="w-8 h-8 rounded-full object-cover"
-            onError={(e) => {
-              e.target.onerror = null;
-              e.target.src = '/icons/user1avatar.svg';
-            }}
-          />
-        ) : (
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-600 to-blue-600 flex items-center justify-center text-white text-xs font-bold">
-            {friend?.username?.[0]?.toUpperCase() || 'U'}
-          </div>
-        )}
+        <Avatar user={friend} className="w-8 h-8 rounded-full object-cover" />
 
         {/* Timer */}
         <span className="text-white text-sm font-mono">
@@ -165,21 +152,10 @@ const ActiveCallInterface = ({
 
         {/* Avatar */}
         <div className="relative">
-          {friend?.avatar_url ? (
-            <img 
-              src={friend.avatar_url.startsWith('http') ? friend.avatar_url : `http://localhost:8080${friend.avatar_url}`}
-              alt={friend.username}
-              className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover border-4 border-green-500 shadow-2xl"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.src = '/icons/user1avatar.svg';
-              }}
-            />
-          ) : (
-            <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-full bg-gradient-to-br from-green-600 to-blue-600 flex items-center justify-center text-white font-bold text-4xl sm:text-5xl border-4 border-green-500 shadow-2xl">
-              {friend?.username?.[0]?.toUpperCase() || 'U'}
-            </div>
-          )}
+          <Avatar
+            user={friend}
+            className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover border-4 border-green-500 shadow-2xl"
+          />
           
           {/* Pulse ring for active call */}
           <div className="absolute inset-0 rounded-full border-4 border-green-400 animate-ping opacity-75"></div>

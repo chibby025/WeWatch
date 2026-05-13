@@ -1,6 +1,7 @@
 // frontend/src/components/MembersModal.jsx
 import React from 'react';
 import AudioWaveform from './AudioWaveform';
+import Avatar from './Avatar';
 import { getBatchFriendshipStatuses, sendFriendRequest, acceptFriendRequest } from '../services/api';
 import toast from 'react-hot-toast';
 
@@ -215,17 +216,8 @@ export default function MembersModal({
                     onClick={() => onMemberClick?.(member)}
                   >
                     {/* Avatar */}
-                    <img 
-                      src={member.avatar_url || '/icons/user1avatar.svg'} 
-                      alt={member.username}
-                      onError={(e) => {
-                        console.log(`🔍 [MembersModal] Avatar load failed for user ${member.id} (${member.username}), URL: ${e.target.src}`);
-                        e.target.onerror = null;
-                        e.target.src = '/icons/user1avatar.svg';
-                      }}
-                      onLoad={(e) => {
-                        console.log(`✅ [MembersModal] Avatar loaded successfully for user ${member.id} (${member.username}), URL: ${e.target.src}`);
-                      }}
+                    <Avatar
+                      user={member}
                       className="w-10 h-10 rounded-full object-cover border-2 border-gray-600"
                     />
                     

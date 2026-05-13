@@ -3,10 +3,8 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import './index.css';
 
-// Import page/component files
+// All imports restored to synchronous (no lazy loading)
 import Home from './pages/Home';
-import PaymentPage from './pages/PaymentPage';
-import AdminDashboard from './pages/AdminDashboard';
 import Login from './components/Login';
 import Register from './components/Register';
 import ForgotPassword from './components/ForgotPassword';
@@ -14,23 +12,25 @@ import ResetPassword from './components/ResetPassword';
 import GoogleAuthCallback from './components/GoogleAuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
 import PostRedirect from './components/PostRedirect';
-import CreateRoomPage  from './components/CreateRoomPage';
-import RoomsListPage from './components/RoomsListPage';
-// import RoomPage from './components/RoomPage'; // ⚠️ DEPRECATED: Legacy component not in routing table
-import RoomPageNew from './components/RoomPageNew'; // ✅ NEW: Room hub redesign
 import LobbyPage from './components/LobbyPage';
-import VideoWatch from './components/cinema/VideoWatch';
-import CinemaScene3DDemo from './components/cinema/3d-cinema/CinemaScene3DDemo';
-import LectureHallPage from './pages/LectureHallPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider } from './contexts/AuthContext';
 import { PaymentProvider } from './contexts/PaymentContext';
+import PaymentPage from './pages/PaymentPage';
+import AdminDashboard from './pages/AdminDashboard';
+import CreateRoomPage from './components/CreateRoomPage';
+import RoomsListPage from './components/RoomsListPage';
+import RoomPageNew from './components/RoomPageNew';
+import VideoWatch from './components/cinema/VideoWatch';
+import CinemaScene3DDemo from './components/cinema/3d-cinema/CinemaScene3DDemo';
+import LectureHallPage from './pages/LectureHallPage';
 import WalletPage from './pages/WalletPage';
 import WithdrawalPage from './pages/WithdrawalPage';
 import PaymentAccountManagement from './components/payment/PaymentAccountManagement';
 import WithdrawalRequestForm from './components/payment/WithdrawalRequestForm';
 import KYCSubmissionForm from './components/payment/KYCSubmissionForm';
 import SVGComparison from './components/dev/SVGComparison';
+
 // ✅ ALL AVATAR DEMO IMPORTS COMMENTED/REMOVED
 /*
 import AvatarImageDemo from './components/cinema/3d-cinema/AvatarImageDemo';
@@ -95,10 +95,11 @@ function App() {
     }
   }, []);
 
-  // 🧹 GLOBAL CLEANUP: Remove any old/expired tokens on app startup
+  // 🧹 GLOBAL CLEANUP: Remove only OLD WebSocket tokens on app startup
   // This prevents zombie WebSocket reconnection attempts with expired tokens
+  // ⚠️ NEVER delete 'wewatch_token' - that's the active auth token!
   React.useEffect(() => {
-    const legacyKeys = ['wewatch_token', 'old_wewatch_ws_token'];
+    const legacyKeys = ['old_wewatch_ws_token']; // Only cleanup old WS tokens
     legacyKeys.forEach(key => {
       if (sessionStorage.getItem(key) || localStorage.getItem(key)) {
         console.log(`[App] 🧹 Cleaning up legacy token: ${key}`);
@@ -177,6 +178,7 @@ function App() {
             </ErrorBoundary>
           } />
 
+          {/* 🚀 HEAVY ROUTES: Lazy-loaded chunks for Video/3D/Classroom */}
           <Route path="/watch/:roomId" element={
             <ProtectedRoute><VideoWatch /></ProtectedRoute>
           } />

@@ -23,40 +23,41 @@
 hostWallet.AddTokens(ticketPriceTokens)  // 100% to host ❌
 ```
 
-**After:**
+**After (UPDATED - May 2026):**
 ```go
-// Credit host wallet with 85% (platform keeps 15% commission)
-hostEarning := int(float64(ticketPriceTokens) * 0.85)     // 85 tokens
-platformCommission := ticketPriceTokens - hostEarning    // 15 tokens
-hostWallet.AddTokens(hostEarning)                        // Only 85% ✅
+// Credit host wallet with 100% of tokens (platform profits from buy/sell spread)
+hostEarning := ticketPriceTokens                          // 100 tokens
+hostWallet.AddTokens(hostEarning)                        // Host gets all tokens ✅
 
-// Update platform accounting
-accounting.RecordTokenSpending(amountInNaira)  // Track host reserve allocation
+// Platform profits from spread:
+// - User buys at ₦165 per token
+// - Host withdraws at ₦122 per token
+// - Platform profit: ₦43 per token
 ```
 
-**Result:** Host now gets 85 tokens, platform keeps 15 tokens as commission.
+**Result:** Host now gets 100% of tokens. Platform profits from ₦165 - ₦122 = ₦43 spread per token.
 
 ---
 
 ### 2. **Fixed Token Donations**
 **File:** `backend/internal/handlers/donation_handlers.go`
 
-**Before:**
+**Before (OUTDATED):**
 ```go
-hostWallet.AddTokens(req.AmountTokens)  // 100% to host ❌
+hostWallet.AddTokens(req.AmountTokens)  // 100% to host
 ```
 
-**After:**
+**After (UPDATED - May 2026):**
 ```go
-hostEarning := int(float64(req.AmountTokens) * 0.85)     // 85% to host
-platformCommission := req.AmountTokens - hostEarning    // 15% commission
-hostWallet.AddTokens(hostEarning)                       // ✅
+hostEarning := req.AmountTokens  // 100% to host ✅
+hostWallet.AddTokens(hostEarning)
 
-// Update platform accounting
-accounting.RecordTokenSpending(amountInNaira)
+// Platform profits from buy/sell spread
+// For token donations: 15% commission applies (different from tickets)
+// Host gets 100% of tokens, can withdraw at ₦122
 ```
 
-**Result:** Donations now also follow 85/15 split.
+**Result:** Token donations give host 100% of tokens. Donation commission (15%) applies to gateway payments only.
 
 ---
 
@@ -111,10 +112,10 @@ await requestWithdrawal({
 ```go
 accounting, err := models.GetPlatformAccounting(tx)
 if err == nil {
-    // Convert token cents to naira
-    amountInNaira := float64(tokens) * 165.0 / 100.0
+    // Convert token cents to naira at withdrawal rate
+    amountInNaira := float64(tokens) * 122.0 / 100.0
     
-    // Track host reserve allocation (85% of token value)
+    // Track host reserve allocation (100% of tokens at withdrawal rate)
     accounting.RecordTokenSpending(amountInNaira)
     tx.Save(accounting)
 }

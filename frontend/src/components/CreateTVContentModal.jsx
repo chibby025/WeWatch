@@ -520,8 +520,8 @@ const CreateTVContentModal = ({ isOpen, onClose, onSubmit, activeSessionId = nul
         {/* Upload Progress Overlay */}
         {isUploading && (
           <div className="absolute inset-0 bg-black/80 z-50 flex items-center justify-center rounded-xl">
-            <div className="bg-gray-800 rounded-lg p-6 w-96 max-w-[90%]">
-              <h3 className="text-white text-lg font-bold mb-4">Uploading Video...</h3>
+            <div className="bg-gray-800 rounded-lg p-4 sm:p-6 w-full sm:w-96 max-w-[90%]">
+              <h3 className="text-white text-base sm:text-lg font-bold mb-4">Uploading Video...</h3>
               <div className="w-full bg-gray-700 rounded-full h-4 mb-2">
                 <div 
                   className="bg-blue-600 h-4 rounded-full transition-all duration-300"

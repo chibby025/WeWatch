@@ -78,7 +78,7 @@ const ContentDeclarationModal = ({ isOpen, onClose, onSubmit, sessionData }) => 
               <div>
                 <h3 className="font-semibold text-yellow-900 mb-1">Why declare content ownership?</h3>
                 <p className="text-sm text-yellow-800">
-                  This declaration protects both you and WeWatch. It creates a legal record that you have the right
+                  This declaration protects both you and LetsWatchOut. It creates a legal record that you have the right
                   to monetize this content. False declarations may result in account suspension.
                 </p>
               </div>
@@ -198,8 +198,8 @@ const ContentDeclarationModal = ({ isOpen, onClose, onSubmit, sessionData }) => 
               <ul className="list-disc list-inside space-y-1 ml-2">
                 <li>I am the copyright owner OR have permission to monetize this content</li>
                 <li>This content does not infringe on any third-party copyrights, trademarks, or rights</li>
-                <li>I grant WeWatch a non-exclusive license to display this content</li>
-                <li>I indemnify WeWatch against any copyright claims related to this content</li>
+                <li>I grant LetsWatchOut a non-exclusive license to display this content</li>
+                <li>I indemnify LetsWatchOut against any copyright claims related to this content</li>
                 <li>I understand that false declarations may result in:
                   <ul className="list-circle list-inside ml-4 mt-1">
                     <li>Immediate account suspension</li>
@@ -207,7 +207,7 @@ const ContentDeclarationModal = ({ isOpen, onClose, onSubmit, sessionData }) => 
                     <li>Legal action for fraud</li>
                   </ul>
                 </li>
-                <li>WeWatch may remove content if a valid DMCA complaint is received</li>
+                <li>LetsWatchOut may remove content if a valid DMCA complaint is received</li>
               </ul>
             </div>
 

@@ -1,6 +1,6 @@
 // frontend/src/components/liveshare/LiveShareTypeSelector.jsx
 import { useState, useEffect, useRef } from 'react';
-import { Camera, Monitor, MonitorPlay } from 'lucide-react';
+import { Camera, Monitor, MonitorPlay, Presentation } from 'lucide-react';
 
 const SHARE_TYPES = [
   {
@@ -40,11 +40,19 @@ export default function LiveShareTypeSelector({
   const [previewStream, setPreviewStream] = useState(null);
   const [permissionError, setPermissionError] = useState(null);
   const videoRef = useRef(null);
+  
+  // ⛪ Presentation state
+  const [presentationFile, setPresentationFile] = useState(null);
+  const [presentationPreview, setPresentationPreview] = useState(null);
+  const presentationInputRef = useRef(null);
 
   // ✅ Filter share types - remove 'both' if guest is selected
-  const availableShareTypes = hasGuestSelected 
-    ? SHARE_TYPES.filter(type => type.id !== 'both')
-    : SHARE_TYPES;
+  const availableShareTypes = SHARE_TYPES.filter(type => {
+    // Remove 'both' if guest is selected
+    if (hasGuestSelected && type.id === 'both') return false;
+    
+    return true;
+  });
 
   // Enumerate camera devices (only if not provided)
   useEffect(() => {
@@ -108,6 +116,12 @@ export default function LiveShareTypeSelector({
 
   const handleTypeClick = (type) => {
     setSelectedType(type.id);
+    
+    // Don't auto-proceed if presentation mode (need file upload first)
+    if (type.id === 'presentation' || type.id === 'presentation_camera') {
+      return; // User needs to upload file first
+    }
+    
     if (embedded) {
       // In wizard mode, immediately proceed when type selected
       if (previewStream) {
@@ -116,9 +130,58 @@ export default function LiveShareTypeSelector({
       onTypeSelect(type.id, selectedDeviceId);
     }
   };
+  
+  const handlePresentationUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    // Validate file type
+    const validTypes = [
+      'application/pdf',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'image/png',
+      'image/jpeg'
+    ];
+    
+    if (!validTypes.includes(file.type)) {
+      alert('Please upload PDF, PowerPoint, or image files');
+      return;
+    }
+    
+    // Check file size (max 50MB)
+    if (file.size > 50 * 1024 * 1024) {
+      alert('File size must be less than 50MB');
+      return;
+    }
+    
+    setPresentationFile(file);
+    setPresentationPreview(file.name);
+  };
+  
+  const handlePresentationContinue = () => {
+    if (!presentationFile) {
+      alert('Please upload a presentation file first');
+      return;
+    }
+    
+    // Cleanup preview stream if camera is involved
+    if (previewStream) {
+      previewStream.getTracks().forEach(track => track.stop());
+    }
+    
+    // Pass presentation file along with type
+    onTypeSelect(selectedType, selectedDeviceId, presentationFile);
+  };
 
   const handleContinue = () => {
     if (selectedType) {
+      // Special handling for presentation mode
+      if (selectedType === 'presentation' || selectedType === 'presentation_camera') {
+        handlePresentationContinue();
+        return;
+      }
+      
       // Cleanup preview stream
       if (previewStream) {
         previewStream.getTracks().forEach(track => track.stop());
@@ -168,6 +231,90 @@ export default function LiveShareTypeSelector({
             );
           })}
         </div>
+
+        {/* ⛪ Presentation File Upload */}
+        {(selectedType === 'presentation' || selectedType === 'presentation_camera') && (
+          <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+            <h3 className="text-white font-medium text-sm mb-2">Upload Presentation</h3>
+            
+            <input
+              ref={presentationInputRef}
+              type="file"
+              accept=".pdf,.ppt,.pptx,.png,.jpg,.jpeg"
+              onChange={handlePresentationUpload}
+              className="hidden"
+            />
+            
+            <button
+              onClick={() => presentationInputRef.current?.click()}
+              className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+            >
+              📄 Choose File (PDF, PowerPoint, Image)
+            </button>
+            
+            {presentationPreview && (
+              <div className="bg-gray-700 rounded-lg p-3 flex items-center gap-2">
+                <span className="text-2xl">📄</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white text-sm font-medium truncate">{presentationPreview}</p>
+                  <p className="text-gray-400 text-xs">Ready to present</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setPresentationFile(null);
+                    setPresentationPreview(null);
+                  }}
+                  className="text-red-400 hover:text-red-300 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+              <p className="text-yellow-400 text-xs">
+                💡 Tip: Upload sermon slides, song lyrics, or Bible verses. You'll be able to advance slides during your service.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Camera Preview for presentation_camera mode */}
+        {selectedType === 'presentation_camera' && (
+          <div className="bg-gray-800 rounded-xl p-3 space-y-3">
+            {/* Device Selection */}
+            {cameraDevices.length > 1 && (
+              <select
+                value={selectedDeviceId}
+                onChange={(e) => setSelectedDeviceId(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 text-white text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {cameraDevices.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Camera ${cameraDevices.indexOf(device) + 1}`}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {/* Compact Video Preview */}
+            <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
+              {permissionError ? (
+                <div className="absolute inset-0 flex items-center justify-center p-2">
+                  <p className="text-red-400 text-xs text-center">{permissionError}</p>
+                </div>
+              ) : (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Compact Camera Preview */}
         {(selectedType === 'camera' || selectedType === 'both') && (

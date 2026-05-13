@@ -1426,7 +1426,7 @@ export const exportPaymentHistory = async (startDate, endDate) => {
     const url = window.URL.createObjectURL(new Blob([response.data]));
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `wewatch_transactions_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `letswatchout_transactions_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     link.remove();

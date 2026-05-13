@@ -77,6 +77,8 @@ func (h *LiveShareHandler) HandleMessage(msgType string, data map[string]interfa
 		return h.handleGuestLeft(data, client)
 	case "bible_verse_update":
 		return h.handleBibleVerseUpdate(data, client)
+	case "hymn_update":
+		return h.handleHymnUpdate(data, client)
 	default:
 		return fmt.Errorf("unknown LiveShare message type: %s", msgType)
 	}
@@ -221,6 +223,44 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 		if guestIDFloat, ok := data["guestUserId"].(float64); ok {
 			broadcastMsg["data"].(map[string]interface{})["guestUserId"] = uint(guestIDFloat)
 			log.Printf("📡 [LiveShare] Including guest in %s broadcast: %d", mode, uint(guestIDFloat))
+		}
+		
+		// ✅ For church mode, include current Bible verse and hymn for late joiners
+		if mode == "church" {
+			var session struct {
+				CurrentBibleVerse *string `gorm:"column:current_bible_verse"`
+				CurrentHymn       *string `gorm:"column:current_hymn"`
+				CurrentHymnVerse  *int    `gorm:"column:current_hymn_verse"`
+			}
+			
+			if err := h.db.Table("watch_sessions").
+				Select("current_bible_verse, current_hymn, current_hymn_verse").
+				Where("session_id = ?", sessionID).
+				Scan(&session).Error; err == nil {
+				
+				if session.CurrentBibleVerse != nil && *session.CurrentBibleVerse != "" {
+					// Parse JSON string back to map
+					var verseData map[string]interface{}
+					if err := json.Unmarshal([]byte(*session.CurrentBibleVerse), &verseData); err == nil {
+						broadcastMsg["data"].(map[string]interface{})["currentBibleVerse"] = verseData
+						log.Printf("📖 [LiveShare] Including current Bible verse for late joiners")
+					}
+				}
+				
+				if session.CurrentHymn != nil && *session.CurrentHymn != "" {
+					// Parse JSON string back to map
+					var hymnData map[string]interface{}
+					if err := json.Unmarshal([]byte(*session.CurrentHymn), &hymnData); err == nil {
+						broadcastMsg["data"].(map[string]interface{})["currentHymn"] = hymnData
+						verseNum := 1
+						if session.CurrentHymnVerse != nil {
+							verseNum = *session.CurrentHymnVerse
+							broadcastMsg["data"].(map[string]interface{})["currentHymnVerse"] = verseNum
+						}
+						log.Printf("🎵 [LiveShare] Including current hymn for late joiners (verse %d)", verseNum)
+					}
+				}
+			}
 		}
 	}
 	
@@ -876,5 +916,77 @@ func (h *LiveShareHandler) handleBibleVerseUpdate(data map[string]interface{}, c
 	}, client)
 
 	log.Printf("✅ [LiveShare] Bible verse update broadcast sent")
+	return nil
+}
+
+// handleHymnUpdate - Host shows/hides hymn (Church mode)
+func (h *LiveShareHandler) handleHymnUpdate(data map[string]interface{}, client Client) error {
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+
+	hymn, _ := data["hymn"].(map[string]interface{})
+	active, _ := data["active"].(bool)
+	verse, _ := data["verse"].(float64) // JavaScript sends numbers as float64
+	verseInt := int(verse)
+	if verseInt == 0 {
+		verseInt = 1 // Default to verse 1
+	}
+
+	log.Printf("🎵 [LiveShare] Hymn update - Session: %s, Active: %v, Verse: %d", sessionID, active, verseInt)
+
+	// Persist to database (for late joiners)
+	if active && hymn != nil {
+		hymnJSON, err := json.Marshal(hymn)
+		if err != nil {
+			return fmt.Errorf("failed to marshal hymn data: %w", err)
+		}
+
+		result := h.db.Table("watch_sessions").
+			Where("session_id = ?", sessionID).
+			Updates(map[string]interface{}{
+				"current_hymn":       string(hymnJSON),
+				"current_hymn_verse": verseInt,
+			})
+
+		if result.Error != nil {
+			return fmt.Errorf("failed to save hymn: %w", result.Error)
+		}
+
+		log.Printf("✅ [LiveShare] Hymn saved to database (verse %d)", verseInt)
+	} else {
+		// Clear hymn from database
+		result := h.db.Table("watch_sessions").
+			Where("session_id = ?", sessionID).
+			Updates(map[string]interface{}{
+				"current_hymn":       nil,
+				"current_hymn_verse": 1,
+			})
+
+		if result.Error != nil {
+			log.Printf("⚠️ [LiveShare] Failed to clear hymn: %v", result.Error)
+		}
+
+		log.Printf("✅ [LiveShare] Hymn cleared from database")
+	}
+
+	// Broadcast to all room members
+	broadcastMsg := map[string]interface{}{
+		"type": "hymn_update",
+		"data": map[string]interface{}{
+			"hymn":   hymn,
+			"active": active,
+			"verse":  verseInt,
+		},
+	}
+
+	msgBytes, _ := json.Marshal(broadcastMsg)
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     msgBytes,
+		IsBinary: false,
+	}, client)
+
+	log.Printf("✅ [LiveShare] Hymn update broadcast sent")
 	return nil
 }

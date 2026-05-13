@@ -27,7 +27,7 @@ const ShareModal = ({ isOpen, onClose, roomId, roomName, shareUrl }) => {
     if (navigator.share) {
       try {
         await navigator.share({
-          title: `Join ${roomName || 'this room'} on WeWatch`,
+          title: `Join ${roomName || 'this room'} on LetsWatchOut`,
           text: `Join me in watching together!`,
           url: roomUrl,
         });
@@ -46,12 +46,12 @@ const ShareModal = ({ isOpen, onClose, roomId, roomName, shareUrl }) => {
     {
       name: 'WhatsApp',
       iconPath: '/icons/whatsappLogo.svg',
-      url: `https://wa.me/?text=${encodeURIComponent(`Join me in ${roomName || 'this room'} on WeWatch! ${roomUrl}`)}`,
+      url: `https://wa.me/?text=${encodeURIComponent(`Join me in ${roomName || 'this room'} on LetsWatchOut! ${roomUrl}`)}`,
     },
     {
       name: 'Twitter',
       iconPath: '/icons/twitterLogo.svg',
-      url: `https://twitter.com/intent/tweet?text=${encodeURIComponent(`Join me in ${roomName || 'this room'} on WeWatch!`)}&url=${encodeURIComponent(roomUrl)}`,
+      url: `https://twitter.com/intent/tweet?text=${encodeURIComponent(`Join me in ${roomName || 'this room'} on LetsWatchOut!`)}&url=${encodeURIComponent(roomUrl)}`,
     },
     {
       name: 'Facebook',
@@ -61,7 +61,7 @@ const ShareModal = ({ isOpen, onClose, roomId, roomName, shareUrl }) => {
     {
       name: 'Telegram',
       iconPath: '/icons/telegramLogo.svg',
-      url: `https://t.me/share/url?url=${encodeURIComponent(roomUrl)}&text=${encodeURIComponent(`Join me in ${roomName || 'this room'} on WeWatch!`)}`,
+      url: `https://t.me/share/url?url=${encodeURIComponent(roomUrl)}&text=${encodeURIComponent(`Join me in ${roomName || 'this room'} on LetsWatchOut!`)}`,
     },
   ];
 

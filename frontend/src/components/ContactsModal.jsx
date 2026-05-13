@@ -1,6 +1,8 @@
 // frontend/src/components/ContactsModal.jsx
 import React, { useState, useEffect } from 'react';
 import apiClient from '../services/api';
+import Avatar from './Avatar';
+import { resolveAvatarUrl } from '../utils/avatar';
 import {
   XMarkIcon,
   MagnifyingGlassIcon,
@@ -258,15 +260,14 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <img
-                              src={friend.profile_picture || `https://ui-avatars.com/api/?name=${friend.username}&background=random`}
-                              alt={friend.username}
+                            <Avatar
+                              user={friend}
                               onClick={() => {
-                                setSelectedImage(friend.profile_picture || `https://ui-avatars.com/api/?name=${friend.username}&background=random`);
+                                setSelectedImage(resolveAvatarUrl(friend.profile_picture || friend.avatar_url));
                                 setSelectedUserName(friend.display_name || friend.username);
                                 setIsImageModalOpen(true);
                               }}
-                              className="w-12 h-12 rounded-full border-2 border-purple-500 cursor-pointer hover:border-purple-300 transition-all"
+                              className="w-12 h-12 rounded-full object-cover border-2 border-purple-500 cursor-pointer hover:border-purple-300 transition-all"
                             />
                             <div>
                               <h3 className="text-white font-semibold">
@@ -334,10 +335,9 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <img
-                              src={request.profile_picture || `https://ui-avatars.com/api/?name=${request.username}&background=random`}
-                              alt={request.username}
-                              className="w-12 h-12 rounded-full border-2 border-yellow-500"
+                            <Avatar
+                              user={request}
+                              className="w-12 h-12 rounded-full object-cover border-2 border-yellow-500"
                             />
                             <div>
                               <h3 className="text-white font-semibold">
@@ -388,10 +388,9 @@ const ContactsModal = ({ isOpen, onClose, currentUser, onCallUser, onChatUser })
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <img
-                              src={request.profile_picture || `https://ui-avatars.com/api/?name=${request.username}&background=random`}
-                              alt={request.username}
-                              className="w-12 h-12 rounded-full border-2 border-blue-500"
+                            <Avatar
+                              user={request}
+                              className="w-12 h-12 rounded-full object-cover border-2 border-blue-500"
                             />
                             <div>
                               <h3 className="text-white font-semibold">

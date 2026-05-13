@@ -224,7 +224,7 @@ export default function LiveShareWizard({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="bg-gray-900 rounded-2xl w-full max-w-xl h-[95vh] border border-gray-700 shadow-2xl flex flex-col">
         {/* Header */}
-        <div className="flex-shrink-0 bg-gray-900 border-b border-gray-700 p-3 md:p-4">
+        <div className="flex-shrink-0 bg-gray-900 rounded-t-2xl border-b border-gray-700 p-3 md:p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <h2 className="text-lg md:text-xl font-bold text-white">

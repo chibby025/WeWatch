@@ -45,11 +45,13 @@ func CreateWatchSessionWithType(roomID uint, hostID uint, watchType string) (*mo
 // Input struct should match the JSON binding in CreateWatchSession handler
 func CreateWatchSessionWithTypeAndTicketing(roomID uint, hostID uint, watchType string, contentRating string, input interface{}) (*models.WatchSession, error) {
 	sessionID := uuid.New().String()
-	log.Printf("🆕 [CreateWatchSessionWithTypeAndTicketing] Creating session with:")
-	log.Printf("  ├─ sessionID: %s", sessionID)
-	log.Printf("  ├─ roomID: %d", roomID)
-	log.Printf("  ├─ watchType: %s", watchType)
-	log.Printf("  └─ contentRating: '%s'", contentRating)
+	log.Printf("\n💾💾💾 [DB SAVE] CreateWatchSessionWithTypeAndTicketing called")
+	log.Printf("💾 [DB SAVE] Room: %d, Host: %d", roomID, hostID)
+	log.Printf("💾 [DB SAVE] Watch Type: '%s'", watchType)
+	log.Printf("💾 [DB SAVE] 🎯🎯🎯 Content Rating RECEIVED: '%s'", contentRating)
+
+	log.Printf("\n🏗️ [DB SAVE] Creating WatchSession struct...")
+	log.Printf("🏗️ [DB SAVE] 🎯 Setting ContentRating field to: '%s'", contentRating)
 
 	session := models.WatchSession{
 		SessionID:     sessionID,
@@ -98,20 +100,26 @@ func CreateWatchSessionWithTypeAndTicketing(roomID uint, hostID uint, watchType 
 		return nil, err
 	}
 
-	log.Printf("✅✅✅ [CreateWatchSessionWithTypeAndTicketing] Session SAVED to database!")
-	log.Printf("  ├─ session_id: %s", sessionID)
-	log.Printf("  ├─ content_rating in struct: '%s'", session.ContentRating)
-	log.Printf("  └─ ticketing_enabled: %v", session.TicketingEnabled)
+	log.Printf("\n✅✅✅ [DB SAVE] Session SAVED to database!")
+	log.Printf("✅ [DB SAVE] Session ID: %s", sessionID)
+	log.Printf("✅ [DB SAVE] 🎯 ContentRating field value: '%s'", session.ContentRating)
 	
 	// Verify what was actually saved
+	log.Printf("\n🔎 [VERIFY] Reading back from database to verify...")
 	var savedSession models.WatchSession
 	if err := DB.Where("session_id = ?", sessionID).First(&savedSession).Error; err == nil {
-		log.Printf("🔍 [CreateWatchSessionWithTypeAndTicketing] VERIFICATION - Reading back from database:")
-		log.Printf("  ├─ content_rating from DB: '%s'", savedSession.ContentRating)
-		log.Printf("  ├─ watch_type from DB: '%s'", savedSession.WatchType)
-		log.Printf("  └─ is_active from DB: %v", savedSession.IsActive)
+		log.Printf("✅ [VERIFY] Successfully read from database:")
+		log.Printf("✅ [VERIFY] Session ID: %s", savedSession.SessionID)
+		log.Printf("✅ [VERIFY] 🎯🎯🎯 ContentRating in DB: '%s'", savedSession.ContentRating)
+		if savedSession.ContentRating != contentRating {
+			log.Printf("🚨🚨🚨 [VERIFY] MISMATCH DETECTED!")
+			log.Printf("🚨 [VERIFY] Expected: '%s'", contentRating)
+			log.Printf("🚨 [VERIFY] Got from DB: '%s'", savedSession.ContentRating)
+		} else {
+			log.Printf("✅ [VERIFY] ContentRating matches expected value")
+		}
 	} else {
-		log.Printf("⚠️ [CreateWatchSessionWithTypeAndTicketing] Could not verify saved session: %v", err)
+		log.Printf("❌ [VERIFY] Could not read back: %v", err)
 	}
 
 	return &session, nil
@@ -404,17 +412,23 @@ func CreateWatchSession(c *gin.Context) {
 		EarlyBirdEndTime     string `json:"early_bird_end_time"` // ISO 8601 string
 	}
 
+	log.Printf("\n\n🎬🎬🎬 ========== CREATE WATCH SESSION CALLED ========== 🎬🎬🎬")
+	log.Printf("📍 Room ID: %d", roomID)
+
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("❌❌❌ [CREATE] JSON BINDING FAILED: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "watch_type is required"})
 		return
 	}
 
-	log.Printf("\n🎬🎬🎬 ===== CREATE WATCH SESSION API CALLED =====")
-	log.Printf("📥 [CreateWatchSession] RAW INPUT RECEIVED:")
-	log.Printf("  ├─ content_rating: '%s'", input.ContentRating)
-	log.Printf("  ├─ watch_type: '%s'", input.WatchType)
-	log.Printf("  ├─ class_type: '%s'", input.ClassType)
-	log.Printf("  └─ ticketing_enabled: %v", input.TicketingEnabled)
+	log.Printf("✅ [CREATE] JSON binding successful")
+	log.Printf("📥 [CREATE] RAW INPUT IMMEDIATELY AFTER BINDING:")
+	log.Printf("   🎯 content_rating: '%s'", input.ContentRating)
+	log.Printf("   🎯 content_rating LENGTH: %d", len(input.ContentRating))
+	log.Printf("   🎯 content_rating BYTES: %v", []byte(input.ContentRating))
+	log.Printf("   📹 watch_type: '%s'", input.WatchType)
+	log.Printf("   🏫 class_type: '%s'", input.ClassType)
+	log.Printf("   🎫 ticketing_enabled: %v", input.TicketingEnabled)
 
 	// Validate watch_type
 	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" {
@@ -423,22 +437,24 @@ func CreateWatchSession(c *gin.Context) {
 	}
 
 	// Validate content_rating
-	log.Printf("🔍 [CreateWatchSession] Starting content_rating validation...")
-	log.Printf("  ├─ Input value: '%s' (length: %d)", input.ContentRating, len(input.ContentRating))
+	log.Printf("\n🔍🔍🔍 [VALIDATION] Starting content_rating validation")
+	log.Printf("🔍 [VALIDATION] Input: '%s' (length: %d, empty: %v)", input.ContentRating, len(input.ContentRating), input.ContentRating == "")
 	contentRating := "G" // Default to 'G' if not provided or invalid
-	validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
+	validRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
 	matched := false
-	for _, rating := range validRatings {
-		log.Printf("  ├─ Comparing '%s' == '%s' ? %v", input.ContentRating, rating, input.ContentRating == rating)
-		if input.ContentRating == rating {
+	for i, rating := range validRatings {
+		isMatch := input.ContentRating == rating
+		log.Printf("🔍 [VALIDATION] Check %d: '%s' == '%s' → %v", i+1, input.ContentRating, rating, isMatch)
+		if isMatch {
 			contentRating = rating
 			matched = true
-			log.Printf("✅ [CreateWatchSession] Valid content_rating matched: '%s'", contentRating)
+			log.Printf("✅✅✅ [VALIDATION] MATCH FOUND! Using: '%s'", contentRating)
 			break
 		}
 	}
 	if !matched {
-		log.Printf("⚠️ [CreateWatchSession] NO MATCH FOUND! Defaulting to 'G'. Input was: '%s'", input.ContentRating)
+		log.Printf("⚠️⚠️⚠️ [VALIDATION] NO MATCH! Defaulting to 'G'")
+		log.Printf("⚠️ [VALIDATION] Input was: '%s' (bytes: %v)", input.ContentRating, []byte(input.ContentRating))
 	}
 
 	// Validate ticketing configuration
@@ -544,23 +560,29 @@ func CreateWatchSession(c *gin.Context) {
 	log.Printf("  └─ ticketing_enabled: %v", session.TicketingEnabled)
 
 	// Broadcast session started to all room members
+	log.Printf("\n📡 [BROADCAST] Preparing session_started message...")
+	log.Printf("📡 [BROADCAST] 🎯 content_rating being sent: '%s'", session.ContentRating)
+
 	sessionMsg := map[string]interface{}{
 		"type": "session_started",
 		"data": map[string]interface{}{
 			"session_id":        session.SessionID,
 			"watch_type":        session.WatchType,
 			"host_id":           session.HostID,
+			"content_rating":    session.ContentRating, // ✅ Include content rating for button filtering
 			"ticketing_enabled": session.TicketingEnabled,
 			"ticket_price":      session.TicketPriceTokens,
 		},
 	}
+	log.Printf("📡 [BROADCAST] Broadcasting session_started to room %d", roomID)
 	if msgBytes, err := json.Marshal(sessionMsg); err == nil {
 		hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+		log.Printf("✅ [BROADCAST] session_started broadcasted successfully")
 	} else {
-		log.Printf("Failed to marshal session_started message: %v", err)
+		log.Printf("❌ [BROADCAST] Failed to marshal session_started: %v", err)
 	}
 
-	log.Printf("📤 [CreateWatchSession] Sending response to frontend:")
+	log.Printf("\n📤 [CREATE] Sending response to frontend:")
 	log.Printf("  ├─ content_rating: '%s'", session.ContentRating)
 	log.Printf("  ├─ session_id: %s", session.SessionID)
 	log.Printf("  └─ ticketing_enabled: %v\n", session.TicketingEnabled)

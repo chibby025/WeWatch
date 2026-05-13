@@ -127,7 +127,7 @@ func GetMyGatewayEarnings(c *gin.Context) {
 		},
 		"summary": gin.H{
 			"total_ticket_revenue": totalTicketRevenue,
-			"total_ticket_net":     totalTicketNet,  // 85% of tickets
+			"total_ticket_net":     totalTicketNet,  // 75% of tickets
 			"total_donations":      totalDonations,  // 100% of donations
 			"total_available":      totalAvailable,  // Total available to withdraw
 			"currency":             "NGN",

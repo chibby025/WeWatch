@@ -447,7 +447,7 @@ useEffect(() => {
         
         // Show browser notification if permission granted
         if (notificationPermission === 'granted') {
-          new Notification('WeWatch - Scheduled Event', {
+          new Notification('LetsWatchOut - Scheduled Event', {
             body: `"${event.title}" starts in ${minutesUntilEvent} minute${minutesUntilEvent > 1 ? 's' : ''}!`,
             icon: '/icons/seat.svg',
             badge: '/icons/seat.svg',
@@ -465,7 +465,7 @@ useEffect(() => {
         });
         
         if (notificationPermission === 'granted') {
-          new Notification('WeWatch - Event Starting!', {
+          new Notification('LetsWatchOut - Event Starting!', {
             body: `"${event.title}" is starting now!`,
             icon: '/icons/seat.svg',
             badge: '/icons/seat.svg',

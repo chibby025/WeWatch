@@ -22,4 +22,15 @@ type UserSettings struct {
 	WhoCanFriendRequest string `gorm:"default:'everyone'" json:"who_can_friend_request"` // 'everyone', 'friends_of_friends', 'nobody'
 	WhoCanSeePosts      string `gorm:"default:'public'" json:"who_can_see_posts"`    // 'public', 'friends', 'only_me'
 	WhoCanCall          string `gorm:"default:'friends'" json:"who_can_call"`        // 'everyone', 'friends', 'nobody'
+
+	// Content preferences
+	ShowMatureContent bool `gorm:"default:false" json:"show_mature_content"` // true = skip blur overlay for 18+/Mature posts
+
+	// Age-based content visibility flags (computed from date_of_birth, refreshed once per year)
+	// All default false — no age-gated content until DOB is confirmed.
+	CanSee13Plus  bool `gorm:"default:false" json:"can_see_13_plus"`
+	CanSee16Plus  bool `gorm:"default:false" json:"can_see_16_plus"`
+	CanSee18Plus  bool `gorm:"default:false" json:"can_see_18_plus"`
+	CanSeeMature  bool `gorm:"default:false" json:"can_see_mature"`
+	AgeFlagsYear  int  `gorm:"default:0"     json:"age_flags_year"` // Calendar year the flags were last computed; 0 = never
 }

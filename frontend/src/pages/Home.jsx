@@ -13,7 +13,7 @@ const Home = () => {
                 <div className="container mx-auto px-6 py-4">
                     <div className="flex justify-between items-center">
                         <div className="flex items-center gap-8">
-                            <h1 className="text-2xl font-bold text-white">🎬 WeWatch</h1>
+                            <h1 className="text-2xl font-bold text-white">🎬 LetsWatchOut</h1>
                             <div className="flex gap-4">
                                 <button
                                     onClick={() => navigate('/rooms')}

@@ -283,9 +283,9 @@ func PurchaseSessionTicketHandler(db *gorm.DB) gin.HandlerFunc {
 			// TODO: Process payment with gateway API
 			log.Printf("💳 Processing %s payment: $%.2f %s", req.PaymentMethod, ticketPriceAmount, ticketPriceCurrency)
 
-			// Calculate commission (15%)
+			// Calculate commission (25%)
 			grossAmount := ticketPriceAmount
-			commission := grossAmount * 0.15
+			commission := grossAmount * 0.25
 			netAmount := grossAmount - commission
 
 			// Create gateway earning record

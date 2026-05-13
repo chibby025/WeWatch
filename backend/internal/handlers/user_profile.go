@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"wewatch-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -76,13 +75,9 @@ func GetUserProfileHandler(c *gin.Context) {
 		}
 	}
 
-	// User can view full profile (either public or they're friends)
-	// Construct profile picture URL
-	backendURL := GetBackendURL()
+	// Return raw avatar value (absolute URL for CDN, relative '/uploads/...' path,
+	// or '' for users with no avatar). Frontend's resolveAvatarUrl() handles resolution.
 	profilePicture := targetUser.AvatarURL
-	if profilePicture != "" && !strings.HasPrefix(profilePicture, "http") {
-		profilePicture = backendURL + profilePicture
-	}
 
 	// Check friendship status
 	var friendshipStatus string = "none"

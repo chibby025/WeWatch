@@ -287,7 +287,7 @@ const RoomPageNew = () => {
           
           // Show browser notification if permission granted
           if (notificationPermission === 'granted') {
-            new Notification('WeWatch - Scheduled Event', {
+            new Notification('LetsWatchOut - Scheduled Event', {
               body: `"${event.title}" starts in ${minutesUntilEvent} minute${minutesUntilEvent > 1 ? 's' : ''}!`,
               icon: '/icons/seat.svg',
               badge: '/icons/seat.svg',
@@ -305,7 +305,7 @@ const RoomPageNew = () => {
           });
           
           if (notificationPermission === 'granted') {
-            new Notification('WeWatch - Event Starting!', {
+            new Notification('LetsWatchOut - Event Starting!', {
               body: `"${event.title}" is starting now!`,
               icon: '/icons/seat.svg',
               badge: '/icons/seat.svg',
@@ -1462,12 +1462,23 @@ const RoomPageNew = () => {
 
   const handleCreateScheduledEvent = async (eventData) => {
     try {
+      console.log('📅 [RoomPageNew] Creating scheduled event with data:', eventData);
       await apiClient.post(`/api/rooms/${roomId}/scheduled-events`, eventData);
       toast.success('Event scheduled successfully!');
       await fetchScheduledEvents(); // Refresh events list
     } catch (err) {
-      console.error('Failed to create scheduled event:', err);
-      toast.error('Failed to schedule event');
+      const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message || 'Unknown error';
+      const fullError = err.response?.data || err.message;
+      
+      console.error('❌ Failed to create scheduled event:', {
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        error: errorMessage,
+        fullResponse: fullError,
+        requestData: eventData,
+      });
+      
+      toast.error(errorMessage);
     }
   };
 
@@ -1865,8 +1876,15 @@ const RoomPageNew = () => {
   const membersInSessionCount = membersInSession.length;
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900 overflow-hidden">
+    <div className="h-screen flex flex-col bg-gray-900 overflow-hidden relative">
       <Toaster position="top-center" />
+
+      {/* ✅ Recording Watermark - Bottom Right */}
+      {isRecording && currentUser && (
+        <div className="fixed bottom-4 right-4 text-white/25 text-xs font-mono pointer-events-none z-[9999] select-none">
+          {currentUser.username}@LetsWatchOut
+        </div>
+      )}
 
       {/* ✅ Sticky Header - Compact layout */}
       <header className={`bg-gray-800 ${isMobile ? 'fixed top-0 left-0 right-0 z-50' : 'flex-none'}`}>
@@ -2489,7 +2507,7 @@ const RoomPageNew = () => {
           {/* Chat Locked Banner (for non-host members) */}
           {room?.host_only_chat && !isHost && (
             <div className={`bg-yellow-500/10 border-t border-yellow-500/30 ${
-              isMobile ? 'fixed bottom-[52px] left-0 right-0 z-[39]' : 'flex-none'
+              isMobile ? `fixed bottom-[52px] ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24 lg:left-28' : 'left-0'} right-0 z-[39]` : 'flex-none'
             } px-3 py-2`}>
               <div className="flex items-center gap-2 text-xs text-yellow-300">
                 <span className="text-base">🔒</span>
@@ -2499,7 +2517,7 @@ const RoomPageNew = () => {
           )}
           
           <form onSubmit={handleSendMessage} className={`bg-gray-800 ${
-            isMobile ? 'fixed bottom-0 left-0 right-0 z-40' : 'flex-none'
+            isMobile ? `fixed bottom-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24 lg:left-28' : 'left-0'} right-0 z-40` : 'flex-none'
           } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
           {/* Reply Context Banner */}
           {replyingTo && (
@@ -2631,7 +2649,7 @@ const RoomPageNew = () => {
       {/* ✅ Join Room Button - Replaces input area when not a member */}
       {!isMember && !isHost && currentUser && (
         <div className={`bg-gray-800 ${
-          isMobile ? 'fixed bottom-0 left-0 right-0 z-40 px-2 py-2 shadow-lg' : 'flex-none px-4 py-3'
+          isMobile ? `fixed bottom-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24 lg:left-28' : 'left-0'} right-0 z-40 px-2 py-2 shadow-lg` : 'flex-none px-4 py-3'
         }`}>
           <button
             onClick={handleJoinRoom}

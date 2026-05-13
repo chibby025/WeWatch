@@ -81,7 +81,7 @@ export default function LiveShareLayoutSelector({
         {/* Mute All Members Toggle */}
         {setMuteAllMembers && (
           <div className="mb-6 bg-gray-800/50 rounded-xl p-4 border-2 border-gray-700">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-xl">🔇</span>

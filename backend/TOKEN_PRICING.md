@@ -26,8 +26,8 @@ WeWatch uses a token-based system for payments within the platform.
 
 ### Revenue Distribution
 All payments (token purchases, ticket sales, donations) are split:
-- **15%** → Platform Revenue Account
-- **85%** → Host Reserve Account
+- **25%** → Platform Revenue Account
+- **75%** → Host Reserve Account
 
 ### Token Purchase Flow
 ```
@@ -35,8 +35,8 @@ Customer pays ₦200
     ↓
 Gateway Earnings Record Created:
 - gross_amount: 200.00
-- platform_commission: 30.00 (15%)
-- net_amount: 170.00 (85%)
+- platform_commission: 50.00 (25%)
+- net_amount: 150.00 (75%)
     ↓
 User receives 121 tokens (1.21 tokens)
 ```
@@ -47,8 +47,8 @@ Token purchases create entries in `gateway_earnings`:
 - `donation_id` = NULL (identifies token purchases)
 - `host_id` = 1 (system user for token purchases)
 - `gross_amount` = total payment
-- `platform_commission` = 15% platform fee
-- `net_amount` = 85% reserve amount
+- `platform_commission` = 25% platform fee
+- `net_amount` = 75% reserve amount
 
 ## Token Transactions
 
@@ -94,7 +94,7 @@ Total revenue includes:
 2. Token purchases (from `gateway_earnings` where session_ticket_id IS NULL)
 3. Donations (separate tracking)
 
-Platform revenue (15%) calculated from:
+Platform revenue (25%) calculated from:
 1. Ticket sales: `ticket_price_amount * 0.15`
 2. Token purchases: `platform_commission` from gateway_earnings
 
@@ -102,8 +102,8 @@ Platform revenue (15%) calculated from:
 
 ### Option 1: Subaccounts (Recommended for Live)
 Create two Paystack subaccounts:
-1. Revenue Account (receives 15% automatically)
-2. Reserve Account (receives 85% automatically)
+1. Revenue Account (receives 25% automatically)
+2. Reserve Account (receives 75% automatically)
 
 Configure at payment time:
 ```json
@@ -117,7 +117,7 @@ Configure at payment time:
 ### Option 2: Manual Transfers (Current MVP)
 - All payments go to one account
 - Track splits in database via `gateway_earnings`
-- Transfer 85% to Reserve account periodically
+- Transfer 75% to Reserve account periodically
 
 ## Testing
 

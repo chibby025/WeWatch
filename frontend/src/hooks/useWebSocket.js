@@ -45,7 +45,8 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
     hostId: null,
     members: [],
     startTime: null,
-    error: null
+    error: null,
+    content_rating: 'G' // ✅ Default content rating
   });
 
   // ✅ CRITICAL FIX: Create stable setter references that don't change between renders
@@ -368,6 +369,7 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
               error: data.error || null,
               isPrivate: data.is_private || false, // ✅ Include session privacy flag
               hideFromLobby: data.hide_from_lobby || false, // ✅ Include lobby visibility flag
+              content_rating: data.content_rating || 'G', // ✅ Include content rating
             };
             
             // Update all subscribers

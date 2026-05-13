@@ -1,7 +1,7 @@
 // WeWatch/frontend/src/components/PostViewModal.jsx
 // YouTube-style fullscreen post viewer with auto-hide footer
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Heart, MessageCircle, Share2, Send, Trash2 } from 'lucide-react';
+import { X, Heart, MessageCircle, Share2, Send, Trash2, Download, Loader2 } from 'lucide-react';
 import apiClient from '../services/api';
 import toast from 'react-hot-toast';
 import { formatCount } from '../utils/formatCount';
@@ -19,6 +19,10 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
   const [showComments, setShowComments] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState(null);
   const [showControls, setShowControls] = useState(true); // YouTube-style auto-hide
+  const [hasAccess, setHasAccess] = useState(false);
+  const [canDownload, setCanDownload] = useState(false);
+  const [purchasing, setPurchasing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const videoRef = useRef(null);
   const hideTimeoutRef = useRef(null);
   const { currentUser } = useAuth();
@@ -40,6 +44,8 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
       setViewTracked(false);
       setShowComments(false);
       setComments([]);
+      setHasAccess(post.has_access || post.is_owner || false);
+      setCanDownload(post.can_download || false);
     }
   }, [post?.id]);
 
@@ -209,6 +215,44 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
     }
   };
 
+  const handlePurchase = async () => {
+    setPurchasing(true);
+    try {
+      await apiClient.post(`/api/posts/${post.id}/purchase`);
+      setHasAccess(true);
+      setCanDownload(true);
+      toast.success('Purchase successful! You now have full access.');
+    } catch (err) {
+      if (err.response?.status === 409) {
+        setHasAccess(true);
+        setCanDownload(true);
+      } else {
+        toast.error(err.response?.data?.error || 'Purchase failed');
+      }
+    } finally {
+      setPurchasing(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const response = await apiClient.get(`/api/posts/${post.id}/download`);
+      const { video_url, filename } = response.data;
+      const a = document.createElement('a');
+      a.href = video_url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast.success('Download started!');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Download failed');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const toggleComments = () => {
     if (!showComments && comments.length === 0) {
       fetchComments();
@@ -266,8 +310,47 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
         onMouseMove={handleMouseMove}
         onDoubleClick={handleDoubleClick}
       >
-        {/* Video/Image fullscreen */}
-        {post.media_type === 'video' ? (
+        {/* Video/Image — paywall when paid and not yet purchased */}
+        {post.is_paid && !hasAccess ? (
+          <div className="relative w-full h-full flex items-center justify-center">
+            {post.thumbnail_url ? (
+              <img
+                src={getMediaUrl(post.thumbnail_url)}
+                alt={post.title}
+                className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-40"
+              />
+            ) : (
+              <div className="absolute inset-0 bg-gray-900" />
+            )}
+            <div className="relative z-10 flex flex-col items-center gap-4 text-center p-8 max-w-sm">
+              <div className="w-16 h-16 bg-yellow-500/20 rounded-full flex items-center justify-center">
+                <svg className="w-8 h-8 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-white font-bold text-xl mb-1">Paid Content</p>
+                <p className="text-gray-300 text-sm">Purchase to unlock full access &amp; download</p>
+              </div>
+              {post.price && (
+                <p className="text-yellow-400 font-bold text-2xl">
+                  ₦{Math.round(post.price * 122).toLocaleString()}
+                </p>
+              )}
+              <button
+                onClick={handlePurchase}
+                disabled={purchasing}
+                className="px-8 py-3 bg-yellow-500 hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed text-black font-bold rounded-full transition-all flex items-center gap-2"
+              >
+                {purchasing ? (
+                  <><Loader2 className="w-5 h-5 animate-spin" /> Processing...</>
+                ) : (
+                  <>🔓 Unlock Now</>
+                )}
+              </button>
+            </div>
+          </div>
+        ) : post.media_type === 'video' ? (
           <video
             ref={videoRef}
             src={getMediaUrl(post.video_url)}
@@ -336,7 +419,18 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
 
               {/* Title + Username/Room */}
               <div className="flex-1 min-w-0">
-                <h2 className="font-bold text-xl text-white mb-1">{post.title}</h2>
+                <h2 className="font-bold text-xl text-white mb-1 flex items-center gap-2 flex-wrap">
+                  {post.title}
+                  {post.content_rating && post.content_rating !== 'G' && (
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                      post.content_rating === '18+' || post.content_rating === 'Mature'
+                        ? 'bg-red-600 text-white'
+                        : post.content_rating === '16+' || post.content_rating === '13+'
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-teal-600 text-white'
+                    }`}>{post.content_rating}</span>
+                  )}
+                </h2>
                 <p className="text-sm text-gray-300">
                   {post.post_type === 'recording' && post.Room ? (
                     <span className="flex items-center gap-1.5">
@@ -383,6 +477,19 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
               >
                 <Share2 className="w-7 h-7 text-white group-hover:text-green-500 transition-colors" />
               </button>
+
+              {canDownload && (
+                <button
+                  onClick={handleDownload}
+                  disabled={downloading}
+                  className="flex items-center gap-2 group transition-all"
+                >
+                  {downloading
+                    ? <Loader2 className="w-7 h-7 text-white animate-spin" />
+                    : <Download className="w-7 h-7 text-white group-hover:text-green-500 transition-colors" />
+                  }
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -143,8 +143,8 @@ func (pa *PlatformAccounting) RecordTokenDonationCommission(commissionInCents fl
 // This doesn't add new money, just tracks who earned what
 func (pa *PlatformAccounting) RecordHostEarning(amount float64) {
 	// Money already in reserve, just tracking attribution
-	// 85% was already allocated to reserve
-	// 15% already in platform revenue
+	// 75% was already allocated to reserve
+	// 25% already in platform revenue
 }
 
 // ProcessPayout when host withdraws money

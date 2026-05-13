@@ -711,6 +711,7 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                 "sharing_source": session.SharingSource,
                 "session_title": session.SessionTitle,
                 "is_private":    watchSession.IsPrivate, // ✅ Include session privacy flag
+                "content_rating": watchSession.ContentRating, // ✅ Include content rating for button filtering
             },
         }
         if statusBytes, err := json.Marshal(statusMsg); err == nil {
@@ -2036,13 +2037,14 @@ func WebSocketHandler(c *gin.Context) {
 			statusMsg := WebSocketMessage{
 				Type: "session_status",
 				Data: map[string]interface{}{
-					"session_id": watchSession.SessionID,
-					"host_id":    watchSession.HostID,
-					"members":    trimmedMembers,
-					"started_at": watchSession.StartedAt,
-					"seating":    seatingMap, // Include current seating assignments
-					"session_title": watchSession.SessionTitle,
-					"is_private":    watchSession.IsPrivate, // ✅ Include session privacy flag
+					"session_id":     watchSession.SessionID,
+					"host_id":        watchSession.HostID,
+					"members":        trimmedMembers,
+					"started_at":     watchSession.StartedAt,
+					"seating":        seatingMap, // Include current seating assignments
+					"session_title":  watchSession.SessionTitle,
+					"is_private":     watchSession.IsPrivate,     // ✅ Session privacy flag
+					"content_rating": watchSession.ContentRating, // ✅ Gates LeftSidebar buttons (Bible/Hymn, Game, WatchFrom)
 				},
 			}
 			if msgBytes, err := json.Marshal(statusMsg); err == nil {
@@ -2449,6 +2451,7 @@ func (client *Client) handleMessage(message []byte) {
                 "is_screen_sharing_active": watchSession.IsScreenSharingActive,
                 "sharing_source": watchSession.SharingSource,
                 "session_title": watchSession.SessionTitle,
+                "content_rating": watchSession.ContentRating, // ✅ Include content rating for button filtering
             },
         }
 
@@ -4397,6 +4400,7 @@ func (client *Client) handleMessage(message []byte) {
                 "is_screen_sharing_active": session.IsScreenSharingActive,
                 "sharing_source":           session.SharingSource,
                 "session_title":            titleData.Title,
+                "content_rating":           session.ContentRating, // ✅ Include content rating for button filtering
             },
         }
 
@@ -5335,6 +5339,7 @@ func (client *Client) handleMessage(message []byte) {
                     "is_screen_sharing_active": activeSession.IsScreenSharingActive,
                     "sharing_source": activeSession.SharingSource,
                     "session_title": activeSession.SessionTitle,
+                    "content_rating": activeSession.ContentRating, // ✅ Include content rating for button filtering
                 },
             }
             if statusBytes, err := json.Marshal(statusMsg); err == nil {

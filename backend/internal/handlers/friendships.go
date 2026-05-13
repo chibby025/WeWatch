@@ -4,25 +4,13 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
-	"strings"
 	"time"
 	"wewatch-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
-
-// GetBackendURL returns the backend base URL (for profile images)
-func GetBackendURL() string {
-	// Check if RAILWAY_ENVIRONMENT is set (production)
-	if os.Getenv("RAILWAY_ENVIRONMENT") != "" {
-		return "https://letswatchout-production.up.railway.app"
-	}
-	// Local development
-	return "http://localhost:8080"
-}
 
 // SendFriendRequestHandler sends a friend request to another user
 func SendFriendRequestHandler(c *gin.Context) {
@@ -398,24 +386,16 @@ func GetFriendsListHandler(c *gin.Context) {
 			friend = friendship.Requester
 		}
 		
-		// ✅ Generate full URL for profile picture
-		profilePictureURL := ""
-		if friend.AvatarURL != "" {
-			if strings.HasPrefix(friend.AvatarURL, "http") {
-				// Already a full URL (Bunny CDN)
-				profilePictureURL = friend.AvatarURL
-			} else {
-				// Railway backend path - construct full URL
-				profilePictureURL = GetBackendURL() + "/" + strings.TrimPrefix(friend.AvatarURL, "/")
-			}
-		}
-		
+		// Return the raw avatar value (absolute URL for CDN, relative '/uploads/...' path
+		// for backend-served files, or '' for users with no avatar). The frontend's
+		// resolveAvatarUrl() helper handles URL resolution and the default fallback.
 		friends = append(friends, gin.H{
 			"id":              friend.ID,
 			"username":        friend.Username,
 			"display_name":    friend.Username, // Use Username as display name
 			"email":           friend.Email,
-			"profile_picture": profilePictureURL,
+			"avatar_url":      friend.AvatarURL,
+			"profile_picture": friend.AvatarURL, // Legacy alias; consumers should prefer avatar_url.
 			"created_at":      friend.CreatedAt,
 		})
 	}

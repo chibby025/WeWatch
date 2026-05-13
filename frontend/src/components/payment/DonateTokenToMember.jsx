@@ -18,7 +18,7 @@ const DonateTokenToMember = ({ isOpen, onClose, onDonationSuccess }) => {
   const giftAudioRef = useRef(null);
 
   const PRESET_AMOUNTS = [10, 25, 50, 100];
-  const TOKEN_VALUE_NGN = 140.25; // Token backing value (85% of ₦165 purchase price)
+  const TOKEN_VALUE_NGN = 122; // Token withdrawal rate (host can withdraw at ₦122 per token)
 
   // Initialize audio
   useEffect(() => {

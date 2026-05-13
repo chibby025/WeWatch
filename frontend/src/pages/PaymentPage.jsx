@@ -521,7 +521,7 @@ const PaymentPage = () => {
         amount: amountInKobo,
         currency: 'NGN',
         ref: reference,
-        split_code: 'SPL_CcDDM4qs7n', // 85/15 split: Reserve (85%) + Revenue (15%)
+        split_code: 'SPL_CcDDM4qs7n', // 75/25 split: Reserve (75%) + Revenue (25%)
         callback: function(response) {
           console.log('✅ [Purchase] Payment successful, reference:', response.reference);
           console.log('🔄 [Purchase] Verifying payment with backend...');

@@ -7,8 +7,6 @@ const LobbyStickerPicker = ({ isOpen, onClose, onSend, recipientId }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('smileys');
 
-  if (!isOpen) return null;
-
   // 😊 Emoji Categories with 100+ emojis
   const emojiCategories = {
     smileys: {
@@ -89,6 +87,9 @@ const LobbyStickerPicker = ({ isOpen, onClose, onSend, recipientId }) => {
       toast.error('Failed to send emoji');
     }
   };
+
+  // ✅ Return null after all hooks have been called
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

@@ -1,7 +1,8 @@
 // frontend/src/components/SettingsModal.jsx
 import React, { useState, useEffect } from 'react';
-import { 
-  XMarkIcon, 
+import Avatar from './Avatar';
+import {
+  XMarkIcon,
   SunIcon, 
   MoonIcon,
   BellIcon,
@@ -34,6 +35,8 @@ const SettingsModal = ({ isOpen, onClose }) => {
     who_can_see_posts: 'public',
     who_can_call: 'friends'
   });
+
+  const [showMatureContent, setShowMatureContent] = useState(false);
   
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [loadingSettings, setLoadingSettings] = useState(false);
@@ -94,6 +97,7 @@ const SettingsModal = ({ isOpen, onClose }) => {
         who_can_see_posts: settings.who_can_see_posts,
         who_can_call: settings.who_can_call
       });
+      setShowMatureContent(settings.show_mature_content || false);
     } catch (error) {
       console.error('Failed to fetch settings:', error);
       toast.error('Failed to load settings');
@@ -141,6 +145,19 @@ const SettingsModal = ({ isOpen, onClose }) => {
     } catch (error) {
       console.error('Failed to update privacy:', error);
       toast.error('Failed to update privacy settings');
+    }
+  };
+
+  // Toggle show mature content
+  const handleMatureContentToggle = async () => {
+    const newValue = !showMatureContent;
+    setShowMatureContent(newValue);
+    try {
+      await apiClient.put('/api/users/settings', { show_mature_content: newValue });
+      toast.success('Content preference updated');
+    } catch (error) {
+      setShowMatureContent(!newValue);
+      toast.error('Failed to update preference');
     }
   };
 
@@ -431,6 +448,16 @@ const SettingsModal = ({ isOpen, onClose }) => {
                     onChange={(value) => handlePrivacyChange('who_can_call', value)}
                   />
                   
+                  {/* Mature Content */}
+                  <div className="border-t border-gray-700 pt-4">
+                    <ToggleItem
+                      label="Show 18+/Mature content without blur"
+                      description="Skip the click-through overlay on adult-rated posts"
+                      enabled={showMatureContent}
+                      onChange={handleMatureContentToggle}
+                    />
+                  </div>
+
                   {/* Blocked Users */}
                   <div className="border-t border-gray-700 pt-6">
                     <h4 className="text-white font-medium mb-3">Blocked Users</h4>
@@ -451,10 +478,9 @@ const SettingsModal = ({ isOpen, onClose }) => {
                             className="bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-3 flex items-center justify-between"
                           >
                             <div className="flex items-center gap-3">
-                              <img
-                                src={user.avatar_url || `https://ui-avatars.com/api/?name=${user.username}&background=random`}
-                                alt={user.username}
-                                className="w-10 h-10 rounded-full"
+                              <Avatar
+                                user={user}
+                                className="w-10 h-10 rounded-full object-cover"
                               />
                               <div>
                                 <p className="text-white font-medium">{user.username}</p>

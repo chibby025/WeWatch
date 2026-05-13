@@ -13,7 +13,7 @@ type User struct {
 	Email	   string  `gorm:"type:varchar(100);uniqueIndex;not null" json:"email"`
 	// Passwordhash to store hashed password not plain text!
 	PasswordHash string `gorm:"type:varchar(255)" json:"-"` // Nullable for OAuth users
-	AvatarURL string `gorm:"default:'/avatars/default.png'" json:"avatar_url"`
+	AvatarURL string `json:"avatar_url"` // Empty means "no avatar"; frontend resolves to a default. See frontend/src/utils/avatar.js.
 	Bio       string `gorm:"type:text" json:"bio"` // User bio/description
 	Role      string `gorm:"type:varchar(20);default:'user'" json:"role"` // 'user', 'admin', 'super_admin'
 	
@@ -39,6 +39,9 @@ type User struct {
 	KYCStatus     string     `gorm:"type:varchar(20);default:'none';index" json:"kyc_status"` // 'none', 'pending', 'approved', 'rejected', 'expired'
 	KYCVerifiedAt *time.Time `json:"kyc_verified_at,omitempty"` // When KYC was approved
 	KYCExpiresAt  *time.Time `gorm:"index" json:"kyc_expires_at,omitempty"` // When it expires (2 years from approval)
+	
+	// Main Room (Primary room for post defaults)
+	MainRoomID *uint `gorm:"index" json:"main_room_id"` // User's primary room (auto-assigned to posts if not specified)
 }
 
 // User role constants
@@ -82,15 +85,16 @@ func (u *User) GetAge() int {
 func (u *User) CanViewContent(contentRating string) bool {
 	age := u.GetAge()
 	
-	// Unknown age = restricted to G and PG only
+	// Unknown age = restricted to G, PG, Educational, and Religious only
 	if age == 0 {
-		return contentRating == "G" || contentRating == "PG"
+		return contentRating == "G" || contentRating == "PG" || 
+		       contentRating == "Educational" || contentRating == "Religious"
 	}
 	
 	// Check age requirements for each rating
 	switch contentRating {
-	case "G", "PG":
-		return true // All ages
+	case "G", "PG", "Educational", "Religious":
+		return true // All ages - safe content
 	case "13+":
 		return age >= 13
 	case "16+":

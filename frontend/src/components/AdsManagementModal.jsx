@@ -529,7 +529,7 @@ const AdsManagementModal = ({ isOpen, onClose }) => {
                           📧 Mark as Contacted
                         </button>
                         <a
-                          href={`mailto:${inquiry.email}?subject=WeWatch Advertising Inquiry - ${inquiry.company_name}`}
+                          href={`mailto:${inquiry.email}?subject=LetsWatchOut Advertising Inquiry - ${inquiry.company_name}`}
                           className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
                         >
                           📨 Send Email

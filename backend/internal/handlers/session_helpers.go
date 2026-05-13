@@ -97,31 +97,29 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("📊 [GetAllActiveSessionsHandler] Found %d sessions with ended_at IS NULL", len(sessions))
+	// Reduced logging - Found %d active sessions
+
+	// Load viewer's age flags once before the loop (zero-value = all flags false = conservative default).
+	var viewerSettings models.UserSettings
+	if userID > 0 {
+		DB.Where("user_id = ?", userID).First(&viewerSettings)
+		// Lazy yearly recompute — same as GetDiscoverFeed.
+		if viewerSettings.AgeFlagsYear != time.Now().Year() {
+			var viewerUser models.User
+			if err := DB.Select("id, date_of_birth").First(&viewerUser, userID).Error; err == nil {
+				saveAgeFlagsForUser(DB, userID, viewerUser.GetAge())
+				DB.Where("user_id = ?", userID).First(&viewerSettings)
+			}
+		}
+	}
 
 	// Build response with room and host details
 	var response []SessionResponse
-	log.Printf("\n🏛️ [GetAllActiveSessionsHandler] Building lobby response for %d sessions...", len(sessions))
 	for _, session := range sessions {
-		log.Printf("\n🔍 [GetAllActiveSessionsHandler] Processing session %s (room %d)", session.SessionID, session.RoomID)
-		log.Printf("  ├─ Content Rating from DB: '%s'", session.ContentRating)
-		log.Printf("  ├─ Watch Type: '%s'", session.WatchType)
-		log.Printf("  ├─ Is Active: %v", session.IsActive)
-		
-		// ✅ AGE-BASED CONTENT FILTER: Skip restricted content if user can't view it
-		if session.ContentRating != "G" && session.ContentRating != "PG" && userID > 0 {
-			var user models.User
-			if err := DB.First(&user, userID).Error; err == nil {
-				if !user.CanViewContent(session.ContentRating) {
-					log.Printf("🔒 [ContentFilter] Hiding %s session %s from user %d (age: %d)", 
-						session.ContentRating, session.SessionID, userID, user.GetAge())
-					continue // Skip this session
-				}
-			}
-		} else if session.ContentRating != "G" && session.ContentRating != "PG" && userID == 0 {
-			// Not logged in or no DOB = hide restricted content
-			log.Printf("🔒 [ContentFilter] Hiding %s session %s from unauthenticated user", 
-				session.ContentRating, session.SessionID)
+		// AGE-BASED CONTENT FILTER: one settings read above replaces per-session user fetch.
+		if !canViewContentRating(session.ContentRating, viewerSettings) {
+			log.Printf("🔒 [ContentFilter] Hiding %s session %s from user %d",
+				session.ContentRating, session.SessionID, userID)
 			continue
 		}
 		
@@ -136,22 +134,18 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 				}
 			}
 			if !isMember {
-				log.Printf("  └─ 🔒 SKIPPING private session (user %d not a member)", userID)
-				continue
+				continue // Skip private sessions where user is not a member
 			}
-			log.Printf("  ├─ 🔓 User %d is member of private session", userID)
 		}
 		
 		// Fetch room details
 		var room models.Room
 		if err := DB.First(&room, session.RoomID).Error; err != nil {
-			log.Printf("⚠️ Warning: Room %d not found for session %s", session.RoomID, session.SessionID)
 			continue // Skip this session if room not found
 		}
 
 		// Count active members
 		activeMemberCount := len(session.Members)
-		log.Printf("  ├─ Room: %s (is_temporary: %v, members: %d)", room.Name, room.IsTemporary, activeMemberCount)
 
 		// If this is a temporary instant-watch room with no active members,
 		// it's stale/orphaned — try to clean it up and skip returning it in the lobby.
@@ -159,29 +153,20 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		if room.IsTemporary && activeMemberCount == 0 {
 			timeSinceCreation := time.Since(session.StartedAt)
 			if timeSinceCreation < 10*time.Second {
-				log.Printf("  └─ ⏰ GRACE PERIOD: Session %s is only %.1f seconds old, skipping cleanup", 
-					session.SessionID, timeSinceCreation.Seconds())
-				// Don't add to response yet, but don't delete either
-				continue
+				continue // Grace period - don't add to response yet
 			}
 			
-			log.Printf("  └─ 🧹 ORPHANED! Cleaning up instant-watch session %s (room %d, age: %.1f seconds)", 
-				session.SessionID, room.ID, timeSinceCreation.Seconds())
-
+			// Cleanup orphaned instant-watch session (reduced logging)
 			tx := DB.Begin()
 			if tx.Error == nil {
 				// Delete temporary media items linked to the session
-				if err := tx.Where("session_id = ?", session.SessionID).Delete(&models.TemporaryMediaItem{}).Error; err != nil {
-					log.Printf("⚠️ Cleanup: Failed to delete temporary media for session %s: %v", session.SessionID, err)
-				}
+				tx.Where("session_id = ?", session.SessionID).Delete(&models.TemporaryMediaItem{})
 				
 				// Clean up LiveShare graphics and media queue
 				CleanupLiveShareAssetsInTransaction(tx, session.ID)
 
 				// Delete watch session members
-				if err := tx.Where("watch_session_id = ?", session.ID).Delete(&models.WatchSessionMember{}).Error; err != nil {
-					log.Printf("⚠️ Cleanup: Failed to delete session members for session %s: %v", session.SessionID, err)
-				}
+				tx.Where("watch_session_id = ?", session.ID).Delete(&models.WatchSessionMember{})
 
 				// Delete chat messages and reactions tied to this session
 				var chatMessages []models.ChatMessage
@@ -191,30 +176,19 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 						for i, m := range chatMessages {
 							ids[i] = m.ID
 						}
-						if err := tx.Where("message_id IN ?", ids).Delete(&models.Reaction{}).Error; err != nil {
-							log.Printf("⚠️ Cleanup: Failed to delete reactions for session %s: %v", session.SessionID, err)
-						}
+						tx.Where("message_id IN ?", ids).Delete(&models.Reaction{})
 					}
 				}
-				if err := tx.Where("session_id = ?", session.SessionID).Delete(&models.ChatMessage{}).Error; err != nil {
-					log.Printf("⚠️ Cleanup: Failed to delete chat messages for session %s: %v", session.SessionID, err)
-				}
+				tx.Where("session_id = ?", session.SessionID).Delete(&models.ChatMessage{})
 
 				// Delete the watch session record
 				if err := tx.Delete(&models.WatchSession{}, session.ID).Error; err != nil {
-					log.Printf("⚠️ Cleanup: Failed to delete watch session %s: %v", session.SessionID, err)
 					tx.Rollback()
 				} else {
 					// Attempt to delete the room itself (temporary rooms should be removed)
-					if err := tx.Delete(&models.Room{}, room.ID).Error; err != nil {
-						log.Printf("⚠️ Cleanup: Failed to delete temporary room %d: %v", room.ID, err)
-					} else {
-						log.Printf("🗑️ Cleanup: Deleted orphaned instant-watch room %d and session %s", room.ID, session.SessionID)
-					}
+					tx.Delete(&models.Room{}, room.ID)
 					tx.Commit()
 				}
-			} else {
-				log.Printf("⚠️ Cleanup: Failed to begin transaction for session %s: %v", session.SessionID, tx.Error)
 			}
 
 			// Skip adding this session to the response
@@ -228,13 +202,7 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			hostUsername = user.Username
 		}
 
-		// ✅ DEBUG: Log session media state fields
-		log.Printf("  ├─ Media State: url=%v, type=%v, sharing=%v, source=%v",
-			session.CurrentMediaURL, session.CurrentMediaType,
-			session.IsScreenSharingActive, session.SharingSource)
-
-		log.Printf("📦 [GetAllActiveSessionsHandler] Building SessionResponse object:")
-		log.Printf("  ├─ Setting content_rating to: '%s'", session.ContentRating)
+		// Build response (reduced logging)
 		sessionResp := SessionResponse{
 			SessionID:             session.SessionID,
 			RoomID:                session.RoomID,
@@ -258,13 +226,10 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			AverageRating:         room.AverageRating,     // ✅ Include room rating
 			TotalRatings:          room.TotalRatings,      // ✅ Include rating count
 		}
-		log.Printf("  ├─ ✅ ADDING to response: %s (temp: %v, members: %d)", room.Name, room.IsTemporary, activeMemberCount)
-		log.Printf("  └─ Response content_rating: '%s'\n", sessionResp.ContentRating)
 		response = append(response, sessionResp)
 	}
 
-	log.Printf("\n✅ [GetAllActiveSessionsHandler] Returning %d active sessions to client (total: %d, has_more: %v)", 
-		len(response), totalCount, int64(offset + limit) < totalCount)
+	// Reduced logging - returning %d active sessions
 	c.JSON(http.StatusOK, gin.H{
 		"sessions": response,
 		"count":    len(response),

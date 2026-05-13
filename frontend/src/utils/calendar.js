@@ -21,7 +21,7 @@ export const generateGoogleCalendarLink = (event, roomUrl) => {
   const details = encodeURIComponent(
     `${event.description || 'Join us for this scheduled watch event!'}\n\nJoin the room: ${roomUrl}`
   );
-  const location = encodeURIComponent('WeWatch - Virtual Room');
+  const location = encodeURIComponent('LetsWatchOut - Virtual Room');
   
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${start}/${end}&details=${details}&location=${location}`;
 };
@@ -53,7 +53,7 @@ export const downloadICalFile = async (eventId) => {
     const url = window.URL.createObjectURL(new Blob([response.data]));
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `wewatch-event-${eventId}.ics`);
+    link.setAttribute('download', `letswatchout-event-${eventId}.ics`);
     document.body.appendChild(link);
     link.click();
     link.remove();

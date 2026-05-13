@@ -70,7 +70,7 @@ type GatewayEarning struct {
 	UpdatedAt          time.Time       `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
-// CalculateNetAmount calculates net amount after 15% commission
+// CalculateNetAmount calculates net amount after 25% commission
 func CalculateNetAmount(grossAmount float64) (netAmount, commission float64) {
 	commission = grossAmount * 0.25
 	netAmount = grossAmount - commission

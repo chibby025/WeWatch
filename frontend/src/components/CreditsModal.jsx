@@ -8,40 +8,18 @@ const CreditsModal = ({ isOpen, onClose }) => {
 
   const sketchfabAssets = [
     {
-      name: 'Cinema 3D Environment',
-      creator: 'Various Artists',
+      name: 'Cinema Theater 3D Model',
+      creator: 'Comicaroid',
       license: 'CC BY 4.0',
       usage: '3D Cinema Room',
+      link: 'https://sketchfab.com/Comicaroid',
     },
     {
       name: 'Lecture Hall Environment',
-      creator: 'Various Artists',
+      creator: 'Comicaroid',
       license: 'CC BY 4.0',
       usage: 'Classroom & Lecture Hall',
-    },
-    // Add specific asset credits as needed
-  ];
-
-  const otherCredits = [
-    {
-      name: 'Three.js',
-      description: '3D Graphics Library',
-      link: 'https://threejs.org',
-    },
-    {
-      name: 'React Three Fiber',
-      description: 'React renderer for Three.js',
-      link: 'https://docs.pmnd.rs/react-three-fiber',
-    },
-    {
-      name: 'LiveKit',
-      description: 'Real-time video infrastructure',
-      link: 'https://livekit.io',
-    },
-    {
-      name: 'Flutterwave',
-      description: 'Payment processing',
-      link: 'https://flutterwave.com',
+      link: 'https://sketchfab.com/Comicaroid',
     },
   ];
 
@@ -69,6 +47,43 @@ const CreditsModal = ({ isOpen, onClose }) => {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* About LetsWatchOut */}
+          <div>
+            <h3 className="text-lg font-semibold text-green-300 mb-3 flex items-center gap-2">
+              <span className="w-1 h-5 bg-green-500 rounded-full"></span>
+              About LetsWatchOut
+            </h3>
+            <div className="bg-gradient-to-br from-gray-800/40 to-gray-900/40 rounded-xl p-5 border border-gray-700/30">
+              <p className="text-sm text-gray-300 leading-relaxed mb-3">
+                LetsWatchOut started when Chinweokwu Chibuzor, a regular guy who taught himself to 
+                code, couldn't accept that his friends were becoming strangers. Some had japa'd abroad. 
+                Others stayed home but couldn't afford fuel to meet up. The solution? Bring everyone 
+                together online, from their phones.
+              </p>
+              <p className="text-sm text-gray-300 leading-relaxed mb-3">
+                What began as a way to stay connected evolved into something bigger: a platform where 
+                every room becomes its own world. Your cinema. Your church. Your lecture hall. Your 
+                podcast studio. Your TV station. Your game house. Your boys' hangout from uni. Your 
+                get-together with guys far from each other. Whatever your unique expression—business 
+                or pleasure—be yourself, attract those who see what you see, and grow your audience 
+                organically.
+              </p>
+              <p className="text-sm text-gray-300 leading-relaxed">
+                This is technology solving problems that are uniquely Nigerian, uniquely African, and 
+                oddly universal. Because distance, rising costs, and the desire to connect? That's 
+                everyone's story.
+              </p>
+              <p className="text-sm text-purple-300 font-medium mt-4">
+                LetsWatchOut and see where your room takes you.
+              </p>
+              <div className="mt-4 pt-4 border-t border-gray-700/50">
+                <p className="text-xs text-gray-400">
+                  Built by Chinweokwu Chibuzor • Nigeria 🇳🇬 • © 2026 LetsWatchOut
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* 3D Assets Section */}
           <div>
             <h3 className="text-lg font-semibold text-purple-300 mb-3 flex items-center gap-2">
@@ -85,7 +100,15 @@ const CreditsModal = ({ isOpen, onClose }) => {
                     <div className="flex-1">
                       <h4 className="text-white font-medium">{asset.name}</h4>
                       <p className="text-sm text-gray-400 mt-1">
-                        by <span className="text-purple-400">{asset.creator}</span>
+                        by{' '}
+                        <a
+                          href={asset.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-purple-400 hover:text-purple-300 underline"
+                        >
+                          {asset.creator}
+                        </a>
                       </p>
                       <div className="flex items-center gap-3 mt-2">
                         <span className="text-xs px-2 py-1 rounded-full bg-blue-500/20 text-blue-300">
@@ -114,65 +137,6 @@ const CreditsModal = ({ isOpen, onClose }) => {
                     </a>
                     , licensed under Creative Commons. We're grateful to the talented 3D artists who share their work.
                   </span>
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Open Source & Services */}
-          <div>
-            <h3 className="text-lg font-semibold text-blue-300 mb-3 flex items-center gap-2">
-              <span className="w-1 h-5 bg-blue-500 rounded-full"></span>
-              Open Source & Services
-            </h3>
-            <div className="space-y-2">
-              {otherCredits.map((credit, index) => (
-                <a
-                  key={index}
-                  href={credit.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block bg-gradient-to-br from-gray-800/40 to-gray-900/40 rounded-xl p-4 border border-gray-700/30 hover:border-gray-600/50 transition-colors"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-white font-medium">{credit.name}</h4>
-                      <p className="text-sm text-gray-400 mt-0.5">{credit.description}</p>
-                    </div>
-                    <svg
-                      className="w-5 h-5 text-gray-500"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                      />
-                    </svg>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </div>
-
-          {/* About WeWatch */}
-          <div>
-            <h3 className="text-lg font-semibold text-green-300 mb-3 flex items-center gap-2">
-              <span className="w-1 h-5 bg-green-500 rounded-full"></span>
-              About WeWatch
-            </h3>
-            <div className="bg-gradient-to-br from-gray-800/40 to-gray-900/40 rounded-xl p-4 border border-gray-700/30">
-              <p className="text-sm text-gray-300 leading-relaxed">
-                WeWatch is a social video streaming platform that brings people together through
-                immersive 3D experiences. From virtual cinemas to interactive classrooms and
-                church services, we're redefining how communities connect and share content online.
-              </p>
-              <div className="mt-3 pt-3 border-t border-gray-700/50">
-                <p className="text-xs text-gray-400">
-                  Built with ❤️ in Africa • © 2026 WeWatch
                 </p>
               </div>
             </div>

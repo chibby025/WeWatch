@@ -664,14 +664,14 @@ func GetUserEventTicketsHandler(c *gin.Context) {
 			}
 
 			// Get ticket image based on watch_type
-			ticketImage := "/tickets/video_ticket.png" // Default
+			ticketImage := "/icons/TheaterTicket.png" // Default
 			switch ticket.ScheduledEvent.WatchType {
 			case "3d_cinema":
-				ticketImage = "/tickets/cinema_ticket.png"
+				ticketImage = "/icons/CinemaTicket.png"
 			case "classroom":
-				ticketImage = "/tickets/classroom_ticket.png"
-			case "video":
-				ticketImage = "/tickets/video_ticket.png"
+				ticketImage = "/icons/LectureTicket.png"
+			case "video_watch":
+				ticketImage = "/icons/TheaterTicket.png"
 			}
 
 			// Calculate if event is starting soon (within 1 hour)

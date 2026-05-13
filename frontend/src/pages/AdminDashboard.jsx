@@ -47,6 +47,8 @@ const AdminDashboard = () => {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [transferringCommission, setTransferringCommission] = useState(false);
   const [processingPayout, setProcessingPayout] = useState(null);
+  const [splitProfit, setSplitProfit] = useState(null);
+  const [transferringSplitProfit, setTransferringSplitProfit] = useState(false);
   
   // KYC Management State
   const [kycSubmissions, setKycSubmissions] = useState([]);
@@ -86,21 +88,26 @@ const AdminDashboard = () => {
   // Fetch analytics data
   const fetchAnalytics = async () => {
     try {
-      const [analyticsRes, tokenSpendingRes, topDonorsRes, eventAnalyticsRes, pendingPayoutsRes, processingPayoutsRes] = await Promise.all([
+      const [analyticsRes, tokenSpendingRes, topDonorsRes, eventAnalyticsRes, pendingPayoutsRes, processingPayoutsRes, splitProfitRes] = await Promise.all([
         apiClient.get('/api/admin/analytics'),
         apiClient.get('/api/admin/token-spending-analytics'),
         apiClient.get('/api/donations/top-donors?limit=20'),
         apiClient.get('/api/admin/event-analytics'),
         getAdminPendingPayouts(),
-        getAdminProcessingPayouts()
+        getAdminProcessingPayouts(),
+        apiClient.get('/api/admin/split-profit-analytics').catch((err) => {
+          console.warn('Split profit analytics fetch failed:', err);
+          return { data: null };
+        })
       ]);
-      
+
       setAnalytics(analyticsRes.data);
       setTokenSpendingData(tokenSpendingRes.data);
       setTopDonorsData(topDonorsRes.data);
       setEventAnalytics(eventAnalyticsRes.data);
       setPendingPayouts(pendingPayoutsRes.payouts || []);
       setProcessingPayouts(processingPayoutsRes.payouts || []);
+      setSplitProfit(splitProfitRes.data);
       setLastUpdated(new Date());
       setLoading(false);
     } catch (error) {
@@ -201,12 +208,12 @@ const AdminDashboard = () => {
     if (!analytics) return;
 
     const csvData = [
-      ['WeWatch Platform Analytics Export'],
+      ['LetsWatchOut Platform Analytics Export'],
       ['Generated:', new Date().toLocaleString()],
       [''],
       ['OVERVIEW METRICS'],
       ['Total Revenue (GMV)', analytics.revenue.all_time.gmv],
-      ['Platform Revenue (15%)', analytics.revenue.all_time.platform_revenue],
+      ['Platform Revenue (25%)', analytics.revenue.all_time.platform_revenue],
       ['Total Users', analytics.users.total],
       ['Total Watch Sessions', analytics.sessions.total],
       ['Total Tokens Purchased', analytics.tokens.all_time.purchased],
@@ -219,8 +226,8 @@ const AdminDashboard = () => {
       ['Tokens Today', analytics.tokens.today.purchased],
       [''],
       ['PLATFORM ACCOUNTING'],
-      ['Revenue Account (Your 15%)', analytics.platform_accounting.revenue_balance],
-      ['Reserve Account (Host 85%)', analytics.platform_accounting.reserve_balance],
+      ['Revenue Account (Your 25%)', analytics.platform_accounting.revenue_balance],
+      ['Reserve Account (Host 75%)', analytics.platform_accounting.reserve_balance],
       ['Total Gateway Balance', analytics.platform_accounting.total_gateway_balance],
       ['Pending Payouts', analytics.platform_accounting.pending_payouts],
       ['Available Reserve', analytics.platform_accounting.available_reserve],
@@ -241,7 +248,7 @@ const AdminDashboard = () => {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `wewatch-analytics-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `letswatchout-analytics-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
     toast.success('Analytics exported to CSV');
@@ -298,6 +305,26 @@ const AdminDashboard = () => {
       toast.error(error.response?.data?.error || 'Transfer failed. Please try again.');
     } finally {
       setTransferringCommission(false);
+    }
+  };
+
+  // Handle split profit transfer
+  const handleTransferSplitProfit = async () => {
+    if (!window.confirm('Sweep accumulated platform split profit (25% of post sales) into the super-admin wallet?')) {
+      return;
+    }
+    setTransferringSplitProfit(true);
+    try {
+      const response = await apiClient.post('/api/admin/transfer-split-profit');
+      toast.success(`✅ Split profit transferred:\n${formatTokens(response.data.amount_tokens)} tokens (${formatCurrency(response.data.amount_ngn)})\nTransferred to super admin wallet (user id 7)`);
+
+      // Refresh analytics to show updated balance
+      await fetchAnalytics();
+    } catch (error) {
+      console.error('Transfer failed:', error);
+      toast.error(error.response?.data?.error || 'Failed to transfer split profit. Please try again.');
+    } finally {
+      setTransferringSplitProfit(false);
     }
   };
 
@@ -527,7 +554,7 @@ const AdminDashboard = () => {
           <MetricCard
             title="Your Platform Profit"
             value={`₦${analytics.revenue.all_time.platform_revenue.toLocaleString()}`}
-            subtitle="15% commission (withdraw safely)"
+            subtitle="25% commission (withdraw safely)"
             color="bg-green-600"
           />
           <MetricCard
@@ -657,14 +684,14 @@ const AdminDashboard = () => {
                 <div className="text-xl font-bold text-blue-400">
                   {formatCurrency(analytics.platform_accounting.platform_profit || 0)}
                 </div>
-                <div className="text-xs text-blue-300">15% commission (withdraw safely)</div>
+                <div className="text-xs text-blue-300">25% commission (withdraw safely)</div>
               </div>
               <div>
                 <div className="text-gray-400">Host Reserve Pool</div>
                 <div className="text-2xl font-bold text-yellow-400">
                   {formatCurrency(analytics.platform_accounting.reserve_balance || 0)}
                 </div>
-                <div className="text-xs text-yellow-300">85% owed to hosts (DO NOT TOUCH)</div>
+                <div className="text-xs text-yellow-300">75% owed to hosts (DO NOT TOUCH)</div>
               </div>
             </div>
           </div>
@@ -677,7 +704,7 @@ const AdminDashboard = () => {
               bgColor="bg-green-700/30"
             />
             <AccountingCard
-              title="Reserve Account (Host 85%)"
+              title="Reserve Account (Host 75%)"
               value={`₦${analytics.platform_accounting.reserve_balance.toLocaleString()}`}
               subtitle="⚠️ DO NOT TOUCH"
               bgColor="bg-blue-700/30"
@@ -1015,7 +1042,7 @@ const AdminDashboard = () => {
               />
               <Legend />
               <Line type="monotone" dataKey="gmv" stroke="#3b82f6" strokeWidth={2} name="GMV (Total)" />
-              <Line type="monotone" dataKey="platform" stroke="#10b981" strokeWidth={2} name="Platform Revenue (15%)" />
+              <Line type="monotone" dataKey="platform" stroke="#10b981" strokeWidth={2} name="Platform Revenue (25%)" />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -1209,7 +1236,7 @@ const AdminDashboard = () => {
                     <tr className="border-b border-white/20">
                       <th className="text-left py-3 px-4">Rank</th>
                       <th className="text-left py-3 px-4">Host</th>
-                      <th className="text-right py-3 px-4">Tokens Earned (85%)</th>
+                      <th className="text-right py-3 px-4">Tokens Earned (100%)</th>
                       <th className="text-right py-3 px-4">Tickets Sold</th>
                       <th className="text-right py-3 px-4">Rooms</th>
                       <th className="text-right py-3 px-4">Revenue</th>
@@ -1229,7 +1256,7 @@ const AdminDashboard = () => {
                         </td>
                         <td className="py-3 px-4 text-right">
                           <div className="font-bold text-green-400">{formatTokens(host.tokens_display)} 🪙</div>
-                          <div className="text-xs text-gray-400">85% of {formatTokens(host.tokens_display / 0.85)}</div>
+                          <div className="text-xs text-gray-400">100% of {formatTokens(host.tokens_display)}</div>
                         </td>
                         <td className="py-3 px-4 text-right text-purple-300">{host.tickets_sold}</td>
                         <td className="py-3 px-4 text-right text-gray-300">{host.room_count}</td>
@@ -1326,7 +1353,7 @@ const AdminDashboard = () => {
                       {formatCurrency(analytics.token_donations?.total_value_ngn || 0)}
                     </div>
                     <p className="text-xs text-gray-400 mt-1">
-                      ₦140.25 per token (85% backing)
+                      ₦122 per token (withdrawal rate)
                     </p>
                   </CardContent>
                 </Card>
@@ -1414,12 +1441,156 @@ const AdminDashboard = () => {
                       <li><strong>Wallet-to-Wallet Gifts:</strong> User A sends tokens directly to User B's wallet (tracked here)</li>
                       <li><strong>In-Session Tips:</strong> Users tip hosts during watch parties (tracked in "Top Donors" section below)</li>
                       <li>When users send wallet gifts, 5% goes to platform commission, 95% to recipient</li>
-                      <li>Commissions are valued at ₦140.25 per token (85% of ₦165 purchase price)</li>
+                      <li>Commissions are valued at ₦122 per token (host withdrawal rate)</li>
                       <li>Commission funds stay in Reserve Subaccount (OPay) until manually transferred to Revenue</li>
                     </ul>
                   </div>
                 </div>
             </div>
+
+            {/* Split Profit Section — 25% platform cut on paid post/recording sales */}
+            {splitProfit?.summary && (
+              <div className="bg-gradient-to-br from-purple-600/20 to-pink-600/20 backdrop-blur-lg rounded-xl p-6 border border-purple-500/30">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold flex items-center gap-2">
+                      🎬 Paid Post Split Profit (25% Platform Share)
+                    </h2>
+                    <p className="text-sm text-gray-400 mt-1">
+                      Accumulates as users buy paid posts/recordings — sweep into super-admin wallet to settle.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                  {/* Total Post Sales */}
+                  <Card className="bg-white/10 border-purple-500/30 hover:bg-white/15 transition-colors">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-gray-300">Total Post Sales</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-purple-400">
+                        {formatTokens(splitProfit.summary.total_sales_tokens || 0)}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">
+                        ≈ {formatCurrency(splitProfit.summary.total_sales_ngn || 0)} at ₦165/token
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Lifetime Platform Profit (25%) */}
+                  <Card className="bg-white/10 border-pink-500/30 hover:bg-white/15 transition-colors">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-gray-300">Lifetime Platform Profit (25%)</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-pink-400">
+                        {formatTokens(splitProfit.summary.total_platform_profit_tokens || 0)}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {formatCurrency(splitProfit.summary.total_platform_profit_ngn || 0)} at ₦122/token
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Already Transferred */}
+                  <Card className="bg-white/10 border-gray-500/30 hover:bg-white/15 transition-colors">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-gray-300">Already Transferred</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-gray-300">
+                        {formatTokens(splitProfit.summary.transferred_tokens || 0)}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Logged in split_profit_transfers
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Available to Transfer */}
+                  <Card className="bg-gradient-to-br from-green-600/30 to-emerald-600/30 border-2 border-green-500/50 hover:from-green-600/40 hover:to-emerald-600/40 transition-all">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-gray-300">💰 Available to Transfer</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-green-300">
+                        {formatTokens(splitProfit.summary.available_tokens || 0)}
+                      </div>
+                      <p className="text-xs text-green-200 mt-1">
+                        Pending sweep to super admin
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Transfer Button */}
+                {(splitProfit.summary.available_tokens || 0) > 0 ? (
+                  <div className="bg-green-600/20 rounded-lg p-4 border border-green-500/30">
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+                      <div>
+                        <div className="font-semibold text-white mb-1">
+                          💸 Sweep Split Profit into Super-Admin Wallet
+                        </div>
+                        <div className="text-sm text-gray-300">
+                          Move {formatTokens(splitProfit.summary.available_tokens)} (≈ {formatCurrency((splitProfit.summary.available_tokens || 0) * 122 / 100)}) into the super-admin token wallet (user&nbsp;id&nbsp;7).
+                        </div>
+                        <div className="text-xs text-yellow-300 mt-2">
+                          ℹ️ Logs a row in <code>split_profit_transfers</code> + a <code>token_transactions</code> entry. Subtracted from "Available" on next refresh.
+                        </div>
+                      </div>
+                      <button
+                        onClick={handleTransferSplitProfit}
+                        disabled={transferringSplitProfit}
+                        className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white px-6 py-3 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-lg hover:shadow-purple-500/50 flex items-center gap-2"
+                      >
+                        {transferringSplitProfit ? (
+                          <>
+                            <ArrowPathIcon className="h-5 w-5 animate-spin" />
+                            Transferring…
+                          </>
+                        ) : (
+                          <>
+                            <ArrowDownTrayIcon className="h-5 w-5" />
+                            Transfer to Super Admin
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-gray-600/20 rounded-lg p-4 border border-gray-500/30 text-center">
+                    <div className="text-gray-400">
+                      💡 No split profit available yet. The 25% platform cut accumulates as users purchase paid posts/recordings.
+                    </div>
+                  </div>
+                )}
+
+                {/* Sales by Content Rating */}
+                {Array.isArray(splitProfit.sales_by_rating) && splitProfit.sales_by_rating.length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="text-sm font-semibold text-gray-300 mb-3">Sales by Content Rating</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {splitProfit.sales_by_rating.map((row) => (
+                        <div
+                          key={row.rating}
+                          className="bg-white/5 border border-white/10 rounded-lg p-3"
+                        >
+                          <div className="text-xs text-gray-400 mb-1">{row.rating}</div>
+                          <div className="text-lg font-bold text-white">
+                            {(row.sales || 0).toLocaleString()}
+                            <span className="text-xs text-gray-400 ml-1">sales</span>
+                          </div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            {formatTokens(row.revenue_tokens || 0)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Event Analytics Section - Ticket Sales & RSVPs */}
             {eventAnalytics && (

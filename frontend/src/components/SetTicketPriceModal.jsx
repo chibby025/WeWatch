@@ -242,7 +242,7 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
                           />
                           <span className="text-xs text-gray-700 group-hover:text-gray-900 transition-colors">
                             <strong>I certify</strong> this content is my original work or I have proper licenses to monetize it. 
-                            I agree to indemnify WeWatch for any copyright claims related to this content.
+                            I agree to indemnify LetsWatchOut for any copyright claims related to this content.
                           </span>
                         </label>
                       </div>

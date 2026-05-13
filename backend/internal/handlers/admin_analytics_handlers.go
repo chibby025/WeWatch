@@ -68,8 +68,8 @@ func GetPlatformAnalytics(c *gin.Context) {
 	// ==== NEW REVENUE METRICS (NET-BASED, CORRECT SOURCES) ====
 	type NetRevenueResult struct {
 		GMV                float64 // Net GMV (all net ticket sales + net token purchases)
-		PlatformRevenue    float64 // Platform's 15% of net ticket sales + all net token purchases
-		Reserve            float64 // Host 85% of net ticket sales
+		PlatformRevenue    float64 // Platform's 25% of net ticket sales + all net token purchases
+		Reserve            float64 // Host 75% of net ticket sales
 		TokenMinted        float64 // All tokens minted (purchased)
 		TokenSpent         float64 // All tokens spent (tickets, donations)
 		DonatedTicketCount int64   // Number of tickets donated
@@ -297,6 +297,21 @@ func GetPlatformAnalytics(c *gin.Context) {
 		ORDER BY p.downloads_count DESC
 		LIMIT 10
 	`).Scan(&topDownloadedPosts)
+
+	// ==== RECORDING METRICS ====
+	var totalRecordings int64
+	var recordingsToday int64
+	var recordingsWeek int64
+	var recordingsMonth int64
+	var recordingsQuarter int64
+	var recordingsYear int64
+
+	db.Model(&models.Post{}).Where("post_type = ? AND deleted_at IS NULL", "recording").Count(&totalRecordings)
+	db.Model(&models.Post{}).Where("post_type = ? AND created_at >= ? AND deleted_at IS NULL", "recording", startOfToday).Count(&recordingsToday)
+	db.Model(&models.Post{}).Where("post_type = ? AND created_at >= ? AND deleted_at IS NULL", "recording", startOfWeek).Count(&recordingsWeek)
+	db.Model(&models.Post{}).Where("post_type = ? AND created_at >= ? AND deleted_at IS NULL", "recording", startOfMonth).Count(&recordingsMonth)
+	db.Model(&models.Post{}).Where("post_type = ? AND created_at >= ? AND deleted_at IS NULL", "recording", startOfQuarter).Count(&recordingsQuarter)
+	db.Model(&models.Post{}).Where("post_type = ? AND created_at >= ? AND deleted_at IS NULL", "recording", startOfYear).Count(&recordingsYear)
 
 	// ==== SCHEDULED EVENTS ====
 	var totalEvents int64
@@ -573,7 +588,7 @@ func GetPlatformAnalytics(c *gin.Context) {
 		"token_donations": gin.H{
 			"total_gifts_count": tokenGiftsAll.TotalGifts,
 			"total_value_tokens": float64(tokenGiftsAll.TotalValueCents) / 100.0, // Convert cents to tokens
-			"total_value_ngn": float64(tokenGiftsAll.TotalValueCents) * 140.25 / 100.0, // Token backing value
+			"total_value_ngn": float64(tokenGiftsAll.TotalValueCents) * 122.0 / 100.0, // Token withdrawal rate
 			"commission_earned_ngn": func() float64 {
 				if accounting != nil {
 					return accounting.LifetimeTokenDonationCommission
@@ -622,6 +637,14 @@ func GetPlatformAnalytics(c *gin.Context) {
 			"month":             downloadsMonth,
 			"top_posts":         topDownloadedPosts,
 		},
+		"recordings": gin.H{
+			"total":    totalRecordings,
+			"today":    recordingsToday,
+			"week":     recordingsWeek,
+			"month":    recordingsMonth,
+			"quarter":  recordingsQuarter,
+			"year":     recordingsYear,
+		},
 		"payouts": gin.H{
 			"total_withdrawn":        totalWithdrawn,
 			"pending_amount":         pendingPayouts,
@@ -646,7 +669,150 @@ func GetPlatformAnalytics(c *gin.Context) {
 		"platform_accounting": platformAccountingData,
 		"top_hosts": topHosts,
 		"currency":  "NGN",
+		"split_profit": gin.H{
+			"available_tokens": 0, // Will be calculated when needed
+			"transferred_tokens": 0,
+			"pending_transfer": false,
+		},
 		"generated_at": now.Format(time.RFC3339),
+	})
+}
+
+// TransferSplitProfit transfers accumulated platform profit from post/recording sales to super admin
+// POST /api/admin/transfer-split-profit
+func TransferSplitProfit(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	// Get authenticated super admin
+	authUser, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	user := authUser.(*models.User)
+
+	// Verify super admin status
+	if user.Role != "super_admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only super admins can transfer split profit"})
+		return
+	}
+
+	// Query total accumulated split profit AND amount already transferred
+	type SplitProfitData struct {
+		TotalSalesTokens  int64
+		TransferredTokens int64
+	}
+
+	var profitData SplitProfitData
+
+	db.Raw(`
+		SELECT
+			COALESCE(SUM(pp.amount_tokens), 0) as total_sales_tokens,
+			COALESCE((SELECT SUM(amount_tokens) FROM split_profit_transfers WHERE status = 'completed'), 0) as transferred_tokens
+		FROM post_purchases pp
+		WHERE pp.status = 'completed'
+	`).Scan(&profitData)
+
+	// 25% of total sales is the platform's lifetime entitlement.
+	// Subtract what's already been transferred so repeated calls don't double-pay.
+	totalProfit := int64(float64(profitData.TotalSalesTokens) * 0.25)
+	availableProfit := totalProfit - profitData.TransferredTokens
+
+	if availableProfit <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No profit available to transfer"})
+		return
+	}
+
+	superAdminID := uint(7)
+
+	// All three writes (transfer record, token transaction, wallet update) must
+	// commit together or the books drift.
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	transfer := map[string]interface{}{
+		"admin_id":       user.ID,
+		"amount_tokens":  availableProfit,
+		"transferred_at": time.Now(),
+		"status":         "completed",
+	}
+
+	if err := tx.Table("split_profit_transfers").Create(transfer).Error; err != nil {
+		tx.Rollback()
+		log.Printf("Error creating split_profit_transfers record: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create transfer record"})
+		return
+	}
+
+	walletTxn := models.TokenTransaction{
+		UserID:          superAdminID,
+		TransactionType: models.TransactionType("admin_split_profit_transfer"),
+		Amount:          int(availableProfit),
+		Status:          models.TransactionStatusCompleted,
+		Metadata: map[string]interface{}{
+			"reference":   "split_profit_transfer_" + time.Now().Format("20060102150405"),
+			"description": "Platform profit from post/recording sales (25% split)",
+		},
+	}
+
+	if err := tx.Create(&walletTxn).Error; err != nil {
+		tx.Rollback()
+		log.Printf("Error creating token transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create wallet transaction"})
+		return
+	}
+
+	var wallet models.UserWallet
+	if err := tx.Where("user_id = ?", superAdminID).First(&wallet).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			wallet = models.UserWallet{
+				UserID:         superAdminID,
+				TokenBalance:   int(availableProfit),
+				LifetimeEarned: int(availableProfit),
+				LifetimeSpent:  0,
+			}
+			if err := tx.Create(&wallet).Error; err != nil {
+				tx.Rollback()
+				log.Printf("Error creating wallet for super admin: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update wallet"})
+				return
+			}
+		} else {
+			tx.Rollback()
+			log.Printf("Error fetching wallet: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch wallet"})
+			return
+		}
+	} else {
+		wallet.TokenBalance += int(availableProfit)
+		wallet.LifetimeEarned += int(availableProfit)
+		if err := tx.Save(&wallet).Error; err != nil {
+			tx.Rollback()
+			log.Printf("Error updating wallet: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update wallet"})
+			return
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("Error committing split profit transfer: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete transfer"})
+		return
+	}
+
+	log.Printf("💰 Split profit transferred: %d tokens (%.2f NGN) to super admin (user_id=%d)",
+		availableProfit, float64(availableProfit)*122.0/100.0, superAdminID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "✅ Split profit transferred to super admin wallet",
+		"amount_tokens": availableProfit,
+		"amount_ngn": float64(availableProfit) * 122.0 / 100.0,
+		"recipient_user_id": superAdminID,
+		"transferred_at": time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -707,11 +873,11 @@ func GetTokenSpendingAnalytics(c *gin.Context) {
 		SELECT 
 			u.id as host_id,
 			u.username as host_name,
-			COALESCE(SUM(st.ticket_price_tokens * 0.85), 0) as tokens_earned,
-			COALESCE(SUM(st.ticket_price_tokens * 0.85), 0) / 100.0 as tokens_float,
+			COALESCE(SUM(st.ticket_price_tokens * 1.0), 0) as tokens_earned,
+			COALESCE(SUM(st.ticket_price_tokens * 1.0), 0) / 100.0 as tokens_float,
 			COUNT(st.id) as tickets_sold,
 			COUNT(DISTINCT ws.room_id) as room_count,
-			COALESCE(SUM(st.ticket_price_tokens * 165.0 / 100.0 * 0.85), 0) as revenue
+			COALESCE(SUM(st.ticket_price_tokens * 122.0 / 100.0 * 1.0), 0) as revenue
 		FROM users u
 		INNER JOIN watch_sessions ws ON ws.host_id = u.id
 		INNER JOIN session_tickets st ON st.session_id = ws.id 
@@ -933,5 +1099,144 @@ func GetEventAnalytics(c *gin.Context) {
 		"top_events":             topEvents,
 		"revenue_by_watch_type":  watchTypeRevenues,
 		"generated_at":           time.Now().Format(time.RFC3339),
+	})
+}
+
+// GetSplitProfitAnalytics returns platform profit from paid post/recording splits
+// GET /api/admin/split-profit-analytics
+func GetSplitProfitAnalytics(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	// ==== POST PURCHASE METRICS BY CONTENT RATING ====
+	type RatingMetrics struct {
+		Rating         string  `json:"rating"`
+		Sales          int64   `json:"sales"`
+		RevenueTokens  int64   `json:"revenue_tokens"` // In cents
+		RevenueNGN     float64 `json:"revenue_ngn"`    // Total revenue in Naira
+		PlatformProfit int64   `json:"platform_profit_tokens"` // 25% platform share in cents
+	}
+
+	// All possible content ratings — must match Post.ContentRating values (case-sensitive)
+	allRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
+	ratingMetricsMap := make(map[string]RatingMetrics)
+
+	// Initialize all ratings with zero values
+	for _, rating := range allRatings {
+		ratingMetricsMap[rating] = RatingMetrics{
+			Rating:         rating,
+			Sales:          0,
+			RevenueTokens:  0,
+			RevenueNGN:     0,
+			PlatformProfit: 0,
+		}
+	}
+
+	// Query actual post_purchases data grouped by content_rating
+	type PostSalesByRating struct {
+		ContentRating  string `json:"content_rating"`
+		Sales          int64  `json:"sales"`
+		RevenueTokens  int64  `json:"revenue_tokens"`
+	}
+
+	var actualSales []PostSalesByRating
+	db.Raw(`
+		SELECT 
+			p.content_rating,
+			COUNT(pp.id) as sales,
+			COALESCE(SUM(pp.amount_tokens), 0) as revenue_tokens
+		FROM posts p
+		LEFT JOIN post_purchases pp ON pp.post_id = p.id AND pp.status = 'completed'
+		WHERE p.deleted_at IS NULL
+		GROUP BY p.content_rating
+	`).Scan(&actualSales)
+
+	// Merge actual data into map
+	for _, sale := range actualSales {
+		revenueNGN := float64(sale.RevenueTokens) * 165.0 / 100.0 // Convert cents to tokens, then tokens to NGN at purchase rate
+		platformProfit := int64(float64(sale.RevenueTokens) * 0.25) // 25% platform share
+
+		ratingMetricsMap[sale.ContentRating] = RatingMetrics{
+			Rating:         sale.ContentRating,
+			Sales:          sale.Sales,
+			RevenueTokens:  sale.RevenueTokens,
+			RevenueNGN:     revenueNGN,
+			PlatformProfit: platformProfit,
+		}
+	}
+
+	// Convert map to slice
+	var ratingMetrics []RatingMetrics
+	for _, rating := range allRatings {
+		ratingMetrics = append(ratingMetrics, ratingMetricsMap[rating])
+	}
+
+	// ==== TOTAL SPLIT PROFIT CALCULATION ====
+	type SplitProfitSummary struct {
+		TotalSalesTokens       int64   `json:"total_sales_tokens"` // Total revenue in tokens (cents)
+		TotalSalesNGN          float64 `json:"total_sales_ngn"`
+		TotalPlatformProfit    int64   `json:"total_platform_profit_tokens"` // 25% share
+		TotalPlatformProfitNGN float64 `json:"total_platform_profit_ngn"`
+		TransferredTokens      int64   `json:"transferred_tokens"` // Already transferred
+		AvailableTokens        int64   `json:"available_tokens"`   // Pending transfer
+	}
+
+	var summary SplitProfitSummary
+	
+	// Calculate total from all ratings
+	for _, metric := range ratingMetrics {
+		summary.TotalSalesTokens += metric.RevenueTokens
+		summary.TotalSalesNGN += metric.RevenueNGN
+		summary.TotalPlatformProfit += metric.PlatformProfit
+	}
+
+	// Convert profit tokens to NGN (using withdrawal rate ₦122)
+	summary.TotalPlatformProfitNGN = float64(summary.TotalPlatformProfit) * 122.0 / 100.0
+
+	// Query transferred amounts from split_profit_transfers table
+	db.Raw(`
+		SELECT 
+			COALESCE(SUM(amount_tokens), 0) as transferred_tokens
+		FROM split_profit_transfers
+		WHERE status = 'completed'
+	`).Scan(map[string]interface{}{"transferred_tokens": &summary.TransferredTokens})
+
+	summary.AvailableTokens = summary.TotalPlatformProfit - summary.TransferredTokens
+
+	// Top purchased posts
+	type TopPost struct {
+		PostID        uint    `json:"post_id"`
+		Title         string  `json:"title"`
+		Username      string  `json:"username"`
+		ContentRating string  `json:"content_rating"`
+		Sales         int64   `json:"sales"`
+		RevenueTokens int64   `json:"revenue_tokens"`
+		RevenueNGN    float64 `json:"revenue_ngn"`
+	}
+
+	var topPosts []TopPost
+	db.Raw(`
+		SELECT 
+			p.id,
+			p.title,
+			u.username,
+			p.content_rating,
+			COUNT(pp.id) as sales,
+			COALESCE(SUM(pp.amount_tokens), 0) as revenue_tokens,
+			COALESCE(SUM(pp.amount_tokens), 0) * 165.0 / 100.0 as revenue_ngn
+		FROM posts p
+		INNER JOIN users u ON u.id = p.user_id
+		LEFT JOIN post_purchases pp ON pp.post_id = p.id AND pp.status = 'completed'
+		WHERE p.is_paid = true AND p.deleted_at IS NULL
+		GROUP BY p.id, p.title, u.username, p.content_rating
+		HAVING COUNT(pp.id) > 0
+		ORDER BY COUNT(pp.id) DESC
+		LIMIT 10
+	`).Scan(&topPosts)
+
+	c.JSON(http.StatusOK, gin.H{
+		"summary":           summary,
+		"sales_by_rating":   ratingMetrics,
+		"top_posts":         topPosts,
+		"generated_at":      time.Now().Format(time.RFC3339),
 	})
 }

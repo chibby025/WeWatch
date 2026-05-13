@@ -75,7 +75,7 @@ const ForgotPassword = () => {
           {/* Logo/Brand */}
           <div className="text-center mb-6 md:mb-8">
             <h1 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-blue-400 to-purple-400 mb-2 animate-gradient">
-              WeWatch
+              LetsWatchOut
             </h1>
             <p className="text-gray-300 text-sm md:text-base">Reset Your Password</p>
           </div>

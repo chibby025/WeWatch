@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
+import { SRGBColorSpace } from 'three'; // Import new color space constant
 
 export default function CinemaTheaterGLB({ 
   position = [0, 0, 0], 
@@ -32,7 +33,7 @@ export default function CinemaTheaterGLB({
     const texture = new THREE.VideoTexture(videoElement);
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
-    texture.encoding = THREE.sRGBEncoding;
+    texture.colorSpace = SRGBColorSpace; // Updated from deprecated sRGBEncoding
     
     videoTextureRef.current = texture;
     setVideoTexture(texture);
@@ -56,7 +57,7 @@ export default function CinemaTheaterGLB({
     const texture = new THREE.VideoTexture(cameraVideoElement);
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
-    texture.encoding = THREE.sRGBEncoding;
+    texture.colorSpace = SRGBColorSpace; // Updated from deprecated sRGBEncoding
     
     cameraTextureRef.current = texture;
     setCameraTexture(texture);
@@ -82,7 +83,7 @@ export default function CinemaTheaterGLB({
     const texture = new THREE.CanvasTexture(gameCanvas);
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
-    texture.encoding = THREE.sRGBEncoding;
+    texture.colorSpace = SRGBColorSpace; // Updated from deprecated sRGBEncoding
     texture.needsUpdate = true; // ✅ Force immediate update
     
     gameTextureRef.current = texture;
@@ -110,7 +111,7 @@ export default function CinemaTheaterGLB({
     const texture = new THREE.CanvasTexture(podcastCanvas);
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
-    texture.encoding = THREE.sRGBEncoding;
+    texture.colorSpace = SRGBColorSpace; // Updated from deprecated sRGBEncoding
     texture.needsUpdate = true;
     
     podcastTextureRef.current = texture;

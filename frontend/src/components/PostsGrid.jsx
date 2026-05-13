@@ -39,7 +39,7 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
         setPosts(newPosts);
       }
       
-      setHasMore(newPosts.length === 12); // If we got a full page, there might be more
+      setHasMore(newPosts.length > 0); // Stop only when the backend returns no rows.
       setError(null);
     } catch (err) {
       console.error('❌ [PostsGrid] Failed to fetch posts:', err);
@@ -56,25 +56,40 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
     fetchPosts(1, false);
   }, [userId, roomId]);
 
-  // Infinite scroll observer
+  // Infinite scroll observer. PostsGrid is often rendered inside a modal with
+  // `overflow-y-auto`, so the user scrolls the inner container rather than the
+  // viewport. We walk up the DOM to find the nearest scrollable ancestor and
+  // pass it as the observer's `root`; falls back to viewport if there isn't one.
   useEffect(() => {
     if (!hasMore || loadingMore) return;
+    const trigger = loadMoreTriggerRef.current;
+    if (!trigger) return;
+
+    let scrollRoot = null;
+    let node = trigger.parentElement;
+    while (node) {
+      const overflowY = getComputedStyle(node).overflowY;
+      if (overflowY === 'auto' || overflowY === 'scroll') {
+        scrollRoot = node;
+        break;
+      }
+      node = node.parentElement;
+    }
 
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMore && !loadingMore) {
           const nextPage = page + 1;
           setPage(nextPage);
-          fetchPosts(nextPage, filter, true);
+          fetchPosts(nextPage, true);
         }
       },
-      { threshold: 0.1 }
+      // Prefetch: fire ~400px before the sentinel scrolls into the scroll container's
+      // viewport so the next page is already loading by the time the user reaches the bottom.
+      { root: scrollRoot, threshold: 0, rootMargin: '400px' }
     );
 
-    if (loadMoreTriggerRef.current) {
-      observer.observe(loadMoreTriggerRef.current);
-    }
-
+    observer.observe(trigger);
     observerRef.current = observer;
 
     return () => {
@@ -82,7 +97,7 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
         observerRef.current.disconnect();
       }
     };
-  }, [hasMore, loadingMore, page]);
+  }, [hasMore, loadingMore, page, loading]);
 
   // Get thumbnail URL
   const getThumbnailUrl = (post) => {

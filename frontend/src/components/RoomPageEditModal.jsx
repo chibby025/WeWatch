@@ -8,6 +8,8 @@ import PostsGrid from './PostsGrid';
 import PostViewModal from './PostViewModal';
 import UserProfileModal from './UserProfileModal';
 import EmojiPicker from './EmojiPicker';
+import Avatar from './Avatar';
+import { resolveAvatarUrl } from '../utils/avatar';
 import { useAuth } from '../contexts/AuthContext';
 
 const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = true, membersInRoom = 0, members = [] }) => {
@@ -557,27 +559,12 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               </h3>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-400 flex items-center gap-2">
-                  <div 
-                    className="w-8 h-8 rounded-full overflow-hidden bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all"
+                  <Avatar
+                    user={{ avatar_url: room?.host_avatar_url, username: room?.host_username }}
                     onClick={() => setIsHostProfileModalOpen(true)}
                     title="View host profile"
-                  >
-                    {room?.host_avatar_url ? (
-                      <img 
-                        src={room.host_avatar_url} 
-                        alt={room?.host_username || 'Host'}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          e.target.onerror = null;
-                          e.target.src = '/icons/user1avatar.svg';
-                        }}
-                      />
-                    ) : (
-                      <span className="text-sm text-white font-bold">
-                        {(room?.host_username || 'H')[0].toUpperCase()}
-                      </span>
-                    )}
-                  </div>
+                    className="w-8 h-8 rounded-full object-cover cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all"
+                  />
                   Host
                 </span>
                 <span 
@@ -617,27 +604,12 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                       key={member.id}
                       className="flex items-center gap-2 p-2 rounded-lg bg-gray-800/30 hover:bg-gray-800/50 transition-colors"
                     >
-                      <div 
-                        className="w-7 h-7 rounded-full overflow-hidden bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all"
-                        onClick={() => setExpandedMemberAvatar(member.avatar_url || '/icons/user1avatar.svg')}
+                      <Avatar
+                        user={member}
+                        onClick={() => setExpandedMemberAvatar(resolveAvatarUrl(member.avatar_url))}
                         title="Click to view full size"
-                      >
-                        {member.avatar_url ? (
-                          <img 
-                            src={member.avatar_url} 
-                            alt={member.username}
-                            className="w-full h-full object-cover"
-                            onError={(e) => {
-                              e.target.onerror = null;
-                              e.target.src = '/icons/user1avatar.svg';
-                            }}
-                          />
-                        ) : (
-                          <span className="text-xs text-white font-bold">
-                            {(member.username || 'U')[0].toUpperCase()}
-                          </span>
-                        )}
-                      </div>
+                        className="w-7 h-7 rounded-full object-cover flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all"
+                      />
                       <span className="text-sm text-white flex-1 truncate">
                         {member.username || `User ${member.id}`}
                       </span>

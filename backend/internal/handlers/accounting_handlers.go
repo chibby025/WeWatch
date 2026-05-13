@@ -40,7 +40,7 @@ func GetPlatformAccountingHandler(db *gorm.DB) gin.HandlerFunc {
 				"total_revenue":         accounting.TotalPlatformRevenue,
 				"lifetime_revenue":      accounting.LifetimeTotalRevenue,
 				"can_withdraw_safely":   accounting.PlatformProfit > 0,
-				"explanation":           "This is YOUR money - 15% commission from all transactions",
+				"explanation":           "This is YOUR money - 25% commission from all transactions",
 			},
 			"host_reserves": gin.H{
 				"total_reserved":        accounting.HostReserveBalance,
@@ -166,7 +166,7 @@ func GetAccountingExportHandler(db *gorm.DB) gin.HandlerFunc {
 			Find(&payouts)
 
 		// Generate CSV
-		csv := "Date,Type,User ID,Amount USD,Revenue (15%),Reserve (85%),Transfer ID\n"
+		csv := "Date,Type,User ID,Amount USD,Revenue (25%),Reserve (75%),Transfer ID\n"
 
 		for _, tx := range tokenPurchases {
 			usdValue := float64(0)

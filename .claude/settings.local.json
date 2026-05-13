@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"psql -h localhost -p 5432 -U postgres -d wewatch_db -f /home/chibuzor_dev/WeWatch/backend/migrations/20260510_create_post_purchases.sql\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"PGPASSWORD='Chibby' psql -h localhost -p 5432 -U postgres -d wewatch_db -v ON_ERROR_STOP=1 -f /home/chibuzor_dev/WeWatch/backend/migrations/20260510_create_post_purchases.sql\")"
+    ]
+  }
+}

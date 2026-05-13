@@ -1,5 +1,6 @@
 // frontend/src/components/lobby/OutgoingCallModal.jsx
 import React, { useEffect, useState } from 'react';
+import Avatar from '../Avatar';
 
 const OutgoingCallModal = ({ 
   isOpen, 
@@ -62,21 +63,10 @@ const OutgoingCallModal = ({
       <div className="flex flex-col items-center justify-center max-w-sm w-full">
         {/* Avatar with pulse animation for calling state */}
         <div className={`relative ${callStatus === 'calling' ? 'animate-pulse' : ''}`}>
-          {friend?.avatar_url ? (
-            <img 
-              src={friend.avatar_url.startsWith('http') ? friend.avatar_url : `http://localhost:8080${friend.avatar_url}`}
-              alt={friend.username}
-              className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover border-4 border-blue-500 shadow-2xl"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.src = '/icons/user1avatar.svg';
-              }}
-            />
-          ) : (
-            <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-white font-bold text-4xl sm:text-5xl border-4 border-blue-500 shadow-2xl">
-              {friend?.username?.[0]?.toUpperCase() || 'U'}
-            </div>
-          )}
+          <Avatar
+            user={friend}
+            className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover border-4 border-blue-500 shadow-2xl"
+          />
           
           {/* Ripple effect for calling */}
           {callStatus === 'calling' && (

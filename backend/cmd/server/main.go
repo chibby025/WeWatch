@@ -333,7 +333,7 @@ func main() {
 	r.GET("/api/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":   "ok",
-			"message":  "WeWatch Backend is running!",
+			"message":  "LetsWatchOut Backend is running!",
 			"database": "connected",
 		})
 	})
@@ -388,6 +388,10 @@ func main() {
 	// Google OAuth routes
 	r.GET("/api/auth/google/login", handlers.GoogleLoginHandler)
 	r.GET("/api/auth/google/callback", handlers.GoogleCallbackHandler)
+
+	// Hymn API proxy (public - CORS bypass for Hymnary.org)
+	r.GET("/api/hymns/search", handlers.SearchHymnsProxy)  // GET /api/hymns/search?query=amazing+grace
+	r.GET("/api/hymns/:id", handlers.GetHymnDetailsProxy)  // GET /api/hymns/it_is_well
 
 	// Protected routes (auth required)
 	// Apply the AuthMiddleware to the /api/auth/me route
@@ -581,8 +585,10 @@ func main() {
 		postsProtected.DELETE("/:id", handlers.DeletePost)                 // DELETE /api/posts/:id (Delete post - owner only)
 		postsProtected.POST("/:id/like", handlers.LikePost)                // POST /api/posts/:id/like (Like post)
 		postsProtected.DELETE("/:id/unlike", handlers.UnlikePost)          // DELETE /api/posts/:id/unlike (Unlike post)
-		postsProtected.POST("/:id/comments", handlers.CreatePostComment)   // POST /api/posts/:id/comments (Add comment)
-		postsProtected.DELETE("/comments/:id", handlers.DeletePostComment) // DELETE /api/posts/comments/:id (Delete comment)
+		postsProtected.POST("/:id/comments", handlers.CreatePostComment)                    // POST /api/posts/:id/comments (Add comment)
+		postsProtected.PUT("/:id/comments/:commentId", handlers.UpdatePostComment)         // PUT /api/posts/:id/comments/:commentId (Edit comment)
+		postsProtected.DELETE("/comments/:id", handlers.DeletePostComment)                 // DELETE /api/posts/comments/:id (Delete comment)
+		postsProtected.POST("/:id/purchase", handlers.PurchasePost)        // POST /api/posts/:id/purchase (Buy paid post with tokens, 75/25 split)
 	}
 	
 	// User posts routes (public)
@@ -998,7 +1004,7 @@ func main() {
     // roomGroup.POST("/:id/playback", handlers.UpdatePlaybackHandler)
 
 	port := ":8080"
-	log.Printf("Starting WeWatch backend server on port %s", port)
+	log.Printf("Starting LetsWatchOut backend server on port %s", port)
 	err = r.Run(port) // Use = because err is already declared
 	if err != nil {
 		log.Fatalf("Failed to run server: %v", err)

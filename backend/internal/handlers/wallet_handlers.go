@@ -160,7 +160,7 @@ func PurchaseTokens(c *gin.Context) {
 		}
 
 		// 💰 Create GatewayEarning for revenue tracking
-		// For token purchases, platform gets 15%, reserve gets 85%
+		// For token purchases, platform gets 25%, reserve gets 75%
 		// Note: We set HostID to system user (1) since token purchases aren't tied to specific hosts
 		grossAmount := float64(req.Amount)
 		platformCommission := grossAmount * 0.25
@@ -186,12 +186,12 @@ func PurchaseTokens(c *gin.Context) {
 			platformCommission, netAmount)
 		
 		// ✅ AUTOMATIC SPLIT: Payment split handled by Paystack Split Code (SPL_CcDDM4qs7n)
-		// Money goes directly: 85% → Reserve subaccount, 15% → Revenue subaccount
+		// Money goes directly: 75% → Reserve subaccount, 25% → Revenue subaccount
 		// No transfer fees! No additional API calls needed!
 		if req.PaymentMethod == "paystack" {
 			log.Printf("✅ Paystack split payment: ₦%.2f automatically split via SPL_CcDDM4qs7n", grossAmount)
-			log.Printf("   → Revenue account receives: ₦%.2f (15%%)", platformCommission)
-			log.Printf("   → Reserve account receives: ₦%.2f (85%%)", netAmount)
+			log.Printf("   → Revenue account receives: ₦%.2f (25%%)", platformCommission)
+			log.Printf("   → Reserve account receives: ₦%.2f (75%%)", netAmount)
 		}
 
 		return nil
@@ -215,7 +215,7 @@ func PurchaseTokens(c *gin.Context) {
 		// Add purchase with fee breakdown
 		accounting.AddTokenPurchaseWithFee(purchaseGross, netAfterFee, gatewayFee)
 		db.Save(accounting)
-		log.Printf("📊 Platform accounting updated: TotalRevenue=%.2f (NET), Profit=%.2f (15%%), Reserve=%.2f (85%%), GatewayFee=%.2f", 
+		log.Printf("📊 Platform accounting updated: TotalRevenue=%.2f (NET), Profit=%.2f (25%%), Reserve=%.2f (75%%), GatewayFee=%.2f", 
 			accounting.TotalPlatformRevenue, accounting.PlatformProfit, accounting.HostReserveBalance, gatewayFee)
 	} else {
 		log.Printf("⚠️  Failed to update platform accounting: %v", accErr)

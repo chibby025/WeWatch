@@ -1,5 +1,6 @@
 // frontend/src/components/ChatHomeModal.jsx
 import React from 'react';
+import Avatar from './Avatar';
 
 export default function ChatHomeModal({
   currentUser,
@@ -116,17 +117,10 @@ export default function ChatHomeModal({
                 >
                   {/* Avatar */}
                   <div className="relative flex-shrink-0">
-                    {user.avatar_url ? (
-                      <img 
-                        src={user.avatar_url.startsWith('http') ? user.avatar_url : `http://localhost:8080${user.avatar_url}`}
-                        alt={user.username}
-                        className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover ring-2 ring-purple-500/50 group-hover:ring-purple-400 transition-all"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-purple-600 to-purple-800 flex items-center justify-center text-white font-bold text-base sm:text-lg ring-2 ring-purple-500/50 group-hover:ring-purple-400 transition-all">
-                        {user.username?.[0]?.toUpperCase() || 'U'}
-                      </div>
-                    )}
+                    <Avatar
+                      user={user}
+                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover ring-2 ring-purple-500/50 group-hover:ring-purple-400 transition-all"
+                    />
                     {/* Unread Badge */}
                     {user.unreadCount > 0 && (
                       <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] sm:text-xs font-bold rounded-full min-w-[18px] h-[18px] sm:min-w-[20px] sm:h-[20px] flex items-center justify-center px-1 shadow-lg ring-2 ring-black animate-pulse">

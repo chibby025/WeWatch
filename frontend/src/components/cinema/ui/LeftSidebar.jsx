@@ -1,8 +1,10 @@
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { uploadMediaToRoom, uploadChunk, apiClient, API_BASE_URL } from '../../../services/api';
-import { Gamepad2, Video } from 'lucide-react'; // Game and Video icons
+import { Gamepad2, Video, BookOpen, Music } from 'lucide-react'; // Game, Video, Bible, and Hymn icons
 import toast from 'react-hot-toast';
+import BibleControl from '../../liveshare/BibleControl';
+import HymnsControl from '../../liveshare/HymnsControl';
 import useSessionRecording from '../../../hooks/useSessionRecording';
 import RecordingOptionsModal from '../../RecordingOptionsModal';
 import { 
@@ -217,6 +219,10 @@ export default function LeftSidebar({
 
   // Alias for display
   const recordingDuration = recordingTime;
+  
+  // 📖 Bible & Hymn state (Religious content)
+  const [showBibleSelector, setShowBibleSelector] = useState(false);
+  const [showHymnSelector, setShowHymnSelector] = useState(false);
   
   // Check for incomplete uploads on mount
   useEffect(() => {
@@ -826,6 +832,38 @@ export default function LeftSidebar({
     { id: 'pluralsight', name: 'Pluralsight', url: 'https://www.pluralsight.com' },
   ];
 
+  // 🙏 Religious platforms for Church/Religious content
+  const religiousPlatforms = [
+    // Video Streaming (Primary)
+    { id: 'youtube', name: 'YouTube', url: 'https://www.youtube.com' },
+    
+    // Nigerian Churches (Free Live Streaming)
+    { id: 'christembassy', name: 'Christ Embassy', url: 'https://christembassy.org/live' },
+    { id: 'rccg', name: 'RCCG', url: 'https://rccg.org' },
+    { id: 'winnerschapel', name: 'Winners Chapel', url: 'https://www.davidoyedepoministries.org' },
+    { id: 'deeperlife', name: 'Deeper Life Bible Church', url: 'https://www.deeperlife.org' },
+    { id: 'mfm', name: 'Mountain of Fire', url: 'https://mountainoffire.org' },
+    { id: 'dunamis', name: 'Dunamis International', url: 'https://dunamisgospel.org' },
+    { id: 'hotr', name: 'House on the Rock', url: 'https://www.hotr.org.ng' },
+    { id: 'daystarng', name: 'Daystar Christian Centre', url: 'https://daystarng.org' },
+    { id: 'covenantnation', name: 'Covenant Nation', url: 'https://thecovenantnation.com' },
+    { id: 'elevationng', name: 'Elevation Church', url: 'https://elevationchurch.tv' },
+    
+    // International Christian Broadcasting Networks
+    { id: 'tbn', name: 'TBN', url: 'https://watch.tbn.org' },
+    { id: 'daystar', name: 'Daystar', url: 'https://www.daystar.com/live' },
+    { id: 'godtv', name: 'GOD TV', url: 'https://god.tv' },
+    { id: 'cbn', name: 'CBN', url: 'https://www1.cbn.com/cbnnews/live' },
+    { id: 'ewtn', name: 'EWTN', url: 'https://www.ewtn.com/live' },
+    { id: 'vatican', name: 'Vatican Media', url: 'https://www.vaticannews.va/en.html' },
+    { id: 'hillsong', name: 'Hillsong Channel', url: 'https://hillsong.com/channel' },
+    { id: 'lifechurch', name: 'Life.Church', url: 'https://live.life.church' },
+    
+    // Sermon & Teaching Platforms
+    { id: 'sermonaudio', name: 'SermonAudio', url: 'https://www.sermonaudio.com' },
+    { id: 'preachtheword', name: 'Preach the Word', url: 'https://www.preachtheword.com' },
+  ];
+
   // 🎬 Entertainment platforms for Cinemas & Video Watch (Screen-share friendly, no DRM)
   const entertainmentPlatforms = [
     // Video Streaming (Legal, No DRM)
@@ -838,28 +876,14 @@ export default function LeftSidebar({
     
     // Free Streaming Services (Legal, Ad-Supported, Screen-share friendly)
     { id: 'tubi', name: 'Tubi', url: 'https://tubitv.com' },
-    { id: 'plutotv', name: 'Pluto TV', url: 'https://pluto.tv' },
-    { id: 'rokuchannel', name: 'Roku Channel', url: 'https://therokuchannel.roku.com' },
-    { id: 'vudu', name: 'Vudu Free', url: 'https://www.vudu.com/content/movies/free' },
-    { id: 'plex', name: 'Plex', url: 'https://watch.plex.tv' },
-    { id: 'peacock', name: 'Peacock Free', url: 'https://www.peacocktv.com' },
     { id: 'crackle', name: 'Crackle', url: 'https://www.crackle.com' },
-    { id: 'freevee', name: 'Freevee', url: 'https://www.amazon.com/freevee' },
     { id: 'xumo', name: 'Xumo Play', url: 'https://www.xumo.com' },
-    { id: 'sling', name: 'Sling Freestream', url: 'https://www.sling.com/freestream' },
-    { id: 'redbox', name: 'Redbox', url: 'https://www.redbox.com' },
-    
-    // Library Streaming (Legal - Requires library card)
-    { id: 'hoopla', name: 'Hoopla', url: 'https://www.hoopladigital.com' },
-    { id: 'kanopy', name: 'Kanopy', url: 'https://www.kanopy.com' },
     
     // Anime & Animation (Free tiers, screen-share friendly)
-    { id: 'crunchyroll', name: 'Crunchyroll', url: 'https://www.crunchyroll.com' },
     { id: 'retrocrush', name: 'RetroCrush', url: 'https://www.retrocrush.tv' },
     
     // Sports & Live Events (Free tiers)
     { id: 'redbulltv', name: 'Red Bull TV', url: 'https://www.redbull.com/int-en/tv' },
-    { id: 'nfl', name: 'NFL+', url: 'https://www.nfl.com/plus' },
     { id: 'caffeine', name: 'Caffeine', url: 'https://www.caffeine.tv' },
     
     // Reading & Comics (Legal)
@@ -871,9 +895,14 @@ export default function LeftSidebar({
     { id: 'archiveofourown', name: 'Archive of Our Own', url: 'https://archiveofourown.org' },
   ];
 
-  // ✅ Choose platform list based on watch type
+  // ✅ Choose platform list based on content rating and watch type
   const isLectureHallContext = watchType === 'classroom' && classType === 'lecture_hall';
-  const platforms = isLectureHallContext ? educationalPlatforms : entertainmentPlatforms;
+  const contentRating = sessionStatus?.content_rating || 'G';
+  
+  const platforms = 
+    contentRating === 'Religious' ? religiousPlatforms :
+    (isLectureHallContext || contentRating === 'Educational') ? educationalPlatforms :
+    entertainmentPlatforms;
 
   const filteredPlatforms = platforms.filter(p =>
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -1161,8 +1190,7 @@ export default function LeftSidebar({
             >
               {tab === 'upload' && <span className="truncate">Upload</span>}
               {tab === 'liveshare' && <span className="truncate">LiveShare</span>}
-              {tab === 'watchfrom' && <span className="truncate hidden sm:inline">Watch From</span>}
-              {tab === 'watchfrom' && <span className="truncate sm:hidden">Watch</span>}
+              {tab === 'watchfrom' && <span className="truncate">Watch From</span>}
             </button>
           ))}
         </div>
@@ -1304,103 +1332,142 @@ export default function LeftSidebar({
             </div>
           )}
 
-          {/* START/END GAME & RECORD BUTTONS - Horizontal Layout */}
-          {isHost && (
-            <div className="flex gap-2 mb-3 sm:mb-4">
-              {/* START/END GAME BUTTON (Host Only) */}
-              {(onGameClick || onGameClose) && (
+          {/* START/END GAME & RECORD & BIBLE & HYMN BUTTONS - Horizontal Layout */}
+          {isHost && (() => {
+            // ✅ Content rating-based filtering
+            const contentRating = sessionStatus?.content_rating || 'G';
+            const showGameButton = !['Educational', 'Religious'].includes(contentRating);
+            const showReligiousButtons = contentRating === 'Religious';
+            
+            // 🔍 DEBUG: Log content rating state
+            console.log('🔍 [LeftSidebar Buttons] Content Rating Check:', {
+              sessionStatus,
+              contentRating,
+              showGameButton,
+              showReligiousButtons,
+              sessionStatusExists: !!sessionStatus,
+              contentRatingField: sessionStatus?.content_rating
+            });
+            
+            // Check if Quiz button should show (Lecture Hall OR Educational content)
+            const showQuizButton = ((watchType === 'classroom' && classType === 'lecture_hall') || contentRating === 'Educational') && onQuizClick;
+            
+            return (
+              <div className="flex justify-around items-center gap-4 mb-3 sm:mb-4 px-2">
+                {/* START/END GAME BUTTON (Host Only - Hidden for Educational/Religious) */}
+                {showGameButton && (onGameClick || onGameClose) && (
+                  <button
+                    onClick={() => {
+                      if (activeGame) {
+                        console.log('🎮 [LeftSidebar] End Game button clicked!');
+                        if (onGameClose) {
+                          onGameClose();
+                          toast.success('Game ended', { icon: '🎮' });
+                        }
+                      } else {
+                        console.log('🎮 [LeftSidebar] Start Game button clicked!');
+                        if (onGameClick) {
+                          onGameClick();
+                        }
+                      }
+                    }}
+                    className="flex flex-col items-center gap-1.5 hover:opacity-70 transition-all group"
+                  >
+                    {activeGame ? (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-7 h-7 sm:w-8 sm:h-8 text-red-400 group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                        <span className="text-[10px] text-gray-300 font-medium">End Game</span>
+                      </>
+                    ) : (
+                      <>
+                        <Gamepad2 className="w-7 h-7 sm:w-8 sm:h-8 text-blue-400 group-hover:scale-110 transition-transform" />
+                        <span className="text-[10px] text-gray-300 font-medium">Start Game</span>
+                      </>
+                    )}
+                  </button>
+                )}
+                
+                {/* QUIZ BUTTON (Lecture Hall OR Educational Content - Host Only) */}
+                {showQuizButton && (
+                  <button
+                    onClick={onQuizClick}
+                    className="flex flex-col items-center gap-1.5 hover:opacity-70 transition-all group"
+                  >
+                    <img src="/icons/quiz.svg" alt="" className="w-7 h-7 sm:w-8 sm:h-8 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] text-gray-300 font-medium">Quiz</span>
+                  </button>
+                )}
+
+                {/* RECORD BUTTON (Host Only - All Watch Types) */}
                 <button
                   onClick={() => {
-                    if (activeGame) {
-                      console.log('🎮 [LeftSidebar] End Game button clicked!');
-                      if (onGameClose) {
-                        onGameClose();
-                        toast.success('Game ended', { icon: '🎮' });
-                      }
+                    if (isRecording) {
+                      stopRecording();
                     } else {
-                      console.log('🎮 [LeftSidebar] Start Game button clicked!');
-                      if (onGameClick) {
-                        onGameClick();
-                      }
+                      setShowRecordingModal(true);
                     }
                   }}
-                  className={`flex-1 px-2 sm:px-3 py-2 sm:py-2.5 rounded-lg font-semibold text-xs sm:text-sm transition-all shadow-lg flex flex-col items-center justify-center gap-1 ${
-                    activeGame
-                      ? 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white'
-                      : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
+                  disabled={recordingProcessing}
+                  className={`flex flex-col items-center gap-1.5 transition-all group ${
+                    recordingProcessing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-70'
                   }`}
                 >
-                  {activeGame ? (
+                  {recordingProcessing ? (
                     <>
-                      <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 sm:w-6 sm:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      <svg className="animate-spin w-7 h-7 sm:w-8 sm:h-8 text-gray-400" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                       </svg>
-                      <span>End Game</span>
+                      <span className="text-[10px] text-gray-300 font-medium">{recordingUploadProgress}%</span>
+                    </>
+                  ) : isRecording ? (
+                    <>
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 bg-red-500 rounded-full animate-pulse"></div>
+                      <span className="text-[10px] text-gray-300 font-medium">{formatTime(recordingDuration)}</span>
                     </>
                   ) : (
                     <>
-                      <Gamepad2 className="w-5 h-5 sm:w-6 sm:h-6" />
-                      <span>Start Game</span>
+                      <Video className="w-7 h-7 sm:w-8 sm:h-8 text-purple-400 group-hover:scale-110 transition-transform" />
+                      <span className="text-[10px] text-gray-300 font-medium">Record</span>
                     </>
                   )}
                 </button>
-              )}
-
-              {/* RECORD BUTTON (Host Only - All Watch Types) */}
-              <button
-                onClick={() => {
-                  if (isRecording) {
-                    stopRecording();
-                  } else {
-                    setShowRecordingModal(true);
-                  }
-                }}
-                disabled={recordingProcessing}
-                className={`flex-1 px-2 sm:px-3 py-2 sm:py-2.5 rounded-lg font-semibold text-xs sm:text-sm transition-all shadow-lg flex flex-col items-center justify-center gap-1 ${
-                  isRecording
-                    ? 'bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 text-white animate-pulse'
-                    : recordingProcessing
-                    ? 'bg-gray-600 text-gray-300 cursor-not-allowed opacity-60'
-                    : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white'
-                }`}
-              >
-                {recordingProcessing ? (
-                  <>
-                    <svg className="animate-spin h-5 w-5 sm:h-6 sm:w-6" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    <span className="hidden sm:inline">Uploading</span>
-                    <span>{recordingUploadProgress}%</span>
-                  </>
-                ) : isRecording ? (
-                  <>
-                    <div className="w-4 h-4 sm:w-5 sm:h-5 bg-white rounded-full animate-pulse"></div>
-                    <span className="text-[10px] sm:text-xs">⏱️ {formatTime(recordingDuration)}</span>
-                  </>
-                ) : (
-                  <>
-                    <Video className="w-5 h-5 sm:w-6 sm:h-6" />
-                    <span>Record</span>
-                  </>
+                
+                {/* BIBLE BUTTON (Religious Content Only) */}
+                {showReligiousButtons && (
+                  <button
+                    onClick={() => {
+                      console.log('📖 [LeftSidebar] Bible button clicked!');
+                      setShowBibleSelector(true);
+                    }}
+                    className="flex flex-col items-center gap-1.5 hover:opacity-70 transition-all group"
+                  >
+                    <BookOpen className="w-7 h-7 sm:w-8 sm:h-8 text-amber-400 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] text-gray-300 font-medium">Bible</span>
+                  </button>
                 )}
-              </button>
-            </div>
-          )}
+                
+                {/* HYMN BUTTON (Religious Content Only) */}
+                {showReligiousButtons && (
+                  <button
+                    onClick={() => {
+                      console.log('🎵 [LeftSidebar] Hymn button clicked!');
+                      setShowHymnSelector(true);
+                    }}
+                    className="flex flex-col items-center gap-1.5 hover:opacity-70 transition-all group"
+                  >
+                    <Music className="w-7 h-7 sm:w-8 sm:h-8 text-green-400 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] text-gray-300 font-medium">Hymn</span>
+                  </button>
+                )}
+              </div>
+            );
+          })()}
 
-          <div className="flex-1 overflow-y-auto min-h-0">
-            <div className="h-full flex flex-col p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
-
-              {/* QUIZ BUTTON (Lecture Hall Only - Host) */}
-              {isHost && watchType === 'classroom' && classType === 'lecture_hall' && onQuizClick && (
-                <button
-                  onClick={onQuizClick}
-                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-lg font-semibold text-xs sm:text-sm transition-all mb-3 sm:mb-4 shadow-lg flex items-center justify-center gap-2"
-                >
-                  <img src="/icons/quiz.svg" alt="" className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Set Quiz
-                </button>
-              )}
+          <div className="flex-1 mt-3 sm:mt-4 min-h-0">
+            <div className="h-full flex flex-col p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl overflow-y-auto">
 
               {/* ACTIVE QUIZZES (Lecture Hall - Students) */}
               {!isHost && watchType === 'classroom' && classType === 'lecture_hall' && onTakeQuiz && (() => {
@@ -1616,7 +1683,7 @@ export default function LeftSidebar({
           {/* Legal Notice */}
           <div className="mb-3 p-2 bg-blue-500/10 border border-blue-500/30 rounded-lg">
             <p className="text-blue-300 text-[10px] leading-relaxed">
-              📺 Screen share from legal platforms. You must have a valid account. WeWatch doesn't host content.
+              📺 Screen share from legal platforms. You must have a valid account. LetsWatchOut doesn't host content.
             </p>
           </div>
 
@@ -1638,7 +1705,7 @@ export default function LeftSidebar({
           {/* ✅ Session Title Editor */}
           <div className="bg-[#D9D9D9]/20 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-white text-xs sm:text-sm font-medium">Session Title</span>
+              <span className="text-white text-sm sm:text-base font-semibold">Session Title</span>
             </div>
             <div className="flex items-center gap-2">
               {isEditingTitle ? (
@@ -1648,35 +1715,35 @@ export default function LeftSidebar({
                     value={tempTitle}
                     onChange={(e) => setTempTitle(e.target.value)}
                     onKeyDown={handleTitleKeyPress}
-                    placeholder="What are you watching? (e.g., Movie Night, Anime)"
-                    className="flex-1 px-3 py-2 bg-gray-800 text-white rounded-lg text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Title of this watch session"
+                    className="flex-1 px-3 py-2.5 bg-gray-800 text-white rounded-lg text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
                     autoFocus
                   />
                   <button
                     onClick={handleSaveTitle}
-                    className="p-2 bg-green-500 hover:bg-green-600 rounded-lg transition-colors"
+                    className="p-2.5 bg-green-500 hover:bg-green-600 rounded-lg transition-colors"
                     title="Save title"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6 text-white" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
                   </button>
                 </>
               ) : (
                 <>
-                  <div className="flex-1 px-3 py-2 bg-gray-800 text-white rounded-lg text-xs sm:text-sm min-h-[34px] sm:min-h-[38px] flex items-center">
+                  <div className="flex-1 px-3 py-2.5 bg-gray-800 text-white rounded-lg text-sm sm:text-base min-h-[38px] sm:min-h-[42px] flex items-center">
                     {sessionTitle || (
                       <span className="text-gray-500 truncate">
-                        {selectedPlatform ? `Watching ${selectedPlatform.name}` : 'Watching...'}
+                        Title of this watch session
                       </span>
                     )}
                   </div>
                   <button
                     onClick={handleEditTitle}
-                    className="p-2 bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
+                    className="p-2.5 bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
                     title="Edit title"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 sm:h-6 sm:w-6 text-white" viewBox="0 0 20 20" fill="currentColor">
                       <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
                     </svg>
                   </button>
@@ -1700,12 +1767,13 @@ export default function LeftSidebar({
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 sm:px-4 py-2 text-white text-xs sm:text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
             />
-            <button type="submit" className="mt-2 w-full bg-purple-600 hover:bg-purple-500 text-white py-2 rounded-lg text-xs sm:text-sm font-medium">
-              Go →
+            <button type="submit" className="mt-3 w-full bg-purple-600 hover:bg-purple-500 text-white py-3 rounded-lg text-base sm:text-lg font-semibold flex items-center justify-center gap-2">
+              <span>Go</span>
+              <span className="text-xl">→</span>
             </button>
           </form>
 
-          <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar">
+          <div className="mt-3 sm:mt-4">
             <div className="grid grid-cols-2 gap-2 sm:gap-3 md:gap-4">
               {filteredPlatforms.map(platform => (
                 <button
@@ -1778,13 +1846,13 @@ export default function LeftSidebar({
             
             <div className="bg-gray-800 rounded-lg p-4 mb-4 max-h-64 overflow-y-auto">
               <p className="text-gray-300 text-sm mb-3">
-                By uploading content to WeWatch, you agree that:
+                By uploading content to LetsWatchOut, you agree that:
               </p>
               <ul className="text-gray-300 text-sm space-y-2 list-disc list-inside">
                 <li>You own the rights to this content OR have permission to share it</li>
                 <li>You will NOT upload copyrighted movies, TV shows, or other protected content</li>
                 <li>You are responsible for any copyright violations</li>
-                <li>WeWatch may remove content that violates copyright laws</li>
+                <li>LetsWatchOut may remove content that violates copyright laws</li>
                 <li>Repeated violations may result in account suspension</li>
               </ul>
               <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
@@ -1899,6 +1967,49 @@ export default function LeftSidebar({
         }}
         roomId={roomId}
       />
+      
+      {/* 📖 Bible Verse Selector Modal (Religious Content) */}
+      {showBibleSelector && (
+        <BibleControl
+          onShowVerse={(verse) => {
+            console.log('📖 [LeftSidebar] Bible verse selected:', verse);
+            if (sendMessage) {
+              sendMessage({
+                type: 'bible_verse_update',
+                data: { verse, active: true }
+              });
+            }
+            setShowBibleSelector(false);
+            toast.success('Bible verse displayed', { icon: '📖' });
+          }}
+          onHideVerse={() => {
+            setShowBibleSelector(false);
+          }}
+          currentVerse={null}
+        />
+      )}
+      
+      {/* 🎵 Hymn Selector Modal (Religious Content) */}
+      {showHymnSelector && (
+        <HymnsControl
+          onShowHymn={(hymn) => {
+            console.log('🎵 [LeftSidebar] Hymn selected:', hymn);
+            if (sendMessage) {
+              sendMessage({
+                type: 'hymn_update',
+                data: { hymn, verse: 1, active: true }
+              });
+            }
+            setShowHymnSelector(false);
+            toast.success('Hymn displayed', { icon: '🎵' });
+          }}
+          onHideHymn={() => {
+            setShowHymnSelector(false);
+          }}
+          currentHymn={null}
+          currentVerse={1}
+        />
+      )}
     </div>
   );
 }

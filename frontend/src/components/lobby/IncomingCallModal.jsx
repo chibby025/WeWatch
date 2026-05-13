@@ -1,5 +1,6 @@
 // frontend/src/components/lobby/IncomingCallModal.jsx
 import React, { useEffect, useState } from 'react';
+import Avatar from '../Avatar';
 
 const IncomingCallModal = ({ 
   isOpen, 
@@ -40,21 +41,10 @@ const IncomingCallModal = ({
       <div className="flex flex-col items-center justify-center max-w-sm w-full animate-pulse">
         {/* Avatar with pulse animation */}
         <div className="relative">
-          {caller?.avatar_url ? (
-            <img 
-              src={caller.avatar_url.startsWith('http') ? caller.avatar_url : `http://localhost:8080${caller.avatar_url}`}
-              alt={caller.username}
-              className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover border-4 border-green-500 shadow-2xl"
-              onError={(e) => {
-                e.target.onerror = null;
-                e.target.src = '/icons/user1avatar.svg';
-              }}
-            />
-          ) : (
-            <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-full bg-gradient-to-br from-green-600 to-blue-600 flex items-center justify-center text-white font-bold text-4xl sm:text-5xl border-4 border-green-500 shadow-2xl">
-              {caller?.username?.[0]?.toUpperCase() || 'U'}
-            </div>
-          )}
+          <Avatar
+            user={caller}
+            className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover border-4 border-green-500 shadow-2xl"
+          />
           
           {/* Ripple effect */}
           <div className="absolute inset-0 rounded-full border-4 border-green-400 animate-ping opacity-75"></div>

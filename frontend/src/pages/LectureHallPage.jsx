@@ -4,6 +4,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Text } from '@react-three/drei';
 import * as THREE from 'three';
+import { SRGBColorSpace } from 'three'; // Import new color space constant
 import toast from 'react-hot-toast';
 import { sendFriendRequest, getFriendshipStatus, apiClient } from '../services/api';
 import Taskbar from '../components/Taskbar';
@@ -287,7 +288,7 @@ function BlackboardWithMedia({ position, dimensions, media, onClose, isHost, sen
       const texture = new THREE.VideoTexture(video);
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
-      texture.encoding = THREE.sRGBEncoding;
+      texture.colorSpace = SRGBColorSpace; // Updated from deprecated sRGBEncoding
       
       console.log('🎥 [BlackboardWithMedia] VideoTexture created for stream');
       setVideoTexture(texture);
@@ -433,7 +434,7 @@ function BlackboardWithMedia({ position, dimensions, media, onClose, isHost, sen
       const cameraTexture = new THREE.VideoTexture(cameraVideo);
       cameraTexture.minFilter = THREE.LinearFilter;
       cameraTexture.magFilter = THREE.LinearFilter;
-      cameraTexture.encoding = THREE.sRGBEncoding;
+      cameraTexture.colorSpace = SRGBColorSpace; // Updated from deprecated sRGBEncoding
       
       console.log('📹 [BlackboardWithMedia] Camera VideoTexture created');
       setCameraTexture(cameraTexture);
@@ -536,7 +537,7 @@ function BlackboardWithMedia({ position, dimensions, media, onClose, isHost, sen
         const texture = new THREE.VideoTexture(video);
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
-        texture.encoding = THREE.sRGBEncoding;
+        texture.colorSpace = SRGBColorSpace; // Updated from deprecated sRGBEncoding
         
         console.log('🎥 [BlackboardWithMedia] VideoTexture created from shared element');
         setVideoTexture(texture);

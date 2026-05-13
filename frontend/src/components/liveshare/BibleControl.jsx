@@ -6,7 +6,7 @@ import { BookOpen, Search, X, Loader2 } from 'lucide-react';
 import { fetchVerse, BIBLE_BOOKS, TOP_100_VERSES, parseReference, buildReference } from '../../utils/bibleApi';
 
 export default function BibleControl({ onShowVerse, onHideVerse, currentVerse }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true); // ✅ Auto-open when mounted
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBook, setSelectedBook] = useState('');
   const [selectedChapter, setSelectedChapter] = useState('');
@@ -106,26 +106,14 @@ export default function BibleControl({ onShowVerse, onHideVerse, currentVerse })
   ];
 
   return (
-    <div className="relative">
-      {/* Trigger Button */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-          currentVerse
-            ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
-            : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-        }`}
-        title="Bible Verse Display"
-      >
-        <BookOpen size={18} />
-        <span className="text-sm font-medium hidden md:inline">
-          {currentVerse ? 'Verse Active' : 'Show Verse'}
-        </span>
-      </button>
-
-      {/* Control Panel */}
+    <>
+      {/* Control Panel Modal Overlay */}
       {isOpen && (
-        <div className="absolute bottom-full right-0 mb-2 w-96 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-4 z-50">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => {
+          onHideVerse();
+          setIsOpen(false);
+        }}>
+          <div className="w-full max-w-lg bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-4" onClick={(e) => e.stopPropagation()}>
           {/* Header */}
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-white font-semibold flex items-center gap-2">
@@ -210,22 +198,6 @@ export default function BibleControl({ onShowVerse, onHideVerse, currentVerse })
             </button>
           )}
 
-          {/* Quick Access - Popular Verses */}
-          <div className="mb-3">
-            <p className="text-xs text-gray-400 mb-2">Quick Access:</p>
-            <div className="grid grid-cols-2 gap-1.5">
-              {TOP_100_VERSES.slice(0, 6).map((ref) => (
-                <button
-                  key={ref}
-                  onClick={() => handleQuickVerse(ref)}
-                  className="px-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-xs transition-colors truncate"
-                >
-                  {ref}
-                </button>
-              ))}
-            </div>
-          </div>
-
           {/* Error */}
           {error && (
             <div className="mb-3 p-2 bg-red-500/10 border border-red-500/30 rounded text-red-400 text-xs">
@@ -294,17 +266,15 @@ export default function BibleControl({ onShowVerse, onHideVerse, currentVerse })
 
           {/* Action Buttons */}
           <div className="flex gap-2">
-            {currentVerse && (
-              <button
-                onClick={() => {
-                  onHideVerse();
-                  setIsOpen(false);
-                }}
-                className="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition-colors"
-              >
-                Hide Verse
-              </button>
-            )}
+            <button
+              onClick={() => {
+                onHideVerse();
+                setIsOpen(false);
+              }}
+              className="flex-1 px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm transition-colors"
+            >
+              Cancel
+            </button>
             {versePreview && (
               <button
                 onClick={handleShowVerse}
@@ -314,8 +284,9 @@ export default function BibleControl({ onShowVerse, onHideVerse, currentVerse })
               </button>
             )}
           </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

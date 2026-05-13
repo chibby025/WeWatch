@@ -1,5 +1,6 @@
 // frontend/src/components/CallHistoryModal.jsx
 import React, { useState, useEffect } from 'react';
+import Avatar from './Avatar';
 import {
   XMarkIcon,
   PhoneIcon,
@@ -179,23 +180,10 @@ const CallHistoryModal = ({ isOpen, onClose, currentUser, onCallUser }) => {
               <div className="flex items-center gap-3">
                 {/* Avatar */}
                 <div className="relative flex-shrink-0">
-                  {call.other_user?.avatar_url ? (
-                    <img
-                      src={call.other_user.avatar_url.startsWith('http') 
-                        ? call.other_user.avatar_url 
-                        : `${apiUrl}${call.other_user.avatar_url}`}
-                      alt={call.other_user.username}
-                      className="w-12 h-12 rounded-full object-cover"
-                      onError={(e) => {
-                        e.target.onerror = null;
-                        e.target.src = '/icons/user1avatar.svg';
-                      }}
-                    />
-                  ) : (
-                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-white font-bold text-lg">
-                      {call.other_user?.username?.[0]?.toUpperCase() || 'U'}
-                    </div>
-                  )}
+                  <Avatar
+                    user={call.other_user}
+                    className="w-12 h-12 rounded-full object-cover"
+                  />
                   
                   {/* Call type icon badge */}
                   <div className="absolute -bottom-1 -right-1 bg-gray-800 rounded-full p-1">

@@ -3,11 +3,47 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"time"
 	"wewatch-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// saveAgeFlagsForUser computes the four content-visibility flags from a user's age and
+// persists them to user_settings. Call this whenever a user's DOB is first set (registration
+// or update-dob endpoint) so flags are ready without a per-request DOB query.
+// The lazy yearly recompute in GetDiscoverFeed calls this too when AgeFlagsYear is stale.
+func saveAgeFlagsForUser(db *gorm.DB, userID uint, age int) {
+	currentYear := time.Now().Year()
+	flags := map[string]interface{}{
+		"can_see_13_plus": age >= 13,
+		"can_see_16_plus": age >= 16,
+		"can_see_18_plus": age >= 18,
+		"can_see_mature":  age >= 18,
+		"age_flags_year":  currentYear,
+	}
+
+	var settings models.UserSettings
+	err := db.Where("user_id = ?", userID).First(&settings).Error
+	if err == gorm.ErrRecordNotFound {
+		settings = models.UserSettings{
+			UserID:       userID,
+			CanSee13Plus: age >= 13,
+			CanSee16Plus: age >= 16,
+			CanSee18Plus: age >= 18,
+			CanSeeMature: age >= 18,
+			AgeFlagsYear: currentYear,
+		}
+		if err := db.Create(&settings).Error; err != nil {
+			log.Printf("⚠️ [saveAgeFlagsForUser] Failed to create settings for user %d: %v", userID, err)
+		}
+	} else if err == nil {
+		if err := db.Model(&settings).Updates(flags).Error; err != nil {
+			log.Printf("⚠️ [saveAgeFlagsForUser] Failed to update flags for user %d: %v", userID, err)
+		}
+	}
+}
 
 // GetUserSettings retrieves the current user's settings
 func GetUserSettings(c *gin.Context) {
@@ -81,6 +117,9 @@ func UpdateUserSettings(c *gin.Context) {
 		WhoCanFriendRequest *string `json:"who_can_friend_request"`
 		WhoCanSeePosts      *string `json:"who_can_see_posts"`
 		WhoCanCall          *string `json:"who_can_call"`
+
+		// Content preferences
+		ShowMatureContent *bool `json:"show_mature_content"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -170,6 +209,9 @@ func UpdateUserSettings(c *gin.Context) {
 	if input.WhoCanCall != nil {
 		updates["who_can_call"] = *input.WhoCanCall
 	}
+	if input.ShowMatureContent != nil {
+		updates["show_mature_content"] = *input.ShowMatureContent
+	}
 
 	// If settings don't exist yet, create them
 	if settings.ID == 0 {
@@ -201,6 +243,8 @@ func UpdateUserSettings(c *gin.Context) {
 				settings.WhoCanSeePosts = value.(string)
 			case "who_can_call":
 				settings.WhoCanCall = value.(string)
+			case "show_mature_content":
+				settings.ShowMatureContent = value.(bool)
 			}
 		}
 		

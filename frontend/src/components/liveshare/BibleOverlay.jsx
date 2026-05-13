@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
-export default function BibleOverlay({ verse, isActive, onDismiss }) {
+export default function BibleOverlay({ verse, isActive, onDismiss, sendMessage, sessionId }) {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
@@ -17,6 +17,34 @@ export default function BibleOverlay({ verse, isActive, onDismiss }) {
   }, [isActive, verse]);
 
   if (!isActive || !verse) return null;
+  
+  // ✅ Broadcast clear to all members when X is clicked
+  const handleClear = () => {
+    if (sendMessage) {
+      console.log('📖 [BibleOverlay] Broadcasting clear to all members');
+      sendMessage({
+        type: 'bible_verse_update',
+        data: { 
+          verse: null,
+          active: false
+        }
+      });
+    }
+    
+    // Clear from backend
+    if (sessionId) {
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/bible-verse`, {
+        method: 'DELETE',
+        credentials: 'include',
+      }).catch(err => console.error('Bible verse clear error:', err));
+    }
+    
+    // Also call local dismiss handler if provided (for host preview)
+    if (onDismiss) {
+      onDismiss();
+    }
+  };
 
   // Apply text case transformation
   const applyTextCase = (text, textCase) => {
@@ -47,27 +75,25 @@ export default function BibleOverlay({ verse, isActive, onDismiss }) {
         isVisible ? 'opacity-100' : 'opacity-0'
       }`}
       style={{
-        backgroundColor: verse.backgroundColor || 'rgba(0, 0, 0, 0.95)',
+        backgroundColor: verse.backgroundColor || 'rgba(0, 0, 0, 0.3)',
       }}
     >
-      {/* Close button (host only) */}
-      {onDismiss && (
-        <button
-          onClick={onDismiss}
-          className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
-        >
-          <X size={24} className="text-white" />
-        </button>
-      )}
+      {/* Close button - broadcasts clear to all members */}
+      <button
+        onClick={handleClear}
+        className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+      >
+        <X size={24} className="text-white" />
+      </button>
 
       {/* Bible verse content */}
-      <div className="max-w-4xl px-8 md:px-16 text-center space-y-6">
+      <div className="max-w-4xl px-4 sm:px-8 md:px-16 text-center space-y-4 sm:space-y-6 w-full">
         {/* Verse text */}
         <p
-          className="leading-relaxed"
+          className="leading-relaxed text-base sm:text-lg md:text-xl lg:text-2xl"
           style={{
             color: textStyle.color || '#FFFFFF',
-            fontSize: `${textStyle.size || 32}px`,
+            fontSize: `clamp(18px, ${textStyle.size || 32}px, ${textStyle.size || 32}px)`,
             fontWeight: textStyle.weight || 700,
             textShadow: '2px 2px 4px rgba(0, 0, 0, 0.8)',
           }}
@@ -77,10 +103,10 @@ export default function BibleOverlay({ verse, isActive, onDismiss }) {
 
         {/* Verse reference */}
         <p
-          className="opacity-90"
+          className="opacity-90 text-sm sm:text-base md:text-lg"
           style={{
             color: textStyle.color || '#FFFFFF',
-            fontSize: `${(textStyle.size || 32) * 0.6}px`,
+            fontSize: `clamp(14px, ${(textStyle.size || 32) * 0.6}px, ${(textStyle.size || 32) * 0.6}px)`,
             fontWeight: (textStyle.weight || 700) - 200,
           }}
         >

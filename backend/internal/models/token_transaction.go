@@ -21,6 +21,8 @@ const (
 	TransactionTypeGiftReceived      TransactionType = "gift_received"
 	TransactionTypeTicketTransferFee TransactionType = "ticket_transfer_fee" // 5% platform fee on ticket transfers
 	TransactionTypeEarlyBirdSavings  TransactionType = "early_bird_savings"  // Informational: savings from early bird pricing
+	TransactionTypePostPurchase      TransactionType = "post_purchase"       // Buyer side: tokens spent on a paid post
+	TransactionTypePostSale          TransactionType = "post_sale"           // Creator side: 75% of post purchase credited to creator wallet
 )
 
 // Scan implements the sql.Scanner interface

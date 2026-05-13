@@ -460,7 +460,7 @@ func PaystackCreateTransferRecipient(secretKey, recipientType, name, accountNumb
 }
 
 // TransferToReserveAccount transfers funds from Revenue account to Reserve account
-// This is called after token purchases to move 85% to the reserve for host payouts
+// This is called after token purchases to move 75% to the reserve for host payouts
 func TransferToReserveAccount(amount float64, currency string, reference string, description string) error {
 	// Use Paystack Transfer API to send money from Revenue → Reserve
 	// https://paystack.com/docs/transfers/single-transfers

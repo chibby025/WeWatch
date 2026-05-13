@@ -1,11 +1,13 @@
 // WeWatch/frontend/src/components/DiscoverFeed.jsx
 // Instagram/TikTok-style discover feed with infinite scroll grid
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
-import { Eye, Heart, MessageCircle, MoreVertical, Trash2, UserPlus, UserCheck, Link, X, Send, Reply, Edit, Trash } from 'lucide-react';
+import { Eye, Heart, MessageCircle, MoreVertical, Trash2, UserPlus, UserCheck, Link, X, Send, Reply, Edit, Trash, Lock } from 'lucide-react';
 import apiClient, { getFollowersCount, joinRoom, leaveRoom } from '../services/api';
 import { formatCount } from '../utils/formatCount';
 import AdBanner from './AdBanner';
+import Avatar from './Avatar';
 import UserProfileModal from './UserProfileModal';
+import PostPurchaseModal from './payment/PostPurchaseModal';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
@@ -36,6 +38,25 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   const [dataSaverEnabled, setDataSaverEnabled] = useState(
     localStorage.getItem('dataSaverMode') === 'true'
   );
+  const [unmutedVideoId, setUnmutedVideoId] = useState(null); // Track which video is unmuted
+  const [purchaseModalPost, setPurchaseModalPost] = useState(null); // Paid post pending purchase
+  const [dismissedOverlays, setDismissedOverlays] = useState(new Set()); // Post IDs where user clicked through the 18+/Mature overlay (session-only)
+
+  // Locked = paid post that the viewer hasn't bought (and isn't the owner of)
+  const isPostLocked = (post) => post.is_paid && !post.has_access && !post.is_owner;
+
+  // Toggle video mute for a specific post
+  const toggleVideoMute = (e, postId) => {
+    e.stopPropagation();
+    
+    if (unmutedVideoId === postId) {
+      // If this video is unmuted, mute it
+      setUnmutedVideoId(null);
+    } else {
+      // Unmute this video (automatically mutes all others)
+      setUnmutedVideoId(postId);
+    }
+  };
 
   // Listen for data saver mode changes
   useEffect(() => {
@@ -56,22 +77,27 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
       if (pageNum === 1) setLoading(true);
       else setLoadingMore(true);
 
+      const PAGE_SIZE = 12;
+      const offset = (pageNum - 1) * PAGE_SIZE;
       const params = new URLSearchParams({
-        page: pageNum,
-        limit: 12,
+        offset,
+        limit: PAGE_SIZE,
         ...(search && { search })
       });
 
       const response = await apiClient.get(`/api/posts?${params}`);
       const newPosts = response.data.posts || [];
-      
+
       if (append) {
         setPosts(prev => [...prev, ...newPosts]);
       } else {
         setPosts(newPosts);
       }
-      
-      setHasMore(newPosts.length === 12); // If we got a full page, there might be more
+
+      // Treat "no rows" as end of feed. We can't use `=== PAGE_SIZE` because the
+      // backend runs a per-post privacy filter AFTER applying LIMIT, so a non-final
+      // page can legitimately come back short. See backend/internal/handlers/posts.go GetDiscoverFeed.
+      setHasMore(newPosts.length > 0);
       setError(null);
     } catch (err) {
       console.error('❌ [DiscoverFeed] Failed to fetch posts:', err);
@@ -153,8 +179,13 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     
     const newFollowingStatus = {};
     posts.forEach(post => {
-      if (post.room_id) {
-        newFollowingStatus[post.id] = roomMemberships.some(rm => rm.room_id === post.room_id);
+      const effectiveRoomId = post.room_id ?? post.user?.main_room_id;
+      const isFollowing = effectiveRoomId
+        ? roomMemberships.some(rm => rm.room_id === effectiveRoomId)
+        : false;
+
+      if (effectiveRoomId) {
+        newFollowingStatus[post.id] = isFollowing;
       }
     });
     setFollowingRooms(newFollowingStatus);
@@ -167,11 +198,14 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMore && !loadingMore) {
-          setPage(prev => prev + 1);
-          fetchPosts(page + 1, true, searchQuery);
+          const nextPage = page + 1;
+          setPage(nextPage);
+          fetchPosts(nextPage, true, searchQuery);
         }
       },
-      { threshold: 0.1 }
+      // Prefetch: fire ~600px before the sentinel scrolls into the viewport so the
+      // next page is already loading by the time the user reaches the bottom.
+      { threshold: 0, rootMargin: '600px' }
     );
 
     if (loadMoreTriggerRef.current) {
@@ -185,7 +219,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
         observerRef.current.disconnect();
       }
     };
-  }, [hasMore, loadingMore, page, searchQuery]);
+  }, [hasMore, loadingMore, page, searchQuery, loading]);
 
   // Get video URL (for video playback)
   const getMediaUrl = (url) => {
@@ -263,16 +297,55 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     return post.user_id === currentUser.id;
   };
 
-  // Handle post click to open fullscreen
+  // Handle post click to open fullscreen — but route locked paid posts to the purchase modal first.
   const handlePostClick = (post) => {
     console.log('🎬 [DiscoverFeed] Post clicked:', {
       postId: post.id,
       title: post.title,
+      isLocked: isPostLocked(post),
       hasOnPostClick: !!onPostClick,
     });
+
+    if (isPostLocked(post)) {
+      if (!currentUser) {
+        toast.error('Please log in to purchase this post');
+        return;
+      }
+      setPurchaseModalPost(post);
+      return;
+    }
+
     if (onPostClick) {
       onPostClick(post);
     }
+  };
+
+  // After a successful purchase, mark the post unlocked locally so the lock overlay
+  // disappears immediately. The next feed refresh will repopulate video_url from the backend.
+  const handlePurchaseSuccess = (result) => {
+    if (!purchaseModalPost) return;
+    const purchasedId = purchaseModalPost.id;
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === purchasedId ? { ...p, has_access: true, can_download: true } : p
+      )
+    );
+    if (!result?.already_owned) {
+      toast.success('Post purchased — enjoy!');
+    }
+    // Refetch the post detail to pull the now-available video_url
+    apiClient
+      .get(`/api/posts/${purchasedId}`)
+      .then((resp) => {
+        const updated = resp.data?.post;
+        if (updated) {
+          setPosts((prev) =>
+            prev.map((p) => (p.id === purchasedId ? { ...p, ...updated, has_access: true, can_download: true } : p))
+          );
+        }
+      })
+      .catch((err) => console.warn('Failed to refresh post after purchase:', err));
+    setPurchaseModalPost(null);
   };
 
   // Handle like toggle from PostViewModal (sync state)
@@ -440,37 +513,36 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   // Handle follow/unfollow
   const handleFollowToggle = async (post, e) => {
     e.stopPropagation();
-    
+
     if (!currentUser) {
       toast.error('Please log in to follow');
       return;
     }
-    
-    if (!post.room_id) {
+
+    const effectiveRoomId = post.room_id ?? post.user?.main_room_id;
+    if (!effectiveRoomId) {
       toast.error('No room associated with this post');
       return;
     }
-    
+
     const isFollowing = followingRooms[post.id];
-    
+
     try {
       if (isFollowing) {
-        await leaveRoom(post.room_id);
+        await leaveRoom(effectiveRoomId);
         setFollowingRooms(prev => ({ ...prev, [post.id]: false }));
-        // Update followers count
         const response = await getFollowersCount(post.user_id);
         setFollowersCount(prev => ({ ...prev, [post.user_id]: response.data.followers_count || 0 }));
         toast.success(`Unfollowed @${post.user?.username}`);
       } else {
-        await joinRoom(post.room_id);
+        await joinRoom(effectiveRoomId);
         setFollowingRooms(prev => ({ ...prev, [post.id]: true }));
-        // Update followers count
         const response = await getFollowersCount(post.user_id);
         setFollowersCount(prev => ({ ...prev, [post.user_id]: response.data.followers_count || 0 }));
         toast.success(`Following @${post.user?.username}`);
       }
     } catch (error) {
-      console.error('Follow toggle error:', error);
+      console.error('❌ [DiscoverFeed] Follow toggle error:', error);
       toast.error(error.message || 'Failed to update follow status');
     }
   };
@@ -478,9 +550,9 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   // Loading skeleton
   if (loading && posts.length === 0) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1 sm:gap-4 px-0 sm:px-4 pb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-1 sm:gap-3 md:gap-4 px-0 sm:px-2 md:px-4 pb-8">
         {[...Array(12)].map((_, i) => (
-          <div key={i} className="aspect-[3/4] bg-gray-200 dark:bg-gray-700 rounded-xl animate-pulse" />
+          <div key={i} className="aspect-[3/4] bg-gray-200 dark:bg-gray-700 rounded-none sm:rounded-xl animate-pulse" />
         ))}
       </div>
     );
@@ -522,19 +594,6 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
       {/* Single column vertical feed (Instagram/Facebook style) */}
       <div className="space-y-1 sm:space-y-6">
         {posts.map((post, index) => {
-          // Debug log for @Unknown issue
-          if (!post.user || !post.user.username) {
-            console.log('⚠️ [DiscoverFeed] Post missing user data:', {
-              postId: post.id,
-              postType: post.post_type,
-              userId: post.user_id,
-              hasUser: !!post.user,
-              username: post.user?.username,
-              hasRoom: !!post.room,
-              roomName: post.room?.name,
-            });
-          }
-          
           return (
           <React.Fragment key={`post-${post.id}`}>
             {/* Regular Post Card */}
@@ -571,19 +630,31 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                         src={getMediaUrl(post.video_url)}
                         poster={getThumbnailUrl(post)}
                         className="w-full h-full object-cover"
-                        muted
+                        muted={unmutedVideoId !== post.id}
                         autoPlay
                         loop
                         playsInline
                       />
                     )}
-                    {/* Muted indicator (only show when video is playing) */}
+                    {/* Mute/Unmute Button - Top Left Overlay */}
                     {!dataSaverEnabled && (
-                      <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm p-2 rounded-full">
-                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
-                        </svg>
-                      </div>
+                      <button
+                        onClick={(e) => toggleVideoMute(e, post.id)}
+                        className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm p-2 rounded-full hover:bg-black/80 transition-colors z-20"
+                        title={unmutedVideoId === post.id ? 'Mute' : 'Unmute'}
+                      >
+                        {unmutedVideoId === post.id ? (
+                          // Unmuted Icon (speaker with sound waves)
+                          <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
+                          </svg>
+                        ) : (
+                          // Muted Icon (X through speaker)
+                          <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </button>
                     )}
                     {/* REC badge overlay for recordings */}
                     {post.post_type === 'recording' && (
@@ -623,10 +694,61 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                   </div>
                 )}
                 
-                {/* Paid content badge */}
+                {/* Paid content badge — show tokens + NGN equivalent */}
                 {post.is_paid && (
-                  <div className="absolute bottom-3 left-3 bg-yellow-500/95 backdrop-blur-sm px-3 py-1.5 rounded-full">
-                    <span className="text-sm font-bold text-black">₦{post.price}</span>
+                  <div className="absolute bottom-3 left-3 bg-yellow-500/95 backdrop-blur-sm px-3 py-1.5 rounded-full shadow-md">
+                    <span className="text-sm font-bold text-black">
+                      🔒 {parseFloat(post.price || 0).toLocaleString()} tokens
+                      <span className="ml-1.5 text-xs opacity-80">
+                        (≈ ₦{(parseFloat(post.price || 0) * 165).toLocaleString(undefined, { maximumFractionDigits: 0 })})
+                      </span>
+                    </span>
+                  </div>
+                )}
+
+                {/* Mature content overlay: blur + click-through for 18+/Mature rated posts */}
+                {post.show_overlay && !dismissedOverlays.has(post.id) && (
+                  <div
+                    className="absolute inset-0 backdrop-blur-md bg-black/60 flex flex-col items-center justify-center text-center p-4 z-20"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDismissedOverlays(prev => new Set([...prev, post.id]));
+                    }}
+                  >
+                    <div className="bg-red-600 text-white rounded-full p-3 mb-3 shadow-lg">
+                      <span className="text-xl font-black">18+</span>
+                    </div>
+                    <p className="text-white font-bold text-sm mb-1">Sensitive Content</p>
+                    <p className="text-white/70 text-xs mb-3">Tap to view</p>
+                    <button className="px-4 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-full text-xs font-medium transition-colors">
+                      Show anyway
+                    </button>
+                  </div>
+                )}
+
+                {/* Locked-content overlay: blurs the preview and surfaces a Buy CTA */}
+                {isPostLocked(post) && (
+                  <div className="absolute inset-0 bg-black/55 backdrop-blur-sm flex flex-col items-center justify-center text-center p-4 z-10">
+                    <div className="bg-yellow-500 text-black rounded-full p-3 mb-3 shadow-lg">
+                      <Lock className="w-6 h-6" strokeWidth={2.5} />
+                    </div>
+                    <p className="text-white font-bold text-base mb-1">Locked Post</p>
+                    <p className="text-white/80 text-xs mb-3">
+                      Purchase to watch &amp; download
+                    </p>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!currentUser) {
+                          toast.error('Please log in to purchase this post');
+                          return;
+                        }
+                        setPurchaseModalPost(post);
+                      }}
+                      className="px-5 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-full text-sm font-bold shadow-lg transition-colors"
+                    >
+                      Buy for {parseFloat(post.price || 0).toLocaleString()} tokens
+                    </button>
                   </div>
                 )}
               </div>
@@ -637,31 +759,15 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                 <div className="flex items-start gap-3 mb-3">
                   {/* User Avatar (Larger size) */}
                   <div className="flex-shrink-0">
-                    {post.user?.avatar_url ? (
-                      <img
-                        src={post.user.avatar_url}
-                        alt={post.user.username}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedUser(post.user);
-                          setIsUserProfileModalOpen(true);
-                        }}
-                        className="w-14 h-14 rounded-full object-cover border-2 border-blue-500 cursor-pointer hover:border-purple-500 transition-colors"
-                      />
-                    ) : (
-                      <div 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedUser(post.user);
-                          setIsUserProfileModalOpen(true);
-                        }}
-                        className="w-14 h-14 rounded-full bg-blue-600 flex items-center justify-center border-2 border-blue-500 cursor-pointer hover:border-purple-500 transition-colors"
-                      >
-                        <span className="text-white text-xl font-bold">
-                          {post.user?.username?.[0]?.toUpperCase() || 'U'}
-                        </span>
-                      </div>
-                    )}
+                    <Avatar
+                      user={post.user}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedUser(post.user);
+                        setIsUserProfileModalOpen(true);
+                      }}
+                      className="w-14 h-14 rounded-full object-cover border-2 border-blue-500 cursor-pointer hover:border-purple-500 transition-colors"
+                    />
                   </div>
 
                   {/* Title + Username + Followers */}
@@ -721,7 +827,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                       )
                     ) : (
                       /* Follow button for other users' posts */
-                      post.room_id && (
+                      (post.room_id ?? post.user?.main_room_id) ? (
                         <button
                           onClick={(e) => handleFollowToggle(post, e)}
                           className={`px-4 py-2 rounded-full font-medium text-sm transition-colors flex items-center gap-1.5 ${
@@ -742,7 +848,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                             </>
                           )}
                         </button>
-                      )
+                      ) : null
                     )}
                   </div>
                 </div>
@@ -903,9 +1009,8 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                       onMouseEnter={() => setHoveredComment(comment.id)}
                       onMouseLeave={() => setHoveredComment(null)}
                     >
-                      <img
-                        src={comment.user?.avatar_url || '/default-avatar.png'}
-                        alt={comment.user?.username}
+                      <Avatar
+                        user={comment.user}
                         className="w-8 h-8 rounded-full flex-shrink-0"
                       />
                       <div className="flex-1 min-w-0">
@@ -1060,6 +1165,14 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
           isOwnProfile={selectedUser?.id === currentUser?.id}
         />
       )}
+
+      {/* Post Purchase Modal — opens when a logged-in user clicks a locked paid post */}
+      <PostPurchaseModal
+        isOpen={purchaseModalPost !== null}
+        onClose={() => setPurchaseModalPost(null)}
+        post={purchaseModalPost}
+        onSuccess={handlePurchaseSuccess}
+      />
     </div>
   );
 });

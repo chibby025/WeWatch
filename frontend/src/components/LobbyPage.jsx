@@ -12,6 +12,7 @@ import ClassTypeModal from './modals/ClassTypeModal';
 import AccessModal from './AccessModal';
 import InstantWatchInfoModal from './InstantWatchInfoModal';
 import toast, { Toaster } from 'react-hot-toast';
+import Avatar from './Avatar';
 import LobbyLeftSidebar from './LobbyLeftSidebar';
 import UserProfileModal from './UserProfileModal';
 import SettingsModal from './SettingsModal';
@@ -129,6 +130,7 @@ const LobbyPage = () => {
   // ✅ Lobby Chat State
   const [friendsList, setFriendsList] = useState([]); // Users to chat with
   const [selectedChatUser, setSelectedChatUser] = useState(null); // Currently open chat
+  const [lightboxAvatarUser, setLightboxAvatarUser] = useState(null); // Avatar lightbox target (clicked avatar in chat tab)
   const [chatMessages, setChatMessages] = useState({}); // { userId: [messages] }
   const [newChatMessage, setNewChatMessage] = useState('');
   const [chatsLoading, setChatsLoading] = useState(false);
@@ -2097,6 +2099,17 @@ const LobbyPage = () => {
                 break;
                 
               case 'rating_updated':
+                break;
+
+              case 'discover_post_created':
+                // New public post published — refresh discover feed for all viewers
+                if (discoverFeedRef.current?.refresh) {
+                  discoverFeedRef.current.refresh();
+                }
+                break;
+
+              default:
+                break;
             }
           } catch (err) {
             console.error('❌ [LobbyPage WS] Failed to parse message:', err);
@@ -3017,24 +3030,23 @@ const LobbyPage = () => {
                     
                       {/* Schedule Icon - Moved to bottom-right to avoid ellipsis overlap */}
                       {room.has_upcoming_events && (
-                        <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 z-10">
+                        <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 z-20">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               setSelectedRoomForEvents({ id: room.id, name: room.name });
                               setIsEventsModalOpen(true);
                             }}
-                            className="relative hover:opacity-80 transition-opacity"
+                            className="relative w-10 h-10 sm:w-11 sm:h-11 hover:opacity-80 transition-opacity"
                             title="View Scheduled Events"
                           >
-                            <img 
-                              src="/icons/scheduleWatchIcon.svg" 
-                              alt="Scheduled Events" 
-                              className="h-8 w-8 sm:h-10 sm:w-10"
+                            <img
+                              src="/icons/scheduleWatchIcon.svg"
+                              alt="Scheduled Events"
+                              className="w-full h-full"
                             />
-                            {/* Badge with event count */}
-                            <div 
-                              className="absolute top-0 right-0 min-w-[16px] sm:min-w-[20px] h-4 sm:h-5 flex items-center justify-center rounded-full text-white text-[10px] sm:text-xs font-bold px-1 sm:px-1.5 bg-purple-500 shadow-lg"
+                            <div
+                              className="absolute -top-1.5 -right-1.5 min-w-[16px] sm:min-w-[20px] h-4 sm:h-5 flex items-center justify-center rounded-full text-white text-[10px] sm:text-xs font-bold px-1 sm:px-1.5 bg-purple-500 shadow-lg"
                               title={`${room.upcoming_events_count || 0} scheduled event${room.upcoming_events_count !== 1 ? 's' : ''}`}
                             >
                               {room.upcoming_events_count || 0}
@@ -3344,10 +3356,29 @@ const LobbyPage = () => {
                       src={`${import.meta.env.VITE_API_BASE_URL}/${trailer.trailer_url}`}
                       autoPlay 
                       loop 
-                      muted 
+                      muted={videoMuted}
                       playsInline
                       className="w-full h-full object-cover"
                     />
+                    
+                    {/* Mute/Unmute Button - Top Left Overlay */}
+                    <button
+                      onClick={toggleVideoMute}
+                      className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm p-2 rounded-full hover:bg-black/80 transition-colors z-20"
+                      title={videoMuted ? 'Unmute' : 'Mute'}
+                    >
+                      {videoMuted ? (
+                        // Muted Icon (X through speaker)
+                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        // Unmuted Icon (speaker with sound waves)
+                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </button>
                     
                     {/* Gradient overlays */}
                     <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/90 pointer-events-none"></div>
@@ -3613,14 +3644,20 @@ const LobbyPage = () => {
                             borderColor: 
                               session.content_rating === 'G' ? 'rgb(74, 222, 128)' :
                               session.content_rating === 'PG' ? 'rgb(96, 165, 250)' :
+                              session.content_rating === 'Educational' ? 'rgb(59, 130, 246)' :
+                              session.content_rating === 'Religious' ? 'rgb(147, 51, 234)' :
                               session.content_rating === '13+' ? 'rgb(250, 204, 21)' :
+                              session.content_rating === '16+' ? 'rgb(251, 146, 60)' :
                               session.content_rating === '18+' ? 'rgb(248, 113, 113)' :
                               session.content_rating === 'Mature' ? 'rgb(192, 132, 252)' :
                               'rgb(156, 163, 175)',
                             boxShadow: 
                               session.content_rating === 'G' ? 'inset 0 0 12px rgba(74, 222, 128, 0.3), 0 0 12px rgba(74, 222, 128, 0.6), 0 0 24px rgba(74, 222, 128, 0.4)' :
                               session.content_rating === 'PG' ? 'inset 0 0 12px rgba(96, 165, 250, 0.3), 0 0 12px rgba(96, 165, 250, 0.6), 0 0 24px rgba(96, 165, 250, 0.4)' :
+                              session.content_rating === 'Educational' ? 'inset 0 0 12px rgba(59, 130, 246, 0.3), 0 0 12px rgba(59, 130, 246, 0.6), 0 0 24px rgba(59, 130, 246, 0.4)' :
+                              session.content_rating === 'Religious' ? 'inset 0 0 12px rgba(147, 51, 234, 0.3), 0 0 12px rgba(147, 51, 234, 0.6), 0 0 24px rgba(147, 51, 234, 0.4)' :
                               session.content_rating === '13+' ? 'inset 0 0 12px rgba(250, 204, 21, 0.3), 0 0 12px rgba(250, 204, 21, 0.6), 0 0 24px rgba(250, 204, 21, 0.4)' :
+                              session.content_rating === '16+' ? 'inset 0 0 12px rgba(251, 146, 60, 0.3), 0 0 12px rgba(251, 146, 60, 0.6), 0 0 24px rgba(251, 146, 60, 0.4)' :
                               session.content_rating === '18+' ? 'inset 0 0 12px rgba(248, 113, 113, 0.3), 0 0 12px rgba(248, 113, 113, 0.6), 0 0 24px rgba(248, 113, 113, 0.4)' :
                               session.content_rating === 'Mature' ? 'inset 0 0 12px rgba(192, 132, 252, 0.3), 0 0 12px rgba(192, 132, 252, 0.6), 0 0 24px rgba(192, 132, 252, 0.4)' :
                               'inset 0 0 12px rgba(156, 163, 175, 0.3), 0 0 12px rgba(156, 163, 175, 0.6), 0 0 24px rgba(156, 163, 175, 0.4)'
@@ -3630,7 +3667,10 @@ const LobbyPage = () => {
                             src={
                               session.content_rating === 'G' ? '/icons/G Rating Icon.png' :
                               session.content_rating === 'PG' ? '/icons/PG Rating Icon.png' :
+                              session.content_rating === 'Educational' ? '/icons/Educational_Rating_Icon.png' :
+                              session.content_rating === 'Religious' ? '/icons/Religious Rating.png' :
                               session.content_rating === '13+' ? '/icons/13_ Rating Icon.png' :
+                              session.content_rating === '16+' ? '/icons/16_ Rating Icon.png' :
                               session.content_rating === '18+' ? '/icons/18_ Rating Icon.png' :
                               session.content_rating === 'Mature' ? '/icons/Mature Rating Icon.png' :
                               '/icons/G Rating Icon.png'
@@ -3897,11 +3937,16 @@ const LobbyPage = () => {
                                 {/* Avatar with Online Status */}
                                 <div className="relative flex-shrink-0">
                                   <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center text-white font-bold text-lg overflow-hidden ring-2 ring-white dark:ring-gray-800">
-                                    {friend.avatar_url ? (
-                                      <img src={friend.avatar_url} alt={friend.username} className="w-full h-full object-cover" />
-                                    ) : (
-                                      friend.username?.[0]?.toUpperCase() || 'U'
-                                    )}
+                                    <Avatar
+                                      user={friend}
+                                      onClick={(e) => {
+                                        // Click opens the avatar lightbox; don't bubble to the parent button which opens chat.
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        setLightboxAvatarUser(friend);
+                                      }}
+                                      className="w-full h-full object-cover cursor-pointer"
+                                    />
                                   </div>
                                   {/* Online Status Indicator */}
                                   {isOnline && (
@@ -4020,13 +4065,10 @@ const LobbyPage = () => {
                               className="p-2 sm:p-4 flex items-center gap-2 sm:gap-3 border-b border-gray-200 dark:border-gray-700"
                             >
                               {/* Avatar */}
-                              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center text-white font-bold text-base sm:text-lg flex-shrink-0 overflow-hidden">
-                                {requester.avatar_url ? (
-                                  <img src={requester.avatar_url} alt={requester.username} className="w-full h-full object-cover" />
-                                ) : (
-                                  requester.username?.[0]?.toUpperCase() || 'U'
-                                )}
-                              </div>
+                              <Avatar
+                                user={requester}
+                                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover flex-shrink-0 ring-2 ring-green-500"
+                              />
                               
                               {/* Info */}
                               <div className="flex-1 min-w-0">
@@ -4077,13 +4119,10 @@ const LobbyPage = () => {
                               className="p-2 sm:p-4 flex items-center gap-2 sm:gap-3 border-b border-gray-200 dark:border-gray-700"
                             >
                               {/* Avatar */}
-                              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-base sm:text-lg flex-shrink-0 overflow-hidden">
-                                {recipient.avatar_url ? (
-                                  <img src={recipient.avatar_url} alt={recipient.username} className="w-full h-full object-cover" />
-                                ) : (
-                                  recipient.username?.[0]?.toUpperCase() || 'U'
-                                )}
-                              </div>
+                              <Avatar
+                                user={recipient}
+                                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover flex-shrink-0 ring-2 ring-blue-500"
+                              />
                               
                               {/* Info */}
                               <div className="flex-1 min-w-0">
@@ -4133,14 +4172,12 @@ const LobbyPage = () => {
                           </svg>
                         </button>
                         
-                        {/* Friend Avatar */}
-                        <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-base overflow-hidden ring-2 ring-white/30 flex-shrink-0">
-                          {selectedChatUser.avatar_url ? (
-                            <img src={selectedChatUser.avatar_url} alt={selectedChatUser.username} className="w-full h-full object-cover" />
-                          ) : (
-                            selectedChatUser.username?.[0]?.toUpperCase() || 'U'
-                          )}
-                        </div>
+                        {/* Friend Avatar (clickable lightbox) */}
+                        <Avatar
+                          user={selectedChatUser}
+                          onClick={() => setLightboxAvatarUser(selectedChatUser)}
+                          className="w-10 h-10 sm:w-11 sm:h-11 rounded-full object-cover ring-2 ring-white/30 flex-shrink-0 cursor-pointer"
+                        />
                         
                         {/* Friend Info */}
                         <div className="flex-1 min-w-0">
@@ -4879,9 +4916,33 @@ const LobbyPage = () => {
       
       {/* ❤️ Heart Animation for likes */}
       {showHeartAnimation && (
-        <TikTokHeartAnimation 
+        <TikTokHeartAnimation
           onComplete={() => setShowHeartAnimation(false)}
         />
+      )}
+
+      {/* 🔍 Avatar Lightbox — opens when a friend avatar is clicked in the chats tab */}
+      {lightboxAvatarUser && (
+        <div
+          className="fixed inset-0 bg-black/90 z-[80] flex items-center justify-center p-4"
+          onClick={() => setLightboxAvatarUser(null)}
+        >
+          <button
+            onClick={() => setLightboxAvatarUser(null)}
+            className="absolute top-4 right-4 text-white text-3xl leading-none hover:text-gray-300"
+            aria-label="Close avatar"
+          >
+            ×
+          </button>
+          <Avatar
+            user={lightboxAvatarUser}
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-[90vw] max-h-[85vh] w-auto h-auto object-contain rounded-lg shadow-2xl"
+          />
+          <p className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white text-lg font-medium drop-shadow-lg">
+            @{lightboxAvatarUser.username}
+          </p>
+        </div>
       )}
     </div>
   );

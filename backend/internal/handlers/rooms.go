@@ -71,7 +71,7 @@ func CreateRoomHandler(c *gin.Context) {
     // Validate and set content rating (default to 'G')
     contentRating := "G"
     if input.ContentRating != "" {
-        validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
+        validRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
         isValid := false
         for _, rating := range validRatings {
             if input.ContentRating == rating {
@@ -1637,7 +1637,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 	// Validate and set content rating (default to 'G')
 	contentRatingForRoom := "G"
 	if input.ContentRating != "" {
-		validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
+		validRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
 		for _, rating := range validRatings {
 			if input.ContentRating == rating {
 				contentRatingForRoom = rating
@@ -1683,7 +1683,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 	log.Printf("🎬 [CreateInstantWatch] Received content_rating: '%s'", input.ContentRating)
 	contentRating := "G"
 	if input.ContentRating != "" {
-		validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
+		validRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
 		for _, rating := range validRatings {
 			if input.ContentRating == rating {
 				contentRating = rating
@@ -2599,15 +2599,8 @@ func GetActiveSessionHandler(c *gin.Context) {
 		Where("watch_session_members.watch_session_id = ? AND watch_session_members.is_active = ?", session.ID, true).
 		Scan(&members)
 	
-	log.Printf("� [GetActiveSessionHandler] Query completed, found %d members", len(members))
-	for i, member := range members {
-		log.Printf("👤 [GetActiveSessionHandler] Member %d: UserID=%d, Username=%s, AvatarURL=%s, UserRole=%s", 
-			i+1, member.UserID, member.Username, member.AvatarURL, member.UserRole)
-	}
+	// Reduced logging - content_rating: %s (found %d members)
 	
-	log.Printf("✅ [GetActiveSessionHandler] Returning %d active members for session %s", len(members), session.SessionID)
-	log.Printf("🎬 [GetActiveSessionHandler] Session content_rating from DB: '%s'", session.ContentRating)
-
 	// ✅ Fetch host username for ticket purchase modal
 	var hostUser models.User
 	hostName := "Unknown Host"
@@ -2708,7 +2701,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	log.Printf("🔍 [CreateWatchSession] Starting content_rating validation...")
 	log.Printf("  ├─ Input value: '%s' (length: %d)", input.ContentRating, len(input.ContentRating))
 	contentRating := "G" // Default to 'G' if not provided or invalid
-	validRatings := []string{"G", "PG", "13+", "16+", "18+", "Mature"}
+	validRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
 	matched := false
 	for _, rating := range validRatings {
 		log.Printf("  ├─ Comparing '%s' == '%s' ? %v", input.ContentRating, rating, input.ContentRating == rating)

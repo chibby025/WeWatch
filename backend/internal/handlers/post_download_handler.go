@@ -47,23 +47,38 @@ func DownloadPost(c *gin.Context) {
 		return
 	}
 
-	// Check if post allows downloads
-	if !post.AllowDownloads {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": "Downloads are disabled for this post",
-		})
-		return
-	}
+	isOwner := userID != nil && *userID == post.UserID
 
-	// Check if post is public or user has access
-	if !post.IsPublic {
+	// Privacy gate: private posts → owner only
+	if !post.IsPublic && !isOwner {
 		if userID == nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required to download private posts"})
 			return
 		}
-		// Only post owner can download private posts
-		if post.UserID != *userID {
-			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have access to download this post"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "You don't have access to download this post"})
+		return
+	}
+
+	// Access gate:
+	//   Paid posts  → owner OR purchaser (purchase grants permanent download right;
+	//                 AllowDownloads is bypassed once paid)
+	//   Free posts  → respect AllowDownloads (owner always allowed)
+	if post.IsPaid {
+		if !isOwner {
+			if userID == nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required to download paid posts"})
+				return
+			}
+			var purchase models.PostPurchase
+			if err := db.Where("post_id = ? AND user_id = ? AND status = ?", postID, *userID, "completed").
+				First(&purchase).Error; err != nil {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Purchase required to download this post"})
+				return
+			}
+		}
+	} else {
+		if !post.AllowDownloads && !isOwner {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Downloads are disabled for this post"})
 			return
 		}
 	}

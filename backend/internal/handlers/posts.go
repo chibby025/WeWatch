@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -17,6 +18,23 @@ import (
 	"gorm.io/gorm"
 )
 
+// canViewContentRating returns whether a viewer with the given settings is allowed to see a post
+// with the given content rating. G/PG/Educational/Religious are always visible.
+func canViewContentRating(rating string, s models.UserSettings) bool {
+	switch rating {
+	case "13+":
+		return s.CanSee13Plus
+	case "16+":
+		return s.CanSee16Plus
+	case "18+":
+		return s.CanSee18Plus
+	case "Mature":
+		return s.CanSeeMature
+	default: // G, PG, Educational, Religious, or unknown
+		return true
+	}
+}
+
 // CreatePostRequest represents the request body for creating a post
 type CreatePostRequest struct {
 	Title          string   `json:"title" binding:"required,max=255"`
@@ -26,6 +44,7 @@ type CreatePostRequest struct {
 	PostType       string   `json:"post_type" binding:"required,oneof=recording upload"`
 	Duration       *int     `json:"duration"`
 	Resolution     string   `json:"resolution"`
+	ContentRating  string   `json:"content_rating" binding:"omitempty,oneof=G PG Educational Religious 13+ 16+ 18+ Mature"`
 	IsPaid         bool     `json:"is_paid"`
 	Price          *float64 `json:"price"`
 	IsPublic       bool     `json:"is_public"`
@@ -39,6 +58,35 @@ type UpdatePostRequest struct {
 	IsPublic    *bool   `json:"is_public"`
 	IsPaid      *bool   `json:"is_paid"`
 	Price       *float64 `json:"price"`
+}
+
+// PostFeedResponse wraps a Post with per-viewer computed access fields.
+// HasAccess: viewer owns or has purchased the post.
+// IsOwner: viewer is the post creator.
+// CanDownload: viewer is allowed to download (paid=purchased/owner, free=allow_downloads or owner).
+// ShowOverlay: viewer should see a blur/click-through overlay (18+/Mature posts for users who haven't opted out).
+type PostFeedResponse struct {
+	models.Post
+	HasAccess   bool `json:"has_access"`
+	IsOwner     bool `json:"is_owner"`
+	CanDownload bool `json:"can_download"`
+	ShowOverlay bool `json:"show_overlay"`
+}
+
+func buildPostResponse(post models.Post, currentUserID uint, purchasedIDs map[uint]bool, viewerShowMature bool) PostFeedResponse {
+	isOwner := currentUserID > 0 && post.UserID == currentUserID
+	hasAccess := isOwner
+	if !isOwner && purchasedIDs != nil {
+		hasAccess = purchasedIDs[post.ID]
+	}
+	canDownload := false
+	if post.IsPaid {
+		canDownload = hasAccess
+	} else {
+		canDownload = isOwner || post.AllowDownloads
+	}
+	showOverlay := !isOwner && !viewerShowMature && (post.ContentRating == "18+" || post.ContentRating == "Mature")
+	return PostFeedResponse{Post: post, HasAccess: hasAccess, IsOwner: isOwner, CanDownload: canDownload, ShowOverlay: showOverlay}
 }
 
 // CreatePost handles POST /api/posts
@@ -55,6 +103,8 @@ func CreatePost(c *gin.Context) {
 		return
 	}
 
+	log.Printf("🎯 [CreatePost] Starting - UserID: %d, ReqRoomID: %v, ReqTitle: '%s'", userID, req.RoomID, req.Title)
+
 	// Validate price requirements
 	if req.IsPaid {
 		if req.Price == nil || *req.Price <= 0 {
@@ -63,31 +113,63 @@ func CreatePost(c *gin.Context) {
 		}
 	}
 
+	// ✅ Determine which room to post to
+	var roomID *uint = req.RoomID
+	
+	log.Printf("🔍 [CreatePost] Initial roomID from request: %v", roomID)
+	
+	// If no room specified, use user's main room
+	if roomID == nil {
+		var user models.User
+		if err := DB.First(&user, userID).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+			return
+		}
+		
+		log.Printf("🔍 [CreatePost] User %d - MainRoomID: %v, ReqRoomID: %v", userID, user.MainRoomID, req.RoomID)
+		
+		// Use main room if it exists
+		if user.MainRoomID != nil {
+			roomID = user.MainRoomID
+			log.Printf("✅ [CreatePost] Auto-assigning main room %d to post", *roomID)
+		} else {
+			log.Printf("⚠️ [CreatePost] No main room found for user %d", userID)
+		}
+	} else {
+		log.Printf("ℹ️ [CreatePost] RoomID already specified in request: %v", *roomID)
+	}
+	
 	// ✅ If posting to a room, verify user is the room host
-	if req.RoomID != nil {
+	if roomID != nil {
 		var room models.Room
-		if err := DB.First(&room, *req.RoomID).Error; err != nil {
+		if err := DB.First(&room, *roomID).Error; err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
 			return
 		}
 		
 		if room.HostID != userID {
-			log.Printf("⛔ [CreatePost] User %d attempted to post to room %d (not host)", userID, *req.RoomID)
+			log.Printf("⛔ [CreatePost] User %d attempted to post to room %d (not host)", userID, *roomID)
 			c.JSON(http.StatusForbidden, gin.H{"error": "Only room hosts can post to room feeds"})
 			return
 		}
 	}
 
 	// Create post
+	contentRating := req.ContentRating
+	if contentRating == "" {
+		contentRating = "G" // Default to G rating if not specified
+	}
+	
 	post := models.Post{
 		UserID:         userID,
-		RoomID:         req.RoomID,
+		RoomID:         roomID,
 		Title:          req.Title,
 		Description:    req.Description,
 		MediaType:      req.MediaType,
 		PostType:       req.PostType,
 		Duration:       req.Duration,
 		Resolution:     req.Resolution,
+		ContentRating:  contentRating,
 		IsPaid:         req.IsPaid,
 		Price:          req.Price,
 		IsPublic:       req.IsPublic,
@@ -180,6 +262,34 @@ func UploadPostMedia(c *gin.Context) {
 	}
 
 	log.Printf("✅ [UploadPostMedia] Media uploaded for post %d: %s", post.ID, cdnURL)
+
+	// Broadcast to discover feed for all connected users (public posts only).
+	if post.IsPublic {
+		go func(p models.Post) {
+			wsHub := GetWebSocketManager()
+			if wsHub == nil {
+				return
+			}
+			notification := map[string]interface{}{
+				"type": "discover_post_created",
+				"data": map[string]interface{}{
+					"post_id":        p.ID,
+					"author_id":      p.UserID,
+					"title":          p.Title,
+					"thumbnail":      p.ThumbnailURL,
+					"media_type":     p.MediaType,
+					"content_rating": p.ContentRating,
+				},
+				"timestamp": time.Now().Unix(),
+			}
+			notificationJSON, err := json.Marshal(notification)
+			if err != nil {
+				return
+			}
+			wsHub.BroadcastToLobby(OutgoingMessage{Data: notificationJSON, IsBinary: false})
+		}(post)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"video_url":     post.VideoURL,
 		"thumbnail_url": post.ThumbnailURL,
@@ -226,56 +336,119 @@ func GetDiscoverFeed(c *gin.Context) {
 		return
 	}
 
-	// ✅ Filter posts based on user privacy settings
+	// ✅ Filter posts based on user privacy settings.
+	// Batch fetch settings for all unique authors in this page to avoid an N+1 query
+	// per post (previously this loop ran len(posts) sequential SELECTs).
+	authorIDSet := make(map[uint]struct{}, len(posts))
+	for _, p := range posts {
+		authorIDSet[p.UserID] = struct{}{}
+	}
+	authorIDs := make([]uint, 0, len(authorIDSet))
+	for id := range authorIDSet {
+		authorIDs = append(authorIDs, id)
+	}
+	settingsByUser := make(map[uint]models.UserSettings, len(authorIDs))
+	if len(authorIDs) > 0 {
+		var batchSettings []models.UserSettings
+		if err := DB.Where("user_id IN ?", authorIDs).Find(&batchSettings).Error; err == nil {
+			for _, s := range batchSettings {
+				settingsByUser[s.UserID] = s
+			}
+		}
+	}
+
 	var filteredPosts []models.Post
 	for _, post := range posts {
-		// Get post author's privacy settings
-		var authorSettings models.UserSettings
-		err := DB.Where("user_id = ?", post.UserID).First(&authorSettings).Error
-		
-		// If no settings found, default to "public" (allow post)
-		if err == nil {
+		// No settings row = default to "public" (allow post).
+		if authorSettings, ok := settingsByUser[post.UserID]; ok {
 			switch authorSettings.WhoCanSeePosts {
 			case "only_me":
-				// Only show to post author
 				if post.UserID != currentUserID {
-					continue // Skip this post
+					continue
 				}
 			case "friends":
-				// Only show to friends
 				if post.UserID != currentUserID {
-					// Check if current user is friends with post author
 					var friendship models.Friendship
 					err := DB.Where(
 						"((requester_id = ? AND recipient_id = ?) OR (requester_id = ? AND recipient_id = ?)) AND status = ?",
 						currentUserID, post.UserID, post.UserID, currentUserID, "accepted",
 					).First(&friendship).Error
-					
 					if err != nil {
-						continue // Not friends, skip this post
+						continue
 					}
 				}
 			// "public" - show to everyone (no filtering)
 			}
 		}
-		
-		// Post passed privacy check
+
 		filteredPosts = append(filteredPosts, post)
 	}
 
 	// Debug log for posts without user data
 	for _, post := range filteredPosts {
-		log.Printf("🔍 [GetDiscoverFeed] Post %d - UserID: %d, User.ID: %d, User.Username: '%s', HasUser: %v",
-			post.ID, post.UserID, post.User.ID, post.User.Username, post.User.ID != 0)
+		log.Printf("🔍 [GetDiscoverFeed] Post %d - UserID: %d, User.ID: %d, User.Username: '%s', User.MainRoomID: %v, PostRoomID: %v, HasUser: %v",
+			post.ID, post.UserID, post.User.ID, post.User.Username, post.User.MainRoomID, post.RoomID, post.User.ID != 0)
 		
 		if post.User.ID == 0 || post.User.Username == "" {
-			log.Printf("⚠️ [GetDiscoverFeed] Post %d missing user data - UserID: %d, User.ID: %d, User.Username: '%s', RoomID: %v",
-				post.ID, post.UserID, post.User.ID, post.User.Username, post.RoomID)
+			log.Printf("⚠️ [GetDiscoverFeed] Post %d missing user data - UserID: %d, User.ID: %d, User.Username: '%s', User.MainRoomID: %v, PostRoomID: %v",
+				post.ID, post.UserID, post.User.ID, post.User.Username, post.User.MainRoomID, post.RoomID)
 		}
 	}
 
+	// Load viewer settings once — covers both age flags and overlay preference.
+	// Zero-value settings (all flags false) is the correct conservative default for
+	// unauthenticated users or users who haven't provided a DOB yet.
+	var viewerSettings models.UserSettings
+	if currentUserID > 0 {
+		DB.Where("user_id = ?", currentUserID).First(&viewerSettings)
+
+		// Lazy yearly recompute: if the flags were computed in a previous calendar year
+		// (e.g. the user turned 13/16/18 since last year), refresh them from DOB.
+		// This is the only path that reads date_of_birth at feed-load time, and it fires
+		// at most once per year per user.
+		if viewerSettings.AgeFlagsYear != time.Now().Year() {
+			var viewerUser models.User
+			if err := DB.Select("id, date_of_birth").First(&viewerUser, currentUserID).Error; err == nil {
+				saveAgeFlagsForUser(DB, currentUserID, viewerUser.GetAge())
+				// Reload so the filter below uses fresh values.
+				DB.Where("user_id = ?", currentUserID).First(&viewerSettings)
+			}
+		}
+	}
+
+	// Filter posts by content rating using pre-computed age flags.
+	ratingFiltered := make([]models.Post, 0, len(filteredPosts))
+	for _, p := range filteredPosts {
+		if canViewContentRating(p.ContentRating, viewerSettings) {
+			ratingFiltered = append(ratingFiltered, p)
+		}
+	}
+	filteredPosts = ratingFiltered
+
+	viewerShowMature := viewerSettings.ShowMatureContent
+
+	// Batch-check which posts the current user has purchased (one query for the whole page).
+	purchasedIDs := make(map[uint]bool)
+	if currentUserID > 0 && len(filteredPosts) > 0 {
+		postIDs := make([]uint, 0, len(filteredPosts))
+		for _, p := range filteredPosts {
+			postIDs = append(postIDs, p.ID)
+		}
+		var purchases []models.PostPurchase
+		DB.Where("user_id = ? AND post_id IN ? AND status = ?", currentUserID, postIDs, "completed").
+			Select("post_id").Find(&purchases)
+		for _, purchase := range purchases {
+			purchasedIDs[purchase.PostID] = true
+		}
+	}
+
+	responsePosts := make([]PostFeedResponse, len(filteredPosts))
+	for i, p := range filteredPosts {
+		responsePosts[i] = buildPostResponse(p, currentUserID, purchasedIDs, viewerShowMature)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"posts":  filteredPosts,
+		"posts":  responsePosts,
 		"limit":  limit,
 		"offset": offset,
 	})
@@ -306,7 +479,27 @@ func GetPost(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"post": post})
+	// Check purchase for paid posts
+	purchasedIDs := make(map[uint]bool)
+	if userID > 0 && post.IsPaid && post.UserID != userID {
+		var purchase models.PostPurchase
+		if err := DB.Where("post_id = ? AND user_id = ? AND status = ?", post.ID, userID, "completed").
+			First(&purchase).Error; err == nil {
+			purchasedIDs[post.ID] = true
+		}
+	}
+
+	var viewerSettings models.UserSettings
+	if userID > 0 {
+		DB.Where("user_id = ?", userID).First(&viewerSettings)
+		// Age-flag check: if viewer can't see this rating at all, treat as not found.
+		if !canViewContentRating(post.ContentRating, viewerSettings) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Post not available for your age group"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"post": buildPostResponse(post, userID, purchasedIDs, viewerSettings.ShowMatureContent)})
 }
 
 // UpdatePost handles PUT /api/posts/:id
@@ -765,6 +958,64 @@ func DeletePostComment(c *gin.Context) {
 
 	log.Printf("✅ [DeletePostComment] Comment %d deleted by user %d", commentID, userID)
 	c.JSON(http.StatusOK, gin.H{"message": "Comment deleted successfully"})
+}
+
+// UpdatePostComment handles PUT /api/posts/:id/comments/:commentId
+func UpdatePostComment(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	postID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid post ID"})
+		return
+	}
+
+	commentID, err := strconv.ParseUint(c.Param("commentId"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid comment ID"})
+		return
+	}
+
+	var comment models.PostComment
+	if err := DB.First(&comment, commentID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Comment not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	if comment.PostID != uint(postID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Comment does not belong to this post"})
+		return
+	}
+
+	if comment.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only edit your own comments"})
+		return
+	}
+
+	var req struct {
+		Content string `json:"content" binding:"required,max=1000"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	comment.Content = req.Content
+	if err := DB.Save(&comment).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update comment"})
+		return
+	}
+
+	DB.Preload("User").First(&comment, comment.ID)
+	c.JSON(http.StatusOK, gin.H{"comment": comment})
 }
 
 // ============================================

@@ -1,6 +1,6 @@
 /**
  * Payment API Service
- * Handles all payment-related API calls for WeWatch Platform
+ * Handles all payment-related API calls for LetsWatchOut Platform
  * 
  * Backend: 44 payment endpoints (Phase 2-3 Complete)
  * - Wallet management
@@ -144,6 +144,22 @@ export const purchaseTicket = async (data) => {
     return response.data;
   } catch (error) {
     console.error('API Error (purchaseTicket):', error);
+    throw error;
+  }
+};
+
+/**
+ * Purchase a paid post/recording with tokens
+ * POST /api/posts/:id/purchase
+ * Backend deducts price from buyer wallet, credits creator 75%, retains 25% for platform.
+ * One purchase per (post, user) — repeated calls return 409.
+ */
+export const purchasePost = async (postId) => {
+  try {
+    const response = await apiClient.post(`/api/posts/${postId}/purchase`);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (purchasePost):', error);
     throw error;
   }
 };
@@ -782,7 +798,7 @@ export const exportPaymentHistory = async (startDate, endDate) => {
     const url = window.URL.createObjectURL(new Blob([response.data]));
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `wewatch_transactions_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `letswatchout_transactions_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -810,6 +826,9 @@ export default {
   // Tickets
   purchaseTicket,
   giftTicket,
+
+  // Posts
+  purchasePost,
   getMyTickets,
   getSessionTickets,
   getTicketSalesSummary,

@@ -6,6 +6,7 @@ import apiClient, { getFollowersCount, joinRoom, leaveRoom } from '../services/a
 import toast from 'react-hot-toast';
 import { formatCount } from '../utils/formatCount';
 import { useAuth } from '../contexts/AuthContext'; // ✅ Use auth context instead of JWT decode
+import Avatar from './Avatar';
 
 const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) => {
   const [isLiked, setIsLiked] = useState(false);
@@ -29,6 +30,16 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
   // Track view on mount
   useEffect(() => {
     if (isOpen && post && !viewTracked) {
+      console.log('🎬 [PostViewModal] Post opened:', {
+        postId: post.id,
+        title: post.title,
+        userId: post.user_id,
+        postRoomId: post.room_id,
+        userMainRoomId: post.user?.main_room_id,
+        effectiveRoomId: post.room_id || post.user?.main_room_id,
+        hasUser: !!post.user,
+        username: post.user?.username,
+      });
       trackView();
       setViewTracked(true);
     }
@@ -56,31 +67,33 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
           });
       }
       
-      // Check if already following
-      if (post.room_id && roomMemberships) {
-        setIsFollowing(roomMemberships.some(rm => rm.room_id === post.room_id));
+      // Check if already following - use post.room_id or fall back to poster's main_room_id
+      const effectiveRoomId = post.room_id || post.user?.main_room_id;
+      console.log('👥 [PostViewModal] Follow check:', {
+        postId: post.id,
+        postRoomId: post.room_id,
+        userMainRoomId: post.user?.main_room_id,
+        effectiveRoomId,
+        roomMembershipsCount: roomMemberships?.length || 0,
+        isFollowing: roomMemberships?.some(rm => rm.room_id === effectiveRoomId) || false,
+      });
+      if (effectiveRoomId && roomMemberships) {
+        setIsFollowing(roomMemberships.some(rm => rm.room_id === effectiveRoomId));
       }
     }
   }, [post?.id, roomMemberships]);
 
-  // Fetch followers count when post changes
+  // Check if user is following - use post.room_id or fall back to poster's main_room_id
   useEffect(() => {
-    const fetchFollowers = async () => {
-      if (post?.user_id) {
-        const count = await getUserFollowersCount(post.user_id);
-        setFollowersCount(count);
-      }
-    };
-    
-    if (isOpen && post) {
-      fetchFollowers();
-    }
-  }, [isOpen, post]);
-
-  // Check if user is following
-  useEffect(() => {
-    if (post?.room_id && roomMemberships) {
-      const following = roomMemberships.some(rm => rm.room_id === post.room_id);
+    const effectiveRoomId = post?.room_id || post?.user?.main_room_id;
+    console.log('🔄 [PostViewModal] Follow state update:', {
+      postId: post?.id,
+      effectiveRoomId,
+      hasRoomMemberships: !!roomMemberships,
+      shouldShowFollowBtn: post?.user_id !== currentUser?.id && !!effectiveRoomId,
+    });
+    if (effectiveRoomId && roomMemberships) {
+      const following = roomMemberships.some(rm => rm.room_id === effectiveRoomId);
       setIsFollowing(following);
     }
   }, [post, roomMemberships]);
@@ -226,20 +239,22 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
       return;
     }
     
-    if (!post?.room_id) {
+    // Use post.room_id or fall back to poster's main_room_id
+    const effectiveRoomId = post?.room_id || post?.user?.main_room_id;
+    if (!effectiveRoomId) {
       toast.error('No room associated with this post');
       return;
     }
     
     try {
       if (isFollowing) {
-        await leaveRoom(post.room_id);
+        await leaveRoom(effectiveRoomId);
         setIsFollowing(false);
         const response = await getFollowersCount(post.user_id);
         setFollowersCount(response.data.followers_count || 0);
         toast.success(`Unfollowed @${post.user?.username}`);
       } else {
-        await joinRoom(post.room_id);
+        await joinRoom(effectiveRoomId);
         setIsFollowing(true);
         const response = await getFollowersCount(post.user_id);
         setFollowersCount(response.data.followers_count || 0);
@@ -253,8 +268,12 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
 
   const handleDownload = async () => {
     if (downloading) return;
-    
-    if (!post.allow_downloads) {
+
+    if (post.is_paid && !post.has_access && !post.is_owner) {
+      toast.error('Purchase this post to download it');
+      return;
+    }
+    if (!post.is_paid && !post.allow_downloads) {
       toast.error('Downloads are disabled for this post');
       return;
     }
@@ -269,7 +288,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
       // Create a temporary anchor element to trigger download
       const link = document.createElement('a');
       link.href = video_url;
-      link.download = filename || `WeWatch_${post.title}_${post.id}.mp4`;
+      link.download = filename || `LetsWatchOut_${post.title}_${post.id}.mp4`;
       link.target = '_blank';
       document.body.appendChild(link);
       link.click();
@@ -411,8 +430,8 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
           <X className="w-6 h-6 text-white" />
         </button>
 
-        {/* Download button (only if downloads are allowed and video exists) */}
-        {post.allow_downloads && post.media_type === 'video' && post.video_url && (
+        {/* Download button — paid posts require purchase/ownership; free posts respect allow_downloads */}
+        {post.media_type === 'video' && post.video_url && post.can_download && (
           <button
             onClick={handleDownload}
             disabled={downloading}
@@ -453,17 +472,10 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
           {/* User info with avatar */}
           <div className="flex items-start gap-3 mb-4">
             {/* User avatar (larger size, always show user, not room) */}
-            {post.user?.avatar_url ? (
-              <img
-                src={post.user.avatar_url.startsWith('http') ? post.user.avatar_url : `${import.meta.env.VITE_API_BASE_URL}/${post.user.avatar_url.startsWith('/') ? post.user.avatar_url.slice(1) : post.user.avatar_url}`}
-                alt={post.user.username}
-                className="w-14 h-14 rounded-full ring-2 ring-blue-500"
-              />
-            ) : (
-              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white font-bold text-lg ring-2 ring-blue-500">
-                {post.user?.username?.charAt(0).toUpperCase() || 'U'}
-              </div>
-            )}
+            <Avatar
+              user={post.user}
+              className="w-14 h-14 rounded-full ring-2 ring-blue-500 object-cover"
+            />
 
             <div className="flex-1">
               {/* Primary: username */}
@@ -475,34 +487,62 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
               </p>
             </div>
 
-            {/* Follow button (hide on own posts) */}
-            {post.user_id !== currentUser?.id && post.room_id && (
-              <button
-                onClick={handleFollowToggle}
-                className={`px-4 py-2 rounded-full font-medium text-sm transition-colors flex items-center gap-1.5 ${
-                  isFollowing
-                    ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                }`}
-              >
-                {isFollowing ? (
-                  <>
-                    <UserCheck className="w-4 h-4" />
-                    Following
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="w-4 h-4" />
-                    Follow
-                  </>
-                )}
-              </button>
+            {/* Follow button - show if viewing another user's post and they have a room (explicit or main) */}
+            {post.user_id !== currentUser?.id && (post.room_id || post.user?.main_room_id) ? (
+              <>
+                {console.log('✅ [PostViewModal] Follow button WILL render for post:', post.id)}
+                <button
+                  onClick={handleFollowToggle}
+                  className={`px-4 py-2 rounded-full font-medium text-sm transition-colors flex items-center gap-1.5 ${
+                    isFollowing
+                      ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  {isFollowing ? (
+                    <>
+                      <UserCheck className="w-4 h-4" />
+                      Following
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="w-4 h-4" />
+                      Follow
+                    </>
+                  )}
+                </button>
+              </>
+            ) : (
+              <>
+                {console.log('❌ [PostViewModal] Follow button HIDDEN for post:', post.id, {
+                  isOwnPost: post.user_id === currentUser?.id,
+                  hasRoomId: !!post.room_id,
+                  hasMainRoomId: !!post.user?.main_room_id,
+                  postRoomId: post.room_id,
+                  userMainRoomId: post.user?.main_room_id,
+                })}
+              </>
             )}
           </div>
 
           {/* Title and description */}
           <div className="mb-4">
-            <h2 className="font-bold text-xl text-white mb-1">{post.title}</h2>
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="font-bold text-xl text-white">{post.title}</h2>
+              {post.content_rating && post.content_rating !== 'G' && (
+                <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-bold ${
+                  post.content_rating === '18+' || post.content_rating === 'Mature'
+                    ? 'bg-red-600 text-white'
+                    : post.content_rating === '16+' || post.content_rating === '13+'
+                    ? 'bg-orange-500 text-white'
+                    : post.content_rating === 'Educational' || post.content_rating === 'Religious'
+                    ? 'bg-teal-600 text-white'
+                    : 'bg-blue-600 text-white'
+                }`}>
+                  {post.content_rating}
+                </span>
+              )}
+            </div>
             {post.description && (
               <p className="text-sm text-gray-300 line-clamp-2">{post.description}</p>
             )}

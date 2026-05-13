@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ClockIcon, TrashIcon, TicketIcon } from '@heroicons/react/24/outline';
+import { ClockIcon, TrashIcon, TicketIcon, XCircleIcon } from '@heroicons/react/24/outline';
 import apiClient from '../services/api';
 import CalendarDropdown from './CalendarDropdown';
 import toast from 'react-hot-toast';
@@ -148,6 +148,18 @@ const ScheduleEventModal = ({
         early_bird_price_tokens: earlyBirdEnabled ? convertFiatToTokens(parseFloat(earlyBirdPriceNaira), 'NGN') : 0,
         early_bird_price_amount: earlyBirdEnabled ? parseFloat(earlyBirdPriceNaira) : 0,
       };
+
+      console.log('📊 [ScheduleModal] Event data prepared:', {
+        watchType: eventData.watch_type,
+        originalWatchType: watchType,
+        startTime: eventData.start_time,
+        title: eventData.title,
+        isPaid: eventData.is_paid,
+        ticketPriceTokens: eventData.ticket_price_tokens,
+        ticketPriceAmount: eventData.ticket_price_amount,
+        ticketPriceCurrency: eventData.ticket_price_currency,
+        earlyBirdEnabled: eventData.early_bird_enabled,
+      });
 
       await onCreate(eventData);
       
@@ -661,181 +673,197 @@ const ScheduleEventModal = ({
                   const hasUserTicket = userTickets[event.ID];
                   const isEarlyBird = event.early_bird_enabled && event.early_bird_active;
                   const ticketPrice = isEarlyBird ? event.early_bird_price_tokens : event.ticket_price_tokens;
-                  const ticketPriceNaira = isEarlyBird ? event.early_bird_price_amount : event.ticket_price_amount;
-                  
+
                   return (
                     <div
                       key={event.ID}
-                      className={`p-3 sm:p-4 border rounded-lg ${
+                      className={`border rounded-lg overflow-hidden ${
                         isStartingSoon
                           ? 'bg-red-50 dark:bg-red-900/10 border-red-300 dark:border-red-800'
                           : 'bg-gray-50 dark:bg-gray-700/50 border-gray-200 dark:border-gray-600'
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-2 sm:gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            {isStartingSoon && (
-                              <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
-                            )}
-                            <h4 className="font-bold text-sm sm:text-base text-gray-900 dark:text-white truncate">{event.title}</h4>
-                            {event.is_paid && (
-                              <span className="flex-shrink-0 px-2 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded">
-                                Paid
-                              </span>
-                            )}
-                          </div>
+                      {/* Card body */}
+                      <div className="p-3 sm:p-4">
+                        {/* Title row */}
+                        <div className="flex items-center gap-2 mb-1">
+                          {isStartingSoon && (
+                            <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
+                          )}
+                          <h4 className="font-bold text-sm sm:text-base text-gray-900 dark:text-white truncate">{event.title}</h4>
+                          {event.is_paid && (
+                            <span className="flex-shrink-0 px-2 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded">
+                              Paid
+                            </span>
+                          )}
+                          {isEarlyBird && !hasUserTicket && (
+                            <span className="flex-shrink-0 px-2 py-0.5 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded">
+                              🎉 Early Bird
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Description */}
+                        {event.description && (
                           <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 line-clamp-2">
-                            {event.description || 'No description'}
+                            {event.description}
                           </p>
-                          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mb-3">
+                        )}
+
+                        {/* Badges */}
+                        <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-gray-500 dark:text-gray-400">
+                          <span className="flex items-center gap-1">
+                            <ClockIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                            <span>{formatEventTime(event.start_time)}</span>
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-xs sm:text-sm font-medium ${
+                            isStartingSoon
+                              ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                              : 'bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                          }`}>
+                            {getTimeUntilEvent(event.start_time)}
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-xs sm:text-sm bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">
+                            {event.watch_type === '3d_cinema' ? '🎬' : event.watch_type === 'classroom' ? '🎓' : '📺'}
+                            <span className="ml-1">
+                              {event.watch_type === '3d_cinema' ? '3D Cinema' : event.watch_type === 'classroom' ? 'Lecture Hall' : 'Video Watch'}
+                            </span>
+                          </span>
+                          {event.is_paid ? (
                             <span className="flex items-center gap-1">
-                              <ClockIcon className="h-3 w-3 sm:h-4 sm:w-4" />
-                              <span className="hidden sm:inline">{formatEventTime(event.start_time)}</span>
-                              <span className="sm:hidden">{new Date(event.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                              <TicketIcon className="h-4 w-4" />
+                              {event.tickets_sold || 0} sold
                             </span>
-                            <span className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded text-[10px] sm:text-xs ${
-                              getTimeUntilEvent(event.start_time) === 'ENDED'
-                                ? 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 line-through'
-                                : isStartingSoon
-                                ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
-                                : 'bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
-                            }`}>
-                              {getTimeUntilEvent(event.start_time)}
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <TicketIcon className="h-4 w-4" />
+                              {event.rsvp_count || 0} RSVP'd
                             </span>
-                            <span className="px-1.5 py-0.5 sm:px-2 sm:py-1 rounded text-[10px] sm:text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">
-                              {event.watch_type === '3d_cinema' ? '🎬' : event.watch_type === 'classroom' ? '🎓' : '📺'}
-                              <span className="hidden sm:inline ml-1">
-                                {event.watch_type === '3d_cinema' ? '3D Cinema' : event.watch_type === 'classroom' ? 'Lecture Hall' : 'Video Watch'}
-                              </span>
-                            </span>
-                            {event.is_paid ? (
-                              <span className="flex items-center gap-1 text-xs">
-                                <TicketIcon className="h-3 w-3" />
-                                {event.tickets_sold || 0} sold
-                              </span>
-                            ) : (
-                              <span className="flex items-center gap-1 text-xs">
-                                <TicketIcon className="h-3 w-3" />
-                                {event.rsvp_count || 0} RSVP'd
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Action Button */}
-                          <div className="flex items-center gap-2">
-                            {hasUserTicket ? (
-                              <div className="flex items-center gap-2">
-                                <span className="flex items-center gap-1 px-3 py-1.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded text-sm font-medium">
-                                  ✅ {event.is_paid ? 'Ticket Purchased' : 'RSVP\'d'}
+                          )}
+                          {event.is_paid && (
+                            <span className="font-semibold text-purple-700 dark:text-purple-400">
+                              {formatTokens(ticketPrice)}
+                              {isEarlyBird && (
+                                <span className="ml-1 line-through text-gray-400 text-[10px]">
+                                  {formatTokens(event.ticket_price_tokens)}
                                 </span>
-                                {!event.is_paid && (
-                                  <button
-                                    onClick={() => handleCancelRSVP(event.ID)}
-                                    disabled={actionLoading[event.ID]}
-                                    className="px-3 py-1.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded text-sm hover:bg-red-200 dark:hover:bg-red-900/50 disabled:opacity-50"
-                                  >
-                                    {actionLoading[event.ID] ? 'Cancelling...' : 'Cancel RSVP'}
-                                  </button>
-                                )}
-                              </div>
-                            ) : (
-                              <>
-                                {event.is_paid ? (
-                                  <div className="w-full">
-                                    {/* Buy Ticket / Gift Ticket Button */}
-                                    {giftingEventId === event.ID ? (
-                                      /* Gift Mode - Show input */
-                                      <div className="space-y-2">
-                                        <input
-                                          type="text"
-                                          value={giftRecipientUsername}
-                                          onChange={(e) => setGiftRecipientUsername(e.target.value)}
-                                          placeholder="Enter recipient's username"
-                                          className="w-full px-3 py-2 border rounded text-sm dark:bg-gray-700 dark:border-gray-600"
-                                        />
-                                        <div className="flex gap-2">
-                                          <button
-                                            onClick={() => handlePurchaseTicket(event.ID, true)}
-                                            disabled={actionLoading[event.ID] || !giftRecipientUsername.trim()}
-                                            className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 bg-pink-600 hover:bg-pink-700 text-white rounded text-sm font-medium disabled:opacity-50"
-                                          >
-                                            <span>🎁</span>
-                                            {actionLoading[event.ID] ? 'Gifting...' : 
-                                              `Gift (${formatTokens(ticketPrice + calculateTransferFee(ticketPrice))})`}
-                                          </button>
-                                          <button
-                                            onClick={() => {
-                                              setGiftingEventId(null);
-                                              setGiftRecipientUsername('');
-                                            }}
-                                            className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 rounded text-sm"
-                                          >
-                                            Cancel
-                                          </button>
-                                        </div>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                                          Ticket: {formatTokens(ticketPrice)} + Transfer fee (5%): {formatTokens(calculateTransferFee(ticketPrice))}
-                                        </p>
-                                      </div>
-                                    ) : (
-                                      /* Normal Mode - Show buttons */
-                                      <div className="flex gap-2">
-                                        <button
-                                          onClick={() => handlePurchaseTicket(event.ID, false)}
-                                          disabled={actionLoading[event.ID]}
-                                          className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm font-medium disabled:opacity-50"
-                                        >
-                                          <TicketIcon className="h-4 w-4" />
-                                          {actionLoading[event.ID] ? 'Purchasing...' : 
-                                            isEarlyBird ? `Buy Early Bird (${formatTokens(ticketPrice)})` : 
-                                            `Buy Ticket (${formatTokens(ticketPrice)})`}
-                                        </button>
-                                        <button
-                                          onClick={() => setGiftingEventId(event.ID)}
-                                          disabled={actionLoading[event.ID]}
-                                          className="px-3 py-1.5 bg-pink-100 hover:bg-pink-200 dark:bg-pink-900/30 dark:hover:bg-pink-900/50 text-pink-700 dark:text-pink-400 rounded text-sm font-medium disabled:opacity-50"
-                                          title="Gift this ticket to someone"
-                                        >
-                                          🎁
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <button
-                                    onClick={() => handleRSVP(event.ID)}
-                                    disabled={actionLoading[event.ID]}
-                                    className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-sm font-medium disabled:opacity-50"
-                                  >
-                                    <TicketIcon className="h-4 w-4" />
-                                    {actionLoading[event.ID] ? 'Booking...' : 'Book Free Spot'}
-                                  </button>
-                                )}
-                              </>
-                            )}
-                          </div>
+                              )}
+                            </span>
+                          )}
+                        </div>
 
-                          {/* Early Bird Notice */}
-                          {event.is_paid && isEarlyBird && !hasUserTicket && (
-                            <p className="mt-2 text-xs text-green-600 dark:text-green-400">
-                              🎉 Early bird pricing! Save {formatTokens(event.ticket_price_tokens - event.early_bird_price_tokens)} 
-                              (Regular: {formatTokens(event.ticket_price_tokens)})
+                        {/* Gift mode input */}
+                        {giftingEventId === event.ID && (
+                          <div className="mt-3 space-y-2">
+                            <input
+                              type="text"
+                              value={giftRecipientUsername}
+                              onChange={(e) => setGiftRecipientUsername(e.target.value)}
+                              placeholder="Enter recipient's username"
+                              className="w-full px-3 py-2 border rounded text-sm dark:bg-gray-700 dark:border-gray-600"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handlePurchaseTicket(event.ID, true)}
+                                disabled={actionLoading[event.ID] || !giftRecipientUsername.trim()}
+                                className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded text-sm font-medium disabled:opacity-50"
+                              >
+                                🎁 {actionLoading[event.ID] ? 'Gifting...' : `Gift (${formatTokens(ticketPrice + calculateTransferFee(ticketPrice))})`}
+                              </button>
+                              <button
+                                onClick={() => { setGiftingEventId(null); setGiftRecipientUsername(''); }}
+                                className="px-3 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 rounded text-sm"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              Ticket: {formatTokens(ticketPrice)} + 5% fee: {formatTokens(calculateTransferFee(ticketPrice))}
                             </p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-                          <CalendarDropdown event={event} roomUrl={roomUrl} />
-                          {isHost && (
-                            <button
-                              onClick={() => handleDeleteEvent(event.ID)}
-                              className="p-1.5 sm:p-2 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                              title="Delete event"
-                            >
-                              <TrashIcon className="h-4 w-4 sm:h-5 sm:w-5" />
-                            </button>
-                          )}
-                        </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Action row */}
+                      <div className="px-3 pb-3 pt-2 border-t border-gray-100 dark:border-gray-700 flex items-center justify-around gap-1">
+                        {hasUserTicket ? (
+                          <>
+                            <div className="flex flex-col items-center gap-1 p-2">
+                              <span className="text-xl leading-none">✅</span>
+                              <span className="text-[10px] text-green-700 dark:text-green-400 font-medium text-center">
+                                {event.is_paid ? 'Purchased' : "RSVP'd"}
+                              </span>
+                            </div>
+                            <CalendarDropdown event={event} roomUrl={roomUrl} large />
+                            {!event.is_paid && (
+                              <button
+                                onClick={() => handleCancelRSVP(event.ID)}
+                                disabled={actionLoading[event.ID]}
+                                className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+                              >
+                                <XCircleIcon className="h-6 w-6 text-red-500 dark:text-red-400" />
+                                <span className="text-[10px] text-red-600 dark:text-red-400">
+                                  {actionLoading[event.ID] ? 'Cancelling…' : 'Cancel'}
+                                </span>
+                              </button>
+                            )}
+                            {isHost && (
+                              <button
+                                onClick={() => handleDeleteEvent(event.ID)}
+                                className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                              >
+                                <TrashIcon className="h-6 w-6 text-red-500" />
+                                <span className="text-[10px] text-red-600">Delete</span>
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            {event.is_paid ? (
+                              <button
+                                onClick={() => handlePurchaseTicket(event.ID, false)}
+                                disabled={actionLoading[event.ID] || giftingEventId === event.ID}
+                                className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors disabled:opacity-50"
+                              >
+                                <TicketIcon className="h-6 w-6 text-purple-600 dark:text-purple-400" />
+                                <span className="text-[10px] text-purple-700 dark:text-purple-400 font-medium text-center leading-tight">
+                                  {actionLoading[event.ID] ? 'Buying…' : isEarlyBird ? 'Early Bird' : 'Buy Ticket'}
+                                </span>
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleRSVP(event.ID)}
+                                disabled={actionLoading[event.ID]}
+                                className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors disabled:opacity-50"
+                              >
+                                <TicketIcon className="h-6 w-6 text-green-600 dark:text-green-400" />
+                                <span className="text-[10px] text-green-700 dark:text-green-400 font-medium">
+                                  {actionLoading[event.ID] ? 'Booking…' : 'Book Free'}
+                                </span>
+                              </button>
+                            )}
+                            <CalendarDropdown event={event} roomUrl={roomUrl} large />
+                            {event.is_paid && giftingEventId !== event.ID && (
+                              <button
+                                onClick={() => setGiftingEventId(event.ID)}
+                                disabled={actionLoading[event.ID]}
+                                className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-pink-50 dark:hover:bg-pink-900/20 transition-colors disabled:opacity-50"
+                              >
+                                <span className="text-xl leading-none">🎁</span>
+                                <span className="text-[10px] text-pink-600 dark:text-pink-400">Gift</span>
+                              </button>
+                            )}
+                            {isHost && (
+                              <button
+                                onClick={() => handleDeleteEvent(event.ID)}
+                                className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                              >
+                                <TrashIcon className="h-6 w-6 text-red-500" />
+                                <span className="text-[10px] text-red-600">Delete</span>
+                              </button>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
                   );

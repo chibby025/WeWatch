@@ -40,7 +40,7 @@ const ProfilePage = () => {
   
   return (
     <div>
-      <img src={user.avatar_url} className="w-20 h-20 rounded-full" />
+      <img src={user.avatar_url} className="w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 rounded-full" />
       <input type="file" onChange={(e) => setNewAvatar(e.target.files[0])} />
       <button onClick={handleAvatarUpload}>Upload Avatar</button>
     </div>

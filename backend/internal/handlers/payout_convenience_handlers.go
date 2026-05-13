@@ -48,7 +48,7 @@ func GetMyPayouts(c *gin.Context) {
 		if payout.AmountValue != nil {
 			amount = *payout.AmountValue
 		} else if payout.AmountTokens != nil {
-			amount = float64(*payout.AmountTokens) * 165.0 / 100.0 // Convert token units to NGN
+			amount = float64(*payout.AmountTokens) * 122.0 / 100.0 // Convert token units to NGN at withdrawal rate
 		}
 		
 		totalRequested += amount

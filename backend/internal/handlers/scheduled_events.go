@@ -87,8 +87,8 @@ func CreateScheduledEventHandler(c *gin.Context) {
 	}
 
 	// 5. Validate watch_type
-	if input.WatchType != "3d_cinema" && input.WatchType != "video_watch" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid watch_type. Must be '3d_cinema' or 'video_watch'"})
+	if input.WatchType != "3d_cinema" && input.WatchType != "video_watch" && input.WatchType != "classroom" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid watch_type. Must be '3d_cinema', 'classroom', or 'video_watch'"})
 		return
 	}
 
@@ -393,7 +393,72 @@ func DeleteScheduledEventHandler(c *gin.Context) {
 		return
 	}
 
-	// 5. Delete the event
+	// 5. Auto-refund paid tickets before deleting
+	var paidTickets []models.EventTicket
+	if err := DB.Where(
+		"scheduled_event_id = ? AND payment_method = ? AND is_refunded = ? AND is_cancelled = ?",
+		event.ID, "tokens", false, false,
+	).Find(&paidTickets).Error; err != nil {
+		log.Printf("Error fetching tickets for refund: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tickets for refund"})
+		return
+	}
+
+	if len(paidTickets) > 0 {
+		refundTx := DB.Begin()
+		defer func() {
+			if r := recover(); r != nil {
+				refundTx.Rollback()
+			}
+		}()
+
+		refundedAt := time.Now()
+		for _, ticket := range paidTickets {
+			// Gifted tickets refund to the gifter, not the recipient
+			refundRecipientID := ticket.UserID
+			if ticket.IsGift && ticket.GiftedByUserID != nil {
+				refundRecipientID = *ticket.GiftedByUserID
+			}
+
+			if err := refundTx.Model(&models.UserWallet{}).
+				Where("user_id = ?", refundRecipientID).
+				Update("token_balance", gorm.Expr("token_balance + ?", ticket.TicketPriceTokens)).Error; err != nil {
+				refundTx.Rollback()
+				log.Printf("Error refunding tokens to user %d: %v", refundRecipientID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process refunds"})
+				return
+			}
+
+			if err := refundTx.Model(&models.UserWallet{}).
+				Where("user_id = ?", event.HostUserID).
+				Update("token_balance", gorm.Expr("token_balance - ?", ticket.TicketPriceTokens)).Error; err != nil {
+				refundTx.Rollback()
+				log.Printf("Error deducting refund from host %d: %v", event.HostUserID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process refunds"})
+				return
+			}
+
+			if err := refundTx.Model(&ticket).Updates(map[string]interface{}{
+				"is_refunded": true,
+				"refunded_at": refundedAt,
+			}).Error; err != nil {
+				refundTx.Rollback()
+				log.Printf("Error marking ticket %d refunded: %v", ticket.ID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to mark tickets as refunded"})
+				return
+			}
+		}
+
+		if err := refundTx.Commit().Error; err != nil {
+			log.Printf("Error committing refunds: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete refunds"})
+			return
+		}
+
+		log.Printf("✅ [DeleteEvent] Auto-refunded %d paid ticket(s) for event %d '%s'", len(paidTickets), event.ID, event.Title)
+	}
+
+	// 6. Delete the event
 	if err := DB.Delete(&event).Error; err != nil {
 		log.Printf("Error deleting scheduled event: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete event"})
@@ -447,8 +512,8 @@ func UpdateScheduledEventHandler(c *gin.Context) {
 	}
 
 	// 4. Validate watch_type
-	if input.WatchType != "3d_cinema" && input.WatchType != "video_watch" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid watch_type. Must be '3d_cinema' or 'video_watch'"})
+	if input.WatchType != "3d_cinema" && input.WatchType != "video_watch" && input.WatchType != "classroom" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid watch_type. Must be '3d_cinema', 'classroom', or 'video_watch'"})
 		return
 	}
 
