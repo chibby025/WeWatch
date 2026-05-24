@@ -16,13 +16,17 @@ export default function LiveShareWizard({
   currentUser,
   availableCameras = [], // 📹 NEW: Available camera devices
   selectedCameraId = null, // 📹 NEW: Currently selected camera
+  contentRating = '',
 }) {
+  // Derive forced mode from content rating — Religious→church, Educational→regular
+  const forcedMode = contentRating === 'Religious' ? 'church' : contentRating === 'Educational' ? 'regular' : null;
+
   // Wizard state
   const [currentStep, setCurrentStep] = useState(1);
   const [completedSteps, setCompletedSteps] = useState([]);
-  
+
   // Selection state
-  const [selectedMode, setSelectedMode] = useState(null);
+  const [selectedMode, setSelectedMode] = useState(forcedMode || null);
   const [setupData, setSetupData] = useState(null);
   const [selectedShareType, setSelectedShareType] = useState(null);
   const [selectedDeviceId, setSelectedDeviceId] = useState(selectedCameraId); // 📹 Initialize with current camera
@@ -65,18 +69,23 @@ export default function LiveShareWizard({
       ];
     }
 
-    const steps = [{ id: 'mode', name: 'Mode', required: true }];
-    
+    const steps = [];
+
+    // Only show mode selector when no content rating forces a specific mode
+    if (!forcedMode) {
+      steps.push({ id: 'mode', name: 'Mode', required: true });
+    }
+
     // Add setup step for podcast/church/news/show modes
     if (selectedMode && ['podcast', 'church', 'news', 'show'].includes(selectedMode)) {
       steps.push({ id: 'setup', name: 'Setup', required: true });
     }
-    
+
     steps.push(
       { id: 'type', name: 'Share Type', required: true },
       { id: 'layout', name: 'Layout', required: true }
     );
-    
+
     return steps;
   };
 
@@ -298,7 +307,6 @@ export default function LiveShareWizard({
           {currentStepData.id === 'mode' && (
             <LiveShareModeSelector
               onModeSelect={handleModeSelect}
-              watchType={watchType}
               embedded={true}
             />
           )}
@@ -421,8 +429,47 @@ function SetupForm({
   logoY,
   setLogoY,
 }) {
-  // Styling state
   const [showStyling, setShowStyling] = useState(false);
+  const [savedPresets, setSavedPresets] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('wewatch_liveshare_presets') || '[]'); } catch { return []; }
+  });
+  const [newPresetName, setNewPresetName] = useState('');
+
+  const BUILTIN_PRESETS = [
+    { name: 'Classic', titleStyle: { color: '#FFFFFF', size: 24, weight: 700, case: 'none' }, logoStyle: { size: 100, x: 10, y: 80 } },
+    { name: 'Bold',    titleStyle: { color: '#FBBF24', size: 32, weight: 900, case: 'upper' }, logoStyle: { size: 120, x: 15, y: 70 } },
+    { name: 'Minimal', titleStyle: { color: '#D1D5DB', size: 20, weight: 400, case: 'none' }, logoStyle: { size: 80,  x: 10, y: 90 } },
+  ];
+
+  const applyPreset = (preset) => {
+    setTitleColor(preset.titleStyle.color);
+    setTitleSize(preset.titleStyle.size);
+    setTitleWeight(preset.titleStyle.weight);
+    setTitleCase(preset.titleStyle.case);
+    setLogoSize(preset.logoStyle.size);
+    setLogoX(preset.logoStyle.x);
+    setLogoY(preset.logoStyle.y);
+  };
+
+  const saveCurrentAsPreset = () => {
+    const name = newPresetName.trim();
+    if (!name) return;
+    const preset = {
+      name,
+      titleStyle: { color: titleColor, size: titleSize, weight: titleWeight, case: titleCase },
+      logoStyle: { size: logoSize, x: logoX, y: logoY },
+    };
+    const next = [...savedPresets.filter(p => p.name !== name), preset];
+    setSavedPresets(next);
+    localStorage.setItem('wewatch_liveshare_presets', JSON.stringify(next));
+    setNewPresetName('');
+  };
+
+  const deletePreset = (name) => {
+    const next = savedPresets.filter(p => p.name !== name);
+    setSavedPresets(next);
+    localStorage.setItem('wewatch_liveshare_presets', JSON.stringify(next));
+  };
 
   const modeConfig = {
     podcast: { title: 'Podcast Setup', fieldLabel: 'Episode Title', guestLabel: 'Guest' },
@@ -559,6 +606,35 @@ function SetupForm({
 
         {showStyling && (
           <div className="px-4 pb-4 pt-2 space-y-4 border-t border-gray-700">
+            {/* Presets */}
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-2">Presets</label>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {BUILTIN_PRESETS.map(p => (
+                  <button key={p.name} onClick={() => applyPreset(p)}
+                    className="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded text-xs text-gray-300 transition-colors">
+                    {p.name}
+                  </button>
+                ))}
+                {savedPresets.map(p => (
+                  <span key={p.name} className="flex items-center gap-1 pl-2.5 pr-1 py-1 bg-blue-900/40 border border-blue-700/40 rounded text-xs text-blue-300">
+                    <button onClick={() => applyPreset(p)} className="hover:text-white transition-colors">{p.name}</button>
+                    <button onClick={() => deletePreset(p.name)} className="text-gray-500 hover:text-red-400 transition-colors leading-none">×</button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-1.5">
+                <input type="text" value={newPresetName} onChange={e => setNewPresetName(e.target.value)}
+                  placeholder="Save as preset..."
+                  className="flex-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button onClick={saveCurrentAsPreset} disabled={!newPresetName.trim()}
+                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white text-xs rounded transition-colors">
+                  Save
+                </button>
+              </div>
+            </div>
+
             {/* Color Picker */}
             <div>
               <label className="block text-xs font-medium text-gray-400 mb-2">Title Color</label>

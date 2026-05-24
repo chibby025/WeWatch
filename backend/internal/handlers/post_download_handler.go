@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -89,55 +91,134 @@ func DownloadPost(c *gin.Context) {
 		return
 	}
 
-	// Get client info for analytics
-	ipAddress := c.ClientIP()
-	userAgent := c.GetHeader("User-Agent")
+	// --- MP4 pipeline ---
+	// If MP4 is ready, serve it directly
+	if post.Mp4Ready && post.Mp4URL != "" {
+		logAndCount(db, &post, userID, c.ClientIP(), c.GetHeader("User-Agent"))
+		c.JSON(http.StatusOK, gin.H{
+			"video_url": post.Mp4URL,
+			"filename":  generateDownloadFilename(post),
+			"message":   "Download ready",
+		})
+		return
+	}
 
-	// Track download in post_downloads table
+	// If already being transcoded, tell the client to wait
+	if post.Mp4Processing {
+		c.JSON(http.StatusAccepted, gin.H{
+			"status":  "processing",
+			"message": "Your download is being prepared. Please check back in a few minutes.",
+		})
+		return
+	}
+
+	// Kick off background transcoding (first download request triggers it)
+	db.Model(&post).Update("mp4_processing", true)
+	go transcodePostToMp4(db, post)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"status":  "processing",
+		"message": "Your download is being prepared. Please check back in a few minutes.",
+	})
+}
+
+// logAndCount records the download event and increments the counter
+func logAndCount(db *gorm.DB, post *models.Post, userID *uint, ip, ua string) {
 	download := models.PostDownload{
-		PostID:       uint(postID),
+		PostID:       post.ID,
 		UserID:       userID,
-		IPAddress:    ipAddress,
-		UserAgent:    userAgent,
+		IPAddress:    ip,
+		UserAgent:    ua,
 		DownloadedAt: time.Now(),
 	}
-
 	if err := db.Create(&download).Error; err != nil {
 		log.Printf("⚠️ [DownloadPost] Failed to log download: %v", err)
-		// Continue even if logging fails
 	}
-
-	// Increment downloads_count
-	if err := db.Model(&post).Update("downloads_count", gorm.Expr("downloads_count + 1")).Error; err != nil {
+	if err := db.Model(post).Update("downloads_count", gorm.Expr("downloads_count + 1")).Error; err != nil {
 		log.Printf("⚠️ [DownloadPost] Failed to increment download count: %v", err)
-		// Continue even if count increment fails
+	}
+}
+
+// transcodePostToMp4 runs in a background goroutine.
+// Downloads the source WebM, transcodes to H.264 MP4 with watermark, uploads to BunnyCDN.
+func transcodePostToMp4(db *gorm.DB, post models.Post) {
+	log.Printf("🎬 [Transcode] Starting MP4 conversion for post %d (source: %s)", post.ID, post.VideoURL)
+
+	// Look up the post owner's username for the watermark text
+	var owner models.User
+	watermarkText := ""
+	if err := db.Select("username").First(&owner, post.UserID).Error; err == nil && owner.Username != "" {
+		watermarkText = "@" + owner.Username
 	}
 
-	log.Printf("📥 [DownloadPost] Post %d downloaded by user %v (IP: %s)", postID, userID, ipAddress)
+	// Logo watermark path — set WATERMARK_LOGO_PATH env var to enable
+	logoPath := os.Getenv("WATERMARK_LOGO_PATH")
 
-	// Return video URL for frontend to trigger download
-	// Frontend will use this URL with download attribute
-	c.JSON(http.StatusOK, gin.H{
-		"video_url": post.VideoURL,
-		"filename":  generateDownloadFilename(post),
-		"message":   "Download started",
-	})
+	// Step 1: download source to a temp file
+	inputPath, err := utils.DownloadFileToTemp(post.VideoURL, ".webm")
+	if err != nil {
+		log.Printf("❌ [Transcode] Download failed for post %d: %v", post.ID, err)
+		db.Model(&post).Update("mp4_processing", false)
+		return
+	}
+	defer os.Remove(inputPath)
+
+	// Step 2: transcode → temp MP4 (with watermark if configured)
+	outputPath := inputPath + "_out.mp4"
+	defer os.Remove(outputPath)
+
+	if err := utils.TranscodeToMp4(inputPath, outputPath, watermarkText, logoPath); err != nil {
+		log.Printf("❌ [Transcode] FFmpeg failed for post %d: %v", post.ID, err)
+		db.Model(&post).Update("mp4_processing", false)
+		return
+	}
+
+	// Step 3: read the MP4 and upload to BunnyCDN
+	mp4Data, err := os.ReadFile(outputPath)
+	if err != nil {
+		log.Printf("❌ [Transcode] Failed to read output MP4 for post %d: %v", post.ID, err)
+		db.Model(&post).Update("mp4_processing", false)
+		return
+	}
+
+	mp4Filename := fmt.Sprintf("recording_%d_%d.mp4", post.ID, time.Now().Unix())
+	mp4URL, err := utils.UploadToBunnyCDN(mp4Data, mp4Filename, "video/mp4")
+	if err != nil {
+		log.Printf("❌ [Transcode] BunnyCDN upload failed for post %d: %v", post.ID, err)
+		db.Model(&post).Update("mp4_processing", false)
+		return
+	}
+
+	// Step 4: update post record
+	if err := db.Model(&post).Updates(map[string]interface{}{
+		"mp4_url":        mp4URL,
+		"mp4_ready":      true,
+		"mp4_processing": false,
+	}).Error; err != nil {
+		log.Printf("❌ [Transcode] DB update failed for post %d: %v", post.ID, err)
+		return
+	}
+
+	log.Printf("✅ [Transcode] Post %d MP4 ready: %s", post.ID, mp4URL)
 }
 
 // generateDownloadFilename creates a user-friendly filename for downloads
 func generateDownloadFilename(post models.Post) string {
-	// Sanitize title for filename
-	title := post.Title
+	// Use description preview as filename base
+	title := post.Description
 	if len(title) > 50 {
 		title = title[:50]
 	}
-	
+	if title == "" {
+		title = fmt.Sprintf("post_%d", post.ID)
+	}
+
 	// Remove special characters
 	for _, char := range []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"} {
 		title = replaceAll(title, char, "-")
 	}
-	
-	// Format: WeWatch_Title_PostID.mp4
+
+	// Format: WeWatch_Desc_PostID.mp4
 	return fmt.Sprintf("WeWatch_%s_%d.mp4", title, post.ID)
 }
 

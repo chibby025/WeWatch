@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
  * SessionEarningsModal - Shows host's earnings from paid session
  * Displays after ending a paid session with earnings > 0
  */
-const SessionEarningsModal = ({ isOpen, onClose, sessionData }) => {
+const SessionEarningsModal = ({ isOpen, onClose, sessionData, contentRating = '' }) => {
+  const isReligious = contentRating === 'Religious';
   const [animatedTokens, setAnimatedTokens] = useState(0);
   const [animatedNGN, setAnimatedNGN] = useState(0);
   const [showConfetti, setShowConfetti] = useState(false);
@@ -110,9 +111,9 @@ const SessionEarningsModal = ({ isOpen, onClose, sessionData }) => {
         <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-6">
           <div className="flex justify-between items-center">
             <div>
-              <h2 className="text-2xl font-bold">Session Earnings</h2>
+              <h2 className="text-2xl font-bold">{isReligious ? 'Offering Received' : 'Session Earnings'}</h2>
               <p className="text-purple-100 mt-1 text-sm">
-                Your earnings from this session
+                {isReligious ? 'Offerings from this service' : 'Your earnings from this session'}
               </p>
             </div>
             <button
@@ -132,10 +133,12 @@ const SessionEarningsModal = ({ isOpen, onClose, sessionData }) => {
           {/* Ticket Sales Summary */}
           <div className="text-center space-y-2">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
-              <span className="text-3xl">🎟️</span>
+              <span className="text-3xl">{isReligious ? '🙏' : '🎟️'}</span>
             </div>
             <h3 className="text-lg font-semibold text-gray-800">
-              {sessionData.total_tickets_sold} {sessionData.total_tickets_sold === 1 ? 'Ticket' : 'Tickets'} Sold
+              {sessionData.total_tickets_sold} {isReligious
+                ? (sessionData.total_tickets_sold === 1 ? 'Offering' : 'Offerings')
+                : (sessionData.total_tickets_sold === 1 ? 'Ticket' : 'Tickets')} Received
             </h3>
           </div>
 

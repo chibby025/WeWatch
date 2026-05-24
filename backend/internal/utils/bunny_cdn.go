@@ -147,6 +147,31 @@ func DeleteFromBunnyCDN(cdnURL string) error {
 	return nil
 }
 
+// DownloadFileToTemp downloads a remote URL (CDN or any HTTPS) to a temporary local file.
+// Returns the temp file path. Caller is responsible for deleting it.
+func DownloadFileToTemp(remoteURL string, suffix string) (string, error) {
+	resp, err := http.Get(remoteURL)
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned status %d", resp.StatusCode)
+	}
+
+	tmpFile, err := os.CreateTemp("", "ww_transcode_*"+suffix)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer tmpFile.Close()
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("failed to write temp file: %w", err)
+	}
+	return tmpFile.Name(), nil
+}
+
 // GenerateThumbnailURL generates a thumbnail URL using BunnyCDN's image processing
 // Example: ?width=320&height=240&aspect_ratio=16:9
 func GenerateThumbnailURL(cdnURL string, width int, height int) string {
@@ -211,6 +236,46 @@ func ValidateBunnyCDNConfig() error {
 	return nil
 }
 
+// UploadTrailerToBunnyCDN uploads a trailer video to BunnyCDN under the trailers/ subdirectory
+func UploadTrailerToBunnyCDN(fileData []byte, filename string, contentType string) (string, error) {
+	if BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {
+		log.Println("⚠️  BunnyCDN not configured, using local storage fallback")
+		return uploadTrailerToLocalStorage(fileData, filename)
+	}
+
+	sanitizedFilename := sanitizeFilename(filename)
+	timestamp := time.Now().Unix()
+	uniqueFilename := fmt.Sprintf("trailers/%d_%s", timestamp, sanitizedFilename)
+
+	uploadURL := fmt.Sprintf("%s/%s", getBunnyCDNStorageURL(), uniqueFilename)
+
+	log.Printf("📤 [BunnyCDN] Uploading trailer: %s (%d bytes)", uniqueFilename, len(fileData))
+
+	req, err := http.NewRequest("PUT", uploadURL, bytes.NewReader(fileData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create upload request: %w", err)
+	}
+	req.Header.Set("AccessKey", BunnyCDNAccessKey)
+	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = int64(len(fileData))
+
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	cdnURL := fmt.Sprintf("%s/%s", BunnyCDNPullZoneURL, uniqueFilename)
+	log.Printf("✅ [BunnyCDN] Trailer upload successful: %s", cdnURL)
+	return cdnURL, nil
+}
+
 // --- LOCAL STORAGE FALLBACK (Development Only) ---
 
 // uploadToLocalStorage saves file to ./uploads/posts/ directory
@@ -250,15 +315,36 @@ func deleteFromLocalStorage(localURL string) error {
 	if len(parts) < 3 {
 		return fmt.Errorf("invalid local URL: %s", localURL)
 	}
-	
+
 	filename := parts[len(parts)-1]
 	filePath := filepath.Join("./uploads/posts", filename)
-	
+
 	// Delete file
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete file: %w", err)
 	}
-	
+
 	log.Printf("✅ [Local Storage] File deleted: %s", filePath)
 	return nil
+}
+
+// uploadTrailerToLocalStorage saves trailer to ./uploads/trailers/ (dev fallback)
+func uploadTrailerToLocalStorage(fileData []byte, filename string) (string, error) {
+	dir := "./uploads/trailers"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create trailers directory: %w", err)
+	}
+
+	sanitizedFilename := sanitizeFilename(filename)
+	timestamp := time.Now().Unix()
+	uniqueFilename := fmt.Sprintf("%d_%s", timestamp, sanitizedFilename)
+	filePath := filepath.Join(dir, uniqueFilename)
+
+	if err := os.WriteFile(filePath, fileData, 0644); err != nil {
+		return "", fmt.Errorf("failed to write file: %w", err)
+	}
+
+	localURL := fmt.Sprintf("/uploads/trailers/%s", uniqueFilename)
+	log.Printf("✅ [Local Storage] Trailer saved: %s", localURL)
+	return localURL, nil
 }

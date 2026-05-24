@@ -81,37 +81,37 @@ export default function LiveShareLayoutSelector({
         {/* Mute All Members Toggle */}
         {setMuteAllMembers && (
           <div className="mb-6 bg-gray-800/50 rounded-xl p-4 border-2 border-gray-700">
-            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
                   <span className="text-xl">🔇</span>
                   <label htmlFor="mute-all-toggle" className="text-base font-semibold text-white">
                     Mute All Members
                   </label>
                 </div>
-                <p className="text-sm text-gray-400 leading-relaxed">
-                  {mode === 'podcast' || mode === 'church' || mode === 'news' || mode === 'show' 
-                    ? hasGuest
-                      ? 'Only you and your guest can speak. All other members will be muted.'
-                      : 'Only you can speak. All members will be muted and can only listen.'
-                    : 'All members will be muted. Only you can speak to the room.'
-                  }
-                </p>
-              </div>
-              <button
-                type="button"
-                id="mute-all-toggle"
-                onClick={() => setMuteAllMembers(!muteAllMembers)}
-                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
-                  muteAllMembers ? 'bg-purple-600' : 'bg-gray-600'
-                }`}
-              >
-                <span
-                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                    muteAllMembers ? 'translate-x-5' : 'translate-x-0'
+                <button
+                  type="button"
+                  id="mute-all-toggle"
+                  onClick={() => setMuteAllMembers(!muteAllMembers)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 self-center cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
+                    muteAllMembers ? 'bg-purple-600' : 'bg-gray-600'
                   }`}
-                />
-              </button>
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      muteAllMembers ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className="text-sm text-gray-400 leading-relaxed">
+                {mode === 'podcast' || mode === 'church' || mode === 'news' || mode === 'show'
+                  ? hasGuest
+                    ? 'Only you and your guest can speak. All other members will be muted.'
+                    : 'Only you can speak. All members will be muted and can only listen.'
+                  : 'All members will be muted. Only you can speak to the room.'
+                }
+              </p>
             </div>
             
             {/* Active State Indicator */}

@@ -27,18 +27,12 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
   const [hasAcceptedDeclaration, setHasAcceptedDeclaration] = useState(false);
   const requiresDeclaration = watchType === 'video' || watchType === '3d_cinema';
 
-  // Get ticket image based on watch type
+  // Get ticket image based on watch type (live sessions have no content_rating)
   const getTicketImage = () => {
-    const type = watchType?.toLowerCase() || 'cinema';
-    
-    if (type === 'classroom' || type === 'lecture_hall') {
-      return '/icons/LectureTicket.png';
-    }
-    if (type.includes('video')) {
-      return '/icons/TheaterTicket.png';
-    }
-    // Cinema (default for 3d_cinema or anything else)
-    return '/icons/CinemaTicket.png';
+    const type = watchType?.toLowerCase() || '';
+    if (type === 'classroom' || type === 'lecture_hall') return '/icons/LectureTicket.png';
+    if (type === '3d_cinema') return '/icons/CinemaTicket.png';
+    return '/icons/VWTicket.png';
   };
 
   // Currency locked to NGN (Paystack Nigeria only)
@@ -85,10 +79,9 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
 
     const amount = parseFloat(priceAmount);
     
-    // Minimum 1 token = ₦122 (withdrawal rate, tokens stored as cents)
-    const minPriceNaira = 122;
+    const minPriceNaira = 50;
     if (amount < minPriceNaira) {
-      setError(`Minimum ticket price is ₦${minPriceNaira} (1 token)`);
+      setError(`Minimum ticket price is ₦${minPriceNaira}`);
       return;
     }
     
@@ -282,6 +275,30 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
                   </p>
                 </div>
 
+                {/* Price Suggestions */}
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide" style={{fontFamily: "'Courier New', monospace"}}>
+                    Quick Select
+                  </label>
+                  <div className="flex gap-2 flex-wrap">
+                    {[50, 100, 200, 1000].map(preset => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setPriceAmount(String(preset))}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-semibold border-2 transition-all ${
+                          parseFloat(priceAmount) === preset
+                            ? 'bg-amber-500 text-white border-amber-500'
+                            : 'bg-white text-gray-700 border-amber-300 hover:border-amber-500 hover:bg-amber-50'
+                        }`}
+                        style={{fontFamily: "'Courier New', monospace"}}
+                      >
+                        ₦{preset.toLocaleString()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Price Amount */}
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide" style={{fontFamily: "'Courier New', monospace"}}>
@@ -317,7 +334,7 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
                   )}
                   
                   {/* Minimum Price Warning */}
-                  {priceAmount && parseFloat(priceAmount) < 122 && (
+                  {priceAmount && parseFloat(priceAmount) < 50 && (
                     <div className="mt-3 p-3 bg-red-50 border-l-4 border-red-500 rounded animate-pulse">
                       <div className="flex items-start gap-2">
                         <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
@@ -328,7 +345,7 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
                             Below Minimum Price
                           </p>
                           <p className="text-xs text-red-700 mt-1">
-                            Minimum ticket price is ₦122 (1 token). Please increase the price to continue.
+                            Minimum ticket price is ₦50. Please increase the price to continue.
                           </p>
                         </div>
                       </div>
@@ -336,86 +353,6 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
                   )}
                 </div>
 
-                {/* Early Bird Toggle */}
-                <div className="border-t-2 border-dashed border-amber-300 pt-6">
-                  <label className="flex items-center cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={earlyBirdEnabled}
-                      onChange={(e) => setEarlyBirdEnabled(e.target.checked)}
-                      className="w-5 h-5 text-amber-600 border-gray-300 rounded focus:ring-amber-500"
-                    />
-                    <span className="ml-3 text-base font-bold text-gray-700 group-hover:text-amber-600 transition-colors">
-                      Enable Early Bird Promo
-                    </span>
-                  </label>
-
-                  {/* Early Bird Fields (Inline Expansion) */}
-                  {earlyBirdEnabled && (
-                    <div className="mt-4 space-y-4 pl-8 border-l-4 border-amber-400 animate-fade-in">
-                      {/* Discount Slider */}
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          Discount: {earlyBirdDiscount}%
-                        </label>
-                        <input
-                          type="range"
-                          min="5"
-                          max="50"
-                          step="5"
-                          value={earlyBirdDiscount}
-                          onChange={(e) => setEarlyBirdDiscount(parseInt(e.target.value))}
-                          className="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
-                        />
-                        <div className="flex justify-between text-xs text-gray-500 mt-1">
-                          <span>5%</span>
-                          <span>50%</span>
-                        </div>
-                      </div>
-
-                      {/* Price Comparison */}
-                      {priceAmount && (
-                        <div className="bg-amber-50 p-4 rounded-lg space-y-2" style={{fontFamily: "'Courier New', monospace"}}>
-                          <div className="flex justify-between text-sm">
-                            <span className="text-gray-600">Early Bird Price:</span>
-                            <span className="font-bold text-green-600">
-                              {formatCurrency(earlyBirdPriceAmount, currency)} ({formatTokens(earlyBirdTokens)})
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-sm">
-                            <span className="text-gray-600">Regular Price:</span>
-                            <span className="font-bold text-gray-700">
-                              {formatCurrency(parseFloat(priceAmount), currency)} ({formatTokens(tokenEquivalent)})
-                            </span>
-                          </div>
-                          <div className="pt-2 border-t border-amber-200">
-                            <span className="text-xs text-green-600 font-semibold">
-                              💰 Buyers save {earlyBirdDiscount}%!
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* End Time */}
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          Early Bird Ends
-                        </label>
-                        <input
-                          type="datetime-local"
-                          value={earlyBirdEndTime}
-                          onChange={(e) => setEarlyBirdEndTime(e.target.value)}
-                          min={new Date().toISOString().slice(0, 16)}
-                          className="w-full px-4 py-2 border-2 border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-gray-800"
-                          required={earlyBirdEnabled}
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                          Discount ends at this time. Regular price applies after.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           </div>

@@ -72,12 +72,37 @@
   transform: scale(0.98);
 }
 
-/* Seat mode styling */
-.audio-mode-bar .audio-mode-content:has(.audio-mode-text:contains("Seat Mode")) {
-  border-color: rgba(103, 126, 234, 0.5);
+.audio-mode-divider {
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
 }
 
-/* Party mode styling */
-.audio-mode-bar .audio-mode-content:has(.audio-mode-text:contains("Party Mode")) {
-  border-color: rgba(255, 107, 53, 0.5);
+.audio-mode-silence {
+  padding: 6px 14px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 15px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.audio-mode-silence:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+.audio-mode-silence.active {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.7);
+  color: #fca5a5;
+}
+
+.audio-mode-silence.active:hover {
+  background: rgba(239, 68, 68, 0.35);
 }

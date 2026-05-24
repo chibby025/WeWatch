@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -554,6 +555,17 @@ func GiftTokensHandler(db *gorm.DB) gin.HandlerFunc {
 
 		log.Printf("🎁 Token gift: %d tokens from user %d → %d (recipient gets %d tokens (95%%), platform keeps %d tokens (5%%))",
 			req.AmountTokens, donor.ID, req.RecipientID, recipientAmount, platformCommission)
+
+		// Notify recipient of token gift
+		recipientIDNotif := req.RecipientID
+		donorUsernameNotif := donor.Username
+		recipientAmtNotif := recipientAmount
+		donorIDNotif := donor.ID
+		go func() {
+			title := fmt.Sprintf("@%s gifted you tokens", donorUsernameNotif)
+			body := fmt.Sprintf("You received %d tokens", recipientAmtNotif)
+			CreateNotification(recipientIDNotif, "token_gift", title, body, "user", donorIDNotif)
+		}()
 
 		// 📡 Broadcast gift notification to all rooms where both users are members
 		var sharedRooms []uint

@@ -2,7 +2,17 @@
   "permissions": {
     "allow": [
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"psql -h localhost -p 5432 -U postgres -d wewatch_db -f /home/chibuzor_dev/WeWatch/backend/migrations/20260510_create_post_purchases.sql\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"PGPASSWORD='Chibby' psql -h localhost -p 5432 -U postgres -d wewatch_db -v ON_ERROR_STOP=1 -f /home/chibuzor_dev/WeWatch/backend/migrations/20260510_create_post_purchases.sql\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"PGPASSWORD='Chibby' psql -h localhost -p 5432 -U postgres -d wewatch_db -v ON_ERROR_STOP=1 -f /home/chibuzor_dev/WeWatch/backend/migrations/20260510_create_post_purchases.sql\")",
+      "PowerShell(wsl -d Ubuntu-22.04 ls /home/chibuzor_dev/go/bin/ 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 ls /home/chibuzor_dev/.local/go/bin/ 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 /home/chibuzor_dev/go/bin/go build -C /home/chibuzor_dev/WeWatch/backend ./cmd/server/...)",
+      "PowerShell(wsl -d Ubuntu-22.04 ls /home/chibuzor_dev/go/bin/)",
+      "PowerShell(wsl -d Ubuntu-22.04 ls /snap/bin/ 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 ls /home/chibuzor_dev/.local/opt/go/bin/)",
+      "PowerShell(wsl -d Ubuntu-22.04 /home/chibuzor_dev/.local/opt/go/bin/go build -C /home/chibuzor_dev/WeWatch/backend ./cmd/server/...)",
+      "PowerShell(wsl -d Ubuntu-22.04 bash -l -c \"cd /home/chibuzor_dev/WeWatch/frontend && npx tsc --noEmit --skipLibCheck 2>&1 | head -50\")",
+      "PowerShell(wsl -d Ubuntu-22.04 bash -l -c \"cd /home/chibuzor_dev/WeWatch/frontend && node_modules/.bin/vite build 2>&1 | tail -20\")",
+      "PowerShell(wsl -d Ubuntu-22.04 bash -l -c \"cd /home/chibuzor_dev/WeWatch/frontend && node_modules/.bin/vite build 2>&1 | tail -8\")"
     ]
   }
 }

@@ -24,7 +24,8 @@ type UserSettings struct {
 	WhoCanCall          string `gorm:"default:'friends'" json:"who_can_call"`        // 'everyone', 'friends', 'nobody'
 
 	// Content preferences
-	ShowMatureContent bool `gorm:"default:false" json:"show_mature_content"` // true = skip blur overlay for 18+/Mature posts
+	ShowMatureContent bool   `gorm:"default:false" json:"show_mature_content"` // true = skip blur overlay for 18+/Mature posts
+	PrimaryRating     string `gorm:"type:varchar(20);default:''" json:"primary_rating"` // preferred content category for feed ranking: G, PG, Educational, Religious, 13+, 16+, 18+, Mature
 
 	// Age-based content visibility flags (computed from date_of_birth, refreshed once per year)
 	// All default false — no age-gated content until DOB is confirmed.

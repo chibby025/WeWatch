@@ -48,25 +48,27 @@ export default function EmotePicker({ isOpen, onClose, onEmoteSelect, onToggleRa
         className="fixed bottom-16 sm:bottom-20 left-1/2 transform -translate-x-1/2 z-[1000] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl p-2 sm:p-4 w-[95vw] max-w-md sm:max-w-lg lg:max-w-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-white text-xs sm:text-sm font-bold mb-2 sm:mb-3 text-center">
-          😊 Send Emote
-        </h3>
-
-        <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-7 gap-1 sm:gap-2">
+        <div className="flex flex-wrap justify-center gap-1 sm:gap-2">
           {emotes.map((emote) => (
             <button
               key={emote.id}
               onClick={() => handleEmoteClick(emote)}
-              className={`flex items-center justify-center p-3 sm:p-4 md:p-5 rounded-lg transition-colors group ${
-                emote.isAction && isHandRaised 
-                  ? 'bg-yellow-600 hover:bg-yellow-700' 
-                  : 'bg-gray-800 hover:bg-gray-700'
+              className={`flex flex-col items-center justify-center p-2 sm:p-3 rounded-xl transition-all duration-150 group ${
+                emote.isAction && isHandRaised
+                  ? 'bg-yellow-500/20 hover:bg-yellow-500/30'
+                  : 'bg-transparent hover:bg-white/8'
               }`}
               title={`${emote.label}${emote.key !== 'R' ? ` (Key: ${emote.key})` : ''}`}
             >
-              <div className="group-hover:scale-110 transition-transform">
-                <EmojiImage emoji={emote.emoji} size={window.innerWidth < 640 ? 40 : 56} />
+              <div className="group-hover:scale-125 transition-transform duration-150 drop-shadow-[0_0_6px_rgba(255,255,255,0.25)] group-hover:drop-shadow-[0_0_10px_rgba(255,255,255,0.45)]">
+                <EmojiImage
+                  emoji={emote.emoji}
+                  size={emote.id === 'heart'
+                    ? (window.innerWidth < 640 ? 52 : 72)
+                    : (window.innerWidth < 640 ? 40 : 56)}
+                />
               </div>
+              <span className="text-[10px] text-gray-400 mt-1 group-hover:text-gray-200 transition-colors">{emote.label}</span>
             </button>
           ))}
         </div>

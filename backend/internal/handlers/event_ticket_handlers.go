@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -182,7 +181,13 @@ func PurchaseEventTicketHandler(c *gin.Context) {
 		return
 	}
 
-	// 5. Validate event is paid
+	// 5. Host cannot purchase tickets for their own event
+	if authenticatedUserID == event.HostUserID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You cannot purchase a ticket for your own event"})
+		return
+	}
+
+	// 5b. Validate event is paid
 	if !event.IsPaid {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "This is a free event. Use the RSVP endpoint instead."})
 		return
@@ -218,7 +223,7 @@ func PurchaseEventTicketHandler(c *gin.Context) {
 		
 		if err == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("User already has a ticket for this event"),
+				"error": "User already has a booking for this event",
 			})
 			return
 		} else if err != gorm.ErrRecordNotFound {
@@ -246,197 +251,16 @@ func PurchaseEventTicketHandler(c *gin.Context) {
 		}
 	}
 
-	// 8. Determine ticket price (early bird or regular)
-	ticketPriceTokens := event.TicketPriceTokens
-	ticketPriceAmount := event.TicketPriceAmount
+	// 8. Determine if early bird applies (recorded for future escrow use)
 	isEarlyBird := false
-	earlyBirdSavingsTokens := 0
-
 	if event.EarlyBirdEnabled && event.EarlyBirdActive {
-		// Check if we're still in early bird window (ends 1 hour before event)
 		earlyBirdEndTime := event.StartTime.Add(-1 * time.Hour)
 		if time.Now().Before(earlyBirdEndTime) {
-			ticketPriceTokens = event.EarlyBirdPriceTokens
-			ticketPriceAmount = event.EarlyBirdPriceAmount
 			isEarlyBird = true
-			earlyBirdSavingsTokens = event.TicketPriceTokens - event.EarlyBirdPriceTokens
-			log.Printf("🎉 [TicketPurchase] Early bird pricing applied for event %d", eventID)
 		}
 	}
 
-	// 9. Calculate transfer fee if gift (5% of ticket price, minimum 1 token)
-	transferFeeTokens := 0
-	if input.IsGift {
-		transferFeeTokens = int(float64(ticketPriceTokens) * 0.05)
-		if transferFeeTokens < 1 {
-			transferFeeTokens = 1 // Minimum 1 token fee
-		}
-		log.Printf("💸 [TicketPurchase] Transfer fee for gift: %d tokens (5%% of %d)", transferFeeTokens, ticketPriceTokens)
-	}
-
-	// 10. Calculate total cost
-	totalCostTokens := ticketPriceTokens + transferFeeTokens
-
-	// 11. Get buyer's wallet
-	var buyerWallet models.UserWallet
-	if err := DB.Where("user_id = ?", authenticatedUserID).First(&buyerWallet).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Wallet not found. Please create a wallet first."})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-		}
-		return
-	}
-
-	// 12. Check sufficient balance
-	if buyerWallet.TokenBalance < totalCostTokens {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Insufficient token balance",
-			"required_tokens": totalCostTokens,
-			"current_balance": buyerWallet.TokenBalance,
-			"ticket_price": ticketPriceTokens,
-			"transfer_fee": transferFeeTokens,
-		})
-		return
-	}
-
-	// 13. Begin transaction
-	tx := DB.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
-	// 14. Deduct tokens from buyer
-	if err := tx.Model(&buyerWallet).Update("token_balance", gorm.Expr("token_balance - ?", totalCostTokens)).Error; err != nil {
-		tx.Rollback()
-		log.Printf("Error deducting tokens from buyer: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to deduct tokens"})
-		return
-	}
-
-	// 15. Add tokens to host's reserve
-	var hostWallet models.UserWallet
-	if err := tx.Where("user_id = ?", event.HostUserID).First(&hostWallet).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			// Create wallet for host if doesn't exist
-			hostWallet = models.UserWallet{
-				UserID:       event.HostUserID,
-				TokenBalance: ticketPriceTokens,
-			}
-			if err := tx.Create(&hostWallet).Error; err != nil {
-				tx.Rollback()
-				log.Printf("Error creating host wallet: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create host wallet"})
-				return
-			}
-		} else {
-			tx.Rollback()
-			log.Printf("Error fetching host wallet: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-			return
-		}
-	} else {
-		// Update existing host wallet
-		if err := tx.Model(&hostWallet).Update("token_balance", gorm.Expr("token_balance + ?", ticketPriceTokens)).Error; err != nil {
-			tx.Rollback()
-			log.Printf("Error adding tokens to host: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add tokens to host"})
-			return
-		}
-	}
-
-	// 16. Record ticket purchase transaction
-	ticketTransaction := models.TokenTransaction{
-		UserID:          authenticatedUserID,
-		TransactionType: models.TransactionTypeTicketPurchase,
-		Amount:          ticketPriceTokens,
-		Status:          models.TransactionStatusCompleted,
-	}
-
-	if err := tx.Create(&ticketTransaction).Error; err != nil {
-		tx.Rollback()
-		log.Printf("Error recording ticket transaction: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record transaction"})
-		return
-	}
-
-	// 17. Record transfer fee transaction if gift
-	if input.IsGift && transferFeeTokens > 0 {
-		transferFeeTransaction := models.TokenTransaction{
-			UserID:          authenticatedUserID,
-			TransactionType: models.TransactionTypeTicketTransferFee,
-			Amount:          transferFeeTokens,
-			Status:          models.TransactionStatusCompleted,
-		}
-
-		if err := tx.Create(&transferFeeTransaction).Error; err != nil {
-			tx.Rollback()
-			log.Printf("Error recording transfer fee transaction: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record transfer fee"})
-			return
-		}
-
-		// Update platform accounting with transfer fee revenue
-		var accounting models.PlatformAccounting
-		if err := tx.First(&accounting, 1).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				// Create accounting record if doesn't exist
-				accounting = models.PlatformAccounting{
-					TransferFeeRevenue:         float64(transferFeeTokens),
-					LifetimeTransferFeeRevenue: float64(transferFeeTokens),
-				}
-				if err := tx.Create(&accounting).Error; err != nil {
-					tx.Rollback()
-					log.Printf("Error creating platform accounting: %v", err)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update accounting"})
-					return
-				}
-			} else {
-				tx.Rollback()
-				log.Printf("Error fetching platform accounting: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-				return
-			}
-		} else {
-			if err := tx.Model(&accounting).Updates(map[string]interface{}{
-				"transfer_fee_revenue":          gorm.Expr("transfer_fee_revenue + ?", transferFeeTokens),
-				"lifetime_transfer_fee_revenue": gorm.Expr("lifetime_transfer_fee_revenue + ?", transferFeeTokens),
-			}).Error; err != nil {
-				tx.Rollback()
-				log.Printf("Error updating platform accounting: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update accounting"})
-				return
-			}
-		}
-	}
-
-	// 18. Record early bird savings transaction if applicable (informational)
-	if isEarlyBird && earlyBirdSavingsTokens > 0 {
-		savingsTransaction := models.TokenTransaction{
-			UserID:          authenticatedUserID,
-			TransactionType: models.TransactionTypeEarlyBirdSavings,
-			Amount:          earlyBirdSavingsTokens,
-			Status:          models.TransactionStatusCompleted,
-		}
-
-		if err := tx.Create(&savingsTransaction).Error; err != nil {
-			// Don't fail the transaction if savings recording fails (it's informational)
-			log.Printf("⚠️ Warning: Failed to record early bird savings: %v", err)
-		}
-
-		// Update platform accounting with early bird savings (informational)
-		var accounting models.PlatformAccounting
-		if err := tx.First(&accounting, 1).Error; err == nil {
-			if err := tx.Model(&accounting).Update("total_early_bird_savings", 
-				gorm.Expr("total_early_bird_savings + ?", earlyBirdSavingsTokens)).Error; err != nil {
-				log.Printf("⚠️ Warning: Failed to update early bird savings in accounting: %v", err)
-			}
-		}
-	}
-
-	// 19. Create event ticket record
+	// 9. Create booking record — no payment deducted; escrow handled in Phase 2
 	var giftedByUserID *uint
 	if input.IsGift {
 		giftedByUserID = &authenticatedUserID
@@ -446,43 +270,31 @@ func PurchaseEventTicketHandler(c *gin.Context) {
 		ScheduledEventID:    uint(eventID),
 		UserID:              recipientUserID,
 		HostID:              event.HostUserID,
-		PaymentMethod:       "tokens",
-		TicketPriceTokens:   ticketPriceTokens,
+		PaymentMethod:       "booking",
+		TicketPriceTokens:   0,
 		TicketPriceCurrency: event.TicketPriceCurrency,
-		TicketPriceAmount:   ticketPriceAmount,
+		TicketPriceAmount:   event.TicketPriceAmount,
 		IsEarlyBird:         isEarlyBird,
-		TransactionID:       &ticketTransaction.ID,
 		IsGift:              input.IsGift,
 		GiftedByUserID:      giftedByUserID,
 	}
 
-	if err := tx.Create(&ticket).Error; err != nil {
-		tx.Rollback()
-		log.Printf("Error creating event ticket: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create ticket"})
+	if err := DB.Create(&ticket).Error; err != nil {
+		log.Printf("Error creating booking: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create booking"})
 		return
 	}
 
-	// 20. Update event ticket count
-	if err := tx.Model(&event).Update("tickets_sold", gorm.Expr("tickets_sold + 1")).Error; err != nil {
-		tx.Rollback()
+	// 10. Update event ticket count
+	if err := DB.Model(&event).Update("tickets_sold", gorm.Expr("tickets_sold + 1")).Error; err != nil {
 		log.Printf("Error updating ticket count: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update ticket count"})
-		return
 	}
 
-	// 21. Commit transaction
-	if err := tx.Commit().Error; err != nil {
-		log.Printf("Error committing transaction: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete purchase"})
-		return
-	}
-
-	// 22. Broadcast to room
+	// 11. Broadcast to room
 	broadcastData := map[string]interface{}{
-		"type":                "ticket_purchased",
-		"scheduled_event_id":  uint(eventID),
-		"tickets_sold":        event.TicketsSold + 1,
+		"type":               "ticket_booked",
+		"scheduled_event_id": uint(eventID),
+		"tickets_sold":       event.TicketsSold + 1,
 	}
 	jsonData, _ := json.Marshal(broadcastData)
 	hub.BroadcastToRoom(event.RoomID, OutgoingMessage{
@@ -490,18 +302,14 @@ func PurchaseEventTicketHandler(c *gin.Context) {
 		IsBinary: false,
 	}, nil)
 
-	// 23. Return success
-	log.Printf("✅ [TicketPurchase] User %d purchased ticket for event %d (gift: %v, early bird: %v, fee: %d)", 
-		authenticatedUserID, eventID, input.IsGift, isEarlyBird, transferFeeTokens)
-	
+	// 12. Return success
+	log.Printf("✅ [Booking] User %d booked ticket for event %d (gift: %v, early bird: %v)",
+		authenticatedUserID, eventID, input.IsGift, isEarlyBird)
+
 	c.JSON(http.StatusCreated, gin.H{
-		"message":             "Ticket purchased successfully",
-		"ticket":              ticket,
-		"total_cost_tokens":   totalCostTokens,
-		"ticket_price_tokens": ticketPriceTokens,
-		"transfer_fee_tokens": transferFeeTokens,
-		"is_early_bird":       isEarlyBird,
-		"early_bird_savings":  earlyBirdSavingsTokens,
+		"message":      "Ticket booked successfully",
+		"ticket":       ticket,
+		"is_early_bird": isEarlyBird,
 	})
 }
 

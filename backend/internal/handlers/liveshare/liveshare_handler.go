@@ -71,6 +71,8 @@ func (h *LiveShareHandler) HandleMessage(msgType string, data map[string]interfa
 		return h.handleBreakEnded(data, client)
 	case "liveshare_guest_joined":
 		return h.handleGuestJoined(data, client)
+	case "liveshare_layout_update":
+		return h.handleLayoutUpdate(data, client)
 	case "liveshare_guest_switched_type":
 		return h.handleGuestSwitchedType(data, client)
 	case "liveshare_guest_left":
@@ -79,6 +81,10 @@ func (h *LiveShareHandler) HandleMessage(msgType string, data map[string]interfa
 		return h.handleBibleVerseUpdate(data, client)
 	case "hymn_update":
 		return h.handleHymnUpdate(data, client)
+	case "sermon_update":
+		return h.handleSermonUpdate(data, client)
+	case "sermon_navigate":
+		return h.handleSermonNavigate(data, client)
 	default:
 		return fmt.Errorf("unknown LiveShare message type: %s", msgType)
 	}
@@ -224,7 +230,13 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 			broadcastMsg["data"].(map[string]interface{})["guestUserId"] = uint(guestIDFloat)
 			log.Printf("📡 [LiveShare] Including guest in %s broadcast: %d", mode, uint(guestIDFloat))
 		}
-		
+		if titleStyle, ok := data["titleStyle"]; ok && titleStyle != nil {
+			broadcastMsg["data"].(map[string]interface{})["titleStyle"] = titleStyle
+		}
+		if logoStyle, ok := data["logoStyle"]; ok && logoStyle != nil {
+			broadcastMsg["data"].(map[string]interface{})["logoStyle"] = logoStyle
+		}
+
 		// ✅ For church mode, include current Bible verse and hymn for late joiners
 		if mode == "church" {
 			var session struct {
@@ -775,6 +787,29 @@ func (h *LiveShareHandler) handleGuestJoined(data map[string]interface{}, client
 	return nil
 }
 
+// handleLayoutUpdate - broadcast a layout change to all room viewers
+func (h *LiveShareHandler) handleLayoutUpdate(data map[string]interface{}, client Client) error {
+	layout, _ := data["layout"].(string)
+	if layout == "" {
+		return fmt.Errorf("missing layout field")
+	}
+
+	broadcastMsg := map[string]interface{}{
+		"type": "liveshare_layout_update",
+		"data": map[string]interface{}{
+			"layout": layout,
+		},
+	}
+	msgBytes, _ := json.Marshal(broadcastMsg)
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     msgBytes,
+		IsBinary: false,
+	}, client)
+
+	log.Printf("✅ [LiveShare] Layout update broadcast: %s", layout)
+	return nil
+}
+
 // handleGuestSwitchedType - Guest switched share type mid-stream
 func (h *LiveShareHandler) handleGuestSwitchedType(data map[string]interface{}, client Client) error {
 	sessionID := client.GetSessionID()
@@ -988,5 +1023,95 @@ func (h *LiveShareHandler) handleHymnUpdate(data map[string]interface{}, client 
 	}, client)
 
 	log.Printf("✅ [LiveShare] Hymn update broadcast sent")
+	return nil
+}
+
+// handleSermonUpdate - Host starts or stops sermon display
+func (h *LiveShareHandler) handleSermonUpdate(data map[string]interface{}, client Client) error {
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+
+	active, _ := data["active"].(bool)
+
+	if active {
+		// Persist full sermon state for late joiners
+		sermonJSON, err := json.Marshal(data)
+		if err != nil {
+			log.Printf("⚠️ [LiveShare] Failed to marshal sermon data: %v", err)
+		} else {
+			result := h.db.Table("watch_sessions").
+				Where("session_id = ?", sessionID).
+				Update("current_sermon", string(sermonJSON))
+			if result.Error != nil {
+				log.Printf("⚠️ [LiveShare] Failed to persist sermon: %v", result.Error)
+			}
+		}
+	} else {
+		h.db.Table("watch_sessions").
+			Where("session_id = ?", sessionID).
+			Update("current_sermon", nil)
+	}
+
+	broadcastMsg := map[string]interface{}{
+		"type": "sermon_update",
+		"data": data,
+	}
+
+	msgBytes, _ := json.Marshal(broadcastMsg)
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     msgBytes,
+		IsBinary: false,
+	}, client)
+
+	log.Printf("✅ [LiveShare] Sermon update broadcast sent (active: %v)", active)
+	return nil
+}
+
+// handleSermonNavigate - Host changes the current sermon page for all members
+func (h *LiveShareHandler) handleSermonNavigate(data map[string]interface{}, client Client) error {
+	sessionID := client.GetSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+
+	currentPage, ok := data["currentPage"].(float64)
+	if !ok {
+		return fmt.Errorf("missing or invalid 'currentPage' field")
+	}
+
+	// Update persisted sermon's currentPage
+	var sermonRaw struct {
+		CurrentSermon *string `gorm:"column:current_sermon"`
+	}
+	if err := h.db.Table("watch_sessions").
+		Select("current_sermon").
+		Where("session_id = ?", sessionID).
+		Scan(&sermonRaw).Error; err == nil && sermonRaw.CurrentSermon != nil {
+
+		var sermonData map[string]interface{}
+		if err := json.Unmarshal([]byte(*sermonRaw.CurrentSermon), &sermonData); err == nil {
+			sermonData["currentPage"] = int(currentPage)
+			if updated, err := json.Marshal(sermonData); err == nil {
+				h.db.Table("watch_sessions").
+					Where("session_id = ?", sessionID).
+					Update("current_sermon", string(updated))
+			}
+		}
+	}
+
+	broadcastMsg := map[string]interface{}{
+		"type": "sermon_navigate",
+		"data": data,
+	}
+
+	msgBytes, _ := json.Marshal(broadcastMsg)
+	h.hub.BroadcastToRoom(client.GetRoomID(), OutgoingMessage{
+		Data:     msgBytes,
+		IsBinary: false,
+	}, client)
+
+	log.Printf("✅ [LiveShare] Sermon navigate broadcast sent (page: %d)", int(currentPage))
 	return nil
 }

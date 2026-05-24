@@ -4,6 +4,7 @@ package utils
 import (
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -74,26 +75,24 @@ func cleanupExpiredTrailers(db *gorm.DB) {
 	}
 }
 
-// deleteTrailerFile removes the trailer file from storage
+// deleteTrailerFile removes the trailer file from storage (CDN or local)
 func deleteTrailerFile(trailerURL string) error {
-	// Handle different storage types
 	if trailerURL == "" {
-		return nil // Nothing to delete
+		return nil
 	}
 
-	// For local filesystem storage (uploads/)
+	// CDN URL — delegate to BunnyCDN delete
+	if strings.HasPrefix(trailerURL, "http") {
+		return DeleteFromBunnyCDN(trailerURL)
+	}
+
+	// Local filesystem path (dev fallback)
 	if _, err := os.Stat(trailerURL); err == nil {
 		if err := os.Remove(trailerURL); err != nil {
 			return err
 		}
 		log.Printf("🗑️ [TrailerCleanup] Deleted local file: %s", trailerURL)
 	}
-
-	// TODO: Add S3/cloud storage deletion when implemented
-	// Example:
-	// if strings.HasPrefix(trailerURL, "https://s3.amazonaws.com/") {
-	//     return deleteFromS3(trailerURL)
-	// }
 
 	return nil
 }

@@ -26,6 +26,8 @@ export default function EmojiImage({ emoji, size = 32, className = '', style = {
 
   const codepoint = getEmojiCodepoint(emoji);
   const twemojiUrl = `https://cdn.jsdelivr.net/gh/twitter/twemoji@14/assets/svg/${codepoint}.svg`;
+  // Variation-selector-stripped fallback (e.g. 2764-fe0f → 2764)
+  const fallbackUrl = twemojiUrl.replace(/-fe0[ef]/gi, '');
 
   return (
     <img
@@ -41,10 +43,19 @@ export default function EmojiImage({ emoji, size = 32, className = '', style = {
         ...style
       }}
       onError={(e) => {
-        // Fallback to text emoji if image fails to load
+        // First retry: strip variation selector (fe0f/fe0e) — Twemoji doesn't always include it
+        if (fallbackUrl !== twemojiUrl && e.target.src !== fallbackUrl) {
+          e.target.src = fallbackUrl;
+          return;
+        }
+        // Both URLs failed: show native emoji in a span at the intended size
         e.target.style.display = 'none';
-        const textNode = document.createTextNode(emoji);
-        e.target.parentNode.appendChild(textNode);
+        const span = document.createElement('span');
+        span.style.fontSize = `${size}px`;
+        span.style.lineHeight = '1';
+        span.style.verticalAlign = 'middle';
+        span.textContent = emoji;
+        e.target.parentNode.appendChild(span);
       }}
     />
   );

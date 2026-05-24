@@ -1,0 +1,15 @@
+User-agent: *
+Allow: /
+
+# Public pages
+Allow: /login
+Allow: /register
+
+# Keep private/authenticated areas out of search results
+Disallow: /lobby
+Disallow: /rooms/
+Disallow: /admin
+Disallow: /payment
+Disallow: /withdrawal
+
+Sitemap: https://letswatchout.com/sitemap.xml

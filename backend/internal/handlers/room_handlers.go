@@ -1084,3 +1084,53 @@ func RemoveVote(c *gin.Context) {
 	})
 }
 
+// MarkRoomVisitedHandler handles POST /api/rooms/:id/visited
+// Stamps last_visited_at on the membership row so unread-post counts work correctly.
+func MarkRoomVisitedHandler(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	roomID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	now := time.Now()
+	DB.Model(&models.UserRoom{}).
+		Where("user_id = ? AND room_id = ?", userID, uint(roomID)).
+		Update("last_visited_at", now)
+
+	c.JSON(http.StatusOK, gin.H{"last_visited_at": now})
+}
+
+// GetRoomUnreadPostsHandler handles GET /api/rooms/:id/unread-posts
+// Returns count of posts created after the member's last_visited_at.
+func GetRoomUnreadPostsHandler(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	roomID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	var membership models.UserRoom
+	if err := DB.Where("user_id = ? AND room_id = ?", userID, uint(roomID)).First(&membership).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{"unread_count": 0})
+		return
+	}
+
+	var room models.Room
+	if err := DB.First(&room, uint(roomID)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	var count int64
+	query := DB.Model(&models.Post{}).Where("user_id = ? AND is_public = ?", room.HostID, true)
+	if membership.LastVisitedAt != nil {
+		query = query.Where("created_at > ?", membership.LastVisitedAt)
+	}
+	query.Count(&count)
+
+	c.JSON(http.StatusOK, gin.H{"unread_count": count})
+}
+

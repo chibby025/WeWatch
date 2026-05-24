@@ -40,28 +40,12 @@ const MODES = [
   },
 ];
 
-export default function LiveShareModeSelector({ onModeSelect, onClose, watchType, embedded = false }) {
+export default function LiveShareModeSelector({ onModeSelect, onClose, embedded = false }) {
   const [selectedMode, setSelectedMode] = useState(null);
 
-  // Filter modes based on watch type
-  const getAvailableModes = () => {
-    switch (watchType) {
-      case '3d_cinema':
-        // Cinema = Show only (theater context, can be minimal or branded)
-        return MODES.filter(m => m.id === 'show');
-      
-      case 'classroom':
-        // Classroom = Regular only (simple teaching mode)
-        return MODES.filter(m => m.id === 'regular');
-      
-      case 'video':
-      default:
-        // VideoWatch = All modes (Zoom-like versatility)
-        return MODES;
-    }
-  };
-
-  const availableModes = getAvailableModes();
+  // All modes are always available — content rating in LiveShareWizard drives
+  // forced-mode logic (Religious→church, Educational→regular); watch type is venue only.
+  const availableModes = MODES;
 
   const handleModeClick = (mode) => {
     setSelectedMode(mode.id);

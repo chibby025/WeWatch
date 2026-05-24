@@ -45,15 +45,15 @@ func SendLobbyChatStickerHandler(c *gin.Context) {
 	}
 
 	// Validate provider
-	if req.Provider != "giphy" && req.Provider != "tenor" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid provider (must be giphy or tenor)"})
+	if req.Provider != "giphy" && req.Provider != "tenor" && req.Provider != "emoji" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid provider (must be giphy, tenor, or emoji)"})
 		return
 	}
 
 	// Validate sticker URL/emoji
 	var stickerURL string
-	if req.Provider == "custom" {
-		// Custom emoji - store the emoji character directly
+	if req.Provider == "emoji" {
+		// Plain emoji character — store directly
 		stickerURL = req.StickerURL
 	} else {
 		// Giphy/Tenor - validate URL

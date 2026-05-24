@@ -16,6 +16,7 @@ type ScheduledEvent struct {
 	Title           string     `gorm:"type:varchar(255)" json:"title"`                     // "Friday Movie Night"
 	Description     string     `gorm:"type:text" json:"description"`                       // "Join us for Q&A after!"
 	HostUserID      uint       `gorm:"not null" json:"host_user_id"`                       // Who scheduled it
+	ContentRating   string     `gorm:"type:varchar(20);default:'G'" json:"content_rating"` // G, PG, Educational, Religious, 13+, 16+, 18+, Mature
 	
 	// Payment/Ticketing fields
 	IsPaid                bool    `gorm:"default:false" json:"is_paid"`                      // Whether this is a paid event
@@ -45,6 +46,11 @@ type ScheduledEvent struct {
 	TrailerUploadedAt     *time.Time `json:"trailer_uploaded_at,omitempty"`                     // When trailer was uploaded
 	TrailerDeletedAt      *time.Time `json:"trailer_deleted_at,omitempty" gorm:"index"`         // Soft delete at start_time
 	
+	// Recurrence fields
+	RecurrenceType    string     `gorm:"type:varchar(20);default:'none'" json:"recurrence_type"` // none/weekly/biweekly/monthly
+	RecurrenceGroupID string     `gorm:"type:varchar(36);index" json:"recurrence_group_id"`     // UUID linking recurring instances
+	RecurrenceEndDate *time.Time `json:"recurrence_end_date,omitempty"`                          // When recurrence stops
+
 	// Relationships
 	Room *Room `gorm:"foreignKey:RoomID" json:"Room,omitempty"` // ✅ Relationship to Room (for preloading room name in trailers)
 	

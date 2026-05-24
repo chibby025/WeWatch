@@ -1,5 +1,6 @@
 // src/components/cinema/VideoWatch.jsx
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import AppSplash from '../AppSplash';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
@@ -44,13 +45,57 @@ import GameOverlay from '../Games/GameOverlay';
 import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
 import BibleOverlay from '../liveshare/BibleOverlay';
 import HymnOverlay from '../liveshare/HymnOverlay';
+import SermonOverlay from '../liveshare/SermonOverlay';
 import TikTokHeartAnimation from '../TikTokHeartAnimation';
 import { HeartIcon } from '@heroicons/react/24/solid';
 import useEmoteSounds from '../../hooks/useEmoteSounds';
+import useNetworkQuality from '../../hooks/useNetworkQuality';
 import FloatingEmoteOverlay from './ui/FloatingEmoteOverlay';
+import NetworkQualityBanner from '../NetworkQualityBanner';
 import AdVideoPreroll from '../AdVideoPreroll';
 import InSessionAdPanel from '../ads/InSessionAdPanel';
 import { calculateAge } from '../../utils/ageUtils';
+
+function SessionEndedOverlay({ reason, onReturn }) {
+  const [countdown, setCountdown] = React.useState(8);
+  const returnCalledRef = React.useRef(false);
+
+  const triggerReturn = React.useCallback(() => {
+    if (returnCalledRef.current) return;
+    returnCalledRef.current = true;
+    onReturn();
+  }, [onReturn]);
+
+  // One setTimeout per tick — stops scheduling when countdown reaches 0, never goes negative.
+  React.useEffect(() => {
+    if (countdown <= 0) {
+      triggerReturn();
+      return;
+    }
+    const t = setTimeout(() => setCountdown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, triggerReturn]);
+
+  const message =
+    reason === 'connection_lost'
+      ? 'Your connection to the session was lost.'
+      : 'This watch session has ended.';
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex flex-col items-center justify-center z-[9999]">
+      <div className="text-5xl mb-5">📺</div>
+      <h2 className="text-2xl font-bold text-white mb-2">Session Ended</h2>
+      <p className="text-gray-400 text-center mb-8 max-w-xs">{message}</p>
+      <button
+        onClick={triggerReturn}
+        className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-xl font-semibold transition-colors"
+      >
+        Return to Room
+      </button>
+      <p className="text-gray-600 text-sm mt-4">Auto-returning in {countdown}s</p>
+    </div>
+  );
+}
 
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
@@ -178,7 +223,7 @@ export default function VideoWatch() {
   const isInstantWatch = urlParams.get('instant') === 'true';
   
   // ✅ Initialize WebSocket connection (must be before hooks that use sessionStatus)
-  const { sendMessage, messages, isConnected, sessionStatus, setBinaryMessageHandler } = useWebSocket(
+  const { sendMessage, messages, isConnected, sessionStatus, setBinaryMessageHandler, clearMessages } = useWebSocket(
     roomId,
     stableTokenRef.current,
     urlSessionId  // ✅ Pass session_id to WebSocket so backend can add us to session members
@@ -263,7 +308,8 @@ export default function VideoWatch() {
   const classType = sessionStatus?.class_type || (
     location.pathname.includes('/lecture-hall/') ? 'lecture_hall' : null
   );
-  
+  const contentRating = sessionStatus?.content_rating || '';
+
   // Derived flags for feature detection
   const isClassroom = watchType === 'classroom';
   const isLectureHall = isClassroom && classType === 'lecture_hall';
@@ -349,18 +395,67 @@ export default function VideoWatch() {
     checkTicket();
   }, [urlSessionId, currentUser, roomId, navigate]);
 
-  // Handle session errors - redirect if session has ended
+  // Handle session errors - only navigate if session is actually dead
   useEffect(() => {
-    if (sessionStatus?.error && !sessionStatus?.isActive) {
-      console.error('❌ Session error detected:', sessionStatus.error);
-      toast.error(sessionStatus.error);
-      
-      // Clear session_id from URL and navigate back to room page
-      setTimeout(() => {
-        navigate(`/rooms/${roomId}`, { replace: true });
-      }, 2000); // Give user time to read the error message
-    }
-  }, [sessionStatus?.error, sessionStatus?.isActive, roomId, navigate]);
+    if (!sessionStatus?.error || sessionStatus?.isActive) return;
+    console.error('❌ Session error detected:', sessionStatus.error);
+
+    // Verify the session is actually gone before kicking the user out.
+    // A WS reconnect failure sets isActive=false even when the session is still live
+    // (e.g. Chrome froze the tab). Confirm via REST before acting.
+    getActiveSession(roomId)
+      .then(res => {
+        const session = res?.data;
+        // Backend returns is_existing:true when an active session is found
+        if (session?.is_existing) {
+          console.warn('⚠️ WS reported session dead but REST confirms it is still active — suppressing kick');
+          return;
+        }
+        setSessionEndedInfo({ reason: 'connection_lost' });
+      })
+      .catch(err => {
+        if (err?.response?.status === 404 || err?.response?.status === 410) {
+          setSessionEndedInfo({ reason: 'ended' });
+        }
+        // For network errors, give benefit of the doubt — don't navigate
+      });
+  }, [sessionStatus?.error, sessionStatus?.isActive, roomId]);
+
+  // Heartbeat: poll every 60s to catch session-ended when WS was down at broadcast time.
+  // Requires 2 consecutive "session gone" responses before acting — prevents a single
+  // bad response from kicking users who are sharing their screen in another tab.
+  useEffect(() => {
+    const activeSessionId = sessionStatus?.id || urlSessionId;
+    if (!activeSessionId || !roomId) return;
+
+    let consecutiveMisses = 0;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await getActiveSession(roomId);
+        const session = res?.data;
+        // Backend returns is_existing:true when an active session is found.
+        // is_active is not in the response — checking it would always be undefined (falsy).
+        if (!session?.is_existing) {
+          consecutiveMisses++;
+          if (consecutiveMisses >= 2) {
+            clearInterval(interval);
+            setSessionEndedInfo({ reason: 'ended' });
+          }
+        } else {
+          consecutiveMisses = 0; // reset on a healthy response
+        }
+      } catch (err) {
+        if (err?.response?.status === 404 || err?.response?.status === 410) {
+          clearInterval(interval);
+          setSessionEndedInfo({ reason: 'ended' });
+        }
+        // Network hiccups (5xx, timeout) are ignored — don't penalise tab-switchers
+      }
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [sessionStatus?.id, urlSessionId, roomId]);
 
   // ✅ LIVEKIT INTEGRATION with auto-subscribe (everyone hears everyone)
   const {
@@ -372,7 +467,10 @@ export default function VideoWatch() {
     disconnect: disconnectLiveKit
   } = useLiveKitRoom(roomId, currentUser, true); // ✅ autoSubscribe=true for watch sessions
 
+  const networkQuality = useNetworkQuality(room);
+
   // 🎥 ALL STATE DECLARATIONS (must be before useEffects that use them)
+  const [sessionEndedInfo, setSessionEndedInfo] = useState(null); // { reason: 'ended' | 'connection_lost' }
   const [currentMedia, setCurrentMedia] = useState(null);
   const [playlist, setPlaylist] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -392,8 +490,8 @@ export default function VideoWatch() {
   const [showHeartAnimation, setShowHeartAnimation] = useState(false);
   const lastLikeTimeRef = useRef(0);
   
-  // 📺 Ad pre-roll state
-  const [showAdPreroll, setShowAdPreroll] = useState(true); // Show ad before video starts
+  // 📺 Ad pre-roll disabled — join experience should feel instant and classy
+  const [showAdPreroll, setShowAdPreroll] = useState(false); // eslint-disable-line no-unused-vars
   
   // 🎯 Banner ad state (80-20 split)
   const [bannerAdData, setBannerAdData] = useState(null);
@@ -685,13 +783,18 @@ export default function VideoWatch() {
   const [sharingSource, setSharingSource] = useState(null); // 'liveshare' | 'watchfrom' | null
   const [hasLiveSharePermission, setHasLiveSharePermission] = useState(false); // Guest permission for LiveShare
   const [forceActiveTab, setForceActiveTab] = useState(null); // Force LeftSidebar to specific tab
-  const [podcastConfig, setPodcastConfig] = useState(null); // { title, logoUrl, guestUserId, guestUsername, hostUsername, sessionId }
+  const [podcastConfig, setPodcastConfig] = useState(null); // { title, logoUrl, titleStyle, logoStyle, guestUserId, hostUsername, sessionId }
+  const [guestInviteAutoTrigger, setGuestInviteAutoTrigger] = useState(null); // { mode, title, hostUsername } — auto-opens guest popup
   const [liveShareGuestId, setLiveShareGuestId] = useState(null); // Selected guest ID for LiveShare (for mute exemption)
   const [currentBibleVerse, setCurrentBibleVerse] = useState(null); // Current Bible verse for church mode
   const [isBibleVerseActive, setIsBibleVerseActive] = useState(false); // Bible verse visibility
   const [currentHymn, setCurrentHymn] = useState(null); // Current hymn for church mode
   const [isHymnActive, setIsHymnActive] = useState(false); // Hymn visibility
   const [currentHymnVerse, setCurrentHymnVerse] = useState(1); // Current verse of hymn
+  const [isSermonActive, setIsSermonActive] = useState(false);
+  const [sermonPages, setSermonPages] = useState([]);
+  const [currentSermonPage, setCurrentSermonPage] = useState(0);
+  const [sermonTitle, setSermonTitle] = useState(null);
   const screenShareTrackRef = useRef(null);
   const cameraShareTrackRef = useRef(null);
   const liveShareVideoRef = useRef(null); // Separate ref for LiveShare main video
@@ -771,9 +874,15 @@ export default function VideoWatch() {
     // ✅ Fallback: Use roomHostId from session_status members
     const hostId = sessionStatus?.hostId || roomHostId;
     const result = currentUser?.id === hostId;
-    
+
     return result;
   }, [currentUser?.id, sessionStatus?.hostId, roomHostId]);
+
+  // 🛡️ Determine if current user is a room admin
+  const isAdmin = React.useMemo(() => {
+    const me = roomMembers.find(m => m.id === currentUser?.id);
+    return me?.user_role === 'admin';
+  }, [roomMembers, currentUser?.id]);
 
   // 🔄 MEMBER: Request current playback state on connect/reconnect
   useEffect(() => {
@@ -939,7 +1048,19 @@ export default function VideoWatch() {
         }
         return;
       }
-      
+
+      // Handle studio config updates (titleStyle / logoStyle) via state — no canvas needed
+      if (graphic.type === 'studio_config') {
+        if (graphic.content) {
+          setPodcastConfig(prev => prev ? {
+            ...prev,
+            ...(graphic.content.titleStyle && { titleStyle: graphic.content.titleStyle }),
+            ...(graphic.content.logoStyle && { logoStyle: graphic.content.logoStyle }),
+          } : prev);
+        }
+        return;
+      }
+
       // Check if renderer exists
       if (!graphicsRendererRef.current) {
         console.error('❌ [GRAPHICS UPDATE] CRITICAL ERROR: Cannot render graphics');
@@ -1006,9 +1127,9 @@ export default function VideoWatch() {
     
     if (lastMessage.type === 'hymn_update') {
       console.log('🎵 [VideoWatch] Hymn update received:', lastMessage.data);
-      
+
       const { hymn, verse, active } = lastMessage.data;
-      
+
       if (active && hymn) {
         console.log('✅ [Hymn] Showing hymn:', hymn.title, 'verse:', verse);
         setCurrentHymn(hymn);
@@ -1020,6 +1141,26 @@ export default function VideoWatch() {
         setCurrentHymnVerse(1);
         setIsHymnActive(false);
       }
+    }
+
+    if (lastMessage.type === 'sermon_update') {
+      const { active, pages, title, currentPage } = lastMessage.data;
+      if (active && pages?.length) {
+        setSermonPages(pages);
+        setSermonTitle(title || null);
+        setCurrentSermonPage(currentPage ?? 0);
+        setIsSermonActive(true);
+      } else {
+        setIsSermonActive(false);
+        setSermonPages([]);
+        setSermonTitle(null);
+        setCurrentSermonPage(0);
+      }
+    }
+
+    if (lastMessage.type === 'sermon_navigate') {
+      const { currentPage } = lastMessage.data;
+      if (currentPage != null) setCurrentSermonPage(currentPage);
     }
   }, [messages]);
   
@@ -2982,17 +3123,12 @@ export default function VideoWatch() {
       if ((mode === 'podcast' || mode === 'show' || mode === 'news') && config) {
         broadcastData.podcastTitle = config.title;
         broadcastData.podcastLogoURL = config.logoUrl;
+        if (config.titleStyle) broadcastData.titleStyle = config.titleStyle;
+        if (config.logoStyle) broadcastData.logoStyle = config.logoStyle;
         if (config.guestId) {
           broadcastData.guestUserId = config.guestId;
+          broadcastData.hostUsername = currentUser?.username || 'Host';
         }
-        console.log(`📡 [VideoWatch HOST BROADCAST] ${mode.toUpperCase()} CONFIG:`, {
-          mode,
-          title: config.title,
-          logoUrl: config.logoUrl,
-          guestId: config.guestId,
-          layout,
-          fullBroadcastData: broadcastData
-        });
       }
       
       console.log(`📡 [VideoWatch HOST] Broadcasting ${mode} mode:`, JSON.stringify(broadcastData, null, 2));
@@ -3080,7 +3216,7 @@ export default function VideoWatch() {
     } catch (err) {
       console.error("Failed to fetch media items:", err);
       if (err.response?.status === 404) {
-        alert("This session has ended.");
+        toast.error('This session has ended.');
         navigate('/lobby');
         return;
       }
@@ -3094,7 +3230,13 @@ export default function VideoWatch() {
 
   // Handle ALL WebSocket messages
   useEffect(() => {
-    const newMessages = messages.slice(processedMessageCountRef.current);
+    // If the cap in useWebSocket truncated the array, processedMessageCountRef may exceed
+    // messages.length. Reset to 0 in that case so we reprocess what's in the capped array.
+    // (Messages that were truncated were already processed in a prior run.)
+    const startIdx = processedMessageCountRef.current > messages.length
+      ? 0
+      : processedMessageCountRef.current;
+    const newMessages = messages.slice(startIdx);
     if (newMessages.length === 0) return;
 
     newMessages.forEach((message) => {
@@ -3866,11 +4008,13 @@ export default function VideoWatch() {
             toast('Session ended - Host disconnected for over 10 minutes', {
               icon: '⏰',
               duration: 5000,
+              id: 'session-ended',
             });
           } else {
-            toast('Videowatch session ended', {
+            toast('Watch session ended', {
               icon: 'ℹ️',
               duration: 3000,
+              id: 'session-ended',
             });
           }
           
@@ -3881,6 +4025,16 @@ export default function VideoWatch() {
           
           performCleanupAndExit(message.data?.is_temporary);
           break;
+        case 'kicked_from_room': {
+          const kickReason = message.data?.reason;
+          if (kickReason === 'banned') {
+            toast.error('You have been banned from this room');
+          } else {
+            toast.error('You have been removed from this room by the host');
+          }
+          performCleanupAndExit(false);
+          break;
+        }
         case 'ticket_required':
           // Backend rejected connection - no ticket for paid session
           console.log('❌ [VideoWatch] Ticket required:', message.data);
@@ -4063,8 +4217,8 @@ export default function VideoWatch() {
                 timestamp: Date.now()
               };
               
-              // Show toast notification to host
-              if (isHost) {
+              // Show toast notification to host/admin
+              if (isHost || isAdmin) {
                 toast(`✋ ${newHand.username} raised their hand`, {
                   icon: '✋',
                   duration: 4000,
@@ -4150,8 +4304,10 @@ export default function VideoWatch() {
                 mode: mode,
                 title: message.data.podcastTitle || `Untitled ${mode.charAt(0).toUpperCase() + mode.slice(1)}`,
                 logoUrl: message.data.podcastLogoURL || null,
+                titleStyle: message.data.titleStyle || null,
+                logoStyle: message.data.logoStyle || null,
                 guestUserId: message.data.guestUserId || null,
-                hostUsername: currentUser?.username || 'Host',
+                hostUsername: message.data.hostUsername || currentUser?.username || 'Host',
                 sessionId: sessionStatus?.id || urlSessionId,
               };
               setPodcastConfig(configData);
@@ -4178,18 +4334,16 @@ export default function VideoWatch() {
           
         case "liveshare_permission_granted":
           // Guest received permission from host
-          console.log('✅ [PERMISSION GRANTED] Received permission:', {
-            userId: currentUser?.id,
-            hasPermission: message.data?.hasPermission,
-            messageData: message.data
-          });
           if (message.data?.hasPermission) {
-            console.log('🎙️ [PERMISSION GRANTED] Setting hasLiveSharePermission = true');
             setHasLiveSharePermission(true);
-            // Auto-switch to LiveShare tab
             setForceActiveTab('liveshare');
-            // Clear forced tab after 100ms to allow user control
             setTimeout(() => setForceActiveTab(null), 100);
+            // Auto-trigger the guest invitation popup in LiveShareManager
+            setGuestInviteAutoTrigger({
+              mode: message.data.mode || 'podcast',
+              title: message.data.title || null,
+              hostUsername: message.data.hostUsername || 'Host',
+            });
           }
           break;
           
@@ -4293,6 +4447,13 @@ export default function VideoWatch() {
           }
           break;
           
+        case "liveshare_layout_update":
+          // Guest or host pushed a layout update — applies to all viewers
+          if (message.data?.layout) {
+            setSelectedLiveShareLayout(message.data.layout);
+          }
+          break;
+
         case "liveshare_guest_left":
           // Guest left - revert to smart default layout (HOST only)
           if (isHost && message.data?.defaultLayout) {
@@ -4328,8 +4489,12 @@ export default function VideoWatch() {
           console.warn("[VideoWatch] Unknown WebSocket message type:", message.type, message);
       }
     });
-    processedMessageCountRef.current = messages.length;
-  }, [messages, sessionStatus.id, currentUser?.id, currentMedia, localParticipant]);
+    // Clear processed messages and reset the index counter.
+    // This keeps the array near zero length rather than growing for the session's lifetime.
+    // The 500-entry cap in useWebSocket acts as a safety backstop if clearMessages is slow.
+    processedMessageCountRef.current = 0;
+    clearMessages();
+  }, [messages, sessionStatus.id, currentUser?.id, currentMedia, localParticipant, clearMessages]);
 
   // Handle Chat
   const handleSendSessionMessage = async () => {
@@ -4454,10 +4619,13 @@ export default function VideoWatch() {
 
   // Cleanup and navigate helper
   const performCleanupAndExit = async (isTemporaryRoom = null) => {
-    // 1. Disconnect LiveKit
+    // 1. Disconnect LiveKit — race against 2s timeout so a hung disconnect can't block navigation
     if (disconnectLiveKit) {
       try {
-        await disconnectLiveKit();
+        await Promise.race([
+          disconnectLiveKit(),
+          new Promise(resolve => setTimeout(resolve, 2000)),
+        ]);
       } catch (error) {
         console.error('Error disconnecting LiveKit:', error);
       }
@@ -4588,9 +4756,9 @@ export default function VideoWatch() {
     }
   }, [roomId]);
 
-  // 🔊 Toggle broadcast permission for a user (host only)
+  // 🔊 Toggle broadcast permission for a user (host/admin only)
   const handleToggleBroadcast = useCallback((userId, currentState) => {
-    if (!isHost) return; // Only host can toggle
+    if (!isHost && !isAdmin) return;
     
     const messageType = currentState ? 'revoke_broadcast' : 'grant_broadcast';
     
@@ -4599,7 +4767,7 @@ export default function VideoWatch() {
       session_id: sessionStatus.id,
       user_id: userId
     });
-  }, [isHost, sessionStatus.id, sendMessage]);
+  }, [isHost, isAdmin, sessionStatus.id, sendMessage]);
 
   // ❌ REMOVED: Don't fetch room members from API - use session members from WebSocket only
   // useEffect(() => {
@@ -4688,10 +4856,10 @@ export default function VideoWatch() {
     });
   }, [isAudioActive, isMutedByHost, currentUser?.id, isSeatedMode, isHost, isHostBroadcasting, userSeats, sendMessage, broadcastPermissions, localParticipant, selectedAudioDeviceId, hasMicPermission]);
 
-  // ✅ Host-only: Toggle mute all members (locked mute, requires host approval to unmute)
+  // ✅ Host/admin: Toggle mute all members (locked mute, requires host approval to unmute)
   const handleMuteAll = useCallback((exemptGuestId = null) => {
-    if (!isHost) {
-      console.warn('🚫 [VideoWatch] Non-host attempted to toggle mute all');
+    if (!isHost && !isAdmin) {
+      console.warn('🚫 [VideoWatch] Non-host/admin attempted to toggle mute all');
       return;
     }
 
@@ -4739,7 +4907,7 @@ export default function VideoWatch() {
         duration: 3000,
       });
     }
-  }, [isHost, isMuteAllActive, sendMessage, currentUser, sessionStatus]);
+  }, [isHost, isAdmin, isMuteAllActive, sendMessage, currentUser, sessionStatus]);
 
   // ✅ Handle emote send (sound for sender, broadcast to all)
   const handleEmoteSend = useCallback((emoteData) => {
@@ -4773,10 +4941,10 @@ export default function VideoWatch() {
     });
   }, [playEmoteSound, sendMessage, currentUser]);
 
-  // ✅ Host-only: Unmute a specific member
+  // ✅ Host/admin: Unmute a specific member
   const handleUnmuteMember = useCallback((targetUserId) => {
-    if (!isHost) {
-      console.warn('🚫 [VideoWatch] Non-host attempted to unmute member');
+    if (!isHost && !isAdmin) {
+      console.warn('🚫 [VideoWatch] Non-host/admin attempted to unmute member');
       return;
     }
 
@@ -4801,7 +4969,7 @@ export default function VideoWatch() {
       icon: '🔊',
       duration: 2000,
     });
-  }, [isHost, sendMessage, currentUser]);
+  }, [isHost, isAdmin, sendMessage, currentUser]);
 
   // ✋ Toggle raise/lower hand
   const handleToggleRaiseHand = useCallback(() => {
@@ -5156,11 +5324,7 @@ export default function VideoWatch() {
 
   // Show loader while auth checks run
   if (authLoading) {
-    return (
-      <div className="w-full h-screen bg-black flex items-center justify-center">
-        <div className="text-white">Loading your cinema experience...</div>
-      </div>
-    );
+    return <AppSplash statusText="Loading your cinema experience..." />;
   }
 
   // Private chat handlers
@@ -5194,7 +5358,17 @@ export default function VideoWatch() {
     <div className="relative w-full h-screen bg-[#0a0a0a] text-white overflow-hidden">
       {/* ✅ Toast Notifications */}
       <Toaster position="top-center" />
-      
+
+      {/* Session Ended Overlay */}
+      {sessionEndedInfo && (
+        <SessionEndedOverlay
+          reason={sessionEndedInfo.reason}
+          onReturn={() => performCleanupAndExit(sessionEndedInfo.isTemporary || false)}
+        />
+      )}
+
+      <NetworkQualityBanner quality={networkQuality} />
+
       {/* � Floating Emote Overlays (visible to sender only) */}
       {localEmotes.map(emote => (
         <FloatingEmoteOverlay
@@ -5234,22 +5408,24 @@ export default function VideoWatch() {
         className="relative w-full h-full"
         onDoubleClick={handleDoubleClickLike}
       >
-        {/* 📺 Ad Pre-roll Video (shows before main content) */}
-        {showAdPreroll && (
+        {/* 📺 Ad Pre-roll disabled — uncomment below to re-enable */}
+        {/* {showAdPreroll && (
           <AdVideoPreroll
             roomId={roomId}
             contentRating={room?.content_rating || 'general'}
             onComplete={() => setShowAdPreroll(false)}
           />
-        )}
+        )} */}
 
-        {/* Main content (video player) - only show after ad completes */}
-        {!showAdPreroll && (
-          <>
-            {/* 🎯 80-20 Split: Video (80%) + Banner Ad (20%) */}
-            <div className="flex flex-col h-full w-full">
-              {/* Video Player: 80% of screen height when ad is showing */}
-              <div className={`relative ${bannerAdData ? 'h-[80%]' : 'h-full'} w-full transition-all duration-300`}>
+        {/* Main content (video player) */}
+
+            {/* 🎯 Right-side push: video slides left to 80%, ad panel slides in from right */}
+            <div className="flex flex-row h-full w-full overflow-hidden">
+              {/* Video Player: shrinks to 80% width when ad is present, snaps back to full */}
+              <div
+                className="relative h-full transition-all duration-500 ease-in-out"
+                style={{ width: bannerAdData ? '80%' : '100%' }}
+              >
                 <CinemaVideoPlayer
                   ref={videoPlayerRef}
                   mediaItem={currentMedia}
@@ -5265,18 +5441,19 @@ export default function VideoWatch() {
                   onError={handleError}
                   onPauseBroadcast={handlePauseBroadcast}
                   onTimeUpdate={handleTimeUpdate}
-                  // ❌ REMOVED: onBinaryHandlerReady, onScreenShareReady (not needed with LiveKit)
                 />
               </div>
-              
-              {/* Banner Ad: 20% of screen height */}
-              {bannerAdData && (
-                <div className="h-[20%] w-full bg-black">
+
+              {/* Banner Ad: slides in as right 20% panel, disappears when done */}
+              <div
+                className="h-full bg-black overflow-hidden transition-all duration-500 ease-in-out flex-shrink-0"
+                style={{ width: bannerAdData ? '20%' : '0%' }}
+              >
+                {bannerAdData && (
                   <InSessionAdPanel
                     ad={bannerAdData}
                     fullscreen={false}
                     onComplete={() => {
-                      console.log('🎯 [VideoWatch] Banner ad completed');
                       setBannerAdData(null);
                     }}
                     onTrackImpression={async (clicked) => {
@@ -5287,14 +5464,13 @@ export default function VideoWatch() {
                           clicked,
                           view_duration: 15
                         });
-                        console.log('🎯 [VideoWatch] Banner ad impression tracked');
                       } catch (err) {
                         console.error('❌ [VideoWatch] Failed to track impression:', err);
                       }
                     }}
                   />
-                </div>
-              )}
+                )}
+              </div>
             </div>
             
             {/* ❤️ TikTok Heart Animation */}
@@ -5320,7 +5496,7 @@ export default function VideoWatch() {
             
             {/* 🎵 Hymn Overlay (Church mode) */}
             {isHymnActive && currentHymn && (
-              <HymnOverlay 
+              <HymnOverlay
                 hymn={currentHymn}
                 isActive={isHymnActive}
                 currentVerse={currentHymnVerse}
@@ -5330,6 +5506,23 @@ export default function VideoWatch() {
                   setIsHymnActive(false);
                   setCurrentHymn(null);
                   setCurrentHymnVerse(1);
+                } : undefined}
+              />
+            )}
+
+            {/* 📜 Sermon Overlay (Church mode) */}
+            {isSermonActive && sermonPages.length > 0 && (
+              <SermonOverlay
+                pages={sermonPages}
+                currentPage={currentSermonPage}
+                title={sermonTitle}
+                isActive={isSermonActive}
+                sendMessage={sendMessage}
+                onDismiss={isHost ? () => {
+                  setIsSermonActive(false);
+                  setSermonPages([]);
+                  setSermonTitle(null);
+                  setCurrentSermonPage(0);
                 } : undefined}
               />
             )}
@@ -5347,9 +5540,7 @@ export default function VideoWatch() {
                 }}
               />
             )}
-          </>
-        )}
-        
+
         {/* 🎙️ LiveShare Overlays (for Podcast/News/Show modes) */}
         {podcastConfig && (podcastConfig.mode === 'podcast' || podcastConfig.mode === 'news' || podcastConfig.mode === 'show') && (
           <div className="absolute inset-0 pointer-events-none">
@@ -5357,22 +5548,23 @@ export default function VideoWatch() {
             <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-lg flex items-center gap-2 pointer-events-auto">
               <span className="text-white font-medium text-sm sm:text-base">{podcastConfig.hostUsername || 'Host'} (Host)</span>
             </div>
+
+            {/* Guest Name Label (top right) — only when a guest is active */}
+            {podcastConfig.guestUserId && (() => {
+              const guestMember = participants.find(p => p.id === podcastConfig.guestUserId);
+              const guestLabel = guestMember?.username || guestMember?.name || `Guest #${podcastConfig.guestUserId}`;
+              return (
+                <div className="absolute top-4 right-4 bg-purple-900/80 backdrop-blur-sm px-4 py-2 rounded-lg flex items-center gap-2 pointer-events-auto">
+                  <span className="text-purple-200 font-medium text-sm sm:text-base">{guestLabel} (Guest)</span>
+                </div>
+              );
+            })()}
             
             {/* Breaking News Banner (DOM-based, full width, behind logo) */}
             {bannerState && (() => {
-              // Get podcast logo position from localStorage
-              let logoY = 80;
-              let logoSize = 100;
-              try {
-                const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${activeSessionId}`);
-                if (savedLogoStyles) {
-                  const styles = JSON.parse(savedLogoStyles);
-                  logoY = styles.y || 80;
-                  logoSize = styles.size || 100;
-                }
-              } catch (err) {
-                console.warn('Failed to load logo styles:', err);
-              }
+              // Use podcastConfig for logo position (kept in sync via WS)
+              const logoY = podcastConfig.logoStyle?.y || 80;
+              const logoSize = podcastConfig.logoStyle?.size || 100;
 
               // 📱 Responsive calculations based on screen size
               const responsiveScale = screenSize === 'mobile' ? 0.5 : screenSize === 'tablet' ? 0.75 : 1;
@@ -5580,34 +5772,13 @@ export default function VideoWatch() {
               // Check if banner is active (now DOM-based)
               const isBannerActive = !!bannerState;
               
-              let logoSize = 100;
-              let logoX = 0;
-              let logoY = 80;
-              let titleColor = '#FFFFFF';
-              let titleSize = 24;
-              let titleWeight = 700;
-              let titleCase = 'none';
-              
-              try {
-                const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${activeSessionId}`);
-                if (savedLogoStyles) {
-                  const styles = JSON.parse(savedLogoStyles);
-                  logoSize = styles.size || 100;
-                  logoX = styles.x || 10;
-                  logoY = styles.y || 80;
-                }
-                
-                const savedStyles = localStorage.getItem(`podcast_title_style_${activeSessionId}`);
-                if (savedStyles) {
-                  const styles = JSON.parse(savedStyles);
-                  titleColor = styles.color || '#FFFFFF';
-                  titleSize = styles.size || 24;
-                  titleWeight = styles.weight || 700;
-                  titleCase = styles.case || 'none';
-                }
-              } catch (err) {
-                console.warn('Failed to load styles:', err);
-              }
+              const logoSize = podcastConfig.logoStyle?.size || 100;
+              const logoX = podcastConfig.logoStyle?.x || 10;
+              const logoY = podcastConfig.logoStyle?.y || 80;
+              const titleColor = podcastConfig.titleStyle?.color || '#FFFFFF';
+              const titleSize = podcastConfig.titleStyle?.size || 24;
+              const titleWeight = podcastConfig.titleStyle?.weight || 700;
+              const titleCase = podcastConfig.titleStyle?.case || 'none';
               
               const applyTextCase = (text, caseType) => {
                 if (!text) return text;
@@ -5674,7 +5845,7 @@ export default function VideoWatch() {
           </div>
         )}
       </div>
-      
+
       {/* 🔊 Remote Audio Player - Handles audio from screen share */}
       {room && <RemoteAudioPlayer room={room} silenceMode={isSilenceMode} />}
 
@@ -5832,7 +6003,7 @@ export default function VideoWatch() {
             onDeleteMedia={onDeleteMedia}
             onMediaSelect={handleMediaSelect}
             onCameraPreview={setCameraPreviewStream}
-            isHost={isHost}
+            isHost={isHost || isAdmin}
             onClose={() => setIsLeftSidebarOpen(false)}
             onUploadComplete={fetchAndGeneratePosters}
             sessionId={activeSessionId}
@@ -5852,12 +6023,14 @@ export default function VideoWatch() {
             onKickLiveShareGuest={() => {}}
             cameraShareTrackRef={cameraShareTrackRef}
             graphicsRendererRef={graphicsRendererRef}
-            onWizardStateChange={setIsLiveShareWizardOpen} // ✅ Track wizard state
-            availableCameras={availableCameras} // 📹 Pass available cameras
-            selectedCameraId={selectedCameraId} // 📹 Pass current camera
-            onCameraSwitch={switchCamera} // 📹 Pass camera switch handler
-            isSessionPrivate={sessionStatus?.is_private || false} // ✅ Pass session privacy flag
-            sessionStatus={sessionStatus} // ✅ Pass full session status for self-validation fallback
+            onWizardStateChange={setIsLiveShareWizardOpen}
+            availableCameras={availableCameras}
+            selectedCameraId={selectedCameraId}
+            onCameraSwitch={switchCamera}
+            isSessionPrivate={sessionStatus?.is_private || false}
+            sessionStatus={sessionStatus}
+            autoOpenGuestInvite={guestInviteAutoTrigger}
+            onGuestInviteConsumed={() => setGuestInviteAutoTrigger(null)}
           />
         </div>
       )}
@@ -6041,7 +6214,7 @@ export default function VideoWatch() {
             [member.id]: 0
           }));
         }}
-        isHost={isHost}
+        isHost={isHost || isAdmin}
         currentUserId={currentUser?.id}
         audioStates={remoteAudioStates}
         broadcastPermissions={broadcastPermissions}
@@ -6114,9 +6287,9 @@ export default function VideoWatch() {
         isVisible={!showCinemaSeatView}
         isFullscreen={showCinemaSeatView}
         isLeftSidebarOpen={isLeftSidebarOpen}
+        contentRating={contentRating}
         onGiftSent={(updatedBalance) => {
           console.log('🎁 [FloatingGiftIcon] Gift sent! New balance:', updatedBalance);
-          // Update local token balance
           setTokenBalance(updatedBalance.token_balance);
         }}
       />
@@ -6125,14 +6298,15 @@ export default function VideoWatch() {
       <DonationNotification
         messages={messages}
         currentUserId={currentUser?.id}
+        contentRating={contentRating}
       />
 
       {/* 📝 QUIZ SYSTEM MODALS */}
-      {isQuizManagementOpen && isHost && (
+      {isQuizManagementOpen && (isHost || isAdmin) && (
         <QuizManagementModal
           isOpen={isQuizManagementOpen}
           onClose={() => setIsQuizManagementOpen(false)}
-          isHost={isHost}
+          isHost={isHost || isAdmin}
           quizzes={quizzes}
           activeQuiz={activeQuiz}
           onCreateQuiz={handleCreateQuiz}
@@ -6142,7 +6316,7 @@ export default function VideoWatch() {
         />
       )}
 
-      {isMakeQuizOpen && isHost && (
+      {isMakeQuizOpen && (isHost || isAdmin) && (
         <MakeQuizModal
           isOpen={isMakeQuizOpen}
           onClose={() => {
@@ -6176,7 +6350,7 @@ export default function VideoWatch() {
       )}
 
       {/* 🎮 GAME SYSTEM MODALS */}
-      {isGameLobbyOpen && isHost && (
+      {isGameLobbyOpen && (isHost || isAdmin) && (
         <GameLobbyModal
           isOpen={isGameLobbyOpen}
           onClose={() => setIsGameLobbyOpen(false)}

@@ -21,9 +21,11 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
   const [formData, setFormData] = useState({
     name: '',
     description: '',
+    handle: '',
     show_host: true,
     show_description: true,
     host_only_chat: false,
+    auto_invite_followers: true,
   });
   const [loading, setLoading] = useState(false);
   const [imageFile, setImageFile] = useState(null);
@@ -32,6 +34,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
   const [isImageExpanded, setIsImageExpanded] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
+  const [isEditingHandle, setIsEditingHandle] = useState(false);
   const [isHostProfileModalOpen, setIsHostProfileModalOpen] = useState(false);
   const [expandedMemberAvatar, setExpandedMemberAvatar] = useState(null);
 
@@ -57,12 +60,16 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
       const showDescription = room.show_description !== undefined ? room.show_description : (room.ShowDescription !== undefined ? room.ShowDescription : true);
       const hostOnlyChat = room.host_only_chat !== undefined ? room.host_only_chat : (room.HostOnlyChat !== undefined ? room.HostOnlyChat : false);
       
+      const autoInviteFollowers = room.auto_invite_followers !== undefined ? room.auto_invite_followers : true;
+
       setFormData({
         name: room.name || room.Name || '',
         description: room.description || room.Description || '',
+        handle: room.handle || '',
         show_host: showHost,
         show_description: showDescription,
         host_only_chat: hostOnlyChat,
+        auto_invite_followers: autoInviteFollowers,
       });
       
       // Set existing image preview
@@ -311,6 +318,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
       setFormData({
         name: response.data.name || response.data.Name || '',
         description: response.data.description || response.data.Description || '',
+        handle: response.data.handle || response.data.Handle || '',
         show_host: true,
         show_description: true,
       });
@@ -479,6 +487,44 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                       title="Edit description"
                     >
                       <PencilIcon className="w-3 h-3 text-gray-400" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Handle */}
+              {isEditingHandle && isHost ? (
+                <div className="flex items-center gap-1 mt-1.5">
+                  <span className="text-gray-500 text-xs font-semibold">@</span>
+                  <input
+                    type="text"
+                    value={formData.handle}
+                    onChange={(e) => setFormData(prev => ({ ...prev, handle: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 50) }))}
+                    placeholder="handle"
+                    className="w-full px-2 py-0.5 text-xs bg-gray-800/50 border border-gray-600 rounded text-gray-300 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    autoFocus
+                    onBlur={() => setIsEditingHandle(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') setIsEditingHandle(false);
+                      if (e.key === 'Escape') {
+                        setFormData(prev => ({ ...prev, handle: room?.handle || '' }));
+                        setIsEditingHandle(false);
+                      }
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 mt-1.5 group">
+                  <p className="text-[10px] text-gray-500 font-medium">
+                    {formData.handle ? `@${formData.handle}` : (isHost ? '@handle' : '')}
+                  </p>
+                  {isHost && (
+                    <button
+                      onClick={() => setIsEditingHandle(true)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700/50 rounded"
+                      title="Edit handle"
+                    >
+                      <PencilIcon className="w-2.5 h-2.5 text-gray-500" />
                     </button>
                   )}
                 </div>
@@ -688,6 +734,38 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Auto-Invite Followers Toggle */}
+              <div className="bg-gradient-to-br from-gray-800/40 to-gray-900/40 rounded-xl p-4 border border-gray-700/30 mt-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-lg">🔔</span>
+                      <label htmlFor="auto_invite_followers" className="text-sm font-medium text-white">
+                        Auto-invite followers to room
+                      </label>
+                    </div>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      When someone follows you, automatically send them an invite to join your room. Public rooms auto-accept; private rooms require your approval.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    id="auto_invite_followers"
+                    onClick={() => setFormData(prev => ({ ...prev, auto_invite_followers: !prev.auto_invite_followers }))}
+                    className={`relative inline-flex h-6 !w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
+                      formData.auto_invite_followers ? 'bg-purple-600' : 'bg-gray-600'
+                    }`}
+                    style={{ minWidth: '2.75rem', width: '2.75rem' }}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        formData.auto_invite_followers ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
             </div>
           </div>

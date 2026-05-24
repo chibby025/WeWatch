@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/services"
 	"wewatch-backend/internal/utils"
 )
 
@@ -221,9 +222,18 @@ func PurchaseTokens(c *gin.Context) {
 		log.Printf("⚠️  Failed to update platform accounting: %v", accErr)
 	}
 
-	// Fetch updated wallet
+	// Fetch updated wallet and user for email
 	var wallet models.UserWallet
 	db.Where("user_id = ?", userID).First(&wallet)
+	var buyer models.User
+	db.Select("id, username, email").First(&buyer, userID)
+
+	go func() {
+		emailSvc := services.NewEmailService()
+		if err := emailSvc.SendTokenPurchaseReceiptEmail(buyer.Email, buyer.Username, float64(req.Amount), tokensToAdd, req.PaymentID); err != nil {
+			log.Printf("⚠️ Token purchase receipt email failed for user %d: %v", userID, err)
+		}
+	}()
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":              "Tokens purchased successfully",

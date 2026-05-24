@@ -15,7 +15,8 @@ import {
   ShieldCheckIcon,
   SignalIcon,
   MegaphoneIcon,
-  InformationCircleIcon
+  InformationCircleIcon,
+  AdjustmentsHorizontalIcon,
 } from '@heroicons/react/24/outline';
 import HelpSupportModal from './HelpSupportModal';
 import SecurityModal from './SecurityModal';
@@ -23,6 +24,7 @@ import CallHistoryModal from './CallHistoryModal';
 import ContactsModal from './ContactsModal';
 import AdsManagementModal from './AdsManagementModal';
 import CreditsModal from './CreditsModal';
+import UserPreferencesModal from './UserPreferencesModal';
 import Avatar from './Avatar';
 import { useNavigate } from 'react-router-dom';
 import { clearAllCaches } from '../utils/cinemaCache';
@@ -41,6 +43,7 @@ const LobbyLeftSidebar = ({
   const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
   const [isAdsManagementModalOpen, setIsAdsManagementModalOpen] = useState(false);
   const [isCreditsModalOpen, setIsCreditsModalOpen] = useState(false);
+  const [isPreferencesModalOpen, setIsPreferencesModalOpen] = useState(false);
   const [dataSaverEnabled, setDataSaverEnabled] = useState(
     localStorage.getItem('dataSaverMode') === 'true'
   );
@@ -163,6 +166,14 @@ const LobbyLeftSidebar = ({
       toggleValue: dataSaverEnabled,
       badge: dataSaverEnabled ? 'ON' : 'OFF',
       description: 'Reduces bandwidth (480p sessions, no autoplay)'
+    },
+    {
+      id: 'preferences',
+      label: 'Content Preferences',
+      icon: AdjustmentsHorizontalIcon,
+      onClick: () => setIsPreferencesModalOpen(true),
+      enabled: true,
+      description: 'Categories, default content rating'
     },
     {
       id: 'credits',
@@ -328,9 +339,15 @@ const LobbyLeftSidebar = ({
       )}
 
       {/* Credits Modal */}
-      <CreditsModal 
+      <CreditsModal
         isOpen={isCreditsModalOpen}
         onClose={() => setIsCreditsModalOpen(false)}
+      />
+
+      {/* Content Preferences Modal */}
+      <UserPreferencesModal
+        isOpen={isPreferencesModalOpen}
+        onClose={() => setIsPreferencesModalOpen(false)}
       />
     </>
   );

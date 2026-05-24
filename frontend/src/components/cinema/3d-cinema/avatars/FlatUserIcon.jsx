@@ -122,12 +122,6 @@ export default function FlatUserIcon({
   //   });
   // }, [username, lectureHallScale, rowNumber, finalScale, isHost]);
 
-  // Floating animation (disabled for lecture hall to match position markers)
-  useFrame((state) => {
-    if (!groupRef.current) return;
-    // Position exactly at seat position, no extra height or floating
-    groupRef.current.position.y = seatPosition[1];
-  });
 
   // ✅ Hide username label when chat bubble is showing (username is already in bubble)
   // ✅ Removed isHovered - username only shows on activity (emotes/speaking), not hover
@@ -154,59 +148,34 @@ export default function FlatUserIcon({
     setIsPulsing(!!isSpeaking);
   }, [isSpeaking]);
 
-  // 🎶 Animate orb and cascading ripples with audio levels
+  // 🌊 Animate cascading ripples with audio levels (scale-based — no geometry allocation)
   useFrame(({ camera }) => {
-    if (orbRef.current) {
-      // 💡 Orb stays constant size, subtle emissive glow
-      orbRef.current.material.emissiveIntensity = 0.2;
-      orbRef.current.scale.set(1, 1, 1); // ✅ Constant size
-    }
-
-    // 🌊 Cascading ripple animations (only when speaking)
     if (isSpeaking && ripple1Ref.current && ripple2Ref.current) {
-      const time = Date.now() * 0.001; // Time in seconds
-      const level = audioLevel || 0.5; // Base audio level (0.0 to 1.0)
-      
-      // 🎵 Speed increases with audio intensity
-      const speedMultiplier = 0.8 + (level * 0.4); // 0.8x to 1.2x speed (slower for calmer effect)
-      
-      // 🌊 Ripple pool configuration (2 bright WHITE rings for cinema darkness)
+      const time = Date.now() * 0.001;
+      const level = audioLevel || 0.5;
+      const speedMultiplier = 0.8 + level * 0.4;
+
+      // Ring 1: base geometry radius 0.02, grows to 0.07 → maxScale 3.5
+      // Ring 2: base geometry radius 0.07, grows to 0.12 → maxScale ~1.71
       const ripples = [
-        { ref: ripple1Ref, startRadius: 0.02, endRadius: 0.07, delay: 0.0, opacity: 1.0 },  // ✨ FULL BRIGHTNESS
-        { ref: ripple2Ref, startRadius: 0.07, endRadius: 0.12, delay: 0.5, opacity: 1.0 }, // ✨ FULL BRIGHTNESS
+        { ref: ripple1Ref, maxScale: 3.5,  delay: 0.0 },
+        { ref: ripple2Ref, maxScale: 1.714, delay: 0.5 },
       ];
-      
-      const cycleDuration = 1.5; // Each ring takes 1.5 seconds to expand fully
-      const thickness = 0.002; // Thicker lines for better visibility
-      
-      ripples.forEach((ripple) => {
-        const phase = ((time * speedMultiplier) + ripple.delay) % cycleDuration;
-        const progress = phase / cycleDuration; // 0 to 1
-        
-        // Interpolate radius based on progress (no scaling, just geometry update)
-        const currentRadius = ripple.startRadius + (progress * (ripple.endRadius - ripple.startRadius));
-        
-        // Dispose old geometry and create new one with updated radius
-        if (ripple.ref.current.geometry) {
-          ripple.ref.current.geometry.dispose();
-        }
-        ripple.ref.current.geometry = new THREE.RingGeometry(
-          currentRadius,
-          currentRadius + thickness,
-          32
-        );
-        
-        // Gentler fade-out to keep rings visible longer
-        const fadeStart = 0.8; // Start fading at 80% of animation
-        const fadeFactor = progress < fadeStart ? 1.0 : (1.0 - (progress - fadeStart) / (1.0 - fadeStart));
-        ripple.ref.current.material.opacity = fadeFactor * ripple.opacity * Math.max(level, 0.8);
-        
-        // Billboard toward camera
-        ripple.ref.current.lookAt(camera.position);
+
+      const cycleDuration = 1.5;
+
+      ripples.forEach(({ ref, maxScale, delay }) => {
+        const progress = ((time * speedMultiplier + delay) % cycleDuration) / cycleDuration;
+        const s = 1 + progress * (maxScale - 1);
+        ref.current.scale.set(s, s, 1);
+
+        const fadeStart = 0.8;
+        const fade = progress < fadeStart ? 1.0 : 1.0 - (progress - fadeStart) / (1.0 - fadeStart);
+        ref.current.material.opacity = fade * Math.max(level, 0.8);
+
+        ref.current.lookAt(camera.position);
       });
-      
     } else if (ripple1Ref.current && ripple2Ref.current) {
-      // Hide all ripples when not speaking
       ripple1Ref.current.material.opacity = 0;
       ripple2Ref.current.material.opacity = 0;
     }
@@ -219,7 +188,6 @@ export default function FlatUserIcon({
       ref={groupRef}
       position={seatPosition}
       scale={[finalScale, finalScale, finalScale]}
-      frustumCulled={false}
     >
       {/* MAIN AVATAR PLANE - Black Silhouette SVG */}
       <mesh
@@ -227,8 +195,7 @@ export default function FlatUserIcon({
         position={[0, 0, 0]}
         onPointerOver={() => onHover?.(userId)}
         onPointerOut={() => onHover?.(null)}
-        onClick={onClick} 
-        frustumCulled={false}
+        onClick={onClick}
       >
         <planeGeometry args={[1, 1]} />
         <meshBasicMaterial
@@ -241,13 +208,7 @@ export default function FlatUserIcon({
     {/* GLOWING DOT - inside avatar's head (mouth area) */}
     <mesh ref={orbRef} position={[0, 0.08, 0.01]}>
       <sphereGeometry args={[0.02, 12, 12]} />
-      <meshStandardMaterial
-        color={userColor}
-        emissive={userColor}
-        emissiveIntensity={0.9}
-        roughness={0.1}
-        metalness={0}
-      />
+      <meshBasicMaterial color={userColor} />
     </mesh>
 
     {/* 🌊 RIPPLE 1 - Inner ring (0.02 → 0.07) ⚪ WHITE FOR VISIBILITY */}

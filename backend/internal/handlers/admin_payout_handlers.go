@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/services"
 	"wewatch-backend/internal/utils"
 )
 
@@ -223,6 +224,12 @@ func ProcessPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 				tx.Commit()
 			}
 
+			LogAdminAction(db, c, "process_payout", "payout", uint(payoutID), map[string]interface{}{
+				"amount":   amount,
+				"currency": currency,
+				"method":   payout.PayoutMethod,
+			}, false, transferErr.Error())
+
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":   "Transfer failed",
 				"message": transferErr.Error(),
@@ -259,6 +266,22 @@ func ProcessPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 
 		log.Printf("✅ Payout processed successfully: ID %d, User %d, Amount %.2f %s, Transfer: %s",
 			payoutID, payout.UserID, amount, currency, transferCode)
+
+		go func() {
+			var u models.User
+			if err := db.Select("email, username").First(&u, payout.UserID).Error; err == nil {
+				emailSvc := services.NewEmailService()
+				_ = emailSvc.SendWithdrawalCompletedEmail(u.Email, u.Username, amount, currency)
+			}
+		}()
+
+		LogAdminAction(db, c, "process_payout", "payout", uint(payoutID), map[string]interface{}{
+			"user_id":       payout.UserID,
+			"amount":        amount,
+			"currency":      currency,
+			"method":        payout.PayoutMethod,
+			"transfer_code": transferCode,
+		}, true, "")
 
 		c.JSON(http.StatusOK, gin.H{
 			"success":      true,
@@ -418,6 +441,29 @@ func RejectPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 
 		log.Printf("✅ Payout rejected: ID %d, Reason: %s", payoutID, req.Reason)
 
+		go func() {
+			var u models.User
+			if err := db.Select("email, username").First(&u, payout.UserID).Error; err == nil {
+				var amt float64
+				var cur string
+				if payout.AmountValue != nil {
+					amt = *payout.AmountValue
+				}
+				if payout.AmountCurrency != nil {
+					cur = *payout.AmountCurrency
+				} else {
+					cur = "NGN"
+				}
+				emailSvc := services.NewEmailService()
+				_ = emailSvc.SendWithdrawalFailedEmail(u.Email, u.Username, amt, cur, req.Reason)
+			}
+		}()
+
+		LogAdminAction(db, c, "reject_payout", "payout", uint(payoutID), map[string]interface{}{
+			"user_id": payout.UserID,
+			"reason":  req.Reason,
+		}, true, "")
+
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"payout":  payout,
@@ -526,6 +572,29 @@ func MarkPayoutCompletedHandler(db *gorm.DB) gin.HandlerFunc {
 
 		log.Printf("✅ Payout manually marked as completed: ID %d, User %d, Amount %.2f %s",
 			payoutID, payout.UserID, *payout.AmountValue, *payout.AmountCurrency)
+
+		go func() {
+			var u models.User
+			if err := db.Select("email, username").First(&u, payout.UserID).Error; err == nil {
+				emailSvc := services.NewEmailService()
+				cur := "NGN"
+				if payout.AmountCurrency != nil {
+					cur = *payout.AmountCurrency
+				}
+				_ = emailSvc.SendWithdrawalCompletedEmail(u.Email, u.Username, *payout.AmountValue, cur)
+			}
+		}()
+
+		details := map[string]interface{}{
+			"user_id": payout.UserID,
+		}
+		if req.TransferReference != nil {
+			details["transfer_reference"] = *req.TransferReference
+		}
+		if req.Notes != nil {
+			details["notes"] = *req.Notes
+		}
+		LogAdminAction(db, c, "complete_payout", "payout", uint(payoutID), details, true, "")
 
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,

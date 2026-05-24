@@ -1,10 +1,10 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl } from '../services/api';
-import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon } from '@heroicons/react/24/solid';
-import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon, FaceSmileIcon as FaceSmileOutlineIcon, MicrophoneIcon as MicrophoneOutlineIcon, PaperClipIcon as PaperClipOutlineIcon, ChartBarSquareIcon as ChartBarSquareOutlineIcon } from '@heroicons/react/24/outline';
-import { Plus } from 'lucide-react';
+import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup } from '../services/api';
+import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon } from '@heroicons/react/24/solid';
+import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon, FaceSmileIcon as FaceSmileOutlineIcon, MicrophoneIcon as MicrophoneOutlineIcon, PaperClipIcon as PaperClipOutlineIcon, ChartBarSquareIcon as ChartBarSquareOutlineIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
+import { Plus, Home, Search } from 'lucide-react';
 import jwtDecodeUtil from '../utils/jwt';
 import apiClient from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
@@ -25,6 +25,7 @@ import EventsPreviewModal from './EventsPreviewModal';
 import SessionPreview from './SessionPreview';
 import { useAuth } from '../contexts/AuthContext';
 import LobbyMessageBubble from './lobby/LobbyMessageBubble';
+import WatchOutModal from './lobby/WatchOutModal';
 import LobbyAttachModal from './lobby/LobbyAttachModal';
 import LobbyStickerPicker from './lobby/LobbyStickerPicker';
 import LobbyPollCreator from './lobby/LobbyPollCreator';
@@ -41,6 +42,7 @@ import DateOfBirthPromptModal from './DateOfBirthPromptModal';
 import { checkDateOfBirth, updateDateOfBirth } from '../services/api';
 import SessionChatPreviewModal from './SessionChatPreviewModal';
 import { formatCount } from '../utils/formatCount';
+import ReportModal from './ReportModal';
 import TikTokHeartAnimation from './TikTokHeartAnimation';
 import FeedAdCard from './ads/FeedAdCard';
 import { calculateAge } from '../utils/ageUtils';
@@ -99,6 +101,11 @@ const LobbyPage = () => {
     };
   }, []);
   
+  // 🔔 Notification state
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+  const [upcomingEventsCount, setUpcomingEventsCount] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [rooms, setRooms] = useState([]);
   const [sessions, setSessions] = useState([]); // ✅ Active watch sessions
@@ -144,6 +151,21 @@ const LobbyPage = () => {
   const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
   const [isStickerPickerOpen, setIsStickerPickerOpen] = useState(false);
   const [isPollCreatorOpen, setIsPollCreatorOpen] = useState(false);
+  const [showWatchOutModal, setShowWatchOutModal] = useState(false);
+
+  // ✅ WatchOut State — live rooms available to share
+  const [liveRooms, setLiveRooms] = useState([]);
+  // Tracks session_ids that ended via WS so private WatchOut cards grey out
+  const [endedSessionIds, setEndedSessionIds] = useState(new Set());
+  const [reportTarget, setReportTarget] = useState(null); // { targetType, targetId, targetName }
+
+  // ✅ Add Friend / unified chats search state
+  const [showChatsSearch, setShowChatsSearch] = useState(false);
+  const [showAddFriendSearch, setShowAddFriendSearch] = useState(false);
+  const [addFriendQuery, setAddFriendQuery] = useState('');
+  const [addFriendResults, setAddFriendResults] = useState([]);
+  const [addFriendLoading, setAddFriendLoading] = useState(false);
+  const [sentFriendRequestIds, setSentFriendRequestIds] = useState(new Set());
   
   // ✅ Voice Recording State
   const [isRecording, setIsRecording] = useState(false);
@@ -159,6 +181,20 @@ const LobbyPage = () => {
   const [callRoom, setCallRoom] = useState(null); // LiveKit Room instance
   const callTimeoutRef = React.useRef(null);
   
+  // ✅ Group Chat State
+  const [groupsList, setGroupsList] = useState([]);
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [groupMessages, setGroupMessages] = useState({}); // { groupId: [messages] }
+  const [groupUnreadCounts, setGroupUnreadCounts] = useState({}); // { groupId: unreadCount }
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [selectedMembersForGroup, setSelectedMembersForGroup] = useState([]);
+  const [incomingGroupCall, setIncomingGroupCall] = useState(null);
+  const [activeGroupCall, setActiveGroupCall] = useState(null);
+  const [groupCallRoom, setGroupCallRoom] = useState(null);
+  const [newGroupChatMessage, setNewGroupChatMessage] = useState('');
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+
   // ✅ Friend Request State
   const [pendingRequests, setPendingRequests] = useState([]); // Friend requests received
   const [sentRequests, setSentRequests] = useState([]); // Friend requests sent
@@ -180,6 +216,7 @@ const LobbyPage = () => {
   const [isCreateNewModalOpen, setIsCreateNewModalOpen] = useState(false);
   const [isPostUploadModalOpen, setIsPostUploadModalOpen] = useState(false);
   const [openMenuRoomId, setOpenMenuRoomId] = useState(null);
+  const [openRoomContextMenuId, setOpenRoomContextMenuId] = useState(null); // non-host room menu
   const [roomToDelete, setRoomToDelete] = useState(null);
   
   // ✅ Events Preview Modal State
@@ -197,6 +234,12 @@ const LobbyPage = () => {
   // ✅ Calendar Modal State (for trailers)
   const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
   const [selectedEventForCalendar, setSelectedEventForCalendar] = useState(null);
+
+  // Calendar drawer state
+  const [showCalendarDrawer, setShowCalendarDrawer] = useState(false);
+  const [showTabHint, setShowTabHint] = useState(true);
+  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
   
   // ✅ Hover state for session cards
   const [hoveredSession, setHoveredSession] = useState(null);
@@ -268,6 +311,24 @@ const LobbyPage = () => {
   
   // 🔍 Discover Search State
   const [discoverSearch, setDiscoverSearch] = useState('');
+  const [showDiscoverSearch, setShowDiscoverSearch] = useState(false);
+  const [showSessionSearch, setShowSessionSearch] = useState(false);
+  const [sessionSearch, setSessionSearch] = useState('');
+  // scroll position memory per feed tab
+  const sessionsScrollPosRef = React.useRef(0);
+  const forYouScrollPosRef = React.useRef(0);
+  const touchStartRef = React.useRef({ x: 0, y: 0 });
+
+  // 🪟 Modal state for W button (hides Post option when opened from Watching Live)
+  const [createModalHidePosts, setCreateModalHidePosts] = React.useState(false);
+
+  // 🔍 Rooms search visibility (taskbar Search toggles this)
+  const [showRoomsSearch, setShowRoomsSearch] = React.useState(false);
+
+  // 🗂️ Member Rooms Card (collapses when memberRooms.length > 10)
+  const [isMemberCardExpanded, setIsMemberCardExpanded] = React.useState(false);
+  // 🗂️ Groups Card (collapses when groupsList.length > 10)
+  const [isGroupsCardExpanded, setIsGroupsCardExpanded] = React.useState(false);
   
   // 🎯 Feed Ads State
   const [feedAds, setFeedAds] = useState([]);
@@ -728,10 +789,26 @@ const LobbyPage = () => {
     return () => document.removeEventListener('click', handleClickOutside);
   }, [friendMenuOpen]);
 
+  // Sort rooms: owned rooms pinned first, member rooms sorted by content-rating proximity
+  const RATING_ORDER = ['G', 'PG', 'Educational', 'Religious', '13+', '16+', '18+', 'Mature'];
+  const sortRooms = (roomsToSort) => {
+    const owned = roomsToSort.filter(r => r.host_id === authenticatedUserID);
+    const member = roomsToSort.filter(r => r.host_id !== authenticatedUserID);
+    const refRating = owned[0]?.content_rating;
+    if (refRating && RATING_ORDER.includes(refRating)) {
+      const refIdx = RATING_ORDER.indexOf(refRating);
+      member.sort((a, b) =>
+        Math.abs(RATING_ORDER.indexOf(a.content_rating || 'G') - refIdx) -
+        Math.abs(RATING_ORDER.indexOf(b.content_rating || 'G') - refIdx)
+      );
+    }
+    return [...owned, ...member];
+  };
+
   // Filter rooms and sessions effect
   useEffect(() => {
     if (searchTerm === '') {
-      setFilteredRooms(rooms);
+      setFilteredRooms(sortRooms(rooms));
       setFilteredSessions(sessions);
     } else {
       const termLower = searchTerm.toLowerCase().trim();
@@ -739,7 +816,7 @@ const LobbyPage = () => {
         (room.name && room.name.toLowerCase().includes(termLower)) ||
         (room.description && room.description.toLowerCase().includes(termLower))
       );
-      setFilteredRooms(filtered);
+      setFilteredRooms(sortRooms(filtered));
       
       // ✅ Filter sessions by room name or host username
       const filteredSess = sessions.filter(session =>
@@ -989,6 +1066,16 @@ const LobbyPage = () => {
       fetchFeedAds();
     }
   }, [currentUser, activeTab]);
+
+  // Fetch upcoming events when drawer opens
+  useEffect(() => {
+    if (!showCalendarDrawer || !currentUser) return;
+    setCalendarLoading(true);
+    apiClient.get('/api/user/upcoming-events')
+      .then(res => setCalendarEvents(res.data.events || []))
+      .catch(err => console.error('Failed to fetch upcoming events:', err))
+      .finally(() => setCalendarLoading(false));
+  }, [showCalendarDrawer, currentUser]);
   
   // ✅ STEP 3: Load next batch of sessions (infinite scroll)
   const loadMoreSessions = async () => {
@@ -1217,6 +1304,51 @@ const LobbyPage = () => {
     }
   };
   
+  // ✅ Fetch rooms with active sessions for WatchOut button
+  const fetchLiveRooms = async () => {
+    try {
+      const resp = await apiClient.get('/api/rooms/with-active-sessions');
+      setLiveRooms(resp.data.rooms || []);
+    } catch {
+      // Silently ignore — not critical
+    }
+  };
+
+  // Poll every 30s when in chats tab so the WatchOut button stays fresh
+  useEffect(() => {
+    if (activeTab !== 'chats') return;
+    fetchLiveRooms();
+    const interval = setInterval(fetchLiveRooms, 30000);
+    return () => clearInterval(interval);
+  }, [activeTab]);
+
+  // Tab hint text: show briefly, then fade
+  useEffect(() => {
+    setShowTabHint(true);
+    const t = setTimeout(() => setShowTabHint(false), 3000);
+    return () => clearTimeout(t);
+  }, [activeTab, watchingSubTab]);
+
+  // Debounced user search for "Add Friend"
+  useEffect(() => {
+    if (addFriendQuery.trim().length < 2) {
+      setAddFriendResults([]);
+      return;
+    }
+    setAddFriendLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const data = await searchUsers(addFriendQuery.trim());
+        setAddFriendResults(data.users || []);
+      } catch {
+        setAddFriendResults([]);
+      } finally {
+        setAddFriendLoading(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [addFriendQuery]);
+
   // ✅ Send lobby chat message
   const handleSendChatMessage = async (e) => {
     e.preventDefault();
@@ -1264,6 +1396,183 @@ const LobbyPage = () => {
   const handleBackToFriends = () => {
     setChatView('friends');
     setSelectedChatUser(null);
+    setSelectedGroup(null);
+  };
+
+  // ── Group chat functions ──────────────────────────────────────
+
+  const fetchGroupsList = async () => {
+    try {
+      const data = await getLobbyGroups();
+      const groups = data.groups || [];
+      setGroupsList(groups);
+      const counts = {};
+      groups.forEach(g => { counts[g.id] = g.unread_count || 0; });
+      setGroupUnreadCounts(counts);
+    } catch (err) {
+      console.error('Failed to fetch groups:', err);
+    }
+  };
+
+  const handleOpenGroup = async (group) => {
+    setSelectedGroup(group);
+    setChatView('group_messages');
+    setGroupMenuOpen(false);
+    try {
+      const data = await getLobbyGroupMessages(group.id);
+      setGroupMessages(prev => ({ ...prev, [group.id]: data.messages || [] }));
+      setGroupUnreadCounts(prev => ({ ...prev, [group.id]: 0 }));
+    } catch (err) {
+      console.error('Failed to fetch group messages:', err);
+      setGroupMessages(prev => ({ ...prev, [group.id]: [] }));
+    }
+    setTimeout(() => chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+  };
+
+  const handleSendGroupMessage = async (e) => {
+    e.preventDefault();
+    if (!newGroupChatMessage.trim() || !selectedGroup) return;
+    const msg = newGroupChatMessage.trim();
+    setNewGroupChatMessage('');
+    try {
+      const data = await sendLobbyGroupMessage(selectedGroup.id, msg);
+      setGroupMessages(prev => ({
+        ...prev,
+        [selectedGroup.id]: [...(prev[selectedGroup.id] || []), data],
+      }));
+      setTimeout(() => chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    } catch (err) {
+      console.error('Failed to send group message:', err);
+      toast.error('Failed to send message');
+    }
+  };
+
+  const handleGroupAttachment = async (fileType, file) => {
+    if (!selectedGroup) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const uploaders = {
+        image: uploadLobbyGroupImage,
+        video: uploadLobbyGroupVideo,
+        document: uploadLobbyGroupDocument,
+        voice_note: uploadLobbyGroupVoiceNote,
+      };
+      const data = await uploaders[fileType](selectedGroup.id, formData);
+      setGroupMessages(prev => ({
+        ...prev,
+        [selectedGroup.id]: [...(prev[selectedGroup.id] || []), data],
+      }));
+      scrollToBottomChat();
+      toast.success('File sent!');
+    } catch (err) {
+      console.error('Failed to send group attachment:', err);
+      throw err;
+    }
+  };
+
+  const handleGroupWatchOut = async (roomId) => {
+    if (!selectedGroup) return;
+    try {
+      await sendLobbyGroupWatchOut(selectedGroup.id, roomId);
+      toast.success('Watch-out sent to group!');
+      setShowWatchOutModal(false);
+      const data = await getLobbyGroupMessages(selectedGroup.id);
+      setGroupMessages(prev => ({ ...prev, [selectedGroup.id]: data.messages || [] }));
+    } catch (err) {
+      toast.error('Failed to send watch-out');
+    }
+  };
+
+  const handleStartGroupCall = async () => {
+    if (!selectedGroup) return;
+    try {
+      const data = await startLobbyGroupCall(selectedGroup.id);
+      const livekitRoom = new Room();
+      await livekitRoom.connect(data.livekit_url, data.token);
+      setActiveGroupCall({ groupId: selectedGroup.id, groupName: selectedGroup.name, token: data.token, roomName: data.room_name, livekitUrl: data.livekit_url });
+      setGroupCallRoom(livekitRoom);
+      toast.success(`Group call started`);
+    } catch (err) {
+      console.error('Failed to start group call:', err);
+      toast.error('Failed to start group call');
+    }
+  };
+
+  const handleJoinGroupCall = async (groupId, roomName, livekitUrl, groupName) => {
+    try {
+      const data = await startLobbyGroupCall(groupId);
+      const livekitRoom = new Room();
+      await livekitRoom.connect(data.livekit_url, data.token);
+      setActiveGroupCall({ groupId, groupName, token: data.token, roomName: data.room_name, livekitUrl: data.livekit_url });
+      setGroupCallRoom(livekitRoom);
+      setIncomingGroupCall(null);
+    } catch (err) {
+      console.error('Failed to join group call:', err);
+      toast.error('Failed to join group call');
+    }
+  };
+
+  const handleEndGroupCall = async () => {
+    if (!activeGroupCall) return;
+    try {
+      if (groupCallRoom) {
+        groupCallRoom.disconnect();
+        setGroupCallRoom(null);
+      }
+      await endLobbyGroupCall(activeGroupCall.groupId);
+      setActiveGroupCall(null);
+    } catch (err) {
+      console.error('Failed to end group call:', err);
+    }
+  };
+
+  const handleLeaveGroup = async () => {
+    if (!selectedGroup) return;
+    const groupId = selectedGroup.id;
+    const groupName = selectedGroup.name;
+    try {
+      await leaveLobbyGroup(groupId);
+      toast.success(`Left "${groupName}"`);
+      setGroupMenuOpen(false);
+      handleBackToFriends();
+      setGroupsList(prev => prev.filter(g => g.id !== groupId));
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to leave group');
+    }
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!selectedGroup) return;
+    const groupId = selectedGroup.id;
+    const groupName = selectedGroup.name;
+    try {
+      await deleteLobbyGroup(groupId);
+      toast.success(`"${groupName}" deleted`);
+      setGroupMenuOpen(false);
+      handleBackToFriends();
+      setGroupsList(prev => prev.filter(g => g.id !== groupId));
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to delete group');
+    }
+  };
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim() || selectedMembersForGroup.length === 0) {
+      toast.error('Enter a group name and add at least one member');
+      return;
+    }
+    try {
+      await createLobbyGroup(newGroupName.trim(), selectedMembersForGroup);
+      toast.success('Group created!');
+      setShowCreateGroupModal(false);
+      setNewGroupName('');
+      setSelectedMembersForGroup([]);
+      await fetchGroupsList();
+    } catch (err) {
+      console.error('Failed to create group:', err);
+      toast.error('Failed to create group');
+    }
   };
 
   // ✅ NEW: Handle file attachment upload
@@ -1753,6 +2062,55 @@ const LobbyPage = () => {
     };
   }, [isWatchingNowFullscreen]);
 
+  // Fetch notifications on mount
+  const fetchNotifications = async () => {
+    try {
+      const res = await apiClient.get('/api/notifications?limit=30');
+      setNotifications(res.data.notifications || []);
+      setUnreadNotifCount(res.data.unread_count || 0);
+    } catch (e) {
+      // notifications are non-critical
+    }
+  };
+
+  const fetchUpcomingEventsCount = async () => {
+    try {
+      const res = await apiClient.get('/api/user/upcoming-events');
+      setUpcomingEventsCount((res.data.events || []).length);
+    } catch (e) {}
+  };
+
+  const markAllNotifsRead = async () => {
+    try {
+      await apiClient.patch('/api/notifications/read-all');
+      setUnreadNotifCount(0);
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    } catch (e) {}
+  };
+
+  const handleNotificationClick = (n) => {
+    setShowNotifPanel(false);
+    if (!n.is_read) {
+      apiClient.patch(`/api/notifications/${n.id}/read`).catch(() => {});
+      setNotifications(prev => prev.map(notif => notif.id === n.id ? { ...notif, is_read: true } : notif));
+      setUnreadNotifCount(prev => Math.max(0, prev - 1));
+    }
+    const nType = n.notif_type || n.type;
+    const roomTypes = ['room_post', 'session_started', 'session_ended', 'event_booking', 'event_booking_confirm', 'gift_ticket', 'watch_invite'];
+    const postTypes = ['post_like', 'post_comment', 'reply'];
+    if (roomTypes.includes(nType)) {
+      navigate(`/rooms/${n.entity_id}`);
+    } else if (postTypes.includes(nType)) {
+      setActiveTab('watching');
+    } else if (nType === 'dm_received' || nType === 'missed_call') {
+      setActiveTab('chats');
+      const friend = friendsList.find(f => (f.id || f.ID) === n.entity_id);
+      if (friend) handleOpenChat(friend);
+    } else if (nType === 'token_gift') {
+      navigate('/payment');
+    }
+  };
+
   // Initial fetch on mount
   useEffect(() => {
     fetchRoomsData();
@@ -1761,9 +2119,13 @@ const LobbyPage = () => {
       fetchFriendsList();
       fetchPendingRequests();
       fetchSentRequests();
-      
+      fetchNotifications();
+      fetchUpcomingEventsCount();
+      fetchGroupsList();
+
       // ✅ STEP 2: Pre-fetch "Watching Now" content in background
       prefetchWatchingNowContent();
+
     }
   }, [currentUser]);
   
@@ -1787,6 +2149,8 @@ const LobbyPage = () => {
     
     return () => observer.disconnect();
   }, [activeTab, sessionsPage.hasMore, trailersPage.hasMore, sessionsPage.loading, trailersPage.loading]);
+
+
 
   // WebSocket connection for real-time lobby updates
   useEffect(() => {
@@ -1845,35 +2209,58 @@ const LobbyPage = () => {
                   setTimeout(() => generateSessionPreview(message.session_id), 500);
                 }
                 break;
+
+              case 'room_session_started':
+                // Targeted alert: a room you're a member of just went live
+                fetchSessionsData();
+                if (message.room_name && message.host_username) {
+                  toast(`🔴 ${message.room_name} is now live!`, {
+                    duration: 6000,
+                    icon: '📺',
+                    style: { background: '#1e1b4b', color: '#fff', border: '1px solid #7c3aed' },
+                  });
+                }
+                if (message.session_id) {
+                  setTimeout(() => generateSessionPreview(message.session_id), 500);
+                }
+                break;
+
+              case 'notification_new':
+                // Increment badge and prepend to list
+                setUnreadNotifCount(prev => prev + 1);
+                if (message.data) {
+                  setNotifications(prev => [{ ...message.data, is_read: false }, ...prev]);
+                }
+                break;
                 
               case 'session_ended':
                 // ✅ OPTIMISTIC UPDATE: Remove session immediately without API call
                 if (message.session_id) {
                   console.log(`🗑️ [Lobby] Session ended: ${message.session_id} - removing from state`);
-                  
+
                   // Remove from sessions state
                   setSessions(prev => prev.filter(s => s.session_id !== message.session_id));
-                  
+
                   // Remove from sessionsPage data (infinite scroll)
                   setSessionsPage(prev => ({
                     ...prev,
                     data: prev.data.filter(s => s.session_id !== message.session_id)
                   }));
-                  
+
                   // Clear preview data
                   setSessionPreviews(prev => {
                     const updated = { ...prev };
                     delete updated[message.session_id];
                     return updated;
                   });
-                  
+
                   // Clear likes and chat counts
                   setSessionLikes(prev => {
                     const updated = { ...prev };
                     delete updated[message.session_id];
                     return updated;
                   });
-                  
+
                   setSessionChatCounts(prev => {
                     const updated = { ...prev };
                     delete updated[message.session_id];
@@ -1882,6 +2269,14 @@ const LobbyPage = () => {
                 } else {
                   // Fallback: refresh if session_id not provided
                   fetchSessionsData();
+                }
+                // Remove from liveRooms so WatchOut button hides and stale invite cards update
+                if (message.room_id) {
+                  setLiveRooms(prev => prev.filter(r => r.room_id !== message.room_id));
+                }
+                // Track ended session_id so private WatchOut DM cards grey out immediately
+                if (message.session_id) {
+                  setEndedSessionIds(prev => new Set([...prev, message.session_id]));
                 }
                 break;
                 
@@ -2107,6 +2502,81 @@ const LobbyPage = () => {
                   discoverFeedRef.current.refresh();
                 }
                 break;
+
+              case 'lobby_chat': {
+                // Real-time message — DM or group
+                const chatData = message.data || message;
+                if (chatData.group_id) {
+                  // Append to open group chat
+                  const gid = chatData.group_id;
+                  setGroupMessages(prev => {
+                    const existing = prev[gid] || [];
+                    // Avoid duplicates (own messages already appended optimistically)
+                    if (existing.some(m => m.id === chatData.id)) return prev;
+                    return { ...prev, [gid]: [...existing, chatData] };
+                  });
+                  // Increment unread badge if group is not currently open
+                  setSelectedGroup(sg => {
+                    if (!sg || sg.id !== gid) {
+                      setGroupUnreadCounts(prev => ({ ...prev, [gid]: (prev[gid] || 0) + 1 }));
+                    }
+                    return sg;
+                  });
+                } else {
+                  // DM message — append to open DM if it's the right user
+                  const dmSenderId = chatData.sender_id;
+                  const dmRecipientId = chatData.recipient_id;
+                  setChatMessages(prev => {
+                    const otherUserId = dmSenderId === currentUser?.id ? dmRecipientId : dmSenderId;
+                    const existing = prev[otherUserId] || [];
+                    if (existing.some(m => m.id === chatData.id)) return prev;
+                    return { ...prev, [otherUserId]: [...existing, chatData] };
+                  });
+                  // Badge increment for closed chats
+                  setSelectedChatUser(scu => {
+                    if (!scu || scu.id !== dmSenderId) {
+                      if (dmSenderId !== currentUser?.id) {
+                        setUnreadCounts(prev => ({ ...prev, [dmSenderId]: (prev[dmSenderId] || 0) + 1 }));
+                      }
+                    }
+                    return scu;
+                  });
+                }
+                break;
+              }
+
+              case 'group_call_incoming':
+                setIncomingGroupCall(message.data || message);
+                toast(`📞 Group Call in ${(message.data || message).group_name}`, {
+                  duration: 15000,
+                  icon: '👥',
+                });
+                break;
+
+              case 'group_call_ended':
+                if (activeGroupCall && activeGroupCall.groupId === (message.data || message).group_id) {
+                  handleEndGroupCall();
+                }
+                setIncomingGroupCall(null);
+                break;
+
+              case 'group_created':
+              case 'group_member_added':
+              case 'group_renamed':
+                fetchGroupsList();
+                break;
+
+              case 'group_deleted': {
+                const deletedGroupId = (message.data || message).group_id;
+                setGroupsList(prev => prev.filter(g => g.id !== deletedGroupId));
+                setGroupMessages(prev => { const next = { ...prev }; delete next[deletedGroupId]; return next; });
+                setGroupUnreadCounts(prev => { const next = { ...prev }; delete next[deletedGroupId]; return next; });
+                if (selectedGroup?.id === deletedGroupId) {
+                  toast(`Group "${(message.data || message).group_name}" was deleted`);
+                  handleBackToFriends();
+                }
+                break;
+              }
 
               default:
                 break;
@@ -2653,16 +3123,128 @@ const LobbyPage = () => {
     });
   }, [sessionsPage.data]);
 
+  // ── scroll-position memory for feed tabs ──────────────────────────────────
+  const saveWatchingScrollPos = () => {
+    if (!watchingNowScrollRef.current) return;
+    const pos = watchingNowScrollRef.current.scrollTop;
+    if (watchingSubTab === 'sessions') sessionsScrollPosRef.current = pos;
+    else forYouScrollPosRef.current = pos;
+  };
+
+  const restoreWatchingScrollPos = (toSubTab) => {
+    requestAnimationFrame(() => {
+      if (!watchingNowScrollRef.current) return;
+      if (toSubTab === 'sessions') watchingNowScrollRef.current.scrollTop = sessionsScrollPosRef.current;
+      else watchingNowScrollRef.current.scrollTop = forYouScrollPosRef.current;
+    });
+  };
+
+  const switchSubTab = (to) => { saveWatchingScrollPos(); setWatchingSubTab(to); restoreWatchingScrollPos(to); };
+
+  // ── swipe-left/right for tab navigation ───────────────────────────────────
+  const handleWatchingTouchStart = (e) => {
+    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+  const handleWatchingTouchEnd = (e) => {
+    const dx = e.changedTouches[0].clientX - touchStartRef.current.x;
+    const dy = e.changedTouches[0].clientY - touchStartRef.current.y;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy)) return;
+    if (dx < 0 && watchingSubTab === 'sessions') switchSubTab('discover');
+    else if (dx > 0 && watchingSubTab === 'discover') switchSubTab('sessions');
+  };
+
+  // ── Taskbar handlers ──
+  const handleCenterFAB = () => {
+    if (activeTab === 'watching') {
+      if (watchingSubTab === 'sessions') {
+        setCreateModalHidePosts(true);
+        setIsCreateNewModalOpen(true);
+      } else {
+        setIsPostUploadModalOpen(true);
+      }
+    } else if (activeTab === 'rooms') {
+      if (!currentUser?.main_room_id) {
+        navigate('/create-room');
+      } else {
+        setCreateModalHidePosts(true);
+        setIsCreateNewModalOpen(true);
+      }
+    }
+  };
+
+  const handleSearchToggle = () => {
+    if (activeTab === 'rooms') setShowRoomsSearch(s => !s);
+    else if (activeTab === 'chats') {
+      if (showChatsSearch) {
+        setFriendsSearchTerm('');
+        setAddFriendQuery('');
+        setAddFriendResults([]);
+      }
+      setShowChatsSearch(s => !s);
+    } else if (activeTab === 'watching') {
+      if (watchingSubTab === 'sessions') setShowSessionSearch(s => !s);
+      else setShowDiscoverSearch(s => !s);
+    }
+  };
+
+  const handleHomeButton = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (activeTab === 'rooms') fetchRoomsData(0, false);
+    else if (activeTab === 'watching') {
+      if (watchingSubTab === 'sessions') handleRefreshWatchingNow();
+      else discoverFeedRef.current?.refresh();
+    }
+  };
+
+  const isSearchActive =
+    (activeTab === 'rooms' && showRoomsSearch) ||
+    (activeTab === 'chats' && showChatsSearch) ||
+    (activeTab === 'watching' && watchingSubTab === 'sessions' && showSessionSearch) ||
+    (activeTab === 'watching' && watchingSubTab === 'discover' && showDiscoverSearch);
+
+  const showCenterFAB = true;
+  const showSearchButton = true;
+
   return (
-    <div className="relative min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-white transition-colors duration-200">
+    <div className="relative min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-white transition-colors duration-200 pb-20">
       {/* ✅ Hamburger Menu Button - Fixed Top Left */}
       <button
         onClick={() => setIsLobbyLeftSidebarOpen(true)}
-        className="fixed top-4 left-4 z-30 bg-gray-800 hover:bg-gray-700 text-white p-3 rounded-lg shadow-lg transition-colors duration-200"
+        className="fixed top-3 left-3 z-30 bg-gray-800/70 hover:bg-gray-700 text-white p-1.5 rounded-lg shadow-lg transition-colors duration-200"
         aria-label="Open menu"
       >
         <Bars3Icon className="h-6 w-6" />
       </button>
+
+
+      {/* 🔔 Notification Panel */}
+      {showNotifPanel && (
+        <div className="fixed bottom-20 right-4 z-40 w-80 max-h-96 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span className="font-semibold text-white text-sm">Notifications</span>
+            <button onClick={() => setShowNotifPanel(false)} className="text-gray-400 hover:text-white">
+              <XMarkIcon className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="overflow-y-auto flex-1">
+            {notifications.length === 0 ? (
+              <p className="text-gray-400 text-sm text-center py-8">No notifications yet</p>
+            ) : (
+              notifications.map(n => (
+                <button
+                  key={n.id}
+                  onClick={() => handleNotificationClick(n)}
+                  className={`w-full text-left px-4 py-3 border-b border-gray-800 hover:bg-gray-750 transition-colors ${!n.is_read ? 'bg-gray-800' : ''}`}
+                >
+                  <p className="text-white text-sm font-medium">{n.title}</p>
+                  <p className="text-gray-400 text-xs mt-0.5">{n.body}</p>
+                  <p className="text-gray-600 text-xs mt-1">{new Date(n.created_at).toLocaleString()}</p>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ✅ Left Sidebar */}
       <LobbyLeftSidebar
@@ -2734,10 +3316,19 @@ const LobbyPage = () => {
         {/* ✅ Create New Modal */}
         <CreateNewModal
           isOpen={isCreateNewModalOpen}
-          onClose={() => setIsCreateNewModalOpen(false)}
+          onClose={() => { setIsCreateNewModalOpen(false); setCreateModalHidePosts(false); }}
           onInstantWatch={handleInstantWatch}
           onCreateRoom={handleCreateRoom}
+          onGoToRoom={(roomId) => {
+            setIsCreateNewModalOpen(false);
+            setCreateModalHidePosts(false);
+            navigate(`/rooms/${roomId}`, { state: { openSession: true } });
+          }}
           onCreatePost={() => setIsPostUploadModalOpen(true)}
+          userMainRoomId={currentUser?.main_room_id}
+          userMainRoomName={rooms.find(r => r.id === currentUser?.main_room_id)?.name}
+          isSuperAdmin={currentUser?.role === 'super_admin'}
+          hidePosts={createModalHidePosts}
         />
 
         {/* ✅ Post Upload Modal */}
@@ -2779,60 +3370,56 @@ const LobbyPage = () => {
         />
 
         {/* Logo Header */}
-        <div className="flex justify-center -mb-4">
-          <img 
-            src="/icons/LetsWatchOut Logo.svg" 
-            alt="LetsWatchOut" 
-            className="h-[173px] sm:h-[151px] w-auto"
+        <div className="flex justify-center -mt-6 mb-1">
+          <img
+            src="/icons/LetsWatchOut Logo.svg"
+            alt="LetsWatchOut"
+            className="h-[70px] sm:h-[110px] w-auto"
           />
         </div>
-      <p className="text-center mb-6 text-gray-700 dark:text-gray-300">Welcome! Find or create a room to start watching together.</p>
+      <p className={`block text-center mb-6 text-gray-700 dark:text-gray-300 transition-opacity duration-700 ${showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        {activeTab === 'rooms'
+          ? 'Welcome! Find or create a room to start watching together.'
+          : activeTab === 'chats'
+          ? "Say hi! Connect with friends and see what they're watching."
+          : watchingSubTab === 'sessions'
+          ? "What's live right now — join a session and watch together."
+          : 'Explore posts and recordings from the community.'}
+      </p>
 
-      {/* Search Bar Section - Only show on Rooms tab */}
-      {activeTab === 'rooms' && (
-        <div className="mb-4 sm:mb-8 flex justify-center">
-          <div className="flex items-center gap-0 w-full max-w-3xl">
-            {/* Search Form - Full Width */}
-            <form onSubmit={handleSearchSubmit} className="flex flex-1">
-              <input
-                type="text"
-                placeholder="Search room name or description..."
-                value={searchTerm}
-                onChange={handleSearchChange}
-                className="px-2 py-1.5 sm:px-4 sm:py-2 text-sm border border-gray-300 dark:border-gray-600 border-r-0 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 rounded-l-lg"
-              />
-              <button
-                type="submit"
-                className="bg-blue-500 hover:bg-blue-700 text-white font-bold p-1.5 sm:p-2 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500 flex-shrink-0"
-                title="Search"
-              >
-                <img 
-                  src="/icons/searchIcon.svg" 
-                  alt="Search" 
-                  className="h-5 w-5 sm:h-6 sm:w-6"
-                />
+      {/* Search Bar Section - Rooms tab, collapsible via taskbar Search button */}
+      {activeTab === 'rooms' && showRoomsSearch && (
+        <div className="px-4 pb-2">
+          <div className="relative">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <input
+              type="text"
+              placeholder="Search rooms..."
+              value={searchTerm}
+              onChange={handleSearchChange}
+              autoFocus
+              className="w-full pl-10 pr-10 py-2 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
+            />
+            {searchTerm && (
+              <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
-            </form>
-            
-            {/* Data Saver Indicator Badge */}
-            {dataSaverEnabled && (
-              <div className="ml-2 sm:ml-4 flex items-center gap-1.5 px-2 py-1 sm:px-3 sm:py-1.5 bg-green-600 text-white text-[10px] sm:text-xs font-semibold rounded-full shadow-lg">
-                <span>💾</span>
-                <span className="hidden sm:inline">Data Saver Active</span>
-                <span className="sm:hidden">Data Saver</span>
-              </div>
             )}
           </div>
         </div>
       )}
 
       {/* ✅ Tab Navigation */}
-      <div className="mb-4 sm:mb-6">
+      <div className="mb-1 sm:mb-2">
         <div className="flex border-b border-gray-300 dark:border-gray-700">
           {/* Tab 1: Chats */}
           <button
             onClick={() => setActiveTab('chats')}
-            className={`px-3 py-2 sm:px-6 sm:py-3 text-sm sm:text-lg font-semibold transition-colors relative ${
+            className={`px-3 py-2 sm:px-6 sm:py-3 text-sm sm:text-base font-semibold transition-colors relative ${
               activeTab === 'chats'
                 ? 'text-green-600 dark:text-green-400'
                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
@@ -2852,7 +3439,7 @@ const LobbyPage = () => {
           {/* Tab 2: Rooms */}
           <button
             onClick={() => setActiveTab('rooms')}
-            className={`px-3 py-2 sm:px-6 sm:py-3 text-sm sm:text-lg font-semibold transition-colors relative ${
+            className={`px-3 py-2 sm:px-6 sm:py-3 text-sm sm:text-base font-semibold transition-colors relative ${
               activeTab === 'rooms'
                 ? 'text-blue-600 dark:text-blue-400'
                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
@@ -2867,7 +3454,7 @@ const LobbyPage = () => {
           {/* Tab 3: Watching Now */}
           <button
             onClick={() => setActiveTab('watching')}
-            className={`px-3 py-2 sm:px-6 sm:py-3 text-sm sm:text-lg font-semibold transition-colors relative ${
+            className={`px-3 py-2 sm:px-6 sm:py-3 text-sm sm:text-base font-semibold transition-colors relative ${
               activeTab === 'watching'
                 ? 'text-purple-600 dark:text-purple-400'
                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
@@ -2883,6 +3470,7 @@ const LobbyPage = () => {
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-600 dark:bg-purple-400"></div>
             )}
           </button>
+
         </div>
       </div>
 
@@ -2912,231 +3500,168 @@ const LobbyPage = () => {
         {!loading && !error && (
           <>
             {filteredRooms && filteredRooms.length > 0 ? (
-              <>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
-                  {filteredRooms.map((room) => {
-                  const isOwnRoom = authenticatedUserID === room.host_id;
-                  const isMember = room.is_member && !isOwnRoom; // Member but not owner
-                  return (
-                  <div 
-                    key={room.id} 
-                    className={`bg-white dark:bg-gray-800 shadow-md rounded-lg hover:shadow-lg transition-shadow duration-300 relative cursor-pointer ${
-                      isOwnRoom 
-                        ? 'ring-2 ring-purple-500 dark:ring-purple-400' 
-                        : isMember
+              (() => {
+                const ownedRooms = filteredRooms.filter(r => r.host_id === authenticatedUserID);
+                const memberRooms = filteredRooms.filter(r => r.is_member && r.host_id !== authenticatedUserID);
+                const discoveryRooms = filteredRooms.filter(r => !r.is_member && r.host_id !== authenticatedUserID);
+                const collapseMemberRooms = memberRooms.length > 10;
+
+                // Helper: renders a single room card (shared across all sections)
+                const RoomCard = (room) => (
+                  <div
+                    key={`card-${room.id}`}
+                    className={`bg-white dark:bg-gray-800 shadow-md rounded-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 relative cursor-pointer ${
+                      room.host_id === authenticatedUserID
+                        ? 'ring-2 ring-purple-500 dark:ring-purple-400'
+                        : room.is_member
                         ? 'ring-2 ring-blue-500 dark:ring-blue-400'
                         : 'border border-gray-200 dark:border-gray-700'
                     }`}
                     onClick={() => navigate(`/rooms/${room.id}`)}
-                   >
-                    {/* Room Card Content - Horizontal Layout */}
-                    <div className="flex items-center p-2 sm:p-4 gap-2 sm:gap-4">
-                      {/* Left: Room Image - Circular like WhatsApp/Telegram */}
+                  >{/* Room Card inner — identical to original */}
+                  <div className="flex items-center p-3 sm:p-4 gap-3 sm:gap-5">
                       <div className="flex-shrink-0 relative">
-                        {/* TikTok-style Live Pulse for active sessions */}
                         {room.is_active_session && (
                           <>
-                            {/* Subtle expanding ring (background) */}
-                            <div className="absolute -inset-2 sm:-inset-2.5 rounded-full bg-red-500/30 animate-ping"></div>
-                            
-                            {/* Pulsing red ring overlay */}
-                            <div className="absolute inset-0 w-14 h-14 sm:w-20 sm:h-20 rounded-full ring-[3px] ring-red-500 animate-pulse pointer-events-none" style={{ animationDuration: '2s' }}></div>
+                            <div className="absolute -inset-2 sm:-inset-3 rounded-full bg-red-500/30 animate-ping"></div>
+                            <div className="absolute inset-0 w-20 h-20 sm:w-28 sm:h-28 rounded-full ring-[3px] ring-red-500 animate-pulse pointer-events-none" style={{ animationDuration: '2s' }}></div>
                           </>
                         )}
-                        
-                        <div className={`relative w-14 h-14 sm:w-20 sm:h-20 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ${
-                          room.is_active_session 
-                            ? '' 
-                            : 'ring-2 ring-gray-300 dark:ring-gray-600'
-                        }`}>
+                        <div className={`relative w-20 h-20 sm:w-28 sm:h-28 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ${room.is_active_session ? '' : 'ring-2 ring-gray-300 dark:ring-gray-600'}`}>
                           {room.image_url ? (
-                            <img 
-                              src={getAssetUrl(room.image_url)} 
-                              alt={room.name}
-                              className="w-full h-full object-cover"
-                            />
+                            <img src={getAssetUrl(room.image_url)} alt={room.name} className="w-full h-full object-cover" />
                           ) : (
-                            <FilmIcon className="w-6 h-6 sm:w-10 sm:h-10 text-white opacity-80" />
+                            <FilmIcon className="w-8 h-8 sm:w-12 sm:h-12 text-white opacity-80" />
                           )}
                         </div>
-                        
-                        {/* Active Session Indicator - Pulsing Green Badge */}
                         {room.is_active_session && (
-                          <div 
-                            className="absolute bottom-0 right-0 bg-green-500 rounded-full p-1 sm:p-1.5 animate-pulse shadow-lg ring-2 ring-white dark:ring-gray-800"
-                            title="Live Watch Session"
-                          >
-                            <svg className="h-2 w-2 sm:h-3 sm:w-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                          <div className="absolute bottom-0.5 right-0.5 bg-green-500 rounded-full p-1.5 sm:p-2 animate-pulse shadow-lg ring-2 ring-white dark:ring-gray-800" title="Live Watch Session">
+                            <svg className="h-2.5 w-2.5 sm:h-3.5 sm:w-3.5 text-white" fill="currentColor" viewBox="0 0 20 20">
                               <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
                             </svg>
                           </div>
                         )}
                       </div>
-                    
-                      {/* Right: Room Info */}
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 mb-0.5 sm:mb-1">
-                          <h2 className="text-base sm:text-xl font-semibold text-blue-600 dark:text-blue-400 hover:underline truncate">
-                            {room.name}
-                          </h2>
-                          {/* ✅ "Your Room" Badge */}
-                          {isOwnRoom && (
-                            <span className="flex items-center gap-1 text-xs font-bold text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/40 px-2 py-0.5 rounded-full flex-shrink-0 w-fit" title="You own this room">
-                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
-                                <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
-                              </svg>
-                              Your Room
-                            </span>
-                          )}
-                          {/* ✅ "Member" Badge */}
-                          {isMember && (
-                            <span className="flex items-center gap-1 text-xs font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 px-2 py-0.5 rounded-full flex-shrink-0 w-fit" title="You are a member of this room">
-                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
-                              </svg>
+                          <h2 className="text-base sm:text-xl font-semibold text-blue-600 dark:text-blue-400 hover:underline truncate">{room.name}</h2>
+                          {room.is_member && room.host_id !== authenticatedUserID && (
+                            <span className="flex items-center gap-1 text-xs font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 px-2 py-0.5 rounded-full flex-shrink-0 w-fit">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" /></svg>
                               Member
                             </span>
                           )}
-                          {/* ✅ Room Rating Badge - Desktop: inline, Mobile: below name */}
-                          {room.average_rating > 0 && (
-                            <span className="flex items-center gap-1 text-xs sm:text-sm font-medium text-yellow-600 bg-yellow-50 dark:bg-yellow-900/30 px-1.5 sm:px-2 py-0.5 rounded-full flex-shrink-0 w-fit mt-1 sm:mt-0" title={`${room.total_ratings} rating${room.total_ratings !== 1 ? 's' : ''}`}>
-                              <svg className="w-3 h-3 sm:w-4 sm:h-4 fill-yellow-500" viewBox="0 0 24 24">
-                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                              </svg>
+                        </div>
+                        {room.handle && <p className="text-[10px] text-gray-400 dark:text-gray-500 font-medium leading-none mb-1">@{room.handle}</p>}
+                        <div className="flex items-center gap-2 mt-1 mb-1">
+                          {room.average_rating > 0 ? (
+                            <span className="flex items-center gap-1 text-xs font-medium text-yellow-600 bg-yellow-50 dark:bg-yellow-900/30 px-1.5 py-0.5 rounded-full">
+                              <svg className="w-3 h-3 fill-yellow-500" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                               {room.average_rating.toFixed(1)}
                             </span>
-                          )}
+                          ) : null}
+                          <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" /></svg>
+                            {room.member_count || 0}
+                          </span>
                         </div>
-                        <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 truncate mb-1">
-                          Host: {room.host_username || `User ${room.host_id}`}
-                        </p>
-                        
-                        {/* ✅ Room Description - Only if enabled and exists */}
                         {(room.show_description === true || room.ShowDescription === true) && room.description && room.description.trim() !== '' && (
-                          <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-1.5 sm:mb-2 pr-10 sm:pr-12 leading-relaxed">
-                            {room.description}
-                          </p>
+                          <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-1.5 sm:mb-2 pr-10 sm:pr-12 leading-relaxed">{room.description}</p>
                         )}
-                        
-                        {/* ✅ Member Count - Below description/host */}
-                        <div className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-                          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
-                          </svg>
-                          <span>{room.member_count || 0}</span>
-                        </div>
                       </div>
-                    
-                      {/* Schedule Icon - Moved to bottom-right to avoid ellipsis overlap */}
-                      {room.has_upcoming_events && (
-                        <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 z-20">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedRoomForEvents({ id: room.id, name: room.name });
-                              setIsEventsModalOpen(true);
-                            }}
-                            className="relative w-10 h-10 sm:w-11 sm:h-11 hover:opacity-80 transition-opacity"
-                            title="View Scheduled Events"
-                          >
-                            <img
-                              src="/icons/scheduleWatchIcon.svg"
-                              alt="Scheduled Events"
-                              className="w-full h-full"
-                            />
-                            <div
-                              className="absolute -top-1.5 -right-1.5 min-w-[16px] sm:min-w-[20px] h-4 sm:h-5 flex items-center justify-center rounded-full text-white text-[10px] sm:text-xs font-bold px-1 sm:px-1.5 bg-purple-500 shadow-lg"
-                              title={`${room.upcoming_events_count || 0} scheduled event${room.upcoming_events_count !== 1 ? 's' : ''}`}
-                            >
-                              {room.upcoming_events_count || 0}
-                            </div>
-                          </button>
+                    </div>
+                  </div>
+                );
+
+                return (
+                <>
+                {/* Owned rooms — always visible at top */}
+                {ownedRooms.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6 mb-3">
+                    {ownedRooms.map(room => (
+                      <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
+                    ))}
+                  </div>
+                )}
+
+                {/* Member Rooms: collapsible card when > 10, inline when ≤ 10 */}
+                {memberRooms.length > 0 && (
+                  collapseMemberRooms ? (
+                    <div className="mb-3">
+                      {ownedRooms.length > 0 && <div className="border-t border-gray-200 dark:border-gray-700 mb-3" />}
+                      {/* Collapsed card header */}
+                      <button
+                        onClick={() => setIsMemberCardExpanded(prev => !prev)}
+                        className="w-full flex items-center gap-3 px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
+                      >
+                        <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
+                          <UsersIcon className="w-4 h-4 text-white" />
                         </div>
-                      )}
-                    
-                    
-                      {/* Ellipsis Menu - Top Right */}
-                      {authenticatedUserID && (authenticatedUserID === room.host_id || currentUser?.role === 'super_admin') && (
-                        <div className="absolute top-2 right-2 sm:top-4 sm:right-4 room-menu">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenMenuRoomId(openMenuRoomId === room.id ? null : room.id);
-                            }}
-                            className="p-1.5 sm:p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
-                            title="Room Options"
-                          >
-                            <EllipsisVerticalIcon className="h-5 w-5 sm:h-6 sm:w-6 text-gray-600 dark:text-gray-400" />
-                          </button>
-
-                          {/* Dropdown Menu */}
-                          {openMenuRoomId === room.id && (
-                            <div className="absolute top-10 right-0 bg-white dark:bg-gray-800 shadow-lg rounded-lg w-48 py-2 z-50 border border-gray-200 dark:border-gray-700">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleOpenDeleteModal(room);
-                                }}
-                                className="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-3 text-gray-700 dark:text-gray-300"
-                              >
-                                <TrashIcon className="h-5 w-5 text-red-500" />
-                                <span>Delete Room</span>
-                              </button>
-
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleShareRoom(room.id, room.name);
-                                }}
-                                className="w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-3 text-gray-700 dark:text-gray-300"
-                              >
-                                <ShareIcon className="h-5 w-5 text-blue-500" />
-                                <span>Share Link</span>
-                              </button>
-
-                              <button
-                                disabled
-                                className="w-full text-left px-4 py-2 flex items-center gap-3 text-gray-400 dark:text-gray-600 cursor-not-allowed"
-                                title="Coming Soon"
-                              >
-                                <Cog6ToothIcon className="h-5 w-5" />
-                                <span>Edit Settings</span>
-                              </button>
-
-                              <button
-                                disabled
-                                className="w-full text-left px-4 py-2 flex items-center gap-3 text-gray-400 dark:text-gray-600 cursor-not-allowed"
-                                title="Coming Soon"
-                              >
-                                <ChartBarIcon className="h-5 w-5" />
-                                <span>Analytics</span>
-                              </button>
-                            </div>
-                          )}
+                        <div className="flex-1 text-left">
+                          <p className="text-sm font-semibold text-blue-700 dark:text-blue-300">
+                            {memberRooms.length} Member Rooms
+                          </p>
+                          <p className="text-xs text-blue-500 dark:text-blue-400">
+                            {isMemberCardExpanded ? 'Click to collapse' : 'Click to expand'}
+                          </p>
+                        </div>
+                        <svg
+                          className={`w-5 h-5 text-blue-600 dark:text-blue-400 transition-transform ${isMemberCardExpanded ? 'rotate-180' : ''}`}
+                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      {/* Expanded rooms */}
+                      {isMemberCardExpanded && (
+                        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
+                          {memberRooms.map(room => (
+                            <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
+                          ))}
                         </div>
                       )}
                     </div>
-                  </div>
-                  );
-                })}
-              </div>
-              
-              {/* ✅ Infinite Scroll Sentinel & Loading Indicator */}
-              <div ref={roomsObserverTarget} className="w-full py-4">
-                {loadingMoreRooms && (
-                  <div className="flex justify-center items-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-                    <span className="ml-3 text-gray-600 dark:text-gray-400">Loading more rooms...</span>
-                  </div>
+                  ) : (
+                    <>
+                      {ownedRooms.length > 0 && <div className="border-t border-gray-200 dark:border-gray-700 mb-3" />}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6 mb-3">
+                        {memberRooms.map(room => (
+                          <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
+                        ))}
+                      </div>
+                    </>
+                  )
                 )}
-                {!hasMoreRooms && rooms.length > 0 && (
-                  <p className="text-center text-gray-500 dark:text-gray-400 text-sm">
-                    No more rooms to load
-                  </p>
+
+                {/* Discovery rooms */}
+                {discoveryRooms.length > 0 && (
+                  <>
+                    {(ownedRooms.length > 0 || memberRooms.length > 0) && (
+                      <div className="border-t border-gray-200 dark:border-gray-700 mb-3" />
+                    )}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
+                      {discoveryRooms.map(room => (
+                        <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
+                      ))}
+                    </div>
+                  </>
                 )}
-              </div>
-              </>
+
+                {/* Infinite scroll sentinel */}
+                <div ref={roomsObserverTarget} className="w-full py-4">
+                  {loadingMoreRooms && (
+                    <div className="flex justify-center items-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                      <span className="ml-3 text-gray-600 dark:text-gray-400">Loading more rooms...</span>
+                    </div>
+                  )}
+                  {!hasMoreRooms && rooms.length > 0 && (
+                    <p className="text-center text-gray-500 dark:text-gray-400 text-sm">No more rooms to load</p>
+                  )}
+                </div>
+                </>
+                );
+              })()
             ) : (
               <div className="text-center py-10">
                 {searchTerm ? (
@@ -3165,32 +3690,6 @@ const LobbyPage = () => {
           </>
         )}
         
-        {/* Floating Create New Button - Only visible on Rooms tab */}
-        {activeTab === 'rooms' && (
-          <div className="relative">
-            <style>{pulseAnimationStyles}</style>
-            <button
-              onClick={() => {
-                setIsCreateNewModalOpen(true);
-                if (showCreateButtonPulse) {
-                  localStorage.setItem('hasSeenCreateButton', 'true');
-                  setShowCreateButtonPulse(false);
-                }
-              }}
-              className={`fixed bottom-20 left-4 sm:bottom-24 sm:left-6 z-40 w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-110 flex items-center justify-center group ${
-                showCreateButtonPulse ? 'animate-pulse ring-4 ring-blue-400 ring-opacity-50' : ''
-              }`}
-              title="Create New Room or Start Instant Watch"
-            >
-              <Plus className="w-7 h-7 sm:w-8 sm:h-8 text-white" strokeWidth={3} />
-              
-              {/* Notification Dot - First-time indicator */}
-              {showCreateButtonPulse && (
-                <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping" />
-              )}
-            </button>
-          </div>
-        )}
         </div>
       )}
 
@@ -3200,143 +3699,60 @@ const LobbyPage = () => {
           ref={watchingNowScrollRef}
           className="overflow-y-auto overflow-x-hidden h-full scrollbar-hide"
           style={{ maxHeight: 'calc(100vh - 200px)', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          onTouchStart={handleWatchingTouchStart}
+          onTouchEnd={handleWatchingTouchEnd}
         >
-          {/* ✅ Sub-tab Navigation: Watching Live | Discover */}
-          <div className="border-b border-gray-300 dark:border-gray-700 mb-6">
-            {/* Desktop: Tabs and search on same line */}
-            <div className="hidden md:flex items-center justify-between gap-4 px-4">
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setWatchingSubTab('sessions')}
-                  className={`px-4 py-2 font-semibold transition-all ${
-                    watchingSubTab === 'sessions'
-                      ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
-                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                  }`}
-                >
-                  Watching Live
-                </button>
-                <button
-                  onClick={() => setWatchingSubTab('discover')}
-                  className={`px-4 py-2 font-semibold transition-all ${
-                    watchingSubTab === 'discover'
-                      ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
-                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                  }`}
-                >
-                  Discover
-                </button>
-              </div>
-              
-              {/* 🔍 Search input (desktop) */}
-              <div className="relative flex-1 max-w-xs">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
-                <input
-                  type="text"
-                  placeholder={watchingSubTab === 'discover' ? 'Search posts...' : 'Search sessions...'}
-                  value={discoverSearch}
-                  onChange={(e) => setDiscoverSearch(e.target.value)}
-                  className="w-full pl-10 pr-10 py-1.5 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
-                />
-                {discoverSearch && (
-                  <button
-                    onClick={() => setDiscoverSearch('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
-              </div>
+          {/* ✅ Sub-tab Navigation: Watching Live | Feed */}
+          <div className="border-b border-gray-300 dark:border-gray-700 mb-4 sticky top-0 z-10 bg-white dark:bg-gray-900">
+            <div className="flex items-center px-4">
+              <button
+                onClick={() => switchSubTab('sessions')}
+                className={`px-3 py-2 text-base font-semibold transition-all relative ${
+                  watchingSubTab === 'sessions'
+                    ? 'text-purple-600 dark:text-purple-400'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                }`}
+              >
+                Watching Live
+                {watchingSubTab === 'sessions' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-600 dark:bg-purple-400" />}
+              </button>
+              <button
+                onClick={() => switchSubTab('discover')}
+                className={`px-3 py-2 text-base font-semibold transition-all relative ${
+                  watchingSubTab === 'discover'
+                    ? 'text-purple-600 dark:text-purple-400'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                }`}
+              >
+                Feed
+                {watchingSubTab === 'discover' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-600 dark:bg-purple-400" />}
+              </button>
             </div>
-
-            {/* Mobile: Tabs on top, search below */}
-            <div className="md:hidden">
-              <div className="flex gap-2 px-4">
-                <button
-                  onClick={() => setWatchingSubTab('sessions')}
-                  className={`px-4 py-2 font-semibold transition-all ${
-                    watchingSubTab === 'sessions'
-                      ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
-                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                  }`}
-                >
-                  Watching Live
-                </button>
-                <button
-                  onClick={() => setWatchingSubTab('discover')}
-                  className={`px-4 py-2 font-semibold transition-all ${
-                    watchingSubTab === 'discover'
-                      ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400'
-                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                  }`}
-                >
-                  Discover
-                </button>
-              </div>
-              
-              {/* 🔍 Search input (mobile - below tabs) */}
-              <div className="px-4 pt-3 pb-2">
-                <div className="relative w-full">
+            {/* Collapsible session search */}
+            {watchingSubTab === 'sessions' && showSessionSearch && (
+              <div className="px-4 pb-2">
+                <div className="relative">
                   <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                   </div>
-                  <input
-                    type="text"
-                    placeholder={watchingSubTab === 'discover' ? 'Search posts...' : 'Search sessions...'}
-                    value={discoverSearch}
-                    onChange={(e) => setDiscoverSearch(e.target.value)}
+                  <input type="text" placeholder="Search sessions..." value={sessionSearch} onChange={e => setSessionSearch(e.target.value)} autoFocus
                     className="w-full pl-10 pr-10 py-2 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
                   />
-                  {discoverSearch && (
-                    <button
-                      onClick={() => setDiscoverSearch('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
+                  {sessionSearch && (
+                    <button onClick={() => setSessionSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                   )}
                 </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* ✅ WATCHING NOW CONTENT - Keep both mounted for instant switching */}
           <div className={watchingSubTab === 'sessions' ? 'block' : 'hidden'}>
             <>
-          {/* ✅ Refresh Button */}
-          <div className="flex justify-center mb-4">
-            <button
-              onClick={handleRefreshWatchingNow}
-              disabled={isRefreshingWatchingNow}
-              className="p-2 rounded-full bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Refresh watching now content"
-            >
-              <svg 
-                className={`w-6 h-6 text-gray-700 dark:text-gray-300 ${isRefreshingWatchingNow ? 'animate-spin' : ''}`}
-                fill="none" 
-                viewBox="0 0 24 24" 
-                stroke="currentColor"
-              >
-                <path 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round" 
-                  strokeWidth={2} 
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
-                />
-              </svg>
-            </button>
-          </div>
-          
           <h2 className="text-2xl font-semibold mb-6 text-gray-900 dark:text-white text-center">
             Watching Now {sessionsPage.data.length > 0 && `(${sessionsPage.data.length + trailersPage.data.length} items)`}
           </h2>
@@ -3783,34 +4199,43 @@ const LobbyPage = () => {
               <p className="text-gray-600 dark:text-gray-400">Start an instant watch or create a room to begin!</p>
             </div>
           )}
+
           </>
           </div>
 
-          {/* ✅ DISCOVER FEED CONTENT - Keep mounted for instant switching */}
+          {/* ✅ FEED CONTENT */}
           <div className={watchingSubTab === 'discover' ? 'block' : 'hidden'}>
             <>
+              {/* Collapsible feed search — mirrors session search pattern */}
+              {showDiscoverSearch && (
+                <div className="px-4 pb-2">
+                  <div className="relative">
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                    <input type="text" placeholder="Search posts..." value={discoverSearch} onChange={e => setDiscoverSearch(e.target.value)} autoFocus
+                      className="w-full pl-10 pr-10 py-2 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
+                    />
+                    {discoverSearch && (
+                      <button onClick={() => setDiscoverSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <DiscoverFeed
                 ref={discoverFeedRef}
                 searchQuery={discoverSearch}
                 onPostClick={(post) => {
-                  console.log('🎬 [LobbyPage] Opening post modal:', {
-                    postId: post.ID,
-                    title: post.title,
-                    currentModalState: isPostViewModalOpen,
-                  });
                   setSelectedPost(post);
                   setIsPostViewModalOpen(true);
                 }}
               />
-              
-              {/* Floating Post Button - Only visible on Discover tab */}
-              <button
-                onClick={() => setIsPostUploadModalOpen(true)}
-                className="fixed bottom-20 left-4 sm:bottom-24 sm:left-6 z-40 w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-110 flex items-center justify-center group"
-                title="Create Post"
-              >
-                <Plus className="w-7 h-7 sm:w-8 sm:h-8 text-white" strokeWidth={3} />
-              </button>
+
             </>
           </div>
         </div>
@@ -3833,50 +4258,219 @@ const LobbyPage = () => {
             </div>
           ) : (
             <div className={selectedChatUser ? "h-full flex flex-col" : "h-[calc(100vh-160px)] sm:h-[calc(100vh-200px)]"}>
-              {/* ✅ STACKED SINGLE-VIEW: Friends List OR Messages (Mobile-First) */}
-              {chatView === 'friends' ? (
+              {/* ✅ STACKED SINGLE-VIEW: Friends List OR DM Messages OR Group Messages */}
+              {chatView === 'group_messages' && selectedGroup ? (
+                /* ========== GROUP MESSAGES VIEW ========== */
+                <div className="bg-white dark:bg-gray-800 shadow-lg overflow-hidden flex flex-col h-full">
+                  {/* Group Header */}
+                  <div className="bg-gradient-to-r from-purple-600 to-green-600 p-3 sm:p-4 flex items-center gap-3">
+                    <button
+                      onClick={handleBackToFriends}
+                      className="text-white hover:bg-white/20 rounded-full p-2 transition-colors flex-shrink-0"
+                    >
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    {/* Group icon */}
+                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+                      <UsersIcon className="w-5 h-5 text-white" />
+                    </div>
+                    {/* Group info */}
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-white font-bold text-base sm:text-lg truncate">{selectedGroup.name}</h3>
+                      <p className="text-white/70 text-xs">{selectedGroup.members?.length || 0} members</p>
+                    </div>
+                    {/* Group call button */}
+                    {activeGroupCall?.groupId === selectedGroup.id ? (
+                      <button
+                        onClick={handleEndGroupCall}
+                        className="p-2 text-red-300 hover:bg-white/20 rounded-full transition-all"
+                        title="End group call"
+                      >
+                        <PhoneIcon className="h-6 w-6 rotate-135" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleStartGroupCall}
+                        className="p-2 text-white hover:bg-white/20 rounded-full transition-all"
+                        title="Start group call"
+                      >
+                        <PhoneIcon className="h-6 w-6" />
+                      </button>
+                    )}
+                    {/* 3-dot menu */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setGroupMenuOpen(prev => !prev)}
+                        className="p-2 text-white hover:bg-white/20 rounded-full transition-all"
+                        title="Group options"
+                      >
+                        <EllipsisVerticalIcon className="h-6 w-6" />
+                      </button>
+                      {groupMenuOpen && (
+                        <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-[160px]">
+                          <button
+                            onClick={handleLeaveGroup}
+                            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          >
+                            🚪 Leave Group
+                          </button>
+                          {selectedGroup.created_by_id === currentUser?.id && (
+                            <button
+                              onClick={handleDeleteGroup}
+                              className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                            >
+                              🗑️ Delete Group
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Messages */}
+                  <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 sm:space-y-3 bg-gray-50 dark:bg-gray-900 custom-sleek-scrollbar">
+                    {(groupMessages[selectedGroup.id] || []).length === 0 ? (
+                      <div className="text-center py-6 sm:py-10 text-gray-500 dark:text-gray-400">
+                        <p className="text-xs sm:text-sm">No messages yet</p>
+                        <p className="text-[10px] sm:text-xs mt-2">Start the group conversation! 👋</p>
+                      </div>
+                    ) : (
+                      (groupMessages[selectedGroup.id] || []).map((msg, index) => (
+                        <LobbyMessageBubble
+                          key={msg.id || index}
+                          message={msg}
+                          isOwn={msg.sender_id === currentUser?.id}
+                          currentUser={currentUser}
+                          onEdit={() => {}}
+                          onDelete={() => {}}
+                          onVotePoll={() => {}}
+                          onViewUser={() => {}}
+                          liveRooms={liveRooms}
+                          endedSessionIds={endedSessionIds}
+                          showSenderName={true}
+                        />
+                      ))
+                    )}
+                    <div ref={chatMessagesEndRef} />
+                  </div>
+
+                  {/* Group Message Input */}
+                  <form onSubmit={handleSendGroupMessage} className="absolute bottom-0 left-0 right-0">
+                    <div className="mb-2 mx-3 relative bg-white dark:bg-gray-900 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-2">
+                      <textarea
+                        value={newGroupChatMessage}
+                        onChange={(e) => setNewGroupChatMessage(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendGroupMessage(e); }
+                        }}
+                        placeholder="Message the group…"
+                        rows={1}
+                        className="w-full bg-transparent border-none outline-none resize-none text-gray-900 dark:text-gray-100 placeholder:text-gray-400 text-sm"
+                        style={{ minHeight: '20px', maxHeight: '80px' }}
+                      />
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setIsAttachModalOpen(true)}
+                            className="p-1.5 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                            title="Attach file"
+                          >
+                            <PaperClipOutlineIcon className="h-5 w-5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowWatchOutModal(true)}
+                            className="rounded-lg hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors relative"
+                            title="Send Watch Out"
+                          >
+                            <span className="relative inline-block h-8 w-8">
+                              <img src="/icons/lwoIcon.png" alt="Watch Out" className="h-8 w-8 object-contain" />
+                              {liveRooms.length > 0 && (
+                                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                              )}
+                            </span>
+                          </button>
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={!newGroupChatMessage.trim()}
+                          className="flex-shrink-0 w-8 h-8 rounded-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white flex items-center justify-center transition-all disabled:cursor-not-allowed shadow-md"
+                          title="Send"
+                        >
+                          <ArrowUpIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              ) : chatView === 'friends' ? (
                 /* ========== FRIENDS LIST VIEW ========== */
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700 flex flex-col h-full">
                   {/* ✅ Friends List Header */}
                   <div className="bg-gradient-to-r from-green-600 to-green-700 p-3 sm:p-4">
                     <h3 className="text-white font-bold text-lg sm:text-xl mb-3">Chats</h3>
                     
-                    {/* ✅ Search Bar */}
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={friendsSearchTerm}
-                        onChange={(e) => setFriendsSearchTerm(e.target.value)}
-                        placeholder="Search friends..."
-                        className="w-full pl-10 pr-4 py-2 bg-white/10 border border-white/20 rounded-full text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/40 text-sm"
-                      />
-                      <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
-                    </div>
+                    {/* ✅ Search Bar — visible only when taskbar Search is active */}
+                    {showChatsSearch && (
+                      <div className="relative mt-2">
+                        <input
+                          type="text"
+                          autoFocus
+                          value={friendsSearchTerm}
+                          onChange={(e) => {
+                            setFriendsSearchTerm(e.target.value);
+                            setAddFriendQuery(e.target.value);
+                          }}
+                          placeholder="Search friends or find people…"
+                          className="w-full pl-10 pr-8 py-2 bg-white/10 border border-white/20 rounded-full text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/40 text-sm"
+                        />
+                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        {friendsSearchTerm && (
+                          <button
+                            onClick={() => { setFriendsSearchTerm(''); setAddFriendQuery(''); setAddFriendResults([]); }}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-white/60 hover:text-white"
+                          >
+                            <XMarkIcon className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 
-                {/* Sub-tabs for Friends vs Requests */}
+                {/* Sub-tabs: Friends / Requests */}
                 <div className="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
                   <button
                     onClick={() => setActiveRequestsTab('friends')}
-                    className={`flex-1 px-3 py-2 text-xs sm:text-sm font-medium transition-colors relative ${
+                    className={`flex-1 px-3 py-2 text-sm sm:text-base transition-colors relative ${
                       activeRequestsTab === 'friends'
-                        ? 'text-green-600 dark:text-green-400'
-                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                        ? 'font-bold text-green-600 dark:text-green-400'
+                        : 'font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                     }`}
                   >
                     Friends
+                    {(() => {
+                      const totalGroupUnread = Object.values(groupUnreadCounts).reduce((a, b) => a + b, 0);
+                      return totalGroupUnread > 0 ? (
+                        <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-green-600 text-white rounded-full">
+                          {totalGroupUnread > 99 ? '99+' : totalGroupUnread}
+                        </span>
+                      ) : null;
+                    })()}
                     {activeRequestsTab === 'friends' && (
                       <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-green-600 dark:bg-green-400"></div>
                     )}
                   </button>
                   <button
                     onClick={() => setActiveRequestsTab('requests')}
-                    className={`flex-1 px-3 py-2 text-xs sm:text-sm font-medium transition-colors relative ${
+                    className={`flex-1 px-3 py-2 text-sm sm:text-base transition-colors relative ${
                       activeRequestsTab === 'requests'
-                        ? 'text-green-600 dark:text-green-400'
-                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                        ? 'font-bold text-green-600 dark:text-green-400'
+                        : 'font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                     }`}
                   >
                     Requests
@@ -3891,152 +4485,356 @@ const LobbyPage = () => {
                   </button>
                 </div>
                 
-                  {/* ✅ Friends Tab Content - Enhanced with message previews */}
-                  {activeRequestsTab === 'friends' && (
-                    <div 
-                      className="overflow-y-auto flex-1 custom-sleek-scrollbar"
-                      style={{
-                        scrollbarWidth: 'thin',
-                        scrollbarColor: '#10b981 #1f2937',
-                      }}
-                    >
-                      {friendsList.filter(f => 
-                        !friendsSearchTerm || 
-                        f.username.toLowerCase().includes(friendsSearchTerm.toLowerCase())
-                      ).length === 0 ? (
-                        <div className="text-center py-10 text-gray-500 dark:text-gray-400">
-                          {friendsSearchTerm ? (
-                            <>
-                              <p className="text-sm">No friends found</p>
-                              <p className="text-xs mt-2">Try a different search</p>
-                            </>
-                          ) : (
-                            <>
-                              <p className="text-sm">No friends yet</p>
-                              <p className="text-xs mt-2 px-4">Accept friend requests to start chatting!</p>
-                            </>
-                          )}
-                        </div>
-                      ) : (
-                        friendsList
-                          .filter(f => 
-                            !friendsSearchTerm || 
-                            f.username.toLowerCase().includes(friendsSearchTerm.toLowerCase())
-                          )
-                          .map(friend => {
-                          const unreadCount = unreadCounts[friend.id] || 0;
-                          const lastMsg = lastMessagePreviews[friend.id];
-                          const isOnline = onlineStatus[friend.id];
-                          
-                          return (
-                            <div key={friend.id} className="relative group friend-menu-container">
-                              <button
-                                onClick={() => handleOpenChat(friend)}
-                                className="w-full p-3 sm:p-4 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors border-b border-gray-100 dark:border-gray-700/50 active:bg-gray-100 dark:active:bg-gray-700"
-                              >
-                                {/* Avatar with Online Status */}
-                                <div className="relative flex-shrink-0">
-                                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center text-white font-bold text-lg overflow-hidden ring-2 ring-white dark:ring-gray-800">
-                                    <Avatar
-                                      user={friend}
-                                      onClick={(e) => {
-                                        // Click opens the avatar lightbox; don't bubble to the parent button which opens chat.
-                                        e.stopPropagation();
-                                        e.preventDefault();
-                                        setLightboxAvatarUser(friend);
-                                      }}
-                                      className="w-full h-full object-cover cursor-pointer"
-                                    />
-                                  </div>
-                                  {/* Online Status Indicator */}
-                                  {isOnline && (
-                                    <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+                  {/* Global "Add People" results — shown inline when unified search has 2+ chars */}
+                  {activeRequestsTab === 'friends' && showChatsSearch && addFriendQuery.trim().length >= 2 && (
+                    <div className="border-b border-gray-100 dark:border-gray-700">
+                      {addFriendLoading && (
+                        <p className="text-xs text-gray-400 text-center py-2">Searching…</p>
+                      )}
+                      {!addFriendLoading && addFriendResults.length > 0 && (
+                        <div className="px-3 py-2 space-y-1">
+                          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Add People</p>
+                          {addFriendResults.map(user => {
+                            const isFriend = friendsList.some(f => f.id === user.id);
+                            const sent = sentFriendRequestIds.has(user.id);
+                            return (
+                              <div key={user.id} className="flex items-center gap-2 py-1">
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-blue-600 flex-shrink-0 overflow-hidden">
+                                  {getAssetUrl(user.avatar_url) ? (
+                                    <img src={getAssetUrl(user.avatar_url)} alt="" className="w-full h-full object-cover" />
+                                  ) : (
+                                    <span className="w-full h-full flex items-center justify-center text-white text-xs font-bold">
+                                      {user.username[0]?.toUpperCase()}
+                                    </span>
                                   )}
                                 </div>
-                                
-                                {/* Info with Message Preview */}
-                                <div className="flex-1 text-left min-w-0 pr-2">
-                                  <div className="flex items-baseline justify-between mb-1">
-                                    <p className="font-semibold text-base text-gray-900 dark:text-white truncate">
-                                      {friend.username}
-                                    </p>
-                                    {lastMsg && (
-                                      <span className="text-xs text-gray-500 dark:text-gray-400 ml-2 flex-shrink-0">
-                                        {new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                      </span>
-                                    )}
+                                <span className="flex-1 text-sm text-gray-900 dark:text-white truncate">{user.username}</span>
+                                {isFriend ? (
+                                  <span className="text-xs text-gray-400">Friends</span>
+                                ) : sent ? (
+                                  <span className="text-xs text-green-500">Sent</span>
+                                ) : (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        await sendFriendRequest(user.id);
+                                        setSentFriendRequestIds(prev => new Set([...prev, user.id]));
+                                      } catch {
+                                        toast.error('Could not send request');
+                                      }
+                                    }}
+                                    className="text-xs bg-green-600 hover:bg-green-700 text-white px-2 py-0.5 rounded-full transition-colors"
+                                  >
+                                    Add
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {!addFriendLoading && addFriendResults.length === 0 && (
+                        <div className="px-3 py-2">
+                          <p className="text-xs text-gray-400 text-center mb-2">No users found for "{addFriendQuery}"</p>
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={async () => {
+                                const inviteUrl = `${window.location.origin}/invite?ref=${currentUser?.id}`;
+                                const shareData = { title: 'Join me on WeWatch', text: 'Hey! Join me on WeWatch — the best place to watch together.', url: inviteUrl };
+                                if (navigator.share && navigator.canShare?.(shareData)) {
+                                  try { await navigator.share(shareData); } catch {}
+                                } else {
+                                  await navigator.clipboard.writeText(inviteUrl);
+                                  toast.success('Invite link copied!');
+                                }
+                              }}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+                            >
+                              <ShareIcon className="w-3.5 h-3.5" />
+                              Invite
+                            </button>
+                            <button
+                              onClick={async () => {
+                                const inviteUrl = `${window.location.origin}/invite?ref=${currentUser?.id}`;
+                                await navigator.clipboard.writeText(inviteUrl);
+                                toast.success('Invite link copied!');
+                              }}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg transition-colors"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                              </svg>
+                              Copy link
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ✅ Friends Tab Content — groups + DMs merged and sorted by last activity */}
+                  {activeRequestsTab === 'friends' && (
+                    <div
+                      className="overflow-y-auto flex-1 custom-sleek-scrollbar"
+                      style={{ scrollbarWidth: 'thin', scrollbarColor: '#10b981 #1f2937' }}
+                    >
+                      {(() => {
+                        const searchTerm = friendsSearchTerm.toLowerCase();
+                        const collapseGroups = groupsList.length > 10 && !searchTerm;
+
+                        // Build merged item list
+                        const items = [];
+
+                        // Groups: inline when ≤ 10 or when searching
+                        if (!collapseGroups) {
+                          groupsList
+                            .filter(g => !searchTerm || g.name.toLowerCase().includes(searchTerm))
+                            .forEach(g => items.push({
+                              type: 'group',
+                              data: g,
+                              lastActivity: g.last_message_at ? new Date(g.last_message_at) : new Date(g.created_at || 0),
+                            }));
+                        }
+
+                        // DMs
+                        friendsList
+                          .filter(f => !searchTerm || f.username.toLowerCase().includes(searchTerm))
+                          .forEach(f => {
+                            const lastMsg = lastMessagePreviews[f.id];
+                            items.push({
+                              type: 'dm',
+                              data: f,
+                              lastActivity: lastMsg ? new Date(lastMsg.timestamp) : new Date(0),
+                            });
+                          });
+
+                        // Sort by most recent first
+                        items.sort((a, b) => b.lastActivity - a.lastActivity);
+
+                        const isEmpty = items.length === 0 && (!collapseGroups || groupsList.length === 0);
+
+                        return (
+                          <>
+                            {/* Collapsed groups card (> 10, no active search) */}
+                            {collapseGroups && (
+                              <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700/50">
+                                <button
+                                  onClick={() => setIsGroupsCardExpanded(prev => !prev)}
+                                  className="w-full flex items-center gap-3 px-4 py-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-xl hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors"
+                                >
+                                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0">
+                                    <UsersIcon className="w-4 h-4 text-white" />
                                   </div>
-                                  {lastMsg && (
-                                    <p className={`text-sm truncate ${
-                                      unreadCount > 0 
-                                        ? 'font-medium text-gray-900 dark:text-white' 
-                                        : 'text-gray-600 dark:text-gray-400'
-                                    }`}>
-                                      {lastMsg.isOwn && (
-                                        <span className="text-green-600 dark:text-green-400 mr-1">
-                                          <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                          </svg>
+                                  <div className="flex-1 text-left">
+                                    <p className="text-sm font-semibold text-purple-700 dark:text-purple-300">
+                                      {groupsList.length} Groups
+                                    </p>
+                                    <p className="text-xs text-purple-500 dark:text-purple-400">
+                                      {isGroupsCardExpanded ? 'Click to collapse' : 'Click to expand'}
+                                    </p>
+                                  </div>
+                                  <svg
+                                    className={`w-5 h-5 text-purple-600 dark:text-purple-400 transition-transform ${isGroupsCardExpanded ? 'rotate-180' : ''}`}
+                                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                  >
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                </button>
+                                {isGroupsCardExpanded && groupsList.map(group => {
+                                  const unread = groupUnreadCounts[group.id] || 0;
+                                  const memberCount = group.members?.length || 0;
+                                  return (
+                                    <div
+                                      key={group.id}
+                                      onClick={() => handleOpenGroup(group)}
+                                      className="flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700/50"
+                                    >
+                                      <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative">
+                                        <UsersIcon className="w-6 h-6 text-white" />
+                                        {unread > 0 && (
+                                          <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                                            {unread > 9 ? '9+' : unread}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-baseline justify-between mb-1">
+                                          <p className="font-semibold text-base text-gray-900 dark:text-white truncate">{group.name}</p>
+                                          {group.last_message_at && (
+                                            <span className="text-xs text-gray-500 dark:text-gray-400 ml-2 flex-shrink-0">
+                                              {new Date(group.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className={`text-sm truncate ${unread > 0 ? 'font-medium text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400'}`}>
+                                          {group.last_message ? (group.last_message.length > 40 ? group.last_message.slice(0, 40) + '…' : group.last_message) : `${memberCount} member${memberCount !== 1 ? 's' : ''}`}
+                                        </p>
+                                      </div>
+                                      {unread > 0 && (
+                                        <div className="bg-green-600 text-white text-xs font-bold rounded-full min-w-[24px] h-6 flex items-center justify-center px-2 flex-shrink-0">
+                                          {unread > 99 ? '99+' : unread}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* Empty state */}
+                            {isEmpty && (
+                              <div className="text-center py-10 text-gray-500 dark:text-gray-400">
+                                {searchTerm ? (
+                                  <>
+                                    <p className="text-sm">No results found</p>
+                                    <p className="text-xs mt-2">Try a different search</p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className="text-sm">No friends yet</p>
+                                    <p className="text-xs mt-2 px-4">Accept friend requests to start chatting!</p>
+                                  </>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Merged sorted list */}
+                            {items.map(item => {
+                              if (item.type === 'group') {
+                                const group = item.data;
+                                const unread = groupUnreadCounts[group.id] || 0;
+                                const memberCount = group.members?.length || 0;
+                                return (
+                                  <div
+                                    key={`group-${group.id}`}
+                                    onClick={() => handleOpenGroup(group)}
+                                    className="flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700/50"
+                                  >
+                                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative">
+                                      <UsersIcon className="w-6 h-6 text-white" />
+                                      {unread > 0 && (
+                                        <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                                          {unread > 9 ? '9+' : unread}
                                         </span>
                                       )}
-                                      {lastMsg.text}
-                                    </p>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-baseline justify-between mb-1">
+                                        <p className="font-semibold text-base text-gray-900 dark:text-white truncate">{group.name}</p>
+                                        {group.last_message_at && (
+                                          <span className="text-xs text-gray-500 dark:text-gray-400 ml-2 flex-shrink-0">
+                                            {new Date(group.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className={`text-sm truncate ${unread > 0 ? 'font-medium text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400'}`}>
+                                        {group.last_message ? (group.last_message.length > 40 ? group.last_message.slice(0, 40) + '…' : group.last_message) : `${memberCount} member${memberCount !== 1 ? 's' : ''}`}
+                                      </p>
+                                    </div>
+                                    {unread > 0 && (
+                                      <div className="bg-green-600 text-white text-xs font-bold rounded-full min-w-[24px] h-6 flex items-center justify-center px-2 flex-shrink-0">
+                                        {unread > 99 ? '99+' : unread}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              // DM friend card
+                              const friend = item.data;
+                              const unreadCount = unreadCounts[friend.id] || 0;
+                              const lastMsg = lastMessagePreviews[friend.id];
+                              const isOnline = onlineStatus[friend.id];
+                              return (
+                                <div key={`dm-${friend.id}`} className="relative group friend-menu-container">
+                                  <button
+                                    onClick={() => handleOpenChat(friend)}
+                                    className="w-full p-3 sm:p-4 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors border-b border-gray-100 dark:border-gray-700/50 active:bg-gray-100 dark:active:bg-gray-700"
+                                  >
+                                    <div className="relative flex-shrink-0">
+                                      <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-green-500 to-blue-600 flex items-center justify-center text-white font-bold text-lg overflow-hidden ring-2 ring-white dark:ring-gray-800">
+                                        <Avatar
+                                          user={friend}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            setLightboxAvatarUser(friend);
+                                          }}
+                                          className="w-full h-full object-cover cursor-pointer"
+                                        />
+                                      </div>
+                                      {isOnline && (
+                                        <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+                                      )}
+                                    </div>
+                                    <div className="flex-1 text-left min-w-0 pr-2">
+                                      <div className="flex items-baseline justify-between mb-1">
+                                        <p className="font-semibold text-base text-gray-900 dark:text-white truncate">
+                                          {friend.username}
+                                        </p>
+                                        {lastMsg && (
+                                          <span className="text-xs text-gray-500 dark:text-gray-400 ml-2 flex-shrink-0">
+                                            {new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {lastMsg && (
+                                        <p className={`text-sm truncate ${unreadCount > 0 ? 'font-medium text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400'}`}>
+                                          {lastMsg.isOwn && (
+                                            <span className="text-green-600 dark:text-green-400 mr-1">
+                                              <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                              </svg>
+                                            </span>
+                                          )}
+                                          {lastMsg.text}
+                                        </p>
+                                      )}
+                                    </div>
+                                    {unreadCount > 0 && (
+                                      <div className="bg-green-600 text-white text-xs font-bold rounded-full min-w-[24px] h-6 flex items-center justify-center px-2 flex-shrink-0">
+                                        {unreadCount > 99 ? '99+' : unreadCount}
+                                      </div>
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setFriendMenuOpen(friendMenuOpen === friend.id ? null : friend.id);
+                                    }}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100"
+                                    title="Options"
+                                  >
+                                    <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24">
+                                      <circle cx="12" cy="5" r="2"/>
+                                      <circle cx="12" cy="12" r="2"/>
+                                      <circle cx="12" cy="19" r="2"/>
+                                    </svg>
+                                  </button>
+                                  {friendMenuOpen === friend.id && (
+                                    <div className="absolute right-2 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-[150px]">
+                                      <button
+                                        onClick={() => { setFriendMenuOpen(null); handleRemoveFriend(friend.id); }}
+                                        className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                      >
+                                        🚫 Unfriend
+                                      </button>
+                                      <button
+                                        onClick={() => { setFriendMenuOpen(null); handleBlockUser(friend.id); }}
+                                        className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                      >
+                                        ⛔ Block User
+                                      </button>
+                                    </div>
                                   )}
                                 </div>
-                                
-                                {/* Unread Badge */}
-                                {unreadCount > 0 && (
-                                  <div className="bg-green-600 text-white text-xs font-bold rounded-full min-w-[24px] h-6 flex items-center justify-center px-2 flex-shrink-0">
-                                    {unreadCount > 99 ? '99+' : unreadCount}
-                                  </div>
-                                )}
-                              </button>
-                          
-                          {/* Ellipsis Menu Button */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setFriendMenuOpen(friendMenuOpen === friend.id ? null : friend.id);
-                            }}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100"
-                            title="Options"
-                          >
-                            <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24">
-                              <circle cx="12" cy="5" r="2"/>
-                              <circle cx="12" cy="12" r="2"/>
-                              <circle cx="12" cy="19" r="2"/>
-                            </svg>
-                          </button>
-                          
-                          {/* Dropdown Menu */}
-                          {friendMenuOpen === friend.id && (
-                            <div className="absolute right-2 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-[150px]">
-                              <button
-                                onClick={() => {
-                                  setFriendMenuOpen(null);
-                                  handleRemoveFriend(friend.id);
-                                }}
-                                className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                              >
-                                🚫 Unfriend
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setFriendMenuOpen(null);
-                                  handleBlockUser(friend.id);
-                                }}
-                                className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                              >
-                                ⛔ Block User
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
+                              );
+                            })}
+                          </>
+                        );
+                      })()}
+                    </div>
                   )}
-                  </div>
-                )}
                 
                 {/* Requests Tab Content */}
                 {activeRequestsTab === 'requests' && (
@@ -4188,15 +4986,21 @@ const LobbyPage = () => {
                         </div>
                         
                         {/* Call Button */}
-                        <Button
+                        <button
                           onClick={() => initiateCall(selectedChatUser)}
-                          variant="ghost"
-                          size="icon"
-                          className="h-10 w-10 text-white hover:bg-white/20 hover:text-white flex-shrink-0 rounded-full"
-                          title="Call"
+                          className="p-2 text-white hover:bg-white/20 rounded-full transition-all active:scale-90 flex-shrink-0"
+                          title="Voice call"
                         >
                           <PhoneIcon className="h-6 w-6" />
-                        </Button>
+                        </button>
+                        {/* 3-dot menu */}
+                        <button
+                          onClick={() => setLightboxAvatarUser(selectedChatUser)}
+                          className="p-2 text-white hover:bg-white/20 rounded-full transition-all active:scale-90 flex-shrink-0"
+                          title="View profile"
+                        >
+                          <EllipsisVerticalIcon className="h-6 w-6" />
+                        </button>
                       </div>
                     
                     {/* Messages */}
@@ -4222,6 +5026,9 @@ const LobbyPage = () => {
                             onEdit={handleEditMessage}
                             onDelete={handleDeleteMessage}
                             onVotePoll={handleVotePoll}
+                            onViewUser={() => setLightboxAvatarUser(selectedChatUser)}
+                            liveRooms={liveRooms}
+                            endedSessionIds={endedSessionIds}
                           />
                         ))
                       )}
@@ -4291,7 +5098,7 @@ const LobbyPage = () => {
                                 className="p-1.5 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
                                 title="Record voice note"
                               >
-                                <MicrophoneOutlineIcon className="h-4 w-4" />
+                                <MicrophoneOutlineIcon className="h-5 w-5" />
                               </button>
                               <button
                                 type="button"
@@ -4299,7 +5106,7 @@ const LobbyPage = () => {
                                 className="p-1.5 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
                                 title="Send emoji/sticker"
                               >
-                                <FaceSmileOutlineIcon className="h-4 w-4" />
+                                <FaceSmileOutlineIcon className="h-5 w-5" />
                               </button>
                               <button
                                 type="button"
@@ -4307,7 +5114,7 @@ const LobbyPage = () => {
                                 className="p-1.5 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
                                 title="Attach file"
                               >
-                                <PaperClipOutlineIcon className="h-4 w-4" />
+                                <PaperClipOutlineIcon className="h-5 w-5" />
                               </button>
                               <button
                                 type="button"
@@ -4315,7 +5122,20 @@ const LobbyPage = () => {
                                 className="p-1.5 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
                                 title="Create poll"
                               >
-                                <ChartBarSquareOutlineIcon className="h-4 w-4" />
+                                <ChartBarSquareOutlineIcon className="h-5 w-5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setShowWatchOutModal(true)}
+                                className="rounded-lg hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors relative"
+                                title="Send Watch Out"
+                              >
+                                <span className="relative inline-block h-8 w-8">
+                                  <img src="/icons/lwoIcon.png" alt="Watch Out" className="h-8 w-8 object-contain" />
+                                  {liveRooms.length > 0 && (
+                                    <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                                  )}
+                                </span>
                               </button>
                             </div>
                             
@@ -4343,8 +5163,117 @@ const LobbyPage = () => {
 
       </div>
 
+      {/* ✅ WatchOut Modal — DM */}
+      {showWatchOutModal && selectedChatUser && chatView === 'messages' && (
+        <WatchOutModal
+          recipientUser={selectedChatUser}
+          onClose={() => setShowWatchOutModal(false)}
+          onSent={() => {
+            fetchChatMessages(selectedChatUser.id);
+          }}
+        />
+      )}
+
+      {/* ✅ WatchOut Modal — Group */}
+      {showWatchOutModal && selectedGroup && chatView === 'group_messages' && (
+        <WatchOutModal
+          groupMode
+          onClose={() => setShowWatchOutModal(false)}
+          onSelectRoom={(roomId) => handleGroupWatchOut(roomId)}
+          liveRooms={liveRooms}
+        />
+      )}
+
+      {/* ✅ Incoming Group Call Banner */}
+      {incomingGroupCall && !activeGroupCall && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[9998] bg-gray-900 text-white rounded-2xl shadow-2xl p-4 flex items-center gap-4 min-w-[280px] max-w-[360px] border border-purple-500">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0">
+            <UsersIcon className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-sm truncate">{incomingGroupCall.group_name}</p>
+            <p className="text-xs text-gray-300 truncate">
+              {incomingGroupCall.initiator_username} started a Group Call
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleJoinGroupCall(
+                incomingGroupCall.group_id,
+                incomingGroupCall.room_name,
+                incomingGroupCall.livekit_url,
+                incomingGroupCall.group_name
+              )}
+              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-full transition-colors"
+            >
+              Join
+            </button>
+            <button
+              onClick={() => setIncomingGroupCall(null)}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-full transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Create Group Modal */}
+      {showCreateGroupModal && (
+        <div className="fixed inset-0 z-[9997] bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm p-5">
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">New Group Chat</h3>
+            <input
+              type="text"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="Group name…"
+              maxLength={100}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm mb-3 outline-none focus:border-green-500"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Add members:</p>
+            <div className="max-h-48 overflow-y-auto space-y-1 mb-4">
+              {friendsList.map(friend => {
+                const selected = selectedMembersForGroup.includes(friend.id);
+                return (
+                  <label key={friend.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => {
+                        setSelectedMembersForGroup(prev =>
+                          selected ? prev.filter(id => id !== friend.id) : [...prev, friend.id]
+                        );
+                      }}
+                      className="accent-green-600"
+                    />
+                    <Avatar user={friend} className="w-7 h-7 rounded-full" />
+                    <span className="text-sm text-gray-900 dark:text-white">{friend.username}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowCreateGroupModal(false); setNewGroupName(''); setSelectedMembersForGroup([]); }}
+                className="flex-1 py-2 rounded-xl border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateGroup}
+                disabled={!newGroupName.trim() || selectedMembersForGroup.length === 0}
+                className="flex-1 py-2 rounded-xl bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-semibold transition-colors"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ✅ Chat Enhancement Modals */}
-      {selectedChatUser && (
+      {selectedChatUser && chatView === 'messages' && (
         <>
           <LobbyAttachModal
             isOpen={isAttachModalOpen}
@@ -4365,6 +5294,16 @@ const LobbyPage = () => {
             recipientId={selectedChatUser.id}
           />
         </>
+      )}
+
+      {/* ✅ Group Attach Modal */}
+      {selectedGroup && chatView === 'group_messages' && (
+        <LobbyAttachModal
+          isOpen={isAttachModalOpen}
+          onClose={() => setIsAttachModalOpen(false)}
+          onSend={handleGroupAttachment}
+          recipientId={0}
+        />
       )}
 
       {/* ✅ Ticket Purchase Modal */}
@@ -4442,6 +5381,7 @@ const LobbyPage = () => {
         isOpen={!!activeCall}
         friend={activeCall?.user}
         room={activeCall?.room}
+        livekitRoom={callRoom}
         onEndCall={handleEndCall}
         localParticipant={callRoom?.localParticipant}
         remoteParticipant={callRoom?.participants ? Array.from(callRoom.participants.values())[0] : null}
@@ -4942,6 +5882,226 @@ const LobbyPage = () => {
           <p className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white text-lg font-medium drop-shadow-lg">
             @{lightboxAvatarUser.username}
           </p>
+        </div>
+      )}
+
+      {/* 📅 Calendar Drawer */}
+      {showCalendarDrawer && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowCalendarDrawer(false)}
+          />
+          {/* Drawer */}
+          <div className="fixed top-0 right-0 z-50 h-full w-full max-w-sm bg-gray-900 shadow-2xl flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+              <div className="flex items-center gap-2">
+                <CalendarDaysIcon className="h-5 w-5 text-amber-400" />
+                <span className="font-semibold text-white text-base">Upcoming Events</span>
+              </div>
+              <button
+                onClick={() => setShowCalendarDrawer(false)}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <XMarkIcon className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+              {calendarLoading ? (
+                <div className="space-y-3 mt-2">
+                  {[1, 2, 3, 4].map(i => (
+                    <div key={i} className="animate-pulse flex gap-3 p-3 rounded-xl bg-gray-800">
+                      <div className="w-10 h-10 rounded-lg bg-gray-700 flex-shrink-0" />
+                      <div className="flex-1 space-y-2 py-1">
+                        <div className="h-3 bg-gray-700 rounded w-3/4" />
+                        <div className="h-3 bg-gray-700 rounded w-1/2" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : calendarEvents.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <CalendarDaysIcon className="h-12 w-12 text-gray-600 mb-3" />
+                  <p className="text-sm font-medium text-gray-400">No upcoming events</p>
+                  <p className="text-xs text-gray-600 mt-1">Events from rooms you've joined will appear here</p>
+                </div>
+              ) : (() => {
+                const now = new Date();
+                const todayEnd = new Date(now); todayEnd.setHours(23, 59, 59, 999);
+                const weekEnd = new Date(now); weekEnd.setDate(weekEnd.getDate() + 7);
+
+                const todayEvs = calendarEvents.filter(ev => new Date(ev.start_time) <= todayEnd);
+                const weekEvs = calendarEvents.filter(ev => {
+                  const d = new Date(ev.start_time);
+                  return d > todayEnd && d <= weekEnd;
+                });
+                const laterEvs = calendarEvents.filter(ev => new Date(ev.start_time) > weekEnd);
+
+                const getEmoji = (ev) => {
+                  const t = ev.watch_type || '';
+                  if (t === '3d_cinema' || t === 'cinema') return '🎬';
+                  if (t === 'classroom') return '🎓';
+                  if (t === 'church') return '⛪';
+                  if (t === 'podcast') return '🎙️';
+                  return '📺';
+                };
+
+                const EventCard = ({ ev }) => (
+                  <div className="flex items-start gap-3 p-3 rounded-xl bg-gray-800 border border-gray-700/50 hover:border-amber-500/40 transition-colors">
+                    <span className="text-xl flex-shrink-0 mt-0.5">{getEmoji(ev)}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">{ev.title}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {new Date(ev.start_time).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                        {' · '}
+                        {new Date(ev.start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                      </p>
+                      {ev.Room?.name && (
+                        <p className="text-xs text-gray-500 mt-0.5 truncate">{ev.Room.name}</p>
+                      )}
+                      <div className="flex items-center gap-2 mt-1.5">
+                        {ev.is_paid && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-900/50 text-purple-300 border border-purple-700/50">Paid</span>
+                        )}
+                        {ev.recurrence_type && ev.recurrence_type !== 'none' && (
+                          <span className="text-[10px] text-amber-500">↻ {ev.recurrence_type}</span>
+                        )}
+                      </div>
+                    </div>
+                    {ev.Room?.ID && (
+                      <button
+                        onClick={() => { setShowCalendarDrawer(false); navigate(`/rooms/${ev.Room.ID}`); }}
+                        className="flex-shrink-0 text-xs px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-semibold transition-colors"
+                      >
+                        Join
+                      </button>
+                    )}
+                  </div>
+                );
+
+                const Section = ({ label, evs }) => evs.length === 0 ? null : (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">{label}</p>
+                    <div className="space-y-2">
+                      {evs.map(ev => <EventCard key={ev.ID || ev.id} ev={ev} />)}
+                    </div>
+                  </div>
+                );
+
+                return (
+                  <>
+                    <Section label="Today" evs={todayEvs} />
+                    <Section label="This Week" evs={weekEvs} />
+                    <Section label="Later" evs={laterEvs} />
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Report Modal */}
+      {reportTarget && (
+        <ReportModal
+          targetType={reportTarget.targetType}
+          targetId={reportTarget.targetId}
+          targetName={reportTarget.targetName}
+          onClose={() => setReportTarget(null)}
+        />
+      )}
+
+      {/* ── Bottom Taskbar ── */}
+      {chatView !== 'messages' && !isPostViewModalOpen && (
+        <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-t border-gray-200/60 dark:border-gray-800/60">
+          <div className="flex items-center justify-around px-2 h-16">
+            {/* Calendar */}
+            <button
+              onClick={() => { setShowCalendarDrawer(true); setUpcomingEventsCount(0); }}
+              className="p-2 relative text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
+            >
+              <div className="relative">
+                <CalendarDaysIcon className="h-7 w-7" />
+                {upcomingEventsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[9px] font-bold rounded-full h-3.5 w-3.5 flex items-center justify-center">
+                    {upcomingEventsCount > 9 ? '9+' : upcomingEventsCount}
+                  </span>
+                )}
+              </div>
+            </button>
+
+            {/* Notifications */}
+            <button
+              onClick={() => { setShowNotifPanel(prev => !prev); if (unreadNotifCount > 0) markAllNotifsRead(); }}
+              className="p-2 relative text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
+            >
+              <div className="relative">
+                <BellIcon className="h-7 w-7" />
+                {unreadNotifCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full h-3.5 w-3.5 flex items-center justify-center">
+                    {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
+                  </span>
+                )}
+              </div>
+            </button>
+
+            {/* Center FAB */}
+            <div className="relative -mt-5">
+              {activeTab === 'chats' ? (
+                <button
+                  onClick={() => setShowCreateGroupModal(true)}
+                  className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-green-500 shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-90"
+                  title="New Group"
+                >
+                  <UsersIcon className="w-7 h-7 text-white" />
+                </button>
+              ) : (activeTab === 'watching' && watchingSubTab === 'sessions') || (activeTab === 'rooms' && currentUser?.main_room_id) ? (
+                <button
+                  onClick={handleCenterFAB}
+                  className="w-14 h-14 flex items-center justify-center transition-all active:scale-95"
+                >
+                  <img src="/icons/lwoIcon.png" alt="Watch" className="w-14 h-14 object-contain" />
+                </button>
+              ) : (
+                <button
+                  onClick={handleCenterFAB}
+                  className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-600 to-pink-600 shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-90"
+                >
+                  <Plus className="w-7 h-7 text-white" strokeWidth={3} />
+                </button>
+              )}
+            </div>
+
+            {/* Search */}
+            <button
+              onClick={handleSearchToggle}
+              className={`p-2 transition-all active:scale-90 ${
+                isSearchActive
+                  ? 'text-purple-600 dark:text-purple-400'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400'
+              }`}
+            >
+              <Search className="w-7 h-7" />
+            </button>
+
+            {/* Home — shows spinning refresh icon while refreshing Watching Live */}
+            <button
+              onClick={handleHomeButton}
+              className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
+            >
+              {activeTab === 'watching' && watchingSubTab === 'sessions' && isRefreshingWatchingNow ? (
+                <svg className="w-7 h-7 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              ) : (
+                <Home className="w-7 h-7" />
+              )}
+            </button>
+          </div>
         </div>
       )}
     </div>

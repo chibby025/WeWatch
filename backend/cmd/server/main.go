@@ -88,11 +88,15 @@ func main() {
 		// Ads system models (Phase 1 - Ad Campaigns & RoomTV Ads)
 		&models.AdSettings{},
 		// Friendship and lobby chat models
-		&models.Friendship{}, &models.LobbyChat{},
+		&models.Friendship{}, &models.LobbyChat{}, &models.LobbyGroup{}, &models.LobbyGroupMember{},
+		// Follow system (decoupled from room membership)
+		&models.UserFollow{},
 		// User settings model (notifications & privacy)
 		&models.UserSettings{},
 		// Admin audit log model (compliance & security)
-		&models.AdminAuditLog{})
+		&models.AdminAuditLog{},
+		// Notification model (room posts, session alerts, friend events)
+		&models.Notification{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -433,6 +437,8 @@ func main() {
     	roomGroup.GET("/:id/users/:user_id/role", handlers.GetUserRoleHandler)
 		roomGroup.POST("/:id/join", handlers.JoinRoomHandler)
 		roomGroup.POST("/:id/leave", handlers.LeaveRoomHandler)
+		roomGroup.DELETE("/:id/members/:user_id", handlers.KickMemberHandler)      // DELETE /api/rooms/:id/members/:user_id
+		roomGroup.POST("/:id/members/:user_id/ban", handlers.BanMemberHandler)      // POST /api/rooms/:id/members/:user_id/ban
 		roomGroup.DELETE("/:id", handlers.DeleteRoomHandler)
 		roomGroup.PUT("/:id", handlers.UpdateRoomHandler)
 		roomGroup.PUT("/:id/image", handlers.UpdateRoomImageHandler)      // PUT /api/rooms/:id/image (Upload room image)
@@ -493,6 +499,7 @@ func main() {
 		roomGroup.GET("/:id/active-session", handlers.GetActiveSessionHandler)
 		roomGroup.PUT("/:id/status", handlers.UpdateRoomStatusHandler)
 		roomGroup.DELETE("/:id/temporary-media/:item_id", handlers.DeleteSingleTemporaryMediaItemHandler)
+		roomGroup.GET("/with-active-sessions", handlers.GetRoomsWithActiveSessionsHandler) // GET /api/rooms/with-active-sessions
 		
 		// --- WebSocket Route (Protected) ---
 		// This endpoint upgrades HTTP to WebSocket for real-time communication.
@@ -589,13 +596,34 @@ func main() {
 		postsProtected.PUT("/:id/comments/:commentId", handlers.UpdatePostComment)         // PUT /api/posts/:id/comments/:commentId (Edit comment)
 		postsProtected.DELETE("/comments/:id", handlers.DeletePostComment)                 // DELETE /api/posts/comments/:id (Delete comment)
 		postsProtected.POST("/:id/purchase", handlers.PurchasePost)        // POST /api/posts/:id/purchase (Buy paid post with tokens, 75/25 split)
+		postsProtected.POST("/:id/tip", handlers.TipPost)                  // POST /api/posts/:id/tip (Tip post, 1 token)
 	}
 	
+	// Following feed (protected — needs auth to know which rooms user joined)
+	postsProtected.GET("/following", handlers.GetFollowingFeedHandler) // GET /api/posts/following
+
 	// User posts routes (public)
 	r.GET("/api/users/:id/posts", handlers.GetUserPosts)      // GET /api/users/:id/posts (Get user's posts)
 	
 	// Room posts routes (public)
 	r.GET("/api/rooms/:id/posts", handlers.GetRoomPosts)      // GET /api/rooms/:id/posts (Get posts created in room context)
+
+	// Room visit tracking + unread badge (protected)
+	roomVisitGroup := r.Group("/api/rooms")
+	roomVisitGroup.Use(handlers.AuthMiddleware())
+	{
+		roomVisitGroup.POST("/:id/visited", handlers.MarkRoomVisitedHandler)          // POST /api/rooms/:id/visited
+		roomVisitGroup.GET("/:id/unread-posts", handlers.GetRoomUnreadPostsHandler)   // GET /api/rooms/:id/unread-posts
+	}
+
+	// --- NOTIFICATIONS ROUTES (Protected) ---
+	notifGroup := r.Group("/api/notifications")
+	notifGroup.Use(handlers.AuthMiddleware())
+	{
+		notifGroup.GET("", handlers.GetMyNotificationsHandler)              // GET /api/notifications
+		notifGroup.PATCH("/read-all", handlers.MarkAllNotificationsReadHandler) // PATCH /api/notifications/read-all
+		notifGroup.PATCH("/:id/read", handlers.MarkNotificationReadHandler)    // PATCH /api/notifications/:id/read
+	}
 
 	theaterGroup := r.Group("/api/theaters")
 	theaterGroup.Use(handlers.AuthMiddleware())
@@ -617,7 +645,9 @@ func main() {
 		protected.PATCH("/scheduled-events/:id/early-bird", handlers.ToggleEarlyBirdHandler) // Toggle early bird pricing
 		protected.GET("/scheduled-events/:id/ical", handlers.DownloadICalHandler)
 		protected.GET("/scheduled-events/with-trailers", handlers.GetScheduledEventsWithTrailersHandler) // ✅ Get events with trailers (paginated)
-		protected.POST("/scheduled-events/upload-trailer", handlers.UploadTrailerHandler) // ✅ Upload trailer video for event
+		protected.POST("/scheduled-events/upload-trailer", handlers.UploadTrailerHandler)               // ✅ Upload trailer video for event
+		protected.GET("/user/calendar", handlers.GetUserCalendarHandler)                                // GET /api/user/calendar?month=2026-05
+		protected.GET("/user/upcoming-events", handlers.GetUserUpcomingEventsHandler)                  // GET /api/user/upcoming-events (next 30 days)
 		
 		// ✅ RSVP & Ticketing routes
 		protected.POST("/scheduled-events/:id/rsvp", handlers.CreateFreeRSVPHandler)           // POST /api/scheduled-events/:id/rsvp (RSVP to free event)
@@ -626,9 +656,14 @@ func main() {
 		protected.GET("/users/me/event-tickets", handlers.GetUserEventTicketsHandler)           // GET /api/users/me/event-tickets (Get user's tickets & RSVPs)
 		
 		// --- USER PROFILE ROUTES ---
+		protected.GET("/users/search", handlers.SearchUsersHandler)              // GET /api/users/search?q=... (must be static, before /:id)
 		protected.GET("/users/:id", handlers.GetUserProfileHandler)              // GET /api/users/:id (Get user profile with privacy)
 		protected.PUT("/users/profile", handlers.UpdateProfileHandler)           // Update current user's profile
 		protected.GET("/users/by-username/:username", handlers.GetUserByUsernameHandler) // GET /api/users/by-username/:username (Lookup user for gifting)
+
+		// --- NDPR / Data Rights Routes ---
+		protected.GET("/users/me/data-export", handlers.DataExportHandler(DB))   // GET /api/users/me/data-export (NDPR right of access)
+		protected.DELETE("/users/me/account", handlers.DeleteAccountHandler(DB)) // DELETE /api/users/me/account (NDPR right to erasure)
 		
 		// --- SUPPORT ROUTES ---
 		protected.POST("/support/send", handlers.SendSupportEmail) // POST /api/support/send (Send help/support email)
@@ -638,8 +673,8 @@ func main() {
 		protected.GET("/wallet/:userId", handlers.GetUserWalletHandler(DB))                  // GET /api/wallet/:userId (Get user's wallet balance)
 		protected.GET("/wallet/:userId/transactions", handlers.GetWalletTransactionsHandler(DB)) // GET /api/wallet/:userId/transactions (Get transaction history)
 		
-		// Token purchases
-		protected.POST("/tokens/purchase", handlers.PurchaseTokensHandler(DB))               // POST /api/tokens/purchase (Buy tokens)
+		// Token purchases (per-user: 10/hr)
+		protected.POST("/tokens/purchase", middleware.RateLimitTokenPurchases(), handlers.PurchaseTokensHandler(DB)) // POST /api/tokens/purchase (Buy tokens)
 		
 		// Earnings & analytics
 		protected.GET("/earnings/:userId", handlers.GetUserEarningsHandler(DB))              // GET /api/earnings/:userId (Host earnings dashboard)
@@ -718,7 +753,7 @@ func main() {
 	})
 	{
 		walletGroup.GET("/me", handlers.GetMyWallet)                                           // GET /api/wallets/me (Get user's wallet)
-		walletGroup.POST("/purchase-tokens", handlers.PurchaseTokens)                          // POST /api/wallets/purchase-tokens (Purchase tokens)
+		walletGroup.POST("/purchase-tokens", middleware.RateLimitTokenPurchases(), handlers.PurchaseTokens) // POST /api/wallets/purchase-tokens (Purchase tokens, 10/hr per user)
 	}
 
 	// --- TOKEN TRANSACTION ROUTES (Protected) - Phase 2 ---
@@ -807,8 +842,20 @@ func main() {
 		
 		// 📋 Admin audit logs
 		adminGroup.GET("/audit-logs", handlers.GetAdminAuditLogsHandler(DB))                   // GET /api/admin/audit-logs (View audit trail)
+
+		// 🚨 Reports
+		adminGroup.GET("/reports", handlers.GetAdminReportsHandler)        // GET /api/admin/reports
+		adminGroup.PATCH("/reports/:id", handlers.UpdateAdminReportHandler) // PATCH /api/admin/reports/:id
 	}
 	
+	// --- REPORTS ROUTES (Protected) ---
+	reportsGroup := r.Group("/api/reports")
+	reportsGroup.Use(handlers.AuthMiddleware())
+	{
+		reportsGroup.POST("", handlers.CreateReportHandler)         // POST /api/reports
+		reportsGroup.GET("/check", handlers.CheckReportedHandler)   // GET /api/reports/check?target_type=...&target_id=...
+	}
+
 	// --- LOBBY CHATS ROUTES (Protected) ---
 	lobbyChatsGroup := r.Group("/api/lobby-chats")
 	lobbyChatsGroup.Use(handlers.AuthMiddleware())
@@ -832,6 +879,9 @@ func main() {
 		lobbyChatsGroup.POST("/sticker", handlers.SendLobbyChatStickerHandler)         // POST /api/lobby-chats/sticker
 		lobbyChatsGroup.POST("/poll", handlers.CreateLobbyChatPollHandler)             // POST /api/lobby-chats/poll
 		lobbyChatsGroup.POST("/poll/:messageId/vote", handlers.VoteLobbyChatPollHandler) // POST /api/lobby-chats/poll/:messageId/vote
+		lobbyChatsGroup.POST("/watch-out", handlers.SendWatchOutHandler)                            // POST /api/lobby-chats/watch-out
+		lobbyChatsGroup.POST("/private-watchout", handlers.StartPrivateWatchoutHandler)             // POST /api/lobby-chats/private-watchout
+		lobbyChatsGroup.GET("/watchout-ratings", handlers.GetWatchoutAllowedRatingsHandler)         // GET  /api/lobby-chats/watchout-ratings?recipient_id=X
 		
 		// Message actions
 		lobbyChatsGroup.PATCH("/:messageId", handlers.EditLobbyChatMessageHandler)     // PATCH /api/lobby-chats/:messageId
@@ -843,6 +893,28 @@ func main() {
 		lobbyChatsGroup.DELETE("/block/:userId", handlers.UnblockUserHandler)          // DELETE /api/lobby-chats/block/:userId
 		lobbyChatsGroup.GET("/blocked", handlers.GetBlockedUsersHandler)               // GET /api/lobby-chats/blocked
 		lobbyChatsGroup.GET("/block-status/:userId", handlers.CheckIfBlockedHandler)   // GET /api/lobby-chats/block-status/:userId
+	}
+
+	// --- LOBBY GROUPS ROUTES (Protected) ---
+	lobbyGroupsGroup := r.Group("/api/lobby-groups")
+	lobbyGroupsGroup.Use(handlers.AuthMiddleware())
+	lobbyGroupsGroup.Use(func(c *gin.Context) { c.Set("db", DB); c.Next() })
+	{
+		lobbyGroupsGroup.POST("", handlers.CreateLobbyGroupHandler)                              // POST   /api/lobby-groups
+		lobbyGroupsGroup.GET("", handlers.GetLobbyGroupsHandler)                                 // GET    /api/lobby-groups
+		lobbyGroupsGroup.GET("/:id/messages", handlers.GetLobbyGroupMessagesHandler)             // GET    /api/lobby-groups/:id/messages
+		lobbyGroupsGroup.POST("/:id/messages", handlers.SendLobbyGroupMessageHandler)            // POST   /api/lobby-groups/:id/messages
+		lobbyGroupsGroup.POST("/:id/image", handlers.UploadLobbyGroupImageHandler)               // POST   /api/lobby-groups/:id/image
+		lobbyGroupsGroup.POST("/:id/video", handlers.UploadLobbyGroupVideoHandler)               // POST   /api/lobby-groups/:id/video
+		lobbyGroupsGroup.POST("/:id/document", handlers.UploadLobbyGroupDocumentHandler)         // POST   /api/lobby-groups/:id/document
+		lobbyGroupsGroup.POST("/:id/voice-note", handlers.UploadLobbyGroupVoiceNoteHandler)      // POST   /api/lobby-groups/:id/voice-note
+		lobbyGroupsGroup.POST("/:id/watch-out", handlers.SendLobbyGroupWatchOutHandler)          // POST   /api/lobby-groups/:id/watch-out
+		lobbyGroupsGroup.POST("/:id/call", handlers.StartLobbyGroupCallHandler)                  // POST   /api/lobby-groups/:id/call
+		lobbyGroupsGroup.POST("/:id/call/end", handlers.EndLobbyGroupCallHandler)                // POST   /api/lobby-groups/:id/call/end
+		lobbyGroupsGroup.POST("/:id/members", handlers.AddLobbyGroupMembersHandler)              // POST   /api/lobby-groups/:id/members
+		lobbyGroupsGroup.DELETE("/:id/leave", handlers.LeaveLobbyGroupHandler)                   // DELETE /api/lobby-groups/:id/leave
+		lobbyGroupsGroup.DELETE("/:id", handlers.DeleteLobbyGroupHandler)                        // DELETE /api/lobby-groups/:id
+		lobbyGroupsGroup.PATCH("/:id", handlers.RenameLobbyGroupHandler)                         // PATCH  /api/lobby-groups/:id
 	}
 
 	// --- LOBBY CALL HISTORY ROUTE (Protected) ---
@@ -873,6 +945,32 @@ func main() {
 		friendshipsGroup.POST("/check-contacts", handlers.CheckContactsHandler)           // POST /api/friendships/check-contacts (Check imported contacts)
 	}
 	
+	// --- FOLLOW ROUTES (Protected) ---
+	followGroup := r.Group("/api/follow")
+	followGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
+	followGroup.Use(func(c *gin.Context) {
+		c.Set("db", DB)
+		c.Next()
+	})
+	{
+		followGroup.POST("/:userId", handlers.FollowUserHandler)           // POST /api/follow/:userId (Follow a user)
+		followGroup.DELETE("/:userId", handlers.UnfollowUserHandler)       // DELETE /api/follow/:userId (Unfollow a user)
+		followGroup.GET("/status/:userId", handlers.GetFollowStatusHandler) // GET /api/follow/status/:userId (Follow status + count)
+	}
+
+	// --- JOIN REQUEST ROUTES (Protected, nested under rooms) ---
+	joinReqGroup := r.Group("/api/rooms")
+	joinReqGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())
+	joinReqGroup.Use(func(c *gin.Context) {
+		c.Set("db", DB)
+		c.Next()
+	})
+	{
+		joinReqGroup.GET("/:id/join-requests", handlers.GetRoomJoinRequestsHandler)                          // GET /api/rooms/:id/join-requests
+		joinReqGroup.POST("/:id/join-requests/:userId/approve", handlers.ApproveRoomJoinRequestHandler)      // POST /api/rooms/:id/join-requests/:userId/approve
+		joinReqGroup.POST("/:id/join-requests/:userId/reject", handlers.RejectRoomJoinRequestHandler)        // POST /api/rooms/:id/join-requests/:userId/reject
+	}
+
 	// --- USER STATS ROUTES (Protected) ---
 	userStatsGroup := r.Group("/api/users")
 	userStatsGroup.Use(handlers.CookieToAuthHeaderMiddleware(), handlers.AuthMiddleware())

@@ -1,8 +1,8 @@
 // WeWatch/frontend/src/components/PostViewModal.jsx
 // Fullscreen post viewer with engagement features (like, comment, share)
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Heart, MessageCircle, Share2, MoreVertical, Send, Trash2, UserPlus, UserCheck, Link, Download } from 'lucide-react';
-import apiClient, { getFollowersCount, joinRoom, leaveRoom } from '../services/api';
+import { X, Heart, MessageCircle, Share2, MoreVertical, Send, Trash2, UserPlus, UserCheck, Link, Download, CornerDownLeft, ChevronDown, ChevronUp } from 'lucide-react';
+import apiClient, { getFollowersCount, joinRoom, leaveRoom, tipPost } from '../services/api';
 import toast from 'react-hot-toast';
 import { formatCount } from '../utils/formatCount';
 import { useAuth } from '../contexts/AuthContext'; // ✅ Use auth context instead of JWT decode
@@ -11,6 +11,8 @@ import Avatar from './Avatar';
 const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) => {
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(0);
+  const [tipCount, setTipCount] = useState(0);
+  const [tipping, setTipping] = useState(false);
   const [comments, setComments] = useState([]);
   const [commentsCount, setCommentsCount] = useState(0);
   const [newComment, setNewComment] = useState('');
@@ -20,6 +22,10 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
   const [showComments, setShowComments] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState(null);
   const [showControls, setShowControls] = useState(true); // YouTube-style auto-hide
+  const [replyingToId, setReplyingToId] = useState(null);
+  const [replyingToUsername, setReplyingToUsername] = useState('');
+  const [expandedReplies, setExpandedReplies] = useState(new Set());
+  const commentInputRef = useRef(null);
   const [followersCount, setFollowersCount] = useState(0);
   const [isFollowing, setIsFollowing] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -32,7 +38,6 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
     if (isOpen && post && !viewTracked) {
       console.log('🎬 [PostViewModal] Post opened:', {
         postId: post.id,
-        title: post.title,
         userId: post.user_id,
         postRoomId: post.room_id,
         userMainRoomId: post.user?.main_room_id,
@@ -51,6 +56,8 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
       setIsLiked(post.is_liked || false);
       setLikesCount(post.likes_count || 0);
       setCommentsCount(post.comments_count || 0);
+      setTipCount(post.tip_count || 0);
+      setTipping(false);
       setViewTracked(false);
       setShowComments(false);
       setComments([]);
@@ -179,6 +186,19 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
     }
   };
 
+  const handleTip = async () => {
+    if (!post || tipping || post.user_id === currentUser?.id) return;
+    setTipping(true);
+    setTipCount(c => c + 1);
+    try {
+      await tipPost(post.id);
+    } catch {
+      setTipCount(c => c - 1);
+    } finally {
+      setTipping(false);
+    }
+  };
+
   const handleLike = async () => {
     if (!post) return;
     
@@ -288,7 +308,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
       // Create a temporary anchor element to trigger download
       const link = document.createElement('a');
       link.href = video_url;
-      link.download = filename || `LetsWatchOut_${post.title}_${post.id}.mp4`;
+      link.download = filename || `LetsWatchOut_${post.description?.slice(0, 30).replace(/[^a-zA-Z0-9]/g, '_') || post.id}.mp4`;
       link.target = '_blank';
       document.body.appendChild(link);
       link.click();
@@ -321,28 +341,63 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
   const handleCommentSubmit = async (e) => {
     e.preventDefault();
     if (!newComment.trim() || submittingComment || !post) return;
-    
+
     setSubmittingComment(true);
+    const postId = post.id || post.ID;
     try {
-      const response = await apiClient.post(`/api/posts/${post.ID}/comments`, {
-        content: newComment.trim()
-      });
-      
+      const body = { content: newComment.trim() };
+      if (replyingToId) body.parent_comment_id = replyingToId;
+
+      const response = await apiClient.post(`/api/posts/${postId}/comments`, body);
       const newCommentData = response.data.comment;
-      setComments(prev => [newCommentData, ...prev]);
-      setCommentsCount(prev => prev + 1);
-      setNewComment('');
-      toast.success('Comment added!');
-      
-      if (onCommentAdded) {
-        onCommentAdded(post.ID);
+
+      if (replyingToId) {
+        setComments(prev => prev.map(c => {
+          const cId = c.id || c.ID;
+          if (cId === replyingToId) {
+            return { ...c, replies: [...(c.replies || []), newCommentData] };
+          }
+          return c;
+        }));
+        setExpandedReplies(prev => new Set([...prev, replyingToId]));
+        setReplyingToId(null);
+        setReplyingToUsername('');
+      } else {
+        setComments(prev => [newCommentData, ...prev]);
+        setCommentsCount(prev => prev + 1);
+        if (onCommentAdded) onCommentAdded(postId);
       }
+      setNewComment('');
     } catch (err) {
       console.error('Failed to add comment:', err);
       toast.error(err.response?.data?.error || 'Failed to add comment');
     } finally {
       setSubmittingComment(false);
     }
+  };
+
+  const handleReply = (comment) => {
+    const id = comment.id || comment.ID;
+    const username = comment.user?.username || comment.User?.username || 'user';
+    setReplyingToId(id);
+    setReplyingToUsername(username);
+    setNewComment(`@${username} `);
+    setTimeout(() => commentInputRef.current?.focus(), 50);
+  };
+
+  const cancelReply = () => {
+    setReplyingToId(null);
+    setReplyingToUsername('');
+    setNewComment('');
+  };
+
+  const toggleReplies = (commentId) => {
+    setExpandedReplies(prev => {
+      const next = new Set(prev);
+      if (next.has(commentId)) next.delete(commentId);
+      else next.add(commentId);
+      return next;
+    });
   };
 
   const handleDeleteComment = async (commentId) => {
@@ -366,7 +421,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
     const url = `${window.location.origin}/posts/${post.ID}`;
     if (navigator.share) {
       navigator.share({
-        title: post.title,
+        title: post.description?.slice(0, 80) || '',
         text: post.description,
         url: url
       }).catch(err => console.log('Share cancelled'));
@@ -398,7 +453,6 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
 
   console.log('🎬 [PostViewModal] Rendering:', {
     postId: post.id,
-    title: post.title,
     mediaType: post.media_type,
     videoUrl: post.video_url,
   });
@@ -436,7 +490,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
             onClick={handleDownload}
             disabled={downloading}
             className="absolute top-4 right-16 z-50 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors disabled:opacity-50"
-            title={`Download ${post.title}`}
+            title="Download"
           >
             {downloading ? (
               <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -448,7 +502,13 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
 
         {/* Fullscreen media */}
         <div className="flex-1 flex items-center justify-center relative post-view-content" onDoubleClick={handleDoubleClick}>
-          {post.media_type === 'video' ? (
+          {post.post_type === 'text' ? (
+            <div className="max-w-lg w-full mx-auto px-8 py-12">
+              <p className="text-white text-xl font-medium text-left leading-relaxed whitespace-pre-wrap">
+                {post.text_content}
+              </p>
+            </div>
+          ) : post.media_type === 'video' ? (
             <video
               ref={videoRef}
               src={getMediaUrl(post.video_url)}
@@ -459,7 +519,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
           ) : (
             <img
               src={getMediaUrl(post.video_url)}
-              alt={post.title}
+              alt={post.description?.slice(0, 80) || 'Post'}
               className="max-h-full max-w-full object-contain"
             />
           )}
@@ -525,12 +585,11 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
             )}
           </div>
 
-          {/* Title and description */}
-          <div className="mb-4">
-            <div className="flex items-center gap-2 mb-1">
-              <h2 className="font-bold text-xl text-white">{post.title}</h2>
+          {/* Description */}
+          {(post.description || (post.content_rating && post.content_rating !== 'G')) && (
+            <div className="mb-4 flex items-start gap-2 flex-wrap">
               {post.content_rating && post.content_rating !== 'G' && (
-                <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-bold ${
+                <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded text-xs font-bold ${
                   post.content_rating === '18+' || post.content_rating === 'Mature'
                     ? 'bg-red-600 text-white'
                     : post.content_rating === '16+' || post.content_rating === '13+'
@@ -542,11 +601,11 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
                   {post.content_rating}
                 </span>
               )}
+              {post.description && (
+                <p className="text-sm text-gray-300 line-clamp-2">{post.description}</p>
+              )}
             </div>
-            {post.description && (
-              <p className="text-sm text-gray-300 line-clamp-2">{post.description}</p>
-            )}
-          </div>
+          )}
 
           {/* Engagement buttons (Larger icons) */}
           <div className="flex items-center gap-6">
@@ -576,6 +635,20 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
               <span className="text-base font-medium text-white">{formatCount(commentsCount)}</span>
             </button>
             
+            {post.user_id !== currentUser?.id && (
+              <button
+                onClick={handleTip}
+                disabled={tipping}
+                className="flex items-center gap-2 group transition-all"
+                title="Tip 1 token"
+              >
+                <span className={`text-2xl transition-transform ${tipping ? 'scale-75 opacity-50' : 'group-hover:scale-110'}`}>
+                  🪙
+                </span>
+                <span className="text-white font-medium">{formatCount(tipCount)}</span>
+              </button>
+            )}
+
             <button
               onClick={() => {
                 navigator.clipboard.writeText(window.location.origin + '/post/' + post.id);
@@ -616,42 +689,116 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
                   <p className="text-sm">Be the first to comment!</p>
                 </div>
               ) : (
-                comments.map((comment) => (
-                  <div key={comment.ID} className="flex gap-3">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                      {comment.User?.username?.charAt(0).toUpperCase() || 'U'}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-semibold text-sm">{comment.User?.username || 'Unknown'}</span>
-                        <span className="text-xs text-gray-500">
-                          {new Date(comment.CreatedAt).toLocaleDateString()}
-                        </span>
+                comments.map((comment) => {
+                  const commentId = comment.id || comment.ID;
+                  const username = comment.user?.username || comment.User?.username || 'Unknown';
+                  const avatar = username.charAt(0).toUpperCase();
+                  const createdAt = comment.created_at || comment.CreatedAt;
+                  const replies = comment.replies || [];
+                  const replyCount = replies.length;
+                  const isExpanded = expandedReplies.has(commentId);
+                  const COLLAPSE_AT = 3;
+                  const visibleReplies = isExpanded || replyCount <= COLLAPSE_AT ? replies : replies.slice(0, 2);
+                  const hiddenCount = replyCount - 2;
+
+                  return (
+                    <div key={commentId} className="space-y-2">
+                      {/* Top-level comment */}
+                      <div className="flex gap-3">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                          {avatar}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="font-semibold text-sm">{username}</span>
+                            <span className="text-xs text-gray-500">
+                              {new Date(createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-300 break-words">{comment.content}</p>
+                          <button
+                            onClick={() => handleReply(comment)}
+                            className="mt-1 flex items-center gap-1 text-xs text-gray-500 hover:text-blue-400 transition-colors"
+                          >
+                            <CornerDownLeft className="w-3 h-3" />
+                            Reply
+                          </button>
+                        </div>
+                        {currentUser && (currentUser.id === comment.user_id || currentUser.id === (comment.user?.id || comment.User?.id)) && (
+                          <button
+                            onClick={() => handleDeleteComment(commentId)}
+                            disabled={deletingCommentId === commentId}
+                            className="text-gray-500 hover:text-red-500 transition-colors disabled:opacity-50 flex-shrink-0"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
-                      <p className="text-sm text-gray-300">{comment.content}</p>
+
+                      {/* Replies */}
+                      {replyCount > 0 && (
+                        <div className="ml-11 space-y-2 border-l-2 border-gray-700 pl-3">
+                          {visibleReplies.map(reply => {
+                            const replyUsername = reply.user?.username || reply.User?.username || 'Unknown';
+                            const replyCreatedAt = reply.created_at || reply.CreatedAt;
+                            return (
+                              <div key={reply.id || reply.ID} className="flex gap-2">
+                                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                                  {replyUsername.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-0.5">
+                                    <span className="font-semibold text-xs">{replyUsername}</span>
+                                    <span className="text-xs text-gray-600">
+                                      {new Date(replyCreatedAt).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-gray-300 break-words">{reply.content}</p>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {replyCount > COLLAPSE_AT && (
+                            <button
+                              onClick={() => toggleReplies(commentId)}
+                              className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                            >
+                              {isExpanded ? (
+                                <><ChevronUp className="w-3 h-3" /> Hide replies</>
+                              ) : (
+                                <><ChevronDown className="w-3 h-3" /> View {hiddenCount} more {hiddenCount === 1 ? 'reply' : 'replies'}</>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    {currentUser && currentUser.id === comment.user_id && (
-                      <button
-                        onClick={() => handleDeleteComment(comment.ID)}
-                        disabled={deletingCommentId === comment.ID}
-                        className="text-gray-500 hover:text-red-500 transition-colors disabled:opacity-50"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
             {/* Comment input */}
             <form onSubmit={handleCommentSubmit} className="p-4 border-t border-gray-800">
+              {replyingToId && (
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <span className="text-xs text-blue-400 flex items-center gap-1">
+                    <CornerDownLeft className="w-3 h-3" />
+                    Replying to <span className="font-semibold">@{replyingToUsername}</span>
+                  </span>
+                  <button type="button" onClick={cancelReply} className="text-xs text-gray-500 hover:text-white transition-colors">
+                    Cancel
+                  </button>
+                </div>
+              )}
               <div className="flex gap-2">
                 <input
+                  ref={commentInputRef}
                   type="text"
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
-                  placeholder="Add a comment..."
+                  placeholder={replyingToId ? `Reply to @${replyingToUsername}…` : 'Add a comment…'}
                   className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-full text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
                   disabled={submittingComment}
                 />

@@ -596,6 +596,8 @@ func logMissedCall(callerID, recipientID uint) {
 		return
 	}
 
+	go CreateNotification(recipientID, "missed_call", "Missed call from @"+caller.Username, "You missed a call", "user", callerID)
+
 	log.Printf("✅ [Call] Logged missed call from %d to %d", callerID, recipientID)
 }
 

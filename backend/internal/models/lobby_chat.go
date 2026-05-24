@@ -20,6 +20,7 @@ type LobbyChat struct {
 	AttachmentName      *string        `gorm:"type:varchar(255)" json:"attachment_name,omitempty"`
 	AttachmentSize      *int64         `json:"attachment_size,omitempty"`
 	Metadata            *string        `gorm:"type:jsonb" json:"metadata,omitempty"`
+	GroupID             *uint          `gorm:"index" json:"group_id,omitempty"`
 	Edited              bool           `gorm:"default:false" json:"edited"`
 	DeletedBySender     bool           `gorm:"default:false" json:"deleted_by_sender"`
 	DeletedByRecipient  bool           `gorm:"default:false" json:"deleted_by_recipient"`
@@ -29,8 +30,9 @@ type LobbyChat struct {
 	ReadAt              *time.Time     `json:"read_at,omitempty"`
 
 	// Relations (use Preload to fetch)
-	Sender    *User `gorm:"foreignKey:SenderID" json:"sender,omitempty"`
-	Recipient *User `gorm:"foreignKey:RecipientID" json:"recipient,omitempty"`
+	Sender    *User        `gorm:"foreignKey:SenderID" json:"sender,omitempty"`
+	Recipient *User        `gorm:"foreignKey:RecipientID" json:"recipient,omitempty"`
+	Group     *LobbyGroup  `gorm:"foreignKey:GroupID" json:"group,omitempty"`
 }
 
 // TableName overrides the table name

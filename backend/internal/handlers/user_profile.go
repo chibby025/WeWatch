@@ -95,6 +95,19 @@ func GetUserProfileHandler(c *gin.Context) {
 		friendshipStatus = "self"
 	}
 
+	// Fetch main room if public — only include room card when room is visible to everyone
+	var mainRoomData gin.H
+	if targetUser.MainRoomID != nil {
+		var room models.Room
+		if err := db.Select("id, name, room_type, is_public").First(&room, *targetUser.MainRoomID).Error; err == nil && room.IsPublic {
+			mainRoomData = gin.H{
+				"id":        room.ID,
+				"name":      room.Name,
+				"room_type": room.RoomType,
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"user": gin.H{
 			"id":                targetUser.ID,
@@ -107,6 +120,7 @@ func GetUserProfileHandler(c *gin.Context) {
 			"profile_type":      profileType,
 			"is_private":        profileType == "private",
 			"friendship_status": friendshipStatus,
+			"main_room":         mainRoomData, // nil if no room or room is private
 		},
 	})
 }

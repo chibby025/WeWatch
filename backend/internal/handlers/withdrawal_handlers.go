@@ -17,6 +17,7 @@ import (
 
 	"wewatch-backend/internal/models"
 	"wewatch-backend/internal/services"
+	"wewatch-backend/internal/utils"
 )
 
 // WithdrawalRequest represents a withdrawal request from a host
@@ -47,7 +48,21 @@ func RequestWithdrawal(c *gin.Context) {
 	
 	// Get database connection from context
 	db := c.MustGet("db").(*gorm.DB)
-	
+
+	// KYC check: withdrawals require verified identity (CBN compliance)
+	var user models.User
+	if err := db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify user identity"})
+		return
+	}
+	if !user.IsKYCVerified() {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Identity verification required before withdrawing funds",
+			"code":  "kyc_required",
+		})
+		return
+	}
+
 	// Fetch the payment account
 	var paymentAccount models.PaymentAccount
 	if err := db.Where("id = ? AND user_id = ?", req.PaymentAccountID, userID).First(&paymentAccount).Error; err != nil {
@@ -337,126 +352,119 @@ func RequestWithdrawal(c *gin.Context) {
 	}
 
 	// 🔐 AUDIT LOG: Withdrawal requested
-	log.Printf("🔐 AUDIT: User %d requested withdrawal (Payout ID: %d, Amount: %.2f %s, Source: %s, Account: %d)", 
+	log.Printf("🔐 AUDIT: User %d requested withdrawal (Payout ID: %d, Amount: %.2f %s, Source: %s, Account: %d)",
 		userID, payout.ID, req.Amount, req.Currency, req.SourceType, req.PaymentAccountID)
-	
-	// ✅ Send withdrawal confirmation email (async)
-	go func() {
-		// Get user details for email
-		var user models.User
-		if err := db.First(&user, userID).Error; err == nil {
-			emailService := services.NewEmailService()
-			err := emailService.SendWithdrawalSubmittedEmail(
-				user.Email,
-				user.Username,
-				req.Amount,
-				req.Currency,
-			)
-			if err != nil {
-				fmt.Printf("⚠️  Failed to send withdrawal email to %s: %v\n", user.Email, err)
+
+	// Send submitted email regardless of auto/manual path.
+	go func(email, username string) {
+		emailSvc := services.NewEmailService()
+		if err := emailSvc.SendWithdrawalSubmittedEmail(email, username, req.Amount, req.Currency); err != nil {
+			log.Printf("⚠️ Withdrawal confirmation email failed for user %d: %v", userID, err)
+		}
+	}(user.Email, user.Username)
+
+	// ⚡ AUTO-PAY vs MANUAL REVIEW
+	// NGN withdrawals below ₦200,000 are processed automatically via Paystack Transfer API.
+	// NGN withdrawals ≥ ₦200,000 are flagged for manual admin review.
+	// All non-NGN withdrawals are always auto-processed.
+	const autoPayThresholdNGN = 200_000.0
+	autoProcess := req.Currency != "NGN" || req.Amount < autoPayThresholdNGN
+
+	// For Paystack accounts, ensure a recipient code exists before launching the goroutine.
+	if autoProcess && paymentAccount.IsPaystack() {
+		if paymentAccount.PaystackRecipientCode == nil || *paymentAccount.PaystackRecipientCode == "" {
+			secretKey := os.Getenv("PAYSTACK_REVENUE_SECRET_KEY")
+			if secretKey == "" {
+				secretKey = os.Getenv("PAYSTACK_SECRET_KEY")
+			}
+			acctNum, acctName, bankCode := "", "", ""
+			if paymentAccount.AccountNumber != nil {
+				acctNum = *paymentAccount.AccountNumber
+			}
+			if paymentAccount.AccountName != nil {
+				acctName = *paymentAccount.AccountName
+			}
+			if paymentAccount.BankCode != nil {
+				bankCode = *paymentAccount.BankCode
+			}
+			if secretKey != "" && acctNum != "" && acctName != "" && bankCode != "" {
+				code, err := utils.PaystackCreateTransferRecipient(
+					secretKey, "nuban", acctName, acctNum, bankCode, paymentAccount.Currency,
+				)
+				if err != nil {
+					log.Printf("⚠️ Failed to create Paystack recipient for payout %d: %v — routing to manual review", payout.ID, err)
+					autoProcess = false
+				} else {
+					db.Model(&paymentAccount).Update("paystack_recipient_code", code)
+					paymentAccount.PaystackRecipientCode = &code
+				}
+			} else {
+				log.Printf("⚠️ Payout %d: missing account fields for recipient creation — routing to manual review", payout.ID)
+				autoProcess = false
 			}
 		}
-	}()
-	
-	// 📧 MANUAL WITHDRAWAL: Notify admin to manually process the withdrawal
-	go func() {
-		// Get admin email from environment or use default
-		adminEmail := os.Getenv("ADMIN_EMAIL")
-		if adminEmail == "" {
-			adminEmail = "watchoutrev@gmail.com" // Default admin email
-		}
-		
-		// Get user details
-		var user models.User
-		db.First(&user, userID)
-		
-		// Send admin notification email
-		emailService := services.NewEmailService()
-		
-		// Format email body
-		emailBody := fmt.Sprintf(`
-New Withdrawal Request Pending Manual Approval
+	}
 
----------------------------------------------
-WITHDRAWAL DETAILS:
----------------------------------------------
-Payout ID: %d
-User: %s (ID: %d)
-Email: %s
-Amount: %.2f %s
-Source: %s
-Payment Account: %s
-Bank: %s
-Account Number: %s
-Status: PENDING MANUAL APPROVAL
+	if autoProcess {
+		go processWithdrawal(db, payout.ID, paymentAccount)
+		log.Printf("⚡ Auto-processing payout #%d (%.2f %s)", payout.ID, req.Amount, req.Currency)
+		c.JSON(http.StatusOK, gin.H{
+			"message":           "Your withdrawal is being processed automatically.",
+			"payout_id":         payout.ID,
+			"amount":            req.Amount,
+			"currency":          req.Currency,
+			"status":            "processing",
+			"payment_account":   paymentAccount.ToResponse(),
+			"estimated_arrival": time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+		})
+	} else {
+		// Large NGN withdrawal (≥ ₦200,000) or recipient setup failure — notify admin.
+		go func(username, email string, payoutID uint, amount float64, currency, sourceType string) {
+			adminEmail := os.Getenv("ADMIN_EMAIL")
+			if adminEmail == "" {
+				adminEmail = "watchoutrev@gmail.com"
+			}
+			acctNum, acctName, bankName := "", "", ""
+			if paymentAccount.AccountNumber != nil {
+				acctNum = *paymentAccount.AccountNumber
+			}
+			if paymentAccount.AccountName != nil {
+				acctName = *paymentAccount.AccountName
+			}
+			if paymentAccount.BankName != nil {
+				bankName = *paymentAccount.BankName
+			}
+			body := fmt.Sprintf(
+				"Large Withdrawal — Manual Review Required\n\n"+
+					"Payout ID:  %d\nUser:       %s (ID: %d)\nEmail:      %s\n"+
+					"Amount:     %.2f %s\nSource:     %s\nBank:       %s\nAccount:    %s\nName:       %s\n\n"+
+					"Instructions:\n"+
+					"1. Log in to Paystack: https://dashboard.paystack.com/#/transfers\n"+
+					"2. Transfer %.2f %s to the account above.\n"+
+					"3. Mark complete: POST /api/admin/payouts/%d/complete\n",
+				payoutID, username, userID, email,
+				amount, currency, sourceType, bankName, acctNum, acctName,
+				amount, currency, payoutID,
+			)
+			emailSvc := services.NewEmailService()
+			if err := emailSvc.SendEmail(adminEmail,
+				fmt.Sprintf("[MANUAL ACTION REQUIRED] Large Withdrawal #%d", payoutID), body); err != nil {
+				log.Printf("⚠️ Admin withdrawal email failed for payout %d: %v", payoutID, err)
+			}
+		}(user.Username, user.Email, payout.ID, req.Amount, req.Currency, req.SourceType)
 
----------------------------------------------
-INSTRUCTIONS:
----------------------------------------------
-1. Login to Paystack dashboard: https://dashboard.paystack.com/#/transfers
-2. Click "New Transfer" → "Single Transfer"
-3. Transfer %.2f %s to:
-   Bank: %s
-   Account: %s
-   Account Name: %s
-4. After transfer is successful, mark this payout as completed:
-   - Go to WeWatch admin panel
-   - Payouts → Payout #%d → Mark as Completed
-   - Enter Paystack transfer reference
-
-OR use the API:
-curl -X POST http://localhost:8080/api/payouts/%d/complete \
-  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
-  -d '{"gateway_transfer_id": "TRF_xxx"}'
-
----------------------------------------------
-`, 
-			payout.ID,
-			user.Username, userID, user.Email,
-			req.Amount, req.Currency,
-			req.SourceType,
-			*paymentAccount.AccountName,
-			*paymentAccount.BankName,
-			*paymentAccount.AccountNumber,
-			req.Amount, req.Currency,
-			*paymentAccount.BankName,
-			*paymentAccount.AccountNumber,
-			*paymentAccount.AccountName,
-			payout.ID,
-			payout.ID,
-		)
-		
-		err := emailService.SendEmail(
-			adminEmail,
-			"[MANUAL ACTION REQUIRED] Withdrawal Request #"+fmt.Sprint(payout.ID),
-			emailBody,
-		)
-		
-		if err != nil {
-			fmt.Printf("⚠️  Failed to send admin notification to %s: %v\n", adminEmail, err)
-		} else {
-			fmt.Printf("📧 Admin notification sent to %s for payout #%d\n", adminEmail, payout.ID)
-		}
-	}()
-	
-	// ⚠️ MANUAL WITHDRAWAL MODE: Do NOT auto-process transfer
-	// Admin will manually transfer via Paystack dashboard and mark as completed
-	// Comment out the automatic processing line:
-	// go processWithdrawal(DB, payout.ID, paymentAccount)
-	
-	fmt.Printf("⏸️  MANUAL WITHDRAWAL: Payout #%d is pending admin approval\n", payout.ID)
-	fmt.Printf("   Admin will manually transfer %.2f %s to %s\n", req.Amount, req.Currency, *paymentAccount.AccountName)
-	
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Withdrawal request submitted! Our team will process it within 24 hours.",
-		"payout_id": payout.ID,
-		"amount": req.Amount,
-		"currency": req.Currency,
-		"status": "pending", // ✅ Changed from "processing" to "pending" for manual approval
-		"payment_account": paymentAccount.ToResponse(),
-		"estimated_arrival": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-		"manual_approval": true, // ✅ Flag to indicate manual approval required
-	})
+		log.Printf("⏸️ Payout #%d queued for manual review (%.2f %s ≥ ₦%.0f threshold)", payout.ID, req.Amount, req.Currency, autoPayThresholdNGN)
+		c.JSON(http.StatusOK, gin.H{
+			"message":           "Your withdrawal has been submitted for review. We'll process it within 24 hours.",
+			"payout_id":         payout.ID,
+			"amount":            req.Amount,
+			"currency":          req.Currency,
+			"status":            "pending",
+			"payment_account":   paymentAccount.ToResponse(),
+			"estimated_arrival": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+			"manual_review":     true,
+		})
+	}
 }
 
 // processWithdrawal handles the actual transfer via Paystack or Stripe

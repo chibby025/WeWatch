@@ -40,6 +40,12 @@ type ScheduledEventInput struct {
 	TrailerURL      string `json:"trailer_url"`       // Uploaded trailer file path
 	TrailerTitle    string `json:"trailer_title"`     // Custom trailer title
 	TrailerDuration int    `json:"trailer_duration"`  // Duration in seconds
+
+	// Recurrence fields
+	RecurrenceType    string `json:"recurrence_type"`    // none/weekly/biweekly/monthly
+	RecurrenceEndDate string `json:"recurrence_end_date"` // ISO 8601 end date for recurrence
+
+	ContentRating string `json:"content_rating"` // G, PG, Educational, Religious, 13+, 16+, 18+, Mature
 }
 
 // CreateScheduledEventHandler handles POST /api/rooms/:id/scheduled-events
@@ -203,6 +209,9 @@ func CreateScheduledEventHandler(c *gin.Context) {
 	}
 
 	// 8. Create ScheduledEvent
+	if input.ContentRating == "" {
+		input.ContentRating = "G"
+	}
 	event := models.ScheduledEvent{
 		RoomID:              uint(roomID),
 		MediaItemID:         input.MediaItemID,
@@ -212,6 +221,7 @@ func CreateScheduledEventHandler(c *gin.Context) {
 		Title:               input.Title,
 		Description:         input.Description,
 		HostUserID:          authenticatedUserID,
+		ContentRating:       input.ContentRating,
 		IsPaid:              input.IsPaid,
 		TicketPriceTokens:   input.TicketPriceTokens,
 		TicketPriceCurrency: input.TicketPriceCurrency,
@@ -223,6 +233,19 @@ func CreateScheduledEventHandler(c *gin.Context) {
 		TrailerURL:          input.TrailerURL,
 		TrailerTitle:        input.TrailerTitle,
 		TrailerDuration:     input.TrailerDuration,
+		RecurrenceType:      "none",
+	}
+
+	// 8b. Set recurrence fields if provided
+	recurrenceType := input.RecurrenceType
+	if recurrenceType == "weekly" || recurrenceType == "biweekly" || recurrenceType == "monthly" {
+		event.RecurrenceGroupID = uuid.New().String()
+		event.RecurrenceType = recurrenceType
+		if input.RecurrenceEndDate != "" {
+			if recurEnd, err := time.Parse(time.RFC3339, input.RecurrenceEndDate); err == nil {
+				event.RecurrenceEndDate = &recurEnd
+			}
+		}
 	}
 	
 	// Set trailer uploaded time if trailer URL is provided
@@ -237,6 +260,55 @@ func CreateScheduledEventHandler(c *gin.Context) {
 		log.Printf("Error creating scheduled event: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create scheduled event"})
 		return
+	}
+
+	// 9b. Create recurring instances if applicable
+	if event.RecurrenceGroupID != "" {
+		var recurEnd time.Time
+		if event.RecurrenceEndDate != nil {
+			recurEnd = *event.RecurrenceEndDate
+		}
+		maxInstances := map[string]int{"weekly": 52, "biweekly": 26, "monthly": 12}[event.RecurrenceType]
+		nextTime := startTime
+		for i := 1; i <= maxInstances; i++ {
+			switch event.RecurrenceType {
+			case "weekly":
+				nextTime = nextTime.Add(7 * 24 * time.Hour)
+			case "biweekly":
+				nextTime = nextTime.Add(14 * 24 * time.Hour)
+			case "monthly":
+				nextTime = nextTime.AddDate(0, 1, 0)
+			}
+			if !recurEnd.IsZero() && nextTime.After(recurEnd) {
+				break
+			}
+			instance := models.ScheduledEvent{
+				RoomID:               event.RoomID,
+				MediaItemID:          event.MediaItemID,
+				WatchType:            event.WatchType,
+				MediaFilePath:        event.MediaFilePath,
+				StartTime:            nextTime,
+				Title:                event.Title,
+				Description:          event.Description,
+				HostUserID:           event.HostUserID,
+				ContentRating:        event.ContentRating,
+				IsPaid:               event.IsPaid,
+				TicketPriceTokens:    event.TicketPriceTokens,
+				TicketPriceCurrency:  event.TicketPriceCurrency,
+				TicketPriceAmount:    event.TicketPriceAmount,
+				EarlyBirdEnabled:     event.EarlyBirdEnabled,
+				EarlyBirdPriceTokens: event.EarlyBirdPriceTokens,
+				EarlyBirdPriceAmount: event.EarlyBirdPriceAmount,
+				EarlyBirdActive:      event.EarlyBirdEnabled,
+				RecurrenceType:       event.RecurrenceType,
+				RecurrenceGroupID:    event.RecurrenceGroupID,
+				RecurrenceEndDate:    event.RecurrenceEndDate,
+			}
+			if err := DB.Create(&instance).Error; err != nil {
+				log.Printf("⚠️ [CreateScheduledEvent] Recurrence instance %d failed: %v", i, err)
+			}
+		}
+		log.Printf("✅ [CreateScheduledEvent] Created %s recurring group %s", event.RecurrenceType, event.RecurrenceGroupID)
 	}
 
 	// 10. Broadcast to room via WebSocket
@@ -559,6 +631,9 @@ func UpdateScheduledEventHandler(c *gin.Context) {
 	event.StartTime, _ = time.Parse(time.RFC3339, input.StartTime)
 	event.Title = input.Title
 	event.Description = input.Description
+	if input.ContentRating != "" {
+		event.ContentRating = input.ContentRating
+	}
 
 	if err := DB.Save(&event).Error; err != nil {
 		log.Printf("Error updating scheduled event: %v", err)
@@ -904,11 +979,139 @@ func UploadTrailerHandler(c *gin.Context) {
 
 	log.Printf("✅ [UploadTrailer] Duration: %ds", durationSeconds)
 
-	// 11. Return success with file path and duration
+	// 11. Upload to BunnyCDN (falls back to local if not configured)
+	fileBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		log.Printf("❌ [UploadTrailer] Failed to read file for CDN upload: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process uploaded file"})
+		return
+	}
+
+	contentTypeMap := map[string]string{
+		".mp4":  "video/mp4",
+		".webm": "video/webm",
+		".mov":  "video/quicktime",
+		".mkv":  "video/x-matroska",
+	}
+	contentType := contentTypeMap[ext]
+	if contentType == "" {
+		contentType = "video/mp4"
+	}
+
+	cdnURL, cdnErr := utils.UploadTrailerToBunnyCDN(fileBytes, uniqueFilename, contentType)
+	if cdnErr != nil {
+		log.Printf("⚠️ [UploadTrailer] CDN upload failed, using local fallback: %v", cdnErr)
+		cdnURL = filePath // serve from local if CDN fails
+	} else {
+		// CDN has the file — delete local temp copy
+		os.Remove(filePath)
+		log.Printf("🗑️ [UploadTrailer] Local temp file removed after CDN upload")
+	}
+
+	// 12. Return success
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "Trailer uploaded successfully",
-		"file_path": filePath,
-		"duration": durationSeconds,
-		"size":     formFile.Size,
+		"message":   "Trailer uploaded successfully",
+		"file_path": cdnURL,
+		"duration":  durationSeconds,
+		"size":      formFile.Size,
+	})
+}
+
+// GetUserUpcomingEventsHandler handles GET /api/user/upcoming-events
+// Returns events from now to +30 days from all rooms the user belongs to
+func GetUserUpcomingEventsHandler(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	authenticatedUserID := userIDValue.(uint)
+
+	now := time.Now().UTC()
+	end := now.Add(30 * 24 * time.Hour)
+
+	var userRooms []models.UserRoom
+	if err := DB.Where("user_id = ? AND status = 'active'", authenticatedUserID).Find(&userRooms).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user rooms"})
+		return
+	}
+
+	roomIDs := make([]uint, 0, len(userRooms))
+	for _, ur := range userRooms {
+		roomIDs = append(roomIDs, ur.RoomID)
+	}
+
+	if len(roomIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{"events": []interface{}{}})
+		return
+	}
+
+	var events []models.ScheduledEvent
+	if err := DB.Preload("Room").
+		Where("room_id IN ? AND start_time >= ? AND start_time <= ?", roomIDs, now, end).
+		Order("start_time ASC").
+		Find(&events).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch upcoming events"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"events": events})
+}
+
+// GetUserCalendarHandler handles GET /api/user/calendar?month=2026-05
+// Returns all scheduled events from rooms the user belongs to for a given month
+func GetUserCalendarHandler(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	authenticatedUserID := userIDValue.(uint)
+
+	monthStr := c.Query("month")
+	var startDate, endDate time.Time
+	if monthStr != "" {
+		if t, err := time.Parse("2006-01", monthStr); err == nil {
+			startDate = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+			endDate = startDate.AddDate(0, 1, 0)
+		}
+	}
+	if startDate.IsZero() {
+		now := time.Now().UTC()
+		startDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		endDate = startDate.AddDate(0, 1, 0)
+	}
+
+	// Get room IDs the user belongs to
+	var userRooms []models.UserRoom
+	if err := DB.Where("user_id = ?", authenticatedUserID).Find(&userRooms).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user rooms"})
+		return
+	}
+
+	roomIDs := make([]uint, 0, len(userRooms))
+	for _, ur := range userRooms {
+		roomIDs = append(roomIDs, ur.RoomID)
+	}
+
+	if len(roomIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{"events": []interface{}{}, "month": monthStr})
+		return
+	}
+
+	var events []models.ScheduledEvent
+	if err := DB.Preload("Room").
+		Where("room_id IN ? AND start_time >= ? AND start_time < ?", roomIDs, startDate, endDate).
+		Order("start_time ASC").
+		Find(&events).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch calendar events"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"events": events,
+		"month":  monthStr,
+		"start":  startDate.Format(time.RFC3339),
+		"end":    endDate.Format(time.RFC3339),
 	})
 }

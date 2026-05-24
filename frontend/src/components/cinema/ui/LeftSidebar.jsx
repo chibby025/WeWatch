@@ -1,10 +1,11 @@
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { uploadMediaToRoom, uploadChunk, apiClient, API_BASE_URL } from '../../../services/api';
-import { Gamepad2, Video, BookOpen, Music } from 'lucide-react'; // Game, Video, Bible, and Hymn icons
+import { Gamepad2, Video, BookOpen, Music, FileText } from 'lucide-react'; // Game, Video, Bible, Hymn, Sermon icons
 import toast from 'react-hot-toast';
 import BibleControl from '../../liveshare/BibleControl';
 import HymnsControl from '../../liveshare/HymnsControl';
+import SermonControl from '../../liveshare/SermonControl';
 import useSessionRecording from '../../../hooks/useSessionRecording';
 import RecordingOptionsModal from '../../RecordingOptionsModal';
 import { 
@@ -59,6 +60,7 @@ export default function LeftSidebar({
   watchSessionMembers = [], // Array of members in watch session
   liveShareMode = 'regular', // Current LiveShare share type (camera/screen/both)
   liveShareContentMode = null, // Content mode ('regular', 'podcast', 'news', 'show')
+  podcastConfig = null, // { title, logoUrl, titleStyle, logoStyle, guestUserId, hostUsername }
   liveShareGuest = null, // Active guest object or null
   hasLiveSharePermission = false, // Boolean for members (is LiveShare tab visible?)
   onLiveShareModeSelect, // Handler for mode selection
@@ -72,42 +74,15 @@ export default function LeftSidebar({
   forceActiveTab = null, // Force switch to specific tab
   isSessionPrivate = false, // ✅ NEW: If true, session was created as private (enforces Ghost Mode)
   sessionStatus = null, // ✅ NEW: Full session status object for self-validation fallback
+  availableCameras = [], // 📹 Available camera devices
+  selectedCameraId = null, // 📹 Currently selected camera
+  onCameraSwitch = null, // 📹 Callback to switch camera
+  autoOpenGuestInvite = null, // Auto-trigger guest popup
+  onGuestInviteConsumed = null, // Clear auto-trigger in parent
 }) {
-  // ✅ Host verification state
-  const [isHost, setIsHost] = useState(isHostProp);
-  const [isVerifyingHost, setIsVerifyingHost] = useState(false);
-  
-  // ✅ Verify host status when sidebar opens
-  useEffect(() => {
-    const verifyHostStatus = async () => {
-      if (!isLeftSidebarOpen || !roomId || !currentUser?.id) return;
-      
-      setIsVerifyingHost(true);
-      try {
-        // ✅ Use apiClient which has withCredentials: true (cookie-based auth)
-        const response = await apiClient.get(`/api/rooms/${roomId}`);
-        
-        // ✅ Backend wraps room data in "room" property
-        const roomData = response.data.room || response.data;
-        const isUserHost = roomData.host_id === currentUser?.id;
-        // console.log('🔍 [LeftSidebar] Host verification:', { 
-        //   hostId: roomData.host_id, 
-        //   userId: currentUser?.id, 
-        //   isHost: isUserHost,
-        //   wasHostProp: isHostProp
-        // });
-        setIsHost(isUserHost);
-      } catch (error) {
-        console.error('❌ [LeftSidebar] Host verification error:', error);
-        // Fallback to prop on error
-        setIsHost(isHostProp);
-      } finally {
-        setIsVerifyingHost(false);
-      }
-    };
-    
-    verifyHostStatus();
-  }, [isLeftSidebarOpen, roomId, currentUser?.id, isHostProp]);
+  // Host status is authoritative from the parent (derived from room.host_id === currentUser.id).
+  // No need to re-verify via API on every sidebar open — host doesn't change during a session.
+  const isHost = isHostProp;
   
   // Dynamically determine available tabs
   // ✅ Host sees all tabs; Members see 'upload' + 'liveshare' (if permission granted)
@@ -116,17 +91,6 @@ export default function LeftSidebar({
     : hasLiveSharePermission 
       ? ['upload', 'liveshare'] 
       : ['upload'];
-  
-  // 🐛 DEBUG: Log permission state changes
-  useEffect(() => {
-    console.log('📊 [LeftSidebar] Permission state:', {
-      isHost,
-      hasLiveSharePermission,
-      availableTabs,
-      currentUserId: currentUser?.id,
-      currentUserName: currentUser?.username
-    });
-  }, [hasLiveSharePermission, isHost, currentUser?.id]);
   
   // ✅ Persist active tab in sessionStorage (clears on session end)
   const getInitialTab = () => {
@@ -220,9 +184,10 @@ export default function LeftSidebar({
   // Alias for display
   const recordingDuration = recordingTime;
   
-  // 📖 Bible & Hymn state (Religious content)
+  // 📖 Bible, Hymn & Sermon state (Religious content)
   const [showBibleSelector, setShowBibleSelector] = useState(false);
   const [showHymnSelector, setShowHymnSelector] = useState(false);
+  const [showSermonSelector, setShowSermonSelector] = useState(false);
   
   // Check for incomplete uploads on mount
   useEffect(() => {
@@ -268,36 +233,44 @@ export default function LeftSidebar({
       const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
       
       if (!connection) {
-        setNetworkQuality('unknown');
+        // Network Information API unavailable (iOS Safari, Firefox).
+        // Use onLine as a binary fallback — offline = treat as 2G, online = unknown/conservative.
+        setNetworkQuality(navigator.onLine === false ? '2g' : 'unknown');
         return;
       }
       
       const effectiveType = connection.effectiveType; // '2g', '3g', '4g', 'slow-2g'
-      console.log('🌐 [Network Detection] Effective type:', effectiveType);
-      
+
       if (effectiveType === 'slow-2g' || effectiveType === '2g') {
         setNetworkQuality('2g');
-        console.log('📶 [Network] 2G detected - Using 2 concurrent chunks');
       } else if (effectiveType === '3g') {
         setNetworkQuality('3g');
-        console.log('📶 [Network] 3G detected - Using 3 concurrent chunks');
       } else if (effectiveType === '4g') {
         setNetworkQuality('4g');
-        console.log('📶 [Network] 4G detected - Using 5 concurrent chunks');
       } else {
         setNetworkQuality('wifi');
-        console.log('📶 [Network] WiFi/Fast connection - Using 5 concurrent chunks');
       }
     };
     
     detectNetworkQuality();
     
-    // Listen for connection changes
+    // Listen for connection changes (Network Information API — Chrome/Android)
     const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
     if (connection) {
       connection.addEventListener('change', detectNetworkQuality);
-      return () => connection.removeEventListener('change', detectNetworkQuality);
     }
+
+    // Fallback for iOS Safari / Firefox: online/offline events are universally supported
+    const handleOffline = () => setNetworkQuality('2g');
+    const handleOnline = () => detectNetworkQuality();
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      if (connection) connection.removeEventListener('change', detectNetworkQuality);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
   }, []);
   
   // ✅ Handle beforeunload - Notify SW that upload was paused
@@ -376,45 +349,21 @@ export default function LeftSidebar({
   // 🖼️ Preview thumbnails toggle state (content moderation)
   // ✅ Initialize from isSessionPrivate - if session is private, Ghost Mode is enforced
   const [hidePreviewThumbnails, setHidePreviewThumbnails] = useState(isSessionPrivate);
-  
-  // � Sync Ghost Mode when session privacy changes OR on mount (handles late-arriving sessionStatus and lazy-loaded sidebar)
+
+  // Sync Ghost Mode when isSessionPrivate prop changes (handles late-arriving prop)
   useEffect(() => {
-    console.log('👻 [LeftSidebar useEffect] Checking Ghost Mode enforcement:', {
-      isSessionPrivate,
-      currentHidePreviewThumbnails: hidePreviewThumbnails
-    });
-    
-    if (isSessionPrivate) {
-      console.log('👻 [LeftSidebar useEffect] ✅ ENFORCING Ghost Mode (setting hidePreviewThumbnails = true)');
-      setHidePreviewThumbnails(true);
-    } else {
-      console.log('👻 [LeftSidebar useEffect] ℹ️ Session is not private, Ghost Mode is optional');
-    }
-  }, [isSessionPrivate]); // Runs on mount AND when isSessionPrivate changes
-  
-  // 🛡️ FALLBACK: Self-checking validation using sessionStatus directly
-  // This runs independently to catch cases where prop arrives late or incorrect
+    if (isSessionPrivate) setHidePreviewThumbnails(true);
+  }, [isSessionPrivate]);
+
+  // Fallback: self-validate using sessionStatus when sidebar opens (catches prop-arrival race)
   useEffect(() => {
     if (!sessionStatus || !isLeftSidebarOpen) return;
-    
     const shouldEnforceGhost = sessionStatus.isPrivate || sessionStatus.hideFromLobby;
-    
-    console.log('🛡️ [LeftSidebar] Self-validation Ghost Mode check:', {
-      sessionId: sessionStatus.id,
-      isPrivate: sessionStatus.isPrivate,
-      hideFromLobby: sessionStatus.hideFromLobby,
-      shouldEnforceGhost,
-      currentHidePreviewThumbnails: hidePreviewThumbnails,
-      propValue: isSessionPrivate
-    });
-    
-    // If self-check disagrees with current state, log warning and enforce
     if (shouldEnforceGhost && !hidePreviewThumbnails) {
-      console.warn('⚠️ [LeftSidebar] Self-validation detected Ghost Mode should be enforced! Correcting state.');
-      console.warn('⚠️ [LeftSidebar] Prop value was:', isSessionPrivate, 'but session data says:', shouldEnforceGhost);
+      console.warn('[LeftSidebar] Ghost Mode corrected via self-validation (prop was stale)');
       setHidePreviewThumbnails(true);
     }
-  }, [sessionStatus, isLeftSidebarOpen, hidePreviewThumbnails, isSessionPrivate]); // Re-validate when sidebar opens or session changes
+  }, [sessionStatus, isLeftSidebarOpen, hidePreviewThumbnails, isSessionPrivate]);
 
   // Auto-close sidebar when mouse leaves (unless screen sharing)
   useEffect(() => {
@@ -463,7 +412,7 @@ export default function LeftSidebar({
       if (onCameraPreview) onCameraPreview(stream);
     } catch (err) {
       console.error("Camera error:", err);
-      alert("Camera unavailable.");
+      toast.error("Camera unavailable. Check browser permissions.");
       if (onCameraPreview) onCameraPreview(null);
     }
   };
@@ -615,12 +564,12 @@ export default function LeftSidebar({
         console.log('🚫 [Upload] Cancelled');
         clearChunkUploadState(uploadId);
         localStorage.removeItem('current_upload_id');
-        alert("Upload cancelled.");
+        toast('Upload cancelled.');
       } else {
         console.error("❌ [Upload] Failed:", err);
         clearChunkUploadState(uploadId);
         localStorage.removeItem('current_upload_id');
-        alert(`Upload failed: ${err.message}`);
+        toast.error(`Upload failed: ${err.message}`);
       }
     } finally {
       localStorage.removeItem('wewatch_active_upload');
@@ -643,18 +592,18 @@ export default function LeftSidebar({
     // ✅ CLIENT-SIDE VALIDATION
     const allowedTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska', 'video/avi', 'video/x-msvideo'];
     if (!allowedTypes.includes(file.type)) {
-      alert(`Invalid file type: ${file.type}\\n\\nAllowed types: MP4, WebM, MOV, MKV, AVI`);
+      toast.error(`Invalid file type: ${file.type}. Allowed: MP4, WebM, MOV, MKV, AVI`);
       return;
     }
-    
+
     const maxSize = 1 * 1024 * 1024 * 1024;
     if (file.size > maxSize) {
-      alert(`File too large: ${(file.size / 1024 / 1024 / 1024).toFixed(2)} GB\\n\\nMaximum: 1 GB`);
+      toast.error(`File too large (${(file.size / 1024 / 1024 / 1024).toFixed(2)} GB). Maximum is 1 GB.`);
       return;
     }
-    
+
     if (file.size < 1024) {
-      alert('File too small. Please select a valid video file.');
+      toast.error('File too small. Please select a valid video file.');
       return;
     }
     
@@ -790,7 +739,7 @@ export default function LeftSidebar({
         onUploadComplete();
       }
       
-      alert('Stream URL added to playlist!');
+      toast.success('Stream URL added to playlist!');
     } catch (err) {
       console.error('❌ [LeftSidebar] Stream URL failed:', err);
       
@@ -1029,16 +978,6 @@ export default function LeftSidebar({
       className="fixed left-0 top-0 h-full w-full sm:w-[350px] md:w-96 z-40 overflow-y-auto hide-scrollbar left-sidebar pt-16"
       onClick={(e) => e.stopPropagation()}
     >
-      {/* ✅ Host Verification Loading Overlay */}
-      {isVerifyingHost && (
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-            <span className="text-white text-sm font-medium">Verifying host status...</span>
-          </div>
-        </div>
-      )}
-      
       {/* 🌙 Host Settings - Darkness Level Control (3D Cinema Only) */}
       {isHost && watchType === '3d_cinema' && darknessLevel && onDarknessLevelChange && (
         <div className="mb-3 p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
@@ -1339,16 +1278,6 @@ export default function LeftSidebar({
             const showGameButton = !['Educational', 'Religious'].includes(contentRating);
             const showReligiousButtons = contentRating === 'Religious';
             
-            // 🔍 DEBUG: Log content rating state
-            console.log('🔍 [LeftSidebar Buttons] Content Rating Check:', {
-              sessionStatus,
-              contentRating,
-              showGameButton,
-              showReligiousButtons,
-              sessionStatusExists: !!sessionStatus,
-              contentRatingField: sessionStatus?.content_rating
-            });
-            
             // Check if Quiz button should show (Lecture Hall OR Educational content)
             const showQuizButton = ((watchType === 'classroom' && classType === 'lecture_hall') || contentRating === 'Educational') && onQuizClick;
             
@@ -1359,13 +1288,11 @@ export default function LeftSidebar({
                   <button
                     onClick={() => {
                       if (activeGame) {
-                        console.log('🎮 [LeftSidebar] End Game button clicked!');
                         if (onGameClose) {
                           onGameClose();
                           toast.success('Game ended', { icon: '🎮' });
                         }
                       } else {
-                        console.log('🎮 [LeftSidebar] Start Game button clicked!');
                         if (onGameClick) {
                           onGameClick();
                         }
@@ -1462,6 +1389,20 @@ export default function LeftSidebar({
                     <span className="text-[10px] text-gray-300 font-medium">Hymn</span>
                   </button>
                 )}
+
+                {/* SERMON BUTTON (Religious Content Only) */}
+                {showReligiousButtons && (
+                  <button
+                    onClick={() => {
+                      console.log('📜 [LeftSidebar] Sermon button clicked!');
+                      setShowSermonSelector(true);
+                    }}
+                    className="flex flex-col items-center gap-1.5 hover:opacity-70 transition-all group"
+                  >
+                    <FileText className="w-7 h-7 sm:w-8 sm:h-8 text-amber-400 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] text-gray-300 font-medium">Sermon</span>
+                  </button>
+                )}
               </div>
             );
           })()}
@@ -1469,8 +1410,8 @@ export default function LeftSidebar({
           <div className="flex-1 mt-3 sm:mt-4 min-h-0">
             <div className="h-full flex flex-col p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl overflow-y-auto">
 
-              {/* ACTIVE QUIZZES (Lecture Hall - Students) */}
-              {!isHost && watchType === 'classroom' && classType === 'lecture_hall' && onTakeQuiz && (() => {
+              {/* ACTIVE QUIZZES (Lecture Hall OR Educational content - Students) */}
+              {!isHost && ((watchType === 'classroom' && classType === 'lecture_hall') || contentRating === 'Educational') && onTakeQuiz && (() => {
                 // ✅ Get all active quizzes (both from activeQuiz and quizHistory)
                 let allActiveQuizzes = [];
                 
@@ -1658,6 +1599,7 @@ export default function LeftSidebar({
             watchType={watchType}
             liveShareMode={liveShareMode}
             liveShareContentMode={liveShareContentMode}
+            podcastConfig={podcastConfig}
             liveShareGuest={liveShareGuest}
             hasLiveSharePermission={hasLiveSharePermission}
             onLiveShareModeSelect={onLiveShareModeSelect}
@@ -1670,7 +1612,13 @@ export default function LeftSidebar({
             sendMessage={sendMessage}
             cameraShareTrackRef={cameraShareTrackRef}
             graphicsRendererRef={graphicsRendererRef}
-            onWizardStateChange={onWizardStateChange} // ✅ Pass through to LiveShareManager
+            onWizardStateChange={onWizardStateChange}
+            contentRating={contentRating}
+            availableCameras={availableCameras}
+            selectedCameraId={selectedCameraId}
+            onCameraSwitch={onCameraSwitch}
+            autoOpenGuestInvite={autoOpenGuestInvite}
+            onGuestInviteConsumed={onGuestInviteConsumed}
           />
         </div>
       )}
@@ -1943,7 +1891,7 @@ export default function LeftSidebar({
               <button
                 onClick={() => {
                   setShowResumeUpload(false);
-                  alert('Resume functionality requires re-selecting the file. Please use the upload button and select the same file.');
+                  toast('To resume, use the upload button and re-select the same file.', { duration: 5000 });
                   // Note: We can't resume without the user re-selecting the file
                   // because we don't have access to the File object
                 }}
@@ -2008,6 +1956,24 @@ export default function LeftSidebar({
           }}
           currentHymn={null}
           currentVerse={1}
+        />
+      )}
+
+      {/* 📜 Sermon Control Modal (Religious Content) */}
+      {showSermonSelector && (
+        <SermonControl
+          onShowSermon={({ pages, title }) => {
+            console.log('📜 [LeftSidebar] Sermon display requested:', { pages: pages.length, title });
+            if (sendMessage) {
+              sendMessage({
+                type: 'sermon_update',
+                data: { active: true, pages, title: title || null, currentPage: 0 }
+              });
+            }
+            setShowSermonSelector(false);
+            toast.success('Sermon displayed', { icon: '📜' });
+          }}
+          onHideSermon={() => setShowSermonSelector(false)}
         />
       )}
     </div>

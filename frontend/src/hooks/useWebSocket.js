@@ -307,9 +307,12 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
             console.log(`🔍 [useWebSocket] ${message.type} → ${poolEntry.subscribers.size} subscribers`);
           }
           
-          // Update all subscribers with the new message
+          // Update all subscribers with the new message (cap at 500 as safety net)
           poolEntry.subscribers.forEach(sub => {
-            sub.setMessages(prev => [...prev, message]);
+            sub.setMessages(prev => {
+              const next = [...prev, message];
+              return next.length > 500 ? next.slice(-500) : next;
+            });
           });
 
           // ✅ Handle leave_acknowledged early (before normal message processing)
@@ -507,7 +510,9 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
         // Remove old connection from pool before reconnecting
         activeConnections.delete(connectionKey);
         
-        setTimeout(connectWebSocket, RECONNECT_INTERVAL * reconnectAttemptRef.current); // Exponential backoff
+        // Jitter (0–1 s) prevents thundering herd when many clients disconnect simultaneously
+        const jitter = Math.floor(Math.random() * 1000);
+        setTimeout(connectWebSocket, RECONNECT_INTERVAL * reconnectAttemptRef.current + jitter);
       } else {
         setIsReconnecting(false);
         if (poolEntry.refCount === 0) {
@@ -862,6 +867,10 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
     });
   }, []);
 
+  // Clears the local messages array after a consumer has processed all pending messages.
+  // Call this after the messages useEffect switch-block to keep memory near zero.
+  const clearMessages = useCallback(() => setMessages([]), []);
+
   // ✅ Memoize sessionStatus to prevent unnecessary re-renders when content doesn't actually change
   const memoizedSessionStatus = useMemo(() => sessionStatus, [
     sessionStatus.id,
@@ -875,13 +884,14 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
 
   // ✅ Memoize return value to prevent causing re-renders in parent components
   return useMemo(() => ({
-    sendMessage, 
-    messages, 
-    isConnected, 
+    sendMessage,
+    messages,
+    isConnected,
     isReconnecting,
     setBinaryMessageHandler,
     sessionStatus: memoizedSessionStatus,
     disconnect,
     waitForAcknowledgment,
-  }), [sendMessage, messages, isConnected, isReconnecting, setBinaryMessageHandler, memoizedSessionStatus, disconnect, waitForAcknowledgment]);
+    clearMessages,
+  }), [sendMessage, messages, isConnected, isReconnecting, setBinaryMessageHandler, memoizedSessionStatus, disconnect, waitForAcknowledgment, clearMessages]);
 }

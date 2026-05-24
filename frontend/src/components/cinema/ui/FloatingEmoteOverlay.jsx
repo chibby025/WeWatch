@@ -5,6 +5,8 @@ import EmojiImage from './EmojiImage';
  * FloatingEmoteOverlay - 2D floating emoji animation (VideoWatch mode)
  * Visible to all users in the room when someone sends an emote
  */
+const HEART_EMOJI = '❤️';
+
 export default function FloatingEmoteOverlay({ emoji, onComplete }) {
   const [opacity, setOpacity] = useState(1);
   const [translateY, setTranslateY] = useState(0);
@@ -60,7 +62,7 @@ export default function FloatingEmoteOverlay({ emoji, onComplete }) {
         zIndex: 1000,
       }}
     >
-      <EmojiImage emoji={emoji} size={64} />
+      <EmojiImage emoji={emoji} size={emoji === HEART_EMOJI ? 82 : 64} />
     </div>
   );
 }

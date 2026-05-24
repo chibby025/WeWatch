@@ -2215,45 +2215,59 @@ func CleanupStaleSessions() {
 	
 	if len(staleSessions) == 0 {
 		log.Println("✅ [CleanupStaleSessions] No stale sessions found")
-		return
+	} else {
+		log.Printf("🗑️ [CleanupStaleSessions] Found %d stale sessions to clean up", len(staleSessions))
+
+		for _, session := range staleSessions {
+			sessionAge := time.Since(session.StartedAt)
+			log.Printf("🔚 [CleanupStaleSessions] Ending stale session %s (age: %.1f hours)",
+				session.SessionID, sessionAge.Hours())
+
+			now := time.Now()
+			if err := DB.Model(&session).Update("ended_at", now).Error; err != nil {
+				log.Printf("❌ [CleanupStaleSessions] Failed to end session %s: %v", session.SessionID, err)
+				continue
+			}
+
+			CleanupLiveShareAssets(session.ID)
+
+			var room models.Room
+			isTemporary := false
+			if err := DB.First(&room, session.RoomID).Error; err == nil {
+				isTemporary = room.IsTemporary
+			}
+
+			broadcastMsg := OutgoingMessage{
+				Data: []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d,"reason":"stale_cleanup","is_temporary":%t}}`,
+					session.SessionID, session.RoomID, isTemporary)),
+				IsBinary: false,
+			}
+			hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)
+
+			log.Printf("✅ [CleanupStaleSessions] Ended stale session %s", session.SessionID)
+		}
+
+		log.Printf("✅ [CleanupStaleSessions] Cleanup complete - ended %d stale sessions", len(staleSessions))
 	}
-	
-	log.Printf("🗑️ [CleanupStaleSessions] Found %d stale sessions to clean up", len(staleSessions))
-	
-	for _, session := range staleSessions {
-		sessionAge := time.Since(session.StartedAt)
-		log.Printf("🔚 [CleanupStaleSessions] Ending stale session %s (age: %.1f hours)", 
-			session.SessionID, sessionAge.Hours())
-		
-		// End the session
-		now := time.Now()
-		if err := DB.Model(&session).Update("ended_at", now).Error; err != nil {
-			log.Printf("❌ [CleanupStaleSessions] Failed to end session %s: %v", session.SessionID, err)
-			continue
+
+	// Sweep for members still marked active in sessions that have already ended.
+	// Catches goroutine failures during EndWatchSessionHandler background cleanup.
+	recentCutoff := time.Now().Add(-7 * 24 * time.Hour)
+	var endedSessionIDs []uint
+	if err := DB.Model(&models.WatchSession{}).
+		Where("ended_at IS NOT NULL AND ended_at > ?", recentCutoff).
+		Pluck("id", &endedSessionIDs).Error; err != nil {
+		log.Printf("⚠️ [CleanupStaleSessions] Failed to query recently ended sessions: %v", err)
+	} else if len(endedSessionIDs) > 0 {
+		result := DB.Model(&models.WatchSessionMember{}).
+			Where("watch_session_id IN ? AND is_active = ?", endedSessionIDs, true).
+			Updates(map[string]interface{}{"is_active": false, "left_at": time.Now()})
+		if result.Error != nil {
+			log.Printf("⚠️ [CleanupStaleSessions] Failed to clean orphaned session members: %v", result.Error)
+		} else if result.RowsAffected > 0 {
+			log.Printf("✅ [CleanupStaleSessions] Cleaned up %d orphaned active members for ended sessions", result.RowsAffected)
 		}
-		
-		// Clean up LiveShare graphics and media queue for this session
-		CleanupLiveShareAssets(session.ID)
-		
-		// ✅ Fetch room to get is_temporary flag
-		var room models.Room
-		isTemporary := false
-		if err := DB.First(&room, session.RoomID).Error; err == nil {
-			isTemporary = room.IsTemporary
-		}
-		
-		// Broadcast session_ended to the room (in case any clients are still connected)
-		broadcastMsg := OutgoingMessage{
-			Data: []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d,"reason":"stale_cleanup","is_temporary":%t}}`, 
-				session.SessionID, session.RoomID, isTemporary)),
-			IsBinary: false,
-		}
-		hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)
-		
-		log.Printf("✅ [CleanupStaleSessions] Ended stale session %s", session.SessionID)
 	}
-	
-	log.Printf("✅ [CleanupStaleSessions] Cleanup complete - ended %d stale sessions", len(staleSessions))
 }
 
 // Helper to create a pointer to an int

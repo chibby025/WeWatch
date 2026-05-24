@@ -1,14 +1,17 @@
 // frontend/src/components/lobby/IncomingCallModal.jsx
 import React, { useEffect, useState } from 'react';
 import Avatar from '../Avatar';
+import useNetworkQuality from '../../hooks/useNetworkQuality';
+import NetworkQualityBanner from '../NetworkQualityBanner';
 
-const IncomingCallModal = ({ 
-  isOpen, 
-  caller, 
+const IncomingCallModal = ({
+  isOpen,
+  caller,
   onAccept,
   onDecline
 }) => {
   const [elapsed, setElapsed] = useState(0);
+  const networkQuality = useNetworkQuality();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -38,6 +41,7 @@ const IncomingCallModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+      <NetworkQualityBanner quality={networkQuality} />
       <div className="flex flex-col items-center justify-center max-w-sm w-full animate-pulse">
         {/* Avatar with pulse animation */}
         <div className="relative">

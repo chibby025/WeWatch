@@ -5,7 +5,7 @@ import { Play, Eye, Heart } from 'lucide-react';
 import apiClient from '../services/api';
 import { formatCount } from '../utils/formatCount';
 
-const PostsGrid = ({ userId, roomId, onPostClick }) => {
+const PostsGrid = ({ userId, roomId, onPostClick, isOwnProfile = false, onPublish }) => {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -32,14 +32,14 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
 
       const response = await apiClient.get(endpoint);
       const newPosts = response.data.posts || [];
-      
+
       if (append) {
         setPosts(prev => [...prev, ...newPosts]);
       } else {
         setPosts(newPosts);
       }
-      
-      setHasMore(newPosts.length > 0); // Stop only when the backend returns no rows.
+
+      setHasMore(newPosts.length > 0);
       setError(null);
     } catch (err) {
       console.error('❌ [PostsGrid] Failed to fetch posts:', err);
@@ -50,16 +50,19 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
     }
   };
 
+  // Expose refresh so parent can trigger after publish
+  PostsGrid.refresh = () => {
+    setPage(1);
+    fetchPosts(1, false);
+  };
+
   // Initial load
   useEffect(() => {
     setPage(1);
     fetchPosts(1, false);
   }, [userId, roomId]);
 
-  // Infinite scroll observer. PostsGrid is often rendered inside a modal with
-  // `overflow-y-auto`, so the user scrolls the inner container rather than the
-  // viewport. We walk up the DOM to find the nearest scrollable ancestor and
-  // pass it as the observer's `root`; falls back to viewport if there isn't one.
+  // Infinite scroll observer
   useEffect(() => {
     if (!hasMore || loadingMore) return;
     const trigger = loadMoreTriggerRef.current;
@@ -84,8 +87,6 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
           fetchPosts(nextPage, true);
         }
       },
-      // Prefetch: fire ~400px before the sentinel scrolls into the scroll container's
-      // viewport so the next page is already loading by the time the user reaches the bottom.
       { root: scrollRoot, threshold: 0, rootMargin: '400px' }
     );
 
@@ -93,53 +94,39 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
     observerRef.current = observer;
 
     return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
+      if (observerRef.current) observerRef.current.disconnect();
     };
   }, [hasMore, loadingMore, page, loading]);
 
   // Get thumbnail URL
   const getThumbnailUrl = (post) => {
-    // Check if thumbnail_url is actually a video file with query params (not a real thumbnail)
     const isVideoThumbnail = post.thumbnail_url && post.thumbnail_url.match(/\.(webm|mp4|mov)\?/);
-    
+
     if (post.thumbnail_url && !isVideoThumbnail) {
-      if (post.thumbnail_url.startsWith('http')) {
-        return post.thumbnail_url;
-      }
-      // Remove leading slash if it exists to avoid double slashes
+      if (post.thumbnail_url.startsWith('http')) return post.thumbnail_url;
       const cleanPath = post.thumbnail_url.startsWith('/') ? post.thumbnail_url.slice(1) : post.thumbnail_url;
       return `${import.meta.env.VITE_API_BASE_URL}/${cleanPath}`;
     }
-    
+
     if (post.media_type === 'image' && post.video_url) {
-      if (post.video_url.startsWith('http')) {
-        return post.video_url;
-      }
-      // Remove leading slash if it exists to avoid double slashes
+      if (post.video_url.startsWith('http')) return post.video_url;
       const cleanPath = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
       return `${import.meta.env.VITE_API_BASE_URL}/${cleanPath}`;
     }
-    
-    // For videos without thumbnails, use the video itself (browser will show first frame)
+
     if (post.media_type === 'video' && post.video_url) {
       let videoUrl;
       if (post.video_url.startsWith('http')) {
         videoUrl = post.video_url;
       } else {
-        // Remove leading slash if it exists to avoid double slashes
         const cleanPath = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
         videoUrl = `${import.meta.env.VITE_API_BASE_URL}/${cleanPath}`;
       }
-      // Add time fragment to seek 1 second into the video for thumbnail
       return `${videoUrl}#t=1`;
     }
-    
+
     return '/icons/video-placeholder.svg';
   };
-
-  // Filter buttons removed - showing all posts
 
   // Loading skeleton
   if (loading && posts.length === 0) {
@@ -182,9 +169,7 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
             </svg>
           </div>
           <p className="text-xl text-gray-700 dark:text-gray-300 mb-2">No posts yet</p>
-          <p className="text-gray-600 dark:text-gray-400">
-            Posts will appear here once created.
-          </p>
+          <p className="text-gray-600 dark:text-gray-400">Posts will appear here once created.</p>
         </div>
       </div>
     );
@@ -192,73 +177,96 @@ const PostsGrid = ({ userId, roomId, onPostClick }) => {
 
   return (
     <div className="space-y-4">
-      {/* Posts grid (Instagram style - 3 columns, square tiles) */}
       <div className="grid grid-cols-3 gap-1 sm:gap-2">
-        {posts.map((post) => (
-          <div
-            key={post.id || post.ID}
-            onClick={() => onPostClick && onPostClick(post)}
-            className="relative aspect-square bg-gray-200 dark:bg-gray-800 cursor-pointer group overflow-hidden"
-          >
-            {/* Thumbnail - use video element for videos without proper image thumbnails */}
-            {post.media_type === 'video' && (!post.thumbnail_url || post.thumbnail_url.match(/\.(webm|mp4|mov)\?/)) ? (
-              <video
-                src={getThumbnailUrl(post)}
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
-                preload="metadata"
-                muted
-              />
-            ) : (
-              <img
-                src={getThumbnailUrl(post)}
-                alt={post.title}
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
-                loading="lazy"
-              />
-            )}
-            
-            {/* Video indicator (top-left) */}
-            {post.media_type === 'video' && (
-              <div className="absolute top-2 right-2">
-                <Play className="w-5 h-5 text-white drop-shadow-lg" fill="white" />
-              </div>
-            )}
-            
-            {/* Hover overlay with stats */}
-            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
-              <div className="flex gap-4 text-white">
-                <div className="flex items-center gap-1">
-                  <Heart className="w-5 h-5" fill="white" />
-                  <span className="text-sm font-semibold">{formatCount(post.likes_count || 0)}</span>
+        {posts.map((post) => {
+          const isDraft = isOwnProfile && !post.is_public;
+          return (
+            <div
+              key={post.id || post.ID}
+              onClick={() => !isDraft && onPostClick && onPostClick(post)}
+              className={`relative aspect-square bg-gray-200 dark:bg-gray-800 overflow-hidden group ${isDraft ? 'cursor-default' : 'cursor-pointer'}`}
+            >
+              {/* Thumbnail */}
+              {post.post_type === 'text' ? (
+                <div className={`w-full h-full bg-gray-900 flex items-start justify-center p-3 pt-4 group-hover:bg-gray-800 transition-colors ${isDraft ? 'opacity-60' : ''}`}>
+                  <p className="text-white/85 text-[11px] leading-relaxed line-clamp-5 text-left break-words">
+                    {post.text_content || post.description || ''}
+                  </p>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Eye className="w-5 h-5" />
-                  <span className="text-sm font-semibold">{formatCount(post.view_count || 0)}</span>
+              ) : post.media_type === 'video' && (!post.thumbnail_url || post.thumbnail_url.match(/\.(webm|mp4|mov)\?/)) ? (
+                <video
+                  src={getThumbnailUrl(post)}
+                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
+                  preload="metadata"
+                  muted
+                />
+              ) : (
+                <img
+                  src={getThumbnailUrl(post)}
+                  alt={post.description?.slice(0, 60) || 'Post'}
+                  className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-110 ${isDraft ? 'opacity-60' : ''}`}
+                  loading="lazy"
+                />
+              )}
+
+              {/* Video indicator */}
+              {post.media_type === 'video' && !isDraft && (
+                <div className="absolute top-2 right-2">
+                  <Play className="w-5 h-5 text-white drop-shadow-lg" fill="white" />
                 </div>
-              </div>
+              )}
+
+              {/* Draft overlay */}
+              {isDraft ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50">
+                  <span className="bg-gray-700 text-gray-200 text-[10px] font-bold px-2 py-0.5 rounded mb-2 tracking-wider uppercase">
+                    Draft
+                  </span>
+                  {onPublish && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onPublish(post); }}
+                      className="bg-purple-600 hover:bg-purple-500 active:scale-95 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+                    >
+                      Publish
+                    </button>
+                  )}
+                </div>
+              ) : (
+                /* Hover overlay with stats */
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                  <div className="flex gap-4 text-white">
+                    <div className="flex items-center gap-1">
+                      <Heart className="w-5 h-5" fill="white" />
+                      <span className="text-sm font-semibold">{formatCount(post.likes_count || 0)}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Eye className="w-5 h-5" />
+                      <span className="text-sm font-semibold">{formatCount(post.view_count || 0)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Paid badge */}
+              {post.is_paid && !isDraft && (
+                <div className="absolute bottom-2 left-2 bg-yellow-500 text-black text-xs font-bold px-2 py-1 rounded">
+                  PAID
+                </div>
+              )}
             </div>
-            
-            {/* Paid badge (bottom-left) */}
-            {post.is_paid && (
-              <div className="absolute bottom-2 left-2 bg-yellow-500 text-black text-xs font-bold px-2 py-1 rounded">
-                PAID
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Infinite scroll trigger */}
       <div ref={loadMoreTriggerRef} className="h-1 mt-4" />
 
-      {/* Loading more indicator */}
       {loadingMore && (
         <div className="text-center py-4">
           <div className="animate-spin h-8 w-8 border-4 border-purple-500 border-t-transparent rounded-full mx-auto" />
         </div>
       )}
 
-      {/* End of content */}
       {!hasMore && posts.length > 0 && (
         <div className="text-center py-8 text-gray-500 dark:text-gray-400">
           <p className="text-sm">All posts loaded</p>

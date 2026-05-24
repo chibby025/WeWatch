@@ -165,6 +165,83 @@ func GeneratePreviewMP4(inputPath, outputPath, startTime string, duration int) e
 	return cmd.Run()
 }
 
+// DetectVideoCodec returns the primary video codec of a file (e.g. "h264", "vp8", "vp9")
+func DetectVideoCodec(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=codec_name",
+		"-of", "csv=p=0",
+		filePath,
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("ffprobe codec detection failed: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// TranscodeToMp4 converts any video file to H.264 MP4.
+// If the source already contains H.264 and no watermark is needed it remuxes
+// (instant, no re-encode). VP8/VP9 or watermarked sources use libx264 veryfast.
+//
+// watermarkText: e.g. "@username" — empty string disables the text watermark.
+// logoPath: absolute path to a PNG logo file — empty string disables logo overlay.
+func TranscodeToMp4(inputPath, outputPath, watermarkText, logoPath string) error {
+	codec, err := DetectVideoCodec(inputPath)
+	if err != nil {
+		codec = "unknown"
+	}
+
+	hasWatermark := watermarkText != "" || logoPath != ""
+
+	if codec == "h264" && !hasWatermark {
+		// Instant container remux — no re-encoding
+		args := []string{"-y", "-i", inputPath, "-c", "copy", "-movflags", "+faststart", outputPath}
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	// Full transcode (VP8/VP9 or watermark required)
+	var filterComplex string
+	inputArgs := []string{"-y", "-i", inputPath}
+
+	if logoPath != "" && watermarkText != "" {
+		// Logo overlay bottom-right + text watermark above it
+		inputArgs = append(inputArgs, "-i", logoPath)
+		filterComplex = fmt.Sprintf(
+			"[0:v][1:v]overlay=W-w-12:H-h-44[withlogo];"+
+				"[withlogo]drawtext=text='%s':x=W-tw-12:y=H-th-16:fontsize=18:fontcolor=white@0.85:shadowcolor=black@0.6:shadowx=1:shadowy=1[out]",
+			watermarkText,
+		)
+	} else if logoPath != "" {
+		inputArgs = append(inputArgs, "-i", logoPath)
+		filterComplex = "[0:v][1:v]overlay=W-w-12:H-h-12[out]"
+	} else if watermarkText != "" {
+		filterComplex = fmt.Sprintf(
+			"[0:v]drawtext=text='%s':x=W-tw-12:y=H-th-16:fontsize=18:fontcolor=white@0.85:shadowcolor=black@0.6:shadowx=1:shadowy=1[out]",
+			watermarkText,
+		)
+	}
+
+	args := inputArgs
+	if filterComplex != "" {
+		args = append(args, "-filter_complex", filterComplex, "-map", "[out]", "-map", "0:a?")
+	}
+	args = append(args,
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+		"-c:a", "aac", "-b:a", "128k",
+		"-movflags", "+faststart",
+		outputPath,
+	)
+
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // GenerateMP4FromFrames creates an MP4 from a series of image frames (for WebRTC streams)
 // framesPattern: path pattern like "/tmp/frame_%03d.jpg" (ffmpeg glob pattern)
 // outputPath: where to save the final MP4

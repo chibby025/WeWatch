@@ -501,7 +501,12 @@ const PaymentPage = () => {
     setError('');
 
     try {
-      const paystackKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_4a20cb2c96eb7d4ce9a96cc234a941fdaa2ca2f8';
+      const paystackKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
+      if (!paystackKey) {
+        setError('Payment system not configured. Please contact support.');
+        setPurchaseLoading(false);
+        return;
+      }
       const userEmail = localStorage.getItem('user_email') || 'user@wewatch.com';
       const amountInKobo = parseInt(tokenAmount) * 100;
       const reference = 'TOKEN_' + Math.floor((Math.random() * 1000000000) + 1);
@@ -521,7 +526,7 @@ const PaymentPage = () => {
         amount: amountInKobo,
         currency: 'NGN',
         ref: reference,
-        split_code: 'SPL_CcDDM4qs7n', // 75/25 split: Reserve (75%) + Revenue (25%)
+        split_code: import.meta.env.VITE_PAYSTACK_SPLIT_CODE, // 75/25 split: Reserve (75%) + Revenue (25%)
         callback: function(response) {
           console.log('✅ [Purchase] Payment successful, reference:', response.reference);
           console.log('🔄 [Purchase] Verifying payment with backend...');

@@ -142,28 +142,16 @@ const TicketPurchaseModal = ({ isOpen, onClose, session, onSuccess }) => {
     return 'CINEMA';
   };
 
-  // Get ticket PNG based on watch type and class type
+  // Get ticket PNG — content_rating takes priority over watch_type
   const getTicketImage = () => {
-    const type = session.watch_type?.toLowerCase() || 'cinema';
-    const classType = session.class_type?.toLowerCase() || '';
-    
-    // Lecture Hall: watch_type='classroom' + class_type='lecture_hall'
-    if (type === 'classroom' && classType === 'lecture_hall') {
-      return '/icons/LectureTicket.png';
-    }
-    
-    // Regular Classroom
-    if (type === 'classroom') {
-      return '/icons/LectureTicket.png';
-    }
-    
-    // Video Watch
-    if (type.includes('video')) {
-      return '/icons/TheaterTicket.png';
-    }
-    
-    // Cinema (default for 3d_cinema, cinema, or anything else)
-    return '/icons/CinemaTicket.png';
+    const rating = session.content_rating || '';
+    const type = session.watch_type?.toLowerCase() || '';
+
+    if (rating === 'Religious') return '/icons/CCTicket.png';
+    if (rating === 'Educational' && type !== 'classroom') return '/icons/CTicket.png';
+    if (type === 'classroom') return '/icons/LectureTicket.png';
+    if (type === '3d_cinema') return '/icons/CinemaTicket.png';
+    return '/icons/VWTicket.png';
   };
 
   return (

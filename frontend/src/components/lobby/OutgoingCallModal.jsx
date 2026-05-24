@@ -1,14 +1,17 @@
 // frontend/src/components/lobby/OutgoingCallModal.jsx
 import React, { useEffect, useState } from 'react';
 import Avatar from '../Avatar';
+import useNetworkQuality from '../../hooks/useNetworkQuality';
+import NetworkQualityBanner from '../NetworkQualityBanner';
 
-const OutgoingCallModal = ({ 
-  isOpen, 
-  friend, 
+const OutgoingCallModal = ({
+  isOpen,
+  friend,
   onCancel,
   callStatus = 'calling' // 'calling', 'declined', 'busy', 'no_answer'
 }) => {
   const [elapsed, setElapsed] = useState(0);
+  const networkQuality = useNetworkQuality();
 
   useEffect(() => {
     if (!isOpen || callStatus !== 'calling') return;
@@ -60,6 +63,7 @@ const OutgoingCallModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+      <NetworkQualityBanner quality={networkQuality} />
       <div className="flex flex-col items-center justify-center max-w-sm w-full">
         {/* Avatar with pulse animation for calling state */}
         <div className={`relative ${callStatus === 'calling' ? 'animate-pulse' : ''}`}>

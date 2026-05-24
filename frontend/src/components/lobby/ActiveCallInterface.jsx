@@ -2,15 +2,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Track } from 'livekit-client';
 import Avatar from '../Avatar';
+import useNetworkQuality from '../../hooks/useNetworkQuality';
+import NetworkQualityBanner from '../NetworkQualityBanner';
 
-const ActiveCallInterface = ({ 
+const ActiveCallInterface = ({
   isOpen,
   friend,
   room,
+  livekitRoom,
   onEndCall,
   localParticipant,
   remoteParticipant
 }) => {
+  const networkQuality = useNetworkQuality(livekitRoom ?? null);
   const [isMuted, setIsMuted] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -138,6 +142,7 @@ const ActiveCallInterface = ({
   // Full view
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 z-[9999] flex items-center justify-center p-4">
+      <NetworkQualityBanner quality={networkQuality} />
       <div className="flex flex-col items-center justify-center max-w-sm w-full">
         {/* Minimize button */}
         <button

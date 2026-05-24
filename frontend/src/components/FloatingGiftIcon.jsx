@@ -11,8 +11,10 @@ const FloatingGiftIcon = ({
   isVisible = true,
   isFullscreen = false,
   isLeftSidebarOpen = false,
-  onGiftSent
+  onGiftSent,
+  contentRating = '',
 }) => {
+  const isReligious = contentRating === 'Religious';
   const [isHovered, setIsHovered] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showAnimation, setShowAnimation] = useState(false);
@@ -182,8 +184,8 @@ const FloatingGiftIcon = ({
         {/* Tooltip on hover */}
         {isHovered && !isSending && (
           <div className="absolute left-20 top-1/2 transform -translate-y-1/2 bg-gray-900 text-white px-3 py-2 rounded-lg text-sm whitespace-nowrap shadow-xl">
-            <div className="font-semibold">Gift to Host</div>
-            <div className="text-xs text-gray-300">Click: 1 token 🪙</div>
+            <div className="font-semibold">{isReligious ? 'Give Offering' : 'Gift to Host'}</div>
+            <div className="text-xs text-gray-300">Click: 1 token {isReligious ? '🙏' : '🪙'}</div>
             <div className={`text-xs mt-1 ${tokenBalance < 100 ? 'text-yellow-400 font-semibold' : 'text-gray-400'}`}>
               Balance: {(tokenBalance / 100).toFixed(2)} tokens
             </div>

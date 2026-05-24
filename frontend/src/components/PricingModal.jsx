@@ -8,8 +8,16 @@ import { useAuth } from '../contexts/AuthContext';
  */
 const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
   const { currentUser } = useAuth();
-  const [contentRating, setContentRating] = useState('G'); // Default to General
+  const [contentRating, setContentRating] = useState('G');
   const [scrollIndex, setScrollIndex] = useState(0);
+
+  // Pre-select user's saved preference when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      const saved = localStorage.getItem('pref_default_content_rating');
+      if (saved) setContentRating(saved);
+    }
+  }, [isOpen]);
 
   // Calculate user's age from date_of_birth
   const userAge = useMemo(() => {
@@ -145,6 +153,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
 
   const handleSelectPricing = (pricingId) => {
     console.log('🎬 [PricingModal] Calling onSelectPricing with:', { pricingId, contentRating });
+    localStorage.setItem('pref_default_content_rating', contentRating);
     onSelectPricing(pricingId, contentRating);
   };
 
@@ -339,15 +348,15 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
               </button>
 
               {/* Pagination Dots */}
-              <div className="flex justify-center gap-1 sm:gap-2 mt-2 sm:mt-3">
+              <div className="flex justify-center gap-1 mt-2">
                 {availableRatings.map((_, index) => (
                   <button
                     key={index}
                     onClick={() => scrollToCard(index)}
                     className={`transition-all ${
                       index === scrollIndex
-                        ? 'w-4 h-1 sm:w-8 sm:h-2 bg-purple-500'
-                        : 'w-1 h-1 sm:w-2 sm:h-2 bg-gray-300 hover:bg-gray-400'
+                        ? 'w-5 h-1.5 bg-purple-500'
+                        : 'w-1.5 h-1.5 bg-gray-300 hover:bg-gray-400'
                     } rounded-full`}
                     aria-label={`Go to rating ${index + 1}`}
                   />

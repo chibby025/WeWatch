@@ -423,8 +423,6 @@ function DynamicLighting({ screenRef, intensity = 1, lightsOn = false, darknessL
   const wallLightsRef = useRef([]);
   const [color, setColor] = useState('#ffffff');
 
-  console.log('💡 [DynamicLighting] Rendering with lightsOn:', lightsOn, 'darknessLevel:', darknessLevel);
-
   // 🚀 PHASE 2: Only trigger re-render when lights actually change
   useFrame(({ invalidate }) => {
     let needsUpdate = false;
@@ -1009,9 +1007,9 @@ const CinemaScene3D = forwardRef(({
           {/* Seat position markers (visual verification) */}
           {showSeatMarkers && <SeatPositionMarkers seats={cinemaSeats.seats} visible={showSeatMarkers} />}
 
-          {/* Helpers to understand the space */}
-          <gridHelper args={[50, 50, '#444444', '#222222']} position={[0, 0, 0]} />
-          <axesHelper args={[10]} />
+          {/* Helpers to understand the space - only rendered when position debug is active */}
+          {showPositionDebug && <gridHelper args={[50, 50, '#444444', '#222222']} position={[0, 0, 0]} />}
+          {showPositionDebug && <axesHelper args={[10]} />}
         </Canvas>
       </div>
 

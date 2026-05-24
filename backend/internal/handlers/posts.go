@@ -37,11 +37,11 @@ func canViewContentRating(rating string, s models.UserSettings) bool {
 
 // CreatePostRequest represents the request body for creating a post
 type CreatePostRequest struct {
-	Title          string   `json:"title" binding:"required,max=255"`
 	Description    string   `json:"description"`
+	TextContent    *string  `json:"text_content"`
 	RoomID         *uint    `json:"room_id"`
 	MediaType      string   `json:"media_type" binding:"required,oneof=video image gif"`
-	PostType       string   `json:"post_type" binding:"required,oneof=recording upload"`
+	PostType       string   `json:"post_type" binding:"required,oneof=recording upload text"`
 	Duration       *int     `json:"duration"`
 	Resolution     string   `json:"resolution"`
 	ContentRating  string   `json:"content_rating" binding:"omitempty,oneof=G PG Educational Religious 13+ 16+ 18+ Mature"`
@@ -53,11 +53,12 @@ type CreatePostRequest struct {
 
 // UpdatePostRequest represents the request body for updating a post
 type UpdatePostRequest struct {
-	Title       *string `json:"title" binding:"omitempty,max=255"`
-	Description *string `json:"description"`
-	IsPublic    *bool   `json:"is_public"`
-	IsPaid      *bool   `json:"is_paid"`
-	Price       *float64 `json:"price"`
+	Description    *string  `json:"description"`
+	IsPublic       *bool    `json:"is_public"`
+	IsPaid         *bool    `json:"is_paid"`
+	Price          *float64 `json:"price"`
+	AllowDownloads *bool    `json:"allow_downloads"`
+	ContentRating  *string  `json:"content_rating" binding:"omitempty,oneof=G PG Educational Religious 13+ 16+ 18+ Mature"`
 }
 
 // PostFeedResponse wraps a Post with per-viewer computed access fields.
@@ -103,13 +104,39 @@ func CreatePost(c *gin.Context) {
 		return
 	}
 
-	log.Printf("🎯 [CreatePost] Starting - UserID: %d, ReqRoomID: %v, ReqTitle: '%s'", userID, req.RoomID, req.Title)
+	log.Printf("🎯 [CreatePost] Starting - UserID: %d, ReqRoomID: %v", userID, req.RoomID)
 
 	// Validate price requirements
 	if req.IsPaid {
 		if req.Price == nil || *req.Price <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Price is required for paid posts"})
 			return
+		}
+	}
+
+	// Recording cap: free users limited to 10 recordings; premium users unlimited
+	if req.PostType == "recording" {
+		var user models.User
+		if err := DB.Select("is_premium, premium_expires_at").First(&user, userID).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify user"})
+			return
+		}
+		isPremium := user.IsPremium && (user.PremiumExpiresAt == nil || user.PremiumExpiresAt.After(time.Now()))
+		if !isPremium {
+			var count int64
+			DB.Model(&models.Post{}).
+				Where("user_id = ? AND post_type = ? AND deleted_at IS NULL", userID, "recording").
+				Count(&count)
+			if count >= 10 {
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":       "Recording limit reached",
+					"code":        "recording_limit",
+					"limit":       10,
+					"count":       count,
+					"upgrade_msg": "Free accounts are limited to 10 recordings. Delete an old recording to make space, or upgrade to Premium for unlimited recordings.",
+				})
+				return
+			}
 		}
 	}
 
@@ -163,8 +190,8 @@ func CreatePost(c *gin.Context) {
 	post := models.Post{
 		UserID:         userID,
 		RoomID:         roomID,
-		Title:          req.Title,
 		Description:    req.Description,
+		TextContent:    req.TextContent,
 		MediaType:      req.MediaType,
 		PostType:       req.PostType,
 		Duration:       req.Duration,
@@ -187,7 +214,7 @@ func CreatePost(c *gin.Context) {
 		log.Printf("⚠️ [CreatePost] Failed to reload post associations: %v", err)
 	}
 
-	log.Printf("✅ [CreatePost] Post %d created by user %d (%s) - Title: '%s'", post.ID, userID, post.User.Username, post.Title)
+	log.Printf("✅ [CreatePost] Post %d created by user %d (%s)", post.ID, userID, post.User.Username)
 
 	// ✅ Broadcast notification to all rooms where user is the host
 	go broadcastRoomPostNotificationToAllHostRooms(post, userID)
@@ -275,7 +302,6 @@ func UploadPostMedia(c *gin.Context) {
 				"data": map[string]interface{}{
 					"post_id":        p.ID,
 					"author_id":      p.UserID,
-					"title":          p.Title,
 					"thumbnail":      p.ThumbnailURL,
 					"media_type":     p.MediaType,
 					"content_rating": p.ContentRating,
@@ -323,8 +349,8 @@ func GetDiscoverFeed(c *gin.Context) {
 	if searchQuery != "" {
 		searchPattern := "%" + searchQuery + "%"
 		query = query.Joins("LEFT JOIN users ON posts.user_id = users.id").
-			Where("posts.title ILIKE ? OR posts.description ILIKE ? OR users.username ILIKE ?",
-				searchPattern, searchPattern, searchPattern)
+			Where("posts.description ILIKE ? OR users.username ILIKE ?",
+				searchPattern, searchPattern)
 		log.Printf("🔍 [GetDiscoverFeed] Searching for: '%s'", searchQuery)
 	}
 	
@@ -424,6 +450,9 @@ func GetDiscoverFeed(c *gin.Context) {
 		}
 	}
 	filteredPosts = ratingFiltered
+
+	// Re-rank using the feed algorithm (scored within this page; batched DB lookups, no N+1).
+	filteredPosts = ScoreAndSortPosts(DB, filteredPosts, currentUserID, viewerSettings.PrimaryRating)
 
 	viewerShowMature := viewerSettings.ShowMatureContent
 
@@ -539,9 +568,6 @@ func UpdatePost(c *gin.Context) {
 	}
 
 	// Update fields
-	if req.Title != nil {
-		post.Title = *req.Title
-	}
 	if req.Description != nil {
 		post.Description = *req.Description
 	}
@@ -553,6 +579,12 @@ func UpdatePost(c *gin.Context) {
 	}
 	if req.Price != nil {
 		post.Price = req.Price
+	}
+	if req.AllowDownloads != nil {
+		post.AllowDownloads = *req.AllowDownloads
+	}
+	if req.ContentRating != nil {
+		post.ContentRating = *req.ContentRating
 	}
 
 	// Validate price requirements
@@ -681,6 +713,24 @@ func LikePost(c *gin.Context) {
 
 	// Increment likes count
 	DB.Model(&post).UpdateColumn("likes_count", gorm.Expr("likes_count + ?", 1))
+
+	// Notify post author
+	if post.UserID != userID {
+		postAuthorID := post.UserID
+		postIDNotif := post.ID
+		postDesc := post.Description
+		likerID := userID
+		go func() {
+			var liker models.User
+			if err := DB.Select("username").First(&liker, likerID).Error; err == nil {
+				desc := postDesc
+				if len(desc) > 60 {
+					desc = desc[:60] + "…"
+				}
+				CreateNotification(postAuthorID, "post_like", "@"+liker.Username+" liked your post", desc, "post", postIDNotif)
+			}
+		}()
+	}
 
 	log.Printf("✅ [LikePost] User %d liked post %d", userID, postID)
 	c.JSON(http.StatusOK, gin.H{"message": "Post liked successfully"})
@@ -828,10 +878,14 @@ func GetPostComments(c *gin.Context) {
 		return
 	}
 
-	// Fetch comments with user data, ordered by newest first
+	// Fetch top-level comments with nested replies
 	var comments []models.PostComment
-	if err := DB.Where("post_id = ?", postID).
+	if err := DB.Where("post_id = ? AND parent_comment_id IS NULL", postID).
 		Preload("User").
+		Preload("Replies", func(db *gorm.DB) *gorm.DB {
+			return db.Where("deleted_at IS NULL").Order("created_at ASC")
+		}).
+		Preload("Replies.User").
 		Order("created_at DESC").
 		Find(&comments).Error; err != nil {
 		log.Printf("❌ [GetPostComments] Failed to fetch comments: %v", err)
@@ -839,7 +893,7 @@ func GetPostComments(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ [GetPostComments] Fetched %d comments for post %d", len(comments), postID)
+	log.Printf("✅ [GetPostComments] Fetched %d top-level comments for post %d", len(comments), postID)
 	c.JSON(http.StatusOK, gin.H{"comments": comments})
 }
 
@@ -902,8 +956,40 @@ func CreatePostComment(c *gin.Context) {
 		return
 	}
 
-	// Increment comments count
-	DB.Model(&post).UpdateColumn("comments_count", gorm.Expr("comments_count + ?", 1))
+	// Increment comments count only for top-level comments
+	if req.ParentCommentID == nil {
+		DB.Model(&post).UpdateColumn("comments_count", gorm.Expr("comments_count + ?", 1))
+	}
+
+	// Notify post author on top-level comment
+	if req.ParentCommentID == nil && post.UserID != userID {
+		postAuthorID := post.UserID
+		commentContent := req.Content
+		commenterID := userID
+		postIDForNotif := post.ID
+		go func() {
+			var commenter models.User
+			if err := DB.Select("username").First(&commenter, commenterID).Error; err == nil {
+				body := commentContent
+				if len(body) > 80 {
+					body = body[:80] + "…"
+				}
+				CreateNotification(postAuthorID, "post_comment", "@"+commenter.Username+" commented on your post", body, "post", postIDForNotif)
+			}
+		}()
+	}
+
+	// Notify parent comment author when someone replies
+	if req.ParentCommentID != nil {
+		var parentComment models.PostComment
+		if err := DB.First(&parentComment, *req.ParentCommentID).Error; err == nil && parentComment.UserID != userID {
+			body := req.Content
+			if len(body) > 80 {
+				body = body[:80] + "…"
+			}
+			go CreateNotification(parentComment.UserID, "reply", "New reply to your comment", body, "post_comment", *req.ParentCommentID)
+		}
+	}
 
 	// Preload user data for response
 	DB.Preload("User").First(&comment, comment.ID)
@@ -1181,7 +1267,7 @@ func broadcastRoomPostNotificationToAllHostRooms(post models.Post, authorID uint
 		return
 	}
 	
-	// Broadcast to each room (Hub automatically distributes to all room clients)
+	// Broadcast to each room and persist notifications for members
 	for _, room := range hostRooms {
 		// Build notification message (matches frontend expectations)
 		notification := map[string]interface{}{
@@ -1193,27 +1279,259 @@ func broadcastRoomPostNotificationToAllHostRooms(post models.Post, authorID uint
 					"id":       authorID,
 					"username": author.Username,
 				},
-				"title":      post.Title,
 				"thumbnail":  post.ThumbnailURL,
 				"media_type": post.MediaType,
 			},
 			"timestamp": time.Now().Unix(),
 		}
-		
+
 		notificationJSON, err := json.Marshal(notification)
 		if err != nil {
 			log.Printf("❌ [BroadcastRoomPost] Failed to marshal notification for room %d: %v", room.ID, err)
 			continue
 		}
-		
+
 		// Broadcast to room - Hub handles distribution to all connected clients
 		hub.BroadcastToRoom(room.ID, OutgoingMessage{
 			Data:     notificationJSON,
 			IsBinary: false,
 		}, nil)
-		
+
+		// Persist a notification for each room member (so they see it on next login)
+		var userRooms []models.UserRoom
+		if err := DB.Where("room_id = ?", room.ID).Find(&userRooms).Error; err == nil {
+			descPreview := post.Description
+			if len(descPreview) > 60 {
+				descPreview = descPreview[:60] + "…"
+			}
+			for _, ur := range userRooms {
+				if ur.UserID != authorID { // skip the host
+					go CreateNotification(
+						ur.UserID,
+						"room_post",
+						author.Username+" posted in "+room.Name,
+						descPreview,
+						"post",
+						post.ID,
+					)
+				}
+			}
+		}
+
 		log.Printf("✅ [BroadcastRoomPost] Sent notification to room %d (%s)", room.ID, room.Name)
 	}
-	
+
 	log.Printf("🎉 [BroadcastRoomPost] Post %d notification broadcast complete - reached %d rooms", post.ID, len(hostRooms))
+}
+
+// TipPost handles POST /api/posts/:id/tip
+// 1 tip = 100 cents from tipper wallet → 95 to creator, 5 to platform_accounting
+func TipPost(c *gin.Context) {
+	tipperID := c.GetUint("user_id")
+	if tipperID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	postID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid post ID"})
+		return
+	}
+
+	var post models.Post
+	if err := DB.Select("id, user_id").First(&post, postID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Post not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	if post.UserID == tipperID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot tip your own post"})
+		return
+	}
+
+	const tipCents = 100
+	const creatorCents = 95
+	const platformCents = 5
+
+	tx := DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Check and deduct from tipper wallet
+	var tipperWallet models.UserWallet
+	if err := tx.Where("user_id = ?", tipperID).First(&tipperWallet).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusOK, gin.H{"message": "ok"}) // silently fail — no wallet
+		return
+	}
+	if tipperWallet.TokenBalance < tipCents {
+		tx.Rollback()
+		c.JSON(http.StatusOK, gin.H{"message": "ok"}) // silently fail — insufficient balance
+		return
+	}
+
+	tipperWallet.TokenBalance -= tipCents
+	if err := tx.Save(&tipperWallet).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to deduct balance"})
+		return
+	}
+
+	// Credit creator wallet
+	var creatorWallet models.UserWallet
+	if err := tx.Where("user_id = ?", post.UserID).First(&creatorWallet).Error; err != nil {
+		creatorWallet = models.UserWallet{
+			UserID:         post.UserID,
+			TokenBalance:   creatorCents,
+			LifetimeEarned: creatorCents,
+		}
+		if err := tx.Create(&creatorWallet).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to credit creator"})
+			return
+		}
+	} else {
+		creatorWallet.TokenBalance += creatorCents
+		creatorWallet.LifetimeEarned += creatorCents
+		if err := tx.Save(&creatorWallet).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to credit creator"})
+			return
+		}
+	}
+
+	// Record tip audit row
+	if err := tx.Exec(`INSERT INTO post_tips (tipper_id, post_id, amount_cents) VALUES (?, ?, ?)`,
+		tipperID, postID, tipCents).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record tip"})
+		return
+	}
+
+	// Increment post tip_count
+	if err := tx.Model(&models.Post{}).Where("id = ?", postID).
+		UpdateColumn("tip_count", gorm.Expr("tip_count + 1")).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update tip count"})
+		return
+	}
+
+	// Accumulate platform cut in platform_accounting
+	accounting, err := models.GetPlatformAccounting(tx)
+	if err == nil {
+		accounting.TokenDonationCommission += float64(platformCents) * 122.0 / 100.0
+		accounting.LifetimeTokenDonationCommission += float64(platformCents) * 122.0 / 100.0
+		tx.Save(accounting)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("❌ [TipPost] Commit error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete tip"})
+		return
+	}
+
+	log.Printf("🪙 [TipPost] User %d tipped post %d (%d cents, creator %d gets %d)", tipperID, postID, tipCents, post.UserID, creatorCents)
+	c.JSON(http.StatusOK, gin.H{"message": "Tip sent", "tip_count_increment": 1})
+}
+
+// GetFollowingFeedHandler handles GET /api/posts/following
+// Returns public posts from:
+//   1. Users the current user directly follows (user_follows table)
+//   2. Hosts of rooms the current user is an active member of (room membership)
+// Results are deduplicated and returned in reverse-chronological order.
+func GetFollowingFeedHandler(c *gin.Context) {
+	currentUserID := c.MustGet("user_id").(uint)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 50 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
+	// Source 1: users I directly follow
+	var follows []models.UserFollow
+	DB.Where("follower_id = ?", currentUserID).Find(&follows)
+
+	authorIDSet := make(map[uint]struct{})
+	for _, f := range follows {
+		authorIDSet[f.FollowingID] = struct{}{}
+	}
+
+	// Source 2: hosts of active rooms I'm a member of
+	var userRooms []models.UserRoom
+	DB.Where("user_id = ? AND status = ?", currentUserID, "active").Find(&userRooms)
+	if len(userRooms) > 0 {
+		roomIDs := make([]uint, len(userRooms))
+		for i, ur := range userRooms {
+			roomIDs[i] = ur.RoomID
+		}
+		var rooms []models.Room
+		DB.Select("id, host_id").Where("id IN ?", roomIDs).Find(&rooms)
+		for _, r := range rooms {
+			authorIDSet[r.HostID] = struct{}{}
+		}
+	}
+
+	// Remove self from authors
+	delete(authorIDSet, currentUserID)
+
+	if len(authorIDSet) == 0 {
+		c.JSON(http.StatusOK, gin.H{"posts": []interface{}{}, "total": 0, "page": page})
+		return
+	}
+
+	authorIDs := make([]uint, 0, len(authorIDSet))
+	for id := range authorIDSet {
+		authorIDs = append(authorIDs, id)
+	}
+
+	var total int64
+	DB.Model(&models.Post{}).
+		Where("user_id IN ? AND is_public = ?", authorIDs, true).
+		Count(&total)
+
+	var posts []models.Post
+	if err := DB.Where("user_id IN ? AND is_public = ?", authorIDs, true).
+		Preload("User").
+		Preload("Room").
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&posts).Error; err != nil {
+		log.Printf("❌ [GetFollowingFeed] DB error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch feed"})
+		return
+	}
+
+	// Fetch viewer's purchased post IDs for access computation
+	var purchases []models.PostPurchase
+	DB.Where("buyer_id = ?", currentUserID).Find(&purchases)
+	purchasedIDs := make(map[uint]bool, len(purchases))
+	for _, p := range purchases {
+		purchasedIDs[p.PostID] = true
+	}
+
+	// Fetch viewer content-rating settings
+	var settings models.UserSettings
+	DB.Where("user_id = ?", currentUserID).First(&settings)
+
+	resp := make([]PostFeedResponse, 0, len(posts))
+	for _, p := range posts {
+		resp = append(resp, buildPostResponse(p, currentUserID, purchasedIDs, settings.ShowMatureContent))
+	}
+
+	log.Printf("✅ [GetFollowingFeed] user=%d page=%d posts=%d (authors=%d)", currentUserID, page, len(resp), len(authorIDs))
+	c.JSON(http.StatusOK, gin.H{"posts": resp, "total": total, "page": page})
 }

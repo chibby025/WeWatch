@@ -9,9 +9,28 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import '../styles/customDatePicker.css';
 
+const CONTENT_RATINGS = ['G', 'PG', 'Educational', 'Religious', '13+', '16+', '18+', 'Mature'];
+
+const getRoomTypeDefaultRating = (roomType) => {
+  if (!roomType) return 'G';
+  const t = roomType.toLowerCase();
+  if (t === 'church') return 'Religious';
+  if (t === 'education' || t === 'classroom') return 'Educational';
+  return 'G';
+};
+
+const getTicketImage = (watchType, contentRating) => {
+  if (contentRating === 'Religious') return '/icons/CCTicket.png';
+  if (contentRating === 'Educational' && watchType !== 'classroom') return '/icons/CTicket.png';
+  if (watchType === 'classroom') return '/icons/LectureTicket.png';
+  if (watchType === '3d_cinema') return '/icons/CinemaTicket.png';
+  return '/icons/VWTicket.png';
+};
+
 const ScheduleEventModal = ({
   isOpen,
   roomId,
+  roomType,
   onClose,
   onCreate,
   eventToEdit,
@@ -50,6 +69,21 @@ const ScheduleEventModal = ({
   const [giftRecipientUsername, setGiftRecipientUsername] = useState('');
   const [giftLoading, setGiftLoading] = useState(false);
 
+  // Content rating
+  const [contentRating, setContentRating] = useState(() => getRoomTypeDefaultRating(roomType));
+
+  // Stepper for create tab
+  const [createStep, setCreateStep] = useState(1);
+
+  // Recurrence state
+  const [recurrenceType, setRecurrenceType] = useState('none');
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState(null);
+
+  // Room calendar state
+  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState(null);
+
   // Sync active tab prop
   useEffect(() => {
     setCurrentTab(activeTab);
@@ -57,7 +91,7 @@ const ScheduleEventModal = ({
   
   // Fetch events when modal opens or tab changes
   useEffect(() => {
-    if (isOpen && currentTab === 'upcoming') {
+    if (isOpen && (currentTab === 'upcoming' || currentTab === 'calendar')) {
       fetchEvents();
     }
   }, [isOpen, currentTab, roomId]);
@@ -69,6 +103,7 @@ const ScheduleEventModal = ({
       setStartTime(eventToEdit.start_time ? new Date(eventToEdit.start_time) : null);
       setTitle(eventToEdit.title || '');
       setDescription(eventToEdit.description || '');
+      setContentRating(eventToEdit.content_rating || getRoomTypeDefaultRating(roomType));
     } else {
       // Reset form for new event
       setWatchType('3d_cinema');
@@ -83,8 +118,12 @@ const ScheduleEventModal = ({
       setTicketPriceNaira('');
       setEarlyBirdEnabled(false);
       setEarlyBirdPriceNaira('');
+      setRecurrenceType('none');
+      setRecurrenceEndDate(null);
+      setContentRating(getRoomTypeDefaultRating(roomType));
+      setCreateStep(1);
     }
-  }, [eventToEdit]);
+  }, [eventToEdit, roomType]);
   
   // Fetch scheduled events
   const fetchEvents = async () => {
@@ -133,12 +172,13 @@ const ScheduleEventModal = ({
 
       const eventData = {
         watch_type: watchType,
-        media_file_path: mediaFile?.name || '', // Store filename for reference
+        media_file_path: mediaFile?.name || '',
         start_time: utcTime,
         title,
         description,
+        content_rating: contentRating || 'G',
         trailer_url: trailerUploadedUrl,
-        trailer_title: trailerTitle || title, // Default to event title
+        trailer_title: trailerTitle || title,
         trailer_duration: trailerUploadedDuration,
         is_paid: isPaid,
         ticket_price_tokens: isPaid ? convertFiatToTokens(parseFloat(ticketPriceNaira), 'NGN') : 0,
@@ -147,6 +187,8 @@ const ScheduleEventModal = ({
         early_bird_enabled: earlyBirdEnabled,
         early_bird_price_tokens: earlyBirdEnabled ? convertFiatToTokens(parseFloat(earlyBirdPriceNaira), 'NGN') : 0,
         early_bird_price_amount: earlyBirdEnabled ? parseFloat(earlyBirdPriceNaira) : 0,
+        recurrence_type: recurrenceType,
+        recurrence_end_date: recurrenceType !== 'none' && recurrenceEndDate ? recurrenceEndDate.toISOString() : null,
       };
 
       console.log('📊 [ScheduleModal] Event data prepared:', {
@@ -176,7 +218,11 @@ const ScheduleEventModal = ({
       setTicketPriceNaira('');
       setEarlyBirdEnabled(false);
       setEarlyBirdPriceNaira('');
-      
+      setRecurrenceType('none');
+      setRecurrenceEndDate(null);
+      setContentRating(getRoomTypeDefaultRating(roomType));
+      setCreateStep(1);
+
       // Switch to upcoming events tab and refresh
       setCurrentTab('upcoming');
       await fetchEvents();
@@ -262,11 +308,11 @@ const ScheduleEventModal = ({
       const result = await purchaseEventTicket(eventId, isGift, recipientUserId);
       
       if (isGift) {
-        toast.success(`🎁 Ticket gifted to @${giftRecipientUsername}! (${result.total_cost_tokens} tokens with 5% transfer fee)`);
+        toast.success(`🎁 Ticket booked for @${giftRecipientUsername}!`);
         setGiftingEventId(null);
         setGiftRecipientUsername('');
       } else {
-        toast.success(`🎟️ Ticket purchased! (${result.total_cost_tokens} tokens)`);
+        toast.success('🎟️ Ticket booked!');
       }
       
       setUserTickets(prev => ({ ...prev, [eventId]: { type: 'ticket', ...result.ticket } }));
@@ -308,7 +354,7 @@ const ScheduleEventModal = ({
   
   // Calculate 5% transfer fee for gifting
   const calculateTransferFee = (ticketPriceTokens) => {
-    const fee = Math.max(1, Math.ceil(ticketPriceTokens * 0.05)); // Minimum 1 token, 5% of price
+    const fee = Math.ceil(ticketPriceTokens * 0.05); // 5% of ticket price
     return fee;
   };
   
@@ -316,6 +362,39 @@ const ScheduleEventModal = ({
   const now = new Date();
   const futureEvents = events.filter(event => new Date(event.start_time) > now);
   const pastEvents = events.filter(event => new Date(event.start_time) <= now);
+
+  // Trailer lock: only within 7 days of event
+  const TRAILER_WINDOW_DAYS = 7;
+  const trailerUnlockDate = startTime
+    ? new Date(startTime.getTime() - TRAILER_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+    : null;
+  const trailerLocked = !startTime || now < trailerUnlockDate;
+  const trailerUnlockFormatted = trailerUnlockDate
+    ? trailerUnlockDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
+    : null;
+
+  // Room calendar helpers
+  const calendarMonthLabel = new Date(calendarYear, calendarMonth).toLocaleString('default', { month: 'long', year: 'numeric' });
+  const firstDayOfMonth = new Date(calendarYear, calendarMonth, 1).getDay();
+  const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+  const eventsByDay = {};
+  events.forEach(ev => {
+    const d = new Date(ev.start_time);
+    if (d.getFullYear() === calendarYear && d.getMonth() === calendarMonth) {
+      const key = d.getDate();
+      if (!eventsByDay[key]) eventsByDay[key] = [];
+      eventsByDay[key].push(ev);
+    }
+  });
+  const navigateCalendarMonth = (dir) => {
+    let m = calendarMonth + dir;
+    let y = calendarYear;
+    if (m < 0) { m = 11; y--; }
+    if (m > 11) { m = 0; y++; }
+    setCalendarMonth(m);
+    setCalendarYear(y);
+    setSelectedCalendarDay(null);
+  };
 
   const roomUrl = `${window.location.origin}/rooms/${roomId}`;
 
@@ -371,275 +450,441 @@ const ScheduleEventModal = ({
           >
             Past Events {pastEvents.length > 0 && `(${pastEvents.length})`}
           </button>
+          <button
+            onClick={() => setCurrentTab('calendar')}
+            className={`px-3 py-2 sm:px-4 text-sm sm:text-base font-medium transition-colors ${
+              currentTab === 'calendar'
+                ? 'border-b-2 border-purple-500 text-purple-600 dark:text-purple-400'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            Calendar
+          </button>
         </div>
         
         {/* Tab Content */}
         {currentTab === 'create' && isHost && (
           <form onSubmit={handleSubmit} className="max-w-md mx-auto">
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">Title</label>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="mt-1 block w-full px-2 py-1.5 sm:px-3 sm:py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                required
-              />
+            {/* Stepper header */}
+            <div className="flex items-center justify-between mb-5">
+              {['Basics', 'Schedule', 'Pricing', 'Trailer'].map((label, idx) => {
+                const step = idx + 1;
+                const done = createStep > step;
+                const active = createStep === step;
+                return (
+                  <React.Fragment key={step}>
+                    <button
+                      type="button"
+                      onClick={() => done && setCreateStep(step)}
+                      className="flex flex-col items-center gap-1 group"
+                    >
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                        done ? 'bg-purple-500 text-white cursor-pointer' :
+                        active ? 'bg-purple-600 text-white ring-2 ring-purple-300' :
+                        'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+                      }`}>
+                        {done ? '✓' : step}
+                      </div>
+                      <span className={`text-[10px] font-medium ${active ? 'text-purple-600 dark:text-purple-400' : 'text-gray-400 dark:text-gray-500'}`}>
+                        {label}
+                      </span>
+                    </button>
+                    {step < 4 && (
+                      <div className={`flex-1 h-0.5 mx-1 mb-4 transition-colors ${createStep > step ? 'bg-purple-500' : 'bg-gray-200 dark:bg-gray-600'}`} />
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </div>
-            
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">Watch Type</label>
-              <select
-                value={watchType}
-                onChange={(e) => setWatchType(e.target.value)}
-                className="mt-1 block w-full px-2 py-1.5 sm:px-3 sm:py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                required
-              >
-                <option value="3d_cinema">🎬 3D Cinema</option>
-                <option value="video_watch">📺 Video Watch</option>
-                <option value="classroom">🎓 Lecture Hall</option>
-              </select>
-            </div>
-            
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">Description (Optional)</label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="mt-1 block w-full px-2 py-1.5 sm:px-3 sm:py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                rows="3"
-              />
-            </div>
-            
-            {/* ✅ Pricing Type Radio Buttons (Simplified) */}
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Pricing Type
-              </label>
-              <div className="flex gap-4">
-                <label className="flex items-center cursor-pointer">
+
+            {/* Step 1: Basics */}
+            {createStep === 1 && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Title</label>
                   <input
-                    type="radio"
-                    name="pricingType"
-                    checked={!isPaid}
-                    onChange={() => setIsPaid(false)}
-                    className="w-4 h-4 text-green-600 border-gray-300 focus:ring-green-500"
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    className="block w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    placeholder="e.g. Friday Movie Night"
+                    required
                   />
-                  <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">Free</span>
-                </label>
-                <label className="flex items-center cursor-pointer">
-                  <input
-                    type="radio"
-                    name="pricingType"
-                    checked={isPaid}
-                    onChange={() => setIsPaid(true)}
-                    className="w-4 h-4 text-purple-600 border-gray-300 focus:ring-purple-500"
+                </div>
+
+                <div>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Watch Type</label>
+                  <select
+                    value={watchType}
+                    onChange={(e) => setWatchType(e.target.value)}
+                    className="block w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    required
+                  >
+                    <option value="3d_cinema">🎬 3D Cinema</option>
+                    <option value="video_watch">📺 Video Watch</option>
+                    <option value="classroom">🎓 Lecture Hall</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Content Rating</label>
+                  <select
+                    value={contentRating}
+                    onChange={(e) => setContentRating(e.target.value)}
+                    className="block w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  >
+                    {CONTENT_RATINGS.map(r => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">Pre-filled from room type. Change if needed.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description <span className="font-normal text-gray-400">(optional)</span></label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="block w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    rows="3"
+                    placeholder="Tell people what to expect…"
                   />
-                  <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">Paid</span>
-                </label>
+                </div>
               </div>
-            </div>
-            
-            {/* ✅ Ticket Image (Based on Watch Type) */}
-            <div className="mb-4 flex justify-center">
-              <img 
-                src={
-                  watchType === 'classroom' ? '/icons/LectureTicket.png' :
-                  watchType === 'video_watch' ? '/icons/TheaterTicket.png' :
-                  '/icons/CinemaTicket.png'
-                }
-                alt="Ticket"
-                className="w-72 h-auto drop-shadow-2xl transition-transform hover:scale-105"
-              />
-            </div>
-            
-            {/* ✅ Ticket Pricing (shown only if paid) */}
-            {isPaid && (
-              <div className="mb-4 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-300 dark:border-purple-600">
-                <div className="mb-3">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Ticket Price (₦)
-                  </label>
+            )}
+
+            {/* Step 2: Schedule */}
+            {createStep === 2 && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Start Time</label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg font-bold text-gray-700 dark:text-gray-300">
-                      ₦
-                    </span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="0.01"
-                      value={ticketPriceNaira}
-                      onChange={(e) => setTicketPriceNaira(e.target.value)}
-                      className="block w-full pl-8 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                      placeholder="e.g., 1000"
-                      required={isPaid}
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
+                      <img src="/icons/schedule.svg" alt="" className="h-8 w-8 text-gray-400 dark:text-gray-500" />
+                    </div>
+                    <DatePicker
+                      selected={startTime}
+                      onChange={(date) => setStartTime(date)}
+                      showTimeSelect
+                      timeFormat="HH:mm"
+                      timeIntervals={15}
+                      dateFormat="MMMM d, yyyy h:mm aa"
+                      minDate={new Date()}
+                      placeholderText="Select date and time"
+                      className="block w-full pl-14 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white cursor-pointer"
+                      calendarClassName="custom-datepicker"
+                      wrapperClassName="w-full"
+                      required
                     />
                   </div>
-                  {ticketPriceNaira && (
-                    <div className="mt-2 p-2 bg-purple-100 dark:bg-purple-800/30 rounded text-xs">
-                      <span className="text-gray-700 dark:text-gray-300">
-                        ≈ {formatTokens(convertFiatToTokens(parseFloat(ticketPriceNaira), 'NGN'))}
-                      </span>
+                  <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Selected: {startTime ? startTime.toLocaleString() : 'Not set'}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Repeat</label>
+                  <select
+                    value={recurrenceType}
+                    onChange={e => { setRecurrenceType(e.target.value); setRecurrenceEndDate(null); }}
+                    className="block w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  >
+                    <option value="none">Does not repeat</option>
+                    <option value="weekly">Every week</option>
+                    <option value="biweekly">Every 2 weeks</option>
+                    <option value="monthly">Every month</option>
+                  </select>
+                  {recurrenceType !== 'none' && (
+                    <div className="mt-2">
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        Repeat until <span className="italic">(optional — defaults to 1 year)</span>
+                      </label>
+                      <DatePicker
+                        selected={recurrenceEndDate}
+                        onChange={date => setRecurrenceEndDate(date)}
+                        minDate={startTime || new Date()}
+                        placeholderText="No end date"
+                        dateFormat="MMMM d, yyyy"
+                        className="block w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white cursor-pointer"
+                        calendarClassName="custom-datepicker"
+                        wrapperClassName="w-full"
+                      />
                     </div>
                   )}
                 </div>
-                
-                {/* Early Bird Toggle */}
-                <div className="flex items-center mb-2">
-                  <input
-                    type="checkbox"
-                    id="earlyBirdToggle"
-                    checked={earlyBirdEnabled}
-                    onChange={(e) => setEarlyBirdEnabled(e.target.checked)}
-                    className="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+              </div>
+            )}
+
+            {/* Step 3: Pricing */}
+            {createStep === 3 && (
+              <div className="space-y-4">
+                {/* Ticket image preview */}
+                <div className="flex justify-center">
+                  <img
+                    src={getTicketImage(watchType, contentRating)}
+                    alt="Ticket"
+                    className="w-64 h-auto drop-shadow-xl transition-transform hover:scale-105"
                   />
-                  <label htmlFor="earlyBirdToggle" className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                    Enable Early Bird Pricing
-                  </label>
                 </div>
-                
-                {earlyBirdEnabled && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Early Bird Price (₦)
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg font-bold text-gray-700 dark:text-gray-300">
-                        ₦
-                      </span>
+
+                <div>
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Pricing</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center cursor-pointer">
                       <input
-                        type="number"
-                        min="1"
-                        step="0.01"
-                        value={earlyBirdPriceNaira}
-                        onChange={(e) => setEarlyBirdPriceNaira(e.target.value)}
-                        className="block w-full pl-8 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                        placeholder={ticketPriceNaira ? `Less than ${ticketPriceNaira}` : 'Early bird price'}
-                        required={earlyBirdEnabled}
+                        type="radio"
+                        name="pricingType"
+                        checked={!isPaid}
+                        onChange={() => setIsPaid(false)}
+                        className="w-4 h-4 text-green-600 border-gray-300 focus:ring-green-500"
                       />
-                    </div>
-                    {earlyBirdPriceNaira && (
-                      <div className="mt-2 p-2 bg-green-100 dark:bg-green-800/30 rounded text-xs">
-                        <span className="text-gray-700 dark:text-gray-300">
-                          ≈ {formatTokens(convertFiatToTokens(parseFloat(earlyBirdPriceNaira), 'NGN'))}
-                        </span>
+                      <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">Free</span>
+                    </label>
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="radio"
+                        name="pricingType"
+                        checked={isPaid}
+                        onChange={() => setIsPaid(true)}
+                        className="w-4 h-4 text-purple-600 border-gray-300 focus:ring-purple-500"
+                      />
+                      <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">Paid</span>
+                    </label>
+                  </div>
+                </div>
+
+                {isPaid && (
+                  <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-300 dark:border-purple-600 space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Ticket Price (₦)</label>
+                      <div className="flex gap-1.5 flex-wrap mb-2">
+                        {[50, 100, 200, 1000].map(preset => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setTicketPriceNaira(String(preset))}
+                            className={`px-2.5 py-1 rounded text-xs font-semibold border transition-all ${
+                              parseFloat(ticketPriceNaira) === preset
+                                ? 'bg-purple-600 text-white border-purple-600'
+                                : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20'
+                            }`}
+                          >
+                            ₦{preset.toLocaleString()}
+                          </button>
+                        ))}
                       </div>
-                    )}
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Automatically ends 1 hour before event starts
-                    </p>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-lg font-bold text-gray-700 dark:text-gray-300">₦</span>
+                        <input
+                          type="number"
+                          min="50"
+                          step="0.01"
+                          value={ticketPriceNaira}
+                          onChange={(e) => setTicketPriceNaira(e.target.value)}
+                          className="block w-full pl-8 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                          placeholder="e.g., 1000"
+                          required={isPaid}
+                        />
+                      </div>
+                      {ticketPriceNaira && (
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          ≈ {formatTokens(convertFiatToTokens(parseFloat(ticketPriceNaira), 'NGN'))}
+                        </p>
+                      )}
+                    </div>
+
                   </div>
                 )}
               </div>
             )}
-            
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">Start Time</label>
-              <div className="relative mt-1">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
-                  <img src="/icons/schedule.svg" alt="" className="h-8 w-8 text-gray-400 dark:text-gray-500" />
+
+            {/* Step 4: Trailer */}
+            {createStep === 4 && (() => {
+              const daysUntilUnlock = trailerUnlockDate
+                ? Math.ceil((trailerUnlockDate - now) / (1000 * 60 * 60 * 24))
+                : null;
+
+              return (
+                <div className="space-y-4">
+                  {trailerLocked ? (
+                    /* ── Locked state ── */
+                    <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700">
+                      <div className="bg-gradient-to-br from-gray-800 to-gray-900 p-7 flex flex-col items-center gap-4">
+                        <div className="relative">
+                          <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center text-3xl">
+                            🎬
+                          </div>
+                          <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-amber-500 flex items-center justify-center text-sm shadow-lg">
+                            🔒
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-white font-semibold text-sm">Trailer Upload Locked</p>
+                          {!startTime ? (
+                            <p className="text-gray-400 text-xs mt-1.5">Go back to Step 2 and set your event date to unlock</p>
+                          ) : (
+                            <>
+                              <p className="text-amber-400 text-sm font-medium mt-1.5">
+                                Opens in {daysUntilUnlock} day{daysUntilUnlock !== 1 ? 's' : ''}
+                              </p>
+                              <p className="text-gray-500 text-[11px] mt-1">Available 7 days before your event</p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700/50 px-4 py-2.5">
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400 text-center">
+                          Trailers auto-delete at event start time — protecting rights &amp; saving storage
+                        </p>
+                      </div>
+                    </div>
+                  ) : !trailerFile ? (
+                    /* ── Upload zone ── */
+                    <label className="block cursor-pointer group">
+                      <input
+                        type="file"
+                        onChange={(e) => {
+                          const file = e.target.files[0];
+                          if (file) {
+                            if (file.size > 50 * 1024 * 1024) {
+                              toast.error('Trailer must be under 50 MB');
+                              return;
+                            }
+                            setTrailerFile(file);
+                            setTrailerPreview(URL.createObjectURL(file));
+                          }
+                        }}
+                        className="hidden"
+                        accept="video/mp4,video/webm,video/quicktime"
+                      />
+                      <div className="border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-xl p-8 flex flex-col items-center gap-3 transition-all group-hover:border-purple-500 group-hover:bg-purple-50/50 dark:group-hover:bg-purple-900/10">
+                        <div className="w-14 h-14 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-2xl">
+                          🎞️
+                        </div>
+                        <div className="text-center">
+                          <p className="text-sm font-semibold text-purple-700 dark:text-purple-300">Upload Trailer</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Click to browse or drag &amp; drop</p>
+                        </div>
+                        <div className="flex flex-wrap justify-center gap-2 mt-1">
+                          {['MP4 · WebM · MOV', 'Max 60 seconds', 'Max 50 MB'].map(tag => (
+                            <span key={tag} className="px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-[11px] text-gray-500 dark:text-gray-400">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </label>
+                  ) : (
+                    /* ── Preview state ── */
+                    <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-600 bg-black">
+                      <video
+                        src={trailerPreview}
+                        controls
+                        className="w-full max-h-52 bg-black"
+                      />
+                      <div className="bg-gray-50 dark:bg-gray-800 px-3 py-2.5 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-gray-800 dark:text-white truncate">{trailerFile.name}</p>
+                          <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+                            {(trailerFile.size / 1024 / 1024).toFixed(1)} MB
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { setTrailerFile(null); setTrailerPreview(null); setTrailerTitle(''); }}
+                          className="flex-shrink-0 text-xs text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 font-medium"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Trailer title (only when file selected and unlocked) */}
+                  {!trailerLocked && trailerFile && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Custom Trailer Title <span className="font-normal text-gray-400">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={trailerTitle}
+                        onChange={(e) => setTrailerTitle(e.target.value)}
+                        placeholder={title || 'Defaults to event title'}
+                        className="block w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      />
+                    </div>
+                  )}
+
+                  {/* Info chips — always visible when unlocked */}
+                  {!trailerLocked && (
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { icon: '⏱', label: 'Max 60 seconds' },
+                        { icon: '🗑', label: 'Auto-deletes at start' },
+                        { icon: '📺', label: 'Shows in Lobby' },
+                      ].map(({ icon, label }) => (
+                        <span key={label} className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-[11px] text-gray-600 dark:text-gray-400">
+                          {icon} {label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Skip hint */}
+                  {trailerLocked && (
+                    <p className="text-center text-xs text-gray-500 dark:text-gray-400">
+                      You can still create the event — add a trailer later when it unlocks.
+                    </p>
+                  )}
                 </div>
-                <DatePicker
-                  selected={startTime}
-                  onChange={(date) => setStartTime(date)}
-                  showTimeSelect
-                  timeFormat="HH:mm"
-                  timeIntervals={15}
-                  dateFormat="MMMM d, yyyy h:mm aa"
-                  minDate={new Date()}
-                  placeholderText="Select date and time"
-                  className="block w-full pl-14 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white cursor-pointer"
-                  calendarClassName="custom-datepicker"
-                  wrapperClassName="w-full"
-                  required
-                />
-              </div>
-              <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Selected: {startTime ? startTime.toLocaleString() : 'Not set'}
-              </p>
-            </div>
-            
-            {/* ✅ Trailer Upload Section - Positioned at bottom for prominence */}
-            <div className="mb-4 p-4 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 rounded-lg border-2 border-dashed border-purple-300 dark:border-purple-600">
-              <label className="block text-sm font-semibold text-purple-700 dark:text-purple-300 mb-2">
-                🎬 Event Trailer (Optional)
-              </label>
-              <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
-                Upload a trailer to promote your event! Max 60 seconds • Auto-deletes when event starts • Appears in lobby "Watching Now"
-              </p>
-              
-              <label className="flex items-center justify-center bg-black hover:bg-gray-900 text-white font-semibold py-3 px-4 rounded-lg cursor-pointer transition-colors">
-                <input
-                  type="file"
-                  onChange={(e) => {
-                    const file = e.target.files[0];
-                    if (file) {
-                      // Validate file size (max 50MB)
-                      if (file.size > 50 * 1024 * 1024) {
-                        toast.error('Trailer file must be less than 50MB');
-                        return;
-                      }
-                      setTrailerFile(file);
-                      setTrailerPreview(URL.createObjectURL(file));
+              );
+            })()}
+
+            {/* Navigation */}
+            <div className="flex justify-between mt-6 gap-2">
+              {createStep > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => setCreateStep(s => s - 1)}
+                  className="px-4 py-2 text-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                >
+                  ← Back
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                >
+                  Cancel
+                </button>
+              )}
+
+              {createStep < 4 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (createStep === 1 && !title.trim()) { toast.error('Please enter a title'); return; }
+                    if (createStep === 2 && !startTime) { toast.error('Please select a start time'); return; }
+                    if (createStep === 3 && isPaid) {
+                      if (!ticketPriceNaira) { toast.error('Please enter a ticket price'); return; }
+                      if (parseFloat(ticketPriceNaira) < 50) { toast.error('Minimum ticket price is ₦50'); return; }
                     }
+                    setCreateStep(s => s + 1);
                   }}
-                  className="hidden"
-                  accept="video/mp4,video/webm,video/quicktime"
-                />
-                <span className="text-sm">📤 Upload Trailer</span>
-              </label>
-              
-              {trailerPreview && (
-                <div className="mt-3">
-                  <video 
-                    src={trailerPreview} 
-                    controls 
-                    className="w-full max-h-40 rounded border border-gray-300 dark:border-gray-600"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTrailerFile(null);
-                      setTrailerPreview(null);
-                      setTrailerTitle('');
-                    }}
-                    className="mt-2 text-xs text-red-600 dark:text-red-400 hover:underline"
-                  >
-                    Remove trailer
-                  </button>
-                </div>
+                  className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors font-medium"
+                >
+                  Next →
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors font-medium"
+                >
+                  Create Event
+                </button>
               )}
-              
-              {trailerFile && (
-                <div className="mt-3">
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Custom Trailer Title (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={trailerTitle}
-                    onChange={(e) => setTrailerTitle(e.target.value)}
-                    placeholder={title || 'Defaults to event title'}
-                    className="block w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  />
-                </div>
-              )}
-            </div>
-            
-            <div className="flex justify-end space-x-2 sm:space-x-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-3 py-1.5 sm:px-4 sm:py-2 text-sm sm:text-base bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors duration-150"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-3 py-1.5 sm:px-4 sm:py-2 text-sm sm:text-base bg-purple-500 text-white rounded hover:bg-purple-600 transition-colors duration-150"
-              >
-                Create Event
-              </button>
             </div>
           </form>
         )}
@@ -732,7 +977,7 @@ const ScheduleEventModal = ({
                           {event.is_paid ? (
                             <span className="flex items-center gap-1">
                               <TicketIcon className="h-4 w-4" />
-                              {event.tickets_sold || 0} sold
+                              {event.tickets_sold || 0} booked
                             </span>
                           ) : (
                             <span className="flex items-center gap-1">
@@ -753,7 +998,7 @@ const ScheduleEventModal = ({
                         </div>
 
                         {/* Gift mode input */}
-                        {giftingEventId === event.ID && (
+                        {!isHost && giftingEventId === event.ID && (
                           <div className="mt-3 space-y-2">
                             <input
                               type="text"
@@ -786,12 +1031,43 @@ const ScheduleEventModal = ({
 
                       {/* Action row */}
                       <div className="px-3 pb-3 pt-2 border-t border-gray-100 dark:border-gray-700 flex items-center justify-around gap-1">
-                        {hasUserTicket ? (
+                        {isHost ? (
+                          <>
+                            {event.is_paid ? (
+                              <div className="flex flex-col gap-0.5 p-2 flex-1">
+                                <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Projected Attendance & Revenue</span>
+                                <div className="flex items-center gap-3 mt-0.5">
+                                  <span className="text-sm font-bold text-green-600 dark:text-green-400">
+                                    ₦{((event.tickets_sold || 0) * (event.ticket_price_amount || 0)).toLocaleString()}
+                                  </span>
+                                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                                    {event.tickets_sold || 0} booked
+                                  </span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col gap-0.5 p-2 flex-1">
+                                <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Projected Attendance</span>
+                                <span className="text-sm font-bold text-blue-600 dark:text-blue-400 mt-0.5">
+                                  {event.rsvp_count || 0} RSVP{(event.rsvp_count || 0) !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+                            )}
+                            <CalendarDropdown event={event} roomUrl={roomUrl} large />
+                            <button
+                              onClick={() => handleDeleteEvent(event.ID)}
+                              className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                            >
+                              <TrashIcon className="h-6 w-6 text-red-500" />
+                              <span className="text-[10px] text-red-600">Delete</span>
+                            </button>
+                          </>
+                        ) : hasUserTicket ? (
                           <>
                             <div className="flex flex-col items-center gap-1 p-2">
                               <span className="text-xl leading-none">✅</span>
                               <span className="text-[10px] text-green-700 dark:text-green-400 font-medium text-center">
-                                {event.is_paid ? 'Purchased' : "RSVP'd"}
+                                {event.is_paid ? 'Booked' : "RSVP'd"}
                               </span>
                             </div>
                             <CalendarDropdown event={event} roomUrl={roomUrl} large />
@@ -807,27 +1083,18 @@ const ScheduleEventModal = ({
                                 </span>
                               </button>
                             )}
-                            {isHost && (
-                              <button
-                                onClick={() => handleDeleteEvent(event.ID)}
-                                className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                              >
-                                <TrashIcon className="h-6 w-6 text-red-500" />
-                                <span className="text-[10px] text-red-600">Delete</span>
-                              </button>
-                            )}
                           </>
                         ) : (
                           <>
                             {event.is_paid ? (
                               <button
                                 onClick={() => handlePurchaseTicket(event.ID, false)}
-                                disabled={actionLoading[event.ID] || giftingEventId === event.ID}
+                                disabled={actionLoading[event.ID]}
                                 className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors disabled:opacity-50"
                               >
                                 <TicketIcon className="h-6 w-6 text-purple-600 dark:text-purple-400" />
                                 <span className="text-[10px] text-purple-700 dark:text-purple-400 font-medium text-center leading-tight">
-                                  {actionLoading[event.ID] ? 'Buying…' : isEarlyBird ? 'Early Bird' : 'Buy Ticket'}
+                                  {actionLoading[event.ID] ? 'Booking…' : isEarlyBird ? 'Early Bird' : 'Book Ticket'}
                                 </span>
                               </button>
                             ) : (
@@ -843,25 +1110,6 @@ const ScheduleEventModal = ({
                               </button>
                             )}
                             <CalendarDropdown event={event} roomUrl={roomUrl} large />
-                            {event.is_paid && giftingEventId !== event.ID && (
-                              <button
-                                onClick={() => setGiftingEventId(event.ID)}
-                                disabled={actionLoading[event.ID]}
-                                className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-pink-50 dark:hover:bg-pink-900/20 transition-colors disabled:opacity-50"
-                              >
-                                <span className="text-xl leading-none">🎁</span>
-                                <span className="text-[10px] text-pink-600 dark:text-pink-400">Gift</span>
-                              </button>
-                            )}
-                            {isHost && (
-                              <button
-                                onClick={() => handleDeleteEvent(event.ID)}
-                                className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                              >
-                                <TrashIcon className="h-6 w-6 text-red-500" />
-                                <span className="text-[10px] text-red-600">Delete</span>
-                              </button>
-                            )}
                           </>
                         )}
                       </div>
@@ -938,6 +1186,102 @@ const ScheduleEventModal = ({
                   );
                 })}
               </div>
+            )}
+          </div>
+        )}
+        {currentTab === 'calendar' && (
+          <div>
+            {/* Month navigation */}
+            <div className="flex items-center justify-between mb-3">
+              <button
+                onClick={() => navigateCalendarMonth(-1)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors"
+              >
+                ‹
+              </button>
+              <span className="text-sm font-semibold text-gray-800 dark:text-white">{calendarMonthLabel}</span>
+              <button
+                onClick={() => navigateCalendarMonth(1)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors"
+              >
+                ›
+              </button>
+            </div>
+
+            {/* Weekday headers */}
+            <div className="grid grid-cols-7 text-center mb-1">
+              {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
+                <div key={d} className="text-[10px] font-medium text-gray-400 dark:text-gray-500 py-1">{d}</div>
+              ))}
+            </div>
+
+            {/* Day grid */}
+            <div className="grid grid-cols-7 gap-0.5">
+              {Array.from({ length: firstDayOfMonth }).map((_, i) => (
+                <div key={`empty-${i}`} />
+              ))}
+              {Array.from({ length: daysInMonth }).map((_, i) => {
+                const day = i + 1;
+                const dayEvents = eventsByDay[day] || [];
+                const isToday =
+                  new Date().getDate() === day &&
+                  new Date().getMonth() === calendarMonth &&
+                  new Date().getFullYear() === calendarYear;
+                const isSelected = selectedCalendarDay === day;
+                return (
+                  <button
+                    key={day}
+                    onClick={() => setSelectedCalendarDay(isSelected ? null : day)}
+                    className={`flex flex-col items-center justify-start pt-1 pb-0.5 rounded-lg text-xs transition-all min-h-[36px] ${
+                      isSelected
+                        ? 'bg-purple-600 text-white'
+                        : isToday
+                        ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 font-bold'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    <span>{day}</span>
+                    {dayEvents.length > 0 && (
+                      <span className={`w-1.5 h-1.5 rounded-full mt-0.5 ${isSelected ? 'bg-white' : 'bg-purple-500'}`} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Selected day events */}
+            {selectedCalendarDay !== null && (
+              <div className="mt-3 border-t border-gray-200 dark:border-gray-700 pt-3">
+                {(eventsByDay[selectedCalendarDay] || []).length === 0 ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center py-2">
+                    No events on {new Date(calendarYear, calendarMonth, selectedCalendarDay).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {(eventsByDay[selectedCalendarDay] || []).map(ev => (
+                      <div key={ev.ID} className="flex items-center gap-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-700/50">
+                        <span className="text-base">{ev.watch_type === '3d_cinema' ? '🎬' : ev.watch_type === 'classroom' ? '🎓' : '📺'}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-gray-800 dark:text-white truncate">{ev.title}</p>
+                          <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                            {new Date(ev.start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                            {ev.recurrence_type && ev.recurrence_type !== 'none' && (
+                              <span className="ml-1 text-purple-500">↻</span>
+                            )}
+                          </p>
+                        </div>
+                        {ev.is_paid && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 flex-shrink-0">Paid</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {loadingEvents && (
+              <p className="text-center text-xs text-gray-500 dark:text-gray-400 mt-3">Loading events…</p>
             )}
           </div>
         )}

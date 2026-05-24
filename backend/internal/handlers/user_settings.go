@@ -119,7 +119,8 @@ func UpdateUserSettings(c *gin.Context) {
 		WhoCanCall          *string `json:"who_can_call"`
 
 		// Content preferences
-		ShowMatureContent *bool `json:"show_mature_content"`
+		ShowMatureContent *bool   `json:"show_mature_content"`
+		PrimaryRating     *string `json:"primary_rating"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -212,6 +213,10 @@ func UpdateUserSettings(c *gin.Context) {
 	if input.ShowMatureContent != nil {
 		updates["show_mature_content"] = *input.ShowMatureContent
 	}
+	validRatings := map[string]bool{"G": true, "PG": true, "Educational": true, "Religious": true, "13+": true, "16+": true, "18+": true, "Mature": true, "": true}
+	if input.PrimaryRating != nil && validRatings[*input.PrimaryRating] {
+		updates["primary_rating"] = *input.PrimaryRating
+	}
 
 	// If settings don't exist yet, create them
 	if settings.ID == 0 {
@@ -245,6 +250,8 @@ func UpdateUserSettings(c *gin.Context) {
 				settings.WhoCanCall = value.(string)
 			case "show_mature_content":
 				settings.ShowMatureContent = value.(bool)
+			case "primary_rating":
+				settings.PrimaryRating = value.(string)
 			}
 		}
 		

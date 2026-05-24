@@ -83,7 +83,7 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen max-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-black flex relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-black flex relative overflow-x-hidden">
       {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-pulse"></div>
@@ -91,32 +91,39 @@ const Login = () => {
         <div className="absolute top-1/2 left-1/2 w-96 h-96 bg-white/5 rounded-full blur-3xl animate-pulse delay-2000"></div>
       </div>
 
-      {/* Split Screen Layout */}
-      <div className="relative z-10 w-full flex flex-col lg:flex-row">
-        {/* Left Side - Logo & Branding */}
-        <div className="lg:w-1/2 flex items-center justify-center p-6 md:p-8 lg:p-12 animate-fade-in bg-black">
-          <div className="text-center max-w-2xl">
-            <img 
-              src="/icons/LetsWatchOutLogo.png" 
-              alt="LetsWatchOut Logo" 
-              className="w-64 h-64 md:w-80 md:h-80 lg:w-96 lg:h-96 mx-auto mb-0 drop-shadow-2xl hover:scale-105 transition-transform duration-300"
+      {/* Stacked on mobile, side-by-side on sm+ */}
+      <div className="relative z-10 w-full flex flex-col sm:flex-row">
+        {/* Branding — compact strip on mobile, full panel on sm+ */}
+        <div className="sm:w-[42%] lg:w-1/2 flex items-center justify-center py-8 px-6 sm:p-6 lg:p-12 animate-fade-in bg-black/60 sm:bg-black flex-shrink-0">
+          <div className="text-center">
+            {/* SVG on mobile (no padding, renders full-size) */}
+            <img
+              src="/icons/LetsWatchOut Logo.svg"
+              alt="LetsWatchOut Logo"
+              className="block sm:hidden h-[90px] w-auto mx-auto drop-shadow-2xl"
             />
-            <p className="text-lg md:text-xl lg:text-xl text-gray-300 mb-1">Watch together, anywhere</p>
-            <p className="text-xs md:text-sm lg:text-sm text-gray-400">You define the space. We bring your people together.</p>
+            {/* PNG on sm+ (looks good at larger panel sizes) */}
+            <img
+              src="/icons/LetsWatchOutLogo.png"
+              alt="LetsWatchOut Logo"
+              className="hidden sm:block sm:w-36 sm:h-36 md:w-56 md:h-56 lg:w-80 lg:h-80 mx-auto drop-shadow-2xl hover:scale-105 transition-transform duration-300"
+            />
+            <p className="text-sm md:text-base lg:text-xl text-gray-300 mt-2 mb-1">Watch together, anywhere</p>
+            <p className="hidden md:block text-xs lg:text-sm text-gray-400">You define the space. We bring your people together.</p>
           </div>
         </div>
 
-        {/* Right Side - Login Form */}
-        <div className="lg:w-1/2 flex items-center justify-center p-6 md:p-8 lg:p-12 animate-slide-right">
+        {/* Login Form */}
+        <div className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-12 overflow-y-auto animate-slide-right">
           <div className="w-full max-w-md">
             {/* Welcome Header */}
-            <div className="mb-6">
-              <h2 className="text-2xl md:text-3xl font-bold text-white mb-1">Welcome Back</h2>
-              <p className="text-sm text-gray-400">Sign in to continue your watch party</p>
+            <div className="mb-4 sm:mb-6">
+              <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-white mb-1">Welcome Back</h2>
+              <p className="text-xs sm:text-sm text-gray-400">Sign in to continue your watch party</p>
             </div>
 
             {/* Glass Card */}
-            <div className="bg-white/10 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 p-6 md:p-8">
+            <div className="bg-white/10 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 p-4 sm:p-6 md:p-8">
               {/* Error Message */}
               {error && (
                 <div className="mb-4 p-3 bg-red-500/20 backdrop-blur-sm border border-red-500/50 text-red-200 rounded-lg animate-shake">

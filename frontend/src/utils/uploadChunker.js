@@ -170,7 +170,7 @@ export const getOptimalChunkSize = (networkQuality) => {
     '3g': 2 * 1024 * 1024,      // 2MB for 3G
     '4g': 5 * 1024 * 1024,      // 5MB for 4G
     'wifi': 10 * 1024 * 1024,   // 10MB for WiFi
-    'unknown': 5 * 1024 * 1024  // 5MB default
+    'unknown': 2 * 1024 * 1024  // 2MB conservative default (iOS Safari / Firefox have no Network API)
   };
   
   return chunkSizes[networkQuality] || chunkSizes['unknown'];

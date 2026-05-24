@@ -412,8 +412,9 @@ func GetCurrentUserHandler(c *gin.Context) {
             "bio":        user.Bio,
             "role":       user.Role,
             "created_at": user.CreatedAt,
-            "age":        user.GetAge(), // ✅ Computed age (not raw DOB) for content rating checks
-            "has_date_of_birth": user.HasDateOfBirth(), // ✅ Frontend needs this to show/hide DOB prompt
+            "age":        user.GetAge(),
+            "has_date_of_birth": user.HasDateOfBirth(),
+            "main_room_id": user.MainRoomID,
         },
         "room_memberships": roomMemberships,
     }

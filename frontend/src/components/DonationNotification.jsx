@@ -2,7 +2,8 @@
 import { useState, useEffect, useRef } from 'react';
 import Confetti from 'react-confetti';
 
-const DonationNotification = ({ messages, currentUserId }) => {
+const DonationNotification = ({ messages, currentUserId, contentRating = '' }) => {
+  const isReligious = contentRating === 'Religious';
   const [activeNotifications, setActiveNotifications] = useState([]);
   const [showConfetti, setShowConfetti] = useState(false);
   const [windowDimensions, setWindowDimensions] = useState({ 
@@ -98,8 +99,8 @@ const DonationNotification = ({ messages, currentUserId }) => {
             }}
           >
             <div className="flex items-center gap-3">
-              {/* Gift Icon */}
-              <div className="text-4xl animate-bounce">🎁</div>
+              {/* Gift / Offering Icon */}
+              <div className="text-4xl animate-bounce">{isReligious ? '🙏' : '🎁'}</div>
               
               {/* Content */}
               <div className="flex-1">

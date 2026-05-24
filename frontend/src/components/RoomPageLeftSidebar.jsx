@@ -3,18 +3,21 @@
 import React, { useState } from 'react';
 import { TrashIcon } from '@heroicons/react/24/outline';
 import { getAssetUrl } from '../services/api';
+import { useMobile } from '../hooks/useMobile';
 
-const RoomPageLeftSidebar = ({ 
+const RoomPageLeftSidebar = ({
   room,
-  groups = [], 
-  selectedGroupId, 
-  onGroupSelect, 
+  groups = [],
+  selectedGroupId,
+  onGroupSelect,
   onDeleteGroup,
   onGroupEdit,
-  isHost = false 
+  isHost = false,
+  mobileHeaderHeight = 80,
 }) => {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const sidebarRef = React.useRef(null);
+  const isMobile = useMobile();
 
   // Set initial scroll position to show Main Chat below header
   React.useEffect(() => {
@@ -43,24 +46,18 @@ const RoomPageLeftSidebar = ({
   return (
     <div
       ref={sidebarRef}
-      className="w-16 sm:w-20 md:w-24 lg:w-28 bg-gray-900/50 border-r border-gray-700/50 flex flex-col items-center pt-20 pb-20 gap-2 overflow-y-scroll overflow-x-hidden flex-shrink-0 min-h-0 h-full"
+      className={`w-16 sm:w-20 md:w-24 lg:w-28 bg-gray-900/50 border-r border-gray-700/50 flex flex-col items-center gap-2 overflow-y-auto overflow-x-hidden flex-shrink-0 min-h-0 h-full ${
+        isMobile ? '' : 'pt-4 pb-4'
+      }`}
       style={{
-        scrollbarWidth: 'none', /* Firefox */
-        msOverflowStyle: 'none', /* IE/Edge */
-        touchAction: 'pan-y', /* Enable vertical touch scrolling */
-        WebkitOverflowScrolling: 'touch', /* iOS smooth scrolling */
+        ...(isMobile ? { paddingTop: `${mobileHeaderHeight + 8}px`, paddingBottom: '80px' } : {}),
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
+        touchAction: 'pan-y',
+        WebkitOverflowScrolling: 'touch',
+        overscrollBehavior: 'contain',
       }}
     >
-      {/* Hide scrollbar for Chrome/Safari/Opera */}
-      <style>{`
-        .w-16.overflow-y-scroll::-webkit-scrollbar,
-        .sm\\:w-20.overflow-y-scroll::-webkit-scrollbar,
-        .md\\:w-24.overflow-y-scroll::-webkit-scrollbar,
-        .lg\\:w-28.overflow-y-scroll::-webkit-scrollbar {
-          display: none;
-        }
-      `}</style>
-      
       {/* Main Chat (No Group) */}
       <div className="flex flex-col items-center gap-1">
         <button

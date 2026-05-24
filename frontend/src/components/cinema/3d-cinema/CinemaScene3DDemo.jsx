@@ -46,191 +46,157 @@ import { GraphicsRenderer } from '../../../utils/GraphicsRenderer';
 import TikTokHeartAnimation from '../../TikTokHeartAnimation';
 import { HeartIcon } from '@heroicons/react/24/solid';
 // LocalStorage cache utilities
-import { 
-  getCachedUser, 
-  cacheUserData, 
-  getCachedCinemaSeats, 
+import {
+  getCachedUser,
+  cacheUserData,
+  getCachedCinemaSeats,
   cacheCinemaSeats,
-  cacheLastSession 
+  cacheLastSession
 } from '../../../utils/cinemaCache';
+import usePlaybackSync from '../../../hooks/usePlaybackSync';
+import useMobileOrientation from '../../../hooks/useMobileOrientation';
+import useViewGuidanceTimer from '../../../hooks/useViewGuidanceTimer';
+
+// Pure function — no component dependencies, safe at module level
+function applyTextCase(text, caseType) {
+  if (!text) return text;
+  switch (caseType) {
+    case 'title': return text.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+    case 'upper': return text.toUpperCase();
+    case 'lower': return text.toLowerCase();
+    case 'sentence': return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+    default: return text;
+  }
+}
 
 // LiveShare Fullscreen Component - Uses MediaStream objects (same pattern as PositionCalculatorPage)
 function LiveShareFullscreenCinema({ stream, cameraStream, liveShareMode, podcastConfig }) {
   const videoRef = useRef();
   const cameraVideoRef = useRef();
-  
-  console.log('🎬 [LiveShareFullscreen] Component rendered:', {
-    hasStream: !!stream,
-    hasCameraStream: !!cameraStream,
-    liveShareMode,
-    podcastConfig
-  });
-  
+
   // 🎙️ Podcast mode uses HTML overlays for fullscreen (lighter weight)
   const isPodcastMode = podcastConfig?.mode === 'podcast';
-  
+
+  // Load podcast logo styles once per session (issue 7: avoid per-render localStorage reads)
+  const logoStyles = useMemo(() => {
+    let logoSize = 100;
+    let logoX = 10;
+    let logoY = 80;
+    try {
+      const saved = localStorage.getItem(`podcast_logo_style_${podcastConfig?.sessionId}`);
+      if (saved) {
+        const s = JSON.parse(saved);
+        logoSize = s.size || 100;
+        logoX = s.x || 10;
+        logoY = s.y || 80;
+      }
+    } catch {}
+    return { logoSize, logoX, logoY };
+  }, [podcastConfig?.sessionId]);
+
+  // Load podcast title styles once per session
+  const titleStyles = useMemo(() => {
+    let titleColor = '#FFFFFF';
+    let titleSize = 24;
+    let titleWeight = 700;
+    let titleCase = 'none';
+    try {
+      const saved = localStorage.getItem(`podcast_title_style_${podcastConfig?.sessionId}`);
+      if (saved) {
+        const s = JSON.parse(saved);
+        titleColor = s.color || '#FFFFFF';
+        titleSize = s.size || 24;
+        titleWeight = s.weight || 700;
+        titleCase = s.case || 'none';
+      }
+    } catch {}
+    return { titleColor, titleSize, titleWeight, titleCase };
+  }, [podcastConfig?.sessionId]);
+
   // Attach screen share stream to video element
   useEffect(() => {
     if (stream && videoRef.current && liveShareMode !== 'camera') {
-      console.log('🎥 [LiveShareFullscreen] Attaching screen stream');
-      
-      // 🔥 Low-latency optimizations
       videoRef.current.setAttribute('preload', 'none');
       videoRef.current.setAttribute('disablePictureInPicture', 'true');
       if (videoRef.current.webkitSetPresentationMode) {
         videoRef.current.webkitSetPresentationMode('inline');
       }
-      
       videoRef.current.srcObject = stream;
       videoRef.current.play().catch(err => console.error('❌ Screen play error:', err));
     }
   }, [stream, liveShareMode]);
-  
+
   // Attach camera stream to video element
   useEffect(() => {
     if (cameraStream && cameraVideoRef.current) {
-      console.log('📹 [LiveShareFullscreen] Attaching camera stream');
-      
-      // 🔥 Low-latency optimizations
       cameraVideoRef.current.setAttribute('preload', 'none');
       cameraVideoRef.current.setAttribute('disablePictureInPicture', 'true');
       if (cameraVideoRef.current.webkitSetPresentationMode) {
         cameraVideoRef.current.webkitSetPresentationMode('inline');
       }
-      
       cameraVideoRef.current.srcObject = cameraStream;
       cameraVideoRef.current.play().catch(err => console.error('❌ Camera play error:', err));
     }
   }, [cameraStream]);
-  
-  const cameraContainerClass = liveShareMode === 'camera' 
+
+  const cameraContainerClass = liveShareMode === 'camera'
     ? "w-full h-full flex items-center justify-center"
     : "absolute top-8 right-8 w-80 h-45 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20";
-  
+
   return (
     <>
       {/* Main screen share video (hidden in camera-only mode) */}
       {stream && liveShareMode !== 'camera' && !isPodcastMode && (
-        <video
-          ref={videoRef}
-          className="w-full h-full object-contain"
-          autoPlay
-          playsInline
-        />
+        <video ref={videoRef} className="w-full h-full object-contain" autoPlay playsInline />
       )}
-      
+
       {/* 🎙️ PODCAST MODE: Show video with HTML overlays */}
       {isPodcastMode && cameraStream && (
         <div className="w-full h-full flex items-center justify-center bg-black relative">
-          {/* Host Camera - Full screen */}
-          <video
-            ref={cameraVideoRef}
-            className="w-full h-full object-cover"
-            autoPlay
-            playsInline
-          />
-          
-          {/* Host Name Label (top left) */}
+          <video ref={cameraVideoRef} className="w-full h-full object-cover" autoPlay playsInline />
+
+          {/* Host Name Label */}
           <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-lg flex items-center gap-2">
             <span className="text-white font-medium">{podcastConfig.hostUsername || 'Host'} (Host)</span>
           </div>
-          
-          {/* Podcast Logo (bottom left above title) - load position and size from localStorage */}
-          {podcastConfig.logoUrl && (() => {
-            // Load custom logo styles from localStorage
-            let logoSize = 100; // Default size
-            let logoX = 10; // Default X position
-            let logoY = 80; // Default Y position (from bottom)
-            
-            try {
-              const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${podcastConfig.sessionId || sessionId}`);
-              if (savedLogoStyles) {
-                const styles = JSON.parse(savedLogoStyles);
-                logoSize = styles.size || 100;
-                logoX = styles.x || 10;
-                logoY = styles.y || 80;
-              }
-            } catch (err) {
-              console.warn('Failed to load logo styles:', err);
-            }
-            
-            return (
-              <img 
-                src={podcastConfig.logoUrl} 
-                alt="Podcast Logo" 
-                className="absolute object-contain"
-                style={{
-                  width: `${logoSize}px`,
-                  height: `${logoSize}px`,
-                  left: `${logoX}px`,
-                  bottom: `${logoY}px`
-                }}
-              />
-            );
-          })()}
-          
-          {/* LIVE Indicator (top center) */}
+
+          {/* Podcast Logo */}
+          {podcastConfig.logoUrl && (
+            <img
+              src={podcastConfig.logoUrl}
+              alt="Podcast Logo"
+              className="absolute object-contain"
+              style={{
+                width: `${logoStyles.logoSize}px`,
+                height: `${logoStyles.logoSize}px`,
+                left: `${logoStyles.logoX}px`,
+                bottom: `${logoStyles.logoY}px`
+              }}
+            />
+          )}
+
+          {/* LIVE Indicator */}
           <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600 px-4 py-2 rounded-full flex items-center gap-2 shadow-xl">
             <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
             <span className="text-white font-bold text-sm uppercase">LIVE</span>
           </div>
-          
-          {/* Podcast Title (bottom left with custom styling) */}
-          {podcastConfig.title && (() => {
-            // Load custom styles from localStorage
-            let titleColor = '#FFFFFF';
-            let titleSize = 24;
-            let titleWeight = 700;
-            let titleCase = 'none';
-            
-            try {
-              const savedStyles = localStorage.getItem(`podcast_title_style_${podcastConfig.sessionId || sessionId}`);
-              if (savedStyles) {
-                const styles = JSON.parse(savedStyles);
-                titleColor = styles.color || '#FFFFFF';
-                titleSize = styles.size || 24;
-                titleWeight = styles.weight || 700;
-                titleCase = styles.case || 'none';
-              }
-            } catch (err) {
-              console.warn('Failed to load title styles:', err);
-            }
-            
-            // Apply text case transformation
-            const applyTextCase = (text, caseType) => {
-              if (!text) return text;
-              
-              switch (caseType) {
-                case 'title':
-                  return text.toLowerCase().replace(/\b\w/g, char => char.toUpperCase());
-                case 'upper':
-                  return text.toUpperCase();
-                case 'lower':
-                  return text.toLowerCase();
-                case 'sentence':
-                  return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
-                case 'none':
-                default:
-                  return text;
-              }
-            };
-            
-            return (
-              <div 
-                className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-lg shadow-xl"
-                style={{
-                  color: titleColor,
-                  fontSize: `${titleSize}px`,
-                  fontWeight: titleWeight
-                }}
-              >
-                <h2>{applyTextCase(podcastConfig.title, titleCase)}</h2>
-              </div>
-            );
-          })()}
+
+          {/* Podcast Title */}
+          {podcastConfig.title && (
+            <div
+              className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-sm px-4 py-2 rounded-lg shadow-xl"
+              style={{
+                color: titleStyles.titleColor,
+                fontSize: `${titleStyles.titleSize}px`,
+                fontWeight: titleStyles.titleWeight
+              }}
+            >
+              <h2>{applyTextCase(podcastConfig.title, titleStyles.titleCase)}</h2>
+            </div>
+          )}
         </div>
       )}
-      
+
       {/* Camera video - fullscreen in camera mode, PiP in both mode (non-podcast) */}
       {!isPodcastMode && cameraStream && (
         <div className={cameraContainerClass}>
@@ -245,6 +211,33 @@ function LiveShareFullscreenCinema({ stream, cameraStream, liveShareMode, podcas
       )}
     </>
   );
+}
+
+// Catches R3F/WebGL initialization errors and reports them to the parent
+class WebGLErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch() {
+    this.props.onError?.();
+  }
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
+
+function checkWebGL() {
+  try {
+    const canvas = document.createElement('canvas');
+    return !!(canvas.getContext('webgl2') || canvas.getContext('webgl'));
+  } catch {
+    return false;
+  }
 }
 
 export default function CinemaScene3DDemo() {
@@ -330,7 +323,8 @@ export default function CinemaScene3DDemo() {
     fetchLikeStatus();
   }, [finalSessionId]);
   
-  // 🐛 DEBUG: Track component mounts/remounts
+  // PHASE 2 EXTRACTION CANDIDATE: mount/unmount debug tracking + log capture system
+  // (low priority — these are dev-only; extract to useDebugLifecycle hook when cleaning up)
   const componentIdRef = useRef(`cinema-${Date.now()}-${Math.random()}`);
   const mountCountRef = useRef(0);
   
@@ -692,6 +686,7 @@ export default function CinemaScene3DDemo() {
   const podcastCanvasRef = useRef(null); // 🎙️ Canvas for compositing podcast overlays
   const podcastLogoImageRef = useRef(null); // 🎙️ Preloaded logo image
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
+  const [webglFailed, setWebglFailed] = useState(() => !checkWebGL()); // false on most devices
   // Ref to trigger local emote notification in CinemaScene3D
   const triggerLocalEmoteRef = useRef(null);
   
@@ -825,8 +820,7 @@ export default function CinemaScene3DDemo() {
 
   // 📱 Mobile state
   const isMobile = useMobile();
-  const [isPortrait, setIsPortrait] = useState(false);
-  const [showTutorial, setShowTutorial] = useState(false);
+  const { isPortrait, showTutorial, setShowTutorial } = useMobileOrientation(isMobile);
   const [isTaskbarVisible, setIsTaskbarVisible] = useState(!isMobile); // Hidden by default on mobile
   const taskbarTimeoutRef = useRef(null);
   const cinemaSceneRef = useRef(null);
@@ -851,6 +845,19 @@ export default function CinemaScene3DDemo() {
       document.body.style.overflowY = originalOverflowY;
     };
   }, []);
+
+  // When WebGL is unavailable, reveal the hidden body-level video so media keeps playing
+  useEffect(() => {
+    const video = document.getElementById('shared-cinema-video') || videoRef.current;
+    if (!video) return;
+    if (webglFailed) {
+      video.style.opacity = '1';
+      video.style.zIndex = '1';
+    } else {
+      video.style.opacity = '0';
+      video.style.zIndex = '-1';
+    }
+  }, [webglFailed]);
 
   // ✅ Now you have reliable isHost!
   //console.log('🎭 isHost (from RoomPage):', isHost);
@@ -1293,6 +1300,8 @@ export default function CinemaScene3DDemo() {
     });
   }, [currentMedia]);
   
+  // PHASE 2 EXTRACTION CANDIDATE: media loading + play/pause sync effects
+  // (extract to useMediaPlayer hook once media handling stabilises)
   // 🎬 Load uploaded media into video element when currentMedia changes
   useEffect(() => {
     // Don't interfere with LiveShare video elements
@@ -1460,119 +1469,17 @@ export default function CinemaScene3DDemo() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // ⏰ Adaptive seek time sync - 8s normal, 4s when drift detected (optimized for smooth playback)
-  useEffect(() => {
-    if (!isHost || !currentMedia || currentMedia.type !== 'upload' || !isPlaying) {
-      return;
-    }
+  // ⏰ Playback sync — managed by usePlaybackSync hook (fixed 8s interval, drift detection in hook)
+  usePlaybackSync({
+    isHost,
+    currentMedia,
+    isPlaying,
+    videoRef,
+    sendMessage,
+    userId: currentUser?.id,
+  });
 
-    const NORMAL_SYNC_INTERVAL = 8000;  // 8 seconds (reduced sync frequency for smoother playback)
-    const FAST_SYNC_INTERVAL = 4000;    // 4 seconds when drift detected (still responsive but not aggressive)
-    const DRIFT_THRESHOLD = 3;          // 3 seconds tolerance before increasing frequency
-    let currentInterval = NORMAL_SYNC_INTERVAL;
-    let lastKnownTime = 0;
-    let lastSyncTimestamp = Date.now();
-
-    const syncPlayback = () => {
-      if (videoRef.current && currentMedia) {
-        const currentSeekTime = Math.floor(videoRef.current.currentTime);
-        
-        // Adaptive logic: detect drift
-        const now = Date.now();
-        const timeSinceLastSync = (now - lastSyncTimestamp) / 1000;
-        const expectedTime = lastKnownTime + timeSinceLastSync;
-        const drift = Math.abs(currentSeekTime - expectedTime);
-        
-        // Adjust interval based on drift
-        if (drift > DRIFT_THRESHOLD) {
-          currentInterval = FAST_SYNC_INTERVAL;
-          // console.log(`⚡ [Sync] High drift (${drift.toFixed(1)}s) - increasing frequency`);
-        } else {
-          currentInterval = NORMAL_SYNC_INTERVAL;
-        }
-        
-        // console.log(`⏰ [Sync] ${currentSeekTime}s (drift: ${drift.toFixed(1)}s, interval: ${currentInterval}ms)`);
-        
-        sendMessage({
-          type: "playback_control",
-          command: "seek",
-          media_item_id: currentMedia.ID || currentMedia.id,
-          file_path: currentMedia.file_path,
-          file_url: currentMedia.mediaUrl,
-          original_name: currentMedia.original_name,
-          seek_time: currentSeekTime,
-          timestamp: Date.now(),
-          sender_id: currentUser?.id,
-        });
-        
-        lastKnownTime = currentSeekTime;
-        lastSyncTimestamp = now;
-      }
-    };
-
-    // Initial sync
-    syncPlayback();
-    
-    // Dynamic interval that adapts
-    let intervalId = setInterval(() => {
-      syncPlayback();
-      // Restart interval with new timing if changed
-      clearInterval(intervalId);
-      intervalId = setInterval(syncPlayback, currentInterval);
-    }, currentInterval);
-
-    return () => clearInterval(intervalId);
-  }, [isHost, currentMedia, isPlaying, sendMessage, currentUser?.id]);
-
-  // 📱 Mobile orientation detection and force landscape (phones only, not tablets)
-  useEffect(() => {
-    if (!isMobile) return;
-
-    const checkOrientation = () => {
-      // Only show orientation prompt for phones (width < 768px), not tablets
-      const isPhone = window.innerWidth < 768;
-      const isPortraitMode = window.innerHeight > window.innerWidth;
-      setIsPortrait(isPhone && isPortraitMode);
-    };
-
-    // Initial check
-    checkOrientation();
-
-    // Try to lock to landscape (may fail without user gesture)
-    const lockOrientation = async () => {
-      // Only attempt lock for phones, not tablets
-      if (window.innerWidth >= 768) return;
-      
-      try {
-        if (screen.orientation && screen.orientation.lock) {
-          await screen.orientation.lock('landscape');
-          console.log('✅ [Mobile] Locked to landscape orientation');
-        }
-      } catch (error) {
-        console.warn('⚠️ [Mobile] Could not lock orientation:', error.message);
-        // Show tutorial instead as fallback
-        setShowTutorial(true);
-      }
-    };
-
-    // Delay lock attempt to ensure user gesture context
-    const timer = setTimeout(lockOrientation, 500);
-
-    // Listen for orientation changes
-    window.addEventListener('resize', checkOrientation);
-    window.addEventListener('orientationchange', checkOrientation);
-
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener('resize', checkOrientation);
-      window.removeEventListener('orientationchange', checkOrientation);
-      
-      // Unlock orientation on unmount
-      if (screen.orientation && screen.orientation.unlock) {
-        screen.orientation.unlock();
-      }
-    };
-  }, [isMobile]);
+  // 📱 Mobile orientation detection and landscape lock — managed by useMobileOrientation hook
 
   // 📱 Mobile taskbar auto-hide logic
   const showTaskbar = useCallback(() => {
@@ -2146,6 +2053,8 @@ export default function CinemaScene3DDemo() {
     };
   }, [room]);
 
+  // PHASE 2 EXTRACTION CANDIDATE: dynamic subscription management + host-broadcast toggle + audio publish
+  // (extract to useCinemaSubscriptions hook; depends on useCinemaAudio and useLiveKitRoom settling first)
   // 🎯 Dynamic subscription management - runs on mode change or seat updates
   useEffect(() => {
     if (!room) {
@@ -2474,17 +2383,8 @@ export default function CinemaScene3DDemo() {
     }
   });
 
-  // Timed view guidance overlay
-  const [viewGuidanceMode, setViewGuidanceMode] = useState(null);
-  const [viewGuidanceExpiresAt, setViewGuidanceExpiresAt] = useState(0);
-
-  // Show initial guidance on seat assignment
-  useEffect(() => {
-    if (currentSeat) {
-      setViewGuidanceMode('initial');
-      setViewGuidanceExpiresAt(Date.now() + 3_000); // 3 seconds
-    }
-  }, [currentSeat]);
+  // Timed view guidance overlay — managed by useViewGuidanceTimer hook
+  const { viewGuidanceMode, viewGuidanceExpiresAt } = useViewGuidanceTimer(currentSeat);
 
   // 🎭 Fetch theaters when session starts
   useEffect(() => {
@@ -2492,39 +2392,6 @@ export default function CinemaScene3DDemo() {
       fetchTheaters();
     }
   }, [sessionStatus?.id]);
-
-  // Handle C/R/L/F keys
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      const key = e.key.toLowerCase();
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (Date.now() >= viewGuidanceExpiresAt) return;
-
-      if (key === 'c' || key === 'r') {
-        setViewGuidanceMode('post-key');
-        setViewGuidanceExpiresAt(Date.now() + 3_000); // 3 seconds
-      } else if (key === 'l' || key === 'f') {
-        setViewGuidanceExpiresAt(Date.now() + 3_000); // 3 seconds
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [viewGuidanceExpiresAt]);
-
-  // Auto-hide expired guidance
-  useEffect(() => {
-    if (viewGuidanceExpiresAt === 0) return;
-    const checkTimer = () => {
-      if (Date.now() >= viewGuidanceExpiresAt) {
-        setViewGuidanceMode(null);
-        setViewGuidanceExpiresAt(0);
-      }
-    };
-    const interval = setInterval(checkTimer, 1000);
-    checkTimer();
-    return () => clearInterval(interval);
-  }, [viewGuidanceExpiresAt]);
 
   // Auto assign user seat on mount
   useEffect(() => {
@@ -4410,11 +4277,13 @@ export default function CinemaScene3DDemo() {
             toast('Session ended - Host disconnected for over 10 minutes', {
               icon: '⏰',
               duration: 5000,
+              id: 'session-ended',
             });
           } else {
-            toast('3D Cinema session ended', {
+            toast('Watch session ended', {
               icon: 'ℹ️',
               duration: 3000,
+              id: 'session-ended',
             });
           }
           
@@ -5644,67 +5513,88 @@ export default function CinemaScene3DDemo() {
           currentRow={currentSeat ? getRowFromSeat(currentSeatKey) : null}
           isHost={isHost}
           onToggleMode={handleAudioModeToggle}
+          isSilenceMode={isSilenceMode}
+          onToggleSilenceMode={() => setIsSilenceMode(prev => !prev)}
         />
       )}
 
-      {/* 3D Scene */}
-      <div 
+      {/* 3D Scene (or 2D fallback when WebGL is unavailable) */}
+      <div
         className="absolute inset-0"
         onDoubleClick={handleDoubleClickLike}
       >
-        <CinemaScene3D
-          ref={cinemaSceneRef}
-          useGLBModel="improved"
-          authenticatedUserID={currentUser?.id}
-        videoElement={liveShareVideoRef.current || videoRef.current} // ✅ Use LiveShare video if active
-        cameraVideoElement={liveShareCameraVideoRef.current || cameraVideoRef.current} // ✅ Use LiveShare camera if active
-        gameCanvas={gameCanvas} // 🎮 NEW: Game canvas for screen texture
-        podcastCanvas={podcastCanvasRef.current} // 🎙️ Podcast canvas with overlays
-        liveShareMode={liveShareMode}
-        onAvatarClick={openProfile}
-        onVideoTextureUpdate={(fn) => {
-          videoTextureUpdateRef.current = fn;
-        }}
-        isViewLocked={isViewLocked}
-        hideLabelsForLocalViewer={isImmersiveMode}
-        currentUserSeat={currentSeat}
-        showSeatMarkers={showSeatMarkers}
-        cinemaSeats={cinemaSeats} // 🎯 Pass seat position data for markers
-        showPositionDebug={showPositionDebug} 
-        debugMode={true}
-        lightsOn={lightsOn}
-        darknessLevel={darknessLevel}
-        roomMembers={roomMembers}
-        userSeats={userSeats} // ✅ Pass seat assignments for avatar filtering
-        remoteParticipants={remoteParticipantsMap}
-        activeSpeakers={activeSpeakers} // 🎤 Pass active speakers for ripple animation
-        showChatBubbles={showChatBubbles} // 💬 User preference for chat bubble visibility
-        isChatActive={isChatOpen || showChatHome} // 🚫 Disable keyboard bindings when chat is open
-        onEmoteReceived={() => {}}
-        onChatMessageReceived={(callback) => {
-          triggerChatBubbleRef.current = callback;
-        }}
-        onEmoteSend={handleEmoteSend}
-        triggerLocalEmoteRef={triggerLocalEmoteRef}
-        isMobile={isMobile}
-        onCameraMove={(pos, lookAt) => { // 🎯 Position Calculator callback
-          // Only log when Position Calculator is open to reduce spam
-          if (showPositionCalculator) {
-            console.log('📸 [onCameraMove]', { pos, lookAt });
-          }
-          setCurrentCameraPos(pos);
-          setCurrentCameraLookAt(lookAt);
-        }}
-        onScreenClick={handleScreenClick} // 🎬 Click 3D screen to enter fullscreen
-      />
-      
-      {/* ❤️ TikTok Heart Animation */}
-      {showHeartAnimation && (
-        <TikTokHeartAnimation 
-          onComplete={() => setShowHeartAnimation(false)}
-        />
-      )}
+        {!webglFailed ? (
+          <WebGLErrorBoundary onError={() => setWebglFailed(true)}>
+            <CinemaScene3D
+              ref={cinemaSceneRef}
+              useGLBModel="improved"
+              authenticatedUserID={currentUser?.id}
+              videoElement={liveShareVideoRef.current || videoRef.current}
+              cameraVideoElement={liveShareCameraVideoRef.current || cameraVideoRef.current}
+              gameCanvas={gameCanvas}
+              podcastCanvas={podcastCanvasRef.current}
+              liveShareMode={liveShareMode}
+              onAvatarClick={openProfile}
+              onVideoTextureUpdate={(fn) => {
+                videoTextureUpdateRef.current = fn;
+              }}
+              isViewLocked={isViewLocked}
+              hideLabelsForLocalViewer={isImmersiveMode}
+              currentUserSeat={currentSeat}
+              showSeatMarkers={showSeatMarkers}
+              cinemaSeats={cinemaSeats}
+              showPositionDebug={showPositionDebug}
+              debugMode={true}
+              lightsOn={lightsOn}
+              darknessLevel={darknessLevel}
+              roomMembers={roomMembers}
+              userSeats={userSeats}
+              remoteParticipants={remoteParticipantsMap}
+              activeSpeakers={activeSpeakers}
+              showChatBubbles={showChatBubbles}
+              isChatActive={isChatOpen || showChatHome}
+              onEmoteReceived={() => {}}
+              onChatMessageReceived={(callback) => {
+                triggerChatBubbleRef.current = callback;
+              }}
+              onEmoteSend={handleEmoteSend}
+              triggerLocalEmoteRef={triggerLocalEmoteRef}
+              isMobile={isMobile}
+              onCameraMove={showPositionCalculator ? (pos, lookAt) => {
+                setCurrentCameraPos(pos);
+                setCurrentCameraLookAt(lookAt);
+              } : null}
+              onScreenClick={handleScreenClick}
+            />
+          </WebGLErrorBoundary>
+        ) : (
+          // WebGL unavailable — body-level video is made visible by the webglFailed useEffect above;
+          // this div just provides the black background behind the banner
+          <div className="w-full h-full bg-black" />
+        )}
+
+        {/* ❤️ TikTok Heart Animation */}
+        {showHeartAnimation && (
+          <TikTokHeartAnimation
+            onComplete={() => setShowHeartAnimation(false)}
+          />
+        )}
       </div>
+
+      {/* WebGL unavailable banner — shown over the 2D video fallback */}
+      {webglFailed && (
+        <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-center gap-3 bg-amber-900/90 px-4 py-2 text-sm text-amber-200">
+          <span>3D unavailable — watching in standard mode</span>
+          <button
+            className="rounded bg-amber-700 px-3 py-1 text-xs hover:bg-amber-600"
+            onClick={() => {
+              if (checkWebGL()) setWebglFailed(false);
+            }}
+          >
+            Retry 3D
+          </button>
+        </div>
+      )}
       
       {/* {console.log('🎬 Final roomMembers passed to Taskbar:', roomMembers)} */}
       {/* Taskbar - hidden by default on mobile, tap to reveal */}

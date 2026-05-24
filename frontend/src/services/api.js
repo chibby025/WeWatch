@@ -732,6 +732,21 @@ export const leaveRoom = async (roomId) => {
   }
 };
 
+// Fetch upcoming events (next 30 days) across all rooms the user belongs to
+export const getUpcomingEvents = () => apiClient.get('/api/user/upcoming-events');
+
+// Kick a member from a room (host only)
+export const kickRoomMember = async (roomId, userId) => {
+  const response = await apiClient.delete(`/api/rooms/${roomId}/members/${userId}`);
+  return response.data;
+};
+
+// Ban a member from a room (host only)
+export const banRoomMember = async (roomId, userId) => {
+  const response = await apiClient.post(`/api/rooms/${roomId}/members/${userId}/ban`);
+  return response.data;
+};
+
 /**
  * Fetches the list of temporary media items for a specific room
  * @param {string|number} roomId - The ID of the room
@@ -1266,6 +1281,33 @@ export const getBatchFriendshipStatuses = async (userIds) => {
   return statuses;
 };
 
+// ==================== FOLLOW API FUNCTIONS ====================
+
+export const followUser = async (userId) => {
+  return await apiClient.post(`/api/follow/${userId}`);
+};
+
+export const unfollowUser = async (userId) => {
+  return await apiClient.delete(`/api/follow/${userId}`);
+};
+
+export const getFollowStatus = async (userId) => {
+  return await apiClient.get(`/api/follow/status/${userId}`);
+};
+
+// Room join requests (host-only)
+export const getRoomJoinRequests = async (roomId) => {
+  return await apiClient.get(`/api/rooms/${roomId}/join-requests`);
+};
+
+export const approveRoomJoinRequest = async (roomId, userId) => {
+  return await apiClient.post(`/api/rooms/${roomId}/join-requests/${userId}/approve`);
+};
+
+export const rejectRoomJoinRequest = async (roomId, userId) => {
+  return await apiClient.post(`/api/rooms/${roomId}/join-requests/${userId}/reject`);
+};
+
 // ==================== PRIVATE MESSAGES API FUNCTIONS ====================
 
 // Get private messages with another user
@@ -1438,6 +1480,154 @@ export const exportPaymentHistory = async (startDate, endDate) => {
     throw error;
   }
 };
+
+export const getRoomsWithActiveSessions = async () => {
+  try {
+    const response = await apiClient.get('/api/rooms/with-active-sessions');
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getRoomsWithActiveSessions):', error);
+    throw error;
+  }
+};
+
+export const sendWatchOut = async (recipientId, roomId) => {
+  try {
+    const response = await apiClient.post('/api/lobby-chats/watch-out', {
+      recipient_id: recipientId,
+      room_id: roomId,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('API Error (sendWatchOut):', error);
+    throw error;
+  }
+};
+
+export const startPrivateWatchout = async (recipientId, watchType = 'video', contentRating = 'G', price = 0) => {
+  try {
+    const response = await apiClient.post('/api/lobby-chats/private-watchout', {
+      recipient_id: recipientId,
+      watch_type: watchType,
+      content_rating: contentRating,
+      price,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('API Error (startPrivateWatchout):', error);
+    throw error;
+  }
+};
+
+export const getWatchoutAllowedRatings = async (recipientId) => {
+  try {
+    const response = await apiClient.get('/api/lobby-chats/watchout-ratings', { params: { recipient_id: recipientId } });
+    return response.data;
+  } catch (error) {
+    console.error('API Error (getWatchoutAllowedRatings):', error);
+    throw error;
+  }
+};
+
+export const searchUsers = async (query) => {
+  try {
+    const response = await apiClient.get('/api/users/search', { params: { q: query } });
+    return response.data;
+  } catch (error) {
+    console.error('API Error (searchUsers):', error);
+    throw error;
+  }
+};
+
+export const tipPost = async (postId) => {
+  const response = await apiClient.post(`/api/posts/${postId}/tip`);
+  return response.data;
+};
+
+export const publishPost = async (postId, data) => {
+  const response = await apiClient.put(`/api/posts/${postId}`, data);
+  return response.data;
+};
+
+export const submitReport = async ({ targetType, targetId, reason, description }) => {
+  const response = await apiClient.post('/api/reports', {
+    target_type: targetType,
+    target_id: targetId,
+    reason,
+    description,
+  });
+  return response.data;
+};
+
+export const checkReported = async (targetType, targetId) => {
+  const response = await apiClient.get('/api/reports/check', { params: { target_type: targetType, target_id: targetId } });
+  return response.data;
+};
+
+export const getUserSettings = async () => {
+  const response = await apiClient.get('/api/users/settings');
+  return response.data;
+};
+
+export const updateUserSettings = async (settings) => {
+  const response = await apiClient.put('/api/users/settings', settings);
+  return response.data;
+};
+
+// ── Lobby Groups ──────────────────────────────────────────────────────────────
+
+export const createLobbyGroup = (name, memberIds) =>
+  apiClient.post('/api/lobby-groups', { name, member_ids: memberIds }).then(r => r.data);
+
+export const getLobbyGroups = () =>
+  apiClient.get('/api/lobby-groups').then(r => r.data);
+
+export const getLobbyGroupMessages = (groupId) =>
+  apiClient.get(`/api/lobby-groups/${groupId}/messages`).then(r => r.data);
+
+export const sendLobbyGroupMessage = (groupId, message) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/messages`, { message }).then(r => r.data);
+
+export const uploadLobbyGroupImage = (groupId, formData) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/image`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+
+export const uploadLobbyGroupVideo = (groupId, formData) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/video`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+
+export const uploadLobbyGroupDocument = (groupId, formData) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/document`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+
+export const uploadLobbyGroupVoiceNote = (groupId, formData) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/voice-note`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+
+export const sendLobbyGroupWatchOut = (groupId, roomId) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/watch-out`, { room_id: roomId }).then(r => r.data);
+
+export const startLobbyGroupCall = (groupId) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/call`).then(r => r.data);
+
+export const endLobbyGroupCall = (groupId) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/call/end`).then(r => r.data);
+
+export const addLobbyGroupMembers = (groupId, userIds) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/members`, { user_ids: userIds }).then(r => r.data);
+
+export const leaveLobbyGroup = (groupId) =>
+  apiClient.delete(`/api/lobby-groups/${groupId}/leave`).then(r => r.data);
+
+export const deleteLobbyGroup = (groupId) =>
+  apiClient.delete(`/api/lobby-groups/${groupId}`).then(r => r.data);
+
+export const renameLobbyGroup = (groupId, name) =>
+  apiClient.patch(`/api/lobby-groups/${groupId}`, { name }).then(r => r.data);
 
 // Export the configured axios instance if needed for direct calls
 // or for setting up other interceptors elsewhere.

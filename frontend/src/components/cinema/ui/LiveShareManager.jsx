@@ -3,13 +3,13 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import { 
-  Video, 
-  Monitor, 
-  Camera, 
-  Mic, 
-  Users, 
-  X, 
+import {
+  Video,
+  Monitor,
+  Camera,
+  Mic,
+  Users,
+  X,
   Upload,
   Image as ImageIcon,
   ChevronDown,
@@ -18,7 +18,10 @@ import {
   UserCircle,
   AlertCircle,
   PauseCircle,
-  Radio
+  Radio,
+  BookOpen,
+  Music,
+  FileText
 } from 'lucide-react';
 import LiveShareLayoutSelector from './LiveShareLayoutSelector';
 import LiveShareWizard from '../../liveshare/LiveShareWizard';
@@ -27,6 +30,7 @@ import InSessionAdPanel from '../../ads/InSessionAdPanel';
 import BibleControl from '../../liveshare/BibleControl';
 import PresentationControl from '../../liveshare/PresentationControl';
 import HymnsControl from '../../liveshare/HymnsControl';
+import SermonControl from '../../liveshare/SermonControl';
 import { calculateAge } from '../../../utils/ageUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
@@ -108,6 +112,9 @@ export default function LiveShareManager({
   availableCameras = [], // 📹 NEW: Available camera devices
   selectedCameraId = null, // 📹 NEW: Currently selected camera
   onCameraSwitch = null, // 📹 NEW: Callback to switch camera
+  contentRating = '',
+  autoOpenGuestInvite = null, // { mode, title, hostUsername } — triggers guest popup automatically
+  onGuestInviteConsumed = null, // callback to clear autoOpenGuestInvite in parent
 }) {
   // Modal state - now using unified wizard
   const [showLiveShareWizard, setShowLiveShareWizard] = useState(false);
@@ -126,6 +133,40 @@ export default function LiveShareManager({
       onWizardStateChange(showLiveShareWizard || showGuestInvitation || showGuestSwitchType);
     }
   }, [showLiveShareWizard, showGuestInvitation, showGuestSwitchType, onWizardStateChange]);
+
+  // Sync live style editor from incoming podcastConfig (e.g. late join or host refresh)
+  useEffect(() => {
+    if (podcastConfig?.titleStyle) setLiveTitleStyle(s => ({ ...s, ...podcastConfig.titleStyle }));
+    if (podcastConfig?.logoStyle) setLiveLogoStyle(s => ({ ...s, ...podcastConfig.logoStyle }));
+  }, [podcastConfig]);
+
+  const handleLiveStyleUpdate = (titleStyle, logoStyle) => {
+    if (!sendMessage) return;
+    sendMessage({
+      type: 'liveshare_graphics_update',
+      data: {
+        graphic: {
+          type: 'studio_config',
+          active: true,
+          content: { titleStyle, logoStyle },
+        },
+      },
+    });
+  };
+
+  // Auto-open guest invitation popup when host assigns us as guest via liveshare_permission_granted
+  useEffect(() => {
+    if (!autoOpenGuestInvite || isGuest) return;
+    const invitationData = {
+      hostUsername: autoOpenGuestInvite.hostUsername || watchSessionMembers.find(m => m.is_host)?.username || 'Host',
+      showTitle: autoOpenGuestInvite.title || podcastConfig?.title || null,
+      mode: autoOpenGuestInvite.mode || liveShareContentMode || 'podcast',
+    };
+    setGuestInvitationData(invitationData);
+    setIsGuest(true);
+    setShowGuestInvitation(true);
+    onGuestInviteConsumed?.();
+  }, [autoOpenGuestInvite]);
 
   // ✅ Cleanup studio controls when LiveShare ends (mode changes from active → null)
   useEffect(() => {
@@ -175,7 +216,10 @@ export default function LiveShareManager({
       setPodcastLogo(null);
       setPodcastLogoPreview(null);
       setSelectedGuest(null);
-      
+      setShowBibleControl(false);
+      setShowHymnControl(false);
+      setShowSermonControl(false);
+
       // Clear localStorage for this session
       storageKeys.forEach(key => localStorage.removeItem(key));
       
@@ -303,6 +347,11 @@ export default function LiveShareManager({
     return localStorage.getItem('liveshare_banner_layout') || 'bn';
   });
   
+  // Church mode panel visibility (on-demand, not auto-rendered)
+  const [showBibleControl, setShowBibleControl] = useState(false);
+  const [showHymnControl, setShowHymnControl] = useState(false);
+  const [showSermonControl, setShowSermonControl] = useState(false);
+
   // Bible verse state (Church mode)
   const [currentBibleVerse, setCurrentBibleVerse] = useState(null);
   
@@ -331,7 +380,11 @@ export default function LiveShareManager({
     return localStorage.getItem('liveshare_ticker_timebox_color') || '#1A1A2E';
   });
   const [bannerColor, setBannerColor] = useState('#DC2626');
-  const [bannerTextColor, setBannerTextColor] = useState('#FFFFFF'); // Default white text
+  const [bannerTextColor, setBannerTextColor] = useState('#FFFFFF');
+
+  // Live title & logo style editor (host-only, synced to podcastConfig)
+  const [liveTitleStyle, setLiveTitleStyle] = useState({ color: '#FFFFFF', size: 24, weight: 700, case: 'none' });
+  const [liveLogoStyle, setLiveLogoStyle] = useState({ x: 10, y: 80, size: 100 });
   
   // Color picker popover states
   const [showLowerThirdColorPicker, setShowLowerThirdColorPicker] = useState(false);
@@ -1097,7 +1150,46 @@ export default function LiveShareManager({
     toast.success(newActive ? 'Banner activated' : 'Banner hidden');
     console.log('🎨 [LiveShareManager] Banner toggle broadcast:', graphicData);
   };
-  
+
+  // Re-broadcast the active banner with a new layout without toggling visibility
+  const rebroadcastBannerWithLayout = (newLayout) => {
+    if (!bannerText.trim()) return;
+    let podcastLogoSize = 100, podcastLogoX = 10, podcastLogoY = 80;
+    try {
+      const saved = localStorage.getItem(`podcast_logo_style_${sessionId}`);
+      if (saved) {
+        const s = JSON.parse(saved);
+        podcastLogoSize = s.size || 100;
+        podcastLogoX = s.x || 10;
+        podcastLogoY = s.y || 80;
+      }
+    } catch {}
+    const graphicData = {
+      type: 'banner',
+      content: {
+        text: bannerText,
+        style: { bgColor: bannerColor, textColor: bannerTextColor },
+        logoUrl: podcastConfig?.logoUrl || logoBugPreview,
+        podcastLogoSize,
+        podcastLogoX,
+        podcastLogoY,
+        layout: newLayout,
+      },
+      position: 'bottom',
+      active: true,
+      z_index: 11,
+    };
+    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(graphicData),
+    }).catch(err => console.error('Banner rebroadcast error:', err));
+    if (sendMessage) {
+      sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
+    }
+  };
+
   // Bible verse handlers (Church mode)
   const handleShowBibleVerse = (verseData) => {
     console.log('📖 [Bible] Showing verse:', verseData);
@@ -1299,6 +1391,18 @@ export default function LiveShareManager({
     }
   };
   
+  // 📜 Sermon handlers (Church mode)
+  const handleShowSermon = ({ pages, title }) => {
+    if (sendMessage) {
+      sendMessage({
+        type: 'sermon_update',
+        data: { active: true, pages, title: title || null, currentPage: 0 }
+      });
+    }
+    setShowSermonControl(false);
+    toast.success('Sermon displayed', { icon: '📜' });
+  };
+
   const handleStopMedia = () => {
     console.log('⏹️ [MediaQueue] Stopping media overlay');
     
@@ -2525,6 +2629,124 @@ export default function LiveShareManager({
           </details>
           )}
           
+          {/* Live Title & Logo Editor — podcast / show / news only */}
+          {(liveShareContentMode === 'podcast' || liveShareContentMode === 'show' || liveShareContentMode === 'news') && podcastConfig && (
+          <details className="bg-gray-800/50 rounded-xl overflow-hidden">
+            <summary className="pl-3 pr-2.5 py-2 cursor-pointer text-sm font-medium text-white hover:text-purple-400 transition-colors list-none">
+              <span className="flex items-center gap-2">
+                <ChevronDown size={14} className="text-gray-400" />
+                <span className="text-purple-400">✦</span>
+                Title &amp; Logo Styles
+              </span>
+            </summary>
+            <div className="px-3 pb-3 pt-2 space-y-3">
+              {/* Title controls */}
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Title</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">Color</label>
+                    <input type="color" value={liveTitleStyle.color}
+                      onChange={e => {
+                        const next = { ...liveTitleStyle, color: e.target.value };
+                        setLiveTitleStyle(next);
+                        handleLiveStyleUpdate(next, liveLogoStyle);
+                      }}
+                      className="w-full h-7 rounded cursor-pointer bg-transparent border border-gray-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">Size (px)</label>
+                    <input type="number" min="12" max="72" value={liveTitleStyle.size}
+                      onChange={e => {
+                        const next = { ...liveTitleStyle, size: parseInt(e.target.value) || 24 };
+                        setLiveTitleStyle(next);
+                        handleLiveStyleUpdate(next, liveLogoStyle);
+                      }}
+                      className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">Weight</label>
+                    <select value={liveTitleStyle.weight}
+                      onChange={e => {
+                        const next = { ...liveTitleStyle, weight: parseInt(e.target.value) };
+                        setLiveTitleStyle(next);
+                        handleLiveStyleUpdate(next, liveLogoStyle);
+                      }}
+                      className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs"
+                    >
+                      <option value={400}>Normal</option>
+                      <option value={600}>Semi-Bold</option>
+                      <option value={700}>Bold</option>
+                      <option value={900}>Black</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">Case</label>
+                    <select value={liveTitleStyle.case}
+                      onChange={e => {
+                        const next = { ...liveTitleStyle, case: e.target.value };
+                        setLiveTitleStyle(next);
+                        handleLiveStyleUpdate(next, liveLogoStyle);
+                      }}
+                      className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs"
+                    >
+                      <option value="none">As-is</option>
+                      <option value="upper">UPPER</option>
+                      <option value="lower">lower</option>
+                      <option value="title">Title</option>
+                      <option value="sentence">Sentence</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Logo position/size controls (only if logo exists) */}
+              {podcastConfig.logoUrl && (
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Logo</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">X (px)</label>
+                    <input type="number" min="0" max="1000" value={liveLogoStyle.x}
+                      onChange={e => {
+                        const next = { ...liveLogoStyle, x: parseInt(e.target.value) || 0 };
+                        setLiveLogoStyle(next);
+                        handleLiveStyleUpdate(liveTitleStyle, next);
+                      }}
+                      className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">Y (px)</label>
+                    <input type="number" min="0" max="1000" value={liveLogoStyle.y}
+                      onChange={e => {
+                        const next = { ...liveLogoStyle, y: parseInt(e.target.value) || 0 };
+                        setLiveLogoStyle(next);
+                        handleLiveStyleUpdate(liveTitleStyle, next);
+                      }}
+                      className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">Size (px)</label>
+                    <input type="number" min="20" max="300" value={liveLogoStyle.size}
+                      onChange={e => {
+                        const next = { ...liveLogoStyle, size: parseInt(e.target.value) || 100 };
+                        setLiveLogoStyle(next);
+                        handleLiveStyleUpdate(liveTitleStyle, next);
+                      }}
+                      className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+              )}
+            </div>
+          </details>
+          )}
+
           {/* Media Queue */}
           {shouldShowControl('mediaQueue') && (
           <details className="bg-gray-800/50 rounded-lg">
@@ -2797,11 +3019,7 @@ export default function LiveShareManager({
                     onClick={() => {
                       setBannerLayout('bn');
                       localStorage.setItem('liveshare_banner_layout', 'bn');
-                      // Re-broadcast if active
-                      if (bannerActive) {
-                        setTimeout(() => handleToggleBanner(), 50);
-                        setTimeout(() => handleToggleBanner(), 100);
-                      }
+                      if (bannerActive) rebroadcastBannerWithLayout('bn');
                     }}
                     className={`flex-1 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg text-xs sm:text-sm transition-colors ${
                       bannerLayout === 'bn'
@@ -2815,11 +3033,7 @@ export default function LiveShareManager({
                     onClick={() => {
                       setBannerLayout('breakin');
                       localStorage.setItem('liveshare_banner_layout', 'breakin');
-                      // Re-broadcast if active
-                      if (bannerActive) {
-                        setTimeout(() => handleToggleBanner(), 50);
-                        setTimeout(() => handleToggleBanner(), 100);
-                      }
+                      if (bannerActive) rebroadcastBannerWithLayout('breakin');
                     }}
                     className={`flex-1 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg text-xs sm:text-sm transition-colors ${
                       bannerLayout === 'breakin'
@@ -2851,16 +3065,49 @@ export default function LiveShareManager({
           </details>
           )}
           
-          {/* Bible Verse Control (Church mode only) */}
+          {/* Church mode: icon launcher row */}
           {liveShareContentMode === 'church' && (
-            <BibleControl 
+            <div className="bg-gray-800/50 rounded-xl p-3">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Church Tools</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowBibleControl(v => !v)}
+                  className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${showBibleControl ? 'bg-amber-600 text-white' : 'bg-gray-700 text-amber-400 hover:bg-gray-600'}`}
+                  title="Bible"
+                >
+                  <BookOpen size={16} />
+                  Bible
+                </button>
+                <button
+                  onClick={() => setShowHymnControl(v => !v)}
+                  className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${showHymnControl ? 'bg-green-600 text-white' : 'bg-gray-700 text-green-400 hover:bg-gray-600'}`}
+                  title="Hymns"
+                >
+                  <Music size={16} />
+                  Hymns
+                </button>
+                <button
+                  onClick={() => setShowSermonControl(v => !v)}
+                  className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${showSermonControl ? 'bg-amber-600 text-white' : 'bg-gray-700 text-amber-400 hover:bg-gray-600'}`}
+                  title="Sermon"
+                >
+                  <FileText size={16} />
+                  Sermon
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Bible Verse Control (Church mode, on demand) */}
+          {liveShareContentMode === 'church' && showBibleControl && (
+            <BibleControl
               onShowVerse={handleShowBibleVerse}
               onHideVerse={handleHideBibleVerse}
               currentVerse={currentBibleVerse}
             />
           )}
-          
-          {/* ⛪ Presentation Control (Church mode only) */}
+
+          {/* Presentation / Slides Control (Church mode, on demand) */}
           {shouldShowControl('presentation') && presentationUrl && (
             <PresentationControl
               presentationUrl={presentationUrl}
@@ -2871,9 +3118,17 @@ export default function LiveShareManager({
               onTogglePresentation={handleTogglePresentation}
             />
           )}
-          
-          {/* 🎵 Hymns Control (Church mode only) */}
-          {shouldShowControl('hymns') && (
+
+          {/* 📜 Sermon Control modal (Church mode, on demand) */}
+          {liveShareContentMode === 'church' && showSermonControl && (
+            <SermonControl
+              onShowSermon={handleShowSermon}
+              onHideSermon={() => setShowSermonControl(false)}
+            />
+          )}
+
+          {/* Hymns Control (Church mode, on demand) */}
+          {shouldShowControl('hymns') && showHymnControl && (
             <HymnsControl
               onShowHymn={handleShowHymn}
               onHideHymn={handleHideHymn}
@@ -3525,6 +3780,7 @@ export default function LiveShareManager({
           currentUser={currentUser}
           availableCameras={availableCameras} // 📹 Pass available cameras
           selectedCameraId={selectedCameraId} // 📹 Pass current camera
+          contentRating={contentRating}
         />
       )}
 
@@ -3564,6 +3820,11 @@ export default function LiveShareManager({
                   guestShareType: shareType,
                   suggestedLayout: autoLayout
                 }
+              });
+              // Fix 3: push layout to all viewers immediately
+              sendMessage({
+                type: 'liveshare_layout_update',
+                data: { layout: autoLayout }
               });
             }
             

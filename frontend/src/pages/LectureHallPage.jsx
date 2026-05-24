@@ -1,5 +1,5 @@
 // frontend/src/pages/PositionCalculatorPage.jsx
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Text } from '@react-three/drei';
@@ -8,13 +8,15 @@ import { SRGBColorSpace } from 'three'; // Import new color space constant
 import toast from 'react-hot-toast';
 import { sendFriendRequest, getFriendshipStatus, apiClient } from '../services/api';
 import Taskbar from '../components/Taskbar';
+import AppSplash from '../components/AppSplash';
 import FlatUserIcon from '../components/cinema/3d-cinema/avatars/FlatUserIcon';
 import LectureHallAvatarManager from '../components/cinema/3d-cinema/avatars/LectureHallAvatarManager';
 import lectureHallCameraPositions from '../data/lectureHallCameraPositions';
 import { lectureHallLeftRightViews } from '../data/lectureHallLeftRightViews';
 import useAuth from '../hooks/useAuth';
 import useWebSocket from '../hooks/useWebSocket';
-import useLectureHallAudio, { isInSameRowGroup, DiscussionModeBar } from '../hooks/useLectureHallAudio';
+import useLectureHallAudio, { isInSameRowGroup } from '../hooks/useLectureHallAudio';
+import DiscussionModeBar from '../components/cinema/3d-cinema/ui/DiscussionModeBar';
 import useLiveKitRoom from '../hooks/useLiveKitRoom';
 import { RoomEvent, Track, LocalVideoTrack } from 'livekit-client'; // For selective subscription and screen share
 import { useSeatSwap } from '../hooks/useSeatSwap';
@@ -43,6 +45,51 @@ import { HeartIcon } from '@heroicons/react/24/solid';
 
 // ✅ Constant empty array - prevents recreation on every render
 const EMPTY_LECTURE_HALL_SEATS = [];
+
+// Retry a fetch on network / 5xx errors with exponential backoff.
+// Never retries on 4xx (bad request won't get better) or AbortError.
+async function withRetry(fn, maxAttempts = 3) {
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      lastErr = err;
+      const status = err?.response?.status;
+      if (status >= 400 && status < 500) throw err;
+      if (attempt < maxAttempts) {
+        await new Promise(r => setTimeout(r, Math.min(1000 * 2 ** (attempt - 1), 8000)));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+// Error boundary wrapping the Three.js <Canvas> — catches GPU context loss
+// and render-loop crashes without crashing the whole page.
+class LectureHallErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error('[LectureHall] Canvas error:', error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center bg-gray-900 text-white gap-3 p-8">
+          <p className="text-lg font-semibold">3D view failed to load</p>
+          <p className="text-sm text-gray-400">{this.state.error.message}</p>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="px-4 py-2 bg-purple-600 rounded-lg hover:bg-purple-500 text-sm"
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ✅ API base URL for quiz fetches
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
@@ -992,7 +1039,15 @@ const PositionCalculatorPage = () => {
   const wsToken = sessionStorage.getItem('wewatch_ws_token');
   
   const controlsRef = useRef();
-  
+
+  // Stability / lifecycle refs
+  const prevConnectedRef = useRef(false);          // WS disconnect toast
+  const memberFetchCacheRef = useRef({ fetchedAt: 0 }); // member-list dedup
+  const updateIntervalRunningRef = useRef(false);  // guard against stacked periodic interval
+  const isMediaFullscreenRef = useRef(false);      // used inside unified mousemove handler
+  const blackboardMediaRef = useRef(null);         // used inside unified mousemove handler
+  const captureAbortRef = useRef(false);           // aborts frame capture loop on unmount
+
   // States
   const [cameraPosition, setCameraPosition] = useState({ x: 0, y: 0, z: 0 });
   const [clickedPosition, setClickedPosition] = useState(null);
@@ -1251,20 +1306,49 @@ const PositionCalculatorPage = () => {
     finalSessionId
   );
   
+  // Keep fullscreen + blackboard refs in sync (used inside unified mousemove handler)
+  useEffect(() => { isMediaFullscreenRef.current = isMediaFullscreen; }, [isMediaFullscreen]);
+  useEffect(() => { blackboardMediaRef.current = blackboardMedia; }, [blackboardMedia]);
+
+  // WebSocket disconnect / reconnect toast
+  useEffect(() => {
+    if (!prevConnectedRef.current && isConnected) {
+      // First connection — no toast
+    } else if (prevConnectedRef.current && !isConnected) {
+      toast.error('Connection lost — reconnecting…', { id: 'ws-disconnect', duration: Infinity });
+    } else if (!prevConnectedRef.current && isConnected && prevConnectedRef.hasWasConnected) {
+      toast.success('Reconnected!', { id: 'ws-disconnect' });
+    }
+    if (isConnected) prevConnectedRef.hasWasConnected = true;
+    prevConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  // Clean up window camera globals and abort any running capture on unmount
+  useEffect(() => {
+    return () => {
+      delete window.targetCameraPosition;
+      delete window.targetLookingAt;
+      captureAbortRef.current = true;
+    };
+  }, []);
+
   // ❤️ Fetch initial like status
   useEffect(() => {
-    const fetchLikeStatus = async () => {
-      if (!finalSessionId) return;
+    if (!finalSessionId) return;
+    let cancelled = false;
+    const run = async () => {
       try {
-        const response = await apiClient.get(`/api/sessions/${finalSessionId}/like-status`);
-        setIsSessionLiked(response.data.isLiked);
-        setSessionLikesCount(response.data.count);
+        const response = await withRetry(() => apiClient.get(`/api/sessions/${finalSessionId}/like-status`));
+        if (!cancelled) {
+          setIsSessionLiked(response.data.isLiked);
+          setSessionLikesCount(response.data.count);
+        }
       } catch (err) {
-        console.error('Failed to fetch like status:', err);
+        if (!cancelled) console.error('Failed to fetch like status:', err);
       }
     };
-    
-    fetchLikeStatus();
+    run();
+    return () => { cancelled = true; };
   }, [finalSessionId]);
   
   // ❤️ Double-click like handler
@@ -1417,37 +1501,17 @@ const PositionCalculatorPage = () => {
     }
   }, [isMediaFullscreen, blackboardMedia]);
 
-  // ✅ Auto-hide fullscreen controls after 2 seconds of inactivity
+  // Show controls on fullscreen entry and start inactivity timer (no mousemove needed here)
   useEffect(() => {
     if (!isMediaFullscreen) return;
-    
-    // Only for uploaded media fullscreen
-    const isUploadedMedia = blackboardMedia && 
-      blackboardMedia.type !== 'liveshare' && 
+    const isUploadedMedia = blackboardMedia &&
+      blackboardMedia.type !== 'liveshare' &&
       blackboardMedia.type !== 'watchfrom';
-    
     if (!isUploadedMedia) return;
-    
     setShowFullscreenControls(true);
-    
-    const handleMouseMove = () => {
-      setShowFullscreenControls(true);
-      if (fullscreenInactivityTimerRef.current) {
-        clearTimeout(fullscreenInactivityTimerRef.current);
-      }
-      fullscreenInactivityTimerRef.current = setTimeout(() => {
-        setShowFullscreenControls(false);
-      }, 2000);
-    };
-    
-    window.addEventListener('mousemove', handleMouseMove);
-    handleMouseMove(); // Trigger initial timer
-    
+    fullscreenInactivityTimerRef.current = setTimeout(() => setShowFullscreenControls(false), 2000);
     return () => {
-      window.addEventListener('mousemove', handleMouseMove);
-      if (fullscreenInactivityTimerRef.current) {
-        clearTimeout(fullscreenInactivityTimerRef.current);
-      }
+      if (fullscreenInactivityTimerRef.current) clearTimeout(fullscreenInactivityTimerRef.current);
     };
   }, [isMediaFullscreen, blackboardMedia]);
 
@@ -1674,53 +1738,62 @@ const PositionCalculatorPage = () => {
     }
   }, []);
   
-  // 🎮 View icons show/hide on mouse movement (3 second auto-hide)
+  // Unified mousemove handler — registered once, uses refs for dynamic state
   useEffect(() => {
     const handleMouseMove = () => {
+      // View icons auto-hide (3s)
       setShowViewIcons(true);
-      
-      // Clear existing timeout
-      if (viewIconsHideTimeoutRef.current) {
-        clearTimeout(viewIconsHideTimeoutRef.current);
+      if (viewIconsHideTimeoutRef.current) clearTimeout(viewIconsHideTimeoutRef.current);
+      viewIconsHideTimeoutRef.current = setTimeout(() => setShowViewIcons(false), 3000);
+
+      // Fullscreen controls auto-hide (2s) — only when applicable
+      const media = blackboardMediaRef.current;
+      const isUploaded = media && media.type !== 'liveshare' && media.type !== 'watchfrom';
+      if (isMediaFullscreenRef.current && isUploaded) {
+        setShowFullscreenControls(true);
+        if (fullscreenInactivityTimerRef.current) clearTimeout(fullscreenInactivityTimerRef.current);
+        fullscreenInactivityTimerRef.current = setTimeout(() => setShowFullscreenControls(false), 2000);
       }
-      
-      // Hide icons after 3 seconds of no movement
-      viewIconsHideTimeoutRef.current = setTimeout(() => {
-        setShowViewIcons(false);
-      }, 3000);
     };
-    
+
     window.addEventListener('mousemove', handleMouseMove);
-    
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
-      if (viewIconsHideTimeoutRef.current) {
-        clearTimeout(viewIconsHideTimeoutRef.current);
-      }
+      if (viewIconsHideTimeoutRef.current) clearTimeout(viewIconsHideTimeoutRef.current);
     };
-  }, []);
+  }, []); // Registered once — dynamic values accessed via refs
   
-  // ✅ Fetch temporary media items when sessionId changes
+  // Fetch temporary media + token balance in parallel on session join
   useEffect(() => {
-    const fetchTemporaryMedia = async () => {
-      if (!actualSessionId) {
-        console.log('📥 [PositionCalculatorPage] No actualSessionId, skipping temporary media fetch');
-        return;
+    if (!actualSessionId || !currentUser?.id) return;
+    let cancelled = false;
+
+    const run = async () => {
+      const [mediaResult, walletResult] = await Promise.allSettled([
+        withRetry(() => getSessionTemporaryMedia(actualSessionId)),
+        withRetry(() => apiClient.get('/api/wallets/me')),
+      ]);
+
+      if (cancelled) return;
+
+      if (mediaResult.status === 'fulfilled') {
+        setTemporaryPlaylist(mediaResult.value);
+      } else {
+        console.error('❌ [Join] Temporary media fetch failed:', mediaResult.reason);
       }
-      
-      try {
-        console.log(`📥 [PositionCalculatorPage] Fetching temporary media for session ${actualSessionId}`);
-        const items = await getSessionTemporaryMedia(actualSessionId);
-        console.log(`📥 [PositionCalculatorPage] Fetched ${items.length} temporary media items:`, items);
-        setTemporaryPlaylist(items);
-      } catch (error) {
-        console.error('❌ [PositionCalculatorPage] Failed to fetch temporary media:', error);
-        // Don't show toast - just log error. Playlist stays empty.
+
+      if (walletResult.status === 'fulfilled') {
+        const balance = walletResult.value?.data?.balance;
+        if (balance !== undefined) setTokenBalance(balance);
+      } else {
+        console.error('❌ [Join] Wallet fetch failed:', walletResult.reason);
+        setTokenBalance(0);
       }
     };
-    
-    fetchTemporaryMedia();
-  }, [actualSessionId]);
+
+    run();
+    return () => { cancelled = true; };
+  }, [actualSessionId, currentUser?.id]);
   
   // ✅ Handle upload complete - refresh temporary playlist
   const handleUploadComplete = useCallback(async () => {
@@ -1749,7 +1822,15 @@ const PositionCalculatorPage = () => {
       console.warn('⚠️ [fetchWatchSessionMembers] Skipping - missing roomId or sessionId');
       return;
     }
-    
+
+    // Dedup: skip if called again within 5 seconds
+    const now = Date.now();
+    if (now - memberFetchCacheRef.current.fetchedAt < 5000) {
+      console.log('⏭️ [fetchWatchSessionMembers] Skipping — fetched < 5s ago');
+      return;
+    }
+    memberFetchCacheRef.current.fetchedAt = now;
+
     try {
       console.log('📡 [fetchWatchSessionMembers] Calling getActiveSession for room:', actualRoomId);
       const response = await getActiveSession(actualRoomId);
@@ -1976,117 +2057,63 @@ const PositionCalculatorPage = () => {
     }
   }, [actualSessionId, currentUser?.id, sendMessage]);
 
-  // ✅ Fetch quiz data from backend API on mount (after sessionStorage restore)
+  // Fetch quiz data — parallel where possible, abort on unmount
   useEffect(() => {
-    const fetchQuizData = async () => {
-      if (!actualSessionId || !currentUser?.id) return;
+    if (!actualSessionId || !currentUser?.id) return;
+    let cancelled = false;
+
+    const run = async () => {
+      const token = sessionStorage.getItem('wewatch_ws_token');
+      if (!token) { console.warn('⚠️ [Quiz Fetch] No auth token'); return; }
+
+      const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
 
       try {
-        const token = sessionStorage.getItem('wewatch_ws_token');
-        if (!token) {
-          console.warn('⚠️ [Quiz Fetch] No auth token found');
-          return;
-        }
-
-        console.log('📥 [Quiz Fetch] Fetching quiz data from backend...');
-
-        // Fetch quizzes list (host view)
         if (isHost) {
-          const quizzesResponse = await fetch(`${API_BASE_URL}/api/quizzes/session/${actualSessionId}`, {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          });
+          // Fetch quizzes list + (if we already know the active quiz) progress in parallel
+          const [quizzesResp, progressResp] = await Promise.allSettled([
+            withRetry(() => fetch(`${API_BASE_URL}/api/quizzes/session/${actualSessionId}`, { headers })),
+            activeQuiz?.id
+              ? withRetry(() => fetch(`${API_BASE_URL}/api/quizzes/${activeQuiz.id}/progress`, { headers }))
+              : Promise.resolve(null),
+          ]);
 
-          if (quizzesResponse.ok) {
-            const quizzesData = await quizzesResponse.json();
-            if (quizzesData && Array.isArray(quizzesData)) {
-              setQuizzes(quizzesData);
-              console.log('✅ [Quiz Fetch] Loaded quizzes:', quizzesData.length);
-              
-              // Find active quiz
-              const activeQuizData = quizzesData.find(q => q.status === 'in_progress');
-              if (activeQuizData) {
-                setActiveQuiz(activeQuizData);
-                console.log('✅ [Quiz Fetch] Found active quiz:', activeQuizData.id);
-              }
+          if (cancelled) return;
+
+          if (quizzesResp.status === 'fulfilled' && quizzesResp.value?.ok) {
+            const data = await quizzesResp.value.json();
+            if (Array.isArray(data)) {
+              setQuizzes(data);
+              const found = data.find(q => q.status === 'in_progress');
+              if (found) setActiveQuiz(found);
             }
-          } else {
-            console.warn('⚠️ [Quiz Fetch] Failed to fetch quizzes:', quizzesResponse.status);
+          }
+          if (progressResp.status === 'fulfilled' && progressResp.value?.ok) {
+            const data = await progressResp.value.json();
+            if (data) setQuizProgress(data);
           }
         } else {
-          // Student: Fetch quiz history
-          const historyResponse = await fetch(`${API_BASE_URL}/api/quizzes/session/${actualSessionId}/history`, {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          });
-
-          if (historyResponse.ok) {
-            const historyData = await historyResponse.json();
-            if (historyData) {
-              setQuizHistory(historyData);
-              console.log('✅ [Quiz Fetch] Loaded quiz history:', historyData);
-              
-              // If there's an active quiz, fetch it
-              if (historyData.active_quizzes && historyData.active_quizzes.length > 0) {
-                const activeQuizData = historyData.active_quizzes[0];
-                setActiveQuiz(activeQuizData);
-                console.log('✅ [Quiz Fetch] Found active quiz for student:', activeQuizData.id);
-              }
-            }
-          } else {
-            console.warn('⚠️ [Quiz Fetch] Failed to fetch quiz history:', historyResponse.status);
-          }
-        }
-
-        // Fetch quiz progress if host viewing active quiz
-        if (isHost && activeQuiz?.id) {
-          const progressResponse = await fetch(`${API_BASE_URL}/api/quizzes/${activeQuiz.id}/progress`, {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          });
-
-          if (progressResponse.ok) {
-            const progressData = await progressResponse.json();
-            if (progressData) {
-              setQuizProgress(progressData);
-              console.log('✅ [Quiz Fetch] Loaded quiz progress:', progressData);
-            }
+          const resp = await withRetry(() =>
+            fetch(`${API_BASE_URL}/api/quizzes/session/${actualSessionId}/history`, { headers })
+          );
+          if (cancelled || !resp.ok) return;
+          const data = await resp.json();
+          if (data) {
+            setQuizHistory(data);
+            if (data.active_quizzes?.length > 0) setActiveQuiz(data.active_quizzes[0]);
           }
         }
       } catch (err) {
-        console.error('❌ [Quiz Fetch] Error fetching quiz data:', err);
+        if (!cancelled) console.error('❌ [Quiz Fetch] Error:', err);
       }
     };
 
-    // Delay fetch to allow sessionStorage restore to complete first
-    const timer = setTimeout(fetchQuizData, 1000);
-    return () => clearTimeout(timer);
+    // Small delay to let sessionStorage restore finish first
+    const timer = setTimeout(run, 500);
+    return () => { clearTimeout(timer); cancelled = true; };
   }, [actualSessionId, currentUser?.id, isHost]);
 
-  // Fetch user's token balance for donation system
-  useEffect(() => {
-    const fetchTokenBalance = async () => {
-      if (!currentUser?.id) return;
-      
-      try {
-        const response = await apiClient.get('/api/wallets/me');
-        if (response.data?.balance !== undefined) {
-          setTokenBalance(response.data.balance);
-        }
-      } catch (error) {
-        console.error('❌ [TokenBalance] Failed to fetch wallet balance:', error);
-        setTokenBalance(0); // Fallback to 0 on error
-      }
-    };
-
-    fetchTokenBalance();
-  }, [currentUser?.id]);
+  // Token balance is fetched in the combined join-time effect above
 
   // Request fresh seat state after WebSocket connects
   useEffect(() => {
@@ -2143,7 +2170,7 @@ const PositionCalculatorPage = () => {
     // Only redirect if session explicitly ended with error, NOT if there was never a session
     if (sessionStatus?.error === 'session_ended') {
       console.log('📛 [PositionCalculator] Session ended via sessionStatus');
-      toast.error('Lecture hall session has ended');
+      toast.error('Lecture hall session has ended', { id: 'session-ended' });
       
       // ✅ Redirect based on room type: lobby for instant watch, room page for persistent
       const redirectPath = isInstantWatch ? '/lobby' : `/rooms/${roomId}`;
@@ -2500,7 +2527,17 @@ const PositionCalculatorPage = () => {
   
   // 🎧 [AUDIO ELEMENTS] Stable storage for audio elements (survives remounts)
   const audioElementsRef = useRef(new Map()); // Map<participantIdentity, HTMLAudioElement>
-  
+
+  // 🔇 Silence mode — mutes all incoming audio without unsubscribing
+  const [isSilenceMode, setIsSilenceMode] = useState(false);
+  const isSilenceModeRef = useRef(false);
+
+  // Sync silence ref and apply to all live audio elements immediately
+  useEffect(() => {
+    isSilenceModeRef.current = isSilenceMode;
+    audioElementsRef.current.forEach(el => { el.muted = isSilenceMode; });
+  }, [isSilenceMode]);
+
   // 📦 [STABLE STATE] Refs for frequently changing state (prevents effect remounts)
   const userSeatsRef = useRef(userSeats);
   const approvedSpeakersRef = useRef(approvedSpeakers);
@@ -2773,7 +2810,7 @@ const PositionCalculatorPage = () => {
       try {
         const audioElement = track.attach();
         audioElement.autoplay = true;
-        audioElement.muted = false; // Explicitly unmute
+        audioElement.muted = isSilenceModeRef.current; // Respect current silence mode
         audioElement.volume = 1.0; // Max volume
         audioElement.style.display = 'none';
         document.body.appendChild(audioElement);
@@ -3182,8 +3219,8 @@ const PositionCalculatorPage = () => {
       // Always hear host (seat 145)
       if (speakerSeatId === 145 || speakerSeatId === '145') return true;
       
-      // Always hear approved speakers
-      if (approvedSpeakers[speakerUserId]) return true;
+      // Always hear approved speakers (read from ref — not a dep so approval changes don't rebuild all subscriptions)
+      if (approvedSpeakersRef.current[speakerUserId]) return true;
       
       // Default: Same row AND column only
       const myLocation = getRowFromSeatId(mySeatId);
@@ -3295,7 +3332,9 @@ const PositionCalculatorPage = () => {
       livekitRoom.off(RoomEvent.TrackPublished, handleTrackPublished);
       console.log('🧹 [SELECTIVE SUBSCRIPTION] Cleaned up');
     };
-  }, [livekitRoom, isLivekitConnected, isLectureHall, discussionMode, approvedSpeakers, isHost, getRowFromSeatId]);
+  }, [livekitRoom, isLivekitConnected, isLectureHall, discussionMode, isHost, getRowFromSeatId]);
+  // approvedSpeakers intentionally omitted — read via approvedSpeakersRef to avoid rebuilding
+  // all audio subscriptions on every approval change. The ref is kept in sync above.
   
   // 🧹 [DISCUSSION MODE CLEANUP] Remove inappropriate audio elements when toggling discussion mode OFF
   useEffect(() => {
@@ -3403,6 +3442,60 @@ const PositionCalculatorPage = () => {
     // console.log('✅ [SUBSCRIPTION SYNC] Complete\n');
   }, [discussionMode, approvedSpeakers, livekitRoom, isLivekitConnected, isLectureHall, isHost, getRowFromSeatId]);
   
+  // ⏱️ [MUTE TIMER] Auto-unsubscribe after 60s of continuous mute; re-subscribe on unmute
+  // Mirrors RemoteAudioPlayer pattern — reduces idle LiveKit subscriptions at scale
+  useEffect(() => {
+    if (!livekitRoom || !isLivekitConnected || !isLectureHall) return;
+
+    const timerMap = new Map();    // trackSid → timeoutId
+    const unsubscribedTracks = new Set(); // trackSids we manually unsubscribed
+
+    const handleTrackMuted = (publication) => {
+      if (publication.kind !== 'audio') return;
+      if (publication.source === Track.Source.ScreenShareAudio) return;
+
+      const existing = timerMap.get(publication.trackSid);
+      if (existing) clearTimeout(existing);
+
+      const timerId = setTimeout(() => {
+        if (publication.isSubscribed) {
+          publication.setSubscribed(false);
+          unsubscribedTracks.add(publication.trackSid);
+        }
+        timerMap.delete(publication.trackSid);
+      }, 60000);
+
+      timerMap.set(publication.trackSid, timerId);
+    };
+
+    const handleTrackUnmuted = (publication) => {
+      if (publication.kind !== 'audio') return;
+      if (publication.source === Track.Source.ScreenShareAudio) return;
+
+      const timerId = timerMap.get(publication.trackSid);
+      if (timerId) {
+        clearTimeout(timerId);
+        timerMap.delete(publication.trackSid);
+      }
+
+      if (unsubscribedTracks.has(publication.trackSid)) {
+        publication.setSubscribed(true);
+        unsubscribedTracks.delete(publication.trackSid);
+      }
+    };
+
+    livekitRoom.on(RoomEvent.TrackMuted, handleTrackMuted);
+    livekitRoom.on(RoomEvent.TrackUnmuted, handleTrackUnmuted);
+
+    return () => {
+      livekitRoom.off(RoomEvent.TrackMuted, handleTrackMuted);
+      livekitRoom.off(RoomEvent.TrackUnmuted, handleTrackUnmuted);
+      timerMap.forEach(timerId => clearTimeout(timerId));
+      timerMap.clear();
+      unsubscribedTracks.clear();
+    };
+  }, [livekitRoom, isLivekitConnected, isLectureHall]);
+
   // 🧹 [CLEANUP] Remove all audio elements on real component unmount
   useEffect(() => {
     return () => {
@@ -3562,6 +3655,10 @@ const PositionCalculatorPage = () => {
       return;
     }
 
+    // Guard against stacking if deps change rapidly (e.g. sendMessage recreation)
+    if (updateIntervalRunningRef.current) return;
+    updateIntervalRunningRef.current = true;
+
     console.log('✅ [Lecture Hall Periodic] Starting 30-second interval');
     const updateInterval = setInterval(() => {
       const currentSeekTime = Math.floor(boardVideoTimeRef.current || 0);
@@ -3584,13 +3681,15 @@ const PositionCalculatorPage = () => {
     return () => {
       console.log('🛑 [Lecture Hall Periodic] Stopping interval');
       clearInterval(updateInterval);
+      updateIntervalRunningRef.current = false;
     };
   }, [isHost, blackboardMedia, sendMessage, currentUser?.id]);
   
   // ✅ Handler for capturing preview frames from LiveShare/WatchFrom
   const handleCapturePreviewFrames = useCallback(async () => {
     console.log('📸 [Frame Capture] Starting frame capture for preview');
-    
+    captureAbortRef.current = false; // reset for this run
+
     if (!actualSessionId) {
       console.error('❌ [Frame Capture] No session ID available');
       return;
@@ -3645,13 +3744,24 @@ const PositionCalculatorPage = () => {
         
         frames.push(blob);
         console.log(`📷 [Frame Capture] Captured frame ${i + 1}/${totalFrames}`);
-        
+
+        // Abort if component unmounted mid-capture
+        if (captureAbortRef.current) {
+          console.log('🛑 [Frame Capture] Aborted after frame', i + 1);
+          return;
+        }
+
         // Wait before capturing next frame (except on last frame)
         if (i < totalFrames - 1) {
           await new Promise(resolve => setTimeout(resolve, frameCaptureInterval));
+          if (captureAbortRef.current) {
+            console.log('🛑 [Frame Capture] Aborted during wait after frame', i + 1);
+            return;
+          }
         }
       }
-      
+
+      if (captureAbortRef.current) return;
       console.log(`✅ [Frame Capture] Captured ${frames.length} frames, uploading...`);
       
       // Upload frames to backend
@@ -4341,7 +4451,7 @@ const PositionCalculatorPage = () => {
       case 'chat_message':
         if (!data) break;
         console.log('💬 [PositionCalculator] Chat message:', data);
-        // Session message - deduplicate by ID like VideoWatch.jsx
+        // Session message - deduplicate by ID; cap list at 200 to prevent unbounded growth
         const chatMsg = { ...data, reactions: data.reactions || [] };
         setSessionChatMessages(prev => {
           const exists = prev.some(msg => msg.ID === chatMsg.ID);
@@ -4349,7 +4459,8 @@ const PositionCalculatorPage = () => {
             console.log('⚠️ [PositionCalculator] Duplicate message ignored:', chatMsg.ID);
             return prev;
           }
-          return [...prev, chatMsg];
+          const next = [...prev, chatMsg];
+          return next.length > 200 ? next.slice(next.length - 200) : next;
         });
         break;
       
@@ -4367,7 +4478,7 @@ const PositionCalculatorPage = () => {
             [data.sender_id]: [...(prev[data.sender_id] || []), data]
           }));
         } else if (!data.is_private) {
-          // Session message - deduplicate by ID like VideoWatch.jsx
+          // Session message - deduplicate by ID; cap at 200
           const chatMsg = { ...data, reactions: data.reactions || [] };
           setSessionChatMessages(prev => {
             const exists = prev.some(msg => msg.ID === chatMsg.ID);
@@ -4375,7 +4486,8 @@ const PositionCalculatorPage = () => {
               console.log('⚠️ [PositionCalculator] Duplicate message ignored:', chatMsg.ID);
               return prev;
             }
-            return [...prev, chatMsg];
+            const next = [...prev, chatMsg];
+            return next.length > 200 ? next.slice(next.length - 200) : next;
           });
         }
         break;
@@ -4881,7 +4993,7 @@ const PositionCalculatorPage = () => {
           is_temporary: message.data?.is_temporary,
           room_id: message.data?.room_id
         });
-        toast.error('Lecture hall session has ended');
+        toast.error('Lecture hall session has ended', { id: 'session-ended' });
         // ✅ Clear private messages and unread counts
         setPrivateMessages({});
         setUnreadMessages({});
@@ -6786,10 +6898,11 @@ const PositionCalculatorPage = () => {
   return (
     <div className="h-screen bg-gray-900 text-white flex overflow-hidden">
       {/* 3D Canvas */}
-      <div 
+      <div
         className="flex-1 relative overflow-hidden"
         onDoubleClick={handleDoubleClickLike}
       >
+        <LectureHallErrorBoundary>
         <Canvas
           camera={{ position: initialCameraPosition, fov: 50 }}
           onCreated={({ gl }) => {
@@ -6896,7 +7009,8 @@ const PositionCalculatorPage = () => {
           <gridHelper args={[20, 20]} />
           <axesHelper args={[5]} />
         </Canvas>
-        
+        </LectureHallErrorBoundary>
+
         {/* ❤️ TikTok Heart Animation */}
         {showHeartAnimation && (
           <TikTokHeartAnimation 
@@ -6909,6 +7023,8 @@ const PositionCalculatorPage = () => {
           discussionMode={discussionMode}
           isHost={isHost}
           onToggleMode={toggleDiscussionMode}
+          isSilenceMode={isSilenceMode}
+          onToggleSilenceMode={() => setIsSilenceMode(prev => !prev)}
         />
         
         {/* 🎮 View Control Icons (Left/Center/Right + Turnaround for Host) */}
@@ -7297,7 +7413,8 @@ const PositionCalculatorPage = () => {
           showVideoToggle={false}
           onToggleLeftSidebar={() => setIsLeftSidebarOpen(prev => !prev)}
           seatSwapRequest={seatSwapRequest}
-          isSilenceMode={false}
+          isSilenceMode={isSilenceMode}
+          onToggleSilenceMode={() => setIsSilenceMode(prev => !prev)}
           onToggleSilenceMode={() => {}}
           handRaised={handRaised}
           hasHostApproval={hasHostApproval}
@@ -7818,11 +7935,7 @@ const PositionCalculatorPage = () => {
       />
 
       {/* 🔄 Loading overlay - Shows during seat assignment */}
-      {loadingStatus && (
-        <div className="fixed inset-0 bg-black z-50 flex items-center justify-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-white"></div>
-        </div>
-      )}
+      {loadingStatus && <AppSplash statusText="Finding your seat..." />}
 
       {/* 📱 Orientation Modal - Suggest landscape mode for better experience */}
       {showOrientationModal && isPortraitMode && (

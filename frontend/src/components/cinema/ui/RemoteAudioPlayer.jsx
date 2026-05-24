@@ -3,10 +3,10 @@ import { useEffect, useRef } from 'react';
 import { RoomEvent, Track } from 'livekit-client';
 
 export default function RemoteAudioPlayer({ room, silenceMode = false }) {
-  // Removed verbose render logging for cleaner console
   const audioContainerRef = useRef(null);
-  
-  // Use room.sid (string) instead of room object for dependency
+  const timerMapRef = useRef(new Map());         // trackSid → timeoutId
+  const unsubscribedTracksRef = useRef(new Set()); // trackSids we manually unsubscribed
+
   const roomSid = room?.sid;
 
   // ✅ Re-attach/detach audio when silence mode changes
@@ -154,8 +154,45 @@ export default function RemoteAudioPlayer({ room, silenceMode = false }) {
       }
     };
 
+    // Auto-unsubscribe after 60 s of continuous mute; re-subscribe on unmute
+    const handleTrackMuted = (publication, participant) => {
+      if (publication.kind !== 'audio') return;
+      if (publication.source === Track.Source.ScreenShareAudio) return;
+
+      const existing = timerMapRef.current.get(publication.trackSid);
+      if (existing) clearTimeout(existing);
+
+      const timerId = setTimeout(() => {
+        if (publication.isSubscribed) {
+          publication.setSubscribed(false);
+          unsubscribedTracksRef.current.add(publication.trackSid);
+        }
+        timerMapRef.current.delete(publication.trackSid);
+      }, 60000);
+
+      timerMapRef.current.set(publication.trackSid, timerId);
+    };
+
+    const handleTrackUnmuted = (publication) => {
+      if (publication.kind !== 'audio') return;
+      if (publication.source === Track.Source.ScreenShareAudio) return;
+
+      const timerId = timerMapRef.current.get(publication.trackSid);
+      if (timerId) {
+        clearTimeout(timerId);
+        timerMapRef.current.delete(publication.trackSid);
+      }
+
+      if (unsubscribedTracksRef.current.has(publication.trackSid)) {
+        publication.setSubscribed(true);
+        unsubscribedTracksRef.current.delete(publication.trackSid);
+      }
+    };
+
     room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
     room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    room.on(RoomEvent.TrackMuted, handleTrackMuted);
+    room.on(RoomEvent.TrackUnmuted, handleTrackUnmuted);
 
     // Check for existing audio tracks
     room.remoteParticipants.forEach(participant => {
@@ -177,11 +214,16 @@ export default function RemoteAudioPlayer({ room, silenceMode = false }) {
     });
 
     return () => {
-      // Cleanup
       room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
       room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
-      
-      // Clean up all audio elements
+      room.off(RoomEvent.TrackMuted, handleTrackMuted);
+      room.off(RoomEvent.TrackUnmuted, handleTrackUnmuted);
+
+      // Cancel all pending unsubscribe timers
+      timerMapRef.current.forEach(timerId => clearTimeout(timerId));
+      timerMapRef.current.clear();
+      unsubscribedTracksRef.current.clear();
+
       if (audioContainerRef.current) {
         audioContainerRef.current.innerHTML = '';
       }

@@ -1,13 +1,14 @@
 // WeWatch/frontend/src/components/DiscoverFeed.jsx
 // Instagram/TikTok-style discover feed with infinite scroll grid
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
-import { Eye, Heart, MessageCircle, MoreVertical, Trash2, UserPlus, UserCheck, Link, X, Send, Reply, Edit, Trash, Lock } from 'lucide-react';
-import apiClient, { getFollowersCount, joinRoom, leaveRoom } from '../services/api';
+import { Eye, Heart, MessageCircle, MoreVertical, Trash2, X, Reply, Edit, Trash, Lock, Flag, Gift } from 'lucide-react';
+import apiClient, { getFollowersCount, joinRoom, leaveRoom, tipPost } from '../services/api';
 import { formatCount } from '../utils/formatCount';
 import AdBanner from './AdBanner';
 import Avatar from './Avatar';
 import UserProfileModal from './UserProfileModal';
 import PostPurchaseModal from './payment/PostPurchaseModal';
+import ReportModal from './ReportModal';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
@@ -41,6 +42,12 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   const [unmutedVideoId, setUnmutedVideoId] = useState(null); // Track which video is unmuted
   const [purchaseModalPost, setPurchaseModalPost] = useState(null); // Paid post pending purchase
   const [dismissedOverlays, setDismissedOverlays] = useState(new Set()); // Post IDs where user clicked through the 18+/Mature overlay (session-only)
+  const [reportTarget, setReportTarget] = useState(null); // { targetType, targetId, targetName }
+  const [postTips, setPostTips] = useState({}); // {postId: count}
+  const [sharePost, setSharePost] = useState(null); // post object for share modal
+  const [shareFriends, setShareFriends] = useState([]);
+  const [shareFriendsLoading, setShareFriendsLoading] = useState(false);
+  const [shareSentTo, setShareSentTo] = useState(new Set()); // user IDs already sent this session
 
   // Locked = paid post that the viewer hasn't bought (and isn't the owner of)
   const isPostLocked = (post) => post.is_paid && !post.has_access && !post.is_owner;
@@ -301,7 +308,6 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   const handlePostClick = (post) => {
     console.log('🎬 [DiscoverFeed] Post clicked:', {
       postId: post.id,
-      title: post.title,
       isLocked: isPostLocked(post),
       hasOnPostClick: !!onPostClick,
     });
@@ -510,6 +516,19 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     }
   };
 
+  // Handle tip post (1 token, silently fails on 0 balance)
+  const handleTip = async (post, e) => {
+    e.stopPropagation();
+    if (!currentUser) { toast.error('Please log in to tip'); return; }
+    const prevCount = postTips[post.id] ?? (post.tip_count || 0);
+    setPostTips(prev => ({ ...prev, [post.id]: prevCount + 1 }));
+    try {
+      await tipPost(post.id);
+    } catch {
+      setPostTips(prev => ({ ...prev, [post.id]: prevCount }));
+    }
+  };
+
   // Handle follow/unfollow
   const handleFollowToggle = async (post, e) => {
     e.stopPropagation();
@@ -545,6 +564,29 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
       console.error('❌ [DiscoverFeed] Follow toggle error:', error);
       toast.error(error.message || 'Failed to update follow status');
     }
+  };
+
+  const openShareModal = async (post) => {
+    setSharePost(post);
+    setShareFriendsLoading(true);
+    try {
+      const res = await apiClient.get('/api/friends');
+      setShareFriends(res.data?.friends || res.data || []);
+    } catch { setShareFriends([]); }
+    finally { setShareFriendsLoading(false); }
+  };
+
+  const handleShareToFriend = async (friend) => {
+    if (!sharePost) return;
+    const url = `${window.location.origin}/post/${sharePost.id}`;
+    try {
+      await apiClient.post('/api/lobby-chats/send', {
+        recipient_id: friend.id,
+        message: `Check out this post: ${sharePost.description?.slice(0, 80) || ''}\n${url}`,
+      });
+      setShareSentTo(prev => new Set([...prev, friend.id]));
+      toast.success(`Shared with @${friend.username}`);
+    } catch { toast.error('Failed to send'); }
   };
 
   // Loading skeleton
@@ -589,25 +631,109 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     );
   }
 
+  // When searching, use compact 2-column grid instead of single column
+  const isSearching = searchQuery && searchQuery.trim().length > 0;
+
   return (
-    <div className="w-full sm:max-w-2xl sm:mx-auto px-0 sm:px-4 pb-8">
-      {/* Single column vertical feed (Instagram/Facebook style) */}
-      <div className="space-y-1 sm:space-y-6">
+    <div className={isSearching ? "w-full px-2 pb-8" : "w-full sm:max-w-2xl sm:mx-auto px-0 sm:px-4 pb-8"}>
+      <div className={isSearching ? "grid grid-cols-2 gap-2" : ""}>
         {posts.map((post, index) => {
           return (
           <React.Fragment key={`post-${post.id}`}>
-            {/* Regular Post Card */}
-            <div 
-              className="bg-white dark:bg-gray-800 rounded-none sm:rounded-xl overflow-hidden shadow-lg relative cursor-pointer"
+            {/* Post Card — Instagram-style layout */}
+            <div
+              className="bg-white dark:bg-gray-950 cursor-pointer rounded-xl border border-white/25 mb-3 sm:mb-4 overflow-hidden"
               onClick={() => handlePostClick(post)}
             >
-              {/* Media Section (square on mobile, 16:9 on larger screens) */}
-              <div className="relative aspect-square sm:aspect-video bg-gray-200 dark:bg-gray-900 group">
-                {/* Media display: video (autoplay muted loop) or image */}
-                {post.media_type === 'video' && post.video_url ? (
+              {/* ── Card Header: Avatar · Username · Follow · ··· ── */}
+              <div className="flex items-center gap-3 px-4 py-2 bg-gray-100 dark:bg-gray-800" onClick={e => e.stopPropagation()}>
+                <Avatar
+                  user={post.user}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedUser(post.user);
+                    setIsUserProfileModalOpen(true);
+                  }}
+                  className="w-12 h-12 rounded-full object-cover flex-shrink-0 cursor-pointer"
+                />
+                <p
+                  className="flex-1 min-w-0 text-base font-bold text-gray-900 dark:text-white truncate cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedUser(post.user);
+                    setIsUserProfileModalOpen(true);
+                  }}
+                >
+                  {post.user?.username || 'Unknown'}
+                </p>
+                {/* Follow — plain text style, only for other users' posts */}
+                {post.user_id !== currentUser?.id && (post.room_id ?? post.user?.main_room_id) && (
+                  <button
+                    onClick={(e) => handleFollowToggle(post, e)}
+                    className={`text-sm font-bold flex-shrink-0 transition-colors ${
+                      followingRooms[post.id]
+                        ? 'text-gray-400 dark:text-gray-500'
+                        : 'text-blue-500 dark:text-blue-400'
+                    }`}
+                  >
+                    {followingRooms[post.id] ? 'Following' : 'Follow'}
+                  </button>
+                )}
+                {/* 3-dot menu */}
+                <div className="relative flex-shrink-0" onClick={e => e.stopPropagation()}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteMenuOpen(deleteMenuOpen === post.id ? null : post.id);
+                    }}
+                    className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                  >
+                    <MoreVertical className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                  </button>
+                  {deleteMenuOpen === post.id && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setDeleteMenuOpen(null); }} />
+                      <div className="absolute right-0 top-full mt-1 z-20 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1 min-w-[140px]">
+                        {post.user_id === currentUser?.id ? (
+                          canDeletePost(post) && (
+                            <button
+                              onClick={(e) => handleDeletePost(post.id, e)}
+                              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              Delete
+                            </button>
+                          )
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteMenuOpen(null);
+                              setReportTarget({ targetType: 'post', targetId: post.id, targetName: post.description?.slice(0, 60) || '' });
+                            }}
+                            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 transition-colors"
+                          >
+                            <Flag className="w-4 h-4" />
+                            Report
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Media — square on mobile, 16:9 on desktop ── */}
+              <div className="relative aspect-[4/3] sm:aspect-video bg-gray-100 dark:bg-gray-900 group overflow-hidden">
+                {post.post_type === 'text' ? (
+                  <div className="w-full h-full flex items-start p-6 bg-white dark:bg-gray-900">
+                    <p className="text-gray-900 dark:text-white text-lg font-medium text-left leading-relaxed line-clamp-6">
+                      {post.text_content}
+                    </p>
+                  </div>
+                ) : post.media_type === 'video' && post.video_url ? (
                   <>
                     {dataSaverEnabled ? (
-                      // Data Saver Mode: Show video first frame, no autoplay
                       <>
                         <video
                           src={getThumbnailUrl(post)}
@@ -615,7 +741,6 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                           muted
                           playsInline
                         />
-                        {/* Play button overlay to indicate video */}
                         <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
                           <div className="bg-white/90 rounded-full p-4">
                             <svg className="w-12 h-12 text-gray-800" fill="currentColor" viewBox="0 0 20 20">
@@ -625,7 +750,6 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                         </div>
                       </>
                     ) : (
-                      // Normal Mode: Autoplay video
                       <video
                         src={getMediaUrl(post.video_url)}
                         poster={getThumbnailUrl(post)}
@@ -636,7 +760,6 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                         playsInline
                       />
                     )}
-                    {/* Mute/Unmute Button - Top Left Overlay */}
                     {!dataSaverEnabled && (
                       <button
                         onClick={(e) => toggleVideoMute(e, post.id)}
@@ -644,19 +767,16 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                         title={unmutedVideoId === post.id ? 'Mute' : 'Unmute'}
                       >
                         {unmutedVideoId === post.id ? (
-                          // Unmuted Icon (speaker with sound waves)
                           <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" />
                           </svg>
                         ) : (
-                          // Muted Icon (X through speaker)
                           <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
                           </svg>
                         )}
                       </button>
                     )}
-                    {/* REC badge overlay for recordings */}
                     {post.post_type === 'recording' && (
                       <img
                         src="/icons/recordIcon.png"
@@ -668,13 +788,13 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                 ) : (
                   <img
                     src={getThumbnailUrl(post)}
-                    alt={post.title}
+                    alt={post.description?.slice(0, 60) || 'Post'}
                     className="w-full h-full object-cover"
                     loading="lazy"
                   />
                 )}
-                
-                {/* Hover overlay with play hint (only for videos) */}
+
+                {/* Hover play hint for videos */}
                 {post.media_type === 'video' && (
                   <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
                     <div className="bg-white/90 rounded-full p-4">
@@ -684,8 +804,8 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                     </div>
                   </div>
                 )}
-                
-                {/* Duration badge (top-right) */}
+
+                {/* Duration badge */}
                 {post.media_type === 'video' && post.duration && (
                   <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm px-2.5 py-1 rounded-md">
                     <span className="text-white text-xs font-medium">
@@ -693,8 +813,8 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                     </span>
                   </div>
                 )}
-                
-                {/* Paid content badge — show tokens + NGN equivalent */}
+
+                {/* Paid badge */}
                 {post.is_paid && (
                   <div className="absolute bottom-3 left-3 bg-yellow-500/95 backdrop-blur-sm px-3 py-1.5 rounded-full shadow-md">
                     <span className="text-sm font-bold text-black">
@@ -706,7 +826,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                   </div>
                 )}
 
-                {/* Mature content overlay: blur + click-through for 18+/Mature rated posts */}
+                {/* Mature content overlay */}
                 {post.show_overlay && !dismissedOverlays.has(post.id) && (
                   <div
                     className="absolute inset-0 backdrop-blur-md bg-black/60 flex flex-col items-center justify-center text-center p-4 z-20"
@@ -726,23 +846,18 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                   </div>
                 )}
 
-                {/* Locked-content overlay: blurs the preview and surfaces a Buy CTA */}
+                {/* Locked-content overlay */}
                 {isPostLocked(post) && (
                   <div className="absolute inset-0 bg-black/55 backdrop-blur-sm flex flex-col items-center justify-center text-center p-4 z-10">
                     <div className="bg-yellow-500 text-black rounded-full p-3 mb-3 shadow-lg">
                       <Lock className="w-6 h-6" strokeWidth={2.5} />
                     </div>
                     <p className="text-white font-bold text-base mb-1">Locked Post</p>
-                    <p className="text-white/80 text-xs mb-3">
-                      Purchase to watch &amp; download
-                    </p>
+                    <p className="text-white/80 text-xs mb-3">Purchase to watch &amp; download</p>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (!currentUser) {
-                          toast.error('Please log in to purchase this post');
-                          return;
-                        }
+                        if (!currentUser) { toast.error('Please log in to purchase this post'); return; }
                         setPurchaseModalPost(post);
                       }}
                       className="px-5 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-full text-sm font-bold shadow-lg transition-colors"
@@ -753,199 +868,103 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                 )}
               </div>
 
-              {/* Footer Section (Always Visible) */}
-              <div className="p-4" onClick={(e) => e.stopPropagation()}>
-                {/* User Info */}
-                <div className="flex items-start gap-3 mb-3">
-                  {/* User Avatar (Larger size) */}
-                  <div className="flex-shrink-0">
-                    <Avatar
-                      user={post.user}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedUser(post.user);
-                        setIsUserProfileModalOpen(true);
-                      }}
-                      className="w-14 h-14 rounded-full object-cover border-2 border-blue-500 cursor-pointer hover:border-purple-500 transition-colors"
-                    />
-                  </div>
-
-                  {/* Title + Username + Followers */}
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-gray-900 dark:text-white text-base line-clamp-2 mb-1">
-                      {post.title}
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <p className="text-lg text-gray-600 dark:text-gray-400 font-medium">
-                        @{post.user?.username || 'Unknown'}
-                      </p>
-                      {/* Followers count */}
-                      <p className="text-xs text-gray-500 dark:text-gray-500 ml-2">
-                        {formatCount(followersCount[post.user_id] || 0)} followers
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Follow/Delete Button */}
-                  <div className="flex-shrink-0">
-                    {post.user_id === currentUser?.id ? (
-                      /* Delete menu for own posts */
-                      canDeletePost(post) && (
-                        <div className="relative">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteMenuOpen(deleteMenuOpen === post.id ? null : post.id);
-                            }}
-                            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
-                          >
-                            <MoreVertical className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                          </button>
-                          {deleteMenuOpen === post.id && (
-                            <>
-                              {/* Backdrop to close menu */}
-                              <div
-                                className="fixed inset-0 z-10"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDeleteMenuOpen(null);
-                                }}
-                              />
-                              {/* Menu */}
-                              <div className="absolute right-0 top-8 z-20 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1 min-w-[120px]">
-                                <button
-                                  onClick={(e) => handleDeletePost(post.id, e)}
-                                  className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 transition-colors"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                  Delete
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      )
-                    ) : (
-                      /* Follow button for other users' posts */
-                      (post.room_id ?? post.user?.main_room_id) ? (
-                        <button
-                          onClick={(e) => handleFollowToggle(post, e)}
-                          className={`px-4 py-2 rounded-full font-medium text-sm transition-colors flex items-center gap-1.5 ${
-                            followingRooms[post.id]
-                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                              : 'bg-blue-600 text-white hover:bg-blue-700'
-                          }`}
-                        >
-                          {followingRooms[post.id] ? (
-                            <>
-                              <UserCheck className="w-4 h-4" />
-                              Following
-                            </>
-                          ) : (
-                            <>
-                              <UserPlus className="w-4 h-4" />
-                              Follow
-                            </>
-                          )}
-                        </button>
-                      ) : null
-                    )}
-                  </div>
-                </div>
-
-                {/* Description (filter out auto-generated text) */}
-                {post.description && post.description !== 'Recorded live watch party session' && (
-                  <p className="text-sm text-gray-700 dark:text-gray-300 mb-3 line-clamp-2">
-                    {post.description}
-                  </p>
-                )}
-
-                {/* Engagement Stats (Solid white icons) */}
-                <div className="flex items-center gap-6">
-                  <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+              {/* ── Footer: action row + caption share one background to avoid sub-pixel gaps ── */}
+              <div className="bg-gray-100 dark:bg-gray-800" onClick={e => e.stopPropagation()}>
+                {/* Action Row: Views · Like · Comment · Gift · Share */}
+                <div className="flex items-center gap-5 px-4 pt-2 pb-1">
+                  {/* Views */}
+                  <div className="flex items-center gap-1.5 text-gray-400 dark:text-gray-500">
                     <Eye className="w-5 h-5" />
-                    <span className="text-base font-medium">{formatCount(post.view_count || 0)}</span>
+                    <span className="text-sm">{formatCount(post.view_count || 0)}</span>
                   </div>
+                  {/* Like */}
                   <button
-                    className="flex items-center gap-2 transition-colors group"
+                    className="flex items-center gap-1.5 transition-colors group"
                     onClick={(e) => handleLikeToggle(post, e)}
                   >
                     <Heart
-                      className={`w-7 h-7 transition-all ${
-                        (postLikes[post.id]?.isLiked)
+                      className={`w-6 h-6 transition-all ${
+                        postLikes[post.id]?.isLiked
                           ? 'fill-red-500 stroke-red-500'
-                          : 'stroke-gray-600 dark:stroke-gray-400 group-hover:stroke-red-500'
+                          : 'stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-red-500'
                       }`}
                       fill="none"
                       strokeWidth={2}
                     />
-                    <span className={`text-base font-medium ${
-                      (postLikes[post.id]?.isLiked)
-                        ? 'text-red-500'
-                        : 'text-gray-600 dark:text-gray-400'
-                    }`}>
+                    <span className={`text-sm font-semibold ${postLikes[post.id]?.isLiked ? 'text-red-500' : 'text-gray-800 dark:text-gray-100'}`}>
                       {formatCount(postLikes[post.id]?.count ?? (post.likes_count || 0))}
                     </span>
                   </button>
+                  {/* Comment */}
                   <button
-                    className="flex items-center gap-2 transition-colors group"
+                    className="flex items-center gap-1.5 transition-colors group"
                     onClick={(e) => {
                       e.stopPropagation();
                       const newOpenState = openComments === post.id ? null : post.id;
                       setOpenComments(newOpenState);
-                      if (newOpenState) {
-                        fetchComments(newOpenState);
-                      }
+                      if (newOpenState) fetchComments(newOpenState);
                     }}
                   >
                     <MessageCircle
-                      className={`w-7 h-7 ${
-                        openComments === post.id
-                          ? 'stroke-blue-500'
-                          : 'stroke-gray-600 dark:stroke-gray-400 group-hover:stroke-blue-500'
-                      }`}
+                      className={`w-6 h-6 ${openComments === post.id ? 'stroke-blue-500' : 'stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-blue-500'}`}
                       fill="none"
                       strokeWidth={2}
                     />
-                    <span className={`text-base font-medium ${
-                      openComments === post.id
-                        ? 'text-blue-500'
-                        : 'text-gray-600 dark:text-gray-400'
-                    }`}>
+                    <span className={`text-sm font-semibold ${openComments === post.id ? 'text-blue-500' : 'text-gray-800 dark:text-gray-100'}`}>
                       {formatCount(post.comments_count || 0)}
                     </span>
                   </button>
+                  {/* Gift / Tip — not shown on own posts */}
+                  {post.user_id !== currentUser?.id && (
+                    <button
+                      className="flex items-center gap-1.5 transition-colors group"
+                      onClick={(e) => handleTip(post, e)}
+                      title="Send 1 token tip"
+                    >
+                      <Gift
+                        className="w-6 h-6 stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-yellow-500 transition-colors"
+                        strokeWidth={2}
+                      />
+                      <span className="text-sm text-gray-800 dark:text-gray-100 group-hover:text-yellow-500">
+                        {formatCount(postTips[post.id] ?? (post.tip_count || 0))}
+                      </span>
+                    </button>
+                  )}
+                  {/* Share */}
                   <button
-                    className="flex items-center gap-2 transition-colors group"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigator.clipboard.writeText(window.location.origin + '/post/' + post.id);
-                      toast.success('Link copied to clipboard!');
-                    }}
-                    title="Copy link"
+                    className="flex items-center transition-colors group"
+                    onClick={(e) => { e.stopPropagation(); openShareModal(post); }}
+                    title="Share"
                   >
-                    <Link 
-                      className="w-7 h-7 stroke-gray-600 dark:stroke-gray-400 group-hover:stroke-purple-500" 
-                      fill="none"
-                      strokeWidth={2}
-                    />
+                    <svg className="w-6 h-6 stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-purple-500" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                    </svg>
                   </button>
                 </div>
+                {/* Caption — description only, skipped for text posts */}
+                {post.post_type !== 'text' && post.description && (
+                  <div className="px-4 pb-3 pt-1">
+                    <p className="text-sm text-gray-900 dark:text-white leading-snug line-clamp-2">
+                      {post.description}
+                    </p>
+                  </div>
+                )}
+                {/* Bottom padding when there's no caption so the footer doesn't feel cramped */}
+                {(post.post_type === 'text' || !post.description) && (
+                  <div className="pb-2" />
+                )}
               </div>
             </div>
 
-            {/* Ad Banner every 6 posts (only if ads enabled) */}
+            {/* Ad Banner every 6 posts */}
             {(index + 1) % 6 === 0 && adsEnabled && (
-              <div key={`ad-${post.id}`} className="bg-white dark:bg-gray-800 rounded-none sm:rounded-xl overflow-hidden shadow-lg">
-                {/* Ad media section with same aspect ratio as posts */}
-                <div className="relative aspect-square sm:aspect-video bg-gray-200 dark:bg-gray-900">
+              <div className="bg-white dark:bg-gray-950 sm:mb-4">
+                <div className="relative aspect-square sm:aspect-video bg-gray-200 dark:bg-gray-900 overflow-hidden">
                   <AdBanner />
                 </div>
-                {/* Footer padding to match post card height */}
-                <div className="p-4">
-                  <p className="text-xs text-gray-500 dark:text-gray-500">
-                    Sponsored content
-                  </p>
+                <div className="px-4 py-2">
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Sponsored content</p>
                 </div>
               </div>
             )}
@@ -1173,6 +1192,92 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
         post={purchaseModalPost}
         onSuccess={handlePurchaseSuccess}
       />
+
+      {/* Report Modal */}
+      {reportTarget && (
+        <ReportModal
+          targetType={reportTarget.targetType}
+          targetId={reportTarget.targetId}
+          targetName={reportTarget.targetName}
+          onClose={() => setReportTarget(null)}
+        />
+      )}
+
+      {/* Share Post Modal */}
+      {sharePost && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => { setSharePost(null); setShareSentTo(new Set()); }}>
+          <div className="bg-white dark:bg-gray-900 w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white">Share Post</h3>
+              <button onClick={() => { setSharePost(null); setShareSentTo(new Set()); }} className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            {/* Quick actions */}
+            <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/post/${sharePost.id}`); toast.success('Link copied!'); }}
+                  className="flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                >
+                  <svg className="w-6 h-6 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                  <span className="text-xs text-gray-600 dark:text-gray-400 font-medium">Copy link</span>
+                </button>
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(`${sharePost.description?.slice(0, 80) || ''} ${window.location.origin}/post/${sharePost.id}`)}`}
+                  target="_blank" rel="noreferrer"
+                  className="flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <svg className="w-6 h-6 text-green-600" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                  <span className="text-xs text-green-600 font-medium">WhatsApp</span>
+                </a>
+                <a
+                  href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(`${window.location.origin}/post/${sharePost.id}`)}&text=${encodeURIComponent(sharePost.description?.slice(0, 120) || '')}`}
+                  target="_blank" rel="noreferrer"
+                  className="flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl bg-sky-50 dark:bg-sky-900/20 hover:bg-sky-100 dark:hover:bg-sky-900/30 transition-colors"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <svg className="w-6 h-6 text-sky-500" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.747l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                  <span className="text-xs text-sky-500 font-medium">X / Twitter</span>
+                </a>
+              </div>
+            </div>
+            {/* Friends list */}
+            <div className="flex-1 overflow-y-auto px-5 py-3">
+              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Send to a friend</p>
+              {shareFriendsLoading ? (
+                <div className="flex justify-center py-6"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-600" /></div>
+              ) : shareFriends.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-4">No friends yet</p>
+              ) : (
+                <div className="space-y-2">
+                  {shareFriends.map(friend => (
+                    <div key={friend.id} className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <img src={friend.avatar_url || friend.profile_picture} alt={friend.username} className="w-9 h-9 rounded-full object-cover flex-shrink-0 bg-gray-200" />
+                        <span className="text-sm font-medium text-gray-900 dark:text-white truncate">@{friend.username}</span>
+                      </div>
+                      <button
+                        onClick={() => handleShareToFriend(friend)}
+                        disabled={shareSentTo.has(friend.id)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-semibold flex-shrink-0 transition-colors ${
+                          shareSentTo.has(friend.id)
+                            ? 'bg-gray-200 dark:bg-gray-700 text-gray-500 cursor-default'
+                            : 'bg-purple-600 hover:bg-purple-700 text-white'
+                        }`}
+                      >
+                        {shareSentTo.has(friend.id) ? 'Sent ✓' : 'Send'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

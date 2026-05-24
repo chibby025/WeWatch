@@ -42,6 +42,10 @@ type User struct {
 	
 	// Main Room (Primary room for post defaults)
 	MainRoomID *uint `gorm:"index" json:"main_room_id"` // User's primary room (auto-assigned to posts if not specified)
+
+	// Premium subscription
+	IsPremium         bool       `gorm:"default:false" json:"is_premium"`
+	PremiumExpiresAt  *time.Time `json:"premium_expires_at,omitempty"`
 }
 
 // User role constants

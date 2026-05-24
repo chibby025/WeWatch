@@ -95,7 +95,7 @@ const PostPurchaseModal = ({ isOpen, onClose, post, onSuccess }) => {
           {post.thumbnail_url ? (
             <img
               src={post.thumbnail_url}
-              alt={post.title}
+              alt={post.description?.slice(0, 60) || 'Post'}
               className="w-full h-48 object-cover rounded-t-2xl"
             />
           ) : (
@@ -124,7 +124,7 @@ const PostPurchaseModal = ({ isOpen, onClose, post, onSuccess }) => {
 
         <div className="p-6">
           <h2 className="text-xl font-bold text-white mb-1">Purchase Post</h2>
-          <p className="text-sm text-gray-300 line-clamp-2 mb-4">{post.title}</p>
+          {post.description && <p className="text-sm text-gray-300 line-clamp-2 mb-4">{post.description}</p>}
 
           {post.user?.username && (
             <p className="text-xs text-gray-400 mb-4">

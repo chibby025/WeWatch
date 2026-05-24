@@ -107,16 +107,8 @@ const AdVideoPreroll = ({ onComplete, roomId, contentRating }) => {
     window.open(ad.click_url, '_blank', 'noopener,noreferrer');
   };
 
-  if (loading) {
-    return (
-      <div className="fixed inset-0 bg-black z-[9999] flex items-center justify-center">
-        <div className="text-white text-center">
-          <div className="animate-spin w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-lg">Loading ad...</p>
-        </div>
-      </div>
-    );
-  }
+  // While fetching, render nothing — content stays visible in the background
+  if (loading) return null;
 
   if (!ad) {
     return null;

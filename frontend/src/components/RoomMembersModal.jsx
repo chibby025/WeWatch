@@ -15,22 +15,27 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
-import { 
-  Search, 
-  UserPlus, 
-  Crown, 
+import {
+  Search,
+  UserPlus,
+  Crown,
   Users,
-  UserCheck
+  UserCheck,
+  MoreVertical,
+  LogOut,
+  Ban
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { 
-  getBatchFriendshipStatuses, 
+import {
+  getBatchFriendshipStatuses,
   sendFriendRequest,
-  getFriendsList
+  getFriendsList,
+  kickRoomMember,
+  banRoomMember
 } from '../services/api';
 import UserProfileModal from './UserProfileModal';
 
-const RoomMembersModal = ({ isOpen, onClose, members, onAddMembers, loading = false, onRequestReopen }) => {
+const RoomMembersModal = ({ isOpen, onClose, members, onAddMembers, loading = false, onRequestReopen, isHost = false, roomId, onMemberKicked }) => {
   const navigate = useNavigate();
   const { currentUser, refreshUser } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
@@ -205,8 +210,32 @@ const RoomMembersModal = ({ isOpen, onClose, members, onAddMembers, loading = fa
   };
   
   // Check if selected member is current user
-  const isOwnProfile = selectedMember && 
+  const isOwnProfile = selectedMember &&
     (selectedMember.id === currentUser?.id || selectedMember.user_id === currentUser?.id);
+
+  const handleKick = async (member) => {
+    const memberId = member.id || member.user_id;
+    if (!window.confirm(`Kick ${member.username} from the room?`)) return;
+    try {
+      await kickRoomMember(roomId, memberId);
+      toast.success(`${member.username} has been kicked`);
+      if (onMemberKicked) onMemberKicked(memberId);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to kick member');
+    }
+  };
+
+  const handleBan = async (member) => {
+    const memberId = member.id || member.user_id;
+    if (!window.confirm(`Ban ${member.username} from the room? They will not be able to rejoin.`)) return;
+    try {
+      await banRoomMember(roomId, memberId);
+      toast.success(`${member.username} has been banned`);
+      if (onMemberKicked) onMemberKicked(memberId);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to ban member');
+    }
+  };
 
   return (
     <>
@@ -302,11 +331,15 @@ const RoomMembersModal = ({ isOpen, onClose, members, onAddMembers, loading = fa
                   </div>
                   <div className="space-y-2">
                     {hosts.map((member) => (
-                      <MemberCard 
-                        key={member.id || member.user_id} 
-                        member={member} 
+                      <MemberCard
+                        key={member.id || member.user_id}
+                        member={member}
                         isHost={true}
                         onClick={() => handleMemberClick(member)}
+                        isCurrentUserHost={isHost}
+                        isSelf={(member.id || member.user_id) === currentUser?.id}
+                        onKick={() => handleKick(member)}
+                        onBan={() => handleBan(member)}
                       />
                     ))}
                   </div>
@@ -322,11 +355,15 @@ const RoomMembersModal = ({ isOpen, onClose, members, onAddMembers, loading = fa
                   </div>
                   <div className="space-y-2">
                     {regularMembers.map((member) => (
-                      <MemberCard 
-                        key={member.id || member.user_id} 
-                        member={member} 
+                      <MemberCard
+                        key={member.id || member.user_id}
+                        member={member}
                         isHost={false}
                         onClick={() => handleMemberClick(member)}
+                        isCurrentUserHost={isHost}
+                        isSelf={(member.id || member.user_id) === currentUser?.id}
+                        onKick={() => handleKick(member)}
+                        onBan={() => handleBan(member)}
                       />
                     ))}
                   </div>
@@ -369,58 +406,98 @@ const RoomMembersModal = ({ isOpen, onClose, members, onAddMembers, loading = fa
 };
 
 // Member Card Component
-const MemberCard = ({ member, isHost, onClick }) => {
+const MemberCard = ({ member, isHost, onClick, isCurrentUserHost, isSelf, onKick, onBan }) => {
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const menuRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
   return (
-    <div 
-      onClick={onClick}
-      className="flex items-center gap-3 p-3 bg-gradient-to-r from-gray-50 to-white dark:from-gray-800 dark:to-gray-800/50 rounded-lg hover:shadow-md hover:scale-[1.02] transition-all duration-200 border border-gray-100 dark:border-gray-700 cursor-pointer"
-    >
-      {/* Avatar with shadcn */}
-      <div className="relative">
-        <Avatar className="w-12 h-12 border-2 border-gray-200 dark:border-gray-600 ring-2 ring-offset-2 ring-transparent hover:ring-blue-500/30 transition-all">
-          <AvatarImage 
-            src={member.avatar_url} 
-            alt={member.username}
-            onError={(e) => {
-              e.target.onerror = null;
-              e.target.src = '/avatars/default.png';
-            }}
-          />
-          <AvatarFallback className="bg-gradient-to-br from-blue-600 to-purple-600 text-white font-bold">
-            {member.username?.charAt(0).toUpperCase() || 'U'}
-          </AvatarFallback>
-        </Avatar>
-        
-        {/* Online Status Indicator */}
-        {member.is_online && (
-          <div className="absolute -bottom-0.5 -right-0.5">
-            <div className="relative">
-              <div className="w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-white dark:border-gray-800" />
-              <div className="absolute inset-0 w-3.5 h-3.5 bg-green-500 rounded-full animate-ping opacity-75" />
+    <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-gray-50 to-white dark:from-gray-800 dark:to-gray-800/50 rounded-lg hover:shadow-md transition-all duration-200 border border-gray-100 dark:border-gray-700 relative">
+      {/* Clickable area (avatar + info) */}
+      <div
+        onClick={onClick}
+        className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer hover:scale-[1.01] transition-transform"
+      >
+        {/* Avatar */}
+        <div className="relative shrink-0">
+          <Avatar className="w-12 h-12 border-2 border-gray-200 dark:border-gray-600 ring-2 ring-offset-2 ring-transparent hover:ring-blue-500/30 transition-all">
+            <AvatarImage
+              src={member.avatar_url}
+              alt={member.username}
+              onError={(e) => { e.target.onerror = null; e.target.src = '/avatars/default.png'; }}
+            />
+            <AvatarFallback className="bg-gradient-to-br from-blue-600 to-purple-600 text-white font-bold">
+              {member.username?.charAt(0).toUpperCase() || 'U'}
+            </AvatarFallback>
+          </Avatar>
+          {member.is_online && (
+            <div className="absolute -bottom-0.5 -right-0.5">
+              <div className="relative">
+                <div className="w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-white dark:border-gray-800" />
+                <div className="absolute inset-0 w-3.5 h-3.5 bg-green-500 rounded-full animate-ping opacity-75" />
+              </div>
             </div>
-          </div>
-        )}
-      </div>
-      
-      {/* Member Info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="font-semibold text-gray-900 dark:text-white truncate">
-            {member.username || `User ${member.id || member.user_id}`}
-          </p>
-          {isHost && (
-            <Badge variant="secondary" className="bg-gradient-to-r from-yellow-100 to-yellow-50 dark:from-yellow-900/30 dark:to-yellow-800/20 text-yellow-800 dark:text-yellow-400 border-yellow-200 dark:border-yellow-700 shadow-sm shrink-0">
-              <Crown className="w-3 h-3 mr-1" />
-              Host
-            </Badge>
           )}
         </div>
-        {member.bio && (
-          <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
-            {member.bio}
-          </p>
-        )}
+
+        {/* Member Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="font-semibold text-gray-900 dark:text-white truncate">
+              {member.username || `User ${member.id || member.user_id}`}
+            </p>
+            {isHost && (
+              <Badge variant="secondary" className="bg-gradient-to-r from-yellow-100 to-yellow-50 dark:from-yellow-900/30 dark:to-yellow-800/20 text-yellow-800 dark:text-yellow-400 border-yellow-200 dark:border-yellow-700 shadow-sm shrink-0">
+                <Crown className="w-3 h-3 mr-1" />
+                Host
+              </Badge>
+            )}
+          </div>
+          {member.bio && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
+              {member.bio}
+            </p>
+          )}
+        </div>
       </div>
+
+      {/* Host actions — 3-dot menu (hidden for self and for the host badge row) */}
+      {isCurrentUserHost && !isSelf && !isHost && (
+        <div ref={menuRef} className="relative shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(p => !p); }}
+            className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          >
+            <MoreVertical className="w-4 h-4" />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-8 z-50 w-36 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-100 dark:border-gray-700 py-1 text-sm">
+              <button
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onKick(); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Kick
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onBan(); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+              >
+                <Ban className="w-3.5 h-3.5" />
+                Ban
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

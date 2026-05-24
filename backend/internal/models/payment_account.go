@@ -1,7 +1,11 @@
 package models
 
 import (
+	"log"
 	"time"
+
+	"gorm.io/gorm"
+	"wewatch-backend/internal/encrypt"
 )
 
 // PaymentAccount represents a host's linked bank account for withdrawals
@@ -14,7 +18,8 @@ type PaymentAccount struct {
 	// Paystack-specific fields (Nigerian, Ghanaian, South African, Kenyan banks)
 	BankCode              *string `gorm:"type:varchar(10)" json:"bank_code,omitempty"`
 	BankName              *string `gorm:"type:varchar(100)" json:"bank_name,omitempty"`
-	AccountNumber         *string `gorm:"type:varchar(20)" json:"account_number,omitempty"`
+	AccountNumber         *string `gorm:"type:text" json:"account_number,omitempty"` // stored AES-256-GCM encrypted
+	AccountNumberHash     *string `gorm:"type:varchar(64);index" json:"-"`            // HMAC-SHA256 for deduplication lookup
 	AccountName           *string `gorm:"type:varchar(255)" json:"account_name,omitempty"`
 	PaystackRecipientCode *string `gorm:"type:varchar(100);uniqueIndex" json:"paystack_recipient_code,omitempty"`
 	
@@ -41,6 +46,61 @@ type PaymentAccount struct {
 // TableName specifies the table name for GORM
 func (PaymentAccount) TableName() string {
 	return "payment_accounts"
+}
+
+// BeforeSave encrypts AccountNumber and computes AccountNumberHash before any DB write.
+// If ENCRYPTION_KEY is not configured the save is blocked — account numbers must not be stored plaintext.
+func (pa *PaymentAccount) BeforeSave(tx *gorm.DB) error {
+	if pa.AccountNumber == nil || *pa.AccountNumber == "" {
+		return nil
+	}
+
+	// Skip if the value is already encrypted (base64 encoded length is much longer than a raw account number).
+	// A plaintext Nigerian account number is 10 digits; an encrypted one is ~60+ base64 chars.
+	if len(*pa.AccountNumber) > 20 {
+		return nil // already encrypted
+	}
+
+	encrypted, err := encrypt.Field(*pa.AccountNumber)
+	if err != nil {
+		log.Printf("❌ Failed to encrypt account number: %v", err)
+		return err
+	}
+
+	hash, err := encrypt.HMAC(*pa.AccountNumber)
+	if err != nil {
+		log.Printf("❌ Failed to hash account number: %v", err)
+		return err
+	}
+
+	pa.AccountNumber = &encrypted
+	pa.AccountNumberHash = &hash
+	return nil
+}
+
+// AfterFind decrypts AccountNumber after loading from the DB.
+// If decryption fails (e.g. key rotation or corrupt value), the field is set to empty string
+// rather than surfacing raw ciphertext to callers.
+func (pa *PaymentAccount) AfterFind(tx *gorm.DB) error {
+	if pa.AccountNumber == nil || *pa.AccountNumber == "" {
+		return nil
+	}
+
+	// Only attempt decryption if the value looks like base64 (longer than any plaintext account number).
+	if len(*pa.AccountNumber) <= 20 {
+		return nil // legacy plaintext row — leave as-is until re-encryption migration runs
+	}
+
+	decrypted, err := encrypt.Decrypt(*pa.AccountNumber)
+	if err != nil {
+		log.Printf("⚠️ Failed to decrypt account_number for PaymentAccount %d: %v", pa.ID, err)
+		empty := ""
+		pa.AccountNumber = &empty
+		return nil
+	}
+
+	pa.AccountNumber = &decrypted
+	return nil
 }
 
 // IsPaystack checks if this is a Paystack account

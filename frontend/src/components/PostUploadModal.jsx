@@ -2,8 +2,8 @@
 // Redesigned: bottom-sheet mobile, two-step flow, full-bleed camera, circular progress
 import { useState, useRef, useEffect, useMemo } from 'react';
 import {
-  X, Upload, Camera, Type as TypeIcon, Video, RefreshCw, Circle, Square,
-  ChevronLeft, ChevronRight, ChevronDown, Globe, Lock, Download, DollarSign, Palette,
+  X, Upload, Camera, Video, RefreshCw, Circle, Square,
+  ChevronLeft, ChevronRight, ChevronDown, Globe, Lock, Download, DollarSign, Palette, AlertCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { apiClient } from '../services/api';
@@ -28,7 +28,6 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
   const [mode, setMode] = useState('camera');
 
   // Common
-  const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isPublic, setIsPublic] = useState(true);
   const [allowDownloads, setAllowDownloads] = useState(true);
@@ -37,6 +36,7 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
   const [contentRating, setContentRating] = useState('G');
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState(null); // for retry UX
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [hostedRooms, setHostedRooms] = useState([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
@@ -105,7 +105,7 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
 
   // Auto-advance to step 2 after capture / file selection
   useEffect(() => { if (capturedMedia && step === 1) setStep(2); }, [capturedMedia]);
-  useEffect(() => { if (uploadFile   && step === 1) setStep(2); }, [uploadFile]);
+  useEffect(() => { if (uploadFile && step === 1 && mode === 'post') setStep(2); }, [uploadFile]);
 
   useEffect(() => {
     if (isOpen && currentUser) fetchHostedRooms();
@@ -267,68 +267,83 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
 
   const handleBack = () => {
     if (mode === 'camera') { setCapturedMedia(null); setMediaType(null); setSelectedFilter('none'); setRecordingTime(0); }
-    else if (mode === 'upload') { setUploadFile(null); setPreviewUrl(null); }
+    else if (mode === 'post') { setUploadFile(null); setPreviewUrl(null); setTextContent(''); }
     setShowFilters(false);
     setShowRoomDropdown(false);
+    setUploadError(null);
     setStep(1);
   };
 
   const resetStates = () => {
-    setStep(1); setMode('camera'); setTitle(''); setDescription('');
+    setStep(1); setMode('camera'); setDescription('');
     setIsPublic(true); setAllowDownloads(true); setIsPaid(false); setPriceNaira('');
     setContentRating('G'); setRatingScrollIndex(0); setSelectedRoom(null);
     setCapturedMedia(null); setMediaType(null); setSelectedFilter('none');
     setShowFilters(false); setShowRoomDropdown(false);
     setTextContent(''); setTextMediaFile(null);
     setUploadFile(null); setPreviewUrl(null); setRecordingTime(0);
+    setUploadError(null); setUploading(false); setUploadProgress(0);
   };
 
   const handleSubmit = async () => {
+    setUploadError(null);
     let finalFile = null, finalMediaType = '';
 
     if (mode === 'camera') {
       if (!capturedMedia) { toast.error('Please capture a photo or video'); return; }
-      if (!title.trim()) { toast.error('Please enter a title'); return; }
       const filterCss = filters.find(f => f.id === selectedFilter)?.filter || 'none';
       finalFile = mediaType === 'photo' ? await applyFilterToBlob(capturedMedia, filterCss) : capturedMedia;
       finalMediaType = mediaType === 'photo' ? 'image' : 'video';
-    } else if (mode === 'type') {
-      if (!textContent.trim() && !textMediaFile) { toast.error('Please enter text or add media'); return; }
-      if (!title.trim()) { toast.error('Please enter a title'); return; }
-      const canvas = document.createElement('canvas');
-      canvas.width = 1080; canvas.height = 1080;
-      const ctx = canvas.getContext('2d');
-      const isDark = document.documentElement.classList.contains('dark');
-      ctx.fillStyle = isDark ? '#111827' : '#ffffff';
-      ctx.fillRect(0, 0, 1080, 1080);
-      ctx.fillStyle = isDark ? '#ffffff' : '#111827';
-      ctx.font = 'bold 64px Arial, sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const words = textContent.split(' ');
-      const lines = []; let cur = words[0];
-      for (let i = 1; i < words.length; i++) {
-        const test = cur + ' ' + words[i];
-        if (ctx.measureText(test).width > 980) { lines.push(cur); cur = words[i]; } else cur = test;
+    } else if (mode === 'post') {
+      if (!textContent.trim() && !uploadFile) { toast.error('Please enter text or add a file'); return; }
+
+      if (uploadFile) {
+        // Media file provided — use it as primary content, text becomes description
+        finalFile = uploadFile;
+        finalMediaType = uploadFile.type === 'image/gif' ? 'gif' : ACCEPTED_VIDEO_TYPES.includes(uploadFile.type) ? 'video' : 'image';
+      } else {
+        // Text-only post — create directly, skip canvas generation and file upload
+        if (isPaid && (!priceNaira || parseFloat(priceNaira) < 122)) { toast.error('Minimum price is ₦122'); return; }
+        setUploading(true); setUploadProgress(0);
+        try {
+          await apiClient.post('/api/posts', {
+            description: description.trim(),
+            text_content: textContent.trim(),
+            media_type: 'image',
+            post_type: 'text',
+            is_public: isPublic,
+            allow_downloads: isPaid ? false : allowDownloads,
+            content_rating: contentRating,
+            room_id: selectedRoom?.id || null,
+            is_paid: isPaid,
+            price: isPaid && priceNaira ? parseFloat(priceNaira) / 122 : null,
+          });
+          setUploadProgress(100);
+          toast.success('Post created successfully!');
+          if (onSuccess) onSuccess();
+          onClose();
+        } catch (err) {
+          console.error('Upload error:', err);
+          const msg = err.response?.data?.error || 'Upload failed. Tap retry to try again.';
+          setUploadError(msg);
+          setUploading(false);
+          setUploadProgress(0);
+        }
+        return;
       }
-      lines.push(cur);
-      const lh = 80, sy = (1080 - lines.length * lh) / 2;
-      lines.forEach((l, i) => ctx.fillText(l, 540, sy + i * lh + lh / 2));
-      await new Promise(res => {
-        canvas.toBlob(blob => { finalFile = textMediaFile || blob; finalMediaType = textMediaFile ? 'video' : 'image'; res(); }, 'image/jpeg', 0.95);
-      });
-    } else if (mode === 'upload') {
-      if (!uploadFile) { toast.error('Please select a file'); return; }
-      if (!title.trim()) { toast.error('Please enter a title'); return; }
-      finalFile = uploadFile;
-      finalMediaType = uploadFile.type === 'image/gif' ? 'gif' : ACCEPTED_VIDEO_TYPES.includes(uploadFile.type) ? 'video' : 'image';
     }
 
     if (isPaid && (!priceNaira || parseFloat(priceNaira) < 122)) { toast.error('Minimum price is ₦122'); return; }
 
+    // Auto-populate description from textContent when media is present
+    const finalDescription = (mode === 'post' && uploadFile && textContent.trim())
+      ? textContent.trim()
+      : description.trim();
+
     setUploading(true); setUploadProgress(0);
     try {
       const createResponse = await apiClient.post('/api/posts', {
-        title: title.trim(), description: description.trim(),
+        description: finalDescription,
         media_type: finalMediaType, post_type: 'upload',
         is_public: isPublic, allow_downloads: isPaid ? false : allowDownloads,
         content_rating: contentRating, room_id: selectedRoom?.id || null,
@@ -336,20 +351,24 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
       });
       const postId = createResponse.data.post.id;
       setUploadProgress(10);
+      const ext = finalMediaType === 'video' ? (uploadFile?.name?.split('.').pop() || 'webm') : 'jpg';
       const formData = new FormData();
-      formData.append('file', finalFile, `post_${postId}.${finalMediaType === 'video' ? 'webm' : 'jpg'}`);
+      formData.append('file', finalFile, `post_${postId}.${ext}`);
       await apiClient.post(`/api/posts/${postId}/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: e => setUploadProgress(Math.round((e.loaded * 90) / e.total) + 10),
       });
       setUploadProgress(100);
-      toast.success('Post created successfully! 🎉');
+      toast.success('Post created successfully!');
       if (onSuccess) onSuccess();
       onClose();
     } catch (err) {
       console.error('Upload error:', err);
-      toast.error(err.response?.data?.error || 'Failed to create post');
-    } finally { setUploading(false); setUploadProgress(0); }
+      const msg = err.response?.data?.error || 'Upload failed. Tap retry to try again.';
+      setUploadError(msg);
+      setUploading(false);
+      setUploadProgress(0);
+    }
   };
 
   if (!isOpen) return null;
@@ -462,9 +481,8 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
               <div className="px-4 pt-3 pb-2 flex-shrink-0">
                 <div className="flex bg-gray-800/80 rounded-full p-1 gap-0.5">
                   {[
-                    { id: 'camera', label: 'Camera', Icon: Camera,   active: 'bg-purple-600' },
-                    { id: 'type',   label: 'Text',   Icon: TypeIcon, active: 'bg-blue-600'   },
-                    { id: 'upload', label: 'Upload', Icon: Upload,   active: 'bg-green-600'  },
+                    { id: 'camera', label: 'Camera', Icon: Camera, active: 'bg-purple-600' },
+                    { id: 'post',   label: 'Post',   Icon: Upload, active: 'bg-blue-600'   },
                   ].map(({ id, label, Icon, active }) => (
                     <button
                       key={id}
@@ -514,59 +532,64 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
                 </div>
               )}
 
-              {/* ── Text ── */}
-              {mode === 'type' && (
+              {/* ── Post (merged Text + Upload) ── */}
+              {mode === 'post' && (
                 <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-4 min-h-0">
-                  <div className="rounded-2xl overflow-hidden aspect-square max-h-64 w-full mx-auto flex items-center justify-center p-8 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
-                    <p className="text-gray-900 dark:text-white text-center text-xl md:text-2xl font-bold break-words leading-tight max-w-full">
-                      {textContent || <span className="text-gray-400 font-normal text-sm">What's on your mind?</span>}
-                    </p>
-                  </div>
+                  {/* Text input — always shown */}
                   <textarea
                     value={textContent}
                     onChange={e => setTextContent(e.target.value)}
                     maxLength={500}
                     rows={4}
-                    placeholder="What's on your mind?"
+                    placeholder="What's on your mind? (required if no file)"
                     autoFocus
                     className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm"
                   />
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between px-1">
                     <span className="text-xs text-gray-500">{textContent.length}/500</span>
-                    {textContent.trim() && (
-                      <button onClick={() => setStep(2)} className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-full transition-all active:scale-95">
-                        Continue →
-                      </button>
-                    )}
                   </div>
-                </div>
-              )}
 
-              {/* ── Upload ── */}
-              {mode === 'upload' && (
-                <div className="flex-1 overflow-y-auto px-4 pb-4 flex items-center min-h-0">
-                  <div
-                    onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`w-full border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all group ${
-                      dragActive ? 'border-green-400 bg-green-500/10 scale-[1.01]' : 'border-gray-600 hover:border-green-500/60 hover:bg-gray-800/50'
-                    }`}
-                  >
-                    <div className="flex flex-col items-center gap-4">
-                      <div className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${dragActive ? 'bg-green-500/25' : 'bg-green-600/15 group-hover:bg-green-600/25'}`}>
-                        <Upload className={`w-9 h-9 text-green-400 transition-transform ${dragActive ? 'scale-110' : 'group-hover:scale-110'}`} />
-                      </div>
-                      <div>
-                        <p className="text-white font-semibold mb-1">
-                          <span className="hidden sm:inline">Drop a file here or </span>
-                          <span className="text-green-400">tap to browse</span>
-                        </p>
-                        <p className="text-gray-400 text-sm">Video (max 500MB, 90s) · Image (max 10MB)</p>
-                        <p className="text-gray-500 text-xs mt-1">MP4, WebM, MOV, JPG, PNG, WebP, GIF</p>
-                      </div>
+                  {/* Media picker — optional */}
+                  {uploadFile ? (
+                    <div className="relative rounded-xl overflow-hidden bg-gray-800">
+                      {uploadFile.type.startsWith('video/')
+                        ? <video src={previewUrl} controls className="w-full max-h-52 object-contain" />
+                        : <img src={previewUrl} alt="Preview" className="w-full max-h-52 object-cover" />
+                      }
+                      <button
+                        onClick={() => { setUploadFile(null); setPreviewUrl(null); }}
+                        className="absolute top-2 right-2 p-1 bg-black/60 rounded-full text-white hover:bg-black/80"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
-                    <input ref={fileInputRef} type="file" accept="video/*,image/*" onChange={e => handleUploadFileSelection(e.target.files[0])} className="hidden" />
-                  </div>
+                  ) : (
+                    <div
+                      onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all group ${
+                        dragActive ? 'border-blue-400 bg-blue-500/10' : 'border-gray-600 hover:border-blue-500/60 hover:bg-gray-800/50'
+                      }`}
+                    >
+                      <Upload className="w-7 h-7 text-blue-400 mx-auto mb-2 group-hover:scale-110 transition-transform" />
+                      <p className="text-sm text-gray-300 font-medium">
+                        <span className="text-blue-400">Add photo or video</span>
+                        <span className="text-gray-500"> (optional)</span>
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">MP4, WebM, MOV, JPG, PNG, WebP, GIF</p>
+                      <input ref={fileInputRef} type="file" accept="video/*,image/*" onChange={e => handleUploadFileSelection(e.target.files[0])} className="hidden" />
+                    </div>
+                  )}
+
+                  {/* Continue button */}
+                  {(textContent.trim() || uploadFile) && (
+                    <button
+                      onClick={() => setStep(2)}
+                      className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-full transition-all active:scale-95"
+                    >
+                      Continue →
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -590,12 +613,12 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
                     <video src={URL.createObjectURL(capturedMedia)} controls className="w-full h-full object-contain" />
                   )
                 )}
-                {mode === 'upload' && previewUrl && (
-                  uploadFile?.type?.startsWith('video/')
+                {mode === 'post' && uploadFile && previewUrl && (
+                  uploadFile.type.startsWith('video/')
                     ? <video src={previewUrl} controls className="w-full h-full object-contain" />
                     : <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
                 )}
-                {mode === 'type' && (
+                {mode === 'post' && !uploadFile && textContent && (
                   <div className="w-full h-full flex items-center justify-center p-6 bg-white dark:bg-gray-900">
                     <p className="text-gray-900 dark:text-white text-center font-bold text-base break-words leading-tight line-clamp-6">{textContent}</p>
                   </div>
@@ -637,17 +660,6 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
 
               {/* Settings form — tighter top padding so image feels prominent */}
               <div className="flex-1 overflow-y-auto px-4 pt-2 pb-4 space-y-3 min-h-0">
-
-                {/* Title */}
-                <input
-                  type="text"
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  maxLength={255}
-                  placeholder="Title *"
-                  autoFocus
-                  className="w-full px-4 py-2.5 bg-gray-800/80 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
-                />
 
                 {/* Description */}
                 <textarea
@@ -717,7 +729,7 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
                       className="flex flex-col items-center gap-1.5 group hover:opacity-70 transition-all"
                     >
                       <Download className={`w-6 h-6 group-hover:scale-110 transition-transform ${allowDownloads ? 'text-cyan-400' : 'text-gray-500'}`} />
-                      <span className="text-[10px] text-gray-300 font-medium">{allowDownloads ? 'Downloads' : 'No DL'}</span>
+                      <span className="text-[10px] text-gray-300 font-medium">{allowDownloads ? 'Allow DL' : 'No DL'}</span>
                     </button>
                   )}
 
@@ -808,19 +820,37 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
                   </div>
                 </div>
 
+                {/* Error + Retry */}
+                {uploadError && (
+                  <div className="flex items-start gap-3 bg-red-900/30 border border-red-700/50 rounded-xl px-4 py-3">
+                    <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-red-300 text-xs leading-snug">{uploadError}</p>
+                    </div>
+                    <button
+                      onClick={() => { setUploadError(null); handleSubmit(); }}
+                      className="flex-shrink-0 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+
                 {/* Submit */}
-                <button
-                  onClick={handleSubmit}
-                  disabled={uploading || !title.trim()}
-                  className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600
-                             hover:from-purple-700 hover:to-pink-700
-                             disabled:opacity-50 disabled:cursor-not-allowed
-                             text-white font-bold rounded-xl transition-all active:scale-[0.98]
-                             flex items-center justify-center gap-2 text-sm"
-                >
-                  <Upload className="w-4 h-4" />
-                  Post
-                </button>
+                {!uploadError && (
+                  <button
+                    onClick={handleSubmit}
+                    disabled={uploading}
+                    className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600
+                               hover:from-purple-700 hover:to-pink-700
+                               disabled:opacity-50 disabled:cursor-not-allowed
+                               text-white font-bold rounded-xl transition-all active:scale-[0.98]
+                               flex items-center justify-center gap-2 text-sm"
+                  >
+                    <Upload className="w-4 h-4" />
+                    Post
+                  </button>
+                )}
               </div>
             </div>
           )}

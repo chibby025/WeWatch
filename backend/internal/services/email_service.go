@@ -2,380 +2,295 @@ package services
 
 import (
 	"fmt"
-	"net/smtp"
 	"os"
+	"strconv"
 	"time"
+
+	"gopkg.in/gomail.v2"
 )
 
-// EmailService handles sending emails via SMTP
+// EmailService handles sending transactional emails via Brevo SMTP relay.
 type EmailService struct {
-	smtpHost     string
-	smtpPort     string
-	smtpUser     string
-	smtpPassword string
-	fromAddress  string
+	smtpHost    string
+	smtpPort    int
+	smtpUser    string
+	smtpPass    string
+	fromAddress string
+	fromName    string
+	devMode     bool
 }
 
-// NewEmailService creates a new email service using environment variables
+// NewEmailService reads SMTP config from environment variables.
+// SMTP_USER  — Brevo account login email (used for SMTP authentication)
+// SMTP_FROM  — sender address shown in the email (e.g. noreply@letswatchout.com)
+// SMTP_FROM_NAME — display name (defaults to "LetsWatchOut")
 func NewEmailService() *EmailService {
+	port := 587
+	if p, err := strconv.Atoi(os.Getenv("SMTP_PORT")); err == nil && p > 0 {
+		port = p
+	}
+
+	fromAddr := os.Getenv("SMTP_FROM")
+	if fromAddr == "" {
+		fromAddr = os.Getenv("SMTP_USER") // fallback
+	}
+	fromName := os.Getenv("SMTP_FROM_NAME")
+	if fromName == "" {
+		fromName = "LetsWatchOut"
+	}
+
 	return &EmailService{
-		smtpHost:     os.Getenv("SMTP_HOST"),
-		smtpPort:     os.Getenv("SMTP_PORT"),
-		smtpUser:     os.Getenv("SMTP_USER"),
-		smtpPassword: os.Getenv("SMTP_PASSWORD"),
-		fromAddress:  "support@letswatchout.com",
+		smtpHost:    os.Getenv("SMTP_HOST"),
+		smtpPort:    port,
+		smtpUser:    os.Getenv("SMTP_USER"),
+		smtpPass:    os.Getenv("SMTP_PASSWORD"),
+		fromAddress: fromAddr,
+		fromName:    fromName,
+		devMode:     os.Getenv("DEV_MODE") == "true",
 	}
 }
 
-// SendEmail sends an email using SMTP
-func (e *EmailService) SendEmail(to, subject, body string) error {
-	// DEV MODE: Log email instead of sending (if SMTP not configured or DEV_MODE=true)
-	devMode := os.Getenv("DEV_MODE") == "true"
-	
-	if devMode || e.smtpHost == "" || e.smtpPort == "" || e.smtpUser == "" || e.smtpPassword == "" {
+func (e *EmailService) isConfigured() bool {
+	return e.smtpHost != "" && e.smtpUser != "" && e.smtpPass != ""
+}
+
+// SendEmail sends an HTML email. Falls back to console logging in dev mode or when SMTP is unconfigured.
+func (e *EmailService) SendEmail(to, subject, htmlBody string) error {
+	return e.send(to, "", subject, htmlBody)
+}
+
+func (e *EmailService) send(to, toName, subject, htmlBody string) error {
+	if e.devMode || !e.isConfigured() {
 		fmt.Println("==================================================")
-		fmt.Printf("📧 [DEV MODE] Email would be sent to: %s\n", to)
-		fmt.Printf("📧 [DEV MODE] Subject: %s\n", subject)
-		fmt.Println("==================================================")
-		fmt.Printf("📧 [DEV MODE] Body:\n%s\n", body)
-		fmt.Println("==================================================")
-		fmt.Println("📧 [DEV MODE] ✅ Email logged (not actually sent)")
+		fmt.Printf("📧 [DEV] To: %s\n", to)
+		fmt.Printf("📧 [DEV] Subject: %s\n", subject)
 		fmt.Println("==================================================")
 		return nil
 	}
-	
-	// Build email message
-	message := []byte(fmt.Sprintf(
-		"From: WeWatch Payments <%s>\r\n"+
-			"To: %s\r\n"+
-			"Subject: %s\r\n"+
-			"MIME-Version: 1.0\r\n"+
-			"Content-Type: text/html; charset=\"UTF-8\"\r\n"+
-			"\r\n"+
-			"%s\r\n",
-		e.fromAddress, to, subject, body,
-	))
-	
-	// Connect to SMTP server
-	auth := smtp.PlainAuth("", e.smtpUser, e.smtpPassword, e.smtpHost)
-	addr := fmt.Sprintf("%s:%s", e.smtpHost, e.smtpPort)
-	
-	// Send email
-	err := smtp.SendMail(addr, auth, e.fromAddress, []string{to}, message)
-	if err != nil {
-		return fmt.Errorf("failed to send email: %w", err)
+
+	m := gomail.NewMessage()
+	m.SetAddressHeader("From", e.fromAddress, e.fromName)
+	if toName != "" {
+		m.SetAddressHeader("To", to, toName)
+	} else {
+		m.SetHeader("To", to)
 	}
-	
-	fmt.Printf("📧 Email sent to %s: %s\n", to, subject)
+	m.SetHeader("Subject", subject)
+	m.SetBody("text/html", htmlBody)
+
+	d := gomail.NewDialer(e.smtpHost, e.smtpPort, e.smtpUser, e.smtpPass)
+	if err := d.DialAndSend(m); err != nil {
+		return fmt.Errorf("email send failed: %w", err)
+	}
+
+	fmt.Printf("📧 Sent: %s → %s\n", subject, to)
 	return nil
 }
 
-// SendWithdrawalSubmittedEmail sends email when withdrawal is submitted
-func (e *EmailService) SendWithdrawalSubmittedEmail(to, username string, amount float64, currency string) error {
-	// Calculate estimated arrival (24 hours from now)
-	arrivalTime := time.Now().Add(24 * time.Hour)
-	formattedTime := arrivalTime.Format("January 2, 2006 at 3:04pm")
-	
-	subject := fmt.Sprintf("Withdrawal Processing - %s%.2f", getCurrencySymbol(currency), amount)
-	
-	body := fmt.Sprintf(`
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-        .content { background-color: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; border-top: none; }
-        .amount { font-size: 32px; font-weight: bold; color: #2563eb; margin: 20px 0; }
-        .info-box { background-color: #dbeafe; border-left: 4px solid #2563eb; padding: 15px; margin: 20px 0; }
-        .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1 style="margin: 0;">💰 Withdrawal Processing</h1>
-        </div>
-        <div class="content">
-            <p>Hi %s,</p>
-            
-            <p>Your withdrawal request has been submitted successfully!</p>
-            
-            <div style="text-align: center;">
-                <div class="amount">%s%.2f</div>
-            </div>
-            
-            <div class="info-box">
-                <p style="margin: 0;"><strong>⏳ Estimated Arrival:</strong> %s</p>
-                <p style="margin: 10px 0 0 0; font-size: 14px; color: #1e40af;">
-                    Bank transfers take 24 hours to process (Paystack processing time, not ours)
-                </p>
-            </div>
-            
-            <p><strong>Status:</strong> Processing by Paystack</p>
-            
-            <p>You'll receive another email when the funds arrive in your bank account.</p>
-            
-            <p>If you have any questions, please contact our support team.</p>
-            
-            <div class="footer">
-                <p>Best regards,<br>WeWatch Payments Team</p>
-                <p style="font-size: 12px;">This is an automated email. Please do not reply.</p>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-	`, username, getCurrencySymbol(currency), amount, formattedTime)
-	
-	return e.SendEmail(to, subject, body)
+// ─── Shared template helpers ────────────────────────────────────────────────
+
+func emailWrap(accentColor, headerIcon, headerTitle, body string) string {
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body{font-family:Arial,sans-serif;background:#f3f4f6;margin:0;padding:0}
+  .wrap{max-width:600px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+  .hdr{background:%s;padding:28px 32px;text-align:center;color:#fff}
+  .hdr h1{margin:0;font-size:22px;font-weight:700}
+  .hdr .icon{font-size:36px;margin-bottom:8px}
+  .body{padding:32px}
+  .amount{font-size:36px;font-weight:800;color:%s;text-align:center;margin:20px 0}
+  .box{border-left:4px solid %s;background:#f8faff;padding:16px;margin:20px 0;border-radius:0 8px 8px 0}
+  .box p{margin:4px 0;font-size:14px}
+  .btn{display:inline-block;background:%s;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin:20px 0}
+  .footer{text-align:center;padding:20px 32px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12px}
+</style></head>
+<body><div class="wrap">
+  <div class="hdr"><div class="icon">%s</div><h1>%s</h1></div>
+  <div class="body">%s</div>
+  <div class="footer">
+    LetsWatchOut · <a href="mailto:support@letswatchout.com" style="color:#6b7280">support@letswatchout.com</a><br>
+    This is an automated message — please do not reply directly.
+  </div>
+</div></body></html>`,
+		accentColor, accentColor, accentColor, accentColor,
+		headerIcon, headerTitle, body)
 }
 
-// SendWithdrawalCompletedEmail sends email when withdrawal is completed
-func (e *EmailService) SendWithdrawalCompletedEmail(to, username string, amount float64, currency string) error {
-	subject := fmt.Sprintf("Withdrawal Complete - %s%.2f Sent", getCurrencySymbol(currency), amount)
-	
-	body := fmt.Sprintf(`
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background-color: #10b981; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-        .content { background-color: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; border-top: none; }
-        .amount { font-size: 32px; font-weight: bold; color: #10b981; margin: 20px 0; }
-        .success-box { background-color: #d1fae5; border-left: 4px solid #10b981; padding: 15px; margin: 20px 0; }
-        .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1 style="margin: 0;">✅ Withdrawal Complete</h1>
-        </div>
-        <div class="content">
-            <p>Hi %s,</p>
-            
-            <p>Great news! Your withdrawal has been completed successfully.</p>
-            
-            <div style="text-align: center;">
-                <div class="amount">%s%.2f</div>
-            </div>
-            
-            <div class="success-box">
-                <p style="margin: 0;"><strong>✅ Status:</strong> Funds have been sent to your bank account</p>
-                <p style="margin: 10px 0 0 0; font-size: 14px; color: #047857;">
-                    The money should appear in your account within a few minutes to a few hours, depending on your bank.
-                </p>
-            </div>
-            
-            <p>Thank you for using WeWatch!</p>
-            
-            <div class="footer">
-                <p>Best regards,<br>WeWatch Payments Team</p>
-                <p style="font-size: 12px;">This is an automated email. Please do not reply.</p>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-	`, username, getCurrencySymbol(currency), amount)
-	
-	return e.SendEmail(to, subject, body)
-}
-
-// SendWithdrawalFailedEmail sends email when withdrawal fails
-func (e *EmailService) SendWithdrawalFailedEmail(to, username string, amount float64, currency string, reason string) error {
-	subject := fmt.Sprintf("Withdrawal Failed - %s%.2f", getCurrencySymbol(currency), amount)
-	
-	body := fmt.Sprintf(`
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background-color: #ef4444; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-        .content { background-color: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; border-top: none; }
-        .amount { font-size: 32px; font-weight: bold; color: #ef4444; margin: 20px 0; }
-        .error-box { background-color: #fee2e2; border-left: 4px solid #ef4444; padding: 15px; margin: 20px 0; }
-        .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1 style="margin: 0;">❌ Withdrawal Failed</h1>
-        </div>
-        <div class="content">
-            <p>Hi %s,</p>
-            
-            <p>Unfortunately, your withdrawal request could not be completed.</p>
-            
-            <div style="text-align: center;">
-                <div class="amount">%s%.2f</div>
-            </div>
-            
-            <div class="error-box">
-                <p style="margin: 0;"><strong>❌ Reason:</strong> %s</p>
-            </div>
-            
-            <p>Your funds have been returned to your wallet and are available for withdrawal.</p>
-            
-            <p>Please check your bank account details and try again. If the problem persists, contact our support team.</p>
-            
-            <div class="footer">
-                <p>Best regards,<br>WeWatch Payments Team</p>
-                <p style="font-size: 12px;">This is an automated email. Please do not reply.</p>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-	`, username, getCurrencySymbol(currency), amount, reason)
-	
-	return e.SendEmail(to, subject, body)
-}
-
-// getCurrencySymbol returns the symbol for a currency code
-func getCurrencySymbol(currency string) string {
+func currencySymbol(currency string) string {
 	symbols := map[string]string{
-		"NGN": "₦",
-		"USD": "$",
-		"EUR": "€",
-		"GBP": "£",
-		"GHS": "₵",
-		"KES": "KSh",
-		"ZAR": "R",
+		"NGN": "₦", "USD": "$", "EUR": "€",
+		"GBP": "£", "GHS": "₵", "KES": "KSh",
 	}
-	
-	if symbol, ok := symbols[currency]; ok {
-		return symbol
+	if s, ok := symbols[currency]; ok {
+		return s
 	}
 	return currency + " "
 }
 
-// SendPasswordResetEmail sends email with password reset link
+// getCurrencySymbol is kept for backwards compatibility with existing callers.
+func getCurrencySymbol(currency string) string { return currencySymbol(currency) }
+
+// ─── Token purchase ──────────────────────────────────────────────────────────
+
+func (e *EmailService) SendTokenPurchaseReceiptEmail(to, username string, amountNGN float64, tokensAdded int, reference string) error {
+	subject := fmt.Sprintf("You bought %.2f tokens — receipt", float64(tokensAdded)/100.0)
+	body := fmt.Sprintf(`
+<p>Hi <strong>%s</strong>,</p>
+<p>Your token purchase was successful. Here's your receipt:</p>
+<div class="amount">%.2f tokens</div>
+<div class="box">
+  <p><strong>Amount paid:</strong> ₦%.2f</p>
+  <p><strong>Reference:</strong> %s</p>
+  <p><strong>Date:</strong> %s</p>
+</div>
+<p>Your tokens are ready to use — buy event tickets, send gifts, or tip creators.</p>
+<p>Thanks for supporting the community!</p>`,
+		username,
+		float64(tokensAdded)/100.0,
+		amountNGN,
+		reference,
+		time.Now().Format("2 Jan 2006, 3:04 PM"),
+	)
+	return e.send(to, username, subject, emailWrap("#7c3aed", "🪙", "Token Purchase Receipt", body))
+}
+
+// ─── Withdrawal emails ───────────────────────────────────────────────────────
+
+func (e *EmailService) SendWithdrawalSubmittedEmail(to, username string, amount float64, currency string) error {
+	sym := currencySymbol(currency)
+	subject := fmt.Sprintf("Withdrawal of %s%.2f submitted", sym, amount)
+	body := fmt.Sprintf(`
+<p>Hi <strong>%s</strong>,</p>
+<p>We've received your withdrawal request and it's being reviewed.</p>
+<div class="amount">%s%.2f</div>
+<div class="box">
+  <p><strong>Status:</strong> Pending review</p>
+  <p><strong>Estimated arrival:</strong> Within 24 hours</p>
+  <p><strong>Date submitted:</strong> %s</p>
+</div>
+<p>You'll get another email once the funds have been sent to your bank account.</p>`,
+		username, sym, amount,
+		time.Now().Format("2 Jan 2006, 3:04 PM"),
+	)
+	return e.send(to, username, subject, emailWrap("#2563eb", "💸", "Withdrawal Submitted", body))
+}
+
+func (e *EmailService) SendWithdrawalCompletedEmail(to, username string, amount float64, currency string) error {
+	sym := currencySymbol(currency)
+	subject := fmt.Sprintf("Withdrawal of %s%.2f completed", sym, amount)
+	body := fmt.Sprintf(`
+<p>Hi <strong>%s</strong>,</p>
+<p>Your withdrawal has been processed and the funds are on their way.</p>
+<div class="amount">%s%.2f</div>
+<div class="box">
+  <p><strong>Status:</strong> Sent to your bank account</p>
+  <p><strong>Date:</strong> %s</p>
+</div>
+<p>Funds typically appear within a few minutes to a few hours depending on your bank.</p>
+<p>Thank you for being part of LetsWatchOut!</p>`,
+		username, sym, amount,
+		time.Now().Format("2 Jan 2006, 3:04 PM"),
+	)
+	return e.send(to, username, subject, emailWrap("#10b981", "✅", "Withdrawal Completed", body))
+}
+
+func (e *EmailService) SendWithdrawalFailedEmail(to, username string, amount float64, currency, reason string) error {
+	sym := currencySymbol(currency)
+	subject := fmt.Sprintf("Withdrawal of %s%.2f could not be processed", sym, amount)
+	body := fmt.Sprintf(`
+<p>Hi <strong>%s</strong>,</p>
+<p>Unfortunately your withdrawal request could not be completed.</p>
+<div class="amount">%s%.2f</div>
+<div class="box">
+  <p><strong>Reason:</strong> %s</p>
+</div>
+<p>Your tokens have been returned to your wallet and are available to withdraw again.</p>
+<p>Please double-check your bank account details and try again. If the issue persists, contact <a href="mailto:support@letswatchout.com">support@letswatchout.com</a>.</p>`,
+		username, sym, amount, reason,
+	)
+	return e.send(to, username, subject, emailWrap("#ef4444", "❌", "Withdrawal Failed", body))
+}
+
+// ─── Ticket purchase ─────────────────────────────────────────────────────────
+
+func (e *EmailService) SendTicketPurchaseEmail(to, username, sessionTitle string, ticketPriceTokens int, currency string, isGift bool, giftedByUsername string) error {
+	subject := fmt.Sprintf("Your ticket for \"%s\"", sessionTitle)
+	recipientLine := ""
+	if isGift {
+		recipientLine = fmt.Sprintf(`<p>This ticket was gifted to you by <strong>%s</strong>.</p>`, giftedByUsername)
+	}
+	body := fmt.Sprintf(`
+<p>Hi <strong>%s</strong>,</p>
+%s
+<p>Your ticket has been confirmed for:</p>
+<div class="box">
+  <p><strong>Event:</strong> %s</p>
+  <p><strong>Price paid:</strong> %.2f tokens</p>
+  <p><strong>Date:</strong> %s</p>
+</div>
+<p>Show up a few minutes early. Enjoy the session!</p>`,
+		username,
+		recipientLine,
+		sessionTitle,
+		float64(ticketPriceTokens)/100.0,
+		time.Now().Format("2 Jan 2006, 3:04 PM"),
+	)
+	return e.send(to, username, subject, emailWrap("#f59e0b", "🎟️", "Ticket Confirmed", body))
+}
+
+// ─── Account deletion ────────────────────────────────────────────────────────
+
+func (e *EmailService) SendAccountDeletionEmail(to, username string) error {
+	subject := "Your LetsWatchOut account has been deleted"
+	body := fmt.Sprintf(`
+<p>Hi <strong>%s</strong>,</p>
+<p>Your account deletion request has been processed. Your personal information has been removed from our systems.</p>
+<div class="box">
+  <p><strong>Deleted on:</strong> %s</p>
+  <p><strong>What was removed:</strong> Profile, bio, linked accounts, payment methods</p>
+  <p><strong>What is retained:</strong> Transaction records (required by CBN regulations for 7 years)</p>
+</div>
+<p>If you did not request this deletion or believe this was an error, contact us immediately at <a href="mailto:support@letswatchout.com">support@letswatchout.com</a>.</p>
+<p>We're sorry to see you go. You're always welcome back.</p>`,
+		username,
+		time.Now().Format("2 Jan 2006, 3:04 PM"),
+	)
+	return e.send(to, username, subject, emailWrap("#6b7280", "👋", "Account Deleted", body))
+}
+
+// ─── Security emails (already used) ─────────────────────────────────────────
+
 func (e *EmailService) SendPasswordResetEmail(to, username, resetToken string) error {
-	// Build reset URL (frontend URL)
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
 		frontendURL = "http://localhost:5173"
 	}
 	resetURL := fmt.Sprintf("%s/reset-password?token=%s", frontendURL, resetToken)
-	
-	subject := "Reset Your WeWatch Password"
-	
+	subject := "Reset your LetsWatchOut password"
 	body := fmt.Sprintf(`
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-        .content { background-color: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; border-top: none; }
-        .button { display: inline-block; background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0; }
-        .button:hover { background-color: #1d4ed8; }
-        .warning-box { background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; }
-        .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1 style="margin: 0;">🔐 Reset Your Password</h1>
-        </div>
-        <div class="content">
-            <p>Hi %s,</p>
-            
-            <p>We received a request to reset your WeWatch password. Click the button below to choose a new password:</p>
-            
-            <div style="text-align: center;">
-                <a href="%s" class="button" style="color: white;">Reset Password</a>
-            </div>
-            
-            <p style="font-size: 14px; color: #6b7280;">Or copy and paste this link into your browser:</p>
-            <p style="font-size: 12px; color: #2563eb; word-break: break-all;">%s</p>
-            
-            <div class="warning-box">
-                <p style="margin: 0;"><strong>⏰ This link expires in 15 minutes</strong></p>
-                <p style="margin: 10px 0 0 0; font-size: 14px;">For your security, password reset links are only valid for a short time.</p>
-            </div>
-            
-            <p><strong>Didn't request this?</strong> You can safely ignore this email. Your password won't be changed.</p>
-            
-            <div class="footer">
-                <p>Best regards,<br>WeWatch Security Team</p>
-                <p style="font-size: 12px;">This is an automated email. Please do not reply.</p>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-	`, username, resetURL, resetURL)
-	
-	return e.SendEmail(to, subject, body)
+<p>Hi <strong>%s</strong>,</p>
+<p>We received a request to reset your password. Click the button below — this link expires in <strong>15 minutes</strong>.</p>
+<div style="text-align:center"><a href="%s" class="btn">Reset Password</a></div>
+<p style="font-size:13px;color:#6b7280">Or paste this link into your browser:<br>%s</p>
+<div class="box">
+  <p><strong>Didn't request this?</strong> You can safely ignore this email. Your password won't change.</p>
+</div>`,
+		username, resetURL, resetURL,
+	)
+	return e.send(to, username, subject, emailWrap("#2563eb", "🔐", "Reset Your Password", body))
 }
 
-// SendPasswordChangedEmail sends confirmation email after password reset
 func (e *EmailService) SendPasswordChangedEmail(to, username string) error {
-	subject := "Your WeWatch Password Was Changed"
-	
-	currentTime := time.Now().Format("January 2, 2006 at 3:04pm MST")
-	
+	subject := "Your LetsWatchOut password was changed"
 	body := fmt.Sprintf(`
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background-color: #10b981; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-        .content { background-color: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; border-top: none; }
-        .success-box { background-color: #d1fae5; border-left: 4px solid #10b981; padding: 15px; margin: 20px 0; }
-        .alert-box { background-color: #fee2e2; border-left: 4px solid #ef4444; padding: 15px; margin: 20px 0; }
-        .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1 style="margin: 0;">✅ Password Changed Successfully</h1>
-        </div>
-        <div class="content">
-            <p>Hi %s,</p>
-            
-            <p>This is a confirmation that your WeWatch password was successfully changed.</p>
-            
-            <div class="success-box">
-                <p style="margin: 0;"><strong>⏰ Changed on:</strong> %s</p>
-                <p style="margin: 10px 0 0 0; font-size: 14px; color: #047857;">
-                    Your account is now secured with your new password.
-                </p>
-            </div>
-            
-            <div class="alert-box">
-                <p style="margin: 0;"><strong>⚠️ Didn't make this change?</strong></p>
-                <p style="margin: 10px 0 0 0; font-size: 14px; color: #991b1b;">
-                    If you didn't reset your password, your account may have been compromised. 
-                    Please contact our support team immediately at support@letswatchout.com
-                </p>
-            </div>
-            
-            <p>If you made this change, no further action is needed. You can now log in with your new password.</p>
-            
-            <div class="footer">
-                <p>Best regards,<br>WeWatch Security Team</p>
-                <p style="font-size: 12px;">This is an automated email. Please do not reply.</p>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-	`, username, currentTime)
-	
-	return e.SendEmail(to, subject, body)
+<p>Hi <strong>%s</strong>,</p>
+<p>Your password was successfully changed on <strong>%s</strong>.</p>
+<div class="box">
+  <p><strong>⚠️ Didn't make this change?</strong> Contact us immediately at <a href="mailto:support@letswatchout.com">support@letswatchout.com</a></p>
+</div>`,
+		username,
+		time.Now().Format("2 Jan 2006, 3:04 PM"),
+	)
+	return e.send(to, username, subject, emailWrap("#10b981", "✅", "Password Changed", body))
 }

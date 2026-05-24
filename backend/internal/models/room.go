@@ -38,12 +38,20 @@ type Room struct {
 	TotalRatings        int     `gorm:"default:0" json:"total_ratings"`
 	CumulativeRatingSum int     `gorm:"default:0" json:"cumulative_rating_sum"`
 	
-	// Content moderation (age-based filtering)
-	ContentRating string `gorm:"type:varchar(10);default:'G';not null" json:"content_rating"` // 'G', 'PG', '13+', '16+', '18+', 'Mature'
+	// Room identity — determines permanent character of the room
+	RoomType      string `gorm:"type:varchar(20);default:'general'" json:"room_type"` // 'general', 'church', 'education', 'other'
+	OtherRoomType string `gorm:"type:varchar(100)" json:"other_room_type,omitempty"`  // user-described type when room_type = 'other'
+
+	// Content moderation (age-based filtering; auto-locked for church/education rooms)
+	ContentRating string `gorm:"type:varchar(10);default:'G';not null" json:"content_rating"` // 'G', 'PG', '13+', '16+', '18+', 'Mature', 'Educational', 'Religious'
 	
+	// Follow-based room auto-invite: when a user follows this host, send them a room invite if enabled
+	AutoInviteFollowers bool `gorm:"default:true" json:"auto_invite_followers"`
+
 	// Ad tracking (for RoomTV ad frequency capping)
-	LastAdShownAt *time.Time `gorm:"type:timestamp" json:"last_ad_shown_at,omitempty"` // Last time ad shown in RoomTV
-	// Add more fields later like MaxViewers, Password, etc.
+	LastAdShownAt *time.Time `gorm:"type:timestamp" json:"last_ad_shown_at,omitempty"`
+	// Handle — unique short identifier (e.g. "cinemahouse_108")
+	Handle string `gorm:"type:varchar(50);uniqueIndex" json:"handle,omitempty"`
 }
 
 // Remove or fix any incorrect hook functions like BeforeCreate or BeforeUpdate

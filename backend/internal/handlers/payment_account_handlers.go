@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"wewatch-backend/internal/encrypt"
 	"wewatch-backend/internal/models"
 )
 
@@ -316,13 +317,17 @@ func AddPaystackBankAccount(c *gin.Context) {
 	
 	recipientCode := recipientResponse.Data.RecipientCode
 	
-	// Step 4: Check if this account already exists
+	// Step 4: Check if this account already exists using the HMAC hash (dedup-safe with encryption)
+	accountHash, err := encrypt.HMAC(req.AccountNumber)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process account details"})
+		return
+	}
 	var existingAccount models.PaymentAccount
-	result := db.Where("user_id = ? AND account_number = ? AND bank_code = ?", 
-		userID, req.AccountNumber, req.BankCode).First(&existingAccount)
-	
+	result := db.Where("user_id = ? AND account_number_hash = ? AND bank_code = ?",
+		userID, accountHash, req.BankCode).First(&existingAccount)
+
 	if result.Error == nil {
-		// Account already exists
 		c.JSON(http.StatusConflict, gin.H{"error": "This bank account is already linked"})
 		return
 	}

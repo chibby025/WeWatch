@@ -1,7 +1,7 @@
 // WeWatch/frontend/src/components/RoomPageNew.jsx
 // Redesigned RoomPage - Hub for room with persistent chat (no video player)
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import EmojiPicker from './EmojiPicker';
 import logger from '../utils/logger';
@@ -12,6 +12,12 @@ import {
   ClockIcon,
   FilmIcon,
   EllipsisVerticalIcon,
+  ArrowUpIcon,
+  MicrophoneIcon as MicrophoneOutlineIcon,
+  FaceSmileIcon as FaceSmileOutlineIcon,
+  PaperClipIcon as PaperClipOutlineIcon,
+  ChartBarSquareIcon as ChartBarSquareOutlineIcon,
+  StopCircleIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
 import { useMobile } from '../hooks/useMobile';
@@ -36,13 +42,16 @@ import SessionEarningsModal from './SessionEarningsModal';
 import DateOfBirthPromptModal from './DateOfBirthPromptModal';
 import RoomPageLeftSidebar from './RoomPageLeftSidebar';
 import RoomGroupEditModal from './RoomGroupEditModal';
-import { checkDateOfBirth, updateDateOfBirth } from '../services/api';
+import RoomJoinRequestsModal from './RoomJoinRequestsModal';
+import { checkDateOfBirth, updateDateOfBirth, getRoomJoinRequests } from '../services/api';
 // TODO: Review MediaBanner integration later - currently commented out for future use
 // import MediaBanner from './MediaBanner';
 
 const RoomPageNew = () => {
   const { id: roomId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const sessionAutoOpened = useRef(false);
   const { currentUser, roomMemberships, addRoomMembership, removeRoomMembership } = useAuth();
   const isMobile = useMobile();
 
@@ -67,6 +76,8 @@ const RoomPageNew = () => {
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  const headerRef = useRef(null);
+  const [mobileHeaderHeight, setMobileHeaderHeight] = useState(80);
   const [openMenuIndex, setOpenMenuIndex] = useState(null);
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editText, setEditText] = useState('');
@@ -76,6 +87,9 @@ const RoomPageNew = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const lastVisibleMessageIndexRef = useRef(null); // Track last visible message when scrolling away
   const [replyingTo, setReplyingTo] = useState(null); // Track message being replied to
+  const [swipingMsgIndex, setSwipingMsgIndex] = useState(null);
+  const [swipeX, setSwipeX] = useState(0);
+  const [highlightedMessageId, setHighlightedMessageId] = useState(null);
 
   // Voice note state
   const [isRecording, setIsRecording] = useState(false);
@@ -100,6 +114,8 @@ const RoomPageNew = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isJoinRequestsModalOpen, setIsJoinRequestsModalOpen] = useState(false);
+  const [pendingJoinCount, setPendingJoinCount] = useState(0);
   const [isTVContentModalOpen, setIsTVContentModalOpen] = useState(false);
   const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
   const [isCreatePollModalOpen, setIsCreatePollModalOpen] = useState(false);
@@ -168,6 +184,14 @@ const RoomPageNew = () => {
   const reconnectTimeoutRef = useRef(null);
   const isMountedRef = useRef(true); // Track if component is mounted
 
+  // Auto-open WatchTypeModal when navigated here with openSession state (from "Watch in Your Room")
+  useEffect(() => {
+    if (room && isHost && location.state?.openSession && !sessionAutoOpened.current) {
+      sessionAutoOpened.current = true;
+      setTimeout(() => setIsWatchTypeModalOpen(true), 300);
+    }
+  }, [room, isHost]);
+
   // ✅ INSTANT membership check from auth context
   useEffect(() => {
     if (roomMemberships && roomMemberships.length > 0) {
@@ -179,6 +203,17 @@ const RoomPageNew = () => {
       }
     }
   }, [roomMemberships, roomId]);
+
+  // Measure fixed mobile header height so sidebar + messages clear it exactly
+  useEffect(() => {
+    if (!isMobile || !headerRef.current) return;
+    const el = headerRef.current;
+    const update = () => setMobileHeaderHeight(el.offsetHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isMobile]);
 
   // Track activeSession state changes
   useEffect(() => {
@@ -412,6 +447,13 @@ const RoomPageNew = () => {
       setRoom(roomData);
       const userIsHost = currentUser?.id === roomData.host_id;
       setIsHost(userIsHost);
+
+      // Fetch pending join request count for host (private rooms)
+      if (userIsHost && !roomData.is_public) {
+        getRoomJoinRequests(roomId)
+          .then(r => setPendingJoinCount(r.data.count || 0))
+          .catch(() => {});
+      }
       
       console.log('🔍 [RoomPageNew] fetchRoomData - Host check:');
       console.log('  currentUser.id:', currentUser?.id, 'type:', typeof currentUser?.id);
@@ -980,6 +1022,21 @@ const RoomPageNew = () => {
           toast.success('Watch session started!');
           fetchActiveSession();
           break;
+        case 'room_join_request':
+          // Increment pending badge for host
+          setPendingJoinCount(prev => prev + 1);
+          toast(`${message.data?.username || 'Someone'} wants to join your room`, { icon: '🔔' });
+          break;
+        case 'kicked_from_room': {
+          const kickReason = message.data?.reason;
+          if (kickReason === 'banned') {
+            toast.error('You have been banned from this room');
+          } else {
+            toast.error('You have been removed from this room by the host');
+          }
+          setTimeout(() => navigate('/lobby'), 1500);
+          break;
+        }
         case 'session_ended':
           logger.debug('🛑 [RoomPageNew] SESSION_ENDED message received:', {
             reason: message.data?.reason,
@@ -990,9 +1047,9 @@ const RoomPageNew = () => {
           
           const reason = message.data?.reason;
           if (reason === 'host_timeout') {
-            toast('Watch session ended - Host disconnected', { icon: '⏰' });
+            toast('Watch session ended - Host disconnected', { icon: '⏰', id: 'session-ended' });
           } else {
-            toast('Watch session ended');
+            toast('Watch session ended', { id: 'session-ended' });
           }
           
           // ✅ Show rating modal for ALL sessions (not just paid) but exclude the host
@@ -1153,24 +1210,47 @@ const RoomPageNew = () => {
     e.preventDefault();
     if (!newMessage.trim()) return;
 
-    // ✅ Check if chat is locked to host-only
     if (room?.host_only_chat && !isHost) {
       toast.error('Chat is locked. Only the host can send messages.');
       return;
     }
 
+    // Capture before clearing so we can restore on error
+    const msgToSend = newMessage;
+    const replyContext = replyingTo;
+
+    // Clear input immediately — snappy UX
+    setNewMessage('');
+    setReplyingTo(null);
+    setShowEmojiPicker(false);
+
     try {
-      await apiClient.post(`/api/rooms/${roomId}/messages`, {
-        message: newMessage,
-        reply_to_id: replyingTo?.id || null, // Include reply reference
-        room_group_id: selectedGroupId || null, // ✅ Include selected group (null = main chat)
+      const response = await apiClient.post(`/api/rooms/${roomId}/messages`, {
+        message: msgToSend,
+        reply_to_id: replyContext?.id || null,
+        room_group_id: selectedGroupId || null,
       });
-      setNewMessage('');
-      setReplyingTo(null); // Clear reply context
-      setShowEmojiPicker(false); // Close picker after sending
+
+      const serverMsg = response.data?.data;
+      // Add message to local state immediately — backend doesn't WS-broadcast own messages
+      setMessages(prev => [...prev, {
+        id: serverMsg?.id || serverMsg?.ID || Date.now(),
+        user_id: currentUser?.id,
+        username: currentUser?.username,
+        message: msgToSend,
+        created_at: serverMsg?.created_at || new Date().toISOString(),
+        reply_to: replyContext
+          ? { id: replyContext.id, username: replyContext.username, message: replyContext.message }
+          : null,
+        room_group_id: selectedGroupId,
+      }]);
+      scrollToBottom();
     } catch (err) {
       console.error('Failed to send message:', err);
       toast.error('Failed to send message');
+      // Restore input on failure
+      setNewMessage(msgToSend);
+      setReplyingTo(replyContext);
     }
   };
 
@@ -1243,9 +1323,26 @@ const RoomPageNew = () => {
   const startReply = (msg) => {
     setReplyingTo(msg);
     setOpenMenuIndex(null);
-    // Focus on input (optional)
     document.querySelector('input[placeholder="Message..."]')?.focus();
   };
+
+  const scrollToMessage = (messageId) => {
+    const el = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedMessageId(messageId);
+    setTimeout(() => setHighlightedMessageId(null), 1500);
+  };
+
+  const replyCounts = useMemo(() => {
+    const counts = {};
+    messages.forEach(msg => {
+      if (msg.reply_to?.id) {
+        counts[msg.reply_to.id] = (counts[msg.reply_to.id] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [messages]);
 
   const cancelEditing = () => {
     setEditingMessageId(null);
@@ -1769,8 +1866,8 @@ const RoomPageNew = () => {
       console.log('📤 [RoomPageNew] Calling end API for session:', activeSession.session_id);
       const response = await endWatchSession(roomId, activeSession.session_id);
       console.log('✅ [RoomPageNew] End API succeeded:', response);
-      toast.success('Watch session ended');
-      
+      toast.success('Watch session ended', { id: 'session-ended' });
+
       // ✅ Check if this was a paid session with earnings (for host)
       if (response?.data?.session && response.data.session.ticketing_enabled && 
           response.data.session.total_ticket_revenue > 0) {
@@ -1887,29 +1984,29 @@ const RoomPageNew = () => {
       )}
 
       {/* ✅ Sticky Header - Compact layout */}
-      <header className={`bg-gray-800 ${isMobile ? 'fixed top-0 left-0 right-0 z-50' : 'flex-none'}`}>
-        <div className={`px-4 ${isMobile ? 'py-2' : 'py-0'}`}>
+      <header ref={headerRef} className={`bg-gray-800 ${isMobile ? 'fixed top-0 left-0 right-0 z-50' : 'flex-none'}`}>
+        <div className="py-2 px-0 md:px-3 lg:px-4">
           {isMobile ? (
             /* Mobile Layout */
             <>
               {/* Single Row with nested room name + info */}
-              <div className="flex items-start justify-between gap-1">
-                {/* Left section: Back + Image + Name with info below */}
-                <div 
-                  className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
+              <div className="flex items-center gap-2">
+                {/* Back button - isolated at far left */}
+                <img
+                  src="/icons/backIcon.svg"
+                  alt="Back"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate('/lobby');
+                  }}
+                  className="h-5 w-5 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
+                />
+
+                {/* Middle section: Image + Name with info below */}
+                <div
+                  className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer"
                   onClick={() => setIsEditModalOpen(true)}
                 >
-                  {/* Back button - same level as image and name */}
-                  <img 
-                    src="/icons/backIcon.svg" 
-                    alt="Back" 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate('/lobby');
-                    }}
-                    className="h-5 w-5 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
-                  />
-                  
                   {/* Room Image */}
                   <div 
                     className="w-14 h-14 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-2 ring-gray-600 flex-shrink-0 cursor-pointer hover:ring-purple-500 transition-all"
@@ -1974,17 +2071,17 @@ const RoomPageNew = () => {
                 </div>
                 
                 {/* Right section: Action Icons + Ellipse */}
-                <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2 md:gap-5 flex-shrink-0 ml-auto" onClick={(e) => e.stopPropagation()}>
                 
                 {!selectedGroupId && (
                   <>
                     {/* Begin Watch Icon */}
                     {!activeSession && (
-                      <img 
+                      <img
                         src="/icons/beginWatchIcon.svg"
                         alt="Begin Watch"
                         onClick={isHost ? handleBeginWatch : undefined}
-                        className={`h-12 w-12 flex-shrink-0 ${
+                        className={`h-7 w-7 md:h-[38px] md:w-[38px] flex-shrink-0 ${
                           isHost ? 'cursor-pointer hover:opacity-80 transition-opacity' : 'opacity-30 cursor-not-allowed'
                         }`}
                         title={isHost ? "Begin Watch" : "Only the host can start a watch session"}
@@ -2001,7 +2098,7 @@ const RoomPageNew = () => {
                             setScheduleModalTab(isHost ? 'create' : 'upcoming');
                             setIsScheduleModalOpen(true);
                           }}
-                          className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity"
+                          className="h-[34px] w-[34px] cursor-pointer hover:opacity-80 transition-opacity"
                         />
                         {scheduledEventsCount > 0 && (
                           <div className={`absolute -top-1 -right-1 min-w-[18px] h-5 flex items-center justify-center rounded-full text-white text-[10px] font-bold px-1 shadow-lg ${
@@ -2019,14 +2116,30 @@ const RoomPageNew = () => {
                         src="/icons/roomTvIcon.svg" 
                         alt="RoomTV" 
                         onClick={() => setIsTVContentModalOpen(true)}
-                        className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
+                        className="h-[38px] w-[38px] cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
                       />
                     )}
                   </>
                 )}
-                
+
+                  {/* Pending join requests badge (host only, private rooms) */}
+                  {isHost && pendingJoinCount > 0 && (
+                    <button
+                      onClick={() => setIsJoinRequestsModalOpen(true)}
+                      className="relative flex items-center justify-center w-8 h-8 rounded-full bg-orange-500 hover:bg-orange-400 transition-colors flex-shrink-0"
+                      title="Pending join requests"
+                    >
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                      </svg>
+                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                        {pendingJoinCount > 9 ? '9+' : pendingJoinCount}
+                      </span>
+                    </button>
+                  )}
+
                   {/* Ellipse */}
-                  <EllipsisVerticalIcon 
+                  <EllipsisVerticalIcon
                     onClick={() => setIsEditModalOpen(true)}
                     className="h-6 w-6 text-white cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
                   />
@@ -2043,7 +2156,7 @@ const RoomPageNew = () => {
                     src="/icons/backIcon.svg" 
                     alt="Back" 
                     onClick={() => navigate('/lobby')}
-                    className="h-6 w-6 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
+                    className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
                   />
                   
                   <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-2 ring-gray-600 flex-shrink-0">
@@ -2105,25 +2218,25 @@ const RoomPageNew = () => {
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-6">
                   {!selectedGroupId && (
                     <>
                       {!activeSession && (
                         <>
                           {/* Begin Watch Button - Host: clickable, Members: greyed out */}
                           {isHost ? (
-                            <img 
+                            <img
                               src="/icons/beginWatchIcon.svg"
                               alt="Begin Watch"
                               onClick={handleBeginWatch}
-                              className="h-20 w-20 cursor-pointer hover:opacity-80 transition-opacity"
+                              className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity"
                               title="Begin Watch"
                             />
                           ) : (
-                            <img 
+                            <img
                               src="/icons/beginWatchIcon.svg"
                               alt="Begin Watch"
-                              className="h-20 w-20 opacity-30 cursor-not-allowed"
+                              className="h-10 w-10 opacity-30 cursor-not-allowed"
                               title="Only the host can start a watch session"
                             />
                           )}
@@ -2132,21 +2245,21 @@ const RoomPageNew = () => {
                       {/* Schedule icon: Always visible to host, visible to members only if events exist */}
                       {(isHost || scheduledEventsCount > 0) && (
                         <div className="relative">
-                          <img 
-                            src="/icons/scheduleWatchIcon.svg" 
-                            alt="Schedule Watch" 
+                          <img
+                            src="/icons/scheduleWatchIcon.svg"
+                            alt="Schedule Watch"
                             onClick={() => {
                               // Host opens to 'create' tab, members open to 'upcoming' tab
                               setScheduleModalTab(isHost ? 'create' : 'upcoming');
                               setIsScheduleModalOpen(true);
                             }}
-                            className="h-20 w-20 cursor-pointer hover:opacity-80 transition-opacity"
+                            className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity"
                             title={isHost ? "Schedule Watch" : "View Scheduled Events"}
                           />
                           {/* Badge with event count */}
                           {scheduledEventsCount > 0 && (
-                            <div 
-                              className={`absolute top-1 right-1 min-w-[24px] h-6 flex items-center justify-center rounded-full text-white text-xs font-bold px-2 shadow-lg ${
+                            <div
+                              className={`absolute top-0 right-0 min-w-[24px] h-6 flex items-center justify-center rounded-full text-white text-xs font-bold px-2 shadow-lg ${
                                 hasEventStartingSoon
                                   ? 'bg-red-500 animate-pulse'
                                   : 'bg-purple-500'
@@ -2159,18 +2272,18 @@ const RoomPageNew = () => {
                         </div>
                       )}
                       {isHost && (
-                        <img 
-                          src="/icons/roomTvIcon.svg" 
-                          alt="Post to RoomTV" 
+                        <img
+                          src="/icons/roomTvIcon.svg"
+                          alt="Post to RoomTV"
                           onClick={() => setIsTVContentModalOpen(true)}
-                          className="h-24 w-24 cursor-pointer hover:opacity-80 transition-opacity -mt-2"
+                          className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity"
                           title="Post to RoomTV"
                         />
                       )}
                     </>
                   )}
                   
-                  <EllipsisVerticalIcon 
+                  <EllipsisVerticalIcon
                     onClick={() => setIsEditModalOpen(true)}
                     className="h-8 w-8 text-white cursor-pointer hover:opacity-80 transition-opacity"
                     title="Room Settings"
@@ -2213,14 +2326,19 @@ const RoomPageNew = () => {
           onDeleteGroup={handleDeleteGroupFromSidebar}
           onGroupEdit={handleGroupEdit}
           isHost={isHost}
+          mobileHeaderHeight={mobileHeaderHeight}
         />
 
+        {/* Chat column: messages + input */}
+        <div className="flex-1 flex flex-col min-h-0">
+
         {/* ✅ Chat Messages - Fills remaining space */}
-        <div 
+        <div
           ref={messagesContainerRef}
           className={`flex-1 overflow-y-auto bg-gray-900 px-4 space-y-1.5 scrollbar-hide relative ${
-            isMobile ? 'pt-[240px] pb-[70px]' : 'py-2'
+            isMobile ? '' : 'py-2'
           }`}
+          style={isMobile ? { paddingTop: `${mobileHeaderHeight + 8}px`, paddingBottom: '90px' } : undefined}
         >
         {messages.length === 0 ? (
           <div className="text-center text-gray-400 py-8">
@@ -2263,16 +2381,25 @@ const RoomPageNew = () => {
               );
             }
 
+            const isSwiping = swipingMsgIndex === index;
+            const currentSwipeX = isSwiping ? swipeX : 0;
+            const isHighlighted = highlightedMessageId === msg.id;
+            const replyCount = replyCounts[msg.id] || 0;
+
             return (
               <div
                 key={index}
                 data-message-index={index}
-                className={`flex group ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
+                data-message-id={msg.id}
+                className={`flex group relative ${isOwnMessage ? 'justify-end' : 'justify-start'} transition-colors duration-700 rounded-lg ${
+                  isHighlighted ? 'bg-purple-500/20' : ''
+                }`}
                 onTouchStart={(e) => {
-                  // Store touch start position for swipe detection
                   const touch = e.touches[0];
                   e.currentTarget.dataset.touchStartX = touch.clientX;
                   e.currentTarget.dataset.touchStartY = touch.clientY;
+                  setSwipingMsgIndex(index);
+                  setSwipeX(0);
                 }}
                 onTouchMove={(e) => {
                   const touch = e.touches[0];
@@ -2280,51 +2407,62 @@ const RoomPageNew = () => {
                   const startY = parseFloat(e.currentTarget.dataset.touchStartY);
                   const deltaX = touch.clientX - startX;
                   const deltaY = touch.clientY - startY;
-                  
-                  // Swipe right on message (horizontal swipe)
-                  if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX > 50) {
-                    e.currentTarget.style.transform = `translateX(${Math.min(deltaX, 100)}px)`;
+                  if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX > 0) {
+                    const clamped = Math.min(deltaX, 90);
+                    setSwipeX(clamped);
                   }
                 }}
                 onTouchEnd={(e) => {
                   const startX = parseFloat(e.currentTarget.dataset.touchStartX);
-                  const touch = e.changedTouches[0];
-                  const deltaX = touch.clientX - startX;
-                  
-                  // If swiped right more than 80px, trigger reply
-                  if (deltaX > 80) {
-                    startReply(msg);
-                  }
-                  
-                  // Reset transform
-                  e.currentTarget.style.transform = '';
+                  const deltaX = e.changedTouches[0].clientX - startX;
+                  if (deltaX > 70) startReply(msg);
+                  setSwipingMsgIndex(null);
+                  setSwipeX(0);
                 }}
               >
-                <div className="relative max-w-xs">
-                  {/* Replied-to message preview - shown above the reply */}
+                {/* Swipe reply indicator — slides in from left */}
+                <div
+                  className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 rounded-full bg-purple-500 text-white transition-all duration-100 pointer-events-none"
+                  style={{
+                    opacity: currentSwipeX > 20 ? Math.min((currentSwipeX - 20) / 50, 1) : 0,
+                    transform: `translateY(-50%) translateX(${Math.min(currentSwipeX * 0.6, 40)}px) scale(${0.6 + Math.min(currentSwipeX / 90, 1) * 0.4})`,
+                  }}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                  </svg>
+                </div>
+
+                <div
+                  className="relative max-w-xs"
+                  style={{ transform: `translateX(${currentSwipeX * 0.35}px)`, transition: isSwiping ? 'none' : 'transform 0.2s ease-out' }}
+                >
+                  {/* Quoted / replied-to preview */}
                   {msg.reply_to && (
-                    <div className="mb-1 ml-3">
-                      <div className="relative">
-                        {/* Connecting line */}
-                        <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-gradient-to-b from-gray-500 to-transparent" />
-                        
-                        {/* Replied message preview */}
-                        <div className={`ml-2 px-2.5 py-1 rounded-lg text-xs ${
-                          isOwnMessage 
-                            ? 'bg-blue-900/40 text-blue-200 border border-blue-700/30'
-                            : 'bg-gray-700/50 text-gray-300 border border-gray-600/30'
-                        }`}>
-                          <div className="font-medium text-[10px] opacity-70 mb-0.5">
-                            @{msg.reply_to.username}
+                    <div
+                      className={`mb-0.5 cursor-pointer rounded-lg overflow-hidden ${isOwnMessage ? 'ml-auto' : ''}`}
+                      style={{ maxWidth: '100%' }}
+                      onClick={() => msg.reply_to.id && scrollToMessage(msg.reply_to.id)}
+                    >
+                      <div className={`flex items-stretch rounded-lg overflow-hidden border ${
+                        isOwnMessage
+                          ? 'bg-blue-900/50 border-blue-700/40'
+                          : 'bg-gray-700/60 border-gray-600/40'
+                      }`}>
+                        {/* Colored left accent bar */}
+                        <div className={`w-1 flex-shrink-0 ${isOwnMessage ? 'bg-blue-400' : 'bg-purple-400'}`} />
+                        <div className="px-2.5 py-1.5 min-w-0">
+                          <div className={`text-[11px] font-semibold mb-0.5 ${isOwnMessage ? 'text-blue-300' : 'text-purple-300'}`}>
+                            {msg.reply_to.username}
                           </div>
-                          <div className="opacity-80 truncate max-w-[200px]">
+                          <div className="text-xs text-gray-300 truncate leading-snug">
                             {msg.reply_to.message}
                           </div>
                         </div>
                       </div>
                     </div>
                   )}
-                  
+
                   {/* Main message bubble */}
                   <div
                     className={`px-3 py-1.5 rounded-lg shadow-sm ${
@@ -2333,7 +2471,7 @@ const RoomPageNew = () => {
                         : 'bg-gray-800 text-gray-100'
                     }`}
                   >
-                    {/* Username and Time on same line - only for text messages */}
+                    {/* Username and Time — only for text messages */}
                     {!msg.audio_url && (
                       <div className="flex items-center justify-between gap-3 text-xs opacity-75 mb-1">
                         <span className="font-medium">{msg.username || 'Anonymous'}</span>
@@ -2342,7 +2480,7 @@ const RoomPageNew = () => {
                         </span>
                       </div>
                     )}
-                    
+
                     {isEditing ? (
                       <div className="space-y-2">
                         <textarea
@@ -2353,60 +2491,34 @@ const RoomPageNew = () => {
                           autoFocus
                         />
                         <div className="flex gap-2 justify-end">
-                          <button
-                            onClick={cancelEditing}
-                            className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={() => saveEdit(msg.id)}
-                            className="px-2 py-1 text-xs bg-blue-500 hover:bg-blue-400 rounded"
-                          >
-                            Save
-                          </button>
+                          <button onClick={cancelEditing} className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded">Cancel</button>
+                          <button onClick={() => saveEdit(msg.id)} className="px-2 py-1 text-xs bg-blue-500 hover:bg-blue-400 rounded">Save</button>
                         </div>
                       </div>
                     ) : (
                       <>
-                        {/* Voice Note Player */}
                         {msg.audio_url ? (
                           <div className="w-full">
-                            {/* Row 1: Sender & Timestamp */}
                             <div className="flex items-center justify-between gap-3 text-xs opacity-75 mb-2">
                               <span className="font-medium">{msg.username || 'Anonymous'}</span>
                               <span className="text-[10px]">
                                 {new Date(msg.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
                               </span>
                             </div>
-                            
-                            {/* Row 2: Play Button & Progress Bar */}
                             <div className="flex items-center gap-2">
-                              {/* Play/Pause Button */}
                               <button
                                 onClick={() => toggleAudioPlayback(msg.id, msg.audio_url)}
                                 className="flex-shrink-0 w-6 h-6 hover:opacity-70 transition-opacity flex items-center justify-center"
                               >
                                 {playingAudioId === msg.id ? (
-                                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z" />
-                                  </svg>
+                                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z" /></svg>
                                 ) : (
-                                  <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-                                  </svg>
+                                  <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" /></svg>
                                 )}
                               </button>
-                              
-                              {/* Progress Bar */}
                               <div className="flex-1 h-1 bg-white/20 rounded-full overflow-hidden max-w-[140px]">
-                                <div 
-                                  className="h-full bg-white transition-all duration-100"
-                                  style={{ width: `${audioProgress[msg.id] || 0}%` }}
-                                />
+                                <div className="h-full bg-white transition-all duration-100" style={{ width: `${audioProgress[msg.id] || 0}%` }} />
                               </div>
-                              
-                              {/* Duration - only show if > 0 */}
                               {msg.duration > 0 && (
                                 <span className="text-xs opacity-60 flex-shrink-0 min-w-[32px] text-right">
                                   {Math.floor(msg.duration / 60)}:{String(msg.duration % 60).padStart(2, '0')}
@@ -2415,7 +2527,6 @@ const RoomPageNew = () => {
                             </div>
                           </div>
                         ) : (
-                          /* Text Message */
                           <div className={msg.deleted_by_host ? 'italic opacity-75 text-sm' : 'text-sm'}>
                             {msg.message}
                           </div>
@@ -2424,7 +2535,22 @@ const RoomPageNew = () => {
                     )}
                   </div>
 
-                  {/* 3-dot menu - Shows on hover for own messages or host */}
+                  {/* Reply count badge */}
+                  {replyCount > 0 && !isEditing && (
+                    <div className={`mt-0.5 flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}>
+                      <button
+                        onClick={() => startReply(msg)}
+                        className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300 transition-colors"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                        </svg>
+                        {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 3-dot menu — hover, own/host only */}
                   {!isEditing && !msg.deleted_by_host && (canEdit || canDelete) && (
                     <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
@@ -2436,28 +2562,16 @@ const RoomPageNew = () => {
 
                       {openMenuIndex === index && (
                         <div className="absolute right-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg py-1 min-w-[120px] z-10">
-                          <button
-                            onClick={() => startReply(msg)}
-                            className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700"
-                          >
+                          <button onClick={() => startReply(msg)} className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700">
                             Reply
                           </button>
                           {canEdit && (
-                            <button
-                              onClick={() => startEditing(msg)}
-                              className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700"
-                            >
+                            <button onClick={() => startEditing(msg)} className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700">
                               Edit
                             </button>
                           )}
                           {canDelete && (
-                            <button
-                              onClick={() => {
-                                handleDeleteMessage(msg.id);
-                                setOpenMenuIndex(null);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-gray-700"
-                            >
+                            <button onClick={() => { handleDeleteMessage(msg.id); setOpenMenuIndex(null); }} className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-gray-700">
                               Delete
                             </button>
                           )}
@@ -2498,8 +2612,6 @@ const RoomPageNew = () => {
           </button>
         )}
       </div>
-      {/* Close sidebar + chat wrapper */}
-      </div>
 
       {/* ✅ Message Input - Fixed bottom on mobile */}
       {isMember && (
@@ -2516,133 +2628,144 @@ const RoomPageNew = () => {
             </div>
           )}
           
-          <form onSubmit={handleSendMessage} className={`bg-gray-800 ${
+          <form onSubmit={handleSendMessage} className={`bg-transparent ${
             isMobile ? `fixed bottom-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24 lg:left-28' : 'left-0'} right-0 z-40` : 'flex-none'
-          } px-2 py-2 sm:px-4 sm:py-3 shadow-lg`}>
-          {/* Reply Context Banner */}
-          {replyingTo && (
-            <div className="flex items-center justify-between bg-gray-700 px-3 py-2 mb-2 rounded-lg">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-gray-400">Replying to {replyingTo.username}</div>
-                <div className="text-sm text-white truncate">{replyingTo.message}</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setReplyingTo(null)}
-                className="ml-2 text-gray-400 hover:text-white transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          )}
-          <div className="flex items-center gap-0.5 sm:gap-3">
-          {/* Left Icons Group - Attach & Voice Note */}
-          <div className="flex items-center gap-0 sm:gap-0.5 flex-none">
-            {/* Attach Button */}
-            <button
-              type="button"
-              onClick={() => isMember && setIsAttachModalOpen(true)}
-              disabled={!isMember}
-              className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 min-w-0"
-              title={isMember ? "Attach files, images, or create poll" : "Join room to attach content"}
-            >
-              <img src="/icons/roomAttachIcon.svg" alt="Attach" className="h-[22px] w-[22px] sm:h-[30px] sm:w-[30px]" />
-            </button>
+          } px-2 pb-2 pt-1 sm:px-3 sm:pb-3 sm:pt-1`}>
 
-            {/* Voice Note Button */}
-            <button
-              type="button"
-              onClick={handleVoiceNoteClick}
-              disabled={!isMember || (room?.host_only_chat && !isHost)}
-              className={`p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed relative flex-shrink-0 min-w-0 ${
-                isRecording ? 'animate-pulse' : ''
-              }`}
-              title={
-                !isMember ? "Join room to send voice notes" :
-                (room?.host_only_chat && !isHost) ? "Chat is locked (host-only)" :
-                isRecording ? `Recording... ${recordingDuration}s` : "Record Voice Note"
-              }
-            >
-              <img 
-                src="/icons/mic.svg" 
-                alt="Voice Note" 
-                className={`h-[22px] w-[22px] sm:h-[30px] sm:w-[30px] ${isRecording ? 'filter brightness-150' : ''}`}
-              />
-              {isRecording && (
-                <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-              )}
-            </button>
-          </div>
-
-          {/* Recording Timer Display */}
-          {isRecording && (
-            <div className="flex items-center gap-1 text-red-500 font-mono text-[10px] sm:text-xs animate-pulse flex-shrink-0">
-              <span className="w-1.5 h-1.5 bg-red-500 rounded-full" />
-              {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
-            </div>
-          )}
-
-          {/* ✅ Message Box Container - Contains emoji and input */}
-          <div className="relative flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg">
-            {/* Emoji Button - Absolute positioned left inside box */}
-            <div className="absolute left-1 top-1/2 -translate-y-1/2 z-10" ref={emojiPickerRef}>
-              <button
-                type="button"
-                onClick={() => isMember && !(room?.host_only_chat && !isHost) && setShowEmojiPicker(!showEmojiPicker)}
-                disabled={!isMember || (room?.host_only_chat && !isHost)}
-                className="p-0 hover:opacity-70 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
-                title={
-                  !isMember ? "Join room to use emojis" :
-                  (room?.host_only_chat && !isHost) ? "Chat is locked (host-only)" :
-                  "Emojis & Stickers"
-                }
-              >
-                <img src="/icons/stickerIcon.svg" alt="Emojis & Stickers" className="h-5 w-5 sm:h-8 sm:w-8" />
-              </button>
-              
-              {/* Emoji Picker Popup */}
-              {showEmojiPicker && isMember && (
-                <div className="absolute bottom-full left-0 mb-2 z-50">
-                  <EmojiPicker
-                    onEmojiSelect={handleEmojiClick}
-                  />
+            {/* Reply Banner */}
+            {replyingTo && (
+              <div className="flex items-stretch mb-1.5 rounded-lg overflow-hidden bg-gray-700/80 border border-purple-500/40">
+                <div className="w-1 flex-shrink-0 bg-purple-500" />
+                <div className="flex items-center flex-1 min-w-0 px-3 py-2 gap-2">
+                  <svg className="w-4 h-4 text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                  </svg>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] font-semibold text-purple-300">@{replyingTo.username}</div>
+                    <div className="text-xs text-gray-300 truncate leading-snug">{replyingTo.message}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReplyingTo(null)}
+                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full hover:bg-gray-600 text-gray-400 hover:text-white transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
+              </div>
+            )}
+
+            {/* Input Card */}
+            <div className="rounded-2xl bg-gray-700 border border-gray-600 shadow-lg overflow-visible">
+
+              {/* Text area or recording indicator */}
+              {isRecording ? (
+                <div className="flex items-center gap-2 px-3 py-2.5">
+                  <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
+                  <span className="font-mono text-sm text-red-400">
+                    {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
+                  </span>
+                  <span className="text-xs text-gray-400">Recording voice note…</span>
+                </div>
+              ) : (
+                <textarea
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage(e);
+                    }
+                  }}
+                  placeholder={room?.host_only_chat && !isHost ? "Chat is locked (host-only)" : "Message…"}
+                  disabled={!isMember || (room?.host_only_chat && !isHost)}
+                  rows={1}
+                  className="w-full bg-transparent border-none focus:outline-none focus:ring-0 resize-none text-white placeholder-gray-500 disabled:opacity-50 disabled:cursor-not-allowed px-3 pt-2.5 pb-1 text-sm"
+                  style={{ minHeight: '36px', maxHeight: '96px' }}
+                />
               )}
+
+              {/* Divider */}
+              <div className="border-t border-gray-600 mx-3" />
+
+              {/* Action row */}
+              <div className="flex items-center justify-between px-2 py-1">
+                {/* Left: action icons */}
+                <div className="flex items-center gap-0.5">
+
+                  {/* Voice note */}
+                  <button
+                    type="button"
+                    onClick={handleVoiceNoteClick}
+                    disabled={!isMember || (room?.host_only_chat && !isHost)}
+                    className={`p-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                      isRecording
+                        ? 'text-red-400 hover:text-red-300 hover:bg-red-900/20'
+                        : 'text-gray-400 hover:text-purple-400 hover:bg-purple-900/20'
+                    }`}
+                    title={isRecording ? `Stop recording (${recordingDuration}s)` : "Voice note"}
+                  >
+                    {isRecording
+                      ? <StopCircleIcon className="h-5 w-5" />
+                      : <MicrophoneOutlineIcon className="h-5 w-5" />
+                    }
+                  </button>
+
+                  {/* Emoji / sticker */}
+                  <div className="relative" ref={emojiPickerRef}>
+                    <button
+                      type="button"
+                      onClick={() => isMember && !(room?.host_only_chat && !isHost) && setShowEmojiPicker(!showEmojiPicker)}
+                      disabled={!isMember || (room?.host_only_chat && !isHost)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-purple-400 hover:bg-purple-900/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Emoji"
+                    >
+                      <FaceSmileOutlineIcon className="h-5 w-5" />
+                    </button>
+                    {showEmojiPicker && isMember && (
+                      <div className="absolute bottom-full left-0 mb-2 z-50">
+                        <EmojiPicker onEmojiSelect={handleEmojiClick} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Attach */}
+                  <button
+                    type="button"
+                    onClick={() => isMember && setIsAttachModalOpen(true)}
+                    disabled={!isMember}
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-purple-400 hover:bg-purple-900/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Attach image / video / file"
+                  >
+                    <PaperClipOutlineIcon className="h-5 w-5" />
+                  </button>
+
+                  {/* Poll */}
+                  <button
+                    type="button"
+                    onClick={() => isMember && !(room?.host_only_chat && !isHost) && setIsCreatePollModalOpen(true)}
+                    disabled={!isMember || (room?.host_only_chat && !isHost)}
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-purple-400 hover:bg-purple-900/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Create poll"
+                  >
+                    <ChartBarSquareOutlineIcon className="h-5 w-5" />
+                  </button>
+                </div>
+
+                {/* Send button */}
+                <button
+                  type="submit"
+                  disabled={(!newMessage.trim() && !isRecording) || !isMember || (room?.host_only_chat && !isHost)}
+                  className="w-8 h-8 rounded-full bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white flex items-center justify-center transition-all shadow-md flex-shrink-0"
+                  title="Send"
+                >
+                  <ArrowUpIcon className="h-4 w-4" />
+                </button>
+              </div>
             </div>
-
-            {/* Message Input - Centered with padding to avoid emoji icon */}
-            <input
-              type="text"
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder={room?.host_only_chat && !isHost ? "Chat is locked (host-only)" : "Message..."}
-              disabled={!isMember || (room?.host_only_chat && !isHost)}
-              className="w-full bg-transparent border-0 focus:outline-none focus:ring-0 text-white placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed pl-9 pr-3 py-1.5 text-sm sm:pl-12 sm:pr-4 sm:py-2.5"
-            />
-          </div>
-
-          {/* Send Button - Standalone right */}
-          <button
-            type="button"
-            onClick={isMember && !(room?.host_only_chat && !isHost) ? handleSendMessage : undefined}
-            disabled={!isMember || (room?.host_only_chat && !isHost)}
-            className={`p-0 transition-all flex-none min-w-0 ${
-              (isMember && !(room?.host_only_chat && !isHost)) ? 'cursor-pointer hover:opacity-80' : 'opacity-40 cursor-not-allowed'
-            }`}
-            title={
-              !isMember ? "Join room to send messages" :
-              (room?.host_only_chat && !isHost) ? "Chat is locked (host-only)" :
-              "Send message"
-            }
-          >
-            <span className={`text-xl sm:text-3xl leading-none transition-colors ${
-              newMessage.trim() ? 'text-white' : 'text-gray-500'
-            }`}>➤</span>
-          </button>
-        </div>
-        </form>
+          </form>
         </>
       )}
 
@@ -2675,6 +2798,9 @@ const RoomPageNew = () => {
           </button>
         </div>
       )}
+
+        </div> {/* closes chat column */}
+      </div> {/* closes flex flex-1 overflow-hidden row */}
 
       {/* ✅ Watch Type Modal */}
       <WatchTypeModal
@@ -2776,6 +2902,7 @@ const RoomPageNew = () => {
       <ScheduleEventModal
         isOpen={isScheduleModalOpen}
         roomId={roomId}
+        roomType={room?.room_type}
         onClose={() => {
           setIsScheduleModalOpen(false);
           fetchScheduledEvents(); // Refresh count when modal closes
@@ -2840,6 +2967,16 @@ const RoomPageNew = () => {
         onLeave={handleGroupLeave}
       />
 
+      {/* Room Join Requests Modal (host only, private rooms) */}
+      {isHost && (
+        <RoomJoinRequestsModal
+          isOpen={isJoinRequestsModalOpen}
+          onClose={() => setIsJoinRequestsModalOpen(false)}
+          roomId={roomId}
+          onCountChange={setPendingJoinCount}
+        />
+      )}
+
       {/* ✅ Room Members Modal */}
       <RoomMembersModal
         isOpen={isMembersModalOpen}
@@ -2850,6 +2987,11 @@ const RoomPageNew = () => {
           setIsShareModalOpen(true);
         }}
         onRequestReopen={() => setIsMembersModalOpen(true)}
+        isHost={isHost}
+        roomId={roomId}
+        onMemberKicked={(userId) => {
+          setMembers(prev => prev.filter(m => (m.id || m.user_id) !== userId));
+        }}
       />
 
       {/* ✅ Share Modal */}
@@ -2892,6 +3034,7 @@ const RoomPageNew = () => {
             setSessionEarnings(null);
           }}
           sessionData={sessionEarnings}
+          contentRating={room?.content_rating}
         />
       )}
 

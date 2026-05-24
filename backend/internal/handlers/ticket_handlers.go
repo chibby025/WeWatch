@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/services"
 )
 
 // PurchaseTicketRequest represents a ticket purchase request
@@ -358,7 +359,44 @@ func PurchaseSessionTicketHandler(db *gorm.DB) gin.HandlerFunc {
 
 		log.Printf("✅ Ticket purchased: Session %d, User %d, Payment: %s, IsGift: %v", sessionID, recipientUserID, req.PaymentMethod, isGift)
 
-		// TODO: Send WebSocket notification to session participants
+		go func() {
+			var recipient models.User
+			if err := db.Select("email, username").First(&recipient, recipientUserID).Error; err != nil {
+				return
+			}
+			giftedBy := ""
+			if isGift {
+				giftedBy = buyer.Username
+			}
+			emailSvc := services.NewEmailService()
+			_ = emailSvc.SendTicketPurchaseEmail(
+				recipient.Email, recipient.Username,
+				session.SessionTitle, ticketPriceTokens,
+				ticketPriceCurrency, isGift, giftedBy,
+			)
+		}()
+
+		// Notify buyer/recipient and host
+		recipientIDNotif := recipientUserID
+		hostIDNotif := session.HostID
+		sessionIDNotif := uint(sessionID)
+		sessionTitleNotif := session.SessionTitle
+		buyerUsernameNotif := buyer.Username
+		isGiftNotif := isGift
+		go func() {
+			title := "Ticket confirmed for " + sessionTitleNotif
+			if isGiftNotif {
+				title = "You received a ticket for " + sessionTitleNotif
+			}
+			CreateNotification(recipientIDNotif, "event_booking_confirm", title, "Your ticket is ready", "session", sessionIDNotif)
+			if hostIDNotif != recipientIDNotif {
+				hostTitle := "@" + buyerUsernameNotif + " bought a ticket"
+				if isGiftNotif {
+					hostTitle = "@" + buyerUsernameNotif + " gifted a ticket"
+				}
+				CreateNotification(hostIDNotif, "event_booking", hostTitle, sessionTitleNotif, "session", sessionIDNotif)
+			}
+		}()
 
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,

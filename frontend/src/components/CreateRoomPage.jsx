@@ -5,16 +5,76 @@ import { createRoom } from '../services/api'; // Assume you'll create this funct
 import PersistentRoomInfoModal from './PersistentRoomInfoModal';
 import EmojiPicker from './EmojiPicker';
 
+const ROOM_TYPES = [
+  {
+    id: 'general',
+    label: 'General',
+    emoji: '🌍',
+    desc: 'Entertainment, movies, gaming, lifestyle',
+    color: 'green',
+  },
+  {
+    id: 'church',
+    label: 'Church',
+    emoji: '⛪',
+    desc: 'Worship services, Bible study, prayer',
+    color: 'yellow',
+    lockedRating: 'Religious',
+  },
+  {
+    id: 'education',
+    label: 'Education',
+    emoji: '🎓',
+    desc: 'Online classes, tutorials, lectures',
+    color: 'blue',
+    lockedRating: 'Educational',
+  },
+  {
+    id: 'other',
+    label: 'Other',
+    emoji: '✨',
+    desc: 'Something unique — tell us more',
+    color: 'purple',
+  },
+];
+
+const CONTENT_RATINGS = ['G', 'PG', '13+', '16+', '18+', 'Mature'];
+
+const slugifyHandle = (str) =>
+  str.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
+
 const CreateRoomPage = () => {
   const [name, setName] = useState('');
+  const [handle, setHandle] = useState('');
+  const [handleEdited, setHandleEdited] = useState(false);
   const [description, setDescription] = useState('');
-  const [isPublic, setIsPublic] = useState(true); // ✅ Privacy toggle state
+  const [roomType, setRoomType] = useState('general');
+  const [otherRoomType, setOtherRoomType] = useState('');
+  const [contentRating, setContentRating] = useState('G');
+  const [isPublic, setIsPublic] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiPickerRef = useRef(null);
-  const navigate = useNavigate(); // Hook for programmatic navigation
+  const navigate = useNavigate();
+
+  const selectedType = ROOM_TYPES.find(t => t.id === roomType);
+  const lockedRating = selectedType?.lockedRating || null;
+
+  // Auto-suggest handle from name unless the user has manually edited it
+  useEffect(() => {
+    if (!handleEdited) {
+      setHandle(slugifyHandle(name));
+    }
+  }, [name, handleEdited]);
+
+  const handleRoomTypeChange = (typeId) => {
+    setRoomType(typeId);
+    const type = ROOM_TYPES.find(t => t.id === typeId);
+    if (type?.lockedRating) setContentRating(type.lockedRating);
+    else setContentRating('G');
+  }; // Hook for programmatic navigation
 
   useEffect(() => {
     // Check if user has dismissed the info modal
@@ -53,10 +113,14 @@ const CreateRoomPage = () => {
 
     try {
       // Prepare data for the API call
-      const roomData = { 
-        name: name.trim(), 
+      const roomData = {
+        name: name.trim(),
         description,
-        is_public: isPublic // ✅ Include privacy setting
+        is_public: isPublic,
+        room_type: roomType,
+        content_rating: lockedRating || contentRating,
+        handle: handle.trim() || undefined,
+        other_room_type: roomType === 'other' ? otherRoomType.trim() : undefined,
       };
 
       // Call the createRoom function from the API service
@@ -165,7 +229,31 @@ const CreateRoomPage = () => {
               </div>
               <p className="text-xs text-gray-500 mt-1.5">Give your room a unique and memorable name</p>
             </div>
-            
+
+            {/* Handle */}
+            <div>
+              <label htmlFor="roomHandle" className="block text-gray-900 text-sm font-bold mb-2">
+                Room Handle <span className="text-gray-400 font-normal">(Optional)</span>
+              </label>
+              <div className="relative flex items-center">
+                <span className="absolute left-4 text-gray-400 font-semibold select-none">@</span>
+                <input
+                  type="text"
+                  id="roomHandle"
+                  value={handle}
+                  onChange={(e) => {
+                    setHandle(slugifyHandle(e.target.value));
+                    setHandleEdited(true);
+                  }}
+                  disabled={loading}
+                  placeholder="yourroom"
+                  maxLength={50}
+                  className="w-full pl-8 pr-4 py-3 text-gray-900 bg-gray-50 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:opacity-50 transition-all text-sm sm:text-base"
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-1.5">Lowercase letters, numbers, and underscores only. Auto-filled from room name.</p>
+            </div>
+
             {/* Description */}
             <div>
               <label htmlFor="roomDescription" className="block text-gray-900 text-sm font-bold mb-2">
@@ -185,6 +273,87 @@ const CreateRoomPage = () => {
                 <p className="text-xs text-gray-500">Describe your content and community</p>
                 <p className="text-xs text-gray-400">{description.length}/500</p>
               </div>
+            </div>
+
+            {/* Room Type */}
+            <div>
+              <label className="block text-gray-900 text-sm font-bold mb-3">Room Type</label>
+
+              {/* 4 pills in one row */}
+              <div className="grid grid-cols-4 gap-2">
+                {ROOM_TYPES.map((type) => {
+                  const colors = {
+                    green:  { active: 'bg-green-50 border-green-500',  icon: 'bg-green-500',  label: 'text-green-700'  },
+                    yellow: { active: 'bg-yellow-50 border-yellow-500', icon: 'bg-yellow-500', label: 'text-yellow-700' },
+                    blue:   { active: 'bg-blue-50 border-blue-500',    icon: 'bg-blue-500',   label: 'text-blue-700'   },
+                    purple: { active: 'bg-purple-50 border-purple-500', icon: 'bg-purple-500', label: 'text-purple-700' },
+                  };
+                  const c = colors[type.color];
+                  const isActive = roomType === type.id;
+                  return (
+                    <button
+                      key={type.id}
+                      type="button"
+                      onClick={() => handleRoomTypeChange(type.id)}
+                      disabled={loading}
+                      className={`relative flex flex-col items-center gap-1.5 py-3 px-1 rounded-xl border-2 transition-all duration-200 ${isActive ? c.active + ' shadow-md' : 'bg-white border-gray-200 hover:border-gray-300'} disabled:opacity-50`}
+                    >
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center ${isActive ? c.icon : 'bg-gray-100'}`}>
+                        <span className="text-lg">{type.emoji}</span>
+                      </div>
+                      <p className={`font-semibold text-xs ${isActive ? c.label : 'text-gray-600'}`}>{type.label}</p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Description of selected type */}
+              {selectedType && (
+                <p className="text-xs text-gray-500 mt-2">{selectedType.desc}</p>
+              )}
+
+              {/* Extra input for "Other" */}
+              {roomType === 'other' && (
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    value={otherRoomType}
+                    onChange={(e) => setOtherRoomType(e.target.value)}
+                    disabled={loading}
+                    placeholder="e.g. Book club, Fitness, Comedy..."
+                    maxLength={100}
+                    className="w-full px-4 py-2.5 text-gray-900 bg-gray-50 border-2 border-purple-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:opacity-50 transition-all text-sm"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Optional — helps us understand how people use WeWatch</p>
+                </div>
+              )}
+            </div>
+
+            {/* Content Rating */}
+            <div>
+              <label className="block text-gray-900 text-sm font-bold mb-2">Content Rating</label>
+              {lockedRating ? (
+                <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-2 border-gray-200 rounded-xl">
+                  <span className="text-lg">{roomType === 'church' ? '✝️' : '🎓'}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">{lockedRating}</p>
+                    <p className="text-xs text-gray-500">Auto-set for {selectedType?.label} rooms</p>
+                  </div>
+                  <span className="ml-auto text-xs bg-gray-200 text-gray-600 rounded-full px-2 py-0.5">Locked</span>
+                </div>
+              ) : (
+                <select
+                  value={contentRating}
+                  onChange={(e) => setContentRating(e.target.value)}
+                  disabled={loading}
+                  className="w-full px-4 py-3 text-gray-900 bg-gray-50 border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:opacity-50 text-sm"
+                >
+                  {CONTENT_RATINGS.map(r => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              )}
+              <p className="text-xs text-gray-500 mt-1.5">Controls what content can be played in this room</p>
             </div>
 
             {/* Privacy Toggle */}
@@ -264,9 +433,9 @@ const CreateRoomPage = () => {
                 </button>
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                {isPublic 
-                  ? "🌍 Your room will appear in the lobby for everyone to discover"
-                  : "🔒 Share the invite link to add members to your private room"}
+                {isPublic
+                  ? "🌍 Anyone can discover and join instantly. Follower invites are auto-accepted."
+                  : "🔒 Invite-only. Follower invites require your approval before they can join."}
               </p>
             </div>
             

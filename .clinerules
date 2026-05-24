@@ -8449,3 +8449,307 @@ Videowatch session ended
 - **Frontend prefetch** — `DiscoverFeed.jsx` IntersectionObserver now uses `rootMargin: '600px'` so the next page request fires before the sentinel reaches the viewport. `PostsGrid.jsx` uses `rootMargin: '400px'` (smaller because it scrolls inside a modal). Net effect: next batch is in flight while the user is still scrolling through the current one, so older posts appear without the previous noticeable pause at the bottom.
 
 ---
+
+## 🔔 Social Graph & Notification Features (May 16, 2026)
+
+### Strategic Context
+
+Four social graph features were planned and implemented in priority order:
+
+1. **Live-session alert to lobby members** — broadcast `session_started` WS event when host starts a session
+2. **Persistent notification records** — notifications table, model, API, CreateNotification helper
+3. **Lobby notification badge** — bell icon with unread count + dropdown panel in LobbyPage
+4. **Following feed** — `GET /api/posts/following` endpoint + For You/Following pill toggle in Feed tab
+
+### Feature 1 — Live-Session Alert ✅
+
+When a host starts a session, `session_started` WebSocket event is broadcast to all lobby members of that room.
+
+- `backend/internal/handlers/sessions.go` — after creating the DB session row, calls `hub.BroadcastToLobby(roomID, ...)` with `type: "session_started"` payload
+- `frontend/src/components/LobbyPage.jsx` — listens on the lobby WS, shows a toast banner "🎬 [Host] started a session — Join Now" with a clickable link to the watch URL
+- No new DB tables needed
+
+### Feature 2 — Persistent Notification Records ✅
+
+**New DB model & migration:**
+- `backend/internal/models/notification.go` — `Notification` struct: `UserID`, `Type`, `Title`, `Body`, `EntityType`, `EntityID`, `IsRead`, `ReadAt`
+- Migration: `backend/migrations/20260516_create_notifications.sql` — `notifications` table with `idx_notifications_user_unread` partial index on `(user_id, created_at DESC) WHERE is_read = false`
+- AutoMigrate entry added in `backend/cmd/server/main.go`
+
+**Helper function:**
+```go
+// backend/internal/handlers/notifications.go
+func CreateNotification(userID uint, notifType, title, body, entityType string, entityID uint) {
+    // Inserts DB row + pushes WS "notification" event to user
+}
+```
+
+**Trigger points:**
+- Session start → notifies all room members (called from `sessions.go`)
+- New post in a room → notifies room members (called from `posts.go`)
+
+**API endpoints** (registered under `protected` group):
+- `GET /api/notifications?page=N&limit=20` — paginated list, newest first
+- `PUT /api/notifications/read-all` — marks all unread as read, returns updated count
+- `GET /api/notifications/count` — returns `{ unread_count: N }`
+
+**Files modified:**
+- `backend/internal/models/notification.go` (new)
+- `backend/migrations/20260516_create_notifications.sql` (new)
+- `backend/internal/handlers/notifications.go` (new — handler + CreateNotification helper)
+- `backend/cmd/server/main.go` (AutoMigrate + 3 route registrations)
+- `backend/internal/handlers/sessions.go` (calls CreateNotification on session start)
+- `backend/internal/handlers/posts.go` (calls CreateNotification on new post + new `GetFollowingFeedHandler`)
+
+### Feature 3 — Lobby Notification Badge ✅
+
+Added to `frontend/src/components/LobbyPage.jsx`:
+
+- `BellIcon`, `XMarkIcon` added to heroicons/24/solid imports
+- State: `notifications`, `unreadNotifCount`, `showNotifPanel` (all pre-existing from Feature 2 WS push; `fetchNotifications` and `markAllNotifsRead` helpers added)
+- **Bell button** — fixed top-right (`z-30`), shows red badge with count when `unreadNotifCount > 0`; clicking toggles the panel and marks all read
+- **Notification panel** — `fixed top-16 right-4 z-40 w-80 max-h-96`, lists notifications with title/body/timestamp; unread rows highlighted with `bg-gray-800`
+
+### Feature 4 — Following Feed ✅
+
+**Backend** (`backend/internal/handlers/posts.go`):
+- `GetFollowingFeedHandler` — `GET /api/posts/following`
+- Fetches all `UserRoom` rows for the requesting user → extracts unique room host IDs → queries `posts WHERE user_id IN (hostIDs) AND is_public = true ORDER BY created_at DESC`
+- Paginates with `?page=N&limit=20`; deduplicates host IDs via a map to handle multi-room hosts
+- Wraps results through `buildPostResponse` (same as other feed handlers) — returns `{ posts, total, page }`
+- Route registered in `postsProtected` group in `main.go`
+
+**Frontend** (`frontend/src/components/LobbyPage.jsx`):
+- "Discover" sub-tab renamed to "Feed" (both desktop and mobile buttons)
+- `feedPill` state (`'for_you' | 'following'`) + `followingFeed` state (`{ posts, loading, page, total, initialized }`)
+- `fetchFollowingFeed(page, append)` — lazy-loads on first pill activation, supports load-more
+- Inside Feed tab: **For You / Following pill toggle** → For You renders existing `<DiscoverFeed>`, Following renders paginated post grid with load-more button
+- useEffect triggers fetch on first switch to Following pill
+
+### LiveShare Forced Mode — Content Rating Auto-Selection ✅
+
+When a session has a specific content rating, the LiveShare wizard skips the mode-selection step and pre-selects the only valid mode:
+
+| Content Rating | Forced Mode | Steps shown |
+|---|---|---|
+| `Religious` | `church` | Setup → Share Type → Layout |
+| `Educational` | `regular` | Share Type → Layout |
+| Any other | none | Mode → (Setup if applicable) → Share Type → Layout |
+
+**Prop chain:** `LeftSidebar` (derives `contentRating` from `sessionStatus?.content_rating`) → `LiveShareManager` → `LiveShareWizard`
+
+**`frontend/src/components/liveshare/LiveShareWizard.jsx`:**
+- New `contentRating = ''` prop
+- `const forcedMode = contentRating === 'Religious' ? 'church' : contentRating === 'Educational' ? 'regular' : null;`
+- `selectedMode` state initialises to `forcedMode || null` (not `null`)
+- `getSteps()` omits `{ id: 'mode' }` step when `forcedMode` is set
+- `muteAllMembers` useEffect still fires normally — church mode auto-mutes all members on mount
+
+**`frontend/src/components/cinema/ui/LiveShareManager.jsx`:**
+- Added `contentRating = ''` to props destructuring
+- Passes `contentRating={contentRating}` to `<LiveShareWizard>`
+
+**`frontend/src/components/cinema/ui/LeftSidebar.jsx`:**
+- `contentRating` was already derived at component level from `sessionStatus?.content_rating`
+- Added `contentRating={contentRating}` to the `<LiveShareManager>` JSX
+
+### Pending / Deferred
+
+- **Room type system** — add `room_type` varchar field to Room model (`church`, `education`, `general`); room type selector in CreateNewModal; content rating auto-lock based on room type (discussed, not yet coded)
+- **Gift → Offering renaming** — FloatingGiftIcon, DonationNotification, SessionEarningsModal: conditional labels when `room.content_rating === 'Religious'` (discussed, not yet coded)
+- **User preferences in LobbyLeftSidebar** — new menu item opening preferences panel (preferred content categories, default content rating)
+- **Save content rating on instant watch** — hook into PricingModal/AccessModal callbacks to persist last-used content rating to user preferences
+- **Onboarding flow** — initial feed/category preferences screen; saves to user preferences
+
+---
+---
+
+## 📍 UPDATES (May 19, 2026)
+
+### Feature 1 — Report System ✅
+
+Users can report rooms, posts, and users. Admins review reports in the dashboard.
+
+**Backend** (`backend/internal/handlers/report_handler.go` — new file):
+- `Report` model (inline in handler file): `reporter_id`, `target_type` (room/post/user), `target_id`, `reason`, `description`, `status` (pending/reviewed/dismissed), `reviewed_by`, `reviewed_at`
+- UNIQUE(reporter_id, target_type, target_id) constraint — race-safe dedup via PG constraint + 409 on conflict
+- Self-report guard: returns 400 if `target_type == "user" && target_id == currentUserID`
+- `CreateReportHandler` — `POST /api/reports`
+- `CheckReportedHandler` — `GET /api/reports/check?target_type=...&target_id=...`
+- `GetAdminReportsHandler` — `GET /api/admin/reports?status=pending|reviewed|dismissed` — returns `{ reports, total, page, counts: { pending, reviewed, dismissed } }`
+- `UpdateAdminReportHandler` — `PATCH /api/admin/reports/:id` — updates status field
+
+**DB migration (run manually in psql):**
+```sql
+CREATE TABLE IF NOT EXISTS reports (
+  id BIGSERIAL PRIMARY KEY,
+  reporter_id BIGINT NOT NULL REFERENCES users(id),
+  target_type VARCHAR(20) NOT NULL,
+  target_id BIGINT NOT NULL,
+  reason VARCHAR(50) NOT NULL,
+  description TEXT,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  reviewed_by BIGINT REFERENCES users(id),
+  reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(reporter_id, target_type, target_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports (status);
+CREATE INDEX IF NOT EXISTS idx_reports_target ON reports (target_type, target_id);
+```
+
+**Routes registered in `main.go`:**
+```go
+reportsGroup := r.Group("/api/reports")
+reportsGroup.Use(handlers.AuthMiddleware())
+reportsGroup.POST("", handlers.CreateReportHandler)
+reportsGroup.GET("/check", handlers.CheckReportedHandler)
+// adminGroup:
+adminGroup.GET("/reports", handlers.GetAdminReportsHandler)
+adminGroup.PATCH("/reports/:id", handlers.UpdateAdminReportHandler)
+```
+
+**Frontend:**
+- `frontend/src/components/ReportModal.jsx` (new) — checks `/api/reports/check` on mount; shows already-reported state; 8 reason options; optional description; 409 response → sets alreadyReported state; props: `targetType`, `targetId`, `targetName`, `onClose`
+- `frontend/src/components/DiscoverFeed.jsx` — Flag button (hidden on own posts) opens ReportModal for posts
+- `frontend/src/components/LobbyPage.jsx` — non-host room ellipsis menu with "Report Room" option; separate `openRoomContextMenuId` state (avoids conflict with host's `openMenuRoomId`)
+- `frontend/src/services/api.js` — `submitReport`, `checkReported` exports added
+- `frontend/src/pages/AdminDashboard.jsx` — Reports section: pending badge count, status filter tabs, table (reporter, target type+id, reason, details, date), Reviewed/Dismiss action buttons
+
+### Feature 2 — Post Tips ✅
+
+Users can tip posts with 1 token (100 cents). Silent failure on zero balance. No self-tipping.
+
+**Backend** (`backend/internal/handlers/posts.go` — `TipPost` handler):
+- `POST /api/posts/:id/tip`
+- 1 tip = 100 cents: deducted from tipper, 95 cents to creator, 5 cents to `platform_accounting.TokenDonationCommission` + `LifetimeTokenDonationCommission`
+- Zero balance → returns 200 OK `{"message":"ok"}` silently (no error exposed to user)
+- Self-tip guard: returns 400 if tipper == post owner
+- Inserts `post_tips` row, increments `posts.tip_count` — all in a single DB transaction
+
+**DB migration (run manually in psql):**
+```sql
+CREATE TABLE IF NOT EXISTS post_tips (
+  id BIGSERIAL PRIMARY KEY,
+  tipper_id BIGINT NOT NULL REFERENCES users(id),
+  post_id BIGINT NOT NULL REFERENCES posts(id),
+  amount_cents INT NOT NULL DEFAULT 100,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_post_tips_post_id ON post_tips (post_id);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS tip_count INT NOT NULL DEFAULT 0;
+```
+
+**Frontend** (`frontend/src/components/DiscoverFeed.jsx`):
+- Coin tip button (🪙) in engagement row, hidden on own posts
+- Optimistic +1 on `postTips` local state; reverts on API error — no toast on failure (silent)
+- `tipPost` API helper in `frontend/src/services/api.js`
+
+### Feature 3 — Merged Post Tab in PostUploadModal ✅
+
+"Text" and "Upload" tabs merged into a single "Post" tab.
+
+**`frontend/src/components/PostUploadModal.jsx`:**
+- Tab system changed from 3 tabs (Camera/Text/Upload) to 2 tabs (Camera/Post)
+- `post` mode (merged): textarea at top, optional media drop zone below with X to remove
+- If media present: media is main content, text becomes `description` field
+- If no media: generates 1080×1080 canvas from text content (existing canvas logic preserved)
+- "Continue →" button appears when text or file is present; auto-advances to step 2 when file selected
+- `handleBack` clears `uploadFile`, `previewUrl`, `textContent` for post mode
+- `resetStates` includes `setUploadError(null)`
+
+### Feature 4 — Upload Retry UX ✅
+
+On upload error: inline red error banner with Retry button instead of a toast; submit button hidden while error is shown.
+
+**`frontend/src/components/PostUploadModal.jsx`:**
+- Added `uploadError` state (string | null)
+- On `handleSubmit` error: sets `uploadError` message, clears `uploading`/`progress` — does NOT toast
+- Error banner with `AlertCircle` icon + message + inline "Retry" button that calls `setUploadError(null); handleSubmit()`
+- Submit button hidden (`{!uploadError && <button>Post</button>}`) while error is shown
+- `resetStates` clears `uploadError`
+
+---
+
+## Church Mode / LiveShare Studio Controls (2026-05)
+
+- Church-mode studio panel uses an **icon-button launcher pattern** — three small toggle buttons (BookOpen / Music / FileText icons) that open Bible, Hymn, and Sermon controls on demand, like the Upload tab in LeftSidebar. Controls are NOT auto-rendered inline.
+- State: `showBibleControl`, `showHymnControl`, `showSermonControl` (all `false`); reset in the `!liveShareMode` cleanup effect.
+- `SermonControl.jsx` supports two input paths: `.txt` file upload (via hidden `<input type="file">` + `FileReader`) and paste/type in textarea. File name becomes the default title. Only accepts `text/plain`.
+- `handleShowSermon({ pages, title })` in `LiveShareManager.jsx`: sends `sermon_update` WS message with pages array, then closes the control (`setShowSermonControl(false)`).
+- The Sermon button is **not gated on `presentationUrl`** — sermon and presentation slides are independent features.
+- `PresentationControl` is only for slide decks (when `presentationUrl` is set); `SermonControl` is always available in church mode.
+
+---
+
+## LectureHallPage Performance Patterns (2026-05)
+
+These patterns were applied to `LectureHallPage.jsx` for network resilience and stability:
+
+- **`withRetry(fn, maxAttempts=3)`** — module-level helper, exponential backoff (100ms × 2^attempt), skips 4xx errors and `AbortError` (don't retry client errors or intentional cancels).
+- **`cancelled` flag pattern** — every async `useEffect` sets `let cancelled = false` at the top and returns `() => { cancelled = true }`. All `setState` calls are guarded by `if (cancelled) return`.
+- **`approvedSpeakersRef` in subscription effects** — subscription effects that depend on a frequently-changing object (e.g. `approvedSpeakers`) should read from a ref (`approvedSpeakersRef.current`) instead of listing the object as a dep. The ref is already kept in sync via a separate `useEffect`. This prevents subscription teardown/rebuild on every speaker change.
+- **`captureAbortRef`** for long async loops — set `captureAbortRef.current = false` at the start of the loop, check it after each frame, each sleep, and before CDN upload. Set `captureAbortRef.current = true` in the unmount cleanup.
+- **`LectureHallErrorBoundary`** — class component wrapping `<Canvas>` to catch 3D renderer crashes without crashing the whole page.
+- **200-message chat cap** — all three `setSessionChatMessages` call sites cap the array: `const next = [...prev, msg]; return next.length > 200 ? next.slice(next.length - 200) : next`.
+- **5s member fetch dedup cache** — `memberFetchCacheRef = { lastFetch: 0, data: null }`; skip network call if `Date.now() - lastFetch < 5000` and return cached data.
+- **Single mousemove handler** — one `useEffect` with `[]` deps registers a single `mousemove` listener for the lifetime of the component. Dynamic state (e.g. `isMediaFullscreen`, `blackboardMedia`) is read via refs synced in separate effects, not via closure.
+- **`updateIntervalRunningRef` guard** — periodic 30s update interval checks `if (updateIntervalRunningRef.current) return` before running, preventing stacked intervals.
+- **Parallel fetch on join** — `fetchTemporaryMedia` + `fetchTokenBalance` combined into one `Promise.allSettled` effect; `fetchQuizData` host path uses `Promise.allSettled` for quizzes + progress in parallel.
+
+---
+
+## Additional Gotchas (2026-05)
+
+- **Banner style switching**: never use double-`setTimeout` to toggle a banner off then on again — the second call captures a stale closure and both fire as "hide". Use `rebroadcastBannerWithLayout(newLayout)` which directly broadcasts `active: true` with the new layout in one call.
+- **Mute All toggle pill shape**: the toggle container must use `flex items-center justify-between` in a horizontal row at all screen sizes. Using `flex-col` as the outer container causes `align-items: stretch` to override the `w-11` width and breaks the pill shape. The description text goes below in a separate element, not alongside the toggle.
+- **Subscription effects reading frequently-changing objects**: if a `useEffect` subscribes/unsubscribes based on a value that changes on every render (like a participant map), read it from a ref instead of listing it as a dep. Keep the ref in sync with a tiny 2-line `useEffect([value])`. This avoids subscription churn without stale-closure risk.
+
+---
+
+## Updates (2026-05-23)
+
+### RoomPageNew Header & Sidebar Layout
+- `useMobile` hook threshold changed from `<= 768` to `< 1024` — mobile layout now applies to all non-desktop (phone + tablet).
+- Header container padding: `px-0 md:px-3 lg:px-4` — full-bleed on phones only, padding restored on tablet and desktop.
+- Dynamic header height: `headerRef` + `ResizeObserver` → `mobileHeaderHeight` state → inline `paddingTop` on both the chat messages area and `RoomPageLeftSidebar`. Default 80px until measured. Replaces the old hardcoded `pt-[248px]` which was stale.
+- Chat column wrapped in `flex-1 flex flex-col min-h-0` inside the row after the sidebar — fixes desktop chat input bleeding under the sidebar.
+- `RoomPageLeftSidebar` accepts `mobileHeaderHeight` prop; uses `paddingTop: ${mobileHeaderHeight + 8}px` inline on mobile.
+- Desktop icon gap increased (`gap-6`), scheduleWatch + roomTV icons `h-11 w-11`. Mid-screen (`md:`) gap `md:gap-5`, begin-watch `md:h-[38px]`.
+
+### Notifications System
+**Backend — `handlers/notifications.go`**
+- `CreateNotification(userID, type, title, body, entityType, entityID)` — inserts DB row + pushes `notification_new` WS event. Always call via `go CreateNotification(...)`.
+- `UpsertDMNotification(recipientID, senderID, senderUsername, messagePreview)` — batches DM notifications: finds existing unread `dm_received` from same sender, increments count in title ("2 unread messages from @alice"), updates `created_at` to bubble it to top. Falls back to `CreateNotification` if none found.
+
+**Notification types wired (where each fires → entityType/entityID):**
+| Type | Handler | EntityType | EntityID |
+|---|---|---|---|
+| `room_post` | `posts.go` CreatePost | `room` | room ID |
+| `session_started` | `rooms.go` StartWatchSession | `room` | room ID |
+| `session_ended` | `rooms.go` background goroutine (non-instant, non-host members) | `room` | room ID |
+| `post_like` | `posts.go` LikePost | `post` | post ID |
+| `post_comment` | `posts.go` CreatePostComment (top-level only) | `post` | post ID |
+| `reply` | `posts.go` CreatePostComment (replies only) | `post_comment` | parent comment ID |
+| `event_booking_confirm` | `ticket_handlers.go` after commit | `session` | session ID |
+| `event_booking` | `ticket_handlers.go` after commit → host | `session` | session ID |
+| `token_gift` | `donation_handlers.go` GiftTokensHandler | `user` | donor ID |
+| `dm_received` | `lobby_chats.go` SendLobbyChatMessageHandler (UPSERT) | `user` | sender ID |
+| `missed_call` | `lobby_calls.go` logMissedCall | `user` | caller ID |
+| `watch_invite` | `watch_out_handler.go` SendWatchOutHandler | `room` | room ID |
+
+**Frontend — `LobbyPage.jsx`**
+- WS pushes `notif_type` field; API returns `type` field — always read as `n.notif_type || n.type`.
+- `handleNotificationClick(n)`: closes panel, marks read, routes:
+  - Room/session types → `navigate('/rooms/:entity_id')`
+  - Post types → switch to Watching Live tab
+  - `dm_received`/`missed_call` → switch Chats tab + `handleOpenChat(friend)` if found in `friendsList`
+  - `token_gift` → `navigate('/payment')`
+- Notification panel rows changed from `<div>` to `<button>` with `onClick`.
+
+### Calendar Badge
+- `upcomingEventsCount` state added to LobbyPage; fetched on mount via `GET /api/user/upcoming-events`.
+- Amber badge on taskbar `CalendarDaysIcon` when count > 0 (matches bell badge style).
+- Badge cleared (`setUpcomingEventsCount(0)`) when drawer opens.
+

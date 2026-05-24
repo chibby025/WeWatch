@@ -253,11 +253,21 @@ func SendLobbyChatMessageHandler(c *gin.Context) {
 	// Broadcast via WebSocket to both users
 	BroadcastLobbyChatMessage(db, chat, sender)
 
+	// Upsert dm_received notification (batches multiple messages from same sender)
+	go UpsertDMNotification(req.RecipientID, senderID, sender.Username, trimmedMessage)
+
 	c.JSON(http.StatusOK, chatResponse)
 }
 
-// BroadcastLobbyChatMessage sends the message to both sender and recipient via WebSocket
+// BroadcastLobbyChatMessage sends the message to both sender and recipient via WebSocket.
+// For group messages (chat.GroupID != nil) it fans out to all group members instead.
 func BroadcastLobbyChatMessage(db *gorm.DB, chat models.LobbyChat, sender models.User) {
+	// Group messages are handled by BroadcastLobbyGroupMessage
+	if chat.GroupID != nil {
+		BroadcastLobbyGroupMessage(db, chat, sender)
+		return
+	}
+
 	// Get WebSocket manager
 	manager := GetWebSocketManager()
 	if manager == nil {
@@ -271,6 +281,11 @@ func BroadcastLobbyChatMessage(db *gorm.DB, chat models.LobbyChat, sender models
 		"sender_id":       chat.SenderID,
 		"recipient_id":    chat.RecipientID,
 		"message":         chat.Message,
+		"message_type":    chat.MessageType,
+		"attachment_url":  chat.AttachmentURL,
+		"attachment_name": chat.AttachmentName,
+		"attachment_size": chat.AttachmentSize,
+		"metadata":        chat.Metadata,
 		"created_at":      chat.CreatedAt,
 		"read_at":         chat.ReadAt,
 		"sender_username": sender.Username,

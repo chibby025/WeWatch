@@ -1,5 +1,5 @@
 // WeWatch/frontend/src/hooks/useSessionRecording.js
-// Hook for recording watch sessions (30min max @ 720p)
+// Hook for recording watch sessions (20min max @ 720p)
 import { useState, useRef, useCallback } from 'react';
 import apiClient from '../services/api';
 import toast from 'react-hot-toast';
@@ -14,9 +14,10 @@ const useSessionRecording = () => {
   const chunksRef = useRef([]);
   const timerRef = useRef(null);
   const streamRef = useRef(null);
+  const cancelledRef = useRef(false);
 
-  const MAX_DURATION = 30 * 60; // 30 minutes in seconds
-  const WARNING_TIME = 28 * 60; // 28 minutes - show warning
+  const MAX_DURATION = 20 * 60; // 20 minutes in seconds
+  const WARNING_TIME = 18 * 60; // 18 minutes - show warning
 
   // Format time as MM:SS
   const formatTime = (seconds) => {
@@ -31,18 +32,18 @@ const useSessionRecording = () => {
       setRecordingTime((prev) => {
         const newTime = prev + 1;
         
-        // Show warning at 28 minutes
+        // Show warning at 18 minutes
         if (newTime === WARNING_TIME) {
           toast('⏰ 2 minutes remaining!', {
             icon: '⚠️',
             duration: 5000,
           });
         }
-        
-        // Auto-stop at 30 minutes
+
+        // Auto-stop at 20 minutes
         if (newTime >= MAX_DURATION) {
           stopRecording();
-          toast('Recording stopped - 30 minute limit reached', {
+          toast('Recording stopped - 20 minute limit reached', {
             icon: '⏱️',
           });
         }
@@ -108,20 +109,25 @@ const useSessionRecording = () => {
 
       streamRef.current = stream;
 
-      // Create MediaRecorder with optimized settings for 720p
+      // Prefer H.264 MP4 (instant server remux); fall back to VP9/VP8 WebM
+      let mimeType = 'video/mp4;codecs=h264,aac';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm;codecs=vp9';
+      }
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm;codecs=vp8';
+      }
+
       const options = {
-        mimeType: 'video/webm;codecs=vp9',
+        mimeType,
         videoBitsPerSecond: 2500000, // 2.5 Mbps for 720p
       };
-
-      // Fallback to vp8 if vp9 not supported
-      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-        options.mimeType = 'video/webm;codecs=vp8';
-      }
 
       const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
+
+      const isH264 = mimeType.startsWith('video/mp4');
 
       // Handle data available event (collect chunks)
       mediaRecorder.ondataavailable = (event) => {
@@ -131,9 +137,11 @@ const useSessionRecording = () => {
       };
 
       // Handle stop event (create blob and upload)
+      cancelledRef.current = false;
       mediaRecorder.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-        await handleUpload(blob, roomId, title);
+        if (cancelledRef.current) return;
+        const blob = new Blob(chunksRef.current, { type: isH264 ? 'video/mp4' : 'video/webm' });
+        await handleUpload(blob, roomId, title, isH264);
       };
 
       // Start recording with 10 second chunks
@@ -171,28 +179,40 @@ const useSessionRecording = () => {
   }, [isRecording, stopTimer]);
 
   // Upload recording and create post
-  const handleUpload = async (blob, roomId, title) => {
+  const handleUpload = async (blob, roomId, title, isH264 = false) => {
     setIsProcessing(true);
     setUploadProgress(0);
 
     try {
-      // Step 1: Create post entry
+      // Step 1: Create post as draft (is_public=false keeps it out of the feed until published)
       const postData = {
-        title: title || `Watch Party Recording - ${new Date().toLocaleDateString()}`,
-        description: 'Recorded live watch party session',
+        description: '',
         media_type: 'video',
         post_type: 'recording',
-        room_id: roomId ? parseInt(roomId, 10) : null, // ✅ Convert to integer
-        is_public: true,
+        room_id: roomId ? parseInt(roomId, 10) : null,
+        is_public: false,
+        allow_downloads: true,
       };
 
-      const createResponse = await apiClient.post('/api/posts', postData);
+      let createResponse;
+      try {
+        createResponse = await apiClient.post('/api/posts', postData);
+      } catch (err) {
+        if (err?.response?.status === 403 && err?.response?.data?.code === 'recording_limit') {
+          const msg = err.response.data.upgrade_msg || 'Recording limit reached. Delete an old recording or upgrade to Premium.';
+          toast.error(msg, { duration: 6000 });
+          setIsProcessing(false);
+          return null;
+        }
+        throw err;
+      }
       const post = createResponse.data.post;
       console.log('✅ [Recording] Post created:', post.id);
 
       // Step 2: Upload video file
       const formData = new FormData();
-      const filename = `recording_${post.id}_${Date.now()}.webm`;
+      const ext = isH264 ? 'mp4' : 'webm';
+      const filename = `recording_${post.id}_${Date.now()}.${ext}`;
       formData.append('file', blob, filename);
 
       const uploadResponse = await apiClient.post(`/api/posts/${post.id}/upload`, formData, {
@@ -213,7 +233,7 @@ const useSessionRecording = () => {
       };
 
       console.log('✅ [Recording] Upload complete:', uploadResponse.data);
-      toast.success('🎉 Recording posted successfully!');
+      toast.success('Recording saved as draft — open your profile to publish it.', { duration: 6000 });
 
       // Reset state
       setIsProcessing(false);
@@ -233,11 +253,12 @@ const useSessionRecording = () => {
   // Cancel recording (without saving)
   const cancelRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {
+      cancelledRef.current = true;
+      chunksRef.current = [];
       mediaRecorderRef.current.stop();
       stopTimer();
       setIsRecording(false);
       setRecordingTime(0);
-      chunksRef.current = [];
 
       // Stop all tracks
       if (streamRef.current) {

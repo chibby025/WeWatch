@@ -17,6 +17,8 @@ export default function useEmoteSounds() {
     thumbs_up: '/sounds/thumbs_up.mp3',
     laugh: '/sounds/laugh.mp3',
     heart: '/sounds/heart.mp3',
+    fire: '/sounds/whoosh.mp3',
+    celebrate: '/sounds/pop.mp3',
   };
 
   // Initialize audio context (Web Audio API for better control)
