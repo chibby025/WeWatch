@@ -330,11 +330,16 @@ const Register = () => {
               {/* Login Link */}
               <p className="mt-6 text-center text-sm text-gray-400">
                 Already have an account?{' '}
-                <Link 
-                  to="/login" 
+                <Link
+                  to="/login"
                   className="font-semibold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400 hover:from-purple-300 hover:to-blue-300 transition-all"
                 >
                   Sign in here
+                </Link>
+              </p>
+              <p className="mt-2 text-center text-xs text-gray-500">
+                <Link to="/explore" className="hover:text-gray-400 transition-colors underline underline-offset-2">
+                  Browse without signing in
                 </Link>
               </p>
             </div>

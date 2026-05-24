@@ -571,6 +571,9 @@ func main() {
 		sessionPublic.GET("/:id/chat-count", handlers.GetSessionChatCountHandler)   // GET /api/sessions/:id/chat-count (Get total chat messages)
 	}
 
+	// --- PUBLIC (no-auth) routes for the /explore browse page ---
+	r.GET("/api/public/live-sessions", handlers.GetPublicLiveSessionsHandler)
+
 	// --- POSTS & USER-GENERATED CONTENT ROUTES (Phase 1: Post & Recording Feature) ---
 	// Public routes (discover feed, view single post, read comments)
 	postsPublic := r.Group("/api/posts")

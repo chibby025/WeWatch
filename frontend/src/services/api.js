@@ -1197,6 +1197,13 @@ export const revokeRoomInvite = async (roomId, inviteId) => {
   }
 };
 
+// --- Public (no-auth) endpoints for the /explore browse page ---
+export const getPublicLiveSessions = () =>
+  fetch(`${API_BASE_URL}/api/public/live-sessions`).then(r => r.json());
+
+export const getPublicFeedPosts = (page = 1, limit = 20) =>
+  fetch(`${API_BASE_URL}/api/posts?page=${page}&limit=${limit}`).then(r => r.json());
+
 export const checkRoomAccess = async (roomId) => {
   try {
     const response = await apiClient.get(`/api/rooms/${roomId}/check-access`);

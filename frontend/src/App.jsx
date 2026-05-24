@@ -30,6 +30,7 @@ import PaymentAccountManagement from './components/payment/PaymentAccountManagem
 import WithdrawalRequestForm from './components/payment/WithdrawalRequestForm';
 import KYCSubmissionForm from './components/payment/KYCSubmissionForm';
 import SVGComparison from './components/dev/SVGComparison';
+import ExplorePage from './pages/ExplorePage';
 
 // ✅ ALL AVATAR DEMO IMPORTS COMMENTED/REMOVED
 /*
@@ -116,6 +117,7 @@ function App() {
           <div className="min-h-screen bg-gray-900">
           <Routes>
           {/* Public routes */}
+          <Route path="/explore" element={<ExplorePage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
