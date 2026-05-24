@@ -1323,6 +1323,11 @@ const PositionCalculatorPage = () => {
     prevConnectedRef.current = isConnected;
   }, [isConnected]);
 
+  // Always clear the stuck reconnect toast when this page unmounts (session end / navigate away)
+  useEffect(() => {
+    return () => { toast.dismiss('ws-disconnect'); };
+  }, []);
+
   // Clean up window camera globals and abort any running capture on unmount
   useEffect(() => {
     return () => {

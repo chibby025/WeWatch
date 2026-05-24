@@ -37,6 +37,12 @@
   line-height: 1;
 }
 
+.audio-mode-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
 .audio-mode-text {
   color: #ffffff;
   font-size: 14px;

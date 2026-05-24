@@ -51,6 +51,7 @@ export default function AudioModeBar({
   const isSeatMode = audioMode === 'seat';
   const modeIcon = isSeatMode ? '🎭' : '🎉';
   const modeText = isSeatMode ? 'Seat Mode' : 'Party Mode';
+  const modeDesc = isSeatMode ? 'Only your row can hear you' : 'Everyone can hear you';
   const rowText = isSeatMode && currentRow !== null ? ` · Row ${currentRow + 1}` : '';
 
   return (
@@ -58,7 +59,10 @@ export default function AudioModeBar({
       <div className="audio-mode-content">
         {/* Mode section */}
         <span className="audio-mode-icon">{modeIcon}</span>
-        <span className="audio-mode-text">{modeText}{rowText}</span>
+        <div className="audio-mode-label">
+          <span className="audio-mode-text">{modeText}{rowText}</span>
+          <span className="audio-mode-status">{modeDesc}</span>
+        </div>
 
         {/* Host: switch-mode button */}
         {isHost && (

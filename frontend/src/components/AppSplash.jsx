@@ -4,15 +4,15 @@ import React from 'react';
 
 export default function AppSplash({ statusText = null }) {
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white">
       <img
-        src="/icons/LWO1.webp"
+        src="/icons/lwoIcon.png"
         alt="LetsWatchOut"
-        className="w-28 h-28 sm:w-36 sm:h-36"
+        className="w-36 h-36 sm:w-44 sm:h-44 object-contain"
         style={{ animation: 'fadeScaleIn 0.4s ease-out forwards, logoPulse 1.5s ease-in-out 0.4s infinite' }}
       />
       {statusText && (
-        <p className="mt-6 text-gray-400 text-sm font-medium tracking-wide">
+        <p className="mt-6 text-gray-500 text-sm font-medium tracking-wide">
           {statusText}
         </p>
       )}

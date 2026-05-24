@@ -8753,3 +8753,85 @@ These patterns were applied to `LectureHallPage.jsx` for network resilience and 
 - Amber badge on taskbar `CalendarDaysIcon` when count > 0 (matches bell badge style).
 - Badge cleared (`setUpcomingEventsCount(0)`) when drawer opens.
 
+
+## Copywriting Suggestions (2026-05-24)
+
+### Login Page
+
+**Current:** "Watch together, anywhere" / "You define the space. We bring your people together."
+
+**Option A — Nostalgia angle**
+> Relive it together.
+> The shows you grew up on. The people you miss. One room, anywhere in the world.
+
+**Option B — Community/creator angle**
+> Your room. Your audience. Your world.
+> Host sessions, charge tickets, build your community — all from your phone.
+
+**Option C — Simple & punchy (Nigerian market)**
+> Abi you wan watch alone?
+> Invite your people. Start a session. Make it a night.
+
+**Option D — Diaspora/nostalgia**
+> Bring back the feeling.
+> Cadbury breakfast TV. Friday night movies. The group chat that never sleeps. It's all here.
+
+---
+
+### Register Page
+
+**Header suggestions:**
+- Join the watch party — simple, inviting
+- Start your room today — creator-forward
+- Your people are already in there — FOMO angle
+
+**Sub-header (below main heading):**
+- Free forever for the basics. Charge your audience when you're ready.
+- Set up your room in 60 seconds. Invite your first guest in two.
+- The church group, the anime nights, the fellowship — all in one place.
+
+**Footer note (replacing dry legal line):**
+> Free to join. No card needed. Cancel-nothing — it's yours.
+
+---
+
+### Lobby / Home (after login)
+
+**Empty state (no rooms joined yet):**
+> Where do you belong?
+> Find a room, or build your own. Rooms are where your people gather — for movies, church, class, debates, whatever you're about.
+
+**Watching Live tab (no sessions):**
+> Nobody's live right now — but you could be.
+> Start a session in your room and go live in seconds.
+
+**Watching Live tab (sessions exist):**
+> People are watching right now. Don't miss it.
+
+**Feed tab (empty):**
+> Nothing here yet.
+> Post a recording, a sermon, a short — your audience is waiting.
+
+**Room creation prompt:**
+> You don't have a room yet.
+> Your room is your stage — host sessions, schedule events, build your audience.
+> Create your room →
+
+---
+
+### Universal Taglines
+
+| Situation | Line |
+|---|---|
+| General | Watch together, anywhere |
+| Churches | Your fellowship, online and on time |
+| Creators | Premiere it. Charge for it. Own it. |
+| Nostalgia | Bring back the feeling |
+| Referral moment | Have you seen this? No? — LetsWatchOut |
+| Movie nights | Make Friday a night to remember |
+| Diaspora | The group chat, but better |
+
+**Tone guidance:** Warm, slightly informal, culturally specific without being exclusionary.
+Code-switching style (e.g. "Abi you wan watch alone?") signals who this is for without saying Nigeria explicitly.
+Use this tone in onboarding, empty states, and marketing copy.
+

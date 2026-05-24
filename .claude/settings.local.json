@@ -13,7 +13,8 @@
       "PowerShell(wsl -d Ubuntu-22.04 bash -l -c \"cd /home/chibuzor_dev/WeWatch/frontend && npx tsc --noEmit --skipLibCheck 2>&1 | head -50\")",
       "PowerShell(wsl -d Ubuntu-22.04 bash -l -c \"cd /home/chibuzor_dev/WeWatch/frontend && node_modules/.bin/vite build 2>&1 | tail -20\")",
       "PowerShell(wsl -d Ubuntu-22.04 bash -l -c \"cd /home/chibuzor_dev/WeWatch/frontend && node_modules/.bin/vite build 2>&1 | tail -8\")",
-      "PowerShell(wsl -d Ubuntu-22.04 /home/chibuzor_dev/.local/opt/go/bin/go build -C /home/chibuzor_dev/WeWatch/backend ./cmd/server/... 2>&1)"
+      "PowerShell(wsl -d Ubuntu-22.04 /home/chibuzor_dev/.local/opt/go/bin/go build -C /home/chibuzor_dev/WeWatch/backend ./cmd/server/... 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 wc -l /home/chibuzor_dev/WeWatch/.clinerules)"
     ]
   }
 }

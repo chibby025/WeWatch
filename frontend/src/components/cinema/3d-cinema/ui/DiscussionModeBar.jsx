@@ -47,6 +47,7 @@ export default function DiscussionModeBar({
 
   const modeIcon = discussionMode ? '🗣️' : '🎓';
   const modeText = discussionMode ? 'Discussion Mode' : 'Lecture Mode';
+  const modeDesc = discussionMode ? 'All participants can speak' : 'Only the host speaks';
 
   return (
     <div className={`audio-mode-bar ${isVisible ? 'visible' : 'hidden'}`}>
@@ -59,7 +60,10 @@ export default function DiscussionModeBar({
         }}
       >
         <span className="audio-mode-icon">{modeIcon}</span>
-        <span className="audio-mode-text">{modeText}</span>
+        <div className="audio-mode-label">
+          <span className="audio-mode-text">{modeText}</span>
+          <span className="audio-mode-status">{modeDesc}</span>
+        </div>
 
         {isHost && (
           <button
