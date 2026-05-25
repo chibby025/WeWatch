@@ -338,12 +338,15 @@ func GetDiscoverFeed(c *gin.Context) {
 	currentUserID := c.GetUint("user_id")
 
 	var posts []models.Post
+	// Fetch a fixed pool of up to 500 posts. ScoreAndSortPosts ranks the entire pool
+	// globally; Go-level pagination slices the result. This prevents the per-page
+	// ranking flaw where old-but-engaged posts beat newer posts on the same small page.
+	const feedPoolSize = 500
 	query := DB.Where("posts.is_public = ? AND posts.deleted_at IS NULL", true).
 		Preload("User").
-		Preload("Room"). // ✅ Preload room association for recordings
-		Order("posts.created_at DESC"). // Newest first (chronological feed)
-		Limit(limit).
-		Offset(offset)
+		Preload("Room").
+		Order("posts.created_at DESC").
+		Limit(feedPoolSize)
 	
 	// 🔍 Search filter (title, description, or username)
 	if searchQuery != "" {
@@ -354,7 +357,7 @@ func GetDiscoverFeed(c *gin.Context) {
 		log.Printf("🔍 [GetDiscoverFeed] Searching for: '%s'", searchQuery)
 	}
 	
-	log.Printf("📊 [GetDiscoverFeed] Fetching posts - limit: %d, offset: %d, search: '%s'", limit, offset, searchQuery)
+	log.Printf("📊 [GetDiscoverFeed] pool fetch (limit=%d offset=%d search='%s')", limit, offset, searchQuery)
 
 	if err := query.Find(&posts).Error; err != nil {
 		log.Printf("❌ [GetDiscoverFeed] Database error: %v", err)
@@ -440,13 +443,29 @@ func GetDiscoverFeed(c *gin.Context) {
 	}
 	filteredPosts = ratingFiltered
 
+	// Score and sort the ENTIRE eligible pool globally, then paginate in Go.
+	// Ranking the full pool (not individual pages) means old-but-engaged posts
+	// compete fairly across all pages rather than winning on a small page.
+	filteredPosts = ScoreAndSortPosts(DB, filteredPosts, currentUserID, viewerSettings.PrimaryRating)
+
+	total := len(filteredPosts)
+	start := offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+	pagePosts := filteredPosts[start:end]
+
 	viewerShowMature := viewerSettings.ShowMatureContent
 
-	// Batch-check which posts the current user has purchased (one query for the whole page).
+	// Batch-check purchased posts only for the current page slice.
 	purchasedIDs := make(map[uint]bool)
-	if currentUserID > 0 && len(filteredPosts) > 0 {
-		postIDs := make([]uint, 0, len(filteredPosts))
-		for _, p := range filteredPosts {
+	if currentUserID > 0 && len(pagePosts) > 0 {
+		postIDs := make([]uint, 0, len(pagePosts))
+		for _, p := range pagePosts {
 			postIDs = append(postIDs, p.ID)
 		}
 		var purchases []models.PostPurchase
@@ -457,15 +476,17 @@ func GetDiscoverFeed(c *gin.Context) {
 		}
 	}
 
-	responsePosts := make([]PostFeedResponse, len(filteredPosts))
-	for i, p := range filteredPosts {
+	responsePosts := make([]PostFeedResponse, len(pagePosts))
+	for i, p := range pagePosts {
 		responsePosts[i] = buildPostResponse(p, currentUserID, purchasedIDs, viewerShowMature)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"posts":  responsePosts,
-		"limit":  limit,
-		"offset": offset,
+		"posts":    responsePosts,
+		"limit":    limit,
+		"offset":   offset,
+		"total":    total,
+		"has_more": end < total,
 	})
 }
 

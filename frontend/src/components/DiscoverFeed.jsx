@@ -111,10 +111,12 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
         setPosts(newPosts);
       }
 
-      // Treat "no rows" as end of feed. We can't use `=== PAGE_SIZE` because the
-      // backend runs a per-post privacy filter AFTER applying LIMIT, so a non-final
-      // page can legitimately come back short. See backend/internal/handlers/posts.go GetDiscoverFeed.
-      setHasMore(newPosts.length > 0);
+      // Prefer the backend's explicit has_more flag (present when global-pool pagination
+      // is active). Fall back to the old heuristic for older server versions.
+      const hasMore = response.data.has_more !== undefined
+        ? response.data.has_more
+        : newPosts.length > 0;
+      setHasMore(hasMore);
       setError(null);
     } catch (err) {
       console.error('❌ [DiscoverFeed] Failed to fetch posts:', err);

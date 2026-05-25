@@ -1,8 +1,15 @@
 // WeWatch/backend/internal/handlers/feed_algorithm.go
-// Scores and re-ranks posts within a fetched page.
-// Formula: (tip_count*5 + comments_count*2 + likes_count*1) / (hours_old + 2)^1.5
-// Boosts applied on top of base score:
-//   joined room ×1.4 | room ≥10 members ×1.2 | content rating match ×1.2 | KYC author ×1.15
+// Scores and re-ranks the entire eligible post pool, then the caller paginates in Go.
+//
+// Scoring formula:
+//   recencyScore  = 10000 / (hours_old + 1)            — dominant signal, halves every ~2× in age
+//   engBoost      = joined-room ×1.4 | big-room ×1.2 | KYC-author ×1.15
+//   engBonus      = min(rawEngagement × engBoost, recencyScore × 0.30)  — capped at 30% of recency
+//   affinity      = content-affinity multiplier per viewer preference (primary ×2.0, adjacent ×1.5/1.2)
+//   final score   = (recencyScore + engBonus) × affinity
+//
+// Property: engagement can shuffle posts within a similar-age band but cannot promote an
+// old post above a post that is significantly newer (the 30% cap + steep recency slope ensures this).
 package handlers
 
 import (
@@ -19,7 +26,29 @@ type scoredPost struct {
 	score float64
 }
 
-// ScoreAndSortPosts re-ranks a slice of posts in-place using the WeWatch feed algorithm.
+// affinityBoost returns a content-rating affinity multiplier for a viewer with the given
+// primary preference. Primary match = ×2.0, adjacent high = ×1.5, adjacent low = ×1.2, neutral = ×1.0.
+func affinityBoost(viewerPref, postRating string) float64 {
+	affinityMap := map[string]map[string]float64{
+		"G":           {"G": 2.0, "PG": 1.5, "Educational": 1.2},
+		"PG":          {"PG": 2.0, "G": 1.5, "Educational": 1.2, "13+": 1.2},
+		"Educational": {"Educational": 2.0, "G": 1.5, "PG": 1.2, "Religious": 1.2},
+		"Religious":   {"Religious": 2.0, "Educational": 1.5, "G": 1.2},
+		"13+":         {"13+": 2.0, "PG": 1.5, "16+": 1.2, "G": 1.2},
+		"16+":         {"16+": 2.0, "13+": 1.5, "18+": 1.2, "PG": 1.2},
+		"18+":         {"18+": 2.0, "Mature": 1.5, "16+": 1.2, "13+": 1.2},
+		"Mature":      {"Mature": 2.0, "18+": 1.5, "16+": 1.2},
+	}
+	if prefs, ok := affinityMap[viewerPref]; ok {
+		if b, ok := prefs[postRating]; ok {
+			return b
+		}
+	}
+	return 1.0
+}
+
+// ScoreAndSortPosts re-ranks a slice of posts using the WeWatch feed algorithm.
+// Call this on the ENTIRE eligible pool before paginating — not on a single page.
 // All DB lookups are batched (no N+1). Safe to call with an empty slice.
 func ScoreAndSortPosts(db *gorm.DB, posts []models.Post, viewerID uint, primaryRating string) []models.Post {
 	if len(posts) <= 1 {
@@ -97,26 +126,36 @@ func ScoreAndSortPosts(db *gorm.DB, posts []models.Post, viewerID uint, primaryR
 		if hoursOld < 0 {
 			hoursOld = 0
 		}
-		decay := math.Pow(hoursOld+2, 1.5)
-		base := (float64(p.TipCount)*5 + float64(p.CommentsCount)*2 + float64(p.LikesCount)) / decay
 
-		boost := 1.0
+		// Recency dominates: score is inversely proportional to age.
+		// A 1-hour post scores ~5000; a 24-hour post ~400; a 7-day post ~6; a 30-day post ~1.4.
+		recencyScore := 10000.0 / (hoursOld + 1)
+
+		// Engagement boosts amplify the raw engagement signal for posts in rooms the viewer
+		// has joined, popular rooms, or posts by KYC-verified authors.
+		engBoost := 1.0
 		if p.RoomID != nil {
 			if joinedRooms[*p.RoomID] {
-				boost *= 1.4
+				engBoost *= 1.4
 			}
 			if roomMemberCounts[*p.RoomID] >= 10 {
-				boost *= 1.2
+				engBoost *= 1.2
 			}
 		}
-		if primaryRating != "" && p.ContentRating == primaryRating {
-			boost *= 1.2
-		}
 		if kycVerified[p.UserID] {
-			boost *= 1.15
+			engBoost *= 1.15
 		}
 
-		scored[i] = scoredPost{post: p, score: base * boost}
+		rawEngagement := float64(p.TipCount*5 + p.CommentsCount*2 + p.LikesCount)
+		// Cap engagement bonus at 30% of the recency score so viral old posts cannot
+		// consistently beat significantly newer posts with zero engagement.
+		engBonus := math.Min(rawEngagement*engBoost, recencyScore*0.30)
+
+		// Content affinity scales the combined score so preferred ratings surface higher
+		// while still respecting recency within each affinity tier.
+		affinity := affinityBoost(primaryRating, p.ContentRating)
+
+		scored[i] = scoredPost{post: p, score: (recencyScore + engBonus) * affinity}
 	}
 
 	sort.SliceStable(scored, func(i, j int) bool {
