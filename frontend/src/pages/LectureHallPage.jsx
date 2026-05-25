@@ -7420,7 +7420,6 @@ const PositionCalculatorPage = () => {
           seatSwapRequest={seatSwapRequest}
           isSilenceMode={isSilenceMode}
           onToggleSilenceMode={() => setIsSilenceMode(prev => !prev)}
-          onToggleSilenceMode={() => {}}
           handRaised={handRaised}
           hasHostApproval={hasHostApproval}
           onRaiseHand={handleRaiseHand}

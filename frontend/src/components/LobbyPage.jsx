@@ -2819,7 +2819,6 @@ const LobbyPage = () => {
       // ✅ For LiveShare/WatchFrom, request frame capture from host
       if (!canGenerateGIF) {
         setSessionPreviews(prev => ({
-        setSessionPreviews(prev => ({
           ...prev,
           [sessionId]: { ...prev[sessionId], isGenerating: true }
         }));
