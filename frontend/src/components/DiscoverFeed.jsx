@@ -1,6 +1,6 @@
 // WeWatch/frontend/src/components/DiscoverFeed.jsx
 // Instagram/TikTok-style discover feed with infinite scroll grid
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useEffect, useRef, useReducer, forwardRef, useImperativeHandle } from 'react';
 import { Eye, Heart, MessageCircle, MoreVertical, Trash2, X, Reply, Edit, Trash, Lock, Flag, Gift } from 'lucide-react';
 import apiClient, { getFollowersCount, joinRoom, leaveRoom, tipPost } from '../services/api';
 import { formatCount } from '../utils/formatCount';
@@ -23,6 +23,13 @@ const formatTimeAgo = (dateStr) => {
 };
 
 const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
+  // Tick every 60s so timestamps re-render without re-fetching data
+  const [, tickTime] = useReducer(x => x + 1, 0);
+  useEffect(() => {
+    const t = setInterval(tickTime, 60_000);
+    return () => clearInterval(t);
+  }, []);
+
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -646,14 +653,14 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   const isSearching = searchQuery && searchQuery.trim().length > 0;
 
   return (
-    <div className={isSearching ? "w-full px-2 pb-8" : "w-full sm:max-w-2xl sm:mx-auto px-0 sm:px-4 pb-8"}>
-      <div className={isSearching ? "grid grid-cols-2 gap-2" : ""}>
+    <div className="w-full px-0 sm:px-4 pb-8">
+      <div className={isSearching ? "grid grid-cols-2 gap-2" : "md:grid md:grid-cols-2 md:gap-4"}>
         {posts.map((post, index) => {
           return (
           <React.Fragment key={`post-${post.id}`}>
-            {/* Post Card — Instagram-style layout */}
+            {/* Post Card */}
             <div
-              className="bg-white dark:bg-gray-950 cursor-pointer rounded-xl border border-white/25 mb-3 sm:mb-4 overflow-hidden"
+              className="bg-white dark:bg-gray-950 cursor-pointer rounded-xl border border-white/25 mb-3 sm:mb-4 md:mb-0 overflow-hidden"
               onClick={() => handlePostClick(post)}
             >
               {/* ── Card Header: Avatar · Username · Follow · ··· ── */}
@@ -729,6 +736,15 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                   )}
                 </div>
               </div>
+
+              {/* Description — below header, above media, skipped for text posts */}
+              {post.post_type !== 'text' && post.description && (
+                <div className="px-4 py-1.5 bg-white dark:bg-gray-950">
+                  <p className="text-sm text-gray-900 dark:text-white leading-snug line-clamp-2">
+                    {post.description}
+                  </p>
+                </div>
+              )}
 
               {/* ── Media — square on mobile, 16:9 on desktop ── */}
               <div className="relative aspect-[4/3] sm:aspect-video bg-gray-100 dark:bg-gray-900 group overflow-hidden">
@@ -875,100 +891,94 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                 )}
               </div>
 
-              {/* ── Footer: action row + caption share one background to avoid sub-pixel gaps ── */}
+              {/* ── Footer ── */}
               <div className="bg-gray-100 dark:bg-gray-800" onClick={e => e.stopPropagation()}>
-                {/* Action Row: Views · Like · Comment · Gift · Share */}
-                <div className="flex items-center gap-5 px-4 pt-2 pb-1">
-                  {/* Views */}
-                  <div className="flex items-center gap-1.5 text-gray-400 dark:text-gray-500">
-                    <Eye className="w-5 h-5" />
-                    <span className="text-sm">{formatCount(post.view_count || 0)}</span>
-                  </div>
-                  {/* Like */}
-                  <button
-                    className="flex items-center gap-1.5 transition-colors group"
-                    onClick={(e) => handleLikeToggle(post, e)}
-                  >
-                    <Heart
-                      className={`w-6 h-6 transition-all ${
-                        postLikes[post.id]?.isLiked
-                          ? 'fill-red-500 stroke-red-500'
-                          : 'stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-red-500'
-                      }`}
-                      fill="none"
-                      strokeWidth={2}
-                    />
-                    <span className={`text-sm font-semibold ${postLikes[post.id]?.isLiked ? 'text-red-500' : 'text-gray-800 dark:text-gray-100'}`}>
-                      {formatCount(postLikes[post.id]?.count ?? (post.likes_count || 0))}
-                    </span>
-                  </button>
-                  {/* Comment */}
-                  <button
-                    className="flex items-center gap-1.5 transition-colors group"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const newOpenState = openComments === post.id ? null : post.id;
-                      setOpenComments(newOpenState);
-                      if (newOpenState) fetchComments(newOpenState);
-                    }}
-                  >
-                    <MessageCircle
-                      className={`w-6 h-6 ${openComments === post.id ? 'stroke-blue-500' : 'stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-blue-500'}`}
-                      fill="none"
-                      strokeWidth={2}
-                    />
-                    <span className={`text-sm font-semibold ${openComments === post.id ? 'text-blue-500' : 'text-gray-800 dark:text-gray-100'}`}>
-                      {formatCount(post.comments_count || 0)}
-                    </span>
-                  </button>
-                  {/* Gift / Tip — not shown on own posts */}
-                  {post.user_id !== currentUser?.id && (
+                {/* Action Row: left icons | share + timestamp pushed right */}
+                <div className="flex items-center px-4 py-2">
+                  {/* Left group */}
+                  <div className="flex items-center gap-4">
+                    {/* Views */}
+                    <div className="flex items-center gap-1.5 text-gray-400 dark:text-gray-500">
+                      <Eye className="w-5 h-5" />
+                      <span className="text-sm">{formatCount(post.view_count || 0)}</span>
+                    </div>
+                    {/* Like */}
                     <button
                       className="flex items-center gap-1.5 transition-colors group"
-                      onClick={(e) => handleTip(post, e)}
-                      title="Send 1 token tip"
+                      onClick={(e) => handleLikeToggle(post, e)}
                     >
-                      <Gift
-                        className="w-6 h-6 stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-yellow-500 transition-colors"
+                      <Heart
+                        className={`w-6 h-6 transition-all ${
+                          postLikes[post.id]?.isLiked
+                            ? 'fill-red-500 stroke-red-500'
+                            : 'stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-red-500'
+                        }`}
+                        fill="none"
                         strokeWidth={2}
                       />
-                      <span className="text-sm text-gray-800 dark:text-gray-100 group-hover:text-yellow-500">
-                        {formatCount(postTips[post.id] ?? (post.tip_count || 0))}
+                      <span className={`text-sm font-semibold ${postLikes[post.id]?.isLiked ? 'text-red-500' : 'text-gray-800 dark:text-gray-100'}`}>
+                        {formatCount(postLikes[post.id]?.count ?? (post.likes_count || 0))}
                       </span>
                     </button>
-                  )}
-                  {/* Share */}
-                  <button
-                    className="flex items-center transition-colors group"
-                    onClick={(e) => { e.stopPropagation(); openShareModal(post); }}
-                    title="Share"
-                  >
-                    <svg className="w-6 h-6 stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-purple-500" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                    </svg>
-                  </button>
-                </div>
-                {/* Caption — description only, skipped for text posts */}
-                {post.post_type !== 'text' && post.description && (
-                  <div className="px-4 pt-1">
-                    <p className="text-sm text-gray-900 dark:text-white leading-snug line-clamp-2">
-                      {post.description}
-                    </p>
+                    {/* Comment */}
+                    <button
+                      className="flex items-center gap-1.5 transition-colors group"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const newOpenState = openComments === post.id ? null : post.id;
+                        setOpenComments(newOpenState);
+                        if (newOpenState) fetchComments(newOpenState);
+                      }}
+                    >
+                      <MessageCircle
+                        className={`w-6 h-6 ${openComments === post.id ? 'stroke-blue-500' : 'stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-blue-500'}`}
+                        fill="none"
+                        strokeWidth={2}
+                      />
+                      <span className={`text-sm font-semibold ${openComments === post.id ? 'text-blue-500' : 'text-gray-800 dark:text-gray-100'}`}>
+                        {formatCount(post.comments_count || 0)}
+                      </span>
+                    </button>
+                    {/* Gift / Tip — not shown on own posts */}
+                    {post.user_id !== currentUser?.id && (
+                      <button
+                        className="flex items-center gap-1.5 transition-colors group"
+                        onClick={(e) => handleTip(post, e)}
+                        title="Send 1 token tip"
+                      >
+                        <Gift
+                          className="w-6 h-6 stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-yellow-500 transition-colors"
+                          strokeWidth={2}
+                        />
+                        <span className="text-sm text-gray-800 dark:text-gray-100 group-hover:text-yellow-500">
+                          {formatCount(postTips[post.id] ?? (post.tip_count || 0))}
+                        </span>
+                      </button>
+                    )}
                   </div>
-                )}
-                {/* Timestamp row */}
-                <div className="flex justify-end px-4 pb-2 pt-1">
-                  <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                    {formatTimeAgo(post.created_at)}
-                  </span>
+                  {/* Right group — share + timestamp */}
+                  <div className="ml-auto flex items-center gap-2.5">
+                    <button
+                      className="flex items-center transition-colors group"
+                      onClick={(e) => { e.stopPropagation(); openShareModal(post); }}
+                      title="Share"
+                    >
+                      <svg className="w-6 h-6 stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-purple-500" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                      </svg>
+                    </button>
+                    <span className="text-[10px] text-gray-400 dark:text-gray-500 whitespace-nowrap">
+                      {formatTimeAgo(post.created_at)}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Ad Banner every 6 posts */}
             {(index + 1) % 6 === 0 && adsEnabled && (
-              <div className="bg-white dark:bg-gray-950 sm:mb-4">
+              <div className="bg-white dark:bg-gray-950 sm:mb-4 md:col-span-2">
                 <div className="relative aspect-square sm:aspect-video bg-gray-200 dark:bg-gray-900 overflow-hidden">
                   <AdBanner />
                 </div>
