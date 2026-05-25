@@ -40,7 +40,7 @@ type CreatePostRequest struct {
 	Description    string   `json:"description"`
 	TextContent    *string  `json:"text_content"`
 	RoomID         *uint    `json:"room_id"`
-	MediaType      string   `json:"media_type" binding:"required,oneof=video image gif"`
+	MediaType      string   `json:"media_type" binding:"omitempty,oneof=video image gif"`
 	PostType       string   `json:"post_type" binding:"required,oneof=recording upload text"`
 	Duration       *int     `json:"duration"`
 	Resolution     string   `json:"resolution"`
@@ -205,7 +205,10 @@ func CreatePost(c *gin.Context) {
 
 	if err := DB.Create(&post).Error; err != nil {
 		log.Printf("❌ [CreatePost] Database error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create post"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create post",
+			"debug": err.Error(), // temporary: remove after diagnosing production error
+		})
 		return
 	}
 

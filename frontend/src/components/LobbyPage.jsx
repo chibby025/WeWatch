@@ -3208,8 +3208,16 @@ const LobbyPage = () => {
         handleRefreshWatchingNow();
         if (watchingNowScrollRef.current) watchingNowScrollRef.current.scrollTop = 0;
       } else {
-        discoverFeedRef.current?.refresh();
-        if (watchingNowScrollRef.current) watchingNowScrollRef.current.scrollTop = 0;
+        const scrollToTop = () => {
+          if (watchingNowScrollRef.current) watchingNowScrollRef.current.scrollTop = 0;
+          window.scrollTo({ top: 0 });
+        };
+        const p = discoverFeedRef.current?.refresh();
+        if (p && typeof p.then === 'function') {
+          p.then(scrollToTop);
+        } else {
+          scrollToTop();
+        }
       }
     }
   };
