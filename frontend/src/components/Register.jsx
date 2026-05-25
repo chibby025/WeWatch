@@ -100,9 +100,14 @@ const Register = () => {
         {/* Left Side - Logo & Branding */}
         <div className="lg:w-1/2 flex items-center justify-center p-8 md:p-12 lg:p-16 animate-fade-in bg-black">
           <div className="text-center max-w-2xl">
-            <img 
-              src="/icons/LetsWatchOutLogo.png" 
-              alt="LetsWatchOut Logo" 
+            <img
+              src="/icons/lwoIcon.png"
+              alt="W"
+              className="w-14 h-14 md:w-20 md:h-20 mx-auto object-contain mb-1"
+            />
+            <img
+              src="/icons/LetsWatchOutLogo.png"
+              alt="LetsWatchOut Logo"
               className="w-80 h-80 md:w-[420px] md:h-[420px] lg:w-[512px] lg:h-[512px] mx-auto mb-0 drop-shadow-2xl hover:scale-105 transition-transform duration-300"
             />
             <p className="text-xl md:text-2xl lg:text-2xl text-gray-300 mb-2">Watch together, anywhere</p>

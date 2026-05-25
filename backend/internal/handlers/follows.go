@@ -175,10 +175,11 @@ func GetFollowStatusHandler(c *gin.Context) {
 	})
 }
 
-// GetFollowersCountHandler handles GET /api/friendships/followers/:userId
-// Replaced the old query (which counted room members) with the user_follows table.
-func GetFollowersCountHandlerV2(c *gin.Context) {
-	userIDStr := c.Param("userId")
+// GetFollowingCountHandler handles GET /api/users/:id/following-count
+// Returns count of unique users this person is following:
+// hosts of rooms they've joined + explicit user_follows, deduped.
+func GetFollowingCountHandler(c *gin.Context) {
+	userIDStr := c.Param("id")
 	userID, err := strconv.ParseUint(userIDStr, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
@@ -188,10 +189,102 @@ func GetFollowersCountHandlerV2(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 
 	var count int64
-	db.Model(&models.UserFollow{}).Where("following_id = ?", userID).Count(&count)
+	if err := db.Raw(`
+		SELECT COUNT(DISTINCT target_id) FROM (
+			SELECT r.host_id AS target_id
+			FROM user_rooms ur
+			JOIN rooms r ON ur.room_id = r.id
+			WHERE ur.user_id = ? AND r.host_id != ? AND r.is_temporary = false
+			UNION
+			SELECT following_id AS target_id
+			FROM user_follows
+			WHERE follower_id = ? AND following_id != ?
+		) AS all_following
+	`, userID, userID, userID, userID).Scan(&count).Error; err != nil {
+		log.Printf("Error counting following for user %d: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count following"})
+		return
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"user_id":         userID,
-		"followers_count": count,
-	})
+	c.JSON(http.StatusOK, gin.H{"user_id": userID, "following_count": count})
+}
+
+// GetFollowingListHandler handles GET /api/users/:id/following
+// Returns the list of users this person follows (room hosts + explicit follows, deduped).
+// Access: always allowed for the owner; for others, only if show_following_public = true.
+func GetFollowingListHandler(c *gin.Context) {
+	userIDStr := c.Param("id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	requesterID := c.MustGet("user_id").(uint)
+	db := c.MustGet("db").(*gorm.DB)
+
+	var targetUser models.User
+	if err := db.Select("id, show_following_public").First(&targetUser, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	if requesterID != uint(userID) && !targetUser.ShowFollowingPublic {
+		c.JSON(http.StatusForbidden, gin.H{"error": "This user's following list is private"})
+		return
+	}
+
+	type FollowingUser struct {
+		ID         uint   `json:"id"`
+		Username   string `json:"username"`
+		AvatarURL  string `json:"avatar_url"`
+		MainRoomID *uint  `json:"main_room_id"`
+	}
+
+	var users []FollowingUser
+	if err := db.Raw(`
+		SELECT DISTINCT u.id, u.username, u.avatar_url, u.main_room_id
+		FROM users u
+		WHERE u.id IN (
+			SELECT DISTINCT r.host_id
+			FROM user_rooms ur
+			JOIN rooms r ON ur.room_id = r.id
+			WHERE ur.user_id = ? AND r.host_id != ? AND r.is_temporary = false
+			UNION
+			SELECT following_id
+			FROM user_follows
+			WHERE follower_id = ? AND following_id != ?
+		)
+		AND u.deleted_at IS NULL
+		ORDER BY u.username
+	`, userID, userID, userID, userID).Scan(&users).Error; err != nil {
+		log.Printf("Error fetching following list for user %d: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch following list"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"following": users, "count": len(users)})
+}
+
+// UpdateFollowingPrivacyHandler handles PATCH /api/users/privacy
+// Toggles whether the user's following/followers list is publicly visible.
+func UpdateFollowingPrivacyHandler(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	db := c.MustGet("db").(*gorm.DB)
+
+	var req struct {
+		ShowFollowingPublic bool `json:"show_following_public"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	if err := db.Model(&models.User{}).Where("id = ?", userID).Update("show_following_public", req.ShowFollowingPublic).Error; err != nil {
+		log.Printf("Error updating following privacy for user %d: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update privacy setting"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"show_following_public": req.ShowFollowingPublic})
 }

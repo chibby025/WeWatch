@@ -110,17 +110,18 @@ func GetUserProfileHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"user": gin.H{
-			"id":                targetUser.ID,
-			"username":          targetUser.Username,
-			"email":             targetUser.Email,
-			"avatar_url":        profilePicture,
-			"profile_picture":   profilePicture,
-			"bio":               targetUser.Bio,
-			"created_at":        targetUser.CreatedAt,
-			"profile_type":      profileType,
-			"is_private":        profileType == "private",
-			"friendship_status": friendshipStatus,
-			"main_room":         mainRoomData, // nil if no room or room is private
+			"id":                    targetUser.ID,
+			"username":              targetUser.Username,
+			"email":                 targetUser.Email,
+			"avatar_url":            profilePicture,
+			"profile_picture":       profilePicture,
+			"bio":                   targetUser.Bio,
+			"created_at":            targetUser.CreatedAt,
+			"profile_type":          profileType,
+			"is_private":            profileType == "private",
+			"friendship_status":     friendshipStatus,
+			"main_room":             mainRoomData,
+			"show_following_public": targetUser.ShowFollowingPublic,
 		},
 	})
 }

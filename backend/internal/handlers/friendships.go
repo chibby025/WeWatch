@@ -528,8 +528,8 @@ func GetFriendCountHandler(c *gin.Context) {
 	})
 }
 
-// GetFollowersCountHandler returns the number of users following a given user.
-// Reads from the user_follows table (decoupled from room membership).
+// GetFollowersCountHandler returns the total unique audience of a user:
+// room members across all non-temporary rooms they host, plus explicit user_follows, deduped.
 func GetFollowersCountHandler(c *gin.Context) {
 	userIDStr := c.Param("userId")
 	userID, err := strconv.ParseUint(userIDStr, 10, 32)
@@ -541,7 +541,18 @@ func GetFollowersCountHandler(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 
 	var count int64
-	if err := db.Model(&models.UserFollow{}).Where("following_id = ?", userID).Count(&count).Error; err != nil {
+	if err := db.Raw(`
+		SELECT COUNT(DISTINCT viewer_id) FROM (
+			SELECT ur.user_id AS viewer_id
+			FROM user_rooms ur
+			JOIN rooms r ON ur.room_id = r.id
+			WHERE r.host_id = ? AND ur.user_id != ? AND r.is_temporary = false
+			UNION
+			SELECT follower_id AS viewer_id
+			FROM user_follows
+			WHERE following_id = ?
+		) AS all_followers
+	`, userID, userID, userID).Scan(&count).Error; err != nil {
 		log.Printf("Error counting followers for user %d: %v", userID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count followers"})
 		return

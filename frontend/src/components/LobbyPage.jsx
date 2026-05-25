@@ -2541,6 +2541,16 @@ const LobbyPage = () => {
                     }
                     return scu;
                   });
+                  // Always update last message preview so friend list stays current
+                  const otherUserId = dmSenderId === currentUser?.id ? dmRecipientId : dmSenderId;
+                  setLastMessagePreviews(prev => ({
+                    ...prev,
+                    [otherUserId]: {
+                      text: chatData.message_type === 'text' ? chatData.message : `[${chatData.message_type}]`,
+                      timestamp: chatData.created_at,
+                      isOwn: dmSenderId === currentUser?.id,
+                    }
+                  }));
                 }
                 break;
               }
@@ -3188,11 +3198,19 @@ const LobbyPage = () => {
   };
 
   const handleHomeButton = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (activeTab === 'rooms') fetchRoomsData(0, false);
-    else if (activeTab === 'watching') {
-      if (watchingSubTab === 'sessions') handleRefreshWatchingNow();
-      else discoverFeedRef.current?.refresh();
+    if (activeTab === 'chats') {
+      setActiveTab('watching');
+      setWatchingSubTab('discover');
+    } else if (activeTab === 'rooms') {
+      fetchRoomsData(0, false);
+    } else if (activeTab === 'watching') {
+      if (watchingSubTab === 'sessions') {
+        handleRefreshWatchingNow();
+        if (watchingNowScrollRef.current) watchingNowScrollRef.current.scrollTop = 0;
+      } else {
+        discoverFeedRef.current?.refresh();
+        if (watchingNowScrollRef.current) watchingNowScrollRef.current.scrollTop = 0;
+      }
     }
   };
 
@@ -3569,6 +3587,19 @@ const LobbyPage = () => {
                           <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-1.5 sm:mb-2 pr-10 sm:pr-12 leading-relaxed">{room.description}</p>
                         )}
                       </div>
+                      {/* Last chat message preview */}
+                      {room.last_chat_message && (
+                        <div className="flex-shrink-0 flex flex-col items-end justify-center gap-1 ml-2 max-w-[100px] sm:max-w-[130px]">
+                          <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate w-full text-right leading-snug">
+                            {room.last_chat_message.length > 35 ? room.last_chat_message.slice(0, 35) + '…' : room.last_chat_message}
+                          </p>
+                          {room.last_chat_at && (
+                            <span className="text-[9px] text-gray-400 dark:text-gray-500 flex-shrink-0">
+                              {new Date(room.last_chat_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

@@ -756,24 +756,30 @@ export default function LiveShareManager({
         console.log('📤 [LiveShareManager] Uploading logo file:', setup.logoFile.name);
         const formData = new FormData();
         formData.append('logo', setup.logoFile);
-        
+
         try {
           const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/podcast-logo`, {
             method: 'POST',
             credentials: 'include',
             body: formData
           });
-          
+
           if (response.ok) {
             const data = await response.json();
             logoUrl = data.logo_url;
             console.log('✅ [LiveShareManager] Logo uploaded successfully:', logoUrl);
           } else {
             console.error('❌ [LiveShareManager] Logo upload failed:', response.status);
+            // Fall back to data URL so the host still sees their logo
+            logoUrl = setup.logoPreview || null;
           }
         } catch (err) {
           console.error('❌ [LiveShareManager] Logo upload error:', err);
+          logoUrl = setup.logoPreview || null;
         }
+      } else if (setup.logoPreview) {
+        // No file object but preview exists (e.g. re-opening wizard) — use data URL directly
+        logoUrl = setup.logoPreview;
       } else {
         console.log('ℹ️ [LiveShareManager] No logo file to upload');
       }

@@ -46,6 +46,9 @@ type User struct {
 	// Premium subscription
 	IsPremium         bool       `gorm:"default:false" json:"is_premium"`
 	PremiumExpiresAt  *time.Time `json:"premium_expires_at,omitempty"`
+
+	// Privacy
+	ShowFollowingPublic bool `gorm:"default:false" json:"show_following_public"`
 }
 
 // User role constants

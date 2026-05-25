@@ -12,6 +12,16 @@ import ReportModal from './ReportModal';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
+const formatTimeAgo = (dateStr) => {
+  if (!dateStr) return '';
+  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+  if (diff < 60) return `${Math.floor(diff)}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return new Date(dateStr).toLocaleDateString([], { month: 'short', day: 'numeric' });
+};
+
 const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -118,7 +128,6 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   // Expose refresh method to parent component via ref
   useImperativeHandle(ref, () => ({
     refresh: () => {
-      console.log('🔄 [DiscoverFeed] Refreshing feed from parent');
       setPage(1);
       setHasMore(true);
       fetchPosts(1, false, searchQuery);
@@ -666,17 +675,13 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                 >
                   {post.user?.username || 'Unknown'}
                 </p>
-                {/* Follow — plain text style, only for other users' posts */}
-                {post.user_id !== currentUser?.id && (post.room_id ?? post.user?.main_room_id) && (
+                {/* Follow — hidden when already a room member */}
+                {post.user_id !== currentUser?.id && (post.room_id ?? post.user?.main_room_id) && !followingRooms[post.id] && (
                   <button
                     onClick={(e) => handleFollowToggle(post, e)}
-                    className={`text-sm font-bold flex-shrink-0 transition-colors ${
-                      followingRooms[post.id]
-                        ? 'text-gray-400 dark:text-gray-500'
-                        : 'text-blue-500 dark:text-blue-400'
-                    }`}
+                    className="text-sm font-bold flex-shrink-0 text-blue-500 dark:text-blue-400 transition-colors"
                   >
-                    {followingRooms[post.id] ? 'Following' : 'Follow'}
+                    Follow
                   </button>
                 )}
                 {/* 3-dot menu */}
@@ -944,16 +949,18 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                 </div>
                 {/* Caption — description only, skipped for text posts */}
                 {post.post_type !== 'text' && post.description && (
-                  <div className="px-4 pb-3 pt-1">
+                  <div className="px-4 pt-1">
                     <p className="text-sm text-gray-900 dark:text-white leading-snug line-clamp-2">
                       {post.description}
                     </p>
                   </div>
                 )}
-                {/* Bottom padding when there's no caption so the footer doesn't feel cramped */}
-                {(post.post_type === 'text' || !post.description) && (
-                  <div className="pb-2" />
-                )}
+                {/* Timestamp row */}
+                <div className="flex justify-end px-4 pb-2 pt-1">
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                    {formatTimeAgo(post.created_at)}
+                  </span>
+                </div>
               </div>
             </div>
 

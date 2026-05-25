@@ -39,18 +39,24 @@ func main() {
 	}
 
 	// --- Database Connection ---
-	// ✅ Use SSL for production (Railway), disable for local development
-	sslMode := "disable"
-	if os.Getenv("RAILWAY_ENVIRONMENT") != "" || os.Getenv("DB_HOST") != "localhost" {
-		sslMode = "require" // Railway PostgreSQL requires SSL
-		log.Println("🔒 Database SSL Mode: ENABLED (production)")
+	// Prefer DATABASE_URL (Railway private networking) over individual vars (public proxy)
+	var dsn string
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		dsn = dbURL
+		log.Println("🔒 Database: using DATABASE_URL (private network)")
 	} else {
-		log.Println("🔓 Database SSL Mode: DISABLED (local development)")
+		sslMode := "disable"
+		if os.Getenv("RAILWAY_ENVIRONMENT") != "" || os.Getenv("DB_HOST") != "localhost" {
+			sslMode = "require"
+			log.Println("🔒 Database SSL Mode: ENABLED (production)")
+		} else {
+			log.Println("🔓 Database SSL Mode: DISABLED (local development)")
+		}
+		dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
+			os.Getenv("DB_HOST"), os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"),
+			os.Getenv("DB_NAME"), os.Getenv("DB_PORT"), sslMode)
+		log.Println("🏠 Database: using individual DB_* vars")
 	}
-	
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
-		os.Getenv("DB_HOST"), os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"),
-		os.Getenv("DB_NAME"), os.Getenv("DB_PORT"), sslMode)
 
 	// Open connection to the database using GORM
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
@@ -314,17 +320,29 @@ func main() {
 
 		fullPath := filepath.Join("./uploads", urlPath)
 
-		// Set MIME type
-		mimeType := "video/mp4"
+		// Set MIME type based on file extension
+		mimeType := "application/octet-stream"
 		switch {
+		case strings.HasSuffix(urlPath, ".mp4"):
+			mimeType = "video/mp4"
+		case strings.HasSuffix(urlPath, ".webm"):
+			mimeType = "video/webm"
 		case strings.HasSuffix(urlPath, ".avi"):
 			mimeType = "video/x-msvideo"
 		case strings.HasSuffix(urlPath, ".mov"):
 			mimeType = "video/quicktime"
 		case strings.HasSuffix(urlPath, ".mkv"):
 			mimeType = "video/x-matroska"
-		case strings.HasSuffix(urlPath, ".webm"):
-			mimeType = "video/webm"
+		case strings.HasSuffix(urlPath, ".png"):
+			mimeType = "image/png"
+		case strings.HasSuffix(urlPath, ".jpg"), strings.HasSuffix(urlPath, ".jpeg"):
+			mimeType = "image/jpeg"
+		case strings.HasSuffix(urlPath, ".gif"):
+			mimeType = "image/gif"
+		case strings.HasSuffix(urlPath, ".webp"):
+			mimeType = "image/webp"
+		case strings.HasSuffix(urlPath, ".svg"):
+			mimeType = "image/svg+xml"
 		}
 		c.Header("Content-Type", mimeType)
 
@@ -662,6 +680,9 @@ func main() {
 		protected.GET("/users/search", handlers.SearchUsersHandler)              // GET /api/users/search?q=... (must be static, before /:id)
 		protected.GET("/users/:id", handlers.GetUserProfileHandler)              // GET /api/users/:id (Get user profile with privacy)
 		protected.PUT("/users/profile", handlers.UpdateProfileHandler)           // Update current user's profile
+		protected.PATCH("/users/privacy", handlers.UpdateFollowingPrivacyHandler) // PATCH /api/users/privacy (Toggle following list visibility)
+		protected.GET("/users/:id/following-count", handlers.GetFollowingCountHandler) // GET /api/users/:id/following-count
+		protected.GET("/users/:id/following", handlers.GetFollowingListHandler)  // GET /api/users/:id/following (privacy-gated list)
 		protected.GET("/users/by-username/:username", handlers.GetUserByUsernameHandler) // GET /api/users/by-username/:username (Lookup user for gifting)
 
 		// --- NDPR / Data Rights Routes ---

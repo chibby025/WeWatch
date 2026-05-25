@@ -139,6 +139,16 @@ export const getReactions = async (roomId) => {
 
 
 
+// --- Request Interceptor ---
+// Attach JWT token from localStorage to every request
+apiClient.interceptors.request.use((config) => {
+    const token = localStorage.getItem('wewatch_token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
 // --- Response Interceptor ---
 // Runs after each response is received success/error
 apiClient.interceptors.response.use(
@@ -1261,9 +1271,24 @@ export const getFriendCount = async (userId) => {
   return await apiClient.get(`/api/friendships/count/${userId}`);
 };
 
-// Get followers count for a user (unique members across all hosted rooms)
+// Get followers count for a user (room members + explicit follows, deduped)
 export const getFollowersCount = async (userId) => {
   return await apiClient.get(`/api/friendships/followers/${userId}`);
+};
+
+// Get following count for a user (rooms joined + explicit follows, deduped)
+export const getFollowingCount = async (userId) => {
+  return await apiClient.get(`/api/users/${userId}/following-count`);
+};
+
+// Get the list of users someone is following (privacy-gated)
+export const getFollowingList = async (userId) => {
+  return await apiClient.get(`/api/users/${userId}/following`);
+};
+
+// Toggle whether the current user's following list is publicly visible
+export const updateFollowingPrivacy = async (showPublic) => {
+  return await apiClient.patch('/api/users/privacy', { show_following_public: showPublic });
 };
 
 // Get average watchers for a user (host stats)

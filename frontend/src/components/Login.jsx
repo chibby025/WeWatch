@@ -96,13 +96,19 @@ const Login = () => {
         {/* Branding — compact strip on mobile, full panel on sm+ */}
         <div className="sm:w-[42%] lg:w-1/2 flex items-center justify-center py-8 px-6 sm:p-6 lg:p-12 animate-fade-in bg-black/60 sm:bg-black flex-shrink-0">
           <div className="text-center">
-            {/* SVG on mobile (no padding, renders full-size) */}
+            {/* lwoIcon above main logo — one unified brand mark */}
+            <img
+              src="/icons/lwoIcon.png"
+              alt="W"
+              className="w-10 h-10 sm:w-14 sm:h-14 mx-auto object-contain mb-1"
+            />
+            {/* SVG on mobile */}
             <img
               src="/icons/LetsWatchOut Logo.svg"
               alt="LetsWatchOut Logo"
               className="block sm:hidden h-[90px] w-auto mx-auto drop-shadow-2xl"
             />
-            {/* PNG on sm+ (looks good at larger panel sizes) */}
+            {/* PNG on sm+ */}
             <img
               src="/icons/LetsWatchOutLogo.png"
               alt="LetsWatchOut Logo"

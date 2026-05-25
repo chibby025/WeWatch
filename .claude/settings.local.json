@@ -14,7 +14,20 @@
       "PowerShell(wsl -d Ubuntu-22.04 bash -l -c \"cd /home/chibuzor_dev/WeWatch/frontend && node_modules/.bin/vite build 2>&1 | tail -20\")",
       "PowerShell(wsl -d Ubuntu-22.04 bash -l -c \"cd /home/chibuzor_dev/WeWatch/frontend && node_modules/.bin/vite build 2>&1 | tail -8\")",
       "PowerShell(wsl -d Ubuntu-22.04 /home/chibuzor_dev/.local/opt/go/bin/go build -C /home/chibuzor_dev/WeWatch/backend ./cmd/server/... 2>&1)",
-      "PowerShell(wsl -d Ubuntu-22.04 wc -l /home/chibuzor_dev/WeWatch/.clinerules)"
+      "PowerShell(wsl -d Ubuntu-22.04 wc -l /home/chibuzor_dev/WeWatch/.clinerules)",
+      "PowerShell(wsl -d Ubuntu-22.04 wc -l /home/chibuzor_dev/WeWatch/frontend/src/components/LobbyPage.jsx)",
+      "PowerShell(wsl -d Ubuntu-22.04 grep -rn \"cors\\\\|CORS\\\\|AllowOrigin\\\\|FRONTEND_URL\" /home/chibuzor_dev/WeWatch/backend/cmd/server/main.go)",
+      "PowerShell(wsl -d Ubuntu-22.04 grep -rn \"FRONTEND_URL\\\\|AllowOrigins\\\\|cors.New\" /home/chibuzor_dev/WeWatch/backend/ 2>/dev/null | Select-Object -First 20)",
+      "PowerShell(wsl -e bash -c 'export PATH=$PATH:/usr/local/go/bin && cd /home/chibuzor_dev/WeWatch/backend && go build ./... 2>&1 | head -30')",
+      "PowerShell(wsl -e bash -c 'which go || find /usr -name \"go\" -type f 2>/dev/null | head -5 || ls /usr/local/go/bin/ 2>/dev/null || echo \"go not in standard path\"')",
+      "PowerShell(wsl -e bash -c 'cd /home/chibuzor_dev/WeWatch/backend && /usr/lib/go-1.18/bin/go build ./... 2>&1 | head -30')",
+      "PowerShell(wsl -e grep -n \"DiscoverFeed\\\\|discoverFeed\\\\|discoverRef\" /home/chibuzor_dev/WeWatch/frontend/src/components/LobbyPage.jsx)",
+      "PowerShell(wsl -e bash -c 'grep -rn \"Authorization\\\\|Bearer\\\\|Cookie\" /home/chibuzor_dev/WeWatch/backend/internal/middleware/ 2>&1 | head -20')",
+      "PowerShell(wsl -e bash -c 'ls /home/chibuzor_dev/WeWatch/backend/internal/middleware/')",
+      "PowerShell(wsl -e bash -c 'grep -rn \"Authorization\\\\|Bearer\\\\|jwt\\\\|JWT\\\\|token\" /home/chibuzor_dev/WeWatch/backend/cmd/server/main.go | head -20')"
+    ],
+    "additionalDirectories": [
+      "\\dev"
     ]
   }
 }

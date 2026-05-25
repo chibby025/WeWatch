@@ -414,8 +414,17 @@ func UploadPodcastLogoHandler(c *gin.Context) {
 		return
 	}
 
-	// Generate URL (relative path for client)
-	logoURL := fmt.Sprintf("/uploads/podcast-logos/%s", uniqueFilename)
+	// Generate absolute URL so the frontend can load it cross-origin
+	backendURL := os.Getenv("BACKEND_URL")
+	if backendURL == "" {
+		// Derive from request (works for local dev and most proxy setups)
+		scheme := "http"
+		if c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		backendURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+	}
+	logoURL := fmt.Sprintf("%s/uploads/podcast-logos/%s", backendURL, uniqueFilename)
 	log.Printf("✅ [UploadPodcastLogoHandler] Logo saved: %s", logoURL)
 
 	// Return logo URL

@@ -1,7 +1,8 @@
 // frontend/src/components/UserProfileModal.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getFriendCount, getFollowersCount, getUserAverageWatchers, followUser, unfollowUser, getFollowStatus } from '../services/api';
+import { getFriendCount, getFollowersCount, getFollowingCount, getFollowingList, updateFollowingPrivacy, getUserAverageWatchers, followUser, unfollowUser, getFollowStatus } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import PostsGrid from './PostsGrid';
 import PostViewModal from './PostViewModal';
 import PublishPostModal from './PublishPostModal';
@@ -42,6 +43,13 @@ export default function UserProfileModal({
   const emojiPickerRef = useRef(null);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [loadingFollowingCount, setLoadingFollowingCount] = useState(true);
+  const [showFollowingPublic, setShowFollowingPublic] = useState(false);
+  const [showFollowingList, setShowFollowingList] = useState(false);
+  const [followingList, setFollowingList] = useState([]);
+  const [loadingFollowingList, setLoadingFollowingList] = useState(false);
+  const { currentUser, roomMemberships } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -66,6 +74,10 @@ export default function UserProfileModal({
       const userId = user.id || user.ID;
       if (!userId) return;
 
+      // Reset list state when modal opens for a different user
+      setShowFollowingList(false);
+      setFollowingList([]);
+
       setLoadingFriendCount(true);
       getFriendCount(userId)
         .then(r => setFriendCount(r.data.count || 0))
@@ -77,6 +89,15 @@ export default function UserProfileModal({
         .then(r => setFollowersCount(r.data.followers_count || 0))
         .catch(() => setFollowersCount(0))
         .finally(() => setLoadingFollowersCount(false));
+
+      setLoadingFollowingCount(true);
+      getFollowingCount(userId)
+        .then(r => setFollowingCount(r.data.following_count || 0))
+        .catch(() => setFollowingCount(0))
+        .finally(() => setLoadingFollowingCount(false));
+
+      // Read privacy setting from user object (returned by GetUserProfileHandler)
+      setShowFollowingPublic(user.show_following_public || false);
 
       if (!isOwnProfile) {
         getFollowStatus(userId)
@@ -139,6 +160,41 @@ export default function UserProfileModal({
       setFollowLoading(false);
     }
   };
+
+  const handlePrivacyToggle = async () => {
+    const newVal = !showFollowingPublic;
+    setShowFollowingPublic(newVal);
+    try {
+      await updateFollowingPrivacy(newVal);
+    } catch {
+      setShowFollowingPublic(!newVal); // revert on error
+    }
+  };
+
+  const handleOpenFollowingList = async () => {
+    if (showFollowingList) { setShowFollowingList(false); return; }
+    setShowFollowingList(true);
+    if (followingList.length > 0) return; // already loaded
+    setLoadingFollowingList(true);
+    try {
+      const userId = user.id || user.ID;
+      const res = await getFollowingList(userId);
+      setFollowingList(res.data.following || []);
+    } catch {
+      setFollowingList([]);
+    } finally {
+      setLoadingFollowingList(false);
+    }
+  };
+
+  // Determine if current user is already a member of the viewed user's room
+  const viewedUserRoomId = user?.main_room?.id;
+  const isInRoom = viewedUserRoomId
+    ? (roomMemberships || []).some(rm => rm.room_id === viewedUserRoomId)
+    : false;
+
+  // Can the current user click through to see the following list?
+  const canViewFollowingList = isOwnProfile || showFollowingPublic;
 
   if (!isOpen || !user) return null;
 
@@ -227,32 +283,34 @@ export default function UserProfileModal({
               )
             ) : (
               <div className="flex gap-3">
-                {/* Follow / Following */}
-                <button
-                  onClick={handleFollowToggle}
-                  disabled={followLoading}
-                  className={`flex-1 py-2.5 rounded-lg text-white font-medium transition-all flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed ${
-                    isFollowing
-                      ? 'bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20'
-                      : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 hover:shadow-purple-500/50'
-                  }`}
-                >
-                  {isFollowing ? (
-                    <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Following
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      Follow
-                    </>
-                  )}
-                </button>
+                {/* Follow button — hidden when already a room member */}
+                {!isInRoom && (
+                  <button
+                    onClick={handleFollowToggle}
+                    disabled={followLoading}
+                    className={`flex-1 py-2.5 rounded-lg text-white font-medium transition-all flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed ${
+                      isFollowing
+                        ? 'bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20'
+                        : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 hover:shadow-purple-500/50'
+                    }`}
+                  >
+                    {isFollowing ? (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Following
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        Follow
+                      </>
+                    )}
+                  </button>
+                )}
 
                 {/* Add Friend */}
                 {isInWatchSession && friendshipStatus !== 'accepted' && onAddFriend && (
@@ -373,19 +431,93 @@ export default function UserProfileModal({
                   </p>
                 </div>
 
-                {/* Friends & Followers */}
+                {/* Stats row: Friends · Followers · Following */}
                 <div>
-                  <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-0.5 block">Friends & Followers</label>
-                  {loadingFriendCount || loadingFollowersCount ? (
+                  <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-1 block">Stats</label>
+                  {loadingFriendCount || loadingFollowersCount || loadingFollowingCount ? (
                     <p className="text-gray-400 text-sm">Loading...</p>
                   ) : (
-                    <p className="text-gray-300 text-base font-semibold">
-                      {friendCount} {friendCount === 1 ? 'Friend' : 'Friends'}
-                      {' · '}
-                      {followersCount} {followersCount === 1 ? 'Follower' : 'Followers'}
-                    </p>
+                    <div className="flex items-center gap-4">
+                      <div className="text-center">
+                        <p className="text-white font-bold text-lg leading-tight">{friendCount}</p>
+                        <p className="text-gray-400 text-xs">Friends</p>
+                      </div>
+                      <div className="w-px h-8 bg-white/10" />
+                      <div className="text-center">
+                        <p className="text-white font-bold text-lg leading-tight">{followersCount}</p>
+                        <p className="text-gray-400 text-xs">Followers</p>
+                      </div>
+                      <div className="w-px h-8 bg-white/10" />
+                      <div className="text-center">
+                        {canViewFollowingList ? (
+                          <button onClick={handleOpenFollowingList} className="group">
+                            <p className="text-white font-bold text-lg leading-tight group-hover:text-purple-400 transition-colors">{followingCount}</p>
+                            <p className="text-gray-400 text-xs group-hover:text-purple-400 transition-colors">Following</p>
+                          </button>
+                        ) : (
+                          <>
+                            <p className="text-white font-bold text-lg leading-tight">{followingCount}</p>
+                            <p className="text-gray-400 text-xs">Following</p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Following list panel */}
+                  {showFollowingList && (
+                    <div className="mt-3 bg-white/5 rounded-lg border border-white/10 overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+                        <span className="text-xs font-semibold text-purple-400 uppercase tracking-wide">Following</span>
+                        <button onClick={() => setShowFollowingList(false)} className="text-gray-400 hover:text-white text-lg leading-none">×</button>
+                      </div>
+                      {loadingFollowingList ? (
+                        <div className="py-4 text-center text-gray-400 text-sm">Loading...</div>
+                      ) : followingList.length === 0 ? (
+                        <div className="py-4 text-center text-gray-500 text-sm italic">Not following anyone yet</div>
+                      ) : (
+                        <div className="max-h-48 overflow-y-auto divide-y divide-white/5">
+                          {followingList.map(u => (
+                            <div key={u.id} className="flex items-center gap-3 px-3 py-2">
+                              <img
+                                src={u.avatar_url || '/icons/user1avatar.svg'}
+                                onError={e => { e.target.src = '/icons/user1avatar.svg'; }}
+                                className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                                alt={u.username}
+                              />
+                              <span className="text-gray-200 text-sm font-medium truncate flex-1">@{u.username}</span>
+                              {u.main_room_id && (
+                                <button
+                                  onClick={() => { onClose(); navigate(`/rooms/${u.main_room_id}`); }}
+                                  className="text-xs text-purple-400 hover:text-purple-300 flex-shrink-0"
+                                >
+                                  Visit Room →
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
+
+                {/* Privacy toggle — edit mode only, own profile */}
+                {isEditing && isOwnProfile && (
+                  <div>
+                    <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-1 block">Following List Privacy</label>
+                    <button
+                      type="button"
+                      onClick={handlePrivacyToggle}
+                      className="flex items-center gap-3 w-full"
+                    >
+                      <div className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${showFollowingPublic ? 'bg-purple-600' : 'bg-gray-600'}`}>
+                        <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${showFollowingPublic ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                      </div>
+                      <span className="text-gray-300 text-sm">{showFollowingPublic ? 'Public — anyone can see who you follow' : 'Private — only you can see who you follow'}</span>
+                    </button>
+                  </div>
+                )
 
                 {/* Audience */}
                 <div>
