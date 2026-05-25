@@ -1,7 +1,7 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup } from '../services/api';
+import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup } from '../services/api';
 import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon } from '@heroicons/react/24/solid';
 import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon, FaceSmileIcon as FaceSmileOutlineIcon, MicrophoneIcon as MicrophoneOutlineIcon, PaperClipIcon as PaperClipOutlineIcon, ChartBarSquareIcon as ChartBarSquareOutlineIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
 import { Plus, Home, Search } from 'lucide-react';
@@ -77,6 +77,10 @@ const pulseAnimationStyles = `
     animation: scaleSquare 1.5s ease-in-out infinite;
   }
 `;
+
+// Module-level stale-while-revalidate cache (survives tab switches, cleared on unmount)
+const _lobbyCache = { rooms: null, roomsTs: 0, sessions: null, sessionsTs: 0 };
+const CACHE_TTL = 60_000; // 60 s
 
 const LobbyPage = () => {
   // ✅ Tab State
@@ -256,6 +260,7 @@ const LobbyPage = () => {
   // WebSocket state for lobby real-time updates
   const wsRef = React.useRef(null);
   const [wsConnected, setWsConnected] = React.useState(false);
+  const fetchAbortRef = React.useRef({}); // keyed abort controllers for cancellable fetches
   
   // Session preview state
   const [sessionPreviews, setSessionPreviews] = useState({}); // { sessionId: { posterUrl, previewUrl, isGenerating } }
@@ -835,7 +840,15 @@ const LobbyPage = () => {
   // Fetch rooms function (moved outside useEffect so it can be reused)
   // Fetch rooms function with pagination support
   const fetchRoomsData = async (page = 0, append = false) => {
-    if (!append) {
+    // Cancel any in-flight rooms fetch
+    if (fetchAbortRef.current.rooms) fetchAbortRef.current.rooms.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current.rooms = controller;
+
+    // Serve stale cache instantly on first page (non-append) while revalidating
+    if (!append && page === 0 && _lobbyCache.rooms && Date.now() - _lobbyCache.roomsTs < CACHE_TTL) {
+      setRooms(_lobbyCache.rooms);
+    } else if (!append) {
       setLoading(true);
     } else {
       setLoadingMoreRooms(true);
@@ -845,7 +858,7 @@ const LobbyPage = () => {
     try {
       const limit = 20;
       const offset = page * limit;
-      const data = await getRooms(limit, offset);
+      const data = await getRooms(limit, offset, { signal: controller.signal });
       
       const roomsList = data.rooms || [];
       
@@ -875,13 +888,15 @@ const LobbyPage = () => {
         setRooms(prevRooms => [...prevRooms, ...filteredForRooms]);
       } else {
         setRooms(filteredForRooms);
+        if (page === 0) { _lobbyCache.rooms = filteredForRooms; _lobbyCache.roomsTs = Date.now(); }
       }
-      
+
       // Update pagination state
       setHasMoreRooms(data.has_more || false);
       setRoomsPage(page);
       
     } catch (err) {
+      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
       console.error("❌ [LobbyPage] Error fetching rooms:", err);
       setError('Failed to load rooms. Please try again later.');
       if (!append) {
@@ -896,9 +911,18 @@ const LobbyPage = () => {
 
   // ✅ Fetch active watch sessions
   const fetchSessionsData = async () => {
-    setSessionsLoading(true);
+    if (fetchAbortRef.current.sessions) fetchAbortRef.current.sessions.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current.sessions = controller;
+
+    // Serve stale cache immediately while revalidating
+    if (_lobbyCache.sessions && Date.now() - _lobbyCache.sessionsTs < CACHE_TTL) {
+      setSessions(_lobbyCache.sessions);
+    } else {
+      setSessionsLoading(true);
+    }
     try {
-      const data = await getActiveSessions();
+      const data = await getActiveSessions(undefined, undefined, { signal: controller.signal });
       
       // Filter logic:
       // 1. Remove orphaned temporary sessions (no active members)
@@ -927,9 +951,11 @@ const LobbyPage = () => {
       });
       
       setSessions(filtered);
+      _lobbyCache.sessions = filtered;
+      _lobbyCache.sessionsTs = Date.now();
     } catch (err) {
+      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
       console.error('❌ [LobbyPage] Error fetching active sessions:', err);
-      // Don't set error state here, sessions are optional
       setSessions([]);
     } finally {
       setSessionsLoading(false);
@@ -2118,8 +2144,33 @@ const LobbyPage = () => {
     }
 
     let reconnectAttempts = 0;
-    const maxReconnectAttempts = 10;
     let reconnectTimer = null;
+    let paused = false;
+    let pendingReconnect = false;
+
+    const scheduleReconnect = () => {
+      if (paused) { pendingReconnect = true; return; }
+      reconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
+      reconnectTimer = setTimeout(connectWebSocket, delay);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        paused = true;
+      } else {
+        paused = false;
+        const wsGone = !wsRef.current || wsRef.current.readyState > 1;
+        if (pendingReconnect || wsGone) {
+          pendingReconnect = false;
+          reconnectAttempts = 0;
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          connectWebSocket();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     const connectWebSocket = () => {
       try {
@@ -2515,13 +2566,7 @@ const LobbyPage = () => {
         
         ws.onclose = (event) => {
           setWsConnected(false);
-          
-          // Attempt reconnection with exponential backoff
-          if (reconnectAttempts < maxReconnectAttempts) {
-            reconnectAttempts++;
-            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
-            reconnectTimer = setTimeout(connectWebSocket, delay);
-          }
+          if (event.code !== 1000) scheduleReconnect();
         };
         
         ws.onerror = (error) => {
@@ -2531,24 +2576,16 @@ const LobbyPage = () => {
         wsRef.current = ws;
       } catch (error) {
         console.error('❌ [LobbyPage WS] Connection exception:', error.message);
-        
-        if (reconnectAttempts < maxReconnectAttempts) {
-          reconnectAttempts++;
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
-          reconnectTimer = setTimeout(connectWebSocket, delay);
-        }
+        scheduleReconnect();
       }
     };
-    
+
     connectWebSocket();
-    
+
     return () => {
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-      }
-      if (wsRef.current) {
-        wsRef.current.close(1000, 'Component unmounting');
-      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (wsRef.current) wsRef.current.close(1000, 'Component unmounting');
     };
   }, [wsToken]); // Re-run when wsToken becomes available
 
@@ -3432,7 +3469,7 @@ const LobbyPage = () => {
                         )}
                         <div className={`relative w-20 h-20 sm:w-28 sm:h-28 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ${room.is_active_session ? '' : 'ring-2 ring-gray-300 dark:ring-gray-600'}`}>
                           {room.image_url ? (
-                            <img src={getAssetUrl(room.image_url)} alt={room.name} className="w-full h-full object-cover" />
+                            <img src={cdnThumb(getAssetUrl(room.image_url), 160)} alt={room.name} className="w-full h-full object-cover" loading="lazy" />
                           ) : (
                             <FilmIcon className="w-8 h-8 sm:w-12 sm:h-12 text-white opacity-80" />
                           )}
@@ -3879,7 +3916,7 @@ const LobbyPage = () => {
                             !session.is_temporary ? 'group-hover:scale-110' : ''
                           }`}>
                             {session.room_avatar_url ? (
-                              <img src={session.room_avatar_url} alt={session.room_name} className="w-full h-full object-cover" />
+                              <img src={cdnThumb(session.room_avatar_url, 80)} alt={session.room_name} className="w-full h-full object-cover" loading="lazy" />
                             ) : (
                               session.room_name?.[0]?.toUpperCase() || 'R'
                             )}
@@ -4416,7 +4453,7 @@ const LobbyPage = () => {
                               <div key={user.id} className="flex items-center gap-2 py-1">
                                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-blue-600 flex-shrink-0 overflow-hidden">
                                   {getAssetUrl(user.avatar_url) ? (
-                                    <img src={getAssetUrl(user.avatar_url)} alt="" className="w-full h-full object-cover" />
+                                    <img src={cdnThumb(getAssetUrl(user.avatar_url), 80)} alt="" className="w-full h-full object-cover" loading="lazy" />
                                   ) : (
                                     <span className="w-full h-full flex items-center justify-center text-white text-xs font-bold">
                                       {user.username[0]?.toUpperCase()}
@@ -5550,7 +5587,7 @@ const LobbyPage = () => {
                         !session.is_temporary ? 'group-hover:scale-110' : ''
                       }`}>
                         {session.room_avatar_url ? (
-                          <img src={session.room_avatar_url} alt={session.room_name} className="w-full h-full object-cover" />
+                          <img src={cdnThumb(session.room_avatar_url, 80)} alt={session.room_name} className="w-full h-full object-cover" loading="lazy" />
                         ) : (
                           session.room_name?.[0]?.toUpperCase() || 'R'
                         )}

@@ -73,13 +73,17 @@ export { API_BASE_URL };
  */
 export const getAssetUrl = (url) => {
   if (!url) return '';
-  // If already a full URL, return as-is
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return url;
-  }
-  // Otherwise, prepend API_BASE_URL
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
   const cleanPath = url.startsWith('/') ? url : '/' + url;
   return `${API_BASE_URL}${cleanPath}`;
+};
+
+// Append BunnyCDN resize params to CDN URLs so thumbnails download at display size.
+// Non-CDN URLs are returned as-is.
+export const cdnThumb = (url, width = 320) => {
+  if (!url || !url.includes('b-cdn.net')) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}width=${width}&quality=80`;
 };
 
 /**
@@ -404,21 +408,14 @@ export const createRoom = async (roomData) => {
  * Get a list of rooms
  * @returns {Promise} Axios promise resolving to the response
  */
-export const getRooms = async (limit = 20, offset = 0) => {
+export const getRooms = async (limit = 20, offset = 0, { signal } = {}) => {
     try {
         const response = await apiClient.get('/api/rooms', {
-            params: { limit, offset }
+            params: { limit, offset },
+            signal,
         });
-        console.log('API Response (getRooms):', response.data);
         return response.data;
     } catch (error) {
-        console.error('Error fetching rooms (api.js):', error);
-        console.error('Error details:', {
-            status: error.response?.status,
-            statusText: error.response?.statusText,
-            data: error.response?.data,
-            message: error.message
-        });
         throw error;
     }
 };
@@ -582,9 +579,9 @@ export const getScheduledEvents = async (roomId) => {
 };
 
 // ✅ Get active sessions with pagination (for lobby infinite scroll)
-export const getActiveSessions = async (limit = 10, offset = 0) => {
+export const getActiveSessions = async (limit = 10, offset = 0, { signal } = {}) => {
   try {
-    const response = await apiClient.get(`/api/sessions/active?limit=${limit}&offset=${offset}`);
+    const response = await apiClient.get(`/api/sessions/active?limit=${limit}&offset=${offset}`, { signal });
     return response.data;
   } catch (error) {
     throw error;

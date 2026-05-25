@@ -338,15 +338,18 @@ func GetDiscoverFeed(c *gin.Context) {
 	currentUserID := c.GetUint("user_id")
 
 	var posts []models.Post
-	// Fetch a fixed pool of up to 500 posts. ScoreAndSortPosts ranks the entire pool
-	// globally; Go-level pagination slices the result. This prevents the per-page
-	// ranking flaw where old-but-engaged posts beat newer posts on the same small page.
-	const feedPoolSize = 500
-	query := DB.Where("posts.is_public = ? AND posts.deleted_at IS NULL", true).
+	// Pool: 90-day window, capped at max(200, 10×pageSize). ScoreAndSortPosts ranks
+	// the full pool globally; Go-level pagination slices it — no per-page ranking flaw.
+	poolSize := limit * 10
+	if poolSize < 200 {
+		poolSize = 200
+	}
+	cutoff := time.Now().AddDate(0, 0, -90)
+	query := DB.Where("posts.is_public = ? AND posts.deleted_at IS NULL AND posts.created_at > ?", true, cutoff).
 		Preload("User").
 		Preload("Room").
 		Order("posts.created_at DESC").
-		Limit(feedPoolSize)
+		Limit(poolSize)
 	
 	// 🔍 Search filter (title, description, or username)
 	if searchQuery != "" {
@@ -354,10 +357,7 @@ func GetDiscoverFeed(c *gin.Context) {
 		query = query.Joins("LEFT JOIN users ON posts.user_id = users.id").
 			Where("posts.description ILIKE ? OR users.username ILIKE ?",
 				searchPattern, searchPattern)
-		log.Printf("🔍 [GetDiscoverFeed] Searching for: '%s'", searchQuery)
 	}
-	
-	log.Printf("📊 [GetDiscoverFeed] pool fetch (limit=%d offset=%d search='%s')", limit, offset, searchQuery)
 
 	if err := query.Find(&posts).Error; err != nil {
 		log.Printf("❌ [GetDiscoverFeed] Database error: %v", err)
