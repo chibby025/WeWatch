@@ -502,23 +502,6 @@ export default function UserProfileModal({
                   )}
                 </div>
 
-                {/* Privacy toggle — edit mode only, own profile */}
-                {isEditing && isOwnProfile && (
-                  <div>
-                    <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-1 block">Following List Privacy</label>
-                    <button
-                      type="button"
-                      onClick={handlePrivacyToggle}
-                      className="flex items-center gap-3 w-full"
-                    >
-                      <div className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${showFollowingPublic ? 'bg-purple-600' : 'bg-gray-600'}`}>
-                        <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${showFollowingPublic ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                      </div>
-                      <span className="text-gray-300 text-sm">{showFollowingPublic ? 'Public — anyone can see who you follow' : 'Private — only you can see who you follow'}</span>
-                    </button>
-                  </div>
-                )
-
                 {/* Audience */}
                 <div>
                   <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-0.5 block">Audience</label>
@@ -536,6 +519,23 @@ export default function UserProfileModal({
                   )}
                 </div>
               </>
+            )}
+
+            {/* Privacy toggle — edit mode only, own profile */}
+            {isEditing && isOwnProfile && (
+              <div>
+                <label className="text-xs font-semibold text-purple-400 uppercase tracking-wide mb-1 block">Following List Privacy</label>
+                <button
+                  type="button"
+                  onClick={handlePrivacyToggle}
+                  className="flex items-center gap-3 w-full"
+                >
+                  <div className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${showFollowingPublic ? 'bg-purple-600' : 'bg-gray-600'}`}>
+                    <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${showFollowingPublic ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </div>
+                  <span className="text-gray-300 text-sm">{showFollowingPublic ? 'Public — anyone can see who you follow' : 'Private — only you can see who you follow'}</span>
+                </button>
+              </div>
             )}
           </div>
 
