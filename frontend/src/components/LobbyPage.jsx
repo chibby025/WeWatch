@@ -84,7 +84,10 @@ const CACHE_TTL = 60_000; // 60 s
 
 const LobbyPage = () => {
   // ✅ Tab State
-  const [activeTab, setActiveTab] = useState('rooms'); // 'chats', 'rooms', or 'watching' - default to 'rooms'
+  // Default to Watching Live if we have cached sessions, otherwise Rooms
+  const [activeTab, setActiveTab] = useState(() =>
+    _lobbyCache.sessions?.length > 0 ? 'watching' : 'rooms'
+  );
   
   // ✅ Data Saver State
   const [dataSaverEnabled, setDataSaverEnabled] = React.useState(
