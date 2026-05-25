@@ -746,15 +746,19 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                 </div>
               )}
 
-              {/* ── Media — square on mobile, 16:9 on desktop ── */}
+              {/* ── Text post body — no fixed aspect ratio, grows with content ── */}
+              {post.post_type === 'text' && (
+                <div className="px-6 py-5 bg-white dark:bg-gray-900">
+                  <p className="text-gray-900 dark:text-white text-lg font-medium text-left leading-relaxed line-clamp-6">
+                    {post.text_content}
+                  </p>
+                </div>
+              )}
+
+              {/* ── Media — fixed aspect ratio for image/video only ── */}
+              {post.post_type !== 'text' && (
               <div className="relative aspect-[4/3] sm:aspect-video bg-gray-100 dark:bg-gray-900 group overflow-hidden">
-                {post.post_type === 'text' ? (
-                  <div className="w-full h-full flex items-start p-6 bg-white dark:bg-gray-900">
-                    <p className="text-gray-900 dark:text-white text-lg font-medium text-left leading-relaxed line-clamp-6">
-                      {post.text_content}
-                    </p>
-                  </div>
-                ) : post.media_type === 'video' && post.video_url ? (
+                {post.media_type === 'video' && post.video_url ? (
                   <>
                     {dataSaverEnabled ? (
                       <>
@@ -890,6 +894,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                   </div>
                 )}
               </div>
+              )}
 
               {/* ── Footer ── */}
               <div className="bg-gray-100 dark:bg-gray-800" onClick={e => e.stopPropagation()}>
