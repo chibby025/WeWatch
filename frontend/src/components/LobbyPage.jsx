@@ -357,7 +357,6 @@ const LobbyPage = () => {
     setVideoMuted(prev => {
       const newMuted = !prev;
       localStorage.setItem('videoAutoplayMuted', String(newMuted));
-      console.log('🔇 Video mute toggled:', newMuted ? 'MUTED' : 'UNMUTED');
       return newMuted;
     });
   };
@@ -463,8 +462,6 @@ const LobbyPage = () => {
         
         setIsChatConnecting(false);
       } catch (err) {
-        // Silently handle errors (session might be private or ended)
-        console.log(`ℹ️ [LobbyChat] Failed to fetch chat for ${session.session_id}:`, err.response?.data?.error || err.message);
         setIsChatConnecting(false);
       }
     };
@@ -540,8 +537,6 @@ const LobbyPage = () => {
     if (location.state?.openChatWith && location.state?.activeTab === 'chats') {
       const userToChat = location.state.openChatWith;
       
-      console.log('📨 [LobbyPage] Opening chat with user from navigation:', userToChat);
-      
       // Set active tab to chats
       setActiveTab('chats');
       
@@ -557,8 +552,6 @@ const LobbyPage = () => {
       const postId = location.state.openPost;
       const autoPlay = location.state.autoPlay || false;
       
-      console.log('📺 [LobbyPage] Opening post from RoomTV:', postId);
-      
       // Switch to watching tab and discover sub-tab
       setActiveTab('watching');
       setWatchingSubTab('discover');
@@ -571,7 +564,7 @@ const LobbyPage = () => {
           
           // If autoPlay is requested, trigger play (handled by PostViewModal)
           if (autoPlay) {
-            console.log('▶️ [LobbyPage] Auto-playing post from RoomTV');
+            // autoPlay state passed to PostViewModal
           }
         })
         .catch(error => {
@@ -620,10 +613,7 @@ const LobbyPage = () => {
       try {
         const response = await checkDateOfBirth();
         if (!response.has_dob) {
-          console.log('⚠️ [DOB Check] User has not provided date of birth, showing prompt');
           setIsDOBPromptOpen(true);
-        } else {
-          console.log('✅ [DOB Check] User has provided date of birth');
         }
       } catch (error) {
         console.error('Error checking date of birth:', error);
@@ -640,7 +630,6 @@ const LobbyPage = () => {
     
     try {
       await updateDateOfBirth(dateOfBirth);
-      console.log('✅ [DOB Update] Date of birth updated successfully');
       toast.success('Date of birth saved! You can now access all features.');
       setIsDOBPromptOpen(false);
       
@@ -677,18 +666,15 @@ const LobbyPage = () => {
 
   // ✅ Handle access selection (public/private + content rating)
   const handleAccessSelected = (isPublic, isPrivate, contentRating) => {
-    console.log('🎬 [handleAccessSelected] Received:', { isPublic, isPrivate, contentRating });
     setSelectedIsPublic(isPublic);
     setSelectedIsPrivate(isPrivate);
-    setSelectedContentRating(contentRating || 'G'); // Store content rating
-    console.log('🎬 [handleAccessSelected] State will be set to:', contentRating || 'G');
+    setSelectedContentRating(contentRating || 'G');
     setIsAccessModalOpen(false);
     setIsWatchTypeModalOpen(true);
   };
 
   // ✅ Handle watch type selection for instant watch
   const handleWatchTypeSelected = (watchType) => {
-    console.log('✅ Watch type selected:', watchType);
     setSelectedWatchType(watchType);
     setIsWatchTypeModalOpen(false);
 
@@ -703,7 +689,6 @@ const LobbyPage = () => {
 
   // ✅ Handle class type selection (for classroom)
   const handleClassTypeSelected = (classType) => {
-    console.log('✅ Class type selected:', classType);
     setSelectedClassType(classType);
     setIsClassTypeModalOpen(false);
     createInstantWatchSession('classroom', classType);
@@ -721,10 +706,6 @@ const LobbyPage = () => {
         content_rating: selectedContentRating || 'G' // Include content rating
       };
       
-      console.log('🎬 [createInstantWatchSession] Sending request with content_rating:', requestBody.content_rating);
-      console.log('🎬 [createInstantWatchSession] is_private flag:', selectedIsPrivate ? 'TRUE (Hidden from Lobby) ✅' : 'FALSE (Visible in Lobby) ❌');
-      console.log('🎬 [createInstantWatchSession] Full request body:', requestBody);
-
       // Add class_type if classroom
       if (watchType === 'classroom' && classType) {
         requestBody.class_type = classType;
@@ -833,7 +814,6 @@ const LobbyPage = () => {
       (entries) => {
         // Load more when sentinel is visible and we have more rooms to load
         if (entries[0].isIntersecting && hasMoreRooms && !loadingMoreRooms && activeTab === 'rooms') {
-          console.log('📜 [LobbyPage] Loading more rooms...');
           fetchRoomsData(roomsPage + 1, true);
         }
       },
@@ -946,7 +926,6 @@ const LobbyPage = () => {
         return false;
       });
       
-      console.log(`📊 [LobbyPage] Fetched ${filtered.length} active sessions`, filtered);
       setSessions(filtered);
     } catch (err) {
       console.error('❌ [LobbyPage] Error fetching active sessions:', err);
@@ -959,19 +938,14 @@ const LobbyPage = () => {
 
   // ✅ Fetch friends list for chat
   const fetchFriendsList = async () => {
-    console.log('👥 [Lobby] Fetching friends list...');
     setChatsLoading(true);
     try {
-      // Fetch accepted friends from friendship system
       const response = await apiClient.get('/api/friendships/list');
-      console.log('✅ [Lobby] Friends list response:', response.data);
-      // Normalize IDs to lowercase
       const normalizedFriends = (response.data.friends || []).map(friend => ({
         ...friend,
         id: friend.id || friend.ID
       }));
       setFriendsList(normalizedFriends);
-      console.log(`👥 [Lobby] Loaded ${normalizedFriends.length} friends`);
     } catch (err) {
       console.error('❌ [Lobby] Failed to fetch friends list:', err);
       console.error('❌ [Lobby] Error details:', err.response?.data || err.message);
@@ -982,11 +956,9 @@ const LobbyPage = () => {
   
   // ✅ Fetch pending friend requests (received)
   const fetchPendingRequests = async () => {
-    console.log('📬 [Lobby] Fetching pending requests...');
     try {
       const response = await apiClient.get('/api/friendships/requests/pending');
       setPendingRequests(response.data.requests || []);
-      console.log(`📬 [Lobby] Loaded ${response.data.requests?.length || 0} pending requests`);
     } catch (err) {
       console.error('❌ [Lobby] Failed to fetch pending requests:', err);
     }
@@ -994,7 +966,6 @@ const LobbyPage = () => {
   
   // ✅ STEP 1: Pre-fetch first 10 sessions + trailers on lobby mount (background)
   const prefetchWatchingNowContent = async () => {
-    console.log('🔄 [Lobby] Pre-fetching first 10 sessions + trailers...');
     try {
       // Import the new API functions
       const { getActiveSessions: getActiveSessionsPaginated, getScheduledEventsWithTrailers } = await import('../services/api');
@@ -1019,7 +990,6 @@ const LobbyPage = () => {
         loading: false
       });
       
-      console.log(`✅ [Lobby] Pre-fetched ${sessionsData.sessions?.length || 0} sessions, ${trailersData.events?.length || 0} trailers`);
     } catch (err) {
       console.error('❌ [Lobby] Pre-fetch failed:', err);
     }
@@ -1045,12 +1015,8 @@ const LobbyPage = () => {
       });
       
       if (response.data.ad) {
-        // Store single ad, we'll inject it multiple times
-        console.log('🎯 [Lobby] Feed ad fetched:', response.data.ad);
         setFeedAds([response.data.ad]);
       } else {
-        // No ad returned (ads disabled or frequency cap) - clear feedAds
-        console.log('🎯 [Lobby] No feed ad returned:', response.data.message || 'Ads disabled');
         setFeedAds([]);
       }
     } catch (err) {
@@ -1100,7 +1066,6 @@ const LobbyPage = () => {
         };
       });
       
-      console.log(`📥 [Lobby] Loaded next 10 sessions (total: ${sessionsPage.data.length + (data.sessions?.length || 0)})`);
     } catch (err) {
       console.error('❌ [Lobby] Load more sessions failed:', err);
       setSessionsPage(prev => ({ ...prev, loading: false }));
@@ -1124,7 +1089,6 @@ const LobbyPage = () => {
         loading: false
       }));
       
-      console.log(`📥 [Lobby] Loaded next 10 trailers (total: ${trailersPage.data.length + (data.events?.length || 0)})`);
     } catch (err) {
       console.error('❌ [Lobby] Load more trailers failed:', err);
       setTrailersPage(prev => ({ ...prev, loading: false }));
@@ -1133,7 +1097,6 @@ const LobbyPage = () => {
   
   // ✅ Refresh "Watching Now" content - resets list and fetches fresh data
   const handleRefreshWatchingNow = async () => {
-    console.log('🔄 [LobbyPage] Refreshing Watching Now content...');
     setIsRefreshingWatchingNow(true);
     
     // Reset both sessions and trailers to initial state
@@ -1163,7 +1126,6 @@ const LobbyPage = () => {
         loading: false
       });
       
-      console.log(`✅ [LobbyPage] Refreshed: ${sessionsData.sessions?.length || 0} sessions, ${trailersData.events?.length || 0} trailers`);
       toast.success('Watching Now refreshed!');
     } catch (err) {
       console.error('❌ [LobbyPage] Failed to refresh Watching Now:', err);
@@ -1175,11 +1137,9 @@ const LobbyPage = () => {
   
   // ✅ Fetch sent friend requests (outgoing)
   const fetchSentRequests = async () => {
-    console.log('📤 [Lobby] Fetching sent requests...');
     try {
       const response = await getSentFriendRequests();
       setSentRequests(response.data.requests || []);
-      console.log(`📤 [Lobby] Loaded ${response.data.requests?.length || 0} sent requests`);
     } catch (err) {
       console.error('❌ [Lobby] Failed to fetch sent requests:', err);
     }
@@ -2136,8 +2096,6 @@ const LobbyPage = () => {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting) {
-          // User scrolled to trigger point - load next batch
-          console.log('🔄 [Lobby] Infinite scroll triggered');
           loadMoreSessions();
           loadMoreTrailers();
         }
@@ -2175,12 +2133,9 @@ const LobbyPage = () => {
         // Build WebSocket URL using backend domain (Railway in production, localhost in dev)
         const wsUrl = `${protocol}://${host}${port}/api/lobby/ws?token=${encodeURIComponent(wsToken)}`;
         
-        console.log(`🔗 [LobbyPage WS] Connecting to: ${wsUrl.split('?')[0]}`);
-          
         const ws = new WebSocket(wsUrl);
-        
+
         ws.onopen = () => {
-          console.log('✅ [LobbyPage WS] Connected');
           setWsConnected(true);
           reconnectAttempts = 0;
         };
@@ -2234,10 +2189,7 @@ const LobbyPage = () => {
                 break;
                 
               case 'session_ended':
-                // ✅ OPTIMISTIC UPDATE: Remove session immediately without API call
                 if (message.session_id) {
-                  console.log(`🗑️ [Lobby] Session ended: ${message.session_id} - removing from state`);
-
                   // Remove from sessions state
                   setSessions(prev => prev.filter(s => s.session_id !== message.session_id));
 
@@ -2341,22 +2293,8 @@ const LobbyPage = () => {
                 break;
                 
               case 'session_preview_updated':
-                // Backend broadcasts when preview is ready (from frame upload)
-                console.log(`🖼️ [LobbyPage] 📥 Preview update received:`, {
-                  session_id: message.session_id,
-                  poster_url: message.poster_url,
-                  preview_url: message.preview_url
-                });
-                
                 if (message.session_id) {
-                  // ✅ Handle different scenarios:
-                  // 1. Poster only (MP4 not ready): show poster
-                  // 2. Both poster + MP4: show video
-                  // 3. Empty URLs: clearing preview (media switched)
-                  
                   if (!message.poster_url && !message.preview_url) {
-                    // Empty URLs = clearing preview
-                    console.log(`🧹 [LobbyPage] Preview cleared for session: ${message.session_id}`);
                     setSessionPreviews(prev => ({
                       ...prev,
                       [message.session_id]: {
@@ -2367,8 +2305,6 @@ const LobbyPage = () => {
                       }
                     }));
                   } else if (message.poster_url && !message.preview_url) {
-                    // Poster only (MP4 generating or upload video)
-                    console.log(`📸 [LobbyPage] Poster ready for session ${message.session_id}:`, message.poster_url);
                     setSessionPreviews(prev => ({
                       ...prev,
                       [message.session_id]: {
@@ -2379,8 +2315,6 @@ const LobbyPage = () => {
                       }
                     }));
                   } else {
-                    // Full preview ready (poster + MP4)
-                    console.log(`✅ [LobbyPage] Full preview ready for session ${message.session_id}`);
                     setSessionPreviews(prev => ({
                       ...prev,
                       [message.session_id]: {
@@ -2395,10 +2329,6 @@ const LobbyPage = () => {
                 break;
                 
               case 'media_state_changed':
-                // ✅ EVENT-DRIVEN: Media started (LiveShare/WatchFrom/Upload)
-                console.log(`📺 [LobbyPage] Media state changed: ${message.session_id}`);
-                console.log(`📺 [LobbyPage] Media data:`, message.data);
-                
                 // ✅ Update sessionsPage with new media state (avoid duplicates)
                 setSessionsPage(prev => {
                   const exists = prev.data.some(s => s.session_id === message.session_id);
@@ -2414,11 +2344,7 @@ const LobbyPage = () => {
                       )
                     };
                   } else {
-                    // Add new session if not present (fetch full data)
-                    setTimeout(() => {
-                      console.log(`🔄 [LobbyPage] Fetching updated sessions after media state change`);
-                      fetchSessionsData();
-                    }, 100);
+                    setTimeout(() => fetchSessionsData(), 100);
                     return prev;
                   }
                 });
@@ -2428,9 +2354,6 @@ const LobbyPage = () => {
                 break;
                 
               case 'room_rating_updated':
-                // ✅ Real-time rating update when someone rates a session
-                console.log(`⭐ [LobbyPage] Rating updated for room ${message.room_id}: ${message.average_rating}`);
-                
                 // Update rooms list
                 setRooms(prevRooms => 
                   prevRooms.map(room => 
@@ -2458,8 +2381,6 @@ const LobbyPage = () => {
                 break;
                 
               case 'session_liked':
-                // ✅ Real-time like update
-                console.log(`❤️ [LobbyPage] Session liked: ${message.session_id}, count: ${message.likes_count}`);
                 setSessionLikes(prev => ({
                   ...prev,
                   [message.session_id]: {
@@ -2470,8 +2391,6 @@ const LobbyPage = () => {
                 break;
                 
               case 'session_unliked':
-                // ✅ Real-time unlike update
-                console.log(`💔 [LobbyPage] Session unliked: ${message.session_id}, count: ${message.likes_count}`);
                 setSessionLikes(prev => ({
                   ...prev,
                   [message.session_id]: {
@@ -2482,8 +2401,6 @@ const LobbyPage = () => {
                 break;
                 
               case 'session_chat_sent':
-                // ✅ Real-time chat count update (for users NOT currently viewing the chat)
-                console.log(`💬 [LobbyPage] Chat sent in session: ${message.session_id}, count: ${message.chat_count}`);
                 // Only update if chat is NOT open (open chat updates from polling)
                 if (activeChatSession?.session_id !== message.session_id) {
                   setSessionChatCounts(prev => ({
@@ -2597,10 +2514,6 @@ const LobbyPage = () => {
         };
         
         ws.onclose = (event) => {
-          if (event.code !== 1000) {
-            console.log(`❌ [LobbyPage WS] Disconnected (code: ${event.code})`);
-          }
-          
           setWsConnected(false);
           
           // Attempt reconnection with exponential backoff
@@ -2664,8 +2577,6 @@ const LobbyPage = () => {
   // ✅ Handle direct join from session preview
   const handleJoinSessionDirect = async (session) => {
     try {
-      console.log('🎬 [Lobby] Direct join requested for session:', session.session_id);
-      
       // 1. Verify session still exists (for temporary rooms)
       if (session.is_temporary) {
         const { exists } = await verifySessionExists(session.session_id);
@@ -2682,8 +2593,6 @@ const LobbyPage = () => {
           const response = await apiClient.get(`/api/sessions/${session.session_id}/tickets/me`);
           
           if (!response.data.has_ticket) {
-            // Open ticket purchase modal directly (don't navigate away)
-            console.log('🎟️ [Lobby] Ticket required - opening purchase modal');
             setSelectedSessionForTicket(session);
             setIsTicketModalOpen(true);
             return; // Stop here - modal will handle the rest
@@ -2717,8 +2626,6 @@ const LobbyPage = () => {
 
   // ✅ Handle ticket purchase success
   const handleTicketPurchaseSuccess = (sessionId) => {
-    console.log('✅ [Lobby] Ticket purchased successfully for session:', sessionId);
-    
     // Close the modal
     setIsTicketModalOpen(false);
     
@@ -2792,7 +2699,6 @@ const LobbyPage = () => {
 
   // Handle create room
   const handleCreateRoom = () => {
-    console.log("Create Room button clicked");
     navigate('/rooms/create');
   };
 
@@ -2838,7 +2744,6 @@ const LobbyPage = () => {
       setLoading(true);
       await deleteRoom(roomId);
       setRooms(prevRooms => prevRooms.filter(room => room.id !== roomId));
-      console.log(`Room ${roomId} deleted successfully`);
     } catch (err) {
       console.error('Error deleting room:', err);
       setError('Failed to delete room. Please try again.');
@@ -2881,27 +2786,15 @@ const LobbyPage = () => {
   // ✅ Generate session preview (poster + GIF)
   const generateSessionPreview = async (sessionId) => {
     // ✅ Skip only if already generating (prevent concurrent API calls)
-    if (sessionPreviews[sessionId]?.isGenerating) {
-      console.log(`⏳ [LobbyPage] Already generating preview for ${sessionId}`);
-      return;
-    }
+    if (sessionPreviews[sessionId]?.isGenerating) return;
 
     try {
-      console.log(`🎬 [LobbyPage] Generating preview: ${sessionId}`);
-      
-      // Find the session in BOTH states (sessions and sessionsPage)
-      const session = sessions.find(s => s.session_id === sessionId) || 
+      const session = sessions.find(s => s.session_id === sessionId) ||
                       sessionsPage.data.find(s => s.session_id === sessionId);
-      if (!session) {
-        console.log(`⏸️ [LobbyPage] Session ${sessionId} not found, skipping preview`);
-        return;
-      }
+      if (!session) return;
       
       // ✅ Check if preview generation is disabled (content moderation)
-      if (session.preview_enabled === false) {
-        console.log(`⏸️ [LobbyPage] Preview generation disabled for session ${sessionId}, skipping`);
-        return;
-      }
+      if (session.preview_enabled === false) return;
       
       // ✅ Detect source dynamically based on session state
       let source = 'upload'; // default
@@ -2925,9 +2818,7 @@ const LobbyPage = () => {
       
       // ✅ For LiveShare/WatchFrom, request frame capture from host
       if (!canGenerateGIF) {
-        console.log(`📸 [LobbyPage] Requesting frame capture: ${sessionId} (${source})`);
-        
-        // Set generating state
+        setSessionPreviews(prev => ({
         setSessionPreviews(prev => ({
           ...prev,
           [sessionId]: { ...prev[sessionId], isGenerating: true }
@@ -2937,19 +2828,13 @@ const LobbyPage = () => {
           const response = await apiClient.post(`/api/sessions/${sessionId}/request-frame-capture`, {
             source: source
           });
-          console.log(`✅ [LobbyPage] Frame capture requested`);
-          
-          // ✅ FALLBACK: If WebSocket disconnected, poll for preview after expected capture time
+          // Fallback: If WebSocket disconnected, poll for preview after expected capture time
           if (!wsConnected) {
-            console.log(`⏳ [LobbyPage] Fallback: Will check preview in 40s`);
-            
             setTimeout(async () => {
               try {
                 const data = await getActiveSessions();
                 const updatedSession = data.sessions?.find(s => s.session_id === sessionId);
-                
                 if (updatedSession?.preview_url) {
-                  console.log(`✅ [LobbyPage] Fallback: Preview found`);
                   setSessionPreviews(prev => ({
                     ...prev,
                     [sessionId]: {
@@ -3002,7 +2887,6 @@ const LobbyPage = () => {
         }
       }));
 
-      console.log(`✅ [LobbyPage] Preview generated: ${sessionId}`);
     } catch (err) {
       // ✅ Check if this is an expected "no session" state vs real error
       const isExpectedNoSession = 
@@ -3013,10 +2897,7 @@ const LobbyPage = () => {
           err.response?.data?.error?.toLowerCase().includes('no active session')
         );
       
-      if (isExpectedNoSession) {
-        // Silently skip - this is expected when no session is active or no media playing
-        console.log(`ℹ️ [LobbyPage] Preview skipped for ${sessionId}: No active session or media`);
-      } else {
+      if (!isExpectedNoSession) {
         // Real error - log it (but don't show toast to avoid spamming users)
         console.error(`❌ [LobbyPage] Preview generation failed: ${sessionId}:`, err.message);
       }
@@ -3088,10 +2969,7 @@ const LobbyPage = () => {
       const hasInterval = !!previewIntervalsRef.current[session.session_id];
       
       // Skip if preview generation is disabled for this session
-      if (session.preview_enabled === false) {
-        console.log(`⏸️ [LobbyPage] Skipping preview setup for ${session.session_id} (disabled)`);
-        return;
-      }
+      if (session.preview_enabled === false) return;
       
       if (!hasInterval) {
         setupPreviewGeneration(session.session_id);
@@ -3616,7 +3494,7 @@ const LobbyPage = () => {
                 <>
                 {/* Owned rooms — always visible at top */}
                 {ownedRooms.length > 0 && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6 mb-3">
+                  <div className="grid grid-cols-2 gap-3 mb-3">
                     {ownedRooms.map(room => (
                       <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
                     ))}
@@ -3653,7 +3531,7 @@ const LobbyPage = () => {
                       </button>
                       {/* Expanded rooms */}
                       {isMemberCardExpanded && (
-                        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
+                        <div className="mt-3 grid grid-cols-2 gap-3">
                           {memberRooms.map(room => (
                             <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
                           ))}
@@ -3663,7 +3541,7 @@ const LobbyPage = () => {
                   ) : (
                     <>
                       {ownedRooms.length > 0 && <div className="border-t border-gray-200 dark:border-gray-700 mb-3" />}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6 mb-3">
+                      <div className="grid grid-cols-2 gap-3 mb-3">
                         {memberRooms.map(room => (
                           <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
                         ))}
@@ -3678,7 +3556,7 @@ const LobbyPage = () => {
                     {(ownedRooms.length > 0 || memberRooms.length > 0) && (
                       <div className="border-t border-gray-200 dark:border-gray-700 mb-3" />
                     )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
+                    <div className="grid grid-cols-2 gap-3">
                       {discoveryRooms.map(room => (
                         <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
                       ))}
@@ -4193,7 +4071,6 @@ const LobbyPage = () => {
                             clicked,
                             view_duration: 5
                           });
-                          console.log('🎯 [Lobby] Feed ad impression tracked');
                         } catch (err) {
                           console.error('❌ [Lobby] Failed to track feed ad:', err);
                         }
@@ -5392,13 +5269,8 @@ const LobbyPage = () => {
           setSelectedPost(null);
         }}
         post={selectedPost}
-        onLikeToggle={(postId, liked) => {
-          // Update post in discover feed if needed
-          console.log('Post', postId, liked ? 'liked' : 'unliked');
-        }}
-        onCommentAdded={(postId) => {
-          console.log('Comment added to post', postId);
-        }}
+        onLikeToggle={() => {}}
+        onCommentAdded={() => {}}
       />
 
       {/* ✅ Call Modals */}
