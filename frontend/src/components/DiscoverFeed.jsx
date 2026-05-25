@@ -111,13 +111,6 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
         setPosts(newPosts);
       }
 
-      // Debug: log post order so we can verify newest-first on production
-      if (newPosts.length > 0) {
-        console.log(`📋 [DiscoverFeed] Page ${pageNum} order (${newPosts.length} posts):`,
-          newPosts.map(p => ({ id: p.id, created_at: p.created_at, desc: p.description?.slice(0, 30) }))
-        );
-      }
-
       // Treat "no rows" as end of feed. We can't use `=== PAGE_SIZE` because the
       // backend runs a per-post privacy filter AFTER applying LIMIT, so a non-final
       // page can legitimately come back short. See backend/internal/handlers/posts.go GetDiscoverFeed.

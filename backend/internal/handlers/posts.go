@@ -205,10 +205,7 @@ func CreatePost(c *gin.Context) {
 
 	if err := DB.Create(&post).Error; err != nil {
 		log.Printf("❌ [CreatePost] Database error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to create post",
-			"debug": err.Error(), // temporary: remove after diagnosing production error
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create post"})
 		return
 	}
 
@@ -413,17 +410,6 @@ func GetDiscoverFeed(c *gin.Context) {
 		filteredPosts = append(filteredPosts, post)
 	}
 
-	// Debug log for posts without user data
-	for _, post := range filteredPosts {
-		log.Printf("🔍 [GetDiscoverFeed] Post %d - UserID: %d, User.ID: %d, User.Username: '%s', User.MainRoomID: %v, PostRoomID: %v, HasUser: %v",
-			post.ID, post.UserID, post.User.ID, post.User.Username, post.User.MainRoomID, post.RoomID, post.User.ID != 0)
-		
-		if post.User.ID == 0 || post.User.Username == "" {
-			log.Printf("⚠️ [GetDiscoverFeed] Post %d missing user data - UserID: %d, User.ID: %d, User.Username: '%s', User.MainRoomID: %v, PostRoomID: %v",
-				post.ID, post.UserID, post.User.ID, post.User.Username, post.User.MainRoomID, post.RoomID)
-		}
-	}
-
 	// Load viewer settings once — covers both age flags and overlay preference.
 	// Zero-value settings (all flags false) is the correct conservative default for
 	// unauthenticated users or users who haven't provided a DOB yet.
@@ -453,9 +439,6 @@ func GetDiscoverFeed(c *gin.Context) {
 		}
 	}
 	filteredPosts = ratingFiltered
-
-	// Re-rank using the feed algorithm (scored within this page; batched DB lookups, no N+1).
-	filteredPosts = ScoreAndSortPosts(DB, filteredPosts, currentUserID, viewerSettings.PrimaryRating)
 
 	viewerShowMature := viewerSettings.ShowMatureContent
 
