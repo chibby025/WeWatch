@@ -3530,7 +3530,7 @@ const LobbyPage = () => {
                 <>
                 {/* Owned rooms — always visible at top */}
                 {ownedRooms.length > 0 && (
-                  <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                     {ownedRooms.map(room => (
                       <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
                     ))}
@@ -3567,7 +3567,7 @@ const LobbyPage = () => {
                       </button>
                       {/* Expanded rooms */}
                       {isMemberCardExpanded && (
-                        <div className="mt-3 grid grid-cols-2 gap-3">
+                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {memberRooms.map(room => (
                             <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
                           ))}
@@ -3577,7 +3577,7 @@ const LobbyPage = () => {
                   ) : (
                     <>
                       {ownedRooms.length > 0 && <div className="border-t border-gray-200 dark:border-gray-700 mb-3" />}
-                      <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                         {memberRooms.map(room => (
                           <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
                         ))}
@@ -3592,7 +3592,7 @@ const LobbyPage = () => {
                     {(ownedRooms.length > 0 || memberRooms.length > 0) && (
                       <div className="border-t border-gray-200 dark:border-gray-700 mb-3" />
                     )}
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {discoveryRooms.map(room => (
                         <React.Fragment key={room.id}>{RoomCard(room)}</React.Fragment>
                       ))}
