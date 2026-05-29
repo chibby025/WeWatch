@@ -22,11 +22,13 @@ var (
 	BunnyCDNPullZoneURL   = os.Getenv("BUNNY_PULL_ZONE_URL")      // e.g., "https://wewatch-posts.b-cdn.net"
 )
 
-// BunnyCDN API endpoints by region
+// BunnyCDN API endpoints by region.
+// Frankfurt (DE) uses the base endpoint — no region prefix.
+// Other regions: https://{region}.storage.bunnycdn.com/{zone}
 func getBunnyCDNStorageURL() string {
 	region := BunnyCDNStorageRegion
 	if region == "" {
-		region = "ny" // Default to New York
+		return fmt.Sprintf("https://storage.bunnycdn.com/%s", BunnyCDNStorageZone)
 	}
 	return fmt.Sprintf("https://%s.storage.bunnycdn.com/%s", region, BunnyCDNStorageZone)
 }

@@ -35,16 +35,17 @@ export default async function handler(request) {
 
   const storageZone = process.env.BUNNY_STORAGE_ZONE;
   const accessKey = process.env.BUNNY_ACCESS_KEY;
-  const region = process.env.BUNNY_STORAGE_REGION || 'ny';
+  const region = process.env.BUNNY_STORAGE_REGION || '';
 
   if (!storageZone || !accessKey) {
     return new Response(JSON.stringify({ error: 'Storage not configured', zone: storageZone || 'MISSING', key: accessKey ? 'SET' : 'MISSING' }), { status: 500 });
   }
 
-  // Temporary debug — log key prefix to verify correct value is set
-  console.log(`[upload-proxy] zone=${storageZone} region=${region} key=${accessKey.substring(0, 8)}...`);
-
-  const bunnyUrl = `https://${region}.storage.bunnycdn.com/${storageZone}/${cdnPath}`;
+  // Frankfurt (DE) uses the base endpoint — no region prefix. Other regions: {region}.storage.bunnycdn.com
+  const bunnyBase = region
+    ? `https://${region}.storage.bunnycdn.com/${storageZone}`
+    : `https://storage.bunnycdn.com/${storageZone}`;
+  const bunnyUrl = `${bunnyBase}/${cdnPath}`;
   const contentType = request.headers.get('Content-Type') || 'application/octet-stream';
 
   const bunnyResponse = await fetch(bunnyUrl, {
