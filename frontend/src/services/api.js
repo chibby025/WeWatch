@@ -914,27 +914,25 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
   formData.append('file_name', fileName);
   formData.append('file_size', fileSize);
 
-  // In production: route through Vercel's reverse proxy (same-origin, no CORS, no Railway timeout).
-  // Vercel buffers the full chunk body before forwarding to Railway at datacenter speed.
-  // In development: go directly to the backend.
-  const uploadBase = import.meta.env.PROD
-    ? window.location.origin   // e.g. https://letswatchout.vercel.app — proxied via vercel.json
-    : API_BASE_URL;            // e.g. http://localhost:8080
-
-  let uploadUrl = `${uploadBase}/api/rooms/${roomId}/upload?chunked=true`;
+  // Always go directly to Railway — Vercel's rewrite proxy does not reliably forward
+  // multipart/form-data POST bodies to external URLs and returns 502. Railway's CORS
+  // config already allows *.vercel.app origins, so no proxy is needed.
+  console.log(`🔗 [uploadChunk] API_BASE_URL=${API_BASE_URL}`);
+  let uploadUrl = `${API_BASE_URL}/api/rooms/${roomId}/upload?chunked=true`;
   if (sessionId) {
     uploadUrl += `&session_id=${encodeURIComponent(sessionId)}`;
   }
 
-  // Vercel's rewrite proxy strips the Authorization header when forwarding to external domains.
-  // Pass the token as a query param instead; CookieToAuthHeaderMiddleware on the backend accepts it.
-  const token = localStorage.getItem('wewatch_token');
+  // Auth: send the session token in the Authorization header (CORS is set up on Railway).
+  // Fall back to auth_token query param for CookieToAuthHeaderMiddleware if header is stripped.
+  const token = sessionStorage.getItem('wewatch_ws_token') || localStorage.getItem('wewatch_token');
+  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
   if (token) {
     uploadUrl += `&auth_token=${encodeURIComponent(token)}`;
   }
 
   const response = await axios.post(uploadUrl, formData, {
-    headers: { 'Content-Type': undefined }, // let browser set multipart boundary
+    headers: { 'Content-Type': undefined, ...authHeaders }, // let browser set multipart boundary
     withCredentials: true,
     timeout: 120000,
     signal: abortSignal,
