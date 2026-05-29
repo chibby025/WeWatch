@@ -8,6 +8,8 @@ import Avatar from '../Avatar';
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 const SPHERE_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Chewy&display=swap');
+
   @keyframes orbitCW  { from{transform:rotate(0deg);}  to{transform:rotate(360deg);}  }
   @keyframes orbitCCW { from{transform:rotate(0deg);}  to{transform:rotate(-360deg);} }
   @keyframes cofPulse {
@@ -46,6 +48,27 @@ const SPHERE_CSS = `
   .cof-deco-r1{ animation:ringSpinCW  18s linear infinite, ringGlow         2.8s ease-in-out infinite; transform-origin:center; }
   .cof-deco-r2{ animation:ringSpinCCW 30s linear infinite;                                              transform-origin:center; opacity:.5; }
   .cof-deco-r3{ animation:ringSpinCW  52s linear infinite, ringPulseOuter   4s   ease-in-out infinite; transform-origin:center; }
+
+  @keyframes cofShoot {
+    0%   { opacity:0; transform:translateX(-80px); }
+    4%   { opacity:0; transform:translateX(-80px); }
+    10%  { opacity:1; transform:translateX(0px);   }
+    20%  { opacity:0; transform:translateX(160px); }
+    100% { opacity:0; transform:translateX(160px); }
+  }
+  @keyframes cofNova {
+    0%   { transform:scale(0);    opacity:0;    box-shadow:0 0 0px  0px  rgba(255,210,80,0);    }
+    4%   { transform:scale(0.05); opacity:1;    box-shadow:0 0 8px  4px  rgba(255,220,100,0.9); }
+    10%  { transform:scale(0.3);  opacity:0.85; box-shadow:0 0 20px 10px rgba(255,160,60,0.6);  }
+    28%  { transform:scale(1.4);  opacity:0.15; box-shadow:0 0 30px 16px rgba(200,100,40,0.05); }
+    42%  { transform:scale(2);    opacity:0;    }
+    100% { transform:scale(2);    opacity:0;    }
+  }
+  .cof-shoot-trail {
+    height:1.5px;
+    background:linear-gradient(to right, transparent, rgba(255,255,255,0.95) 50%, rgba(180,210,255,0.3));
+    border-radius:9999px;
+  }
 `;
 
 // Ring radii — keep in sync with OrbitRing usage
@@ -63,6 +86,21 @@ const ZONES = [
 ];
 
 const ringRadius = r => r === 1 ? R1 : r === 2 ? R2 : R3;
+
+const SHOOT_STARS = [
+  { top: '7%',  left: '8%',  angle: 32, width: 90,  dur: 14, delay: 0    },
+  { top: '20%', left: '62%', angle: 25, width: 70,  dur: 12, delay: 4.5  },
+  { top: '4%',  left: '38%', angle: 44, width: 110, dur: 18, delay: 8    },
+  { top: '38%', left: '2%',  angle: 18, width: 75,  dur: 16, delay: 2    },
+  { top: '14%', left: '78%', angle: 38, width: 85,  dur: 13, delay: 11   },
+  { top: '28%', left: '50%', angle: 55, width: 65,  dur: 20, delay: 6.5  },
+];
+
+const SUPERNOVAS = [
+  { top: '22%', left: '70%', size: 5, dur: 18, delay: 2  },
+  { top: '9%',  left: '24%', size: 4, dur: 23, delay: 9  },
+  { top: '42%', left: '83%', size: 6, dur: 20, delay: 15 },
+];
 
 // ── OrbitRing ─────────────────────────────────────────────────────────────────
 const OrbitRing = ({ members, radius, size, ringClass, faceClass, onTap, activeId, borderCls, paused }) => {
@@ -239,19 +277,19 @@ const CircleOfFriendsSphere = ({
         style={{ background: 'linear-gradient(180deg, rgba(26,16,96,0.95) 0%, transparent 100%)' }}
         onClick={e => e.stopPropagation()} // header clicks don't reset rings
       >
-        <div className="flex items-center px-3 pt-10 pb-1">
+        <div className="flex items-center px-3 pt-10 pb-0.5">
           <button onClick={onClose}
             className="p-2 rounded-full text-white/70 hover:bg-white/10 transition-colors active:scale-90 flex-shrink-0">
             <ChevronLeftIcon className="w-6 h-6" />
           </button>
           <div className="flex-1 text-center">
-            <h2 className="text-white text-2xl font-bold tracking-tight leading-none">Circle of Friends</h2>
+            <h2 className="text-white leading-none" style={{ fontFamily: '"Chewy", cursive', letterSpacing: '0.01em', fontSize: '2.75rem' }}>Circle of Friends</h2>
           </div>
           <div className="w-10 flex-shrink-0" />
         </div>
 
         {/* Editable group label */}
-        <div className="flex items-center justify-center gap-1.5 px-6 mt-0.5">
+        <div className="flex items-center justify-center gap-1 px-2 mt-0">
           {editingLabel ? (
             <div className="flex items-center gap-2">
               <input
@@ -269,15 +307,15 @@ const CircleOfFriendsSphere = ({
             </div>
           ) : (
             <button onClick={() => setEditingLabel(true)} className="flex items-center gap-1.5 group">
-              <span className="text-white/50 text-xs font-medium">{groupLabel}</span>
-              <PencilIcon className="w-3 h-3 text-white/25 group-hover:text-white/60 transition-colors" />
+              <span className="text-xl font-bold text-purple-400">{groupLabel}</span>
+              <PencilIcon className="w-3.5 h-3.5 text-white/25 group-hover:text-white/60 transition-colors" />
             </button>
           )}
         </div>
 
         {/* Stacked mini-avatars */}
         {circleMembers.length > 0 && (
-          <div className="flex justify-center mt-2">
+          <div className="flex justify-center mt-0.5">
             <div className="flex items-center -space-x-2">
               {circleMembers.slice(0, 6).map(m => (
                 <Avatar key={m.id} user={m} size={26}
@@ -288,7 +326,7 @@ const CircleOfFriendsSphere = ({
                   <span className="text-white text-[9px] font-bold">+{circleMembers.length - 6}</span>
                 </div>
               )}
-              <span className="ml-2.5 text-white/35 text-xs">{circleMembers.length} in orbit</span>
+              <span className="ml-2.5 text-white text-xs">{circleMembers.length} in orbit</span>
             </div>
           </div>
         )}
@@ -296,6 +334,25 @@ const CircleOfFriendsSphere = ({
 
       {/* ═══ SPHERE ═══════════════════════════════════════════════════════════ */}
       <div className="flex-1 flex items-center justify-center relative overflow-hidden">
+        {/* ── Shooting stars ── */}
+        {SHOOT_STARS.map((s, i) => (
+          <div key={`ss${i}`} className="absolute pointer-events-none"
+            style={{ top: s.top, left: s.left, transform: `rotate(${s.angle}deg)` }}>
+            <div className="cof-shoot-trail"
+              style={{ width: s.width, animation: `cofShoot ${s.dur}s linear ${s.delay}s infinite` }} />
+          </div>
+        ))}
+
+        {/* ── Supernovas ── */}
+        {SUPERNOVAS.map((n, i) => (
+          <div key={`sn${i}`} className="absolute rounded-full pointer-events-none bg-white"
+            style={{
+              top: n.top, left: n.left,
+              width: n.size, height: n.size,
+              animation: `cofNova ${n.dur}s ease-out ${n.delay}s infinite`,
+            }} />
+        ))}
+
         {stars.map((s, i) => (
           <div key={i} className="cof-star absolute rounded-full bg-white pointer-events-none"
             style={{ width: s.size, height: s.size, left: `${s.left}%`, top: `${s.top}%`, animationDelay: `${s.delay}s` }} />

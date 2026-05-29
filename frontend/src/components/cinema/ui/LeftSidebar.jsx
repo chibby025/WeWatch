@@ -554,7 +554,7 @@ export default function LeftSidebar({
         } catch (err) {
           console.warn('⚠️ [Poster Retry] Failed to fetch updated poster:', err);
         }
-      }, 1500); // Wait 1.5s for async poster generation
+      }, 5000); // Wait 5s for async poster generation + CDN upload
 
       if (onUploadComplete) {
         onUploadComplete();

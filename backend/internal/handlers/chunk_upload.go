@@ -219,7 +219,7 @@ func ChunkUploadHandler(c *gin.Context) {
 			}
 
 			// ✅ ASYNC POSTER + CDN UPLOAD
-			go func(itemID uint, videoPath, posterPath, sid, mimeType, uniqueFilename string) {
+			go func(itemID uint, roomID uint, videoPath, posterPath, sid, mimeType, uniqueFilename string) {
 				// 1. Generate poster
 				posterCDNURL := fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
 				if err := utils.ExtractThumbnail(videoPath, posterPath); err != nil {
@@ -229,12 +229,14 @@ func ChunkUploadHandler(c *gin.Context) {
 						log.Printf("⚠️ [Async] Poster CDN upload failed for temp item %d: %v", itemID, err)
 					} else {
 						posterCDNURL = cdnURL
+						os.Remove(posterPath)
 					}
 				}
 				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
 					log.Printf("❌ [Async] Failed to update poster_url for temp item %d: %v", itemID, err)
 				} else {
 					log.Printf("✅ [Async] Poster updated for temp item %d: %s", itemID, posterCDNURL)
+					// Notify lobby (session preview card)
 					if sid != "" {
 						broadcastData := map[string]interface{}{
 							"type":        "session_preview_updated",
@@ -246,6 +248,14 @@ func ChunkUploadHandler(c *gin.Context) {
 						log.Printf("📡 [Poster] Broadcasting poster update to lobby for session %s", sid)
 						hub.BroadcastToLobby(OutgoingMessage{Data: broadcastJSON, IsBinary: false})
 					}
+					// Notify room members so sidebar playlist refreshes immediately
+					roomBroadcast := map[string]interface{}{
+						"type":     "playlist_poster_updated",
+						"item_id":  itemID,
+						"poster_url": posterCDNURL,
+					}
+					roomJSON, _ := json.Marshal(roomBroadcast)
+					hub.BroadcastToRoom(roomID, roomJSON)
 				}
 
 				// 2. Upload video to CDN; update file_path so cleanup targets CDN
@@ -258,8 +268,9 @@ func ChunkUploadHandler(c *gin.Context) {
 					log.Printf("❌ [Async] Failed to update file_path for temp item %d: %v", itemID, err)
 				} else {
 					log.Printf("✅ [Async] CDN upload complete for temp item %d: %s", itemID, videoCDNURL)
+					os.Remove(videoPath)
 				}
-			}(newTempMediaItem.ID, finalFilePath, posterPath, sessionID, mimeType, uniqueFilename)
+			}(newTempMediaItem.ID, roomIDUint, finalFilePath, posterPath, sessionID, mimeType, uniqueFilename)
 			
 			// ✅ Construct public URL for browser access
 			publicURL := fmt.Sprintf("/uploads/temp/%s", uniqueFilename)
@@ -317,6 +328,7 @@ func ChunkUploadHandler(c *gin.Context) {
 						log.Printf("⚠️ [Async] Poster CDN upload failed for item %d: %v", itemID, err)
 					} else {
 						posterCDNURL = cdnURL
+						os.Remove(posterPath)
 					}
 				}
 				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
@@ -335,6 +347,7 @@ func ChunkUploadHandler(c *gin.Context) {
 					log.Printf("❌ [Async] Failed to update file_path for item %d: %v", itemID, err)
 				} else {
 					log.Printf("✅ [Async] CDN upload complete for item %d: %s", itemID, videoCDNURL)
+					os.Remove(videoPath)
 				}
 			}(newMediaItem.ID, finalFilePath, posterPath, mimeType, uniqueFilename)
 			

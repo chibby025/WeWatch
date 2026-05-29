@@ -249,6 +249,9 @@ func main() {
 					"https://letswatchout.com",
 					"https://www.letswatchout.com",
 				}
+				if fu := os.Getenv("FRONTEND_URL"); fu != "" {
+					allowedOrigins = append(allowedOrigins, fu)
+				}
 				for _, allowed := range allowedOrigins {
 					if origin == allowed {
 						return true

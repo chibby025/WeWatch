@@ -186,14 +186,16 @@ func GetTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 			continue
 		}
 		
-		// Generate poster for items without one
-		if item.FilePath != "" {
+		// Generate poster for items without one — skip if FilePath is a CDN URL (remote)
+		if item.FilePath != "" &&
+			!strings.HasPrefix(item.FilePath, "http://") &&
+			!strings.HasPrefix(item.FilePath, "https://") {
 			log.Printf("🎨 Generating missing poster for %s", item.FileName)
-			
+
 			posterFilename := fmt.Sprintf("%s_poster.jpg", strings.TrimSuffix(item.FileName, filepath.Ext(item.FileName)))
 			posterPath := filepath.Join("./uploads/temp", posterFilename)
 			posterURL := fmt.Sprintf("/uploads/temp/%s", posterFilename)
-			
+
 			// Check if poster file already exists on disk
 			if _, err := os.Stat(posterPath); os.IsNotExist(err) {
 				// Generate new poster
@@ -210,7 +212,7 @@ func GetTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 				log.Printf("✅ Found existing poster on disk: %s", posterPath)
 				item.PosterURL = posterURL
 			}
-			
+
 			// Update database with new poster URL
 			DB.Model(item).Update("poster_url", item.PosterURL)
 		}
@@ -294,14 +296,16 @@ func GetTemporaryMediaItemsForSessionHandler(c *gin.Context) {
 			continue
 		}
 		
-		// Generate poster for items without one
-		if item.FilePath != "" {
+		// Generate poster for items without one — skip if FilePath is a CDN URL (remote)
+		if item.FilePath != "" &&
+			!strings.HasPrefix(item.FilePath, "http://") &&
+			!strings.HasPrefix(item.FilePath, "https://") {
 			log.Printf("🎨 Generating missing poster for %s", item.FileName)
-			
+
 			posterFilename := fmt.Sprintf("%s_poster.jpg", strings.TrimSuffix(item.FileName, filepath.Ext(item.FileName)))
 			posterPath := filepath.Join("./uploads/temp", posterFilename)
 			posterURL := fmt.Sprintf("/uploads/temp/%s", posterFilename)
-			
+
 			// Check if poster file already exists on disk
 			if _, err := os.Stat(posterPath); os.IsNotExist(err) {
 				// Generate new poster
@@ -318,7 +322,7 @@ func GetTemporaryMediaItemsForSessionHandler(c *gin.Context) {
 				log.Printf("✅ Found existing poster on disk: %s", posterPath)
 				item.PosterURL = posterURL
 			}
-			
+
 			// Update database with new poster URL
 			DB.Model(item).Update("poster_url", item.PosterURL)
 		}

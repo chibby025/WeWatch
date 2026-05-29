@@ -206,6 +206,7 @@ func UploadMediaHandler(c *gin.Context) {
 					log.Printf("⚠️ [Async] Poster CDN upload failed for temp item %d: %v", itemID, err)
 				} else {
 					posterCDNURL = cdnURL
+					os.Remove(posterPath)
 				}
 			}
 			if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
@@ -224,6 +225,7 @@ func UploadMediaHandler(c *gin.Context) {
 				log.Printf("❌ [Async] Failed to update file_path for temp item %d: %v", itemID, err)
 			} else {
 				log.Printf("✅ [Async] CDN upload complete for temp item %d: %s", itemID, videoCDNURL)
+				os.Remove(videoPath)
 			}
 		}(newTempMediaItem.ID, filePath, posterPath, getMimeType(ext), uniqueFilename)
 
@@ -292,6 +294,7 @@ func UploadMediaHandler(c *gin.Context) {
 					log.Printf("⚠️ [Async] Poster CDN upload failed for item %d: %v", itemID, err)
 				} else {
 					posterCDNURL = cdnURL
+					os.Remove(posterPath)
 				}
 			}
 			if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
@@ -310,6 +313,7 @@ func UploadMediaHandler(c *gin.Context) {
 				log.Printf("❌ [Async] Failed to update file_path for item %d: %v", itemID, err)
 			} else {
 				log.Printf("✅ [Async] CDN upload complete for item %d: %s", itemID, videoCDNURL)
+				os.Remove(videoPath)
 			}
 		}(newMediaItem.ID, filePath, posterPath, getMimeType(ext), uniqueFilename)
 

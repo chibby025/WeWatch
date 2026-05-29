@@ -3354,6 +3354,14 @@ export default function VideoWatch() {
         console.log('📨 [VideoWatch]', message.type, ':', message.data);
       }
       switch (message.type) {
+        case "playlist_poster_updated":
+          setPlaylist(prev => prev.map(item =>
+            (item.ID || item.id) === message.data.item_id
+              ? { ...item, poster_url: message.data.poster_url }
+              : item
+          ));
+          break;
+
         case "session_status":
           const data = message.data;
           console.log('📊 [VideoWatch] session_status received - FULL DATA:', data);

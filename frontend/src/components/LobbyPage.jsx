@@ -6185,11 +6185,16 @@ const LobbyPage = () => {
             <div className="relative -mt-5">
               {activeTab === 'chats' ? (
                 <button
-                  onClick={() => setShowCreateGroupModal(true)}
-                  className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-green-500 shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-90"
-                  title="New Group"
+                  onClick={() => setShowCircleSphere(true)}
+                  className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-700 to-indigo-800 shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-90 relative"
+                  title="Circle of Friends"
                 >
-                  <UsersIcon className="w-7 h-7 text-white" />
+                  <img src="/icons/cof.webp" alt="Circle of Friends" className="w-10 h-10 object-contain" />
+                  {circleOfFriendsIds.length > 0 && (
+                    <span className="absolute top-0 right-0 min-w-[14px] h-3.5 px-0.5 flex items-center justify-center text-[8px] font-bold bg-purple-400 text-white rounded-full">
+                      {circleOfFriendsIds.length}
+                    </span>
+                  )}
                 </button>
               ) : (activeTab === 'watching' && watchingSubTab === 'sessions') || (activeTab === 'rooms' && currentUser?.main_room_id) ? (
                 <button
@@ -6220,27 +6225,14 @@ const LobbyPage = () => {
               <Search className="w-7 h-7" />
             </button>
 
-            {/* Home / Circle of Friends */}
+            {/* Home / New Group */}
             {activeTab === 'chats' ? (
               <button
-                onClick={() => setShowCircleSphere(true)}
-                className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-500 dark:hover:text-purple-400 transition-all active:scale-90 relative"
-                title="Circle of Friends"
+                onClick={() => setShowCreateGroupModal(true)}
+                className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-500 dark:hover:text-purple-400 transition-all active:scale-90"
+                title="New Group"
               >
-                {/* Orbit icon — two concentric circles with a dot at center */}
-                <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                  <circle cx="14" cy="14" r="2.5" fill="currentColor" stroke="none" />
-                  <ellipse cx="14" cy="14" rx="7" ry="4.5" transform="rotate(-30 14 14)" />
-                  <ellipse cx="14" cy="14" rx="11.5" ry="6.5" transform="rotate(15 14 14)" />
-                  <circle cx="7.5"  cy="10.5" r="2" fill="currentColor" stroke="none" />
-                  <circle cx="20.5" cy="17.5" r="1.5" fill="currentColor" stroke="none" />
-                  <circle cx="18"   cy="7"    r="1.5" fill="currentColor" stroke="none" />
-                </svg>
-                {circleOfFriendsIds.length > 0 && (
-                  <span className="absolute top-0.5 right-0.5 min-w-[14px] h-3.5 px-0.5 flex items-center justify-center text-[8px] font-bold bg-purple-500 text-white rounded-full">
-                    {circleOfFriendsIds.length}
-                  </span>
-                )}
+                <UsersIcon className="w-7 h-7" />
               </button>
             ) : (
               <button
