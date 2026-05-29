@@ -248,6 +248,7 @@ func main() {
 				allowedOrigins := []string{
 					"https://letswatchout.com",
 					"https://www.letswatchout.com",
+					"https://letswatchout.vercel.app", // Vercel preview/staging (uploads bypass Vercel proxy)
 				}
 				if fu := os.Getenv("FRONTEND_URL"); fu != "" {
 					allowedOrigins = append(allowedOrigins, fu)
