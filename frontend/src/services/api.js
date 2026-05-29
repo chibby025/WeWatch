@@ -915,7 +915,7 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
   formData.append('file_size', fileSize);
   
   const config = {
-    headers: { 'Content-Type': 'multipart/form-data' },
+    headers: { 'Content-Type': undefined }, // let browser set multipart/form-data with correct boundary
     timeout: 120000, // 2 minutes per chunk
     signal: abortSignal
   };
