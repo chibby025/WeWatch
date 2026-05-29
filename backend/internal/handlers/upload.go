@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,12 +10,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	//"encoding/json"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/services"
 	"wewatch-backend/internal/utils"
 )
 
@@ -361,5 +362,201 @@ func getMimeType(ext string) string {
 		return "video/webm"
 	default:
 		return "application/octet-stream"
+	}
+}
+
+// ConfirmUploadInput is the JSON body for POST /api/rooms/:id/upload/confirm
+type ConfirmUploadInput struct {
+	CDNPath      string `json:"cdn_path" binding:"required"`
+	CDNURL       string `json:"cdn_url" binding:"required"`
+	OriginalName string `json:"original_name" binding:"required"`
+	MimeType     string `json:"mime_type"`
+	FileSize     int64  `json:"file_size"`
+	SessionID    string `json:"session_id"`
+	Duration     string `json:"duration"`
+}
+
+// ConfirmUploadHandler creates the DB record after a direct BunnyCDN upload.
+// The file is already on BunnyCDN — this endpoint only stores metadata.
+// POST /api/rooms/:id/upload/confirm
+func ConfirmUploadHandler(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	authenticatedUserID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	roomIDStr := c.Param("id")
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil || roomID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+	roomIDUint := uint(roomID)
+
+	var input ConfirmUploadInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("ConfirmUploadHandler: Invalid input: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var room models.Room
+	if err := DB.First(&room, roomIDUint).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(input.OriginalName))
+	mimeType := input.MimeType
+	if mimeType == "" {
+		mimeType = getMimeType(ext)
+	}
+
+	isTemporary := input.SessionID != ""
+	posterURL := "/icons/placeholder-poster.jpg"
+
+	log.Printf("💾 [ConfirmUpload] roomID=%d userID=%d file=%s isTemp=%v", roomIDUint, authenticatedUserID, input.OriginalName, isTemporary)
+
+	if isTemporary {
+		newItem := models.TemporaryMediaItem{
+			FileName:     filepath.Base(input.CDNPath),
+			OriginalName: input.OriginalName,
+			MimeType:     mimeType,
+			FileSize:     input.FileSize,
+			FilePath:     input.CDNURL,
+			PosterURL:    posterURL,
+			RoomID:       roomIDUint,
+			UploaderID:   authenticatedUserID,
+			Duration:     input.Duration,
+			OrderIndex:   0,
+			SessionID:    input.SessionID,
+		}
+
+		if err := DB.Create(&newItem).Error; err != nil {
+			log.Printf("❌ [ConfirmUpload] DB create failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save media information"})
+			return
+		}
+		log.Printf("✅ [ConfirmUpload] Created TemporaryMediaItem ID=%d", newItem.ID)
+
+		if pq := services.GetPreviewQueue(); pq != nil {
+			pq.QueuePreview(services.PreviewRequest{
+				SessionID:        input.SessionID,
+				MediaID:          newItem.ID,
+				MediaPath:        input.CDNURL,
+				IsTemporary:      true,
+				CurrentTimestamp: 0,
+				MediaType:        services.MediaTypeUpload,
+			})
+		}
+
+		go func(itemID uint, roomID uint, cdnURL, cdnPath, sid, mimeType string) {
+			posterFilename := strings.TrimSuffix(filepath.Base(cdnPath), filepath.Ext(cdnPath)) + "_poster.jpg"
+			posterLocalPath := filepath.Join(UploadDir, "temp", posterFilename)
+			posterCDNURL := "/icons/placeholder-poster.jpg"
+
+			localVideoPath, err := utils.DownloadFileToTemp(cdnURL, filepath.Ext(cdnPath))
+			if err != nil {
+				log.Printf("⚠️ [ConfirmUpload Async] Download for poster failed: %v", err)
+			} else {
+				if err := utils.ExtractThumbnail(localVideoPath, posterLocalPath); err != nil {
+					log.Printf("⚠️ [ConfirmUpload Async] Poster extraction failed item %d: %v", itemID, err)
+				} else if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "temp-media/"+posterFilename, "image/jpeg"); err != nil {
+					log.Printf("⚠️ [ConfirmUpload Async] Poster CDN upload failed: %v", err)
+				} else {
+					posterCDNURL = pURL
+					os.Remove(posterLocalPath)
+				}
+				os.Remove(localVideoPath)
+			}
+
+			if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
+				log.Printf("❌ [ConfirmUpload Async] poster_url update failed: %v", err)
+				return
+			}
+			log.Printf("✅ [ConfirmUpload Async] Poster set for item %d: %s", itemID, posterCDNURL)
+
+			if sid != "" {
+				broadcastData := map[string]interface{}{
+					"type": "session_preview_updated", "session_id": sid,
+					"poster_url": posterCDNURL, "preview_url": "",
+				}
+				broadcastJSON, _ := json.Marshal(broadcastData)
+				hub.BroadcastToLobby(OutgoingMessage{Data: broadcastJSON, IsBinary: false})
+			}
+			roomBroadcast := map[string]interface{}{
+				"type": "playlist_poster_updated", "item_id": itemID, "poster_url": posterCDNURL,
+			}
+			roomJSON, _ := json.Marshal(roomBroadcast)
+			hub.BroadcastToRoom(roomID, OutgoingMessage{Data: roomJSON, IsBinary: false}, nil)
+		}(newItem.ID, roomIDUint, input.CDNURL, input.CDNPath, input.SessionID, mimeType)
+
+		c.JSON(http.StatusCreated, gin.H{
+			"message":       "Temporary media item uploaded successfully",
+			"media_item_id": newItem.ID, "file_name": newItem.FileName,
+			"original_name": newItem.OriginalName, "mime_type": newItem.MimeType,
+			"file_size": newItem.FileSize, "file_path": newItem.FilePath,
+			"file_url": input.CDNURL, "poster_url": newItem.PosterURL,
+			"room_id": newItem.RoomID, "uploader_id": newItem.UploaderID,
+			"duration": newItem.Duration, "is_temporary": true, "session_id": input.SessionID,
+		})
+	} else {
+		newItem := models.MediaItem{
+			FileName:     filepath.Base(input.CDNPath),
+			OriginalName: input.OriginalName,
+			MimeType:     mimeType,
+			FileSize:     input.FileSize,
+			FilePath:     input.CDNURL,
+			PosterURL:    posterURL,
+			RoomID:       roomIDUint,
+			UploaderID:   authenticatedUserID,
+			Duration:     input.Duration,
+			OrderIndex:   0,
+		}
+
+		if err := DB.Create(&newItem).Error; err != nil {
+			log.Printf("❌ [ConfirmUpload] DB create failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save media information"})
+			return
+		}
+		log.Printf("✅ [ConfirmUpload] Created MediaItem ID=%d", newItem.ID)
+
+		go func(itemID uint, cdnURL, cdnPath, mimeType string) {
+			posterFilename := strings.TrimSuffix(filepath.Base(cdnPath), filepath.Ext(cdnPath)) + "_poster.jpg"
+			posterLocalPath := filepath.Join(UploadDir, posterFilename)
+			posterCDNURL := "/icons/placeholder-poster.jpg"
+
+			localVideoPath, err := utils.DownloadFileToTemp(cdnURL, filepath.Ext(cdnPath))
+			if err != nil {
+				log.Printf("⚠️ [ConfirmUpload Async] Download for poster failed: %v", err)
+			} else {
+				if err := utils.ExtractThumbnail(localVideoPath, posterLocalPath); err != nil {
+					log.Printf("⚠️ [ConfirmUpload Async] Poster extraction failed: %v", err)
+				} else if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "media/"+posterFilename, "image/jpeg"); err != nil {
+					log.Printf("⚠️ [ConfirmUpload Async] Poster CDN upload failed: %v", err)
+				} else {
+					posterCDNURL = pURL
+					os.Remove(posterLocalPath)
+				}
+				os.Remove(localVideoPath)
+			}
+			DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL)
+		}(newItem.ID, input.CDNURL, input.CDNPath, mimeType)
+
+		c.JSON(http.StatusCreated, gin.H{
+			"message":    "Media item uploaded successfully",
+			"media_item": newItem, "file_name": newItem.FileName,
+			"original_name": newItem.OriginalName, "mime_type": newItem.MimeType,
+			"file_size": newItem.FileSize, "file_path": newItem.FilePath,
+			"file_url": input.CDNURL, "poster_url": newItem.PosterURL,
+			"room_id": newItem.RoomID, "uploader_id": newItem.UploaderID,
+			"duration": newItem.Duration, "is_temporary": false,
+		})
 	}
 }
