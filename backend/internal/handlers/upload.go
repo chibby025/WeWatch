@@ -560,3 +560,254 @@ func ConfirmUploadHandler(c *gin.Context) {
 		})
 	}
 }
+
+// ConfirmChunkedUploadInput is the JSON body for POST /api/rooms/:id/upload/assemble
+type ConfirmChunkedUploadInput struct {
+	UploadID     string `json:"upload_id" binding:"required"`
+	TotalChunks  int    `json:"total_chunks" binding:"required,min=1"`
+	OriginalName string `json:"original_name" binding:"required"`
+	MimeType     string `json:"mime_type"`
+	FileSize     int64  `json:"file_size"`
+	SessionID    string `json:"session_id"`
+	Duration     string `json:"duration"`
+}
+
+// AssembleUploadHandler downloads BunnyCDN chunks uploaded via the Vercel Edge Function,
+// assembles them into the final file, re-uploads to BunnyCDN, and creates the DB record.
+// POST /api/rooms/:id/upload/assemble
+func AssembleUploadHandler(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	authenticatedUserID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	roomIDStr := c.Param("id")
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil || roomID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+	roomIDUint := uint(roomID)
+
+	var input ConfirmChunkedUploadInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("AssembleUploadHandler: Invalid input: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var room models.Room
+	if err := DB.First(&room, roomIDUint).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(input.OriginalName))
+	mimeType := input.MimeType
+	if mimeType == "" {
+		mimeType = getMimeType(ext)
+	}
+
+	log.Printf("[Assemble] Starting assembly: uploadId=%s chunks=%d file=%s", input.UploadID, input.TotalChunks, input.OriginalName)
+
+	// Create a temp file to assemble chunks into
+	tmpFile, err := os.CreateTemp("", "ww_assemble_*"+ext)
+	if err != nil {
+		log.Printf("[Assemble] Failed to create temp file: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare assembly"})
+		return
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	// Download and append each chunk
+	for i := 0; i < input.TotalChunks; i++ {
+		chunkPath := fmt.Sprintf("temp-media/%s/chunk_%d", input.UploadID, i)
+		log.Printf("[Assemble] Downloading chunk %d/%d", i+1, input.TotalChunks)
+
+		chunkData, err := utils.DownloadChunkFromBunnyCDNStorage(chunkPath)
+		if err != nil {
+			tmpFile.Close()
+			log.Printf("[Assemble] Failed to download chunk %d: %v", i, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to download chunk %d", i)})
+			return
+		}
+
+		if _, err := tmpFile.Write(chunkData); err != nil {
+			tmpFile.Close()
+			log.Printf("[Assemble] Failed to write chunk %d: %v", i, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to assemble file"})
+			return
+		}
+	}
+	tmpFile.Close()
+
+	log.Printf("[Assemble] All %d chunks assembled into %s", input.TotalChunks, tmpPath)
+
+	// Upload assembled file to BunnyCDN
+	uniqueID := uuid.New().String()
+	isTemporary := input.SessionID != ""
+	var remotePath string
+	if isTemporary {
+		remotePath = fmt.Sprintf("temp-media/%s%s", uniqueID, ext)
+	} else {
+		remotePath = fmt.Sprintf("media/%s%s", uniqueID, ext)
+	}
+
+	cdnURL, err := utils.UploadLocalFileToBunnyCDN(tmpPath, remotePath, mimeType)
+	if err != nil {
+		log.Printf("[Assemble] CDN upload failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload assembled file"})
+		return
+	}
+
+	log.Printf("[Assemble] Uploaded to CDN: %s", cdnURL)
+
+	posterURL := "/icons/placeholder-poster.jpg"
+
+	if isTemporary {
+		newItem := models.TemporaryMediaItem{
+			FileName:     filepath.Base(remotePath),
+			OriginalName: input.OriginalName,
+			MimeType:     mimeType,
+			FileSize:     input.FileSize,
+			FilePath:     cdnURL,
+			PosterURL:    posterURL,
+			RoomID:       roomIDUint,
+			UploaderID:   authenticatedUserID,
+			Duration:     input.Duration,
+			OrderIndex:   0,
+			SessionID:    input.SessionID,
+		}
+
+		if err := DB.Create(&newItem).Error; err != nil {
+			log.Printf("[Assemble] DB create failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save media information"})
+			return
+		}
+		log.Printf("[Assemble] Created TemporaryMediaItem ID=%d", newItem.ID)
+
+		if pq := services.GetPreviewQueue(); pq != nil {
+			pq.QueuePreview(services.PreviewRequest{
+				SessionID:        input.SessionID,
+				MediaID:          newItem.ID,
+				MediaPath:        cdnURL,
+				IsTemporary:      true,
+				CurrentTimestamp: 0,
+				MediaType:        services.MediaTypeUpload,
+			})
+		}
+
+		// Async: generate poster + delete chunk files from BunnyCDN
+		go func(itemID uint, roomID uint, cdnURL, remotePath, sid, mimeType, uploadID string, totalChunks int) {
+			// Delete chunk files
+			for i := 0; i < totalChunks; i++ {
+				utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("temp-media/%s/chunk_%d", uploadID, i))
+			}
+			log.Printf("[Assemble] Deleted %d chunk files for uploadId=%s", totalChunks, uploadID)
+
+			// Poster generation
+			posterFilename := strings.TrimSuffix(filepath.Base(remotePath), filepath.Ext(remotePath)) + "_poster.jpg"
+			posterLocalPath := filepath.Join(UploadDir, "temp", posterFilename)
+			posterCDNURL := "/icons/placeholder-poster.jpg"
+
+			localVideoPath, err := utils.DownloadFileToTemp(cdnURL, filepath.Ext(remotePath))
+			if err != nil {
+				log.Printf("[Assemble Async] Download for poster failed: %v", err)
+			} else {
+				if err := utils.ExtractThumbnail(localVideoPath, posterLocalPath); err != nil {
+					log.Printf("[Assemble Async] Poster extraction failed: %v", err)
+				} else if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "temp-media/"+posterFilename, "image/jpeg"); err != nil {
+					log.Printf("[Assemble Async] Poster CDN upload failed: %v", err)
+				} else {
+					posterCDNURL = pURL
+					os.Remove(posterLocalPath)
+				}
+				os.Remove(localVideoPath)
+			}
+
+			if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
+				log.Printf("[Assemble Async] poster_url update failed: %v", err)
+				return
+			}
+			if sid != "" {
+				broadcastData := map[string]interface{}{
+					"type": "session_preview_updated", "session_id": sid,
+					"poster_url": posterCDNURL, "preview_url": "",
+				}
+				broadcastJSON, _ := json.Marshal(broadcastData)
+				hub.BroadcastToLobby(OutgoingMessage{Data: broadcastJSON, IsBinary: false})
+			}
+			roomBroadcast := map[string]interface{}{
+				"type": "playlist_poster_updated", "item_id": itemID, "poster_url": posterCDNURL,
+			}
+			roomJSON, _ := json.Marshal(roomBroadcast)
+			hub.BroadcastToRoom(roomID, OutgoingMessage{Data: roomJSON, IsBinary: false}, nil)
+		}(newItem.ID, roomIDUint, cdnURL, remotePath, input.SessionID, mimeType, input.UploadID, input.TotalChunks)
+
+		c.JSON(http.StatusCreated, gin.H{
+			"message":       "Temporary media item uploaded successfully",
+			"media_item_id": newItem.ID, "file_name": newItem.FileName,
+			"original_name": newItem.OriginalName, "mime_type": newItem.MimeType,
+			"file_size": newItem.FileSize, "file_path": newItem.FilePath,
+			"file_url": cdnURL, "poster_url": newItem.PosterURL,
+			"room_id": newItem.RoomID, "uploader_id": newItem.UploaderID,
+			"duration": newItem.Duration, "is_temporary": true, "session_id": input.SessionID,
+		})
+	} else {
+		newItem := models.MediaItem{
+			FileName:     filepath.Base(remotePath),
+			OriginalName: input.OriginalName,
+			MimeType:     mimeType,
+			FileSize:     input.FileSize,
+			FilePath:     cdnURL,
+			PosterURL:    posterURL,
+			RoomID:       roomIDUint,
+			UploaderID:   authenticatedUserID,
+			Duration:     input.Duration,
+			OrderIndex:   0,
+		}
+
+		if err := DB.Create(&newItem).Error; err != nil {
+			log.Printf("[Assemble] DB create failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save media information"})
+			return
+		}
+
+		go func(itemID uint, cdnURL, remotePath, mimeType, uploadID string, totalChunks int) {
+			for i := 0; i < totalChunks; i++ {
+				utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("temp-media/%s/chunk_%d", uploadID, i))
+			}
+			posterFilename := strings.TrimSuffix(filepath.Base(remotePath), filepath.Ext(remotePath)) + "_poster.jpg"
+			posterLocalPath := filepath.Join(UploadDir, posterFilename)
+			posterCDNURL := "/icons/placeholder-poster.jpg"
+			localVideoPath, err := utils.DownloadFileToTemp(cdnURL, filepath.Ext(remotePath))
+			if err == nil {
+				if err := utils.ExtractThumbnail(localVideoPath, posterLocalPath); err == nil {
+					if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "media/"+posterFilename, "image/jpeg"); err == nil {
+						posterCDNURL = pURL
+						os.Remove(posterLocalPath)
+					}
+				}
+				os.Remove(localVideoPath)
+			}
+			DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL)
+		}(newItem.ID, cdnURL, remotePath, mimeType, input.UploadID, input.TotalChunks)
+
+		c.JSON(http.StatusCreated, gin.H{
+			"message":       "Media item uploaded successfully",
+			"media_item":    newItem, "file_name": newItem.FileName,
+			"original_name": newItem.OriginalName, "mime_type": newItem.MimeType,
+			"file_size": newItem.FileSize, "file_path": newItem.FilePath,
+			"file_url": cdnURL, "poster_url": newItem.PosterURL,
+			"room_id": newItem.RoomID, "uploader_id": newItem.UploaderID,
+			"duration": newItem.Duration, "is_temporary": false,
+		})
+	}
+}

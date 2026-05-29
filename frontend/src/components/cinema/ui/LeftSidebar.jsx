@@ -1,6 +1,6 @@
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { uploadMediaToRoom, uploadChunk, uploadFileToBunnyCDN, confirmUpload, apiClient, API_BASE_URL } from '../../../services/api';
+import { uploadMediaToRoom, uploadChunk, uploadFileToBunnyCDN, assembleUpload, apiClient, API_BASE_URL } from '../../../services/api';
 import { Gamepad2, Video, BookOpen, Music, FileText } from 'lucide-react'; // Game, Video, Bible, Hymn, Sermon icons
 import toast from 'react-hot-toast';
 import BibleControl from '../../liveshare/BibleControl';
@@ -630,11 +630,11 @@ export default function LeftSidebar({
       // Get duration before upload (fast, runs locally in browser)
       const duration = await getVideoDurationFromFile(file);
 
-      // Upload via Vercel Edge Function proxy (streams to BunnyCDN)
+      // Upload in 3MB chunks via Vercel Edge Function → BunnyCDN
       const startTime = Date.now();
-      await uploadFileToBunnyCDN(
+      const { uploadId, totalChunks } = await uploadFileToBunnyCDN(
         file,
-        cdnPath,
+        cdnPath, // ignored internally, kept for signature compat
         (percent, loaded, total) => {
           const now = Date.now();
           if (now - lastProgressUpdateRef.current < 500 && percent < 100) return;
@@ -655,13 +655,13 @@ export default function LeftSidebar({
         abortController.signal
       );
 
-      console.log(`✅ [DirectUpload] File on CDN: ${cdnUrl}`);
-      setUploadProgress(100);
+      console.log(`[DirectUpload] All chunks on BunnyCDN, requesting assembly...`);
+      setUploadProgress(99); // Show near-complete while Railway assembles
 
-      // Confirm with Railway — tiny JSON, no file data
-      await confirmUpload(roomId, {
-        cdn_path: cdnPath,
-        cdn_url: cdnUrl,
+      // Tell Railway to download chunks, assemble, and create the DB record
+      await assembleUpload(roomId, {
+        upload_id: uploadId,
+        total_chunks: totalChunks,
         original_name: file.name,
         mime_type: file.type || `video/${ext}`,
         file_size: file.size,

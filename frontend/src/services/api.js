@@ -941,62 +941,61 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
 };
 
 /**
- * Upload file directly to BunnyCDN from the browser.
- * Vercel Edge Functions have a 4 MB body limit so we skip all intermediaries
- * and PUT straight to BunnyCDN's Storage API using VITE_-prefixed env vars.
- * Uses XHR for upload progress tracking.
+ * Upload file to BunnyCDN in 3MB chunks via Vercel Edge Function.
+ * BunnyCDN Storage API requires header auth which CORS strips — the Edge Function
+ * acts as a server-side proxy for each chunk (each under the 4MB Edge Function limit).
+ * Returns { uploadId, totalChunks } so Railway can assemble the final file.
  */
-export const uploadFileToBunnyCDN = (file, cdnPath, onProgress, abortSignal) =>
-  new Promise((resolve, reject) => {
-    const accessKey  = import.meta.env.VITE_BUNNY_ACCESS_KEY;
-    const zone       = import.meta.env.VITE_BUNNY_STORAGE_ZONE;
-    const region     = import.meta.env.VITE_BUNNY_STORAGE_REGION || 'ny';
+export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSignal) => {
+  const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB — safely under Vercel's 4MB Edge Function limit
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  const uploadId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Debug: log first 8 chars so we can verify the key is baked in correctly
-    console.log(`🔑 [BunnyCDN] key=${accessKey ? accessKey.substring(0, 8) + '...' : 'MISSING'} zone=${zone || 'MISSING'} region=${region}`);
+  console.log(`[BunnyCDN Chunked] ${totalChunks} chunks x 3MB for uploadId=${uploadId}`);
 
-    if (!accessKey || !zone) {
-      reject(new Error('BunnyCDN env vars not configured (VITE_BUNNY_ACCESS_KEY / VITE_BUNNY_STORAGE_ZONE)'));
-      return;
+  for (let i = 0; i < totalChunks; i++) {
+    if (abortSignal?.aborted) throw Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' });
+
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const chunk = file.slice(start, end);
+
+    const chunkPath = `temp-media/${uploadId}/chunk_${i}`;
+    const proxyUrl = `/api/upload-proxy?path=${encodeURIComponent(chunkPath)}`;
+
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Chunk ${i} upload failed: ${xhr.status}`));
+      xhr.onerror = () => reject(new Error(`Network error on chunk ${i}`));
+      xhr.onabort = () => reject(Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' }));
+      if (abortSignal) abortSignal.addEventListener('abort', () => xhr.abort());
+      xhr.open('PUT', proxyUrl);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.send(chunk);
+    });
+
+    if (onProgress) {
+      const loaded = Math.min((i + 1) * CHUNK_SIZE, file.size);
+      onProgress(Math.round(loaded * 100 / file.size), loaded, file.size);
     }
 
-    const uploadUrl = `https://${region}.storage.bunnycdn.com/${zone}/${cdnPath}`;
-    console.log(`📡 [BunnyCDN] PUT ${uploadUrl}`);
+    console.log(`[BunnyCDN Chunked] chunk ${i + 1}/${totalChunks} uploaded`);
+  }
 
-    const xhr = new XMLHttpRequest();
-
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) {
-        onProgress(Math.round((e.loaded * 100) / e.total), e.loaded, e.total);
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
-      } else {
-        reject(new Error(`BunnyCDN upload failed: ${xhr.status} ${xhr.responseText}`));
-      }
-    };
-
-    xhr.onerror = () => reject(new Error('Network error during upload'));
-    xhr.onabort = () => reject(Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' }));
-
-    if (abortSignal) {
-      abortSignal.addEventListener('abort', () => xhr.abort());
-    }
-
-    xhr.open('PUT', uploadUrl);
-    xhr.setRequestHeader('AccessKey', accessKey);
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-    xhr.send(file);
-  });
+  return { uploadId, totalChunks };
+};
 
 /**
  * Confirm a completed BunnyCDN upload with Railway to create the DB record.
  */
 export const confirmUpload = (roomId, data) =>
   apiClient.post(`/api/rooms/${roomId}/upload/confirm`, data);
+
+/**
+ * Tell Railway to assemble BunnyCDN chunks into the final file and create the DB record.
+ */
+export const assembleUpload = (roomId, data) =>
+  apiClient.post(`/api/rooms/${roomId}/upload/assemble`, data, { timeout: 300000 }); // 5min for large files
 
 export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false, sessionId = null, abortSignal = null) => {
   const uploadStartTime = Date.now();

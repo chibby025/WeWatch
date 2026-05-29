@@ -24,9 +24,13 @@ export default async function handler(request) {
     return new Response(JSON.stringify({ error: 'Missing path parameter' }), { status: 400 });
   }
 
+  // Allow final video files (with extension) and intermediate chunk files
   const ext = cdnPath.split('.').pop()?.toLowerCase();
-  if (!ext || !ALLOWED_EXTENSIONS.has(ext)) {
-    return new Response(JSON.stringify({ error: 'Invalid file type' }), { status: 400 });
+  const isVideoFile = ALLOWED_EXTENSIONS.has(ext);
+  const isChunkFile = /^(temp-media|media)\/[\w_-]+\/chunk_\d+$/.test(cdnPath);
+
+  if (!isVideoFile && !isChunkFile) {
+    return new Response(JSON.stringify({ error: 'Invalid file path' }), { status: 400 });
   }
 
   const storageZone = process.env.BUNNY_STORAGE_ZONE;

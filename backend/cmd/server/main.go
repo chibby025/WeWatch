@@ -469,6 +469,7 @@ func main() {
 		uploadLimiter := handlers.NewUploadRateLimiter(3, 10*time.Minute)
 		roomGroup.POST("/:id/upload", uploadLimiter, handlers.UploadMediaHandler) // POST /api/rooms/:id/upload (Upload media to a room)
 		roomGroup.POST("/:id/upload/confirm", handlers.ConfirmUploadHandler)      // POST /api/rooms/:id/upload/confirm (Confirm BunnyCDN direct upload)
+		roomGroup.POST("/:id/upload/assemble", handlers.AssembleUploadHandler)    // POST /api/rooms/:id/upload/assemble (Assemble chunked BunnyCDN upload)
 		roomGroup.POST("/:id/media/stream", handlers.HandleStreamURL)     // POST /api/rooms/:id/media/stream (Add stream URL to playlist)
 		roomGroup.GET("/:id/temporary-media", handlers.GetTemporaryMediaItemsForRoomHandler) // GET /api/rooms/:id/temporary-media (Get list of temporary media items)
 		roomGroup.DELETE("/:id/temporary-media", handlers.DeleteTemporaryMediaItemsForRoomHandler) // DELETE /api/rooms/:id/temporary-media (Delete all temporary media items - Host only)

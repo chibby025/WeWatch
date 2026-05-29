@@ -395,6 +395,52 @@ func UploadTrailerToBunnyCDN(fileData []byte, filename string, contentType strin
 	return cdnURL, nil
 }
 
+// DownloadChunkFromBunnyCDNStorage downloads a chunk file from the BunnyCDN Storage Zone
+// using the AccessKey (server-to-server, no CORS). Returns the raw bytes.
+func DownloadChunkFromBunnyCDNStorage(chunkPath string) ([]byte, error) {
+	downloadURL := fmt.Sprintf("%s/%s", getBunnyCDNStorageURL(), chunkPath)
+	req, err := http.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create download request: %w", err)
+	}
+	req.Header.Set("AccessKey", BunnyCDNAccessKey)
+
+	client := &http.Client{Timeout: 2 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download returned status %d for %s", resp.StatusCode, chunkPath)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read chunk body: %w", err)
+	}
+	return data, nil
+}
+
+// DeletePathFromBunnyCDNStorage deletes a file or prefix from BunnyCDN Storage Zone.
+func DeletePathFromBunnyCDNStorage(remotePath string) error {
+	deleteURL := fmt.Sprintf("%s/%s", getBunnyCDNStorageURL(), remotePath)
+	req, err := http.NewRequest("DELETE", deleteURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create delete request: %w", err)
+	}
+	req.Header.Set("AccessKey", BunnyCDNAccessKey)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
 // --- LOCAL STORAGE FALLBACK (Development Only) ---
 
 // uploadToLocalStorage saves file to ./uploads/posts/ directory
