@@ -7,7 +7,7 @@
  * @param {number} chunkSize - Size of each chunk in bytes (default 5MB)
  * @returns {Array} Array of chunk metadata
  */
-export const splitFileIntoChunks = (file, chunkSize = 5 * 1024 * 1024) => {
+export const splitFileIntoChunks = (file, chunkSize = 3 * 1024 * 1024) => {
   const chunks = [];
   const totalChunks = Math.ceil(file.size / chunkSize);
   
@@ -169,11 +169,13 @@ export const getOptimalChunkSize = (networkQuality) => {
     '2g':     256 * 1024,        // 256KB for 2G  (~1.2s at 0.17 MB/s)
     '3g':     512 * 1024,        // 512KB for 3G  (~2.4s at 0.21 MB/s) — Railway proxy timeout fix
     '4g':     2 * 1024 * 1024,  // 2MB for 4G
-    'wifi':   5 * 1024 * 1024,  // 5MB for WiFi
+    'wifi':   3 * 1024 * 1024,  // 3MB for WiFi (Vercel rewrite proxy has 4.5MB body limit — stay well under)
     'unknown': 512 * 1024,       // 512KB safe default
   };
 
-  return chunkSizes[networkQuality] || chunkSizes['unknown'];
+  const size = chunkSizes[networkQuality] || chunkSizes['unknown'];
+  console.log(`🌐 [Chunker] Network quality: ${networkQuality} → chunk size: ${(size / 1024 / 1024).toFixed(2)}MB`);
+  return size;
 };
 
 /**
