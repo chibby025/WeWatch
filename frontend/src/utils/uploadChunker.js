@@ -166,13 +166,13 @@ export const uploadChunkWithRetry = async ({
  */
 export const getOptimalChunkSize = (networkQuality) => {
   const chunkSizes = {
-    '2g': 1 * 1024 * 1024,      // 1MB for 2G
-    '3g': 2 * 1024 * 1024,      // 2MB for 3G
-    '4g': 5 * 1024 * 1024,      // 5MB for 4G
-    'wifi': 10 * 1024 * 1024,   // 10MB for WiFi
-    'unknown': 2 * 1024 * 1024  // 2MB conservative default (iOS Safari / Firefox have no Network API)
+    '2g':     256 * 1024,        // 256KB for 2G  (~1.2s at 0.17 MB/s)
+    '3g':     512 * 1024,        // 512KB for 3G  (~2.4s at 0.21 MB/s) — Railway proxy timeout fix
+    '4g':     2 * 1024 * 1024,  // 2MB for 4G
+    'wifi':   5 * 1024 * 1024,  // 5MB for WiFi
+    'unknown': 512 * 1024,       // 512KB safe default
   };
-  
+
   return chunkSizes[networkQuality] || chunkSizes['unknown'];
 };
 
@@ -183,9 +183,9 @@ export const getOptimalChunkSize = (networkQuality) => {
  */
 export const getUploadConcurrency = (networkQuality) => {
   const concurrency = {
-    '2g': 2,      // 2 chunks at once for 2G
-    '3g': 3,      // 3 chunks at once for 3G
-    '4g': 5,      // 5 chunks at once for 4G
+    '2g': 1,      // 1 chunk at a time for 2G (slow — serialise to avoid proxy timeouts)
+    '3g': 1,      // 1 chunk at a time for 3G (Railway proxy timeout fix)
+    '4g': 3,      // 3 chunks at once for 4G
     'wifi': 5,    // 5 chunks at once for WiFi
     'unknown': 3  // 3 chunks default
   };
