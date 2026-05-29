@@ -38,8 +38,11 @@ export default async function handler(request) {
   const region = process.env.BUNNY_STORAGE_REGION || 'ny';
 
   if (!storageZone || !accessKey) {
-    return new Response(JSON.stringify({ error: 'Storage not configured' }), { status: 500 });
+    return new Response(JSON.stringify({ error: 'Storage not configured', zone: storageZone || 'MISSING', key: accessKey ? 'SET' : 'MISSING' }), { status: 500 });
   }
+
+  // Temporary debug — log key prefix to verify correct value is set
+  console.log(`[upload-proxy] zone=${storageZone} region=${region} key=${accessKey.substring(0, 8)}...`);
 
   const bunnyUrl = `https://${region}.storage.bunnycdn.com/${storageZone}/${cdnPath}`;
   const contentType = request.headers.get('Content-Type') || 'application/octet-stream';
