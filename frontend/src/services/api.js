@@ -952,6 +952,9 @@ export const uploadFileToBunnyCDN = (file, cdnPath, onProgress, abortSignal) =>
     const zone       = import.meta.env.VITE_BUNNY_STORAGE_ZONE;
     const region     = import.meta.env.VITE_BUNNY_STORAGE_REGION || 'ny';
 
+    // Debug: log first 8 chars so we can verify the key is baked in correctly
+    console.log(`🔑 [BunnyCDN] key=${accessKey ? accessKey.substring(0, 8) + '...' : 'MISSING'} zone=${zone || 'MISSING'} region=${region}`);
+
     if (!accessKey || !zone) {
       reject(new Error('BunnyCDN env vars not configured (VITE_BUNNY_ACCESS_KEY / VITE_BUNNY_STORAGE_ZONE)'));
       return;
