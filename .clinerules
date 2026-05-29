@@ -25,9 +25,31 @@ This is more than a project - it's a testament to perseverance, continuous learn
 
 ---
 
-## 📍 PROJECT STATUS (May 10, 2026 - POST-LAUNCH + REVENUE SPLIT CORRECTION)
+## 📍 PROJECT STATUS (May 28, 2026 - SESSION PREVIEW PIPELINE + CONSOLE CLEANUP)
 
 ### 🚀 LAUNCH STATUS: PRODUCTION LIVE ✅
+
+### ✅ LATEST UPDATES (May 28, 2026):
+
+**Session Preview Pipeline (Lobby Live Cards)** ✅
+- `WatchSession` model: added `preview_url TEXT` + `poster_url TEXT` columns (migration pending)
+- `session_preview.go`: `POST /api/sessions/:id/upload-frames` — handles JPEG poster frames and liveshare WebM clips. `source_type` read before frames check to avoid false 400 on clip uploads.
+- `internal/services/preview_queue.go`: background JPEG→WebM clip encoder; `IsTemporary` bug fixed.
+- `internal/services/media_switch_handler.go`: 30s debounced preview refresh on media change, cancel-safe timers.
+- `session_helpers.go`: `preview_url` + `poster_url` included in `GetAllActiveSessionsHandler` response.
+- Static file serving fix: `strings.TrimPrefix(urlPath, "/")` before `filepath.Join` in `main.go`.
+- `VideoWatch.jsx`: both upload calls use `{ headers: { 'Content-Type': undefined } }` for proper multipart boundary.
+- `SessionPreview.jsx`: full state machine (emoji→loading→poster→video), IntersectionObserver lazy-load + play/pause, data-saver detection, aspect-ratio-aware fit, `previewVersion` cache-busting. Emoji fallback uses W logo (`/icons/lwoIcon.png`) with `iconFloat` CSS animation on purple→blue gradient.
+
+**Console Noise Cleanup** ✅
+- `api.js` response interceptor: silently drops `ERR_CANCELED` / `CanceledError` / `AbortError` — no more spam from React StrictMode double-invoke.
+- `LobbyPage.jsx` `ws.onopen`: logs `✅ [LobbyPage WS] Connected`.
+- `LobbyPage.jsx` `ws.onerror`: downgraded to `console.warn`, fires only on first reconnect attempt.
+- `PostViewModal.jsx`: removed all debug `console.log` calls for follow-button check/state/render.
+
+---
+
+## 📍 PROJECT STATUS (May 10, 2026 - POST-LAUNCH + REVENUE SPLIT CORRECTION)
 
 ### 🎯 NEW STRATEGIC DIRECTION: "Twitch meets TikTok for Watch Parties"
 **Positioning:** Social congregation app for creator monetization
@@ -8753,6 +8775,60 @@ These patterns were applied to `LectureHallPage.jsx` for network resilience and 
 - Amber badge on taskbar `CalendarDaysIcon` when count > 0 (matches bell badge style).
 - Badge cleared (`setUpcomingEventsCount(0)`) when drawer opens.
 
+
+## Updates (2026-05-28)
+
+### Room Favourites
+- New `user_room_favourites` table — separate from `user_rooms`. **Do not** add a favourites column to `user_rooms`; keep them as distinct tables.
+- Model: `UserRoomFavourite` in `models/user_room_favourite.go` with composite unique index `(user_id, room_id)` and `Room *Room` preload association.
+- Room model field is `ImageURL` (not `AvatarURL`) — use this when building `RoomItem` response structs.
+- `POST /api/rooms/:id/favourite` → `ToggleRoomFavouriteHandler` in `room_favourite_handler.go`: adds if absent, removes if present; returns `{ is_favourite: bool }`.
+- `GET /api/rooms/favourites` → `GetFavouriteRoomsHandler`: returns `{ rooms: [{ room_id, name, image_url, room_type, is_public }] }`.
+- Frontend state in `LobbyPage.jsx`: `savedRooms { [roomId]: bool }` + `joinedRooms { [roomId]: 'active'|'pending' }`.
+- **DB migration (NOT YET RUN):**
+```sql
+CREATE TABLE IF NOT EXISTS user_room_favourites (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  room_id BIGINT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, room_id)
+);
+```
+
+### Session Preview Cards — Favourite/Join UI
+Applies to all 3 card layouts in `LobbyPage.jsx` (small TikTok, grid, fullscreen) and the `watch_out` DM bubble in `LobbyMessageBubble.jsx`.
+
+**Join (room membership):**
+- Green `+` circle badge overlaid at bottom-right of room avatar (or emoji span in DM bubble). Hidden if `session.is_member` is true or session is temporary.
+- After clicking: becomes blue `✓` badge. State held in `joinedRooms[roomId]`.
+- Join badge hidden for private watchouts in DM bubble (no standalone room to join).
+
+**Save (favourite):**
+- `BookmarkOutlineIcon` with white `+` badge at top-right = unsaved. Solid amber `BookmarkIcon`, no badge = saved.
+- Import: solid from `@heroicons/react/24/solid`, outline aliased as `BookmarkOutlineIcon` from `@heroicons/react/24/outline`.
+- Hidden for temporary (instant-watch) sessions.
+- In DM bubble: rendered as a single-button row below the card body, above the primary "Watch Now →" / "Join Watch Session →" CTA.
+
+### Session Preview Cards — Ranking Algorithm
+- `SessionResponse` in `session_helpers.go` now includes `IsMember bool \`json:"is_member"\`` — set from a batch query of the user's active `user_rooms` rows before the main session fetch (no N+1).
+- Scoring ORDER BY (quality-first, server-side SQL):
+  - **Quality 0.4** — Bayesian credible rating: `(total_ratings × avg_rating + 5×3.0) / ((total_ratings + 5) × 5.0)`, normalised 0–1. Prevents single-rating gaming.
+  - **Audience 0.3** — `LEAST(live_member_count / 100.0, 1.0)`. Capped at 100 viewers.
+  - **Recency 0.2** — `1 / (1 + hours_since_start)`. Exponential decay.
+  - **Preview 0.1** — +0.1 bonus if `preview_url` is non-empty.
+- Implemented via GORM `.Joins("JOIN rooms r ON r.id = watch_sessions.room_id")` + member count subquery LEFT JOIN.
+
+### SessionChatPreviewModal — Bottom Sheet
+- Redesigned from a centred dialog to a bottom-anchored sheet.
+- Outer container: `fixed inset-0 ... flex items-end justify-center` (no padding).
+- Inner panel: `h-[90vh] rounded-t-2xl animate-slide-up`.
+- `handleOpenChatPreview(session, e)` in `LobbyPage.jsx` only sets `selectedSessionForChat` + `isChatPreviewOpen(true)`. It does **not** call `connectToSessionChat` or set `activeChatSession` — those open the 70-30 split view, not this modal.
+
+### Additional Gotchas (2026-05-28)
+- **Duplicate exports in `api.js`**: Vite/esbuild hard-fails with "Multiple exports with the same name". Before adding a new API helper, grep for existing exports with the same name. The canonical definition lives near related endpoints; never paste a second version at the bottom.
+
+---
 
 ## Copywriting Suggestions (2026-05-24)
 

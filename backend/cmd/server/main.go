@@ -102,7 +102,9 @@ func main() {
 		// Admin audit log model (compliance & security)
 		&models.AdminAuditLog{},
 		// Notification model (room posts, session alerts, friend events)
-		&models.Notification{})
+		&models.Notification{},
+		// Session likes
+		&models.SessionLike{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -318,7 +320,12 @@ func main() {
 			return
 		}
 
-		fullPath := filepath.Join("./uploads", urlPath)
+		// Strip leading slash so filepath.Join produces a relative path
+		trimmedPath := strings.TrimPrefix(urlPath, "/")
+		fullPath := filepath.Join("./uploads", trimmedPath)
+		if strings.HasPrefix(urlPath, "/previews/") {
+			log.Printf("📁 [Static] urlPath=%q fullPath=%q", urlPath, fullPath)
+		}
 
 		// Set MIME type based on file extension
 		mimeType := "application/octet-stream"
@@ -346,7 +353,19 @@ func main() {
 		}
 		c.Header("Content-Type", mimeType)
 
-		http.ServeFile(c.Writer, c.Request, fullPath)
+		f, openErr := os.Open(fullPath)
+		if openErr != nil {
+			log.Printf("❌ [Static] os.Open failed for %q: %v", fullPath, openErr)
+			c.Status(http.StatusNotFound)
+			return
+		}
+		defer f.Close()
+		stat, statErr := f.Stat()
+		if statErr != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		http.ServeContent(c.Writer, c.Request, urlPath, stat.ModTime(), f)
 	})
 	
 	// --- --- ---
@@ -457,6 +476,8 @@ func main() {
 		roomGroup.POST("/:id/leave", handlers.LeaveRoomHandler)
 		roomGroup.DELETE("/:id/members/:user_id", handlers.KickMemberHandler)      // DELETE /api/rooms/:id/members/:user_id
 		roomGroup.POST("/:id/members/:user_id/ban", handlers.BanMemberHandler)      // POST /api/rooms/:id/members/:user_id/ban
+		roomGroup.POST("/:id/favourite", handlers.ToggleRoomFavouriteHandler)       // POST /api/rooms/:id/favourite (Toggle room favourite)
+		roomGroup.GET("/favourites", handlers.GetFavouriteRoomsHandler)             // GET /api/rooms/favourites (List user's favourite rooms)
 		roomGroup.DELETE("/:id", handlers.DeleteRoomHandler)
 		roomGroup.PUT("/:id", handlers.UpdateRoomHandler)
 		roomGroup.PUT("/:id/image", handlers.UpdateRoomImageHandler)      // PUT /api/rooms/:id/image (Upload room image)

@@ -76,14 +76,6 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
       
       // Check if already following - use post.room_id or fall back to poster's main_room_id
       const effectiveRoomId = post.room_id || post.user?.main_room_id;
-      console.log('👥 [PostViewModal] Follow check:', {
-        postId: post.id,
-        postRoomId: post.room_id,
-        userMainRoomId: post.user?.main_room_id,
-        effectiveRoomId,
-        roomMembershipsCount: roomMemberships?.length || 0,
-        isFollowing: roomMemberships?.some(rm => rm.room_id === effectiveRoomId) || false,
-      });
       if (effectiveRoomId && roomMemberships) {
         setIsFollowing(roomMemberships.some(rm => rm.room_id === effectiveRoomId));
       }
@@ -93,12 +85,6 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
   // Check if user is following - use post.room_id or fall back to poster's main_room_id
   useEffect(() => {
     const effectiveRoomId = post?.room_id || post?.user?.main_room_id;
-    console.log('🔄 [PostViewModal] Follow state update:', {
-      postId: post?.id,
-      effectiveRoomId,
-      hasRoomMemberships: !!roomMemberships,
-      shouldShowFollowBtn: post?.user_id !== currentUser?.id && !!effectiveRoomId,
-    });
     if (effectiveRoomId && roomMemberships) {
       const following = roomMemberships.some(rm => rm.room_id === effectiveRoomId);
       setIsFollowing(following);
@@ -550,7 +536,6 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
             {/* Follow button - show if viewing another user's post and they have a room (explicit or main) */}
             {post.user_id !== currentUser?.id && (post.room_id || post.user?.main_room_id) ? (
               <>
-                {console.log('✅ [PostViewModal] Follow button WILL render for post:', post.id)}
                 <button
                   onClick={handleFollowToggle}
                   className={`px-4 py-2 rounded-full font-medium text-sm transition-colors flex items-center gap-1.5 ${
@@ -572,17 +557,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
                   )}
                 </button>
               </>
-            ) : (
-              <>
-                {console.log('❌ [PostViewModal] Follow button HIDDEN for post:', post.id, {
-                  isOwnPost: post.user_id === currentUser?.id,
-                  hasRoomId: !!post.room_id,
-                  hasMainRoomId: !!post.user?.main_room_id,
-                  postRoomId: post.room_id,
-                  userMainRoomId: post.user?.main_room_id,
-                })}
-              </>
-            )}
+            ) : null}
           </div>
 
           {/* Description */}

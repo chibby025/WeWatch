@@ -9,9 +9,19 @@ const GoogleAuthCallback = () => {
   useEffect(() => {
     const handleCallback = async () => {
       try {
-        // Backend has set HttpOnly cookie, just fetch current user
+        // Extract token from URL hash set by backend redirect
+        const hash = window.location.hash.slice(1);
+        const params = new URLSearchParams(hash);
+        const token = params.get('token');
+        if (token) {
+          localStorage.setItem('wewatch_token', token);
+          // Clean token from URL bar
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+
+        // Fetch current user (cookie or token header via interceptor)
         const response = await getCurrentUser();
-        
+
         // Save user to localStorage and cache
         localStorage.setItem('user', JSON.stringify(response.user));
         cacheUserData(response.user);

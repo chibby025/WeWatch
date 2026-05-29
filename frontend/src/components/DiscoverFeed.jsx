@@ -660,11 +660,11 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
           <React.Fragment key={`post-${post.id}`}>
             {/* Post Card */}
             <div
-              className="bg-white dark:bg-gray-950 cursor-pointer rounded-xl border border-white/25 mb-3 sm:mb-4 md:mb-0 overflow-hidden"
+              className="flex flex-col bg-white dark:bg-gray-950 cursor-pointer rounded-xl border border-white/25 mb-3 sm:mb-4 md:mb-0 overflow-hidden"
               onClick={() => handlePostClick(post)}
             >
               {/* ── Card Header: Avatar · Username · Follow · ··· ── */}
-              <div className="flex items-center gap-3 px-4 py-2 bg-gray-100 dark:bg-gray-800" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-3 px-4 py-2 bg-gray-100 dark:bg-gray-800 flex-shrink-0" onClick={e => e.stopPropagation()}>
                 <Avatar
                   user={post.user}
                   onClick={(e) => {
@@ -739,25 +739,27 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
 
               {/* Description — below header, above media, skipped for text posts */}
               {post.post_type !== 'text' && post.description && (
-                <div className="px-4 py-1.5 bg-white dark:bg-gray-950">
+                <div className="px-4 py-1.5 bg-white dark:bg-gray-950 flex-shrink-0">
                   <p className="text-sm text-gray-900 dark:text-white leading-snug line-clamp-2">
                     {post.description}
                   </p>
                 </div>
               )}
 
-              {/* ── Text post body — no fixed aspect ratio, grows with content ── */}
+              {/* ── Text post body ── */}
               {post.post_type === 'text' && (
-                <div className="px-6 py-5 bg-white dark:bg-gray-900">
-                  <p className="text-gray-900 dark:text-white text-lg font-medium text-left leading-relaxed line-clamp-6">
-                    {post.text_content}
-                  </p>
+                <div className="flex-1 relative bg-white dark:bg-gray-900 overflow-hidden min-h-[150px] md:min-h-0">
+                  <div className="absolute inset-0 flex flex-col px-4 py-4 sm:px-6 sm:py-5">
+                    <p className="text-gray-900 dark:text-white text-sm sm:text-base md:text-lg font-medium text-left leading-relaxed line-clamp-5 sm:line-clamp-6">
+                      {post.text_content}
+                    </p>
+                  </div>
                 </div>
               )}
 
-              {/* ── Media — fixed aspect ratio for image/video only ── */}
+              {/* ── Media — flex-1 grows with the card, aspect-ratio sets the natural min-height ── */}
               {post.post_type !== 'text' && (
-              <div className="relative aspect-[4/3] sm:aspect-video bg-gray-100 dark:bg-gray-900 group overflow-hidden">
+              <div className="flex-1 relative aspect-[4/3] sm:aspect-video bg-gray-100 dark:bg-gray-900 group overflow-hidden">
                 {post.media_type === 'video' && post.video_url ? (
                   <>
                     {dataSaverEnabled ? (
@@ -897,7 +899,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
               )}
 
               {/* ── Footer ── */}
-              <div className="bg-gray-100 dark:bg-gray-800" onClick={e => e.stopPropagation()}>
+              <div className="bg-gray-100 dark:bg-gray-800 flex-shrink-0" onClick={e => e.stopPropagation()}>
                 {/* Action Row: left icons | share + timestamp pushed right */}
                 <div className="flex items-center px-4 py-2">
                   {/* Left group */}

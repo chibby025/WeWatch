@@ -135,27 +135,26 @@ func GeneratePreviewMP4(inputPath, outputPath, startTime string, duration int) e
 		return fmt.Errorf("failed to detect source resolution: %w", err)
 	}
 
-	// Calculate target resolution: MIN(720p, source_height)
-	targetHeight := 720
+	// Cap at 540p for lobby previews — sharp on retina screens, moderate file size
+	targetHeight := 540
 	if height < targetHeight {
 		targetHeight = height // Never upscale
 	}
 
-	// Build scale filter: maintain aspect ratio, cap at target height
 	scaleFilter := fmt.Sprintf("scale=-2:%d:flags=lanczos", targetHeight)
 
-	// Generate MP4 with audio (if available)
 	cmd := exec.Command("ffmpeg", "-y",
 		"-ss", startTime,
 		"-i", inputPath,
 		"-t", fmt.Sprintf("%d", duration),
 		"-c:v", "libx264",
-		"-crf", "26",          // Quality factor (lower = better, 26 is good balance)
-		"-preset", "fast",     // Encoding speed
-		"-vf", fmt.Sprintf("fps=24,%s", scaleFilter), // 24fps + adaptive scale
-		"-c:a", "aac",         // Audio codec (will be skipped if no audio)
-		"-b:a", "96k",         // Audio bitrate
-		"-movflags", "+faststart", // Enable fast web playback
+		"-crf", "28",
+		"-preset", "veryfast",
+		"-vf", fmt.Sprintf("fps=24,%s", scaleFilter),
+		"-c:a", "aac",
+		"-b:a", "96k",
+		"-movflags", "+faststart",
+		"-f", "mp4",
 		outputPath,
 	)
 
@@ -253,7 +252,7 @@ func GenerateMP4FromFrames(framesPattern, outputPath string, fps int) error {
 		"-c:v", "libx264",
 		"-crf", "26",
 		"-preset", "fast",
-		"-vf", fmt.Sprintf("fps=%d,scale=-2:720:flags=lanczos", fps), // 24fps, 720p max
+		"-vf", fmt.Sprintf("fps=%d,scale=-2:540:flags=lanczos", fps), // 540p — sharp on retina, consistent with upload previews
 		"-movflags", "+faststart",
 		"-pix_fmt", "yuv420p", // Ensure compatibility
 		outputPath,

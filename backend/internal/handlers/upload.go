@@ -195,38 +195,37 @@ func UploadMediaHandler(c *gin.Context) {
 			return
 		}
 
-		// ✅ ASYNC POSTER GENERATION (don't block response)
-		go func(itemID uint, videoPath, posterPath string, isTemp bool) {
-			log.Printf("🎨 [Async] Starting poster generation for item %d", itemID)
-			
-			err := utils.ExtractThumbnail(videoPath, posterPath)
+		// ✅ ASYNC POSTER + CDN UPLOAD (don't block response)
+		go func(itemID uint, videoPath, posterPath, mimeType, uniqueFilename string) {
+			// 1. Generate poster
+			posterCDNURL := fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
+			if err := utils.ExtractThumbnail(videoPath, posterPath); err != nil {
+				log.Printf("⚠️ [Async] Poster generation failed for temp item %d: %v", itemID, err)
+			} else {
+				if cdnURL, err := utils.UploadLocalFileToBunnyCDN(posterPath, "temp-media/"+filepath.Base(posterPath), "image/jpeg"); err != nil {
+					log.Printf("⚠️ [Async] Poster CDN upload failed for temp item %d: %v", itemID, err)
+				} else {
+					posterCDNURL = cdnURL
+				}
+			}
+			if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
+				log.Printf("❌ [Async] Failed to update poster_url for temp item %d: %v", itemID, err)
+			} else {
+				log.Printf("✅ [Async] Poster updated for temp item %d: %s", itemID, posterCDNURL)
+			}
+
+			// 2. Upload video to CDN; update file_path so cleanup targets CDN
+			videoCDNURL, err := utils.UploadLocalFileToBunnyCDN(videoPath, "temp-media/"+uniqueFilename, mimeType)
 			if err != nil {
-				log.Printf("⚠️ [Async] Failed to generate poster for item %d: %v", itemID, err)
+				log.Printf("⚠️ [Async] Video CDN upload failed for temp item %d: %v", itemID, err)
 				return
 			}
-			
-			// Update database with real poster URL
-			var posterURL string
-			if isTemp {
-				posterURL = fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
+			if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("file_path", videoCDNURL).Error; err != nil {
+				log.Printf("❌ [Async] Failed to update file_path for temp item %d: %v", itemID, err)
 			} else {
-				posterURL = fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
+				log.Printf("✅ [Async] CDN upload complete for temp item %d: %s", itemID, videoCDNURL)
 			}
-			
-			if isTemp {
-				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
-					log.Printf("❌ [Async] Failed to update poster URL for temp item %d: %v", itemID, err)
-				} else {
-					log.Printf("✅ [Async] Poster generated and updated for temp item %d: %s", itemID, posterURL)
-				}
-			} else {
-				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
-					log.Printf("❌ [Async] Failed to update poster URL for item %d: %v", itemID, err)
-				} else {
-					log.Printf("✅ [Async] Poster generated and updated for item %d: %s", itemID, posterURL)
-				}
-			}
-		}(newTempMediaItem.ID, filePath, posterPath, true)
+		}(newTempMediaItem.ID, filePath, posterPath, getMimeType(ext), uniqueFilename)
 
 		// ✅ BROADCAST TO ROOM — FIXED
 		//message := map[string]interface{}{
@@ -282,38 +281,37 @@ func UploadMediaHandler(c *gin.Context) {
 			return
 		}
 
-		// ✅ ASYNC POSTER GENERATION (don't block response)
-		go func(itemID uint, videoPath, posterPath string, isTemp bool) {
-			log.Printf("🎨 [Async] Starting poster generation for item %d", itemID)
-			
-			err := utils.ExtractThumbnail(videoPath, posterPath)
+		// ✅ ASYNC POSTER + CDN UPLOAD (don't block response)
+		go func(itemID uint, videoPath, posterPath, mimeType, uniqueFilename string) {
+			// 1. Generate poster
+			posterCDNURL := fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
+			if err := utils.ExtractThumbnail(videoPath, posterPath); err != nil {
+				log.Printf("⚠️ [Async] Poster generation failed for item %d: %v", itemID, err)
+			} else {
+				if cdnURL, err := utils.UploadLocalFileToBunnyCDN(posterPath, "media/"+filepath.Base(posterPath), "image/jpeg"); err != nil {
+					log.Printf("⚠️ [Async] Poster CDN upload failed for item %d: %v", itemID, err)
+				} else {
+					posterCDNURL = cdnURL
+				}
+			}
+			if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
+				log.Printf("❌ [Async] Failed to update poster_url for item %d: %v", itemID, err)
+			} else {
+				log.Printf("✅ [Async] Poster updated for item %d: %s", itemID, posterCDNURL)
+			}
+
+			// 2. Upload video to CDN; update file_path so cleanup targets CDN
+			videoCDNURL, err := utils.UploadLocalFileToBunnyCDN(videoPath, "media/"+uniqueFilename, mimeType)
 			if err != nil {
-				log.Printf("⚠️ [Async] Failed to generate poster for item %d: %v", itemID, err)
+				log.Printf("⚠️ [Async] Video CDN upload failed for item %d: %v", itemID, err)
 				return
 			}
-			
-			// Update database with real poster URL
-			var posterURL string
-			if isTemp {
-				posterURL = fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
+			if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("file_path", videoCDNURL).Error; err != nil {
+				log.Printf("❌ [Async] Failed to update file_path for item %d: %v", itemID, err)
 			} else {
-				posterURL = fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
+				log.Printf("✅ [Async] CDN upload complete for item %d: %s", itemID, videoCDNURL)
 			}
-			
-			if isTemp {
-				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
-					log.Printf("❌ [Async] Failed to update poster URL for temp item %d: %v", itemID, err)
-				} else {
-					log.Printf("✅ [Async] Poster generated and updated for temp item %d: %s", itemID, posterURL)
-				}
-			} else {
-				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
-					log.Printf("❌ [Async] Failed to update poster URL for item %d: %v", itemID, err)
-				} else {
-					log.Printf("✅ [Async] Poster generated and updated for item %d: %s", itemID, posterURL)
-				}
-			}
-		}(newMediaItem.ID, filePath, posterPath, false)
+		}(newMediaItem.ID, filePath, posterPath, getMimeType(ext), uniqueFilename)
 
 		// ✅ BROADCAST TO ROOM — FIXED
 		//message := map[string]interface{}{

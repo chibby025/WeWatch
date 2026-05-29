@@ -147,6 +147,71 @@ func DeleteFromBunnyCDN(cdnURL string) error {
 	return nil
 }
 
+// UploadLocalFileToBunnyCDN streams a local file to BunnyCDN at the exact remotePath given
+// (relative to the storage zone root, e.g. "temp-media/uuid.mp4").
+// Unlike UploadToBunnyCDN it does NOT add a timestamp prefix — caller controls the remote name.
+// Local dev fallback: if BunnyCDN is not configured, returns a /uploads/... URL derived from
+// the local path and leaves the file on disk unchanged.
+func UploadLocalFileToBunnyCDN(localPath, remotePath, contentType string) (string, error) {
+	if BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {
+		rel := strings.TrimPrefix(localPath, "./")
+		return "/" + rel, nil
+	}
+
+	f, err := os.Open(localPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open local file: %w", err)
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return "", fmt.Errorf("failed to stat local file: %w", err)
+	}
+
+	uploadURL := fmt.Sprintf("%s/%s", getBunnyCDNStorageURL(), remotePath)
+	log.Printf("📤 [BunnyCDN] Streaming upload: %s → %s (%d bytes)", filepath.Base(localPath), remotePath, fi.Size())
+
+	req, err := http.NewRequest("PUT", uploadURL, f)
+	if err != nil {
+		return "", fmt.Errorf("failed to create upload request: %w", err)
+	}
+	req.Header.Set("AccessKey", BunnyCDNAccessKey)
+	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = fi.Size()
+
+	client := &http.Client{Timeout: 15 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	cdnURL := fmt.Sprintf("%s/%s", BunnyCDNPullZoneURL, remotePath)
+	log.Printf("✅ [BunnyCDN] Stream upload successful: %s", cdnURL)
+	return cdnURL, nil
+}
+
+// DeleteMediaFile deletes a media file whether it is a BunnyCDN URL (https://...) or a local
+// filesystem path. Not-found errors are silently ignored in both cases.
+func DeleteMediaFile(filePathOrURL string) error {
+	if filePathOrURL == "" {
+		return nil
+	}
+	if strings.HasPrefix(filePathOrURL, "http://") || strings.HasPrefix(filePathOrURL, "https://") {
+		return DeleteFromBunnyCDN(filePathOrURL)
+	}
+	if err := os.Remove(filePathOrURL); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // DownloadFileToTemp downloads a remote URL (CDN or any HTTPS) to a temporary local file.
 // Returns the temp file path. Caller is responsible for deleting it.
 func DownloadFileToTemp(remoteURL string, suffix string) (string, error) {
@@ -170,6 +235,60 @@ func DownloadFileToTemp(remoteURL string, suffix string) (string, error) {
 		return "", fmt.Errorf("failed to write temp file: %w", err)
 	}
 	return tmpFile.Name(), nil
+}
+
+// UploadPreviewToBunnyCDN uploads a session preview file to BunnyCDN under previews/.
+// The filename is used as-is (no timestamp added) so repeated calls overwrite the same CDN path —
+// this is intentional: each preview refresh replaces the previous clip without accumulating files.
+// Falls back to ./uploads/previews/ if BunnyCDN is not configured (local dev).
+func UploadPreviewToBunnyCDN(fileData []byte, filename string) (string, error) {
+	if BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {
+		previewDir := "./uploads/previews"
+		if err := os.MkdirAll(previewDir, 0755); err != nil {
+			return "", fmt.Errorf("failed to create previews dir: %w", err)
+		}
+		localPath := filepath.Join(previewDir, filename)
+		if err := os.WriteFile(localPath, fileData, 0644); err != nil {
+			return "", fmt.Errorf("failed to write local preview: %w", err)
+		}
+		return "/uploads/previews/" + filename, nil
+	}
+
+	cdnPath := "previews/" + sanitizeFilename(filename)
+	uploadURL := fmt.Sprintf("%s/%s", getBunnyCDNStorageURL(), cdnPath)
+
+	req, err := http.NewRequest("PUT", uploadURL, bytes.NewReader(fileData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create upload request: %w", err)
+	}
+	ct := "video/mp4"
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".webm":
+		ct = "video/webm"
+	case ".jpg", ".jpeg":
+		ct = "image/jpeg"
+	case ".png":
+		ct = "image/png"
+	}
+	req.Header.Set("AccessKey", BunnyCDNAccessKey)
+	req.Header.Set("Content-Type", ct)
+	req.ContentLength = int64(len(fileData))
+
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("preview upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("preview upload failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	cdnURL := fmt.Sprintf("%s/%s", BunnyCDNPullZoneURL, cdnPath)
+	log.Printf("✅ [BunnyCDN] Preview uploaded: %s", cdnURL)
+	return cdnURL, nil
 }
 
 // GenerateThumbnailURL generates a thumbnail URL using BunnyCDN's image processing

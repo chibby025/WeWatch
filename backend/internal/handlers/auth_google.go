@@ -178,12 +178,12 @@ func GoogleCallbackHandler(c *gin.Context) {
 	http.SetCookie(c.Writer, cookie)
 	log.Printf("✅ [GoogleCallback] JWT cookie set for user ID: %d", user.ID)
 	
-	// Redirect to frontend success page
+	// Redirect to frontend success page, passing token in URL hash so it can be stored in localStorage
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
 		frontendURL = "http://localhost:5173"
 	}
-	
-	redirectURL := fmt.Sprintf("%s/auth/google/success", frontendURL)
+
+	redirectURL := fmt.Sprintf("%s/auth/google/success#token=%s", frontendURL, jwtToken)
 	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }

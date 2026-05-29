@@ -1,12 +1,12 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup } from '../services/api';
-import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon } from '@heroicons/react/24/solid';
+import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup, toggleRoomFavourite, joinRoom } from '../services/api';
+import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon, EyeIcon, ChatBubbleOvalLeftEllipsisIcon, BookmarkIcon } from '@heroicons/react/24/solid';
 import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon, FaceSmileIcon as FaceSmileOutlineIcon, MicrophoneIcon as MicrophoneOutlineIcon, PaperClipIcon as PaperClipOutlineIcon, ChartBarSquareIcon as ChartBarSquareOutlineIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
 import { Plus, Home, Search } from 'lucide-react';
 import jwtDecodeUtil from '../utils/jwt';
-import apiClient from '../services/api';
+import apiClient, { API_BASE_URL } from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
 import ClassTypeModal from './modals/ClassTypeModal';
 import AccessModal from './AccessModal';
@@ -26,6 +26,7 @@ import SessionPreview from './SessionPreview';
 import { useAuth } from '../contexts/AuthContext';
 import LobbyMessageBubble from './lobby/LobbyMessageBubble';
 import WatchOutModal from './lobby/WatchOutModal';
+import CircleOfFriendsSphere from './lobby/CircleOfFriendsSphere';
 import LobbyAttachModal from './lobby/LobbyAttachModal';
 import LobbyStickerPicker from './lobby/LobbyStickerPicker';
 import LobbyPollCreator from './lobby/LobbyPollCreator';
@@ -47,35 +48,34 @@ import TikTokHeartAnimation from './TikTokHeartAnimation';
 import FeedAdCard from './ads/FeedAdCard';
 import { calculateAge } from '../utils/ageUtils';
 
+// Resolve a backend-relative preview URL to a full absolute URL
+const resolvePreviewUrl = (url) => {
+  if (!url) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  return `${API_BASE_URL}${url}`;
+};
+
 // CSS for custom pulsing animations
 const pulseAnimationStyles = `
   @keyframes pulseRed {
-    0%, 100% {
-      color: #ef4444;
-      opacity: 1;
-    }
-    50% {
-      color: #dc2626;
-      opacity: 0.8;
-    }
+    0%, 100% { color: #ef4444; opacity: 1; }
+    50%       { color: #dc2626; opacity: 0.8; }
   }
-  
   @keyframes scaleSquare {
-    0%, 100% {
-      transform: scale(1);
-    }
-    50% {
-      transform: scale(1.1);
-    }
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.1); }
   }
-  
-  .pulse-red-cross {
-    animation: pulseRed 1.5s ease-in-out infinite;
+  @keyframes floatZzz {
+    0%   { opacity: 0;   transform: translateY(0)   scale(0.7); }
+    20%  { opacity: 0.9; }
+    80%  { opacity: 0.6; }
+    100% { opacity: 0;   transform: translateY(-60px) scale(1.2); }
   }
-  
-  .scale-square {
-    animation: scaleSquare 1.5s ease-in-out infinite;
-  }
+  .pulse-red-cross { animation: pulseRed 1.5s ease-in-out infinite; }
+  .scale-square    { animation: scaleSquare 1.5s ease-in-out infinite; }
+  .zzz-1 { animation: floatZzz 2.4s ease-in-out infinite; animation-delay: 0s; }
+  .zzz-2 { animation: floatZzz 2.4s ease-in-out infinite; animation-delay: 0.8s; }
+  .zzz-3 { animation: floatZzz 2.4s ease-in-out infinite; animation-delay: 1.6s; }
 `;
 
 // Module-level stale-while-revalidate cache (survives tab switches, cleared on unmount)
@@ -141,6 +141,13 @@ const LobbyPage = () => {
   const [selectedIsPrivate, setSelectedIsPrivate] = useState(false); // Store session privacy choice
   const [selectedContentRating, setSelectedContentRating] = useState('G'); // Store content rating
   
+  // ✅ Circle of Friends state — member IDs persisted in localStorage
+  const [showCircleSphere, setShowCircleSphere] = useState(false);
+  const [circleOfFriendsIds, setCircleOfFriendsIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('circleOfFriends') || '[]'); }
+    catch { return []; }
+  });
+
   // ✅ Lobby Chat State
   const [friendsList, setFriendsList] = useState([]); // Users to chat with
   const [selectedChatUser, setSelectedChatUser] = useState(null); // Currently open chat
@@ -267,13 +274,16 @@ const LobbyPage = () => {
   
   // Session preview state
   const [sessionPreviews, setSessionPreviews] = useState({}); // { sessionId: { posterUrl, previewUrl, isGenerating } }
-  const previewIntervalsRef = React.useRef({}); // Track intervals per session
   
   // ✅ Session Likes State
   const [sessionLikes, setSessionLikes] = useState({}); // { sessionId: { count, isLiked } }
   
   // ✅ Session Chat Counts State
   const [sessionChatCounts, setSessionChatCounts] = useState({}); // { sessionId: messageCount }
+
+  // ✅ Room Favourite + Join State (from session preview cards)
+  const [savedRooms, setSavedRooms] = useState({});   // { roomId: bool }
+  const [joinedRooms, setJoinedRooms] = useState({}); // { roomId: 'active' | 'pending' }
   
   // ✅ Chat Preview Modal State (OLD - kept for backward compatibility)
   const [isChatPreviewOpen, setIsChatPreviewOpen] = useState(false);
@@ -326,6 +336,7 @@ const LobbyPage = () => {
   const sessionsScrollPosRef = React.useRef(0);
   const forYouScrollPosRef = React.useRef(0);
   const touchStartRef = React.useRef({ x: 0, y: 0 });
+  const swipeStateRef = React.useRef({ startX: 0, startY: 0, locked: null });
 
   // 🪟 Modal state for W button (hides Post option when opened from Watching Live)
   const [createModalHidePosts, setCreateModalHidePosts] = React.useState(false);
@@ -352,6 +363,8 @@ const LobbyPage = () => {
   const watchingNowScrollRef = React.useRef(null);
   const loadMoreTriggerRef = React.useRef(null);
   const discoverFeedRef = React.useRef(null);
+  const tabBarRef = React.useRef(null);
+  const [watchingTopOffset, setWatchingTopOffset] = React.useState(190);
   
   // ✅ Get current user from Auth Context
   const { currentUser, wsToken, refreshUser } = useAuth();
@@ -360,8 +373,7 @@ const LobbyPage = () => {
   const authenticatedUserID = currentUser?.id || null;
   
   // 🔇 Toggle video mute state and save to localStorage
-  const toggleVideoMute = (e) => {
-    e.stopPropagation(); // Prevent card click
+  const toggleVideoMute = () => {
     setVideoMuted(prev => {
       const newMuted = !prev;
       localStorage.setItem('videoAutoplayMuted', String(newMuted));
@@ -438,20 +450,25 @@ const LobbyPage = () => {
   // 💬 Handle opening interactive chat (70-30 split mode)
   const handleOpenChatPreview = (session, e) => {
     e.stopPropagation();
-    
-    // Close previous chat if open
-    if (activeChatSession && chatWsRef) {
-      chatWsRef.close();
-      setChatWsRef(null);
-    }
-    
-    // Set active chat session (triggers 70-30 split rendering)
-    setActiveChatSession(session);
-    setSessionChatMessages([]);
-    setIsChatConnecting(true);
-    
-    // Connect to WebSocket for this session
-    connectToSessionChat(session);
+    setSelectedSessionForChat(session);
+    setIsChatPreviewOpen(true);
+  };
+
+  const handleToggleFavourite = async (roomId, e) => {
+    e.stopPropagation();
+    try {
+      const res = await toggleRoomFavourite(roomId);
+      setSavedRooms(prev => ({ ...prev, [roomId]: res.is_favourite }));
+    } catch { /* silent */ }
+  };
+
+  const handleJoinRoomFromCard = async (roomId, e) => {
+    e.stopPropagation();
+    if (joinedRooms[roomId]) return;
+    try {
+      const res = await joinRoom(roomId);
+      setJoinedRooms(prev => ({ ...prev, [roomId]: res.status || 'active' }));
+    } catch { /* silent */ }
   };
   
   // 🔌 Connect to session chat via REST API polling
@@ -533,6 +550,20 @@ const LobbyPage = () => {
     };
   }, [chatWsRef]);
   
+  // 📐 Measure tab bar bottom so the watching view fills exactly the remaining height.
+  // useEffect (not useLayoutEffect) so measurement is async and doesn't block tab-switch paint.
+  React.useEffect(() => {
+    const measure = () => {
+      if (tabBarRef.current) {
+        const bottom = tabBarRef.current.getBoundingClientRect().bottom;
+        setWatchingTopOffset(prev => (prev === bottom ? prev : bottom));
+      }
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [activeTab]);
+
   // 🧹 Close chat when exiting fullscreen
   useEffect(() => {
     if (!isWatchingNowFullscreen && activeChatSession) {
@@ -956,6 +987,17 @@ const LobbyPage = () => {
       setSessions(filtered);
       _lobbyCache.sessions = filtered;
       _lobbyCache.sessionsTs = Date.now();
+
+      // Sync sessionsPage.data so cards render immediately (badge and cards share same source)
+      setSessionsPage(prev => {
+        if (prev.data.length === 0) return { ...prev, data: filtered };
+        const filteredIds = new Set(filtered.map(s => s.session_id));
+        const pruned = prev.data.filter(s => filteredIds.has(s.session_id));
+        const prunedIds = new Set(pruned.map(s => s.session_id));
+        const newSessions = filtered.filter(s => !prunedIds.has(s.session_id));
+        if (newSessions.length === 0 && pruned.length === prev.data.length) return prev;
+        return { ...prev, data: [...newSessions, ...pruned] };
+      });
     } catch (err) {
       if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
       console.error('❌ [LobbyPage] Error fetching active sessions:', err);
@@ -1797,6 +1839,59 @@ const LobbyPage = () => {
     }
   };
 
+  // ✅ Circle of Friends handlers
+  const handleCircleAddMember = (friend) => {
+    setCircleOfFriendsIds(prev => {
+      if (prev.includes(friend.id)) return prev;
+      const next = [...prev, friend.id];
+      localStorage.setItem('circleOfFriends', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const handleCircleRemoveMember = (userId) => {
+    setCircleOfFriendsIds(prev => {
+      const next = prev.filter(id => id !== userId);
+      localStorage.setItem('circleOfFriends', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const handleCircleWatchOut = (memberIds) => {
+    if (!memberIds.length) return;
+    setShowCircleSphere(false);
+    // Kick off an instant watch, then the new session_started WS event will trigger
+    // WatchOut invites to circle members can be sent once the session is live.
+    // For now, open the WatchType modal so the host can choose session type.
+    setIsWatchTypeModalOpen(true);
+  };
+
+  const handleCircleGroupChat = async (members) => {
+    if (!members.length) return;
+    setShowCircleSphere(false);
+    const label = localStorage.getItem('circleGroupLabel') || 'My Inner Circle';
+    try {
+      await createLobbyGroup(label, members.map(m => m.id));
+      await fetchGroupsList();
+      setActiveTab('chats');
+      toast.success('Group created!');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to create group');
+    }
+  };
+
+  const handleCircleChat = (friend) => {
+    setActiveTab('chats');
+    // Find friend in chats list and open
+    const chatFriend = friendsList.find(f => f.id === friend.id) || friend;
+    // Small delay to let tab switch render
+    setTimeout(() => {
+      if (chatFriend) {
+        setSelectedChatUser(chatFriend);
+      }
+    }, 50);
+  };
+
   // ✅ Call Functions
   const initiateCall = async (user) => {
     if (!user || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -2192,6 +2287,7 @@ const LobbyPage = () => {
         ws.onopen = () => {
           setWsConnected(true);
           reconnectAttempts = 0;
+          console.log('✅ [LobbyPage WS] Connected');
         };
         
         ws.onmessage = (event) => {
@@ -2213,24 +2309,35 @@ const LobbyPage = () => {
                 
               case 'session_started':
                 fetchSessionsData();
-                // ✅ Immediately trigger preview generation for new session
-                if (message.session_id) {
-                  setTimeout(() => generateSessionPreview(message.session_id), 500);
-                }
+                // Prepend the new session card immediately without waiting for fetchSessionsData
+                getActiveSessions(10, 0).then(data => {
+                  setSessionsPage(prev => {
+                    const existingIds = new Set(prev.data.map(s => s.session_id));
+                    const newSessions = (data.sessions || []).filter(s => !existingIds.has(s.session_id));
+                    if (newSessions.length === 0) return prev;
+                    return { ...prev, data: [...newSessions, ...prev.data] };
+                  });
+                }).catch(() => {});
                 break;
 
               case 'room_session_started':
                 // Targeted alert: a room you're a member of just went live
                 fetchSessionsData();
+                // Prepend the new session card immediately
+                getActiveSessions(10, 0).then(data => {
+                  setSessionsPage(prev => {
+                    const existingIds = new Set(prev.data.map(s => s.session_id));
+                    const newSessions = (data.sessions || []).filter(s => !existingIds.has(s.session_id));
+                    if (newSessions.length === 0) return prev;
+                    return { ...prev, data: [...newSessions, ...prev.data] };
+                  });
+                }).catch(() => {});
                 if (message.room_name && message.host_username) {
                   toast(`🔴 ${message.room_name} is now live!`, {
                     duration: 6000,
                     icon: '📺',
                     style: { background: '#1e1b4b', color: '#fff', border: '1px solid #7c3aed' },
                   });
-                }
-                if (message.session_id) {
-                  setTimeout(() => generateSessionPreview(message.session_id), 500);
                 }
                 break;
 
@@ -2362,9 +2469,12 @@ const LobbyPage = () => {
                     setSessionPreviews(prev => ({
                       ...prev,
                       [message.session_id]: {
-                        posterUrl: message.poster_url,
-                        previewUrl: null,
-                        isGenerating: false, // ✅ Show poster, not spinner
+                        posterUrl: resolvePreviewUrl(message.poster_url),
+                        // Preserve existing previewUrl and version — poster broadcast must not
+                        // overwrite a clip that already arrived or clear the previewVersion key.
+                        previewUrl: prev[message.session_id]?.previewUrl || null,
+                        version: prev[message.session_id]?.version,
+                        isGenerating: false,
                         isClearing: false,
                       }
                     }));
@@ -2372,16 +2482,54 @@ const LobbyPage = () => {
                     setSessionPreviews(prev => ({
                       ...prev,
                       [message.session_id]: {
-                        posterUrl: message.poster_url,
-                        previewUrl: message.preview_url,
+                        posterUrl: resolvePreviewUrl(message.poster_url),
+                        previewUrl: resolvePreviewUrl(message.preview_url),
                         isGenerating: false,
                         isClearing: false,
+                        version: Date.now(),
                       }
+                    }));
+                  }
+                  // Merge liveshare metadata into the session card so podcast title/logo
+                  // and liveshare_mode appear without waiting for a full sessions refetch.
+                  // Use || so empty-string values from the broadcast don't erase existing data.
+                  if (message.liveshare_mode || message.podcast_title || message.podcast_logo_url) {
+                    setSessionsPage(prev => ({
+                      ...prev,
+                      data: prev.data.map(s =>
+                        s.session_id === message.session_id
+                          ? {
+                              ...s,
+                              liveshare_mode:   message.liveshare_mode   || s.liveshare_mode,
+                              podcast_title:    message.podcast_title    || s.podcast_title,
+                              podcast_logo_url: message.podcast_logo_url || s.podcast_logo_url,
+                            }
+                          : s
+                      ),
                     }));
                   }
                 }
                 break;
                 
+              case 'session_meta_updated':
+                // Fired by liveshare_mode_selected handler immediately — no DB read dependency.
+                if (message.session_id && (message.liveshare_mode || message.podcast_title || message.podcast_logo_url)) {
+                  setSessionsPage(prev => ({
+                    ...prev,
+                    data: prev.data.map(s =>
+                      s.session_id === message.session_id
+                        ? {
+                            ...s,
+                            liveshare_mode:   message.liveshare_mode   || s.liveshare_mode,
+                            podcast_title:    message.podcast_title    || s.podcast_title,
+                            podcast_logo_url: message.podcast_logo_url || s.podcast_logo_url,
+                          }
+                        : s
+                    ),
+                  }));
+                }
+                break;
+
               case 'media_state_changed':
                 // ✅ Update sessionsPage with new media state (avoid duplicates)
                 setSessionsPage(prev => {
@@ -2572,8 +2720,8 @@ const LobbyPage = () => {
           if (event.code !== 1000) scheduleReconnect();
         };
         
-        ws.onerror = (error) => {
-          console.error('❌ [LobbyPage WS] Connection error:', error.type);
+        ws.onerror = () => {
+          if (reconnectAttempts <= 1) console.warn('⚠️ [LobbyPage WS] Connection error — will retry');
         };
         
         wsRef.current = ws;
@@ -2823,149 +2971,6 @@ const LobbyPage = () => {
     }
   };
 
-  // ✅ Generate session preview (poster + GIF)
-  const generateSessionPreview = async (sessionId) => {
-    // ✅ Skip only if already generating (prevent concurrent API calls)
-    if (sessionPreviews[sessionId]?.isGenerating) return;
-
-    try {
-      const session = sessions.find(s => s.session_id === sessionId) ||
-                      sessionsPage.data.find(s => s.session_id === sessionId);
-      if (!session) return;
-      
-      // ✅ Check if preview generation is disabled (content moderation)
-      if (session.preview_enabled === false) return;
-      
-      // ✅ Detect source dynamically based on session state
-      let source = 'upload'; // default
-      let canGenerateGIF = true;
-      
-      if (session.watch_type === 'classroom' && session.class_type === 'lecture_hall') {
-        // Lecture hall: Check media state from backend
-        if (session.current_media_url && session.current_media_type === 'upload') {
-          source = 'upload';
-          canGenerateGIF = true;
-        } else if (session.is_screen_sharing_active) {
-          source = session.sharing_source || 'liveshare';
-          canGenerateGIF = false; // Frame capture required
-        } else {
-          return; // No media
-        }
-      } else {
-        source = 'upload';
-        canGenerateGIF = true;
-      }
-      
-      // ✅ For LiveShare/WatchFrom, request frame capture from host
-      if (!canGenerateGIF) {
-        setSessionPreviews(prev => ({
-          ...prev,
-          [sessionId]: { ...prev[sessionId], isGenerating: true }
-        }));
-        
-        try {
-          const response = await apiClient.post(`/api/sessions/${sessionId}/request-frame-capture`, {
-            source: source
-          });
-          // Fallback: If WebSocket disconnected, poll for preview after expected capture time
-          if (!wsConnected) {
-            setTimeout(async () => {
-              try {
-                const data = await getActiveSessions();
-                const updatedSession = data.sessions?.find(s => s.session_id === sessionId);
-                if (updatedSession?.preview_url) {
-                  setSessionPreviews(prev => ({
-                    ...prev,
-                    [sessionId]: {
-                      posterUrl: updatedSession.poster_url,
-                      previewUrl: updatedSession.preview_url,
-                      isGenerating: false,
-                    }
-                  }));
-                } else {
-                  setSessionPreviews(prev => ({
-                    ...prev,
-                    [sessionId]: { ...prev[sessionId], isGenerating: false }
-                  }));
-                }
-              } catch (err) {
-                setSessionPreviews(prev => ({
-                  ...prev,
-                  [sessionId]: { ...prev[sessionId], isGenerating: false }
-                }));
-              }
-            }, 40000);
-          }
-        } catch (err) {
-          console.error(`❌ [LobbyPage] Frame capture failed:`, err.message);
-          setSessionPreviews(prev => ({
-            ...prev,
-            [sessionId]: { ...prev[sessionId], isGenerating: false }
-          }));
-        }
-        return;
-      }
-      
-      // Generate GIF from uploaded media
-      setSessionPreviews(prev => ({
-        ...prev,
-        [sessionId]: { ...prev[sessionId], isGenerating: true }
-      }));
-
-      const response = await apiClient.post(`/api/sessions/${sessionId}/generate-preview`, {
-        source: source,
-        current_time: '5',
-      });
-
-      setSessionPreviews(prev => ({
-        ...prev,
-        [sessionId]: {
-          posterUrl: response.data.poster_url,
-          previewUrl: response.data.preview_url,
-          isGenerating: false,
-        }
-      }));
-
-    } catch (err) {
-      // ✅ Check if this is an expected "no session" state vs real error
-      const isExpectedNoSession = 
-        err.response?.status === 404 || // Session not found
-        err.response?.status === 400 && (
-          err.response?.data?.error?.toLowerCase().includes('no media') ||
-          err.response?.data?.error?.toLowerCase().includes('not playing') ||
-          err.response?.data?.error?.toLowerCase().includes('no active session')
-        );
-      
-      if (!isExpectedNoSession) {
-        // Real error - log it (but don't show toast to avoid spamming users)
-        console.error(`❌ [LobbyPage] Preview generation failed: ${sessionId}:`, err.message);
-      }
-      
-      setSessionPreviews(prev => ({
-        ...prev,
-        [sessionId]: { ...prev[sessionId], isGenerating: false }
-      }));
-    }
-  };
-
-  // ✅ Setup preview generation for a session
-  // Event-driven triggers happen instantly via media_state_changed WebSocket
-  // This function only sets up the 5-minute refresh interval
-  const setupPreviewGeneration = (sessionId) => {
-    // Clear existing interval if any
-    if (previewIntervalsRef.current[sessionId]) {
-      clearInterval(previewIntervalsRef.current[sessionId].interval);
-      clearTimeout(previewIntervalsRef.current[sessionId].timeout);
-    }
-
-    // Start 5-minute refresh interval (event-driven handles initial generation)
-    const interval = setInterval(() => {
-      generateSessionPreview(sessionId);
-    }, 5 * 60 * 1000); // 5 minutes
-
-    previewIntervalsRef.current[sessionId] = { interval };
-  };
-
   // ✅ Fetch session like status (isLiked + count)
   const fetchSessionLikes = async (sessionId) => {
     try {
@@ -3001,41 +3006,33 @@ const LobbyPage = () => {
     }
   };
 
-  // ✅ Setup preview generation for all active sessions
+  // Sync sessionPreviews from API data (backend stores preview_url/poster_url after each generation).
+  // Runs on every sessionsPage poll so previews appear without needing a live WS connection.
+  // Also seeds new sessions with room_avatar_url so the card shows immediately on session start.
   useEffect(() => {
-    // Setup preview generation for each session from sessionsPage (the actual rendered data)
-    sessionsPage.data.forEach(session => {
-      const hasInterval = !!previewIntervalsRef.current[session.session_id];
-      
-      // Skip if preview generation is disabled for this session
-      if (session.preview_enabled === false) return;
-      
-      if (!hasInterval) {
-        setupPreviewGeneration(session.session_id);
-        
-        // ✅ INITIAL CHECK: Only generate if no preview exists yet
-        const hasActiveMedia = session.current_media_type || session.is_screen_sharing_active;
-        const needsPreview = !sessionPreviews[session.session_id]?.previewUrl && !sessionPreviews[session.session_id]?.isGenerating;
-        
-        if (hasActiveMedia && needsPreview) {
-          generateSessionPreview(session.session_id);
-        }
-      }
-    });
+    setSessionPreviews(prev => {
+      const updates = {};
+      sessionsPage.data.forEach(session => {
+        const newPreviewUrl = resolvePreviewUrl(session.preview_url);
+        const newPosterUrl = resolvePreviewUrl(session.poster_url) || resolvePreviewUrl(session.room_avatar_url);
+        const existing = prev[session.session_id];
 
-    // Cleanup ONLY sessions that no longer exist
-    return () => {
-      const activeSessionIds = new Set(sessionsPage.data.map(s => s.session_id));
-      Object.keys(previewIntervalsRef.current).forEach(sessionId => {
-        if (!activeSessionIds.has(sessionId)) {
-          const { interval, timeout } = previewIntervalsRef.current[sessionId];
-          if (interval) clearInterval(interval);
-          if (timeout) clearTimeout(timeout);
-          delete previewIntervalsRef.current[sessionId];
+        const previewChanged = newPreviewUrl && existing?.previewUrl !== newPreviewUrl;
+        // Seed new sessions that have no entry yet but do have a poster/room avatar
+        const needsSeed = !existing && newPosterUrl;
+
+        if (previewChanged || needsSeed) {
+          updates[session.session_id] = {
+            posterUrl: newPosterUrl || null,
+            previewUrl: newPreviewUrl || null,
+            isGenerating: false,
+            version: newPreviewUrl ? Date.now() : undefined,
+          };
         }
       });
-    };
-  }, [sessionsPage.data, sessionPreviews]);
+      return Object.keys(updates).length ? { ...prev, ...updates } : prev;
+    });
+  }, [sessionsPage.data]);
   
   // ✅ Fetch likes and chat counts for all sessions
   useEffect(() => {
@@ -3068,27 +3065,34 @@ const LobbyPage = () => {
 
   const switchSubTab = (to) => { saveWatchingScrollPos(); setWatchingSubTab(to); restoreWatchingScrollPos(to); };
 
-  // ── swipe-left/right for tab navigation ───────────────────────────────────
-  const handleWatchingTouchStart = (e) => {
-    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  // ── direction-locked swipe for tab switching (all tabs) ──────────────────
+  const handleTouchStart = (e) => {
+    swipeStateRef.current = { startX: e.touches[0].clientX, startY: e.touches[0].clientY, locked: null };
   };
-  const handleWatchingTouchEnd = (e) => {
-    const dx = e.changedTouches[0].clientX - touchStartRef.current.x;
-    const dy = e.changedTouches[0].clientY - touchStartRef.current.y;
-    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy)) return;
-    if (dx < 0 && watchingSubTab === 'sessions') switchSubTab('discover');
-    else if (dx > 0 && watchingSubTab === 'discover') switchSubTab('sessions');
+  const handleTouchMove = (e) => {
+    if (swipeStateRef.current.locked !== null) return;
+    const dx = Math.abs(e.touches[0].clientX - swipeStateRef.current.startX);
+    const dy = Math.abs(e.touches[0].clientY - swipeStateRef.current.startY);
+    if (Math.sqrt(dx * dx + dy * dy) < 12) return;
+    swipeStateRef.current.locked = dx > dy ? 'h' : 'v';
+  };
+  const handleTouchEnd = (e) => {
+    if (swipeStateRef.current.locked !== 'h') return;
+    const dx = e.changedTouches[0].clientX - swipeStateRef.current.startX;
+    if (Math.abs(dx) < 50) return;
+    const tabOrder = ['chats', 'rooms', 'watching', 'feed'];
+    const currentIdx = tabOrder.indexOf(activeTab);
+    if (dx < 0 && currentIdx < tabOrder.length - 1) setActiveTab(tabOrder[currentIdx + 1]);
+    else if (dx > 0 && currentIdx > 0) setActiveTab(tabOrder[currentIdx - 1]);
   };
 
   // ── Taskbar handlers ──
   const handleCenterFAB = () => {
     if (activeTab === 'watching') {
-      if (watchingSubTab === 'sessions') {
-        setCreateModalHidePosts(true);
-        setIsCreateNewModalOpen(true);
-      } else {
-        setIsPostUploadModalOpen(true);
-      }
+      setCreateModalHidePosts(true);
+      setIsCreateNewModalOpen(true);
+    } else if (activeTab === 'feed') {
+      setIsPostUploadModalOpen(true);
     } else if (activeTab === 'rooms') {
       if (!currentUser?.main_room_id) {
         navigate('/create-room');
@@ -3109,41 +3113,35 @@ const LobbyPage = () => {
       }
       setShowChatsSearch(s => !s);
     } else if (activeTab === 'watching') {
-      if (watchingSubTab === 'sessions') setShowSessionSearch(s => !s);
-      else setShowDiscoverSearch(s => !s);
+      setShowSessionSearch(s => !s);
+    } else if (activeTab === 'feed') {
+      setShowDiscoverSearch(s => !s);
     }
   };
 
   const handleHomeButton = () => {
     if (activeTab === 'chats') {
       setActiveTab('watching');
-      setWatchingSubTab('discover');
     } else if (activeTab === 'rooms') {
       fetchRoomsData(0, false);
     } else if (activeTab === 'watching') {
-      if (watchingSubTab === 'sessions') {
-        handleRefreshWatchingNow();
-        if (watchingNowScrollRef.current) watchingNowScrollRef.current.scrollTop = 0;
-      } else {
-        const scrollToTop = () => {
-          if (watchingNowScrollRef.current) watchingNowScrollRef.current.scrollTop = 0;
-          window.scrollTo({ top: 0 });
-        };
-        const p = discoverFeedRef.current?.refresh();
-        if (p && typeof p.then === 'function') {
-          p.then(scrollToTop);
-        } else {
-          scrollToTop();
-        }
-      }
+      handleRefreshWatchingNow();
+      if (watchingNowScrollRef.current) watchingNowScrollRef.current.scrollTop = 0;
+    } else if (activeTab === 'feed') {
+      const scrollToTop = () => {
+        window.scrollTo({ top: 0 });
+      };
+      const p = discoverFeedRef.current?.refresh();
+      if (p && typeof p.then === 'function') p.then(scrollToTop);
+      else scrollToTop();
     }
   };
 
   const isSearchActive =
     (activeTab === 'rooms' && showRoomsSearch) ||
     (activeTab === 'chats' && showChatsSearch) ||
-    (activeTab === 'watching' && watchingSubTab === 'sessions' && showSessionSearch) ||
-    (activeTab === 'watching' && watchingSubTab === 'discover' && showDiscoverSearch);
+    (activeTab === 'watching' && showSessionSearch) ||
+    (activeTab === 'feed' && showDiscoverSearch);
 
   const showCenterFAB = true;
   const showSearchButton = true;
@@ -3280,14 +3278,8 @@ const LobbyPage = () => {
           onClose={() => setIsPostUploadModalOpen(false)}
           onSuccess={() => {
             // Switch to discover tab and refresh feed
-            setActiveTab('watching');
-            setWatchingSubTab('discover');
-            // Refresh discover feed after a short delay to ensure backend processed upload
-            setTimeout(() => {
-              if (discoverFeedRef.current?.refresh) {
-                discoverFeedRef.current.refresh();
-              }
-            }, 500);
+            setActiveTab('feed');
+            setTimeout(() => { if (discoverFeedRef.current?.refresh) discoverFeedRef.current.refresh(); }, 500);
             setIsPostUploadModalOpen(false);
           }}
         />
@@ -3317,7 +3309,7 @@ const LobbyPage = () => {
           <img
             src="/icons/LetsWatchOut Logo.svg"
             alt="LetsWatchOut"
-            className="h-[70px] sm:h-[110px] w-auto"
+            className="h-[68px] sm:h-[107px] w-auto"
           />
         </div>
       <p className={`block text-center mb-6 text-gray-700 dark:text-gray-300 transition-opacity duration-700 ${showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
@@ -3325,9 +3317,9 @@ const LobbyPage = () => {
           ? 'Welcome! Find or create a room to start watching together.'
           : activeTab === 'chats'
           ? "Say hi! Connect with friends and see what they're watching."
-          : watchingSubTab === 'sessions'
-          ? "What's live right now — join a session and watch together."
-          : 'Explore posts and recordings from the community.'}
+          : activeTab === 'feed'
+          ? 'Explore posts and recordings from the community.'
+          : "Live WatchOuts — tap any card to jump in and watch together."}
       </p>
 
       {/* Search Bar Section - Rooms tab, collapsible via taskbar Search button */}
@@ -3356,70 +3348,55 @@ const LobbyPage = () => {
         </div>
       )}
 
-      {/* ✅ Tab Navigation */}
-      <div className="mb-1 sm:mb-2">
-        <div className="flex border-b border-gray-300 dark:border-gray-700">
-          {/* Tab 1: Chats */}
-          <button
-            onClick={() => setActiveTab('chats')}
-            className={`px-3 py-2 sm:px-6 sm:py-3 text-sm sm:text-base font-semibold transition-colors relative ${
-              activeTab === 'chats'
-                ? 'text-green-600 dark:text-green-400'
-                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-            }`}
-          >
-            Chats
-            {Object.values(unreadCounts).reduce((sum, count) => sum + count, 0) > 0 && (
-              <span className="ml-1 sm:ml-2 px-1.5 py-0.5 text-[10px] sm:text-xs bg-green-600 text-white rounded-full">
-                {Object.values(unreadCounts).reduce((sum, count) => sum + count, 0)}
-              </span>
-            )}
-            {activeTab === 'chats' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-green-600 dark:bg-green-400"></div>
-            )}
-          </button>
-          
-          {/* Tab 2: Rooms */}
-          <button
-            onClick={() => setActiveTab('rooms')}
-            className={`px-3 py-2 sm:px-6 sm:py-3 text-sm sm:text-base font-semibold transition-colors relative ${
-              activeTab === 'rooms'
-                ? 'text-blue-600 dark:text-blue-400'
-                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-            }`}
-          >
-            Rooms
-            {activeTab === 'rooms' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400"></div>
-            )}
-          </button>
-          
-          {/* Tab 3: Watching Now */}
-          <button
-            onClick={() => setActiveTab('watching')}
-            className={`px-3 py-2 sm:px-6 sm:py-3 text-sm sm:text-base font-semibold transition-colors relative ${
-              activeTab === 'watching'
-                ? 'text-purple-600 dark:text-purple-400'
-                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-            }`}
-          >
-            Watching Now
-            {sessions.length > 0 && (
-              <span className="ml-1 sm:ml-2 px-1.5 py-0.5 text-[10px] sm:text-xs bg-purple-600 text-white rounded-full">
-                {sessions.length}
-              </span>
-            )}
-            {activeTab === 'watching' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-600 dark:bg-purple-400"></div>
-            )}
-          </button>
+      {/* ── Inline 4-tab bar — always dark so active=white works on all tabs ── */}
+      <div ref={tabBarRef} className="mb-1 sm:mb-2 bg-gray-900 dark:bg-gray-900 rounded-xl">
+        <div className="flex border-b border-white/10">
+          {[
+            { id: 'chats',    label: 'Chats' },
+            { id: 'rooms',    label: 'Rooms' },
+            { id: 'watching', label: 'WatchOuts' },
+            { id: 'feed',     label: 'Feed' },
+          ].map(tab => {
+            const isActive   = activeTab === tab.id;
+            const chatUnread = tab.id === 'chats'
+              ? Object.values(unreadCounts).reduce((s, c) => s + c, 0)
+              : 0;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`relative flex-1 py-2 transition-colors
+                  ${isActive ? 'font-bold text-white' : 'font-semibold text-white/40 hover:text-white/70'}`}
+              >
+                <span className="text-sm sm:text-base md:text-lg">{tab.label}</span>
 
+                {/* Active underline */}
+                {isActive && (
+                  <span className="absolute bottom-0 left-1/4 right-1/4 h-0.5 rounded-full bg-white" />
+                )}
+
+                {/* Chats unread badge */}
+                {chatUnread > 0 && (
+                  <span className="absolute top-1 right-2 min-w-[16px] h-4 px-0.5 flex items-center justify-center text-[9px] font-bold bg-green-600 text-white rounded-full">
+                    {chatUnread}
+                  </span>
+                )}
+
+                {/* WatchOuts session badge */}
+                {tab.id === 'watching' && sessions.length > 0 && (
+                  <span className="absolute top-1 right-2 min-w-[16px] h-4 px-0.5 flex items-center justify-center text-[9px] font-bold bg-red-500 text-white rounded-full">
+                    {sessions.length}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* ✅ ROOMS TAB CONTENT */}
       {activeTab === 'rooms' && (
-        <div>
+        <div onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
           <h2 className="text-2xl font-semibold mb-4 text-gray-900 dark:text-white">
             Available Rooms {searchTerm && ` (Filtered: ${filteredRooms.length}/${rooms.length})`}
           </h2>
@@ -3649,64 +3626,269 @@ const LobbyPage = () => {
         </div>
       )}
 
-      {/* ✅ WATCHING NOW TAB CONTENT - TikTok-Style Vertical Scroll with Infinite Loading */}
-      {activeTab === 'watching' && (
-        <div 
+      {/* ✅ WATCHOUTS - TikTok snap-scroll (always mounted; hidden when not active to avoid video teardown lag) */}
+      <div
           ref={watchingNowScrollRef}
-          className="overflow-y-auto overflow-x-hidden h-full scrollbar-hide"
-          style={{ maxHeight: 'calc(100vh - 200px)', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-          onTouchStart={handleWatchingTouchStart}
-          onTouchEnd={handleWatchingTouchEnd}
-        >
-          {/* ✅ Sub-tab Navigation: Watching Live | Feed */}
-          <div className="border-b border-gray-300 dark:border-gray-700 mb-4 sticky top-0 z-10 bg-white dark:bg-gray-900">
-            <div className="flex items-center px-4">
-              <button
-                onClick={() => switchSubTab('sessions')}
-                className={`px-3 py-2 text-base font-semibold transition-all relative ${
-                  watchingSubTab === 'sessions'
-                    ? 'text-purple-600 dark:text-purple-400'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                }`}
-              >
-                Watching Live
-                {watchingSubTab === 'sessions' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-600 dark:bg-purple-400" />}
-              </button>
-              <button
-                onClick={() => switchSubTab('discover')}
-                className={`px-3 py-2 text-base font-semibold transition-all relative ${
-                  watchingSubTab === 'discover'
-                    ? 'text-purple-600 dark:text-purple-400'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                }`}
-              >
-                Feed
-                {watchingSubTab === 'discover' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-600 dark:bg-purple-400" />}
-              </button>
+          className="overflow-y-scroll snap-y snap-mandatory bg-black"
+          style={{ display: activeTab === 'watching' ? 'block' : 'none', height: `calc(100dvh - ${watchingTopOffset}px - 64px)`, scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          aria-hidden={activeTab !== 'watching'}
+          onTouchStart={activeTab === 'watching' ? handleTouchStart : undefined}
+          onTouchMove={activeTab === 'watching' ? handleTouchMove : undefined}
+          onTouchEnd={activeTab === 'watching' ? handleTouchEnd : undefined}
+      >
+          <style>{`.watching-scroll::-webkit-scrollbar { display: none; }`}</style>
+
+          {/* Empty state */}
+          {!sessionsPage.loading && sessionsPage.data.length === 0 && trailersPage.data.length === 0 && (
+            <div className="h-full w-full snap-start flex flex-col items-center justify-center bg-gradient-to-br from-purple-900 via-gray-900 to-black text-white text-center px-8">
+              <style>{pulseAnimationStyles}</style>
+              {/* Sleeping icon with floating Zzz */}
+              <div className="relative mb-8 flex items-center justify-center w-28 h-28">
+                <img src="/icons/lwoIcon.png" alt="WatchOut" className="w-20 h-20 opacity-25" onError={e => { e.target.style.display='none'; }} />
+                {/* Zzz float up from top-right of icon */}
+                <span className="zzz-1 absolute text-white/70 font-bold select-none pointer-events-none"
+                  style={{ fontSize: '12px', top: '8px', right: '8px' }}>z</span>
+                <span className="zzz-2 absolute text-white/70 font-bold select-none pointer-events-none"
+                  style={{ fontSize: '16px', top: '0px', right: '18px' }}>z</span>
+                <span className="zzz-3 absolute text-white/70 font-bold select-none pointer-events-none"
+                  style={{ fontSize: '22px', top: '-10px', right: '28px' }}>Z</span>
+              </div>
+              <p className="text-xl font-semibold mb-2">No WatchOuts right now</p>
+              <p className="text-gray-400 text-sm">Start a WatchOut — go live and invite friends to watch with you!</p>
             </div>
-            {/* Collapsible session search */}
-            {watchingSubTab === 'sessions' && showSessionSearch && (
-              <div className="px-4 pb-2">
-                <div className="relative">
-                  <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  </div>
-                  <input type="text" placeholder="Search sessions..." value={sessionSearch} onChange={e => setSessionSearch(e.target.value)} autoFocus
-                    className="w-full pl-10 pr-10 py-2 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
-                  />
-                  {sessionSearch && (
-                    <button onClick={() => setSessionSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                  )}
+          )}
+
+          {/* Loading skeleton */}
+          {sessionsPage.loading && sessionsPage.data.length === 0 && (
+            <div className="h-full w-full snap-start flex items-center justify-center bg-black">
+              <div className="animate-spin h-12 w-12 border-4 border-white/20 border-t-white rounded-full" />
+            </div>
+          )}
+
+          {/* ── Trailers ── */}
+          {trailersPage.data.map((trailer) => (
+            <div key={`t-${trailer.ID}`} className="relative h-full w-full snap-start snap-always overflow-hidden">
+              <video
+                src={`${import.meta.env.VITE_API_BASE_URL}/${trailer.trailer_url}`}
+                autoPlay loop muted={videoMuted} playsInline
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/90 pointer-events-none" />
+              <div className="absolute top-16 left-6 z-10">
+                <div className="bg-red-600/30 backdrop-blur-sm border-4 border-red-500/50 text-red-100 px-5 py-2 -rotate-12 shadow-2xl mb-3 inline-block">
+                  <span className="text-xl font-black tracking-wider" style={{ fontFamily: 'Impact, Arial Black, sans-serif' }}>COMING SOON</span>
+                </div>
+                <h3 className="text-2xl font-bold text-white drop-shadow-lg">{trailer.Room?.name || 'Event Room'}</h3>
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
+                <h4 className="text-2xl font-bold mb-1 drop-shadow-lg">{trailer.trailer_title || trailer.title}</h4>
+                <p className="text-sm text-gray-200 mb-3 drop-shadow-md line-clamp-2">{trailer.description}</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm"><span className="text-gray-300">Starts:</span> <span className="font-semibold">{new Date(trailer.start_time).toLocaleString()}</span></p>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSelectedEventForCalendar(trailer); setIsCalendarModalOpen(true); }}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg font-medium transition-colors shadow-lg"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    Add to Calendar
+                  </button>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          ))}
 
-          {/* ✅ WATCHING NOW CONTENT - Keep both mounted for instant switching */}
+          {/* ── Live session cards ── */}
+          {(() => {
+            // Renders logo-bug + lower-third overlays sourced from the session's stored liveshare graphics state
+            const LiveShareOverlay = ({ session }) => {
+              if (!session.is_screen_sharing_active) return null;
+              let logo = null;
+              let lowerThird = null;
+              try { logo = session.liveshare_logo_bug ? JSON.parse(session.liveshare_logo_bug) : null; } catch {}
+              try { lowerThird = session.liveshare_lower_third ? JSON.parse(session.liveshare_lower_third) : null; } catch {}
+              if (!logo && !lowerThird) return null;
+              return (
+                <div className="absolute inset-0 pointer-events-none z-10">
+                  {logo?.imageUrl && (
+                    <img
+                      src={logo.imageUrl}
+                      alt=""
+                      className="absolute top-2 right-2 h-7 w-auto object-contain opacity-90"
+                    />
+                  )}
+                  {lowerThird?.name && (
+                    <div className="absolute bottom-0 left-0 right-0 px-3 py-1.5 bg-gradient-to-t from-black/70 to-transparent">
+                      <p className="text-white text-xs font-semibold leading-tight truncate">{lowerThird.name}</p>
+                      {lowerThird.title && <p className="text-gray-300 text-[10px] leading-tight truncate">{lowerThird.title}</p>}
+                    </div>
+                  )}
+                </div>
+              );
+            };
+
+            const filtered = sessionsPage.data.filter(s => {
+              if (!sessionSearch.trim()) return true;
+              const q = sessionSearch.toLowerCase();
+              return (
+                s.room_name?.toLowerCase().includes(q) ||
+                s.host_username?.toLowerCase().includes(q) ||
+                s.session_title?.toLowerCase().includes(q) ||
+                s.watch_type?.toLowerCase().includes(q)
+              );
+            });
+            return filtered.map((session) => {
+              const preview = sessionPreviews[session.session_id] || {};
+              const watchTypeConfig = {
+                classroom: { emoji: '🎓', name: 'Classroom' },
+                '3d_cinema': { emoji: '🎭', name: '3D Cinema' },
+                video: { emoji: '🎬', name: 'Video Watch' },
+              };
+              const watchType = watchTypeConfig[session.watch_type] || watchTypeConfig.video;
+
+              return (
+                <div
+                  key={session.session_id}
+                  className="relative h-full w-full snap-start snap-always overflow-hidden cursor-pointer"
+                  onClick={() => handleJoinSessionDirect(session)}
+                >
+                  {/* Full-bleed preview */}
+                  <div className="absolute inset-0">
+                    <SessionPreview
+                      session={session}
+                      previewUrl={preview.previewUrl}
+                      posterUrl={preview.posterUrl}
+                      isGenerating={preview.isGenerating}
+                      isClearing={preview.isClearing || false}
+                      muted={videoMuted}
+                      previewVersion={preview.version}
+                    />
+                    <LiveShareOverlay session={session} />
+                  </div>
+
+                  {/* Top gradient — mute button readability */}
+                  <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-black/55 to-transparent pointer-events-none" />
+                  {/* Bottom gradient */}
+                  <div className="absolute bottom-0 left-0 right-0 h-2/5 bg-gradient-to-t from-black/90 via-black/50 to-transparent pointer-events-none" />
+
+                  {/* Mute button */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleVideoMute(); }}
+                    className="absolute top-4 left-4 z-10 bg-black/40 backdrop-blur-sm p-2 rounded-full"
+                  >
+                    {videoMuted ? (
+                      <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                    ) : (
+                      <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" clipRule="evenodd" /></svg>
+                    )}
+                  </button>
+
+                  {/* Right-side icon stack */}
+                  <div className="absolute bottom-28 right-4 flex flex-col items-center gap-5 pointer-events-auto">
+                    {session.content_rating && (
+                      session.content_rating === 'Educational' ? (
+                        <img src="/icons/E.png" alt="Educational" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
+                      ) : session.content_rating === 'Religious' ? (
+                        <img src="/icons/R.png" alt="Religious" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
+                      ) : (
+                        <span className="text-white font-black text-3xl leading-none" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7)' }}>
+                          {session.content_rating === 'Mature' ? 'M' : session.content_rating}
+                        </span>
+                      )
+                    )}
+                    <button onClick={(e) => { e.stopPropagation(); handleSessionLike(session.session_id, e); }} className="flex flex-col items-center gap-1 transition-transform active:scale-90">
+                      <HeartIcon
+                        key={`heart-tiktok-${session.session_id}-${!!sessionLikes[session.session_id]?.isLiked}`}
+                        className={`w-9 h-9 ${sessionLikes[session.session_id]?.isLiked ? 'text-red-500 [animation:heartPop_0.4s_ease]' : 'text-white'}`}
+                        style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
+                      <span className="text-white text-xs font-bold" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.9)' }}>{formatCount(sessionLikes[session.session_id]?.count || 0)}</span>
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); handleOpenChatPreview(session, e); }} className="flex flex-col items-center gap-1 transition-transform active:scale-90">
+                      <ChatBubbleOvalLeftEllipsisIcon className="w-9 h-9 text-white" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
+                      <span className="text-white text-xs font-bold" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.9)' }}>{formatCount(sessionChatCounts[session.session_id] || 0)}</span>
+                    </button>
+                    <div className="flex flex-col items-center gap-1">
+                      <img src="/icons/view.png" alt="viewers" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
+                      <span className="text-white text-xs font-bold" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.9)' }}>{formatCount(session.member_count || 0)}</span>
+                    </div>
+                    {!session.is_temporary && (
+                      <button onClick={(e) => handleToggleFavourite(session.room_id, e)} className="flex flex-col items-center gap-1 transition-transform active:scale-90">
+                        {savedRooms[session.room_id]
+                          ? <BookmarkIcon className="w-9 h-9 text-purple-400" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
+                          : <svg viewBox="0 0 24 24" fill="white" className="w-9 h-9" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }}>
+                              <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93z M11 7L13 7L13 9L15 9L15 11L13 11L13 13L11 13L11 11L9 11L9 9L11 9Z" />
+                            </svg>
+                        }
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Bottom info */}
+                  <div className="absolute bottom-20 left-4 right-16 pointer-events-auto" style={{ fontFamily: '"Outfit", -apple-system, "Segoe UI", sans-serif' }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div
+                        onClick={(e) => { e.stopPropagation(); if (!session.is_temporary) navigate(`/rooms/${session.room_id}`); }}
+                        className="relative flex-shrink-0 cursor-pointer"
+                      >
+                        <div className="absolute -inset-1 rounded-full bg-red-500/30 animate-ping" />
+                        <div className="absolute inset-0 w-9 h-9 rounded-full ring-2 ring-red-500 animate-pulse pointer-events-none" style={{ animationDuration: '2s' }} />
+                        <div className="relative w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold text-sm overflow-hidden">
+                          {session.room_avatar_url
+                            ? <img src={cdnThumb(session.room_avatar_url, 72)} alt={session.room_name} className="w-full h-full object-cover" />
+                            : session.room_name?.[0]?.toUpperCase() || 'R'}
+                        </div>
+                      </div>
+                      <span className="font-bold text-white text-base truncate" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>{session.room_name}</span>
+                      {session.average_rating > 0 && (
+                        <div className="flex items-center gap-0.5 flex-shrink-0">
+                          <svg className="w-3.5 h-3.5 fill-yellow-400" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                          <span className="text-white text-sm font-bold">{session.average_rating.toFixed(1)}</span>
+                        </div>
+                      )}
+                      {!session.is_member && !session.is_temporary && (
+                        joinedRooms[session.room_id]
+                          ? <div className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-500 rounded-full flex items-center justify-center shadow-md">
+                              <span className="text-white text-[9px] sm:text-[11px] font-black leading-none">✓</span>
+                            </div>
+                          : <button onClick={(e) => handleJoinRoomFromCard(session.room_id, e)} className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-600 hover:bg-purple-500 rounded-full overflow-hidden shadow-md transition-transform active:scale-90">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" className="w-full h-full p-[5px]"><path d="M12 2v20M2 12h20" /></svg>
+                            </button>
+                      )}
+                    </div>
+                    <h3 className="text-base font-bold leading-tight line-clamp-2 mb-1" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}>
+                      {session.session_title || session.currently_playing || 'Live Session'}
+                    </h3>
+                    <div className="flex items-center gap-2 text-xs text-gray-300">
+                      {session.ticketing_enabled && session.ticket_price_tokens > 0 && (
+                        <span className="text-yellow-300 font-semibold">🪙 {session.early_bird_active && session.early_bird_enabled ? session.early_bird_price_tokens : session.ticket_price_tokens} tokens</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ─── Tap to Join strip ─────────────────────────────────── */}
+                  <div className="absolute bottom-6 left-0 right-0 flex items-center gap-3 px-5 pointer-events-none">
+                    <div className="flex-1 h-px bg-white/50" />
+                    <span className="text-white text-sm font-black tracking-[0.25em] whitespace-nowrap" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
+                      {session.ticketing_enabled && session.ticket_price_tokens > 0 ? 'Tap to Purchase & Join' : 'Tap to Join'}
+                    </span>
+                    <div className="flex-1 h-px bg-white/50" />
+                  </div>
+                </div>
+              );
+            });
+          })()}
+
+          {/* Infinite scroll trigger */}
+          <div ref={loadMoreTriggerRef} className="h-2 snap-start" />
+
+          {/* Loading more spinner */}
+          {(sessionsPage.loading || trailersPage.loading) && sessionsPage.data.length > 0 && (
+            <div className="h-full snap-start flex items-center justify-center bg-black">
+              <div className="animate-spin h-10 w-10 border-4 border-white/20 border-t-white rounded-full" />
+            </div>
+          )}
+
+          {/* Legacy watching-now content blocks (not rendered — preserved below) */}
+          {false && (<>
           <div className={watchingSubTab === 'sessions' ? 'block' : 'hidden'}>
             <>
           <h2 className="text-2xl font-semibold mb-6 text-gray-900 dark:text-white text-center">
@@ -3866,9 +4048,11 @@ const LobbyPage = () => {
                         isGenerating={preview.isGenerating}
                         isClearing={preview.isClearing || false}
                         muted={videoMuted}
+                        previewVersion={preview.version}
                       />
+                      <LiveShareOverlay session={session} />
                     </div>
-                    
+
                     {/* Mute/Unmute Button - Top Left Overlay */}
                     <button
                       onClick={toggleVideoMute}
@@ -3925,26 +4109,34 @@ const LobbyPage = () => {
                             )}
                           </div>
                         </div>
-                        
+
                         {/* Room Name + Star Rating */}
                         <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <span 
-                            className="font-semibold text-white text-sm truncate"
+                          <span
+                            className="font-bold text-white text-base truncate"
                             style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
                           >
                             {session.room_name}
                           </span>
-                          
                           {/* Star Rating (Inline with room name) */}
                           {session.average_rating > 0 && (
                             <div className="flex items-center gap-1 flex-shrink-0">
                               <svg className="w-3.5 h-3.5 fill-yellow-400" viewBox="0 0 24 24" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }}>
                                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
                               </svg>
-                              <span className="text-white font-bold text-xs" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
+                              <span className="text-white font-bold text-sm" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
                                 {session.average_rating.toFixed(1)}
                               </span>
                             </div>
+                          )}
+                          {!session.is_member && !session.is_temporary && (
+                            joinedRooms[session.room_id]
+                              ? <div className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-500 rounded-full flex items-center justify-center shadow-md">
+                                  <span className="text-white text-[9px] sm:text-[11px] font-black leading-none">✓</span>
+                                </div>
+                              : <button onClick={(e) => handleJoinRoomFromCard(session.room_id, e)} className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-600 hover:bg-purple-500 rounded-full overflow-hidden shadow-md transition-transform active:scale-90">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" className="w-full h-full p-[5px]"><path d="M12 2v20M2 12h20" /></svg>
+                                </button>
                           )}
                         </div>
                       </div>
@@ -3986,16 +4178,6 @@ const LobbyPage = () => {
                             <UserIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
                             <span className="font-medium">{session.host_username}</span>
                           </span>
-                          <span className="inline-flex items-center gap-1.5">
-                            {session.watch_type === 'classroom' ? (
-                              <AcademicCapIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
-                            ) : session.watch_type === '3d_cinema' ? (
-                              <VideoCameraIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
-                            ) : (
-                              <FilmIcon className="w-4 h-4 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
-                            )}
-                            <span>{watchType.name}</span>
-                          </span>
                           {session.ticketing_enabled && (
                             <span className="inline-flex items-center gap-1.5 text-yellow-300 font-semibold">
                               <span>🪙</span>
@@ -4008,49 +4190,17 @@ const LobbyPage = () => {
                     
                     {/* Right Icon Stack - TikTok Style */}
                     <div className="absolute bottom-4 right-4 flex flex-col items-center gap-4 pointer-events-auto">
-                      {/* Content Rating - Neon Outline Frame */}
+                      {/* Content Rating */}
                       {session.content_rating && (
-                        <div 
-                          className="w-[38px] h-14 flex items-center justify-center border-2"
-                          style={{
-                            borderColor: 
-                              session.content_rating === 'G' ? 'rgb(74, 222, 128)' :
-                              session.content_rating === 'PG' ? 'rgb(96, 165, 250)' :
-                              session.content_rating === 'Educational' ? 'rgb(59, 130, 246)' :
-                              session.content_rating === 'Religious' ? 'rgb(147, 51, 234)' :
-                              session.content_rating === '13+' ? 'rgb(250, 204, 21)' :
-                              session.content_rating === '16+' ? 'rgb(251, 146, 60)' :
-                              session.content_rating === '18+' ? 'rgb(248, 113, 113)' :
-                              session.content_rating === 'Mature' ? 'rgb(192, 132, 252)' :
-                              'rgb(156, 163, 175)',
-                            boxShadow: 
-                              session.content_rating === 'G' ? 'inset 0 0 12px rgba(74, 222, 128, 0.3), 0 0 12px rgba(74, 222, 128, 0.6), 0 0 24px rgba(74, 222, 128, 0.4)' :
-                              session.content_rating === 'PG' ? 'inset 0 0 12px rgba(96, 165, 250, 0.3), 0 0 12px rgba(96, 165, 250, 0.6), 0 0 24px rgba(96, 165, 250, 0.4)' :
-                              session.content_rating === 'Educational' ? 'inset 0 0 12px rgba(59, 130, 246, 0.3), 0 0 12px rgba(59, 130, 246, 0.6), 0 0 24px rgba(59, 130, 246, 0.4)' :
-                              session.content_rating === 'Religious' ? 'inset 0 0 12px rgba(147, 51, 234, 0.3), 0 0 12px rgba(147, 51, 234, 0.6), 0 0 24px rgba(147, 51, 234, 0.4)' :
-                              session.content_rating === '13+' ? 'inset 0 0 12px rgba(250, 204, 21, 0.3), 0 0 12px rgba(250, 204, 21, 0.6), 0 0 24px rgba(250, 204, 21, 0.4)' :
-                              session.content_rating === '16+' ? 'inset 0 0 12px rgba(251, 146, 60, 0.3), 0 0 12px rgba(251, 146, 60, 0.6), 0 0 24px rgba(251, 146, 60, 0.4)' :
-                              session.content_rating === '18+' ? 'inset 0 0 12px rgba(248, 113, 113, 0.3), 0 0 12px rgba(248, 113, 113, 0.6), 0 0 24px rgba(248, 113, 113, 0.4)' :
-                              session.content_rating === 'Mature' ? 'inset 0 0 12px rgba(192, 132, 252, 0.3), 0 0 12px rgba(192, 132, 252, 0.6), 0 0 24px rgba(192, 132, 252, 0.4)' :
-                              'inset 0 0 12px rgba(156, 163, 175, 0.3), 0 0 12px rgba(156, 163, 175, 0.6), 0 0 24px rgba(156, 163, 175, 0.4)'
-                          }}
-                        >
-                          <img 
-                            src={
-                              session.content_rating === 'G' ? '/icons/G Rating Icon.png' :
-                              session.content_rating === 'PG' ? '/icons/PG Rating Icon.png' :
-                              session.content_rating === 'Educational' ? '/icons/Educational_Rating_Icon.png' :
-                              session.content_rating === 'Religious' ? '/icons/Religious Rating.png' :
-                              session.content_rating === '13+' ? '/icons/13_ Rating Icon.png' :
-                              session.content_rating === '16+' ? '/icons/16_ Rating Icon.png' :
-                              session.content_rating === '18+' ? '/icons/18_ Rating Icon.png' :
-                              session.content_rating === 'Mature' ? '/icons/Mature Rating Icon.png' :
-                              '/icons/G Rating Icon.png'
-                            }
-                            alt={`${session.content_rating} rating`}
-                            className="w-full h-full object-contain"
-                          />
-                        </div>
+                        session.content_rating === 'Educational' ? (
+                          <img src="/icons/E.png" alt="Educational" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
+                        ) : session.content_rating === 'Religious' ? (
+                          <img src="/icons/R.png" alt="Religious" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
+                        ) : (
+                          <span className="text-white font-black text-3xl leading-none" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7)' }}>
+                            {session.content_rating === 'Mature' ? 'M' : session.content_rating}
+                          </span>
+                        )
                       )}
                       
                       {/* Likes */}
@@ -4058,16 +4208,10 @@ const LobbyPage = () => {
                         onClick={(e) => handleSessionLike(session.session_id, e)}
                         className="flex flex-col items-center gap-1 group transition-transform hover:scale-110"
                       >
-                        <HeartIcon 
-                          className={`w-9 h-9 ${
-                            sessionLikes[session.session_id]?.isLiked ? 'text-red-500' : 'text-white'
-                          }`} 
-                          style={{ 
-                            filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))',
-                            fill: sessionLikes[session.session_id]?.isLiked ? 'currentColor' : 'none',
-                            stroke: sessionLikes[session.session_id]?.isLiked ? 'none' : 'currentColor',
-                            strokeWidth: sessionLikes[session.session_id]?.isLiked ? 0 : 1.5
-                          }} 
+                        <HeartIcon
+                          key={`heart-grid-${session.session_id}-${!!sessionLikes[session.session_id]?.isLiked}`}
+                          className={`w-9 h-9 ${sessionLikes[session.session_id]?.isLiked ? 'text-red-500 [animation:heartPop_0.4s_ease]' : 'text-white'}`}
+                          style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }}
                         />
                         <span className="text-white text-xs font-bold" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.9)' }}>
                           {formatCount(sessionLikes[session.session_id]?.count || 0)}
@@ -4079,21 +4223,31 @@ const LobbyPage = () => {
                         onClick={(e) => handleOpenChatPreview(session, e)}
                         className="flex flex-col items-center gap-1 group transition-transform hover:scale-110"
                       >
-                        <ChatBubbleLeftIcon className="w-9 h-9 text-white" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
+                        <ChatBubbleOvalLeftEllipsisIcon className="w-9 h-9 text-white" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
                         <span className="text-white text-xs font-bold" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.9)' }}>
                           {formatCount(sessionChatCounts[session.session_id] || 0)}
                         </span>
                       </button>
-                      
+
                       {/* Members */}
                       <div className="flex flex-col items-center gap-1">
-                        <UsersIcon className="w-9 h-9 text-white" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
+                        <img src="/icons/view.png" alt="viewers" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
                         <span className="text-white text-xs font-bold" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.9)' }}>
                           {formatCount(session.member_count || 0)}
                         </span>
                       </div>
+                      {!session.is_temporary && (
+                        <button onClick={(e) => handleToggleFavourite(session.room_id, e)} className="flex flex-col items-center gap-1 transition-transform active:scale-90">
+                          {savedRooms[session.room_id]
+                            ? <BookmarkIcon className="w-9 h-9 text-purple-400" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
+                            : <svg viewBox="0 0 24 24" fill="white" className="w-9 h-9" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }}>
+                                <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93z M11 7L13 7L13 9L15 9L15 11L13 11L13 13L11 13L11 11L9 11L9 9L11 9Z" />
+                              </svg>
+                          }
+                        </button>
+                      )}
                     </div>
-                    
+
                     <div className="absolute inset-0 border-4 border-transparent hover:border-blue-500/50 transition-colors duration-300 rounded-2xl pointer-events-none"></div>
                   </div>
                   
@@ -4193,9 +4347,9 @@ const LobbyPage = () => {
 
             </>
           </div>
+          </>)}
         </div>
-      )}
-      
+
       {/* ✅ Session Chat Preview Modal */}
       <SessionChatPreviewModal
         isOpen={isChatPreviewOpen}
@@ -4206,7 +4360,7 @@ const LobbyPage = () => {
       
       {/* ✅ CHATS TAB CONTENT */}
       {activeTab === 'chats' && (
-        <div className={selectedChatUser ? "fixed inset-0 z-50 bg-gray-50 dark:bg-gray-900" : "max-w-5xl mx-auto"}>
+        <div className={selectedChatUser ? "fixed inset-0 z-50 bg-gray-50 dark:bg-gray-900" : "max-w-5xl mx-auto"} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
           {chatsLoading ? (
             <div className={selectedChatUser ? "flex justify-center items-center h-full" : "flex justify-center items-center h-96"}>
               <p className="text-lg text-gray-700 dark:text-gray-300">Loading chats...</p>
@@ -5497,9 +5651,11 @@ const LobbyPage = () => {
                       isGenerating={preview.isGenerating}
                       isClearing={preview.isClearing || false}
                       muted={false}
+                      previewVersion={preview.version}
                     />
+                    <LiveShareOverlay session={session} />
                   </div>
-                  
+
                   {/* Dark Gradient Overlay (only when chat NOT active) */}
                   {!isChatActive && (
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none"></div>
@@ -5596,16 +5752,15 @@ const LobbyPage = () => {
                         )}
                       </div>
                     </div>
-                    
+
                     {/* Room Name + Star Rating */}
                     <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <span 
+                      <span
                         className="font-bold text-white text-lg truncate"
                         style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}
                       >
                         {session.room_name}
                       </span>
-                      
                       {/* Star Rating (Inline with room name) */}
                       {session.average_rating > 0 && (
                         <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -5616,6 +5771,15 @@ const LobbyPage = () => {
                             {session.average_rating.toFixed(1)}
                           </span>
                         </div>
+                      )}
+                      {!session.is_member && !session.is_temporary && (
+                        joinedRooms[session.room_id]
+                          ? <div className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-500 rounded-full flex items-center justify-center shadow-md">
+                              <span className="text-white text-[9px] sm:text-[11px] font-black leading-none">✓</span>
+                            </div>
+                          : <button onClick={(e) => handleJoinRoomFromCard(session.room_id, e)} className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-600 hover:bg-purple-500 rounded-full overflow-hidden shadow-md transition-transform active:scale-90">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" className="w-full h-full p-[5px]"><path d="M12 2v20M2 12h20" /></svg>
+                            </button>
                       )}
                     </div>
                   </div>
@@ -5657,16 +5821,6 @@ const LobbyPage = () => {
                         <UserIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
                         <span className="font-medium">{session.host_username}</span>
                       </span>
-                      <span className="inline-flex items-center gap-1.5">
-                        {session.watch_type === 'classroom' ? (
-                          <AcademicCapIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
-                        ) : session.watch_type === '3d_cinema' ? (
-                          <VideoCameraIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
-                        ) : (
-                          <FilmIcon className="w-5 h-5 text-white" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))' }} />
-                        )}
-                        <span>{watchType.name}</span>
-                      </span>
                       {session.ticketing_enabled && (
                         <span className="inline-flex items-center gap-1.5 text-yellow-300 font-semibold">
                           <span>🪙</span>
@@ -5679,40 +5833,17 @@ const LobbyPage = () => {
                 
                 {/* Right Icon Stack - TikTok Style (Fullscreen) */}
                 <div className="absolute bottom-24 right-6 flex flex-col items-center gap-6 pointer-events-auto">
-                  {/* Content Rating - Neon Outline Frame */}
+                  {/* Content Rating */}
                   {session.content_rating && (
-                    <div 
-                      className="w-[45px] h-16 flex items-center justify-center border-2"
-                      style={{
-                        borderColor: 
-                          session.content_rating === 'G' ? 'rgb(74, 222, 128)' :
-                          session.content_rating === 'PG' ? 'rgb(96, 165, 250)' :
-                          session.content_rating === '13+' ? 'rgb(250, 204, 21)' :
-                          session.content_rating === '18+' ? 'rgb(248, 113, 113)' :
-                          session.content_rating === 'Mature' ? 'rgb(192, 132, 252)' :
-                          'rgb(156, 163, 175)',
-                        boxShadow: 
-                          session.content_rating === 'G' ? 'inset 0 0 16px rgba(74, 222, 128, 0.3), 0 0 16px rgba(74, 222, 128, 0.7), 0 0 32px rgba(74, 222, 128, 0.5)' :
-                          session.content_rating === 'PG' ? 'inset 0 0 16px rgba(96, 165, 250, 0.3), 0 0 16px rgba(96, 165, 250, 0.7), 0 0 32px rgba(96, 165, 250, 0.5)' :
-                          session.content_rating === '13+' ? 'inset 0 0 16px rgba(250, 204, 21, 0.3), 0 0 16px rgba(250, 204, 21, 0.7), 0 0 32px rgba(250, 204, 21, 0.5)' :
-                          session.content_rating === '18+' ? 'inset 0 0 16px rgba(248, 113, 113, 0.3), 0 0 16px rgba(248, 113, 113, 0.7), 0 0 32px rgba(248, 113, 113, 0.5)' :
-                          session.content_rating === 'Mature' ? 'inset 0 0 16px rgba(192, 132, 252, 0.3), 0 0 16px rgba(192, 132, 252, 0.7), 0 0 32px rgba(192, 132, 252, 0.5)' :
-                          'inset 0 0 16px rgba(156, 163, 175, 0.3), 0 0 16px rgba(156, 163, 175, 0.7), 0 0 32px rgba(156, 163, 175, 0.5)'
-                      }}
-                    >
-                      <img 
-                        src={
-                          session.content_rating === 'G' ? '/icons/G Rating Icon.png' :
-                          session.content_rating === 'PG' ? '/icons/PG Rating Icon.png' :
-                          session.content_rating === '13+' ? '/icons/13_ Rating Icon.png' :
-                          session.content_rating === '18+' ? '/icons/18_ Rating Icon.png' :
-                          session.content_rating === 'Mature' ? '/icons/Mature Rating Icon.png' :
-                          '/icons/G Rating Icon.png'
-                        }
-                        alt={`${session.content_rating} rating`}
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
+                    session.content_rating === 'Educational' ? (
+                      <img src="/icons/E.png" alt="Educational" className="w-11 h-11 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
+                    ) : session.content_rating === 'Religious' ? (
+                      <img src="/icons/R.png" alt="Religious" className="w-11 h-11 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
+                    ) : (
+                      <span className="text-white font-black text-4xl leading-none" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7)' }}>
+                        {session.content_rating === 'Mature' ? 'M' : session.content_rating}
+                      </span>
+                    )
                   )}
                   
                   {/* Likes */}
@@ -5720,16 +5851,10 @@ const LobbyPage = () => {
                     onClick={(e) => handleSessionLike(session.session_id, e)}
                     className="flex flex-col items-center gap-1.5 group transition-transform hover:scale-110"
                   >
-                    <HeartIcon 
-                      className={`w-11 h-11 ${
-                        sessionLikes[session.session_id]?.isLiked ? 'text-red-500' : 'text-white'
-                      }`} 
-                      style={{ 
-                        filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))',
-                        fill: sessionLikes[session.session_id]?.isLiked ? 'currentColor' : 'none',
-                        stroke: sessionLikes[session.session_id]?.isLiked ? 'none' : 'currentColor',
-                        strokeWidth: sessionLikes[session.session_id]?.isLiked ? 0 : 1.5
-                      }} 
+                    <HeartIcon
+                      key={`heart-full-${session.session_id}-${!!sessionLikes[session.session_id]?.isLiked}`}
+                      className={`w-11 h-11 ${sessionLikes[session.session_id]?.isLiked ? 'text-red-500 [animation:heartPop_0.4s_ease]' : 'text-white'}`}
+                      style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }}
                     />
                     <span className="text-white text-base font-bold" style={{ textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
                       {formatCount(sessionLikes[session.session_id]?.count || 0)}
@@ -5741,7 +5866,7 @@ const LobbyPage = () => {
                     onClick={(e) => handleOpenChatPreview(session, e)}
                     className="flex flex-col items-center gap-1.5 group transition-transform hover:scale-110"
                   >
-                    <ChatBubbleLeftIcon className="w-11 h-11 text-white" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }} />
+                    <ChatBubbleOvalLeftEllipsisIcon className="w-11 h-11 text-white" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }} />
                     <span className="text-white text-base font-bold" style={{ textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
                       {formatCount(sessionChatCounts[session.session_id] || 0)}
                     </span>
@@ -5749,13 +5874,25 @@ const LobbyPage = () => {
                   
                   {/* Members */}
                   <div className="flex flex-col items-center gap-1.5">
-                    <UsersIcon className="w-11 h-11 text-white" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }} />
+                    <img src="/icons/view.png" alt="viewers" className="w-11 h-11 object-contain" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }} />
                     <span className="text-white text-base font-bold" style={{ textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
                       {formatCount(session.member_count || 0)}
                     </span>
                   </div>
+
+                  {/* Favourite */}
+                  {!session.is_temporary && (
+                    <button onClick={(e) => handleToggleFavourite(session.room_id, e)} className="flex flex-col items-center gap-1.5 transition-transform active:scale-90">
+                      {savedRooms[session.room_id]
+                        ? <BookmarkIcon className="w-11 h-11 text-purple-400" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }} />
+                        : <svg viewBox="0 0 24 24" fill="white" className="w-11 h-11" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }}>
+                            <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93z M11 7L13 7L13 9L15 9L15 11L13 11L13 13L11 13L11 11L9 11L9 9L11 9Z" />
+                          </svg>
+                      }
+                    </button>
+                  )}
                 </div>
-                
+
                 {/* Sleek Join Now Button - Fixed Bottom Center */}
                 <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-3 pointer-events-auto">
                   <button
@@ -5832,6 +5969,36 @@ const LobbyPage = () => {
           <p className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white text-lg font-medium drop-shadow-lg">
             @{lightboxAvatarUser.username}
           </p>
+        </div>
+      )}
+
+      {/* ✅ FEED TAB CONTENT */}
+      {activeTab === 'feed' && (
+        <div className="pt-14">
+          {showDiscoverSearch && (
+            <div className="px-4 pb-2 pt-2">
+              <div className="relative">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <input type="text" placeholder="Search posts..." value={discoverSearch} onChange={e => setDiscoverSearch(e.target.value)} autoFocus
+                  className="w-full pl-10 pr-10 py-2 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
+                />
+                {discoverSearch && (
+                  <button onClick={() => setDiscoverSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          <DiscoverFeed
+            ref={discoverFeedRef}
+            searchQuery={discoverSearch}
+            onPostClick={(post) => { setSelectedPost(post); setIsPostViewModalOpen(true); }}
+          />
         </div>
       )}
 
@@ -5966,6 +6133,21 @@ const LobbyPage = () => {
       )}
 
       {/* ── Bottom Taskbar ── */}
+      {/* ✅ Circle of Friends Sphere */}
+      <CircleOfFriendsSphere
+        isOpen={showCircleSphere}
+        onClose={() => setShowCircleSphere(false)}
+        currentUser={currentUser}
+        friendsList={friendsList}
+        circleMembers={friendsList.filter(f => circleOfFriendsIds.includes(f.id))}
+        onAddMember={handleCircleAddMember}
+        onRemoveMember={handleCircleRemoveMember}
+        onChatWith={handleCircleChat}
+        onCallUser={(friend) => { initiateCall(friend); }}
+        onStartWatchOut={handleCircleWatchOut}
+        onGroupChat={handleCircleGroupChat}
+      />
+
       {chatView !== 'messages' && !isPostViewModalOpen && (
         <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-t border-gray-200/60 dark:border-gray-800/60">
           <div className="flex items-center justify-around px-2 h-16">
@@ -6038,19 +6220,42 @@ const LobbyPage = () => {
               <Search className="w-7 h-7" />
             </button>
 
-            {/* Home — shows spinning refresh icon while refreshing Watching Live */}
-            <button
-              onClick={handleHomeButton}
-              className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
-            >
-              {activeTab === 'watching' && watchingSubTab === 'sessions' && isRefreshingWatchingNow ? (
-                <svg className="w-7 h-7 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            {/* Home / Circle of Friends */}
+            {activeTab === 'chats' ? (
+              <button
+                onClick={() => setShowCircleSphere(true)}
+                className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-500 dark:hover:text-purple-400 transition-all active:scale-90 relative"
+                title="Circle of Friends"
+              >
+                {/* Orbit icon — two concentric circles with a dot at center */}
+                <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                  <circle cx="14" cy="14" r="2.5" fill="currentColor" stroke="none" />
+                  <ellipse cx="14" cy="14" rx="7" ry="4.5" transform="rotate(-30 14 14)" />
+                  <ellipse cx="14" cy="14" rx="11.5" ry="6.5" transform="rotate(15 14 14)" />
+                  <circle cx="7.5"  cy="10.5" r="2" fill="currentColor" stroke="none" />
+                  <circle cx="20.5" cy="17.5" r="1.5" fill="currentColor" stroke="none" />
+                  <circle cx="18"   cy="7"    r="1.5" fill="currentColor" stroke="none" />
                 </svg>
-              ) : (
-                <Home className="w-7 h-7" />
-              )}
-            </button>
+                {circleOfFriendsIds.length > 0 && (
+                  <span className="absolute top-0.5 right-0.5 min-w-[14px] h-3.5 px-0.5 flex items-center justify-center text-[8px] font-bold bg-purple-500 text-white rounded-full">
+                    {circleOfFriendsIds.length}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <button
+                onClick={handleHomeButton}
+                className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
+              >
+                {activeTab === 'watching' && isRefreshingWatchingNow ? (
+                  <svg className="w-7 h-7 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                ) : (
+                  <Home className="w-7 h-7" />
+                )}
+              </button>
+            )}
           </div>
         </div>
       )}

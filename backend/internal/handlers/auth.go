@@ -233,9 +233,9 @@ func LoginHandler(c *gin.Context) {
 
     log.Printf("User logged in successfully: ID=%d, Username=%s", user.ID, user.Username)
 
-    // ✅ DO NOT send token in response body
     c.JSON(http.StatusOK, gin.H{
         "message": "Login successful",
+        "token":   tokenString,
         "user": gin.H{
             "id":       user.ID,
             "username": user.Username,
@@ -251,6 +251,13 @@ func LoginHandler(c *gin.Context) {
 func LogoutHandler(c *gin.Context) {
     // ✅ P0 Security Fix: Blacklist JWT token before clearing cookie
     token, err := c.Cookie("wewatch_token")
+    // Also accept token from Authorization header (for localStorage-based clients)
+    if err != nil || token == "" {
+        if authHeader := c.GetHeader("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+            token = authHeader[7:]
+            err = nil
+        }
+    }
     if err == nil && token != "" {
         // Parse token to get expiration time
         claims, parseErr := utils.ParseJWT(token)

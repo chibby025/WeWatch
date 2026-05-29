@@ -101,10 +101,10 @@ const SessionChatPreviewModal = ({ isOpen, onClose, sessionId, sessionTitle }) =
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-fade-in">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center z-50">
+      <div className="bg-white dark:bg-gray-800 rounded-t-2xl shadow-2xl w-full max-w-2xl h-[90vh] flex flex-col animate-slide-up">
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 rounded-t-2xl flex items-center justify-between">
+        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 rounded-t-2xl flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
             <ChatBubbleLeftIcon className="w-6 h-6" />
             <div>
@@ -176,7 +176,7 @@ const SessionChatPreviewModal = ({ isOpen, onClose, sessionId, sessionTitle }) =
         </div>
 
         {/* Footer */}
-        <div className="bg-gray-100 dark:bg-gray-800 p-4 rounded-b-2xl border-t border-gray-200 dark:border-gray-700">
+        <div className="bg-gray-100 dark:bg-gray-800 p-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
           <div className="text-center text-sm text-gray-600 dark:text-gray-400">
             {totalCount > 0 && (
               <p>

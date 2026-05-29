@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/services"
 	"wewatch-backend/internal/utils"
 )
 
@@ -200,41 +201,65 @@ func ChunkUploadHandler(c *gin.Context) {
 			}
 			
 			log.Printf("✅ [ChunkUpload] Created TemporaryMediaItem ID=%d for session %s", newTempMediaItem.ID, sessionID)
-			
-			// ✅ ASYNC POSTER GENERATION
-			go func(itemID uint, videoPath, posterPath, sid string) {
-				log.Printf("🎨 [Async] Starting poster generation for temp item %d", itemID)
-				
-				err := utils.ExtractThumbnail(videoPath, posterPath)
-				if err != nil {
-					log.Printf("⚠️ [Async] Failed to generate poster for temp item %d: %v", itemID, err)
-					return
+
+			// Queue a preview clip immediately after upload (timestamp 0).
+			// This runs independently of the playback_control WS path, which may arrive
+			// later or not at all depending on client WS state.
+			if sessionID != "" {
+				if pq := services.GetPreviewQueue(); pq != nil {
+					pq.QueuePreview(services.PreviewRequest{
+						SessionID:        sessionID,
+						MediaID:          newTempMediaItem.ID,
+						MediaPath:        finalFilePath,
+						IsTemporary:      true,
+						CurrentTimestamp: 0,
+						MediaType:        services.MediaTypeUpload,
+					})
 				}
-				
-				posterURL := fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
-				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
-					log.Printf("❌ [Async] Failed to update poster URL for temp item %d: %v", itemID, err)
+			}
+
+			// ✅ ASYNC POSTER + CDN UPLOAD
+			go func(itemID uint, videoPath, posterPath, sid, mimeType, uniqueFilename string) {
+				// 1. Generate poster
+				posterCDNURL := fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
+				if err := utils.ExtractThumbnail(videoPath, posterPath); err != nil {
+					log.Printf("⚠️ [Async] Poster generation failed for temp item %d: %v", itemID, err)
 				} else {
-					log.Printf("✅ [Async] Poster generated and updated for temp item %d: %s", itemID, posterURL)
-					
-					// ✅ BROADCAST POSTER UPDATE TO LOBBY (so preview cards update immediately)
+					if cdnURL, err := utils.UploadLocalFileToBunnyCDN(posterPath, "temp-media/"+filepath.Base(posterPath), "image/jpeg"); err != nil {
+						log.Printf("⚠️ [Async] Poster CDN upload failed for temp item %d: %v", itemID, err)
+					} else {
+						posterCDNURL = cdnURL
+					}
+				}
+				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
+					log.Printf("❌ [Async] Failed to update poster_url for temp item %d: %v", itemID, err)
+				} else {
+					log.Printf("✅ [Async] Poster updated for temp item %d: %s", itemID, posterCDNURL)
 					if sid != "" {
 						broadcastData := map[string]interface{}{
 							"type":        "session_preview_updated",
 							"session_id":  sid,
-							"poster_url":  posterURL,
-							"preview_url": "", // MP4 not ready yet
+							"poster_url":  posterCDNURL,
+							"preview_url": "",
 						}
 						broadcastJSON, _ := json.Marshal(broadcastData)
-						
 						log.Printf("📡 [Poster] Broadcasting poster update to lobby for session %s", sid)
-						hub.BroadcastToLobby(OutgoingMessage{
-							Data:     broadcastJSON,
-							IsBinary: false,
-						})
+						hub.BroadcastToLobby(OutgoingMessage{Data: broadcastJSON, IsBinary: false})
 					}
 				}
-			}(newTempMediaItem.ID, finalFilePath, posterPath, sessionID)
+
+				// 2. Upload video to CDN; update file_path so cleanup targets CDN
+				videoCDNURL, err := utils.UploadLocalFileToBunnyCDN(videoPath, "temp-media/"+uniqueFilename, mimeType)
+				if err != nil {
+					log.Printf("⚠️ [Async] Video CDN upload failed for temp item %d: %v", itemID, err)
+					return
+				}
+				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("file_path", videoCDNURL).Error; err != nil {
+					log.Printf("❌ [Async] Failed to update file_path for temp item %d: %v", itemID, err)
+				} else {
+					log.Printf("✅ [Async] CDN upload complete for temp item %d: %s", itemID, videoCDNURL)
+				}
+			}(newTempMediaItem.ID, finalFilePath, posterPath, sessionID, mimeType, uniqueFilename)
 			
 			// ✅ Construct public URL for browser access
 			publicURL := fmt.Sprintf("/uploads/temp/%s", uniqueFilename)
@@ -281,23 +306,37 @@ func ChunkUploadHandler(c *gin.Context) {
 			
 			log.Printf("✅ [ChunkUpload] Created MediaItem ID=%d for room %d", newMediaItem.ID, roomIDUint)
 			
-			// ✅ ASYNC POSTER GENERATION
-			go func(itemID uint, videoPath, posterPath string) {
-				log.Printf("🎨 [Async] Starting poster generation for item %d", itemID)
-				
-				err := utils.ExtractThumbnail(videoPath, posterPath)
+			// ✅ ASYNC POSTER + CDN UPLOAD
+			go func(itemID uint, videoPath, posterPath, mimeType, uniqueFilename string) {
+				// 1. Generate poster
+				posterCDNURL := fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
+				if err := utils.ExtractThumbnail(videoPath, posterPath); err != nil {
+					log.Printf("⚠️ [Async] Poster generation failed for item %d: %v", itemID, err)
+				} else {
+					if cdnURL, err := utils.UploadLocalFileToBunnyCDN(posterPath, "media/"+filepath.Base(posterPath), "image/jpeg"); err != nil {
+						log.Printf("⚠️ [Async] Poster CDN upload failed for item %d: %v", itemID, err)
+					} else {
+						posterCDNURL = cdnURL
+					}
+				}
+				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
+					log.Printf("❌ [Async] Failed to update poster_url for item %d: %v", itemID, err)
+				} else {
+					log.Printf("✅ [Async] Poster updated for item %d: %s", itemID, posterCDNURL)
+				}
+
+				// 2. Upload video to CDN; update file_path so cleanup targets CDN
+				videoCDNURL, err := utils.UploadLocalFileToBunnyCDN(videoPath, "media/"+uniqueFilename, mimeType)
 				if err != nil {
-					log.Printf("⚠️ [Async] Failed to generate poster for item %d: %v", itemID, err)
+					log.Printf("⚠️ [Async] Video CDN upload failed for item %d: %v", itemID, err)
 					return
 				}
-				
-				posterURL := fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
-				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
-					log.Printf("❌ [Async] Failed to update poster URL for item %d: %v", itemID, err)
+				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("file_path", videoCDNURL).Error; err != nil {
+					log.Printf("❌ [Async] Failed to update file_path for item %d: %v", itemID, err)
 				} else {
-					log.Printf("✅ [Async] Poster generated and updated for item %d: %s", itemID, posterURL)
+					log.Printf("✅ [Async] CDN upload complete for item %d: %s", itemID, videoCDNURL)
 				}
-			}(newMediaItem.ID, finalFilePath, posterPath)
+			}(newMediaItem.ID, finalFilePath, posterPath, mimeType, uniqueFilename)
 			
 			// ✅ Construct public URL for browser access
 			publicURL := fmt.Sprintf("/uploads/%s", uniqueFilename)

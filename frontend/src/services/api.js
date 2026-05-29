@@ -160,9 +160,10 @@ apiClient.interceptors.response.use(
         return response;
     },
     (error) => {
-        // Only log unexpected errors (not 404 for unimplemented features)
+        if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError') {
+            return Promise.reject(error);
+        }
         if (error.response?.status === 401) {
-            // Clear the token from storage
             localStorage.removeItem('wewatch_token');
         } else if (error.response?.status !== 404 && error.response?.status !== 400) {
             console.error('API Error:', error.response?.data?.error || error.message);
@@ -598,6 +599,24 @@ export const getScheduledEventsWithTrailers = async (limit = 10, offset = 0) => 
   }
 };
 
+// Toggle room favourite — returns { is_favourite: bool }
+export const toggleRoomFavourite = async (roomId) => {
+  const response = await apiClient.post(`/api/rooms/${roomId}/favourite`);
+  return response.data;
+};
+
+// Join a room as member — returns { status: 'active'|'pending' }
+export const joinRoom = async (roomId) => {
+  const response = await apiClient.post(`/api/rooms/${roomId}/join`);
+  return response.data;
+};
+
+// Get user's favourite rooms
+export const getFavouriteRooms = async () => {
+  const response = await apiClient.get('/api/rooms/favourites');
+  return response.data;
+};
+
 // Delete a scheduled event
 export const deleteScheduledEvent = async (eventId) => {
   try {
@@ -701,31 +720,6 @@ export const purchaseEventTicket = async (eventId, isGift = false, recipientUser
   }
 };
 
-
-
-// Add this function to your api.js file
-export const joinRoom = async (roomId) => {
-  try {
-    console.log(`joinRoom: Joining room ${roomId}`);
-    
-    const response = await apiClient.post(`/api/rooms/${roomId}/join`);
-    console.log(`joinRoom: Response received for room ${roomId}:`, response.data);
-    
-    return response.data;
-  } catch (error) {
-    console.error('API Error (joinRoom):', error);
-    if (error.response) {
-      // Server responded with error status (4xx, 5xx)
-      throw new Error(`Failed to join room: ${error.response.data.error || error.response.statusText}`);
-    } else if (error.request) {
-      // Request was made but no response received (network issue)
-      throw new Error('Network error. Please check your connection.');
-    } else {
-      // Something else happened in setting up the request
-      throw new Error('An unexpected error occurred while joining room.');
-    }
-  }
-};
 
 // Leave a room
 export const leaveRoom = async (roomId) => {

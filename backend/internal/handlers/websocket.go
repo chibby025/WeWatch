@@ -258,6 +258,13 @@ func (lw *liveShareHubWrapper) BroadcastToUser(userID uint, roomID uint, message
 	})
 }
 
+func (lw *liveShareHubWrapper) BroadcastToLobby(message liveshare.OutgoingMessage) {
+	lw.hub.BroadcastToLobby(OutgoingMessage{
+		Data:     message.Data,
+		IsBinary: message.IsBinary,
+	})
+}
+
 // hubWrapper adapts Hub to services.WebSocketHub interface
 type hubWrapper struct {
 	hub *Hub
@@ -718,8 +725,17 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
             log.Printf("📢 [JoinWatchSession] Broadcasting session_status to room %d: memberCount=%d", client.roomID, len(activeMembers))
             h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: statusBytes, IsBinary: false}, nil)
         }
+
+        // Push updated count to lobby so session cards update without polling
+        if countMsg, err := json.Marshal(map[string]interface{}{
+            "type":       "media_state_changed",
+            "session_id": sessionID,
+            "data":       map[string]interface{}{"member_count": len(activeMembers)},
+        }); err == nil {
+            h.BroadcastToLobby(OutgoingMessage{Data: countMsg, IsBinary: false})
+        }
     }
-    
+
     return nil
 }
 
@@ -968,6 +984,19 @@ func (h *Hub) Run() {
 									h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leftBytes, IsBinary: false}, nil)
 									log.Printf("📢 Broadcast user_left for user %d (%s) in session %s", client.userID, user.Username, sessionIDToCleanup)
 								}
+							}
+
+							// Push updated count to lobby
+							var newCount int64
+							DB.Model(&models.WatchSessionMember{}).
+								Where("watch_session_id = ? AND is_active = ?", watchSessionID, true).
+								Count(&newCount)
+							if countMsg, err := json.Marshal(map[string]interface{}{
+								"type":       "media_state_changed",
+								"session_id": sessionIDToCleanup,
+								"data":       map[string]interface{}{"member_count": newCount},
+							}); err == nil {
+								h.BroadcastToLobby(OutgoingMessage{Data: countMsg, IsBinary: false})
 							}
 						}
 						
@@ -1598,11 +1627,12 @@ func WebSocketHandler(c *gin.Context) {
 				// Session doesn't exist at all - create new one
 				log.Printf("⚠️ [WebSocketHandler] Session %s not found in DB, creating it...", sessionID)
 				watchSession = models.WatchSession{
-					SessionID: sessionID,
-					RoomID:    roomID,
-					HostID:    authenticatedUserID,
-					StartedAt: time.Now(),
-					IsActive:  true, // ✅ Explicitly set active flag
+					SessionID:      sessionID,
+					RoomID:         roomID,
+					HostID:         authenticatedUserID,
+					StartedAt:      time.Now(),
+					IsActive:       true,
+					PreviewEnabled: true,
 				}
 				if err := DB.Create(&watchSession).Error; err != nil {
 					log.Printf("Failed to create watch session: %v", err)
@@ -4386,6 +4416,18 @@ func (client *Client) handleMessage(message []byte) {
 
         log.Printf("[session_title_update] ✅ Updated session %s title to: %s", titleData.SessionID, titleData.Title)
 
+        // Push the new title to all lobby tabs immediately
+        if lobbyMsg, err := json.Marshal(map[string]interface{}{
+            "type":       "media_state_changed",
+            "session_id": titleData.SessionID,
+            "data": map[string]interface{}{
+                "session_title":     titleData.Title,
+                "currently_playing": titleData.Title,
+            },
+        }); err == nil {
+            hub.BroadcastToLobby(OutgoingMessage{Data: lobbyMsg, IsBinary: false})
+        }
+
         // Broadcast updated session_status with new title
         var activeMembers []models.WatchSessionMember
         DB.Where("watch_session_id = ? AND is_active = ?", session.ID, true).Find(&activeMembers)
@@ -5629,6 +5671,8 @@ func (client *Client) handleMessage(message []byte) {
                             "current_media_type":       "upload",
                             "is_screen_sharing_active": false,
                             "sharing_source":           nil,
+                            "session_title":            playbackData.OriginalName,
+                            "currently_playing":        playbackData.OriginalName,
                         },
                     }
                     notificationJSON, _ := json.Marshal(lobbyNotification)

@@ -97,6 +97,8 @@ function SessionEndedOverlay({ reason, onReturn }) {
   );
 }
 
+const PREVIEW_INTERVAL = import.meta.env.DEV ? 60_000 : 300_000;
+
 export default function VideoWatch() {
   const componentIdRef = useRef(`VideoWatch-${Date.now()}`);
   
@@ -191,6 +193,7 @@ export default function VideoWatch() {
     console.log(`🏁🏁🏁 [${componentIdRef.current}] COMPONENT MOUNTED`);
     return () => {
       console.log(`💀💀💀 [${componentIdRef.current}] COMPONENT UNMOUNTED`);
+      clearInterval(previewIntervalRef.current);
     };
   }, []);
   
@@ -799,6 +802,7 @@ export default function VideoWatch() {
   const cameraShareTrackRef = useRef(null);
   const liveShareVideoRef = useRef(null); // Separate ref for LiveShare main video
   const liveShareCameraVideoRef = useRef(null); // Separate ref for LiveShare PIP camera
+  const previewIntervalRef = useRef(null); // Periodic liveshare preview capture
   const [screenShareTrackSid, setScreenShareTrackSid] = useState(null);
   const [cameraShareTrackSid, setCameraShareTrackSid] = useState(null);
 
@@ -2863,7 +2867,11 @@ export default function VideoWatch() {
       
       setLiveShareMode(mode);
       setSharingSource(source);
-      
+
+      // Auto-switch sidebar to liveshare tab so upload tab doesn't stay active
+      setForceActiveTab('liveshare');
+      setTimeout(() => setForceActiveTab(null), 100);
+
       // ✅ Include streams in currentMedia for CinemaVideoPlayer
       setCurrentMedia({ 
         type: 'liveshare', 
@@ -2883,7 +2891,106 @@ export default function VideoWatch() {
           liveshare_mode: mode
         }
       });
-      
+
+      // Capture poster + video clip previews so lobby cards update
+      const captureSessionId = sessionStatus?.id || urlSessionId;
+      if (captureSessionId) {
+        const captureFrameForPreview = (videoEl) => {
+          if (!videoEl || videoEl.videoWidth === 0) return;
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = 320;
+            canvas.height = 180;
+            canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(async (blob) => {
+              if (!blob) return;
+              const fd = new FormData();
+              fd.append('frames', blob, 'frame_0.jpg');
+              fd.append('source_type', 'liveshare');
+              try {
+                await apiClient.post(`/api/sessions/${captureSessionId}/upload-frames`, fd, { headers: { 'Content-Type': undefined } });
+              } catch (e) {
+                console.warn('⚠️ [LiveShare] Poster upload failed:', e.message);
+              }
+            }, 'image/jpeg', 0.8);
+          } catch (e) {
+            console.warn('⚠️ [LiveShare] Frame capture failed:', e.message);
+          }
+        };
+
+        const recordPreviewClip = (stream) => {
+          if (!stream) return;
+          const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+            ? 'video/webm;codecs=vp9'
+            : MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
+            ? 'video/webm;codecs=vp8'
+            : MediaRecorder.isTypeSupported('video/webm')
+            ? 'video/webm'
+            : null;
+          if (!mimeType) return;
+          try {
+            const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 500_000 });
+            const chunks = [];
+            recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+            recorder.onstop = async () => {
+              const blob = new Blob(chunks, { type: mimeType });
+              if (blob.size < 1000) return;
+              const fd = new FormData();
+              fd.append('clip', blob, 'preview.webm');
+              fd.append('source_type', 'liveshare_clip');
+              try {
+                await apiClient.post(`/api/sessions/${captureSessionId}/upload-frames`, fd, { headers: { 'Content-Type': undefined } });
+              } catch (e) {
+                console.warn('⚠️ [LiveShare] Clip upload failed:', e.message);
+              }
+            };
+            recorder.start();
+            setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 4000);
+          } catch (e) {
+            console.warn('⚠️ [LiveShare] MediaRecorder error:', e.message);
+          }
+        };
+
+        const doCapture = () => {
+          if (mode === 'camera' || mode === 'both') {
+            captureFrameForPreview(liveShareCameraVideoRef.current);
+            const camStream = liveShareCameraVideoRef.current?.srcObject;
+            if (camStream) recordPreviewClip(camStream);
+          } else if ((mode === 'screen' || mode === 'regular') && screenStream) {
+            const sv = document.createElement('video');
+            sv.srcObject = screenStream;
+            sv.muted = true;
+            sv.onloadeddata = () => { captureFrameForPreview(sv); sv.srcObject = null; };
+            sv.play().catch(() => {});
+            recordPreviewClip(screenStream);
+          }
+        };
+
+        if (mode === 'camera' || mode === 'both') {
+          // 2s: poster (camera needs a moment to render a frame)
+          setTimeout(() => captureFrameForPreview(liveShareCameraVideoRef.current), 2000);
+          // 3s: clip (slightly after poster so stream is fully live)
+          setTimeout(() => {
+            const camStream = liveShareCameraVideoRef.current?.srcObject;
+            if (camStream) recordPreviewClip(camStream);
+          }, 3000);
+        } else if (mode === 'screen' || mode === 'regular') {
+          if (screenStream) {
+            const sv = document.createElement('video');
+            sv.srcObject = screenStream;
+            sv.muted = true;
+            sv.onloadeddata = () => { captureFrameForPreview(sv); sv.srcObject = null; };
+            sv.play().catch(() => {});
+            // clip: 2s delay for screen stream to stabilise
+            setTimeout(() => recordPreviewClip(screenStream), 2000);
+          }
+        }
+
+        // Periodic refresh: poster + clip every N minutes
+        clearInterval(previewIntervalRef.current);
+        previewIntervalRef.current = setInterval(doCapture, PREVIEW_INTERVAL);
+      }
+
       toast.success(`LiveShare started: ${mode}`);
     } catch (err) {
       console.error('❌ [VideoWatch] LiveShare error:', err);
@@ -2976,6 +3083,8 @@ export default function VideoWatch() {
       setIsHymnActive(false);
     }
     
+    clearInterval(previewIntervalRef.current);
+    previewIntervalRef.current = null;
     setLiveShareMode(null);
     setSharingSource(null);
     setIsScreenSharingActive(false);
@@ -4636,6 +4745,9 @@ export default function VideoWatch() {
       cameraPreviewStream.getTracks().forEach(track => track.stop());
       setCameraPreviewStream(null);
     }
+
+    clearInterval(previewIntervalRef.current);
+    previewIntervalRef.current = null;
 
     // 3. Clear chat messages
     setSessionChatMessages([]);
@@ -6376,87 +6488,6 @@ export default function VideoWatch() {
         />
       )}
 
-      {/* 📋 FLOATING LOG EXPORT BUTTON */}
-      <button
-        onClick={async () => {
-          try {
-            // Use captured logs instead of Eruda API
-            const logs = [];
-            
-            if (window.capturedLogs && Array.isArray(window.capturedLogs) && window.capturedLogs.length > 0) {
-              window.capturedLogs.forEach(log => {
-                const timestamp = new Date(log.time).toISOString();
-                const type = log.type || 'log';
-                const message = Array.isArray(log.args) 
-                  ? log.args.map(arg => {
-                      if (typeof arg === 'object') {
-                        try {
-                          return JSON.stringify(arg, null, 2);
-                        } catch (e) {
-                          return String(arg);
-                        }
-                      }
-                      return String(arg);
-                    }).join(' ')
-                  : String(log.args || '');
-                
-                logs.push(`[${timestamp}] [${type.toUpperCase()}] ${message}`);
-              });
-            }
-            
-            if (logs.length === 0) {
-              toast.error('No logs captured yet. Logs are captured after page loads.', { duration: 4000 });
-              console.error('❌ No captured logs available. window.capturedLogs:', window.capturedLogs);
-              return;
-            }
-            
-            const logText = logs.join('\n');
-            
-            // Copy to clipboard
-            await navigator.clipboard.writeText(logText);
-            
-            toast.success(`📋 Copied ${logs.length} log entries!`, {
-              duration: 3000,
-              icon: '✅'
-            });
-            
-            console.log(`✅ [VideoWatch] Copied ${logs.length} logs to clipboard`);
-          } catch (error) {
-            console.error('❌ [VideoWatch] Failed to copy logs:', error);
-            toast.error('Failed to copy logs. Check console for details.');
-          }
-        }}
-        style={{
-          position: 'fixed',
-          bottom: '80px',
-          right: '20px',
-          zIndex: 10000,
-          background: '#4CAF50',
-          color: 'white',
-          border: 'none',
-          borderRadius: '50%',
-          width: '60px',
-          height: '60px',
-          fontSize: '28px',
-          cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.2s ease',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'scale(1.1)';
-          e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.4)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'scale(1)';
-          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
-        }}
-        title="Copy All Logs to Clipboard"
-      >
-        📋
-      </button>
     </div>
   );
 }

@@ -27,10 +27,16 @@ WeWatch/
 │   │   │   ├── scheduled_events.go # CRUD + recurrence generation + GetUserCalendarHandler
 │   │   │   ├── lobby_chats.go      # DM send/receive, BroadcastLobbyChatMessage
 │   │   │   ├── watch_out_handler.go # WatchOut Layer 1 — live room sharing via DM
+│   │   │   ├── room_favourite_handler.go # Toggle/list user room favourites
+│   │   │   ├── session_helpers.go  # GetAllActiveSessionsHandler + scoring ORDER BY
+│   │   │   ├── session_preview.go  # UploadSessionFramesHandler — poster JPEG + liveshare WebM clip
 │   │   │   ├── posts.go            # Post CRUD, recording cap gate
 │   │   │   ├── post_download_handler.go # MP4 pipeline: remux H.264, transcode VP8/VP9
 │   │   │   └── ...
 │   │   ├── models/                 # GORM models (one file per entity)
+│   │   ├── services/
+│   │   │   ├── preview_queue.go    # PreviewQueue: background JPEG→WebM clip pipeline
+│   │   │   └── media_switch_handler.go # 30s debounced preview refresh on media change
 │   │   └── utils/
 │   │       ├── ffmpeg.go           # DetectVideoCodec(), TranscodeToMp4()
 │   │       └── bunny_cdn.go        # DownloadFileToTemp(), UploadToBunny()
@@ -92,6 +98,48 @@ ALTER TABLE table_name ADD COLUMN IF NOT EXISTS col_name TYPE DEFAULT value;
 - **Session end broadcast pattern** (`EndWatchSessionHandler` in `rooms.go`): single blocking DB write (`ended_at`, `is_active=false`), then broadcast `session_ended` + lobby broadcast immediately. All remaining cleanup (media, seating, chat, LiveKit, quizzes, etc.) runs in a background goroutine. This keeps navigation snappy — never add slow operations before the broadcast.
 - `CleanupStaleSessions` goroutine (hourly, in `websocket.go`) sweeps both stale active sessions AND orphaned `watch_session_members` rows (active = true but session already ended within last 7 days). Safety net for background goroutine failures.
 
+### Session Preview Pipeline (added 2026-05)
+Live-session preview cards in LobbyPage show a looping video clip (or static poster) instead of a plain icon. The pipeline has three layers:
+
+**Backend — frame upload & storage**
+- `POST /api/sessions/:id/upload-frames` → `UploadSessionFramesHandler` in `session_preview.go`
+  - `source_type = "liveshare_clip"`: receives a WebM blob in the `clip` field, saves to `uploads/previews/session_<id>_<ts>.webm`, updates `watch_sessions.preview_url`
+  - All other source types: receive JPEG frames in the `frames` multipart field; copies first frame to `uploads/previews/session_<id>_poster.jpg` (updates `poster_url`), then enqueues a clip-generation job
+- **Critical ordering**: read `source_type` from form BEFORE checking `form.File["frames"]` — liveshare clip uploads have no `frames` field and will 400 otherwise
+- File handles inside the loop are closed explicitly (`out.Close()` per iteration), not with `defer` (which would batch all closes to function return)
+- Static files served from `/uploads/*filepath` in `main.go` — path resolved with `strings.TrimPrefix(urlPath, "/")` before `filepath.Join("./uploads", trimmedPath)` to strip the leading slash that `c.Param` returns
+
+**Backend — background clip generation**
+- `PreviewQueue` in `internal/services/preview_queue.go`: single goroutine consuming a buffered channel; takes saved JPEG frames and encodes a short looping WebM using FFmpeg; stores result path on the session row
+- `MediaSwitchHandler` in `internal/services/media_switch_handler.go`: debounces preview refresh 30 s after each media change; cancel-safe (new media change cancels pending timer); calls `StartRefreshTimer` after initial seed
+
+**Backend — session response**
+- `SessionResponse` in `session_helpers.go` includes `PreviewURL string` and `PosterURL string` from the session row
+- `WatchSession` model has `PreviewURL string` and `PosterURL string` columns (added 2026-05)
+
+**Frontend — `VideoWatch.jsx`**
+- All multipart uploads to `/upload-frames` use `{ headers: { 'Content-Type': undefined } }` — lets axios/browser set the correct `multipart/form-data; boundary=...` header automatically. Passing nothing or `'multipart/form-data'` drops the boundary and causes a 400.
+- Poster upload: snapshots canvas frame, posts JPEG blob with `source_type=poster`
+- Clip upload: captures MediaRecorder WebM blob, posts with `source_type=liveshare_clip`
+
+**Frontend — `SessionPreview.jsx`**
+- State machine: `emoji` → `loading` → `poster` → `video`
+  - `emoji`: W logo (`/icons/lwoIcon.png`) with `iconFloat` CSS animation on purple→blue gradient
+  - `loading`: spinner while `isGenerating=true`
+  - `poster`: static `<img>` fallback
+  - `video`: lazy-loaded `<video loop muted playsInline>`; src set only after IntersectionObserver confirms card is on screen (`hasBeenVisible`)
+- Play/pause driven by IntersectionObserver (`isVisible`) — off-screen videos are paused to reduce decode load
+- `previewVersion` prop: incrementing integer passed as `key` and `?v=` cache-bust query param; forces video element remount when backend generates a new clip
+- Data-saver mode: skips video, falls back to poster — auto-detected via `navigator.connection.effectiveType` + manual `localStorage.getItem('dataSaverMode')`
+- Aspect ratio detection: `videoWidth / videoHeight ≤ 1.0` → `object-cover` (portrait/square); `> 1.0` → `object-contain` (landscape)
+
+**DB migration (NOT YET RUN)**:
+```sql
+ALTER TABLE watch_sessions
+  ADD COLUMN IF NOT EXISTS preview_url TEXT,
+  ADD COLUMN IF NOT EXISTS poster_url  TEXT;
+```
+
 ### Kick / Ban (added 2026-05)
 - `DELETE /api/rooms/:id/members/:user_id` — kicks member (removes UserRoom row, can rejoin)
 - `POST /api/rooms/:id/members/:user_id/ban` — bans member (sets `is_banned=true`, `status='banned'`; blocks future joins)
@@ -125,6 +173,29 @@ ALTER TABLE table_name ADD COLUMN IF NOT EXISTS col_name TYPE DEFAULT value;
 - `GET /api/posts/:id/download` in `post_download_handler.go`: checks `Mp4Ready` → serve; checks `Mp4Processing` → 202; else → triggers `go transcodePostToMp4()`
 - `utils/ffmpeg.go`: `DetectVideoCodec()`, `TranscodeToMp4()` — H.264 source is instant `-c copy` remux; VP8/VP9 triggers `libx264 -preset veryfast` transcode
 - `utils/bunny_cdn.go`: `DownloadFileToTemp(remoteURL, suffix)` downloads from BunnyCDN to temp file for processing
+
+### Room Favourites (added 2026-05)
+- Separate `user_room_favourites` table — NOT a column on `user_rooms`. `UserRoomFavourite` model in `models/user_room_favourite.go` with composite unique index `(user_id, room_id)`.
+- `POST /api/rooms/:id/favourite` → `ToggleRoomFavouriteHandler`: adds if absent, removes if present; returns `{ is_favourite: bool }`.
+- `GET /api/rooms/favourites` → `GetFavouriteRoomsHandler`: returns `{ rooms: [{ room_id, name, image_url, room_type, is_public }] }`.
+- Room model field is `ImageURL` (not `AvatarURL`) — use this when building `RoomItem` responses.
+- Frontend state in LobbyPage: `savedRooms { [roomId]: bool }` + `joinedRooms { [roomId]: 'active'|'pending' }`.
+- **Session preview card UI** (all 3 layouts — TikTok, grid, fullscreen): green `+` badge overlaid on bottom-right of room avatar → joins room; becomes blue `✓` after join. Bookmark icon below viewer count in right icon stack → toggles favourite. Hidden for temporary (instant-watch) sessions.
+- **watch_out DM bubble** (`LobbyMessageBubble.jsx`): join `+` badge overlaid on bottom-right of the emoji span (not a row button); bookmark row below card body (BookmarkOutlineIcon + white `+` badge when unsaved → solid amber BookmarkIcon when saved). Join badge hidden for private watchouts.
+- **Icon pattern**: unsaved = `BookmarkOutlineIcon` with white `+` badge at top-right; saved = solid `BookmarkIcon` amber, no badge. Import solid from `@heroicons/react/24/solid`, outline aliased as `BookmarkOutlineIcon` from `@heroicons/react/24/outline`.
+
+### Session Preview Cards — Ranking & `is_member` (added 2026-05)
+- `SessionResponse` struct in `session_helpers.go` has `IsMember bool \`json:"is_member"\`` — set to `true` if the requesting user has an active `user_rooms` row for that room OR is the host. Loaded via batch query (not N+1) before the main session fetch.
+- Scoring ORDER BY (quality-first): `quality×0.4 + audience×0.3 + recency×0.2 + preview×0.1`
+  - **Quality** (0.4): Bayesian credible rating = `(total_ratings × avg_rating + 5×3.0) / ((total_ratings + 5) × 5.0)` — normalised to 0–1. Prevents single-rating gaming.
+  - **Audience** (0.3): `LEAST(live_member_count / 100.0, 1.0)` — caps at 100 viewers = 1.0.
+  - **Recency** (0.2): `1 / (1 + hours_since_start)` — exponential decay.
+  - **Preview** (0.1): `+0.1` bonus if `preview_url` is non-empty.
+- Implemented via GORM `.Joins("JOIN rooms r ON r.id = watch_sessions.room_id")` + member count subquery LEFT JOIN; no raw query string needed for the SELECT.
+
+### SessionChatPreviewModal (updated 2026-05)
+- Renders as a **bottom-anchored sheet**, not a centred dialog. Container: `fixed inset-0 ... flex items-end justify-center`. Inner panel: `h-[90vh] rounded-t-2xl animate-slide-up`.
+- Opens via `handleOpenChatPreview(session, e)` in LobbyPage — sets `selectedSessionForChat` + `isChatPreviewOpen(true)`. Does NOT call `connectToSessionChat` or set `activeChatSession` (those open the 70-30 split view).
 
 ### WatchOut Layer 1 — Live Session Sharing (added 2026-05)
 - `GET /api/rooms/with-active-sessions` → `GetRoomsWithActiveSessionsHandler`: returns rooms the current user has joined that have a live `WatchSession`; response includes `room_id`, `room_name`, `room_type`, `watch_type`, `session_title`, `watching_count`, `is_private`, `session_id`, `host_id`
@@ -266,6 +337,11 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_events_recurrence_group
 -- Watch sessions (confirmed run 2026-05)
 ALTER TABLE watch_sessions ADD COLUMN IF NOT EXISTS current_sermon TEXT;
 
+-- Session preview (NOT YET RUN — 2026-05)
+ALTER TABLE watch_sessions
+  ADD COLUMN IF NOT EXISTS preview_url TEXT,
+  ADD COLUMN IF NOT EXISTS poster_url  TEXT;
+
 -- Kick/ban (confirmed run 2026-05)
 ALTER TABLE user_rooms
   ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false,
@@ -280,6 +356,15 @@ ALTER TABLE users
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS text_content TEXT;
 -- Optional cleanup (title column is ignored by GORM but still exists in DB):
 -- ALTER TABLE posts DROP COLUMN IF EXISTS title;
+
+-- Room favourites (NOT YET RUN — 2026-05)
+CREATE TABLE IF NOT EXISTS user_room_favourites (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  room_id BIGINT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, room_id)
+);
 
 -- WatchOut Layer 2: Streaks (NOT YET RUN — build when implementing)
 -- CREATE TABLE watch_streaks (
@@ -324,3 +409,8 @@ Key vars expected in `.env` or Railway config:
 - **Banner style switching**: never use double-`setTimeout` to toggle a banner off then on again — the second call captures a stale closure and both fire as "hide". Use `rebroadcastBannerWithLayout(newLayout)` which directly broadcasts `active: true` with the new layout in one call.
 - **Mute All toggle pill shape**: the toggle container must use `flex items-center justify-between` in a horizontal row at all screen sizes. Using `flex-col` as the outer container causes `align-items: stretch` to override the `w-11` width and breaks the pill shape. The description text goes below in a separate element, not alongside the toggle.
 - **Subscription effects reading frequently-changing objects**: if a `useEffect` subscribes/unsubscribes based on a value that changes on every render (like a participant map), read it from a ref instead of listing it as a dep. Keep the ref in sync with a tiny 2-line `useEffect([value])`. This avoids subscription churn without stale-closure risk.
+- **Duplicate exports in `api.js`**: Vite/esbuild will hard-fail with "Multiple exports with the same name" — check for duplicate `export const funcName` before adding new API helpers. The canonical single definition lives near related endpoints; never paste a second version at the bottom.
+- **FormData axios uploads**: never set `Content-Type: 'multipart/form-data'` manually — pass `{ headers: { 'Content-Type': undefined } }` so the browser fills in the correct `multipart/form-data; boundary=...` value. Setting it manually drops the boundary and the server gets a 400.
+- **Go multipart handler field ordering**: always read `c.PostForm("source_type")` BEFORE calling `c.Request.MultipartForm` or checking `form.File["frames"]`. Some upload paths (e.g. liveshare clip) send a `clip` field instead of `frames` — checking for frames first returns a false 400.
+- **`http.ServeFile` leading-slash path**: `c.Param("filepath")` returns a path starting with `/` (e.g. `/previews/foo.jpg`). Use `strings.TrimPrefix(urlPath, "/")` before `filepath.Join("./uploads", trimmedPath)` — a leading slash causes `filepath.Join` to treat the segment as an absolute path and `http.ServeFile` returns 404.
+- **`ERR_CANCELED` / `CanceledError` in axios interceptors**: React StrictMode double-invokes effects, causing in-flight requests to be aborted on the first unmount. These produce `error.code === 'ERR_CANCELED'` — check for this (and `error.name === 'CanceledError'` / `'AbortError'`) in the response error interceptor and return early without logging. They are not real errors.

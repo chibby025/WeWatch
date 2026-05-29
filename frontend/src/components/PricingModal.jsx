@@ -353,7 +353,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
                   <button
                     key={index}
                     onClick={() => scrollToCard(index)}
-                    className={`transition-all ${
+                    className={`transition-all !min-h-0 !min-w-0 ${
                       index === scrollIndex
                         ? 'w-5 h-1.5 bg-purple-500'
                         : 'w-1.5 h-1.5 bg-gray-300 hover:bg-gray-400'

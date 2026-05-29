@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -173,6 +174,16 @@ func GenerateSessionPreviewHandler(c *gin.Context) {
 		} else {
 			mp4URL = fmt.Sprintf("/uploads/previews/%s", mp4Filename)
 			log.Printf("✅ [GenerateSessionPreview] MP4 generated: %s", mp4URL)
+			// Upload to BunnyCDN when configured so the URL is stable across redeploys
+			if fileData, readErr := os.ReadFile(mp4Path); readErr == nil {
+				if cdnURL, uploadErr := utils.UploadPreviewToBunnyCDN(fileData, mp4Filename); uploadErr == nil {
+					mp4URL = cdnURL
+					if strings.HasPrefix(cdnURL, "http") {
+						os.Remove(mp4Path) // only clean up local file when CDN took over
+					}
+					log.Printf("✅ [GenerateSessionPreview] MP4 uploaded to CDN: %s", mp4URL)
+				}
+			}
 		}
 
 	case "liveshare", "watchfrom":
@@ -239,7 +250,54 @@ func UploadSessionFramesHandler(c *gin.Context) {
 		return
 	}
 
-	// Get uploaded frames
+	// Read source_type BEFORE the frames check — clip uploads use a "clip" field, not "frames"
+	sourceType := c.PostForm("source_type")
+
+	// Liveshare video clip — upload WebM directly as preview_url
+	if sourceType == "liveshare_clip" {
+		clipFile, clipHeader, clipErr := c.Request.FormFile("clip")
+		if clipErr != nil {
+			log.Printf("❌ [UploadSessionFrames] No clip file: %v", clipErr)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "no clip file"})
+			return
+		}
+		defer clipFile.Close()
+
+		clipData, readErr := io.ReadAll(clipFile)
+		if readErr != nil || len(clipData) < 1000 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "clip too small or unreadable"})
+			return
+		}
+
+		ext := filepath.Ext(clipHeader.Filename)
+		if ext == "" {
+			ext = ".webm"
+		}
+		clipFilename := fmt.Sprintf("session_%s_preview_%d%s", sessionID, time.Now().UnixNano(), ext)
+		clipURL := fmt.Sprintf("/uploads/previews/%s", clipFilename)
+		if cdnURL, uploadErr := utils.UploadPreviewToBunnyCDN(clipData, clipFilename); uploadErr == nil {
+			clipURL = cdnURL
+		}
+
+		DB.Model(&models.WatchSession{}).Where("session_id = ?", sessionID).Update("preview_url", clipURL)
+
+		broadcastData := map[string]interface{}{
+			"type":             "session_preview_updated",
+			"session_id":       sessionID,
+			"poster_url":       session.PosterURL,
+			"preview_url":      clipURL,
+			"liveshare_mode":   session.LiveshareMode,
+			"podcast_title":    session.PodcastTitle,
+			"podcast_logo_url": session.PodcastLogoURL,
+		}
+		broadcastJSON, _ := json.Marshal(broadcastData)
+		hub.BroadcastToLobby(OutgoingMessage{Data: broadcastJSON, IsBinary: false})
+		log.Printf("✅ [UploadSessionFrames] Liveshare clip uploaded for session %s: %s", sessionID, clipURL)
+		c.JSON(http.StatusOK, gin.H{"message": "Liveshare preview clip updated", "preview_url": clipURL})
+		return
+	}
+
+	// All remaining paths require a "frames" multipart field
 	form := c.Request.MultipartForm
 	files := form.File["frames"]
 	if len(files) == 0 {
@@ -249,7 +307,6 @@ func UploadSessionFramesHandler(c *gin.Context) {
 
 	log.Printf("📥 [UploadSessionFrames] Received %d frames for session %s", len(files), sessionID)
 
-	// Create temporary directory for frames
 	timestamp := time.Now().Unix()
 	tempDir := filepath.Join(PreviewsDir, fmt.Sprintf("temp_session_%s_%d", sessionID, timestamp))
 	if err := os.MkdirAll(tempDir, os.ModePerm); err != nil {
@@ -257,41 +314,71 @@ func UploadSessionFramesHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create temp directory"})
 		return
 	}
-	defer os.RemoveAll(tempDir) // Cleanup temp directory
+	defer os.RemoveAll(tempDir)
 
-	// Save frames to disk
 	for i, fileHeader := range files {
 		file, err := fileHeader.Open()
 		if err != nil {
 			log.Printf("❌ [UploadSessionFrames] Failed to open frame %d: %v", i, err)
 			continue
 		}
-		defer file.Close()
-
 		framePath := filepath.Join(tempDir, fmt.Sprintf("frame_%03d.jpg", i))
 		out, err := os.Create(framePath)
 		if err != nil {
+			file.Close()
 			log.Printf("❌ [UploadSessionFrames] Failed to create frame file %d: %v", i, err)
 			continue
 		}
-		defer out.Close()
-
 		if _, err := io.Copy(out, file); err != nil {
 			log.Printf("❌ [UploadSessionFrames] Failed to save frame %d: %v", i, err)
-			continue
 		}
+		out.Close()
+		file.Close()
 	}
 
-	// Generate poster from first frame
 	posterFilename := fmt.Sprintf("session_%s_poster_%d.jpg", sessionID, timestamp)
 	posterPath := filepath.Join(PreviewsDir, posterFilename)
 	firstFramePath := filepath.Join(tempDir, "frame_000.jpg")
 
-	// Copy first frame as poster
 	if err := copyFile(firstFramePath, posterPath); err != nil {
 		log.Printf("❌ [UploadSessionFrames] Failed to create poster: %v", err)
+	} else {
+		cwd, _ := os.Getwd()
+		log.Printf("📂 [UploadSessionFrames] cwd=%s posterPath=%s", cwd, posterPath)
+		if _, statErr := os.Stat(posterPath); statErr != nil {
+			log.Printf("❌ [UploadSessionFrames] Poster file missing on disk after copy: %v", statErr)
+		} else {
+			log.Printf("✅ [UploadSessionFrames] Poster file confirmed on disk")
+		}
 	}
 	posterURL := fmt.Sprintf("/uploads/previews/%s", posterFilename)
+
+	// For liveshare snapshots, skip MP4 — a static poster is all we need
+	if sourceType == "liveshare" {
+		if fileData, readErr := os.ReadFile(posterPath); readErr == nil {
+			if cdnURL, uploadErr := utils.UploadPreviewToBunnyCDN(fileData, posterFilename); uploadErr == nil {
+				posterURL = cdnURL
+				if strings.HasPrefix(cdnURL, "http") {
+					os.Remove(posterPath) // only clean up local file when CDN took over
+				}
+			}
+		}
+		DB.Model(&models.WatchSession{}).Where("session_id = ?", sessionID).Update("poster_url", posterURL)
+		broadcastData := map[string]interface{}{
+			"type":             "session_preview_updated",
+			"session_id":       sessionID,
+			"poster_url":       posterURL,
+			"preview_url":      "",
+			"liveshare_mode":   session.LiveshareMode,
+			"podcast_title":    session.PodcastTitle,
+			"podcast_logo_url": session.PodcastLogoURL,
+		}
+		broadcastJSON, _ := json.Marshal(broadcastData)
+		hub.BroadcastToLobby(OutgoingMessage{Data: broadcastJSON, IsBinary: false})
+		log.Printf("✅ [UploadSessionFrames] Liveshare poster broadcast for session %s", sessionID)
+		c.JSON(http.StatusOK, gin.H{"message": "Liveshare poster updated", "session_id": sessionID, "poster_url": posterURL})
+		return
+	}
 
 	// Generate MP4 from frames
 	mp4Filename := fmt.Sprintf("session_%s_preview_%d.mp4", sessionID, timestamp)
@@ -301,6 +388,16 @@ func UploadSessionFramesHandler(c *gin.Context) {
 	log.Printf("🎞️ [UploadSessionFrames] Generating MP4 from %d frames", len(files))
 	if err := utils.GenerateMP4FromFrames(framesPattern, mp4Path, 5); err != nil {
 		log.Printf("❌ [UploadSessionFrames] MP4 generation failed: %v", err)
+		// Still update DB and broadcast poster so lobby reflects the new camera frame
+		DB.Model(&models.WatchSession{}).Where("session_id = ?", sessionID).Update("poster_url", posterURL)
+		fallbackBroadcast := map[string]interface{}{
+			"type":        "session_preview_updated",
+			"session_id":  sessionID,
+			"poster_url":  posterURL,
+			"preview_url": "",
+		}
+		fallbackJSON, _ := json.Marshal(fallbackBroadcast)
+		hub.BroadcastToLobby(OutgoingMessage{Data: fallbackJSON, IsBinary: false})
 		c.JSON(http.StatusOK, gin.H{
 			"message":     "Frames uploaded but MP4 generation failed",
 			"session_id":  sessionID,
@@ -311,7 +408,17 @@ func UploadSessionFramesHandler(c *gin.Context) {
 	}
 
 	mp4URL := fmt.Sprintf("/uploads/previews/%s", mp4Filename)
-	log.Printf("✅ [UploadSessionFrames] MP4 generated successfully: %s", mp4URL)
+	log.Printf("✅ [UploadSessionFrames] MP4 generated: %s", mp4URL)
+
+	// Upload to CDN so lobby clients don't hit Railway disk directly
+	if fileData, readErr := os.ReadFile(mp4Path); readErr == nil {
+		if cdnURL, uploadErr := utils.UploadPreviewToBunnyCDN(fileData, mp4Filename); uploadErr == nil {
+			mp4URL = cdnURL
+			if strings.HasPrefix(cdnURL, "http") {
+				os.Remove(mp4Path) // only clean up local file when CDN took over
+			}
+		}
+	}
 
 	// ✅ Update session with preview URLs in database
 	if err := DB.Model(&models.WatchSession{}).

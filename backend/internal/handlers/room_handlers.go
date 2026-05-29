@@ -24,12 +24,13 @@ import (
 func CreateWatchSessionWithType(roomID uint, hostID uint, watchType string) (*models.WatchSession, error) {
 	sessionID := uuid.New().String()
 	session := models.WatchSession{
-		SessionID: sessionID,
-		RoomID:    roomID,
-		HostID:    hostID,
-		WatchType: watchType,
-		StartedAt: time.Now(),
-		IsActive:  true, // ✅ Explicitly set active flag
+		SessionID:      sessionID,
+		RoomID:         roomID,
+		HostID:         hostID,
+		WatchType:      watchType,
+		StartedAt:      time.Now(),
+		IsActive:       true,
+		PreviewEnabled: true,
 	}
 
 	if err := DB.Create(&session).Error; err != nil {
@@ -54,13 +55,14 @@ func CreateWatchSessionWithTypeAndTicketing(roomID uint, hostID uint, watchType 
 	log.Printf("🏗️ [DB SAVE] 🎯 Setting ContentRating field to: '%s'", contentRating)
 
 	session := models.WatchSession{
-		SessionID:     sessionID,
-		RoomID:        roomID,
-		HostID:        hostID,
-		WatchType:     watchType,
-		ContentRating: contentRating, // ✅ Set content rating
-		StartedAt:     time.Now(),
-		IsActive:      true, // ✅ Explicitly set active flag
+		SessionID:      sessionID,
+		RoomID:         roomID,
+		HostID:         hostID,
+		WatchType:      watchType,
+		ContentRating:  contentRating,
+		StartedAt:      time.Now(),
+		IsActive:       true,
+		PreviewEnabled: true,
 	}
 
 	// Extract ticketing configuration using type assertion
@@ -581,6 +583,47 @@ func CreateWatchSession(c *gin.Context) {
 	} else {
 		log.Printf("❌ [BROADCAST] Failed to marshal session_started: %v", err)
 	}
+
+	// Broadcast to lobby so the Live tab updates immediately for all lobby users.
+	// Also send a targeted room_session_started to room members so they see a toast.
+	go func(sid string, rid uint, hostID uint, wt string) {
+		var room models.Room
+		if err := DB.First(&room, rid).Error; err != nil {
+			return
+		}
+		var host models.User
+		DB.Select("username").First(&host, hostID)
+
+		lobbyMsg, _ := json.Marshal(map[string]interface{}{
+			"type":          "session_started",
+			"session_id":    sid,
+			"room_id":       rid,
+			"room_name":     room.Name,
+			"host_username": host.Username,
+			"watch_type":    wt,
+		})
+		hub.BroadcastToLobby(OutgoingMessage{Data: lobbyMsg, IsBinary: false})
+
+		var userRooms []models.UserRoom
+		DB.Where("room_id = ?", rid).Find(&userRooms)
+		var memberIDs []uint
+		for _, ur := range userRooms {
+			if ur.UserID != hostID {
+				memberIDs = append(memberIDs, ur.UserID)
+			}
+		}
+		if len(memberIDs) > 0 {
+			memberMsg, _ := json.Marshal(map[string]interface{}{
+				"type":          "room_session_started",
+				"session_id":    sid,
+				"room_id":       rid,
+				"room_name":     room.Name,
+				"host_username": host.Username,
+				"watch_type":    wt,
+			})
+			hub.BroadcastToUsers(memberIDs, OutgoingMessage{Data: memberMsg, IsBinary: false})
+		}
+	}(session.SessionID, uint(roomID), userID.(uint), session.WatchType)
 
 	log.Printf("\n📤 [CREATE] Sending response to frontend:")
 	log.Printf("  ├─ content_rating: '%s'", session.ContentRating)

@@ -4,8 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import {
   PencilIcon, TrashIcon, PlayIcon, PauseIcon, CheckIcon,
   PhoneXMarkIcon, PhoneIcon,
-  DocumentDuplicateIcon, UserCircleIcon,
+  DocumentDuplicateIcon, UserCircleIcon, BookmarkIcon,
 } from '@heroicons/react/24/solid';
+import { toggleRoomFavourite, joinRoom } from '../../services/api';
 
 const LobbyMessageBubble = ({
   message,
@@ -26,6 +27,11 @@ const LobbyMessageBubble = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [copied, setCopied] = useState(false);
+  // WatchOut card action state
+  const [isFav, setIsFav] = useState(false);
+  const [favLoading, setFavLoading] = useState(false);
+  const [joinStatus, setJoinStatus] = useState(null); // null | 'active' | 'pending'
+  const [joinLoading, setJoinLoading] = useState(false);
   const audioRef = useRef(null);
   const bubbleRef = useRef(null);
   const longPressTimerRef = useRef(null);
@@ -423,7 +429,30 @@ const LobbyMessageBubble = ({
                   <div className="flex items-start gap-2">
                     <span className="text-2xl leading-none flex-shrink-0">{emoji}</span>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-semibold truncate ${isOwn ? 'text-white' : 'text-gray-900 dark:text-white'}`}>{metadata.room_name}</p>
+                      <div className="flex items-center gap-1">
+                        <p className={`text-sm font-semibold truncate ${isOwn ? 'text-white' : 'text-gray-900 dark:text-white'}`}>{metadata.room_name}</p>
+                        {!isPrivate && (
+                          joinStatus
+                            ? <div className="relative -top-1 flex-shrink-0 w-3.5 h-3.5 bg-purple-500 rounded-full flex items-center justify-center shadow-md">
+                                <span className="text-white text-[7px] font-black leading-none">✓</span>
+                              </div>
+                            : <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (joinLoading || !metadata.room_id) return;
+                                  setJoinLoading(true);
+                                  try {
+                                    const res = await joinRoom(metadata.room_id);
+                                    setJoinStatus(res.status || 'active');
+                                  } catch { /* silent */ }
+                                  finally { setJoinLoading(false); }
+                                }}
+                                className="relative -top-1 flex-shrink-0 w-3.5 h-3.5 bg-purple-600 hover:bg-purple-500 rounded-full overflow-hidden shadow-md transition-transform active:scale-90"
+                              >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" className="w-full h-full"><path d="M12 2v20M2 12h20" /></svg>
+                              </button>
+                        )}
+                      </div>
                       {metadata.session_title && <p className={`text-xs truncate mt-0.5 ${isOwn ? 'text-green-100' : 'text-gray-500 dark:text-gray-400'}`}>{metadata.session_title}</p>}
                       {!isEnded && !isPrivate && <p className={`text-xs mt-1 ${isOwn ? 'text-green-100' : 'text-gray-500 dark:text-gray-400'}`}>{metadata.watching_count} watching</p>}
                       {isPrivate && (metadata.watch_type || metadata.content_rating || metadata.price > 0) && (
@@ -438,10 +467,42 @@ const LobbyMessageBubble = ({
                 </div>
                 {isEnded ? (
                   <div className={`w-full py-2 text-xs text-center ${isOwn ? 'text-white/40' : 'text-gray-400 dark:text-gray-500'}`}>Session no longer active</div>
-                ) : isPrivate ? (
-                  <button onClick={(e) => { e.stopPropagation(); navigate(`/rooms/${metadata.room_id}`); }} className={`w-full py-2 text-xs font-semibold transition-colors ${isOwn ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>Join Watch Session →</button>
                 ) : (
-                  <button onClick={(e) => { e.stopPropagation(); navigate(`/rooms/${metadata.room_id}`); }} className={`w-full py-2 text-xs font-semibold transition-colors ${isOwn ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}>Watch Now →</button>
+                  <>
+                    {/* Secondary action: Favourite */}
+                    <div className={`flex border-t ${isOwn ? 'border-white/10' : 'border-gray-200 dark:border-gray-700'}`}>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (favLoading || !metadata.room_id) return;
+                          setFavLoading(true);
+                          try {
+                            const res = await toggleRoomFavourite(metadata.room_id);
+                            setIsFav(res.is_favourite);
+                          } catch { /* silent */ }
+                          finally { setFavLoading(false); }
+                        }}
+                        disabled={favLoading}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-medium transition-colors disabled:opacity-50
+                          ${isOwn ? 'hover:bg-white/10 text-white/80' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'}`}
+                      >
+                        {isFav
+                          ? <BookmarkIcon className="w-3.5 h-3.5 text-purple-400" />
+                          : <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
+                              <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93z M11 7L13 7L13 9L15 9L15 11L13 11L13 13L11 13L11 11L9 11L9 9L11 9Z" />
+                            </svg>
+                        }
+                        {isFav ? 'Saved' : 'Save'}
+                      </button>
+                    </div>
+
+                    {/* Primary CTA */}
+                    {isPrivate ? (
+                      <button onClick={(e) => { e.stopPropagation(); navigate(`/rooms/${metadata.room_id}`); }} className={`w-full py-2 text-xs font-semibold transition-colors ${isOwn ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>Join Watch Session →</button>
+                    ) : (
+                      <button onClick={(e) => { e.stopPropagation(); navigate(`/rooms/${metadata.room_id}`); }} className={`w-full py-2 text-xs font-semibold transition-colors ${isOwn ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}>Watch Now →</button>
+                    )}
+                  </>
                 )}
               </div>
               <p className={`text-[10px] text-right mt-1 ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}</p>

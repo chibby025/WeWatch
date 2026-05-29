@@ -30,13 +30,14 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		SessionID             string  `json:"session_id"`
 		RoomID                uint    `json:"room_id"`
 		RoomName              string  `json:"room_name"`
-		RoomAvatarURL         string  `json:"room_avatar_url,omitempty"` // ✅ Room avatar image
+		RoomAvatarURL         string  `json:"room_avatar_url,omitempty"`
 		HostID                uint    `json:"host_id"`
 		HostUsername          string  `json:"host_username"`
 		WatchType             string  `json:"watch_type"`
 		ClassType             string  `json:"class_type,omitempty"`
 		IsTemporary           bool    `json:"is_temporary"`
 		IsPublic              bool    `json:"is_public"`
+		IsMember              bool    `json:"is_member"`
 		MemberCount           int     `json:"member_count"`
 		CurrentlyPlaying      string  `json:"currently_playing,omitempty"`
 		SessionTitle          string  `json:"session_title,omitempty"`
@@ -45,9 +46,16 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		CurrentMediaType      string  `json:"current_media_type,omitempty"`
 		IsScreenSharingActive bool    `json:"is_screen_sharing_active"`
 		SharingSource         string  `json:"sharing_source,omitempty"`
-		ContentRating         string  `json:"content_rating"`     // ✅ Age-based content rating
-		AverageRating         float64 `json:"average_rating"`     // ✅ Room's average rating
-		TotalRatings          int     `json:"total_ratings"`      // ✅ Number of ratings
+		ContentRating         string  `json:"content_rating"`
+		AverageRating         float64 `json:"average_rating"`
+		TotalRatings          int     `json:"total_ratings"`
+		PreviewURL            string  `json:"preview_url,omitempty"`
+		PosterURL             string  `json:"poster_url,omitempty"`
+		LiveshareMode         string  `json:"liveshare_mode,omitempty"`
+		PodcastTitle          string  `json:"podcast_title,omitempty"`
+		PodcastLogoURL        string  `json:"podcast_logo_url,omitempty"`
+		LiveShareLowerThird   string  `json:"liveshare_lower_third,omitempty"`
+		LiveShareLogoBug      string  `json:"liveshare_logo_bug,omitempty"`
 	}
 
 	// ✅ Get current user ID for privacy filtering
@@ -84,11 +92,38 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		return
 	}
 	
-	// Query active sessions with pagination (EndedAt is NULL)
+	// Build a set of room IDs the current user is an active member of (for is_member field).
+	memberRoomSet := make(map[uint]bool)
+	if userID > 0 {
+		var memberRoomIDs []uint
+		DB.Model(&models.UserRoom{}).
+			Where("user_id = ? AND status = 'active' AND is_banned = false", userID).
+			Pluck("room_id", &memberRoomIDs)
+		for _, id := range memberRoomIDs {
+			memberRoomSet[id] = true
+		}
+	}
+
+	// Scoring ORDER BY:
+	//   quality 0.4 — Bayesian credible rating (prevents low-sample gaming)
+	//   audience 0.3 — live viewer count, capped at 100
+	//   recency 0.2 — decay function 1/(1+hours_since_start)
+	//   preview 0.1 — flat bonus for sessions with a generated video preview
+	const scoringOrder = `(
+		((r.total_ratings * r.average_rating + 5.0 * 3.0) / ((r.total_ratings + 5.0) * 5.0)) * 0.4
+		+ LEAST(COALESCE(mc.cnt, 0) / 100.0, 1.0) * 0.3
+		+ (1.0 / (1.0 + EXTRACT(EPOCH FROM (NOW() - watch_sessions.started_at)) / 3600.0)) * 0.2
+		+ CASE WHEN watch_sessions.preview_url IS NOT NULL AND watch_sessions.preview_url != '' THEN 0.1 ELSE 0.0 END
+	) DESC`
+
+	// Query active sessions with pagination — scored by quality, audience, recency, preview.
 	var sessions []models.WatchSession
-	if err := DB.Where("ended_at IS NULL").
+	if err := DB.Select("watch_sessions.*").
+		Where("watch_sessions.ended_at IS NULL").
 		Preload("Members", "is_active = ?", true).
-		Order("started_at DESC"). // Most recent first
+		Joins("JOIN rooms r ON r.id = watch_sessions.room_id").
+		Joins("LEFT JOIN (SELECT watch_session_id, COUNT(*) AS cnt FROM watch_session_members WHERE is_active = true GROUP BY watch_session_id) mc ON mc.watch_session_id = watch_sessions.id").
+		Order(scoringOrder).
 		Limit(limit).
 		Offset(offset).
 		Find(&sessions).Error; err != nil {
@@ -96,8 +131,6 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch active sessions"})
 		return
 	}
-
-	// Reduced logging - Found %d active sessions
 
 	// Load viewer's age flags once before the loop (zero-value = all flags false = conservative default).
 	var viewerSettings models.UserSettings
@@ -207,13 +240,14 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			SessionID:             session.SessionID,
 			RoomID:                session.RoomID,
 			RoomName:              room.Name,
-			RoomAvatarURL:         room.ImageURL,           // ✅ Include room avatar (using ImageURL field)
+			RoomAvatarURL:         room.ImageURL,
 			HostID:                room.HostID,
 			HostUsername:          hostUsername,
 			WatchType:             session.WatchType,
 			ClassType:             session.ClassType,
 			IsTemporary:           room.IsTemporary,
 			IsPublic:              room.IsPublic,
+			IsMember:              memberRoomSet[session.RoomID] || room.HostID == userID,
 			MemberCount:           activeMemberCount,
 			CurrentlyPlaying:      room.CurrentlyPlaying,
 			SessionTitle:          session.SessionTitle,
@@ -222,9 +256,16 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			CurrentMediaType:      session.CurrentMediaType,
 			IsScreenSharingActive: session.IsScreenSharingActive,
 			SharingSource:         session.SharingSource,
-			ContentRating:         session.ContentRating,  // ✅ Include content rating
-			AverageRating:         room.AverageRating,     // ✅ Include room rating
-			TotalRatings:          room.TotalRatings,      // ✅ Include rating count
+			ContentRating:         session.ContentRating,
+			AverageRating:         room.AverageRating,
+			TotalRatings:          room.TotalRatings,
+			PreviewURL:            session.PreviewURL,
+			PosterURL:             session.PosterURL,
+			LiveshareMode:         session.LiveshareMode,
+			PodcastTitle:          session.PodcastTitle,
+			PodcastLogoURL:        session.PodcastLogoURL,
+			LiveShareLowerThird:   session.LiveShareLowerThird,
+			LiveShareLogoBug:      session.LiveShareLogoBug,
 		}
 		response = append(response, sessionResp)
 	}

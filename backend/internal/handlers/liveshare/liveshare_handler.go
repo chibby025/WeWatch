@@ -27,6 +27,7 @@ type OutgoingMessage struct {
 type WebSocketHub interface {
 	BroadcastToRoom(roomID uint, message OutgoingMessage, sender interface{})
 	BroadcastToUser(userID uint, roomID uint, message OutgoingMessage)
+	BroadcastToLobby(msg OutgoingMessage)
 }
 
 // Client interface - minimal interface for what we need from websocket.Client
@@ -119,10 +120,12 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 		log.Printf("⚠️ [LiveShare] No layout in incoming data or layout is empty string")
 	}
 
+	// Extract podcast/church fields at outer scope so they're available for the lobby broadcast.
+	podcastTitle, _ := data["podcastTitle"].(string)
+	podcastLogoURL, _ := data["podcastLogoURL"].(string)
+
 	// For podcast or church mode, extract additional config (both use same fields: title, logo, guest)
 	if mode == "podcast" || mode == "church" {
-		podcastTitle, _ := data["podcastTitle"].(string)
-		podcastLogoURL, _ := data["podcastLogoURL"].(string)
 		
 		// Extract guest user ID
 		var guestUserID *uint
@@ -290,6 +293,20 @@ func (h *LiveShareHandler) handleModeSelected(data map[string]interface{}, clien
 		Data:     msgBytes,
 		IsBinary: false,
 	}, client)
+
+	// Broadcast session metadata to lobby so preview cards update immediately —
+	// this fires from the in-memory message, not the DB, so it works even if
+	// podcast_title/podcast_logo_url columns haven't been migrated yet.
+	lobbyMeta := map[string]interface{}{
+		"type":             "session_meta_updated",
+		"session_id":       sessionID,
+		"liveshare_mode":   mode,
+		"podcast_title":    podcastTitle,
+		"podcast_logo_url": podcastLogoURL,
+	}
+	if lobbyBytes, err := json.Marshal(lobbyMeta); err == nil {
+		h.hub.BroadcastToLobby(OutgoingMessage{Data: lobbyBytes, IsBinary: false})
+	}
 
 	log.Printf("✅ [LiveShare] Mode %s set for session %s", mode, sessionID)
 	return nil

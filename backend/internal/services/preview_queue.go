@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"wewatch-backend/internal/models"
@@ -44,11 +45,12 @@ type OutgoingMessage struct {
 
 // PreviewQueue manages preview generation requests
 type PreviewQueue struct {
-	queue   chan PreviewRequest
-	db      *gorm.DB
-	hub     WebSocketHub
-	active  map[string]bool // Track active sessions to prevent duplicates
-	timers  map[string]*time.Ticker // Track refresh timers per session
+	queue  chan PreviewRequest
+	db     *gorm.DB
+	hub    WebSocketHub
+	mu     sync.Mutex
+	active map[string]bool
+	timers map[string]*time.Ticker
 }
 
 // WebSocketHub interface for broadcasting messages
@@ -61,14 +63,13 @@ var globalPreviewQueue *PreviewQueue
 // InitPreviewQueue initializes the preview queue worker
 func InitPreviewQueue(db *gorm.DB, hub WebSocketHub) {
 	globalPreviewQueue = &PreviewQueue{
-		queue:   make(chan PreviewRequest, 100),
-		db:      db,
-		hub:     hub,
-		active:  make(map[string]bool),
-		timers:  make(map[string]*time.Ticker),
+		queue:  make(chan PreviewRequest, 100),
+		db:     db,
+		hub:    hub,
+		active: make(map[string]bool),
+		timers: make(map[string]*time.Ticker),
 	}
-	
-	log.Println("✅ [PreviewQueue] Preview queue initialized")
+	log.Println("✅ [PreviewQueue] Initialized")
 	globalPreviewQueue.start()
 }
 
@@ -77,10 +78,8 @@ func GetPreviewQueue() *PreviewQueue {
 	return globalPreviewQueue
 }
 
-// start begins the worker goroutine
 func (pq *PreviewQueue) start() {
 	go func() {
-		log.Println("🚀 [PreviewQueue] Worker started")
 		for req := range pq.queue {
 			pq.processRequest(req)
 		}
@@ -89,111 +88,107 @@ func (pq *PreviewQueue) start() {
 
 // QueuePreview adds a preview request to the queue
 func (pq *PreviewQueue) QueuePreview(req PreviewRequest) {
-	// Check if preview generation is enabled for this session
 	var session models.WatchSession
 	if err := pq.db.Where("session_id = ?", req.SessionID).First(&session).Error; err != nil {
-		log.Printf("❌ [PreviewQueue] Session not found: %s, error: %v", req.SessionID, err)
 		return
 	}
-	
 	if !session.PreviewEnabled {
-		log.Printf("⏸️ [PreviewQueue] Preview generation disabled for session %s, skipping", req.SessionID)
 		return
 	}
-	
-	// Check if already in queue
+
+	pq.mu.Lock()
 	if pq.active[req.SessionID] {
-		log.Printf("⏭️ [PreviewQueue] Preview already queued for session %s, skipping duplicate", req.SessionID)
+		pq.mu.Unlock()
 		return
 	}
-	
 	pq.active[req.SessionID] = true
-	log.Printf("📥 [PreviewQueue] ✅ QUEUED preview request for session %s, type: %s, timestamp: %d", req.SessionID, req.MediaType, req.CurrentTimestamp)
+	pq.mu.Unlock()
+
 	pq.queue <- req
 }
 
-// processRequest handles the actual preview generation
 func (pq *PreviewQueue) processRequest(req PreviewRequest) {
 	defer func() {
+		pq.mu.Lock()
 		delete(pq.active, req.SessionID)
+		pq.mu.Unlock()
 	}()
-	
-	log.Printf("⚙️ [PreviewQueue] Processing preview for session %s", req.SessionID)
-	
+
 	switch req.MediaType {
 	case MediaTypeUpload:
 		pq.generateUploadPreview(req)
 	case MediaTypeLiveShare, MediaTypeWatchFrom:
-		// WebRTC previews are handled by existing frame capture system
-		log.Printf("ℹ️ [PreviewQueue] WebRTC preview handled by frame capture system")
-	default:
-		log.Printf("⚠️ [PreviewQueue] Unknown media type: %s", req.MediaType)
+		// WebRTC previews handled by frame capture system
 	}
 }
 
-// generateUploadPreview generates preview for uploaded video
 func (pq *PreviewQueue) generateUploadPreview(req PreviewRequest) {
-	// Check if file exists
 	if _, err := os.Stat(req.MediaPath); os.IsNotExist(err) {
 		log.Printf("❌ [PreviewQueue] Media file not found: %s", req.MediaPath)
 		return
 	}
-	
-	// Generate preview filename (FIXED - no timestamp to prevent accumulation)
+
+	// Deterministic filename — same path on every refresh so CDN overwrites cleanly
 	baseName := filepath.Base(req.MediaPath)
 	ext := filepath.Ext(baseName)
 	nameWithoutExt := strings.TrimSuffix(baseName, ext)
-	previewFilename := fmt.Sprintf("%s_preview.mp4", nameWithoutExt) // ✅ Fixed filename, no timestamp
-	
-	var previewPath string
-	var previewURL string
-	
-	if req.IsTemporary {
-		previewPath = filepath.Join("./uploads/temp", previewFilename)
-		previewURL = fmt.Sprintf("/uploads/temp/%s", previewFilename)
-	} else {
-		previewPath = filepath.Join("./uploads", previewFilename)
-		previewURL = fmt.Sprintf("/uploads/%s", previewFilename)
-	}
-	
-	// ✅ Delete old preview before generating new one (prevents accumulation)
-	if _, err := os.Stat(previewPath); err == nil {
-		if removeErr := os.Remove(previewPath); removeErr != nil {
-			log.Printf("⚠️ [PreviewQueue] Failed to delete old preview %s: %v", previewPath, removeErr)
-		} else {
-			log.Printf("🗑️ [PreviewQueue] Deleted old preview: %s", previewPath)
-		}
-	}
-	
-	// Generate preview starting from current timestamp
+	previewFilename := fmt.Sprintf("%s_preview.mp4", nameWithoutExt)
+
+	localPreviewPath := filepath.Join("./uploads/previews", previewFilename)
+	os.MkdirAll("./uploads/previews", os.ModePerm)
+
+	// Generate to a temp path so the current preview stays accessible while ffmpeg runs.
+	// A looping video element requests the file every 15s; deleting it before the new one
+	// is ready causes a 404 → onError → broken preview card.
+	tempPreviewPath := localPreviewPath + ".tmp"
+	os.Remove(tempPreviewPath)
+
 	startTime := formatSeconds(req.CurrentTimestamp)
-	log.Printf("🎬 [PreviewQueue] 🚀 Generating MP4 preview from timestamp: %s (file: %s)", startTime, req.MediaPath)
-	
-	err := utils.GeneratePreviewMP4(req.MediaPath, previewPath, startTime, 30)
-	if err != nil {
-		log.Printf("❌ [PreviewQueue] Failed to generate MP4 preview: %v", err)
+	log.Printf("🎬 [PreviewQueue] Generating 15s/540p preview for session %s from %s", req.SessionID, startTime)
+
+	if err := utils.GeneratePreviewMP4(req.MediaPath, tempPreviewPath, startTime, 15); err != nil {
+		log.Printf("❌ [PreviewQueue] ffmpeg failed for session %s: %v", req.SessionID, err)
+		os.Remove(tempPreviewPath)
 		return
 	}
-	
-	log.Printf("✅ [PreviewQueue] MP4 preview generated successfully: %s", previewPath)
-	
-	// Update database
-	if req.IsTemporary {
-		pq.db.Model(&models.TemporaryMediaItem{}).
-			Where("id = ?", req.MediaID).
-			Updates(map[string]interface{}{
-				"preview_url":         previewURL,
-				"preview_generated_at": time.Now(),
-			})
+
+	// Promote: CDN upload (prod) or atomic rename (dev).
+	previewURL := "/uploads/previews/" + previewFilename
+	if utils.BunnyCDNStorageZone != "" && utils.BunnyCDNAccessKey != "" {
+		fileData, err := os.ReadFile(tempPreviewPath)
+		if err == nil {
+			if cdnURL, uploadErr := utils.UploadPreviewToBunnyCDN(fileData, previewFilename); uploadErr == nil {
+				previewURL = cdnURL
+				os.Remove(tempPreviewPath)
+			} else {
+				log.Printf("⚠️ [PreviewQueue] CDN upload failed, promoting temp to local: %v", uploadErr)
+				if err := os.Rename(tempPreviewPath, localPreviewPath); err != nil {
+					log.Printf("❌ [PreviewQueue] Failed to promote preview: %v", err)
+					os.Remove(tempPreviewPath)
+					return
+				}
+			}
+		}
 	} else {
-		pq.db.Model(&models.MediaItem{}).
-			Where("id = ?", req.MediaID).
-			Updates(map[string]interface{}{
-				"preview_url":         previewURL,
-				"preview_generated_at": time.Now(),
-			})
+		// Local dev: atomic rename — old file stays readable until the new one is fully written.
+		if err := os.Rename(tempPreviewPath, localPreviewPath); err != nil {
+			log.Printf("❌ [PreviewQueue] Failed to rename preview: %v", err)
+			os.Remove(tempPreviewPath)
+			return
+		}
+		absPath, _ := filepath.Abs(localPreviewPath)
+		log.Printf("✅ [PreviewQueue] Preview file written to: %s (url: %s)", absPath, previewURL)
 	}
-	
+
+	// Update preview_url on the media item so cached previews are served immediately next time
+	if req.IsTemporary {
+		pq.db.Model(&models.TemporaryMediaItem{}).Where("id = ?", req.MediaID).
+			Updates(map[string]interface{}{"preview_url": previewURL, "preview_generated_at": time.Now()})
+	} else {
+		pq.db.Model(&models.MediaItem{}).Where("id = ?", req.MediaID).
+			Updates(map[string]interface{}{"preview_url": previewURL, "preview_generated_at": time.Now()})
+	}
+
 	// Get poster URL
 	var posterURL string
 	if req.IsTemporary {
@@ -205,97 +200,86 @@ func (pq *PreviewQueue) generateUploadPreview(req PreviewRequest) {
 		pq.db.First(&media, req.MediaID)
 		posterURL = media.PosterURL
 	}
-	
-	// Broadcast to lobby
+
+	// Persist URLs on the session row so members joining mid-session get them immediately
+	pq.db.Table("watch_sessions").
+		Where("session_id = ?", req.SessionID).
+		Updates(map[string]interface{}{"preview_url": previewURL, "poster_url": posterURL})
+
 	pq.broadcastPreviewToLobby(req.SessionID, posterURL, previewURL)
 }
 
-// broadcastPreviewToLobby sends preview update to lobby WebSocket
 func (pq *PreviewQueue) broadcastPreviewToLobby(sessionID, posterURL, previewURL string) {
-	log.Printf("📡 [PreviewQueue] Broadcasting preview update for session %s", sessionID)
-	log.Printf("   📸 Poster: %s", posterURL)
-	log.Printf("   🎬 Preview: %s", previewURL)
-	
 	broadcastData := map[string]interface{}{
 		"type":        "session_preview_updated",
 		"session_id":  sessionID,
 		"poster_url":  posterURL,
 		"preview_url": previewURL,
 	}
-	
 	broadcastJSON, err := json.Marshal(broadcastData)
 	if err != nil {
-		log.Printf("❌ [PreviewQueue] Failed to marshal broadcast: %v", err)
 		return
 	}
-	
-	pq.hub.BroadcastToLobby(OutgoingMessage{
-		Data:     broadcastJSON,
-		IsBinary: false,
-	})
-	
-	log.Printf("✅ [PreviewQueue] Broadcast sent successfully for session %s", sessionID)
+	pq.hub.BroadcastToLobby(OutgoingMessage{Data: broadcastJSON, IsBinary: false})
 }
 
-// StartRefreshTimer starts a 1-minute refresh timer for a session (⚡ TESTING MODE - change back to 5 minutes for production)
+// StartRefreshTimer starts a periodic preview refresh for a session.
+// Interval: 1 min in local dev (no RAILWAY_ENVIRONMENT), 5 min in production.
 func (pq *PreviewQueue) StartRefreshTimer(sessionID string) {
-	// Stop existing timer if any
 	pq.StopRefreshTimer(sessionID)
-	
-	log.Printf("⏱️ [PreviewQueue] 🚀 STARTING 1-minute refresh timer for session %s (TESTING MODE)", sessionID)
-	ticker := time.NewTicker(1 * time.Minute) // ⚡ TESTING: 1 minute (change to 5 * time.Minute for production)
+
+	interval := 5 * time.Minute
+	if os.Getenv("RAILWAY_ENVIRONMENT") == "" {
+		interval = 1 * time.Minute
+	}
+
+	ticker := time.NewTicker(interval)
+
+	pq.mu.Lock()
 	pq.timers[sessionID] = ticker
-	
+	pq.mu.Unlock()
+
 	go func() {
-		tickerCount := 0
 		for range ticker.C {
-			tickerCount++
-			log.Printf("⏰ [PreviewQueue] 🔔 TIMER TICK #%d for session %s - triggering refresh", tickerCount, sessionID)
 			pq.refreshPreview(sessionID)
 		}
-		log.Printf("⏹️ [PreviewQueue] Timer goroutine exited for session %s", sessionID)
 	}()
-	
-	log.Printf("✅ [PreviewQueue] Timer goroutine spawned for session %s", sessionID)
 }
 
-// StopRefreshTimer stops the refresh timer for a session
 func (pq *PreviewQueue) StopRefreshTimer(sessionID string) {
-	if ticker, exists := pq.timers[sessionID]; exists {
-		ticker.Stop()
+	pq.mu.Lock()
+	ticker, exists := pq.timers[sessionID]
+	if exists {
 		delete(pq.timers, sessionID)
-		log.Printf("⏹️ [PreviewQueue] Stopped refresh timer for session %s", sessionID)
+	}
+	pq.mu.Unlock()
+
+	if exists {
+		ticker.Stop()
 	}
 }
 
-// refreshPreview generates a new preview based on current playback position
 func (pq *PreviewQueue) refreshPreview(sessionID string) {
-	log.Printf("🔄 [PreviewQueue] refreshPreview called for session %s", sessionID)
-	
 	var session models.WatchSession
-	result := pq.db.Where("session_id = ?", sessionID).First(&session)
-	if result.Error != nil {
-		log.Printf("❌ [PreviewQueue] Session not found for refresh: %s, error: %v", sessionID, result.Error)
+	if err := pq.db.Where("session_id = ?", sessionID).First(&session).Error; err != nil {
 		return
 	}
-	
-	log.Printf("📊 [PreviewQueue] Session state: MediaType=%s, MediaPath=%s, PlaybackTime=%d", 
-		session.CurrentMediaType, session.CurrentMediaPath, session.CurrentPlaybackTime)
-	
-	// Only refresh if media is upload type
-	if session.CurrentMediaType != string(MediaTypeUpload) {
-		log.Printf("⏭️ [PreviewQueue] Skipping refresh - not upload type (current: %s)", session.CurrentMediaType)
+	if session.CurrentMediaType != string(MediaTypeUpload) || session.CurrentMediaID == 0 {
 		return
 	}
-	
-	log.Printf("✅ [PreviewQueue] Queueing new preview generation from position %d seconds", session.CurrentPlaybackTime)
-	
-	// Queue new preview generation from current position
+
+	// Detect whether the playing media is a temporary upload or a permanent media item
+	isTemporary := false
+	var tempItem models.TemporaryMediaItem
+	if err := pq.db.First(&tempItem, session.CurrentMediaID).Error; err == nil {
+		isTemporary = true
+	}
+
 	pq.QueuePreview(PreviewRequest{
 		SessionID:        sessionID,
 		MediaID:          uint(session.CurrentMediaID),
 		MediaPath:        session.CurrentMediaPath,
-		IsTemporary:      false, // TODO: detect from path
+		IsTemporary:      isTemporary,
 		CurrentTimestamp: session.CurrentPlaybackTime,
 		MediaType:        MediaType(session.CurrentMediaType),
 	})
@@ -303,64 +287,45 @@ func (pq *PreviewQueue) refreshPreview(sessionID string) {
 
 // ClearSessionPreview deletes preview files and clears database entries
 func (pq *PreviewQueue) ClearSessionPreview(sessionID string) {
-	// Query preview and poster URLs directly from database
 	var result struct {
 		PreviewURL string
 		PosterURL  string
 	}
-	
 	if err := pq.db.Table("watch_sessions").
 		Select("preview_url, poster_url").
 		Where("session_id = ?", sessionID).
 		First(&result).Error; err != nil {
-		log.Printf("❌ [PreviewQueue] Session not found for cleanup: %s", sessionID)
 		return
 	}
-	
-	// Delete preview file
+
+	// Delete from CDN if it's a CDN URL; delete local file if it's a local path
 	if result.PreviewURL != "" {
-		previewPath := strings.TrimPrefix(result.PreviewURL, "/")
-		if err := os.Remove(previewPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("⚠️ [PreviewQueue] Failed to delete preview file %s: %v", previewPath, err)
+		if strings.Contains(result.PreviewURL, "b-cdn.net") {
+			utils.DeleteFromBunnyCDN(result.PreviewURL)
 		} else {
-			log.Printf("🗑️ [PreviewQueue] Deleted preview file: %s", previewPath)
+			os.Remove(strings.TrimPrefix(result.PreviewURL, "/"))
 		}
 	}
-	
-	// Delete poster if it's a WebRTC poster (contains "webrtc" or "frame")
 	if result.PosterURL != "" && (strings.Contains(result.PosterURL, "webrtc") || strings.Contains(result.PosterURL, "frame")) {
-		posterPath := strings.TrimPrefix(result.PosterURL, "/")
-		if err := os.Remove(posterPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("⚠️ [PreviewQueue] Failed to delete poster file %s: %v", posterPath, err)
-		} else {
-			log.Printf("🗑️ [PreviewQueue] Deleted poster file: %s", posterPath)
-		}
+		os.Remove(strings.TrimPrefix(result.PosterURL, "/"))
 	}
-	
-	// Clear URLs from database
-	pq.db.Table("watch_sessions").
-		Where("session_id = ?", sessionID).
-		Updates(map[string]interface{}{
-			"preview_url": nil,
-			"poster_url":  nil,
-		})
-	
-	// ✅ Broadcast preview cleared to lobby so frontend updates immediately
+
+	pq.db.Table("watch_sessions").Where("session_id = ?", sessionID).
+		Updates(map[string]interface{}{"preview_url": nil, "poster_url": nil})
+
 	pq.broadcastPreviewToLobby(sessionID, "", "")
-	log.Printf("📡 [PreviewQueue] Broadcast preview cleared for session %s", sessionID)
-	
-	log.Printf("🧹 [PreviewQueue] Cleared preview for session %s", sessionID)
 }
 
 // CleanupSession stops timers and clears previews when session ends
 func (pq *PreviewQueue) CleanupSession(sessionID string) {
 	pq.StopRefreshTimer(sessionID)
 	pq.ClearSessionPreview(sessionID)
+
+	pq.mu.Lock()
 	delete(pq.active, sessionID)
-	log.Printf("🧹 [PreviewQueue] Full cleanup completed for session %s", sessionID)
+	pq.mu.Unlock()
 }
 
-// formatSeconds converts seconds to HH:MM:SS format for ffmpeg
 func formatSeconds(seconds int) string {
 	hours := seconds / 3600
 	minutes := (seconds % 3600) / 60

@@ -448,13 +448,14 @@ func StartPrivateWatchoutHandler(c *gin.Context) {
 
 	sessionUUID := uuid.New().String()
 	watchSession := models.WatchSession{
-		SessionID:     sessionUUID,
-		RoomID:        newRoom.ID,
-		HostID:        senderID,
-		WatchType:     req.WatchType,
-		IsPrivate:     true,
-		ContentRating: req.ContentRating,
-		StartedAt:     time.Now(),
+		SessionID:      sessionUUID,
+		RoomID:         newRoom.ID,
+		HostID:         senderID,
+		WatchType:      req.WatchType,
+		IsPrivate:      true,
+		ContentRating:  req.ContentRating,
+		StartedAt:      time.Now(),
+		PreviewEnabled: true,
 	}
 	if err := tx.Create(&watchSession).Error; err != nil {
 		tx.Rollback()

@@ -73,11 +73,11 @@ func DeleteSingleTemporaryMediaItemHandler(c *gin.Context) {
 		return
 	}
 
-	// Delete file
-	if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+	// Delete file (local or CDN)
+	if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 		log.Printf("Warning: failed to delete file %s: %v", item.FilePath, err)
 	}
-	// Delete thumbnail
+	// Delete thumbnail (best-effort local cleanup; CDN posters are cleaned via poster_url separately)
 	thumbPath := item.FilePath + ".jpg"
 	os.Remove(thumbPath)
 
@@ -381,7 +381,11 @@ func GetTemporaryMediaFileHandler(c *gin.Context) {
 		return
 	}
 
-	// ✅ Serve the file
+	// If file is on CDN, redirect; otherwise serve local file
+	if strings.HasPrefix(item.FilePath, "http://") || strings.HasPrefix(item.FilePath, "https://") {
+		c.Redirect(http.StatusFound, item.FilePath)
+		return
+	}
 	c.Header("Content-Type", item.MimeType)
 	c.Header("Accept-Ranges", "bytes")
 	c.File(item.FilePath)
@@ -472,7 +476,7 @@ func DeleteTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 	successCount := 0
 	failureCount := 0
 	for _, item := range temporaryMediaItems {
-		if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+		if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 			log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Warning - Failed to delete file '%s': %v", item.FilePath, err)
 			failureCount++
 			continue

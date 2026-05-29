@@ -683,7 +683,7 @@ func EndWatchSessionHandler(c *gin.Context) {
 			return
 		}
 		for _, item := range tempItems {
-			if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+			if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 				log.Printf("⚠️ [EndWatchSession cleanup] Failed to delete file %s: %v", item.FilePath, err)
 			}
 			if err := tx.Delete(&item).Error; err != nil {
@@ -923,7 +923,7 @@ func AutoEndSession(sessionID string) error {
 	log.Printf("🗑️ AutoEndSession: Found %d temporary media items to delete for session %s", len(tempItems), sessionID)
 	for _, item := range tempItems {
 		log.Printf("🗑️ Deleting temporary media: ID=%d, File=%s, SessionID=%s", item.ID, item.FileName, item.SessionID)
-		if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+		if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete file %s: %v", item.FilePath, err)
 		} else {
 			log.Printf("✅ Deleted file: %s", item.FilePath)
@@ -1244,19 +1244,14 @@ func CleanupAllTemporaryMedia() {
 	failedFiles := 0
 	
 	for _, item := range orphanedMedia {
-		// Delete physical file
-		if err := os.Remove(item.FilePath); err != nil {
-			if os.IsNotExist(err) {
-				log.Printf("ℹ️ [CleanupTempMedia] File already deleted: %s", item.FilePath)
-			} else {
-				log.Printf("⚠️ [CleanupTempMedia] Failed to delete file %s: %v", item.FilePath, err)
-				failedFiles++
-				continue
-			}
-		} else {
-			deletedFiles++
-			log.Printf("✅ [CleanupTempMedia] Deleted file: %s", item.FilePath)
+		// Delete physical file or CDN object
+		if err := utils.DeleteMediaFile(item.FilePath); err != nil {
+			log.Printf("⚠️ [CleanupTempMedia] Failed to delete file %s: %v", item.FilePath, err)
+			failedFiles++
+			continue
 		}
+		deletedFiles++
+		log.Printf("✅ [CleanupTempMedia] Deleted file: %s", item.FilePath)
 		
 		// Delete database record
 		if err := DB.Delete(&item).Error; err != nil {
@@ -1270,73 +1265,67 @@ func CleanupAllTemporaryMedia() {
 		deletedFiles, deletedRecords, failedFiles)
 }
 
-// CleanupOrphanedPreviews deletes preview files that are no longer referenced
-// Handles both temp and permanent previews in uploads/temp/ and uploads/ folders
+// CleanupOrphanedPreviews deletes preview files in uploads/previews/ that are not
+// referenced by any active watch session. Also removes leftover .tmp files from crashes.
 func CleanupOrphanedPreviews() {
 	log.Println("🧹 [CleanupPreviews] Starting cleanup of orphaned preview files...")
-	
-	// Check temp folder for orphaned previews
-	tempPreviewsPath := "./uploads/temp"
-	if entries, err := os.ReadDir(tempPreviewsPath); err == nil {
-		orphanedCount := 0
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.Contains(entry.Name(), "_preview") {
-				continue
-			}
-			
-			// Check if this preview is still referenced in temporary_media_items
-			filePath := filepath.Join(tempPreviewsPath, entry.Name())
-			var count int64
-			DB.Model(&models.TemporaryMediaItem{}).
-				Where("preview_url LIKE ?", "%"+entry.Name()+"%").
-				Count(&count)
-			
-			if count == 0 {
-				// Preview not referenced, delete it
-				if err := os.Remove(filePath); err != nil {
-					log.Printf("⚠️ [CleanupPreviews] Failed to delete %s: %v", filePath, err)
-				} else {
-					orphanedCount++
-					log.Printf("🗑️ [CleanupPreviews] Deleted orphaned preview: %s", entry.Name())
+
+	previewsPath := "./uploads/previews"
+	entries, err := os.ReadDir(previewsPath)
+	if err != nil {
+		log.Println("✅ [CleanupPreviews] Preview cleanup complete")
+		return
+	}
+
+	// Collect preview_urls from all active sessions into a set for O(1) lookup
+	var activePreviews []string
+	DB.Model(&models.WatchSession{}).
+		Where("is_active = true AND preview_url IS NOT NULL AND preview_url != ''").
+		Pluck("preview_url", &activePreviews)
+
+	activeSet := make(map[string]bool, len(activePreviews))
+	for _, u := range activePreviews {
+		activeSet[u] = true
+	}
+
+	deleted := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		filePath := filepath.Join(previewsPath, name)
+
+		// Always remove stale temp files left by crashes
+		if strings.HasSuffix(name, ".tmp") {
+			info, err := entry.Info()
+			if err == nil && time.Since(info.ModTime()) > 10*time.Minute {
+				if os.Remove(filePath) == nil {
+					deleted++
+					log.Printf("🗑️ [CleanupPreviews] Removed stale temp: %s", name)
 				}
 			}
+			continue
 		}
-		if orphanedCount > 0 {
-			log.Printf("✅ [CleanupPreviews] Deleted %d orphaned temp previews", orphanedCount)
+
+		// Only consider _preview.mp4 files
+		if !strings.Contains(name, "_preview") {
+			continue
 		}
-	}
-	
-	// Check uploads folder for orphaned previews
-	uploadsPath := "./uploads"
-	if entries, err := os.ReadDir(uploadsPath); err == nil {
-		orphanedCount := 0
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.Contains(entry.Name(), "_preview") {
-				continue
-			}
-			
-			// Check if this preview is still referenced in media_items
-			filePath := filepath.Join(uploadsPath, entry.Name())
-			var count int64
-			DB.Model(&models.MediaItem{}).
-				Where("preview_url LIKE ?", "%"+entry.Name()+"%").
-				Count(&count)
-			
-			if count == 0 {
-				// Preview not referenced, delete it
-				if err := os.Remove(filePath); err != nil {
-					log.Printf("⚠️ [CleanupPreviews] Failed to delete %s: %v", filePath, err)
-				} else {
-					orphanedCount++
-					log.Printf("🗑️ [CleanupPreviews] Deleted orphaned preview: %s", entry.Name())
-				}
+
+		// Delete if no active session references this file
+		localURL := "/uploads/previews/" + name
+		if !activeSet[localURL] {
+			if os.Remove(filePath) == nil {
+				deleted++
+				log.Printf("🗑️ [CleanupPreviews] Removed orphaned preview: %s", name)
 			}
 		}
-		if orphanedCount > 0 {
-			log.Printf("✅ [CleanupPreviews] Deleted %d orphaned permanent previews", orphanedCount)
-		}
 	}
-	
+
+	if deleted > 0 {
+		log.Printf("✅ [CleanupPreviews] Deleted %d files", deleted)
+	}
 	log.Println("✅ [CleanupPreviews] Preview cleanup complete")
 }
 
@@ -1362,7 +1351,7 @@ func CleanupExpiredSessions() {
 		var items []models.TemporaryMediaItem
 		tx.Where("session_id = ?", s.SessionID).Find(&items)
 		for _, item := range items {
-			if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+			if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 				log.Printf("⚠️ CleanupExpiredSessions: Failed to delete file: %s", item.FilePath)
 			}
 			tx.Delete(&item)
@@ -1714,14 +1703,15 @@ func CreateInstantWatchHandler(c *gin.Context) {
 	}
 	
 	watchSession := models.WatchSession{
-		SessionID:     sessionUUID,
-		RoomID:        newRoom.ID,
-		HostID:        userID,
-		WatchType:     input.WatchType,
-		ClassType:     classType,  // ✅ Set class_type for classroom sessions
-		IsPrivate:     isPrivate,  // ✅ Hide from lobby if private
-		ContentRating: contentRating, // ✅ Set content rating
-		StartedAt:     time.Now(),
+		SessionID:      sessionUUID,
+		RoomID:         newRoom.ID,
+		HostID:         userID,
+		WatchType:      input.WatchType,
+		ClassType:      classType,
+		IsPrivate:      isPrivate,
+		ContentRating:  contentRating,
+		StartedAt:      time.Now(),
+		PreviewEnabled: true,
 	}
 
 	if err := tx.Create(&watchSession).Error; err != nil {
@@ -2363,8 +2353,11 @@ func DeleteRoomHandler(c *gin.Context) {
         if err := DB.Unscoped().Where("room_id = ?", roomIDUint).Find(&tempItems).Error; err == nil {
             for _, item := range tempItems {
                 if item.FilePath != "" {
-                    os.Remove(item.FilePath)
-                    log.Printf("Deleted temp file: %s", item.FilePath)
+                    if err := utils.DeleteMediaFile(item.FilePath); err != nil {
+                        log.Printf("⚠️ Failed to delete temp file %s: %v", item.FilePath, err)
+                    } else {
+                        log.Printf("Deleted temp file: %s", item.FilePath)
+                    }
                 }
             }
         }
@@ -2813,10 +2806,11 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		RoomID:            uint(roomID),
 		HostID:            userID,
 		WatchType:         input.WatchType,
-		ClassType:         classType,         // ✅ Set class_type for classroom sessions
-		ContentRating:     contentRating,     // ✅ Set content rating
+		ClassType:         classType,
+		ContentRating:     contentRating,
 		StartedAt:         time.Now(),
 		IsActive:          true,
+		PreviewEnabled:    true,
 	}
 	
 	// Only populate ticketing fields if ticketing is enabled
