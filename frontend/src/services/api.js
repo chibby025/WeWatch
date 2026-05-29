@@ -926,7 +926,7 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
     uploadUrl += `&session_id=${encodeURIComponent(sessionId)}`;
   }
 
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('wewatch_token');
   const response = await axios.post(uploadUrl, formData, {
     headers: {
       'Content-Type': undefined, // let browser set boundary
