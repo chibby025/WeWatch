@@ -941,11 +941,25 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
 };
 
 /**
- * Upload file directly to BunnyCDN via Vercel Edge Function proxy.
+ * Upload file directly to BunnyCDN from the browser.
+ * Vercel Edge Functions have a 4 MB body limit so we skip all intermediaries
+ * and PUT straight to BunnyCDN's Storage API using VITE_-prefixed env vars.
  * Uses XHR for upload progress tracking.
  */
 export const uploadFileToBunnyCDN = (file, cdnPath, onProgress, abortSignal) =>
   new Promise((resolve, reject) => {
+    const accessKey  = import.meta.env.VITE_BUNNY_ACCESS_KEY;
+    const zone       = import.meta.env.VITE_BUNNY_STORAGE_ZONE;
+    const region     = import.meta.env.VITE_BUNNY_STORAGE_REGION || 'ny';
+
+    if (!accessKey || !zone) {
+      reject(new Error('BunnyCDN env vars not configured (VITE_BUNNY_ACCESS_KEY / VITE_BUNNY_STORAGE_ZONE)'));
+      return;
+    }
+
+    const uploadUrl = `https://${region}.storage.bunnycdn.com/${zone}/${cdnPath}`;
+    console.log(`📡 [BunnyCDN] PUT ${uploadUrl}`);
+
     const xhr = new XMLHttpRequest();
 
     xhr.upload.onprogress = (e) => {
@@ -969,8 +983,8 @@ export const uploadFileToBunnyCDN = (file, cdnPath, onProgress, abortSignal) =>
       abortSignal.addEventListener('abort', () => xhr.abort());
     }
 
-    const proxyUrl = `/api/upload-proxy?path=${encodeURIComponent(cdnPath)}`;
-    xhr.open('PUT', proxyUrl);
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('AccessKey', accessKey);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.send(file);
   });
