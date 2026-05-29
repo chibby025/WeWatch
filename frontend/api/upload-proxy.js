@@ -57,11 +57,9 @@ export default async function handler(request) {
   });
 
   const responseText = await bunnyResponse.text();
-  return new Response(
-    bunnyResponse.ok ? JSON.stringify({ success: true }) : responseText,
-    {
-      status: bunnyResponse.ok ? 200 : bunnyResponse.status,
-      headers: { 'Content-Type': 'application/json' },
-    }
-  );
+  if (!bunnyResponse.ok) {
+    const debug = { bunny_error: responseText, key_prefix: accessKey.substring(0, 8), zone: storageZone, region };
+    return new Response(JSON.stringify(debug), { status: bunnyResponse.status, headers: { 'Content-Type': 'application/json' } });
+  }
+  return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }

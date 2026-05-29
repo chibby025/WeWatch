@@ -965,7 +965,7 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
 
     await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Chunk ${i} upload failed: ${xhr.status}`));
+      xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Chunk ${i} upload failed: ${xhr.status} ${xhr.responseText}`));
       xhr.onerror = () => reject(new Error(`Network error on chunk ${i}`));
       xhr.onabort = () => reject(Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' }));
       if (abortSignal) abortSignal.addEventListener('abort', () => xhr.abort());
