@@ -1,6 +1,6 @@
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { uploadMediaToRoom, uploadChunk, apiClient, API_BASE_URL } from '../../../services/api';
+import { uploadMediaToRoom, uploadChunk, uploadFileToBunnyCDN, confirmUpload, apiClient, API_BASE_URL } from '../../../services/api';
 import { Gamepad2, Video, BookOpen, Music, FileText } from 'lucide-react'; // Game, Video, Bible, Hymn, Sermon icons
 import toast from 'react-hot-toast';
 import BibleControl from '../../liveshare/BibleControl';
@@ -430,6 +430,24 @@ export default function LeftSidebar({
     }
   }, [onSessionCleanup, cleanupSessionState]);
 
+  const getVideoDurationFromFile = (file) =>
+    new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.onloadedmetadata = () => {
+        const s = Math.floor(video.duration) || 0;
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        resolve(
+          `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+        );
+        URL.revokeObjectURL(video.src);
+      };
+      video.onerror = () => { URL.revokeObjectURL(video.src); resolve('00:00:00'); };
+      video.src = URL.createObjectURL(file);
+    });
+
   // ✅ CHUNKED UPLOAD FUNCTION WITH PARALLEL UPLOADS
   const uploadFileChunked = async (file) => {
     setUploading(true);
@@ -584,11 +602,99 @@ export default function LeftSidebar({
     }
   };
 
+  // Direct BunnyCDN upload path (production only).
+  // Browser → Vercel Edge Function → BunnyCDN (no Railway for binary data).
+  // After upload, Railway is notified via a tiny JSON confirm call.
+  const uploadFileDirect = async (file) => {
+    setUploading(true);
+    setUploadProgress(0);
+    setUploadSpeed(0);
+    setUploadETA('Calculating...');
+    setUploadedBytes(0);
+    setTotalBytes(file.size);
+    uploadStartTimeRef.current = Date.now();
+
+    const abortController = new AbortController();
+    uploadAbortControllerRef.current = abortController;
+
+    try {
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'mp4';
+      const uniqueId = crypto.randomUUID();
+      const cdnFolder = sessionId ? 'temp-media' : 'media';
+      const cdnPath = `${cdnFolder}/${uniqueId}.${ext}`;
+      const pullZoneUrl = import.meta.env.VITE_BUNNY_PULL_ZONE_URL?.replace(/\/$/, '');
+      const cdnUrl = `${pullZoneUrl}/${cdnPath}`;
+
+      console.log(`🚀 [DirectUpload] Starting: ${file.name} → ${cdnPath}`);
+
+      // Get duration before upload (fast, runs locally in browser)
+      const duration = await getVideoDurationFromFile(file);
+
+      // Upload via Vercel Edge Function proxy (streams to BunnyCDN)
+      const startTime = Date.now();
+      await uploadFileToBunnyCDN(
+        file,
+        cdnPath,
+        (percent, loaded, total) => {
+          const now = Date.now();
+          if (now - lastProgressUpdateRef.current < 500 && percent < 100) return;
+          lastProgressUpdateRef.current = now;
+
+          const elapsedSeconds = (now - startTime) / 1000;
+          const speed = loaded / 1024 / 1024 / (elapsedSeconds || 1);
+          const remainingBytes = total - loaded;
+          const etaSeconds = remainingBytes / (speed * 1024 * 1024);
+
+          setUploadProgress(percent);
+          setUploadedBytes(loaded);
+          setUploadSpeed(speed);
+          if (etaSeconds < 60) setUploadETA(`${Math.round(etaSeconds)}s`);
+          else if (etaSeconds < 3600) setUploadETA(`${Math.round(etaSeconds / 60)}m`);
+          else setUploadETA(`${Math.round(etaSeconds / 3600)}h`);
+        },
+        abortController.signal
+      );
+
+      console.log(`✅ [DirectUpload] File on CDN: ${cdnUrl}`);
+      setUploadProgress(100);
+
+      // Confirm with Railway — tiny JSON, no file data
+      await confirmUpload(roomId, {
+        cdn_path: cdnPath,
+        cdn_url: cdnUrl,
+        original_name: file.name,
+        mime_type: file.type || `video/${ext}`,
+        file_size: file.size,
+        session_id: sessionId || '',
+        duration,
+      });
+
+      console.log('✅ [DirectUpload] DB record created');
+      if (onUploadComplete) onUploadComplete();
+    } catch (err) {
+      if (err.name === 'CanceledError' || err.message?.includes('cancel')) {
+        console.log('🚫 [DirectUpload] Cancelled');
+        toast('Upload cancelled.');
+      } else {
+        console.error('❌ [DirectUpload] Failed:', err);
+        toast.error(`Upload failed: ${err.message}`);
+      }
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+      setUploadSpeed(0);
+      setUploadETA('');
+      setUploadedBytes(0);
+      setTotalBytes(0);
+      uploadAbortControllerRef.current = null;
+    }
+  };
+
   const handleFileUpload = async (files) => {
     if (!files?.length || !roomId) return;
-    
+
     const file = files[0];
-    
+
     // ✅ CLIENT-SIDE VALIDATION
     const allowedTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska', 'video/avi', 'video/x-msvideo'];
     if (!allowedTypes.includes(file.type)) {
@@ -619,7 +725,11 @@ export default function LeftSidebar({
     }
     
     // ✅ START UPLOAD DIRECTLY (no compression)
-    await uploadFileChunked(file);
+    if (import.meta.env.PROD) {
+      await uploadFileDirect(file);
+    } else {
+      await uploadFileChunked(file);
+    }
   };
 
   const handleCancelUpload = () => {

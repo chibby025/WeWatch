@@ -940,6 +940,47 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
   return response.data;
 };
 
+/**
+ * Upload file directly to BunnyCDN via Vercel Edge Function proxy.
+ * Uses XHR for upload progress tracking.
+ */
+export const uploadFileToBunnyCDN = (file, cdnPath, onProgress, abortSignal) =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded * 100) / e.total), e.loaded, e.total);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`BunnyCDN upload failed: ${xhr.status} ${xhr.responseText}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.onabort = () => reject(Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' }));
+
+    if (abortSignal) {
+      abortSignal.addEventListener('abort', () => xhr.abort());
+    }
+
+    const proxyUrl = `/api/upload-proxy?path=${encodeURIComponent(cdnPath)}`;
+    xhr.open('PUT', proxyUrl);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.send(file);
+  });
+
+/**
+ * Confirm a completed BunnyCDN upload with Railway to create the DB record.
+ */
+export const confirmUpload = (roomId, data) =>
+  apiClient.post(`/api/rooms/${roomId}/upload/confirm`, data);
+
 export const uploadMediaToRoom = async (roomId, file, onUploadProgressCallback, isTemporary = false, sessionId = null, abortSignal = null) => {
   const uploadStartTime = Date.now();
   let lastProgressTime = uploadStartTime;
