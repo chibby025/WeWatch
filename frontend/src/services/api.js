@@ -926,17 +926,16 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
     uploadUrl += `&session_id=${encodeURIComponent(sessionId)}`;
   }
 
-  // Sync token to cookie so Vercel's proxy forwards it to Railway.
-  // Vercel strips the Authorization header on external-domain rewrites but does forward cookies.
-  // CookieToAuthHeaderMiddleware on the backend converts wewatch_token cookie → Authorization header.
+  // Vercel's rewrite proxy strips the Authorization header when forwarding to external domains.
+  // Pass the token as a query param instead; CookieToAuthHeaderMiddleware on the backend accepts it.
   const token = localStorage.getItem('wewatch_token');
   if (token) {
-    document.cookie = `wewatch_token=${token}; SameSite=None; Secure; Path=/; Max-Age=86400`;
+    uploadUrl += `&auth_token=${encodeURIComponent(token)}`;
   }
 
   const response = await axios.post(uploadUrl, formData, {
     headers: { 'Content-Type': undefined }, // let browser set multipart boundary
-    withCredentials: true, // sends cookies (including wewatch_token) to Vercel → Railway
+    withCredentials: true,
     timeout: 120000,
     signal: abortSignal,
   });

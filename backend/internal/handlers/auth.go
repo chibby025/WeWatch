@@ -353,13 +353,22 @@ func ChangePasswordHandler(c *gin.Context) {
 	})
 }
 
-// CookieToAuthHeaderMiddleware converts wewatch_token cookie to Authorization header
+// CookieToAuthHeaderMiddleware converts wewatch_token cookie (or auth_token query param) to Authorization header
 func CookieToAuthHeaderMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Get token from cookie
-		token, err := c.Cookie("wewatch_token")
-		if err == nil && token != "" {
-			// Inject into Authorization header
+		// Already has Authorization header — nothing to do
+		if c.GetHeader("Authorization") != "" {
+			c.Next()
+			return
+		}
+		// Fallback 1: wewatch_token cookie (native / same-domain requests)
+		if token, err := c.Cookie("wewatch_token"); err == nil && token != "" {
+			c.Request.Header.Set("Authorization", "Bearer "+token)
+			c.Next()
+			return
+		}
+		// Fallback 2: auth_token query param (Vercel proxy strips Authorization header)
+		if token := c.Query("auth_token"); token != "" {
 			c.Request.Header.Set("Authorization", "Bearer "+token)
 		}
 		c.Next()
