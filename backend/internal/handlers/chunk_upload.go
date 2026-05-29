@@ -255,7 +255,7 @@ func ChunkUploadHandler(c *gin.Context) {
 						"poster_url": posterCDNURL,
 					}
 					roomJSON, _ := json.Marshal(roomBroadcast)
-					hub.BroadcastToRoom(roomID, roomJSON)
+					hub.BroadcastToRoom(roomID, OutgoingMessage{Data: roomJSON, IsBinary: false}, nil)
 				}
 
 				// 2. Upload video to CDN; update file_path so cleanup targets CDN
