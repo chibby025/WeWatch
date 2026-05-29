@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/rooms/:id/upload",
+      "destination": "https://letswatchout-production.up.railway.app/api/rooms/:id/upload"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

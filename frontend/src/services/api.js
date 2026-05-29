@@ -913,19 +913,29 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
   formData.append('upload_id', uploadId);
   formData.append('file_name', fileName);
   formData.append('file_size', fileSize);
-  
-  const config = {
-    headers: { 'Content-Type': undefined }, // let browser set multipart/form-data with correct boundary
-    timeout: 120000, // 2 minutes per chunk
-    signal: abortSignal
-  };
-  
-  let uploadUrl = `/api/rooms/${roomId}/upload?chunked=true`;
+
+  // In production: route through Vercel's reverse proxy (same-origin, no CORS, no Railway timeout).
+  // Vercel buffers the full chunk body before forwarding to Railway at datacenter speed.
+  // In development: go directly to the backend.
+  const uploadBase = import.meta.env.PROD
+    ? window.location.origin   // e.g. https://letswatchout.vercel.app — proxied via vercel.json
+    : API_BASE_URL;            // e.g. http://localhost:8080
+
+  let uploadUrl = `${uploadBase}/api/rooms/${roomId}/upload?chunked=true`;
   if (sessionId) {
     uploadUrl += `&session_id=${encodeURIComponent(sessionId)}`;
   }
-  
-  const response = await apiClient.post(uploadUrl, formData, config);
+
+  const token = localStorage.getItem('token');
+  const response = await axios.post(uploadUrl, formData, {
+    headers: {
+      'Content-Type': undefined, // let browser set boundary
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+    },
+    timeout: 120000,
+    withCredentials: true,
+    signal: abortSignal,
+  });
   return response.data;
 };
 
