@@ -3356,13 +3356,17 @@ export default function VideoWatch() {
         console.log('📨 [VideoWatch]', message.type, ':', message.data);
       }
       switch (message.type) {
-        case "playlist_poster_updated":
+        case "playlist_poster_updated": {
+          // Backend sends a flat message {type, item_id, poster_url} — not nested under data.
+          const _ppu = message.data || message;
+          console.log('🖼️ [VideoWatch] playlist_poster_updated:', _ppu.item_id, _ppu.poster_url);
           setPlaylist(prev => prev.map(item =>
-            (item.ID || item.id) === message.data.item_id
-              ? { ...item, poster_url: message.data.poster_url }
+            (item.ID || item.id) === _ppu.item_id
+              ? { ...item, poster_url: _ppu.poster_url }
               : item
           ));
           break;
+        }
 
         case "session_status":
           const data = message.data;

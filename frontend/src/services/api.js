@@ -946,6 +946,26 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
  * acts as a server-side proxy for each chunk (each under the 4MB Edge Function limit).
  * Returns { uploadId, totalChunks } so Railway can assemble the final file.
  */
+const _uploadChunkToProxy = (proxyUrl, chunk, chunkIndex, abortSignal) =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        const err = new Error(`Chunk ${chunkIndex} upload failed: ${xhr.status} ${xhr.responseText}`);
+        err.status = xhr.status;
+        reject(err);
+      }
+    };
+    xhr.onerror = () => reject(new Error(`Network error on chunk ${chunkIndex}`));
+    xhr.onabort = () => reject(Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' }));
+    if (abortSignal) abortSignal.addEventListener('abort', () => xhr.abort());
+    xhr.open('PUT', proxyUrl);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.send(chunk);
+  });
+
 export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSignal) => {
   const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB — safely under Vercel's 4MB Edge Function limit
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -963,16 +983,26 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
     const chunkPath = `temp-media/${uploadId}/chunk_${i}`;
     const proxyUrl = `/api/upload-proxy?path=${encodeURIComponent(chunkPath)}`;
 
-    await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Chunk ${i} upload failed: ${xhr.status} ${xhr.responseText}`));
-      xhr.onerror = () => reject(new Error(`Network error on chunk ${i}`));
-      xhr.onabort = () => reject(Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' }));
-      if (abortSignal) abortSignal.addEventListener('abort', () => xhr.abort());
-      xhr.open('PUT', proxyUrl);
-      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-      xhr.send(chunk);
-    });
+    // Retry up to 3 times on transient 5xx / network errors; fail fast on 4xx.
+    const MAX_RETRIES = 3;
+    let lastErr;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        await _uploadChunkToProxy(proxyUrl, chunk, i, abortSignal);
+        lastErr = null;
+        break;
+      } catch (err) {
+        if (err.name === 'CanceledError') throw err;           // user cancelled — stop immediately
+        if (err.status >= 400 && err.status < 500) throw err;  // client error — retrying won't help
+        lastErr = err;
+        if (attempt < MAX_RETRIES) {
+          const delay = 500 * Math.pow(2, attempt); // 500ms → 1s → 2s
+          console.warn(`⚠️ [BunnyCDN] Chunk ${i} attempt ${attempt + 1} failed (${err.message}), retrying in ${delay}ms…`);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+    }
+    if (lastErr) throw lastErr;
 
     if (onProgress) {
       const loaded = Math.min((i + 1) * CHUNK_SIZE, file.size);
