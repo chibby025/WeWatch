@@ -92,25 +92,38 @@ export default function LeftSidebar({
       ? ['upload', 'liveshare'] 
       : ['upload'];
   
-  // ✅ Persist active tab in sessionStorage (clears on session end)
+  // Capture intended tab BEFORE useState can overwrite sessionStorage.
+  // On refresh, availableTabs starts as ['upload'] (isHost not yet known), so
+  // getInitialTab() would fall back to 'upload' and immediately save it —
+  // losing the user's original tab (e.g. 'liveshare'). This ref preserves it.
+  const intendedTabRef = useRef(sessionStorage.getItem('wewatch_active_sidebar_tab'));
+
   const getInitialTab = () => {
-    const savedTab = sessionStorage.getItem('wewatch_active_sidebar_tab');
-    // Only use saved tab if it's available for current user
+    const savedTab = intendedTabRef.current;
     if (savedTab && availableTabs.includes(savedTab)) {
       return savedTab;
     }
     return availableTabs[0];
   };
-  
+
   const [activeTab, setActiveTab] = useState(getInitialTab());
-  
+
   // ✅ Force tab switch when requested by parent
   useEffect(() => {
     if (forceActiveTab && availableTabs.includes(forceActiveTab)) {
       setActiveTab(forceActiveTab);
     }
   }, [forceActiveTab, availableTabs]);
-  
+
+  // When availableTabs expands (isHost resolved after WS connects), restore the
+  // intended tab if it is now valid and the user hasn't manually navigated away.
+  useEffect(() => {
+    const intended = intendedTabRef.current;
+    if (intended && availableTabs.includes(intended) && intended !== activeTab) {
+      setActiveTab(intended);
+    }
+  }, [availableTabs]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ✅ Save tab to sessionStorage when it changes (clears on session end)
   useEffect(() => {
     sessionStorage.setItem('wewatch_active_sidebar_tab', activeTab);

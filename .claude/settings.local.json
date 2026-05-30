@@ -93,7 +93,11 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- git -C /home/chibuzor_dev/WeWatch status --short 2>&1)",
       "PowerShell(wsl -d Ubuntu-22.04 -- git -C /home/chibuzor_dev/WeWatch log --oneline -5 2>&1)",
-      "PowerShell(wsl -d Ubuntu-22.04 -- git -C /home/chibuzor_dev/WeWatch show --stat 7597d47 2>&1)"
+      "PowerShell(wsl -d Ubuntu-22.04 -- git -C /home/chibuzor_dev/WeWatch show --stat 7597d47 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 -- grep -n \"hostId\\\\|host_id\\\\|roomHost\\\\|HostId\" \"/home/chibuzor_dev/WeWatch/frontend/src/components/cinema/VideoWatch.jsx\" 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 sh -c 'grep -n \"hostId\\\\|host_id\\\\|roomHost\\\\|HostId\\\\|isHost\" /home/chibuzor_dev/WeWatch/frontend/src/components/cinema/VideoWatch.jsx 2>&1 | head -50')",
+      "PowerShell(wsl -d Ubuntu-22.04 sh -c 'grep -c \"isHost\" /home/chibuzor_dev/WeWatch/frontend/src/components/cinema/VideoWatch.jsx')",
+      "PowerShell(wsl -d Ubuntu-22.04 sh -c 'grep -n \"fetchRoomMembers\\\\b\" /home/chibuzor_dev/WeWatch/frontend/src/components/cinema/VideoWatch.jsx 2>/dev/null')"
     ],
     "additionalDirectories": [
       "\\dev",

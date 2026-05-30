@@ -333,6 +333,13 @@ export default function VideoWatch() {
         }
         
         const isUserHost = currentUser.id === sessionDetails.host_id;
+
+        // Set roomHostId immediately from the REST response so isHost is correct
+        // before the WS session_status message arrives (eliminates the race condition
+        // where LeftSidebar only shows the upload tab on refresh).
+        if (sessionDetails?.host_id) {
+          setRoomHostId(Number(sessionDetails.host_id));
+        }
         
         // ✅ AGE VERIFICATION - Check content rating before allowing access
         if (!isUserHost && sessionDetails.content_rating) {
