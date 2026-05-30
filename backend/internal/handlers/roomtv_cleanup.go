@@ -5,9 +5,9 @@ package handlers
 import (
 	"encoding/json"
 	"log"
-	"os"
 	"time"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 )
 
 // CleanupExpiredRoomTVContent deletes expired RoomTV content and their files
@@ -33,9 +33,9 @@ func CleanupExpiredRoomTVContent() {
 		log.Printf("  ⏰ Deleting: ID=%d, Room=%d, Title=%s (expired %s ago)",
 			content.ID, content.RoomID, content.Title, expiredFor.Round(time.Second))
 
-		// Delete uploaded file if exists
+		// Delete uploaded file (local or CDN)
 		if content.IsUploaded && content.FilePath != "" {
-			if err := os.Remove(content.FilePath); err != nil && !os.IsNotExist(err) {
+			if err := utils.DeleteMediaFile(content.FilePath); err != nil {
 				log.Printf("    ⚠️  Failed to delete file: %v", err)
 			}
 		}

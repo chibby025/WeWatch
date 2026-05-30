@@ -931,6 +931,9 @@ func AutoEndSession(sessionID string) error {
 		} else {
 			log.Printf("✅ Deleted file: %s", item.FilePath)
 		}
+		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+			utils.DeleteMediaFile(item.PosterURL) //nolint
+		}
 		if err := tx.Delete(&item).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete DB record for %s: %v", item.FilePath, err)
 		} else {
@@ -1196,24 +1199,13 @@ func CleanupOrphanedPodcastLogos() {
 	
 	deletedLogos := 0
 	for _, session := range endedPodcastSessions {
-		// Extract filename from URL
-		logoFilename := filepath.Base(session.PodcastLogoURL)
-		logoPath := filepath.Join("./uploads/podcast-logos", logoFilename)
-		
-		// Delete physical file
-		if err := os.Remove(logoPath); err != nil {
-			if os.IsNotExist(err) {
-				log.Printf("ℹ️ [CleanupPodcastLogos] Logo already deleted: %s", logoPath)
-			} else {
-				log.Printf("⚠️ [CleanupPodcastLogos] Failed to delete %s: %v", logoPath, err)
-				continue
-			}
+		if err := utils.DeleteMediaFile(session.PodcastLogoURL); err != nil {
+			log.Printf("⚠️ [CleanupPodcastLogos] Failed to delete %s: %v", session.PodcastLogoURL, err)
 		} else {
 			deletedLogos++
-			log.Printf("✅ [CleanupPodcastLogos] Deleted: %s (session %s ended)", logoPath, session.SessionID)
+			log.Printf("✅ [CleanupPodcastLogos] Deleted: %s (session %s ended)", session.PodcastLogoURL, session.SessionID)
 		}
-		
-		// Clear logo URL in database (prevent re-scanning)
+		// Clear URL to prevent re-scanning on next cycle
 		DB.Model(&session).Update("podcast_logo_url", "")
 	}
 	
@@ -1258,7 +1250,10 @@ func CleanupAllTemporaryMedia() {
 		}
 		deletedFiles++
 		log.Printf("✅ [CleanupTempMedia] Deleted file: %s", item.FilePath)
-		
+		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+			utils.DeleteMediaFile(item.PosterURL) //nolint
+		}
+
 		// Delete database record
 		if err := DB.Delete(&item).Error; err != nil {
 			log.Printf("⚠️ [CleanupTempMedia] Failed to delete DB record for %s: %v", item.FilePath, err)
@@ -1360,6 +1355,9 @@ func CleanupExpiredSessions() {
 			if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 				log.Printf("⚠️ CleanupExpiredSessions: Failed to delete file: %s", item.FilePath)
 			}
+			if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+				utils.DeleteMediaFile(item.PosterURL) //nolint
+			}
 			tx.Delete(&item)
 		}
 		// Mark session as ended
@@ -1453,18 +1451,39 @@ func CleanupOrphanedInstantWatchRooms() {
 			continue
 		}
 		
+		// Delete CDN/local files before removing DB rows
+		var tempMedia []models.TemporaryMediaItem
+		if DB.Where("room_id = ?", room.ID).Find(&tempMedia).Error == nil {
+			for _, item := range tempMedia {
+				utils.DeleteMediaFile(item.FilePath)  //nolint
+				if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+					utils.DeleteMediaFile(item.PosterURL) //nolint
+				}
+			}
+		}
+		var mediaItems []models.MediaItem
+		if DB.Unscoped().Where("room_id = ?", room.ID).Find(&mediaItems).Error == nil {
+			for _, item := range mediaItems {
+				utils.DeleteMediaFile(item.FilePath) //nolint
+				if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+					utils.DeleteMediaFile(item.PosterURL) //nolint
+				}
+			}
+		}
+
 		// Delete all related data (hard delete with Unscoped)
 		// Order matters: delete children before parents to avoid foreign key violations
-		
+
 		// First, delete deepest children
 		tx.Exec("DELETE FROM watch_session_members WHERE watch_session_id IN (SELECT id FROM watch_sessions WHERE room_id = ?)", room.ID)
 		tx.Exec("DELETE FROM user_theater_assignments WHERE theater_id IN (SELECT id FROM theaters WHERE watch_session_id IN (SELECT id FROM watch_sessions WHERE room_id = ?))", room.ID)
 		tx.Exec("DELETE FROM theaters WHERE watch_session_id IN (SELECT id FROM watch_sessions WHERE room_id = ?)", room.ID)
-		
+
 		// Then delete other related data
 		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.UserRoom{})
 		// Note: room_invitations table doesn't exist yet - skip for now
 		// tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.RoomInvitation{})
+		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.TemporaryMediaItem{})
 		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.MediaItem{})
 		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.ScheduledEvent{})
 		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.RoomTVContent{})
