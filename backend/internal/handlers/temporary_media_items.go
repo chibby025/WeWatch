@@ -73,13 +73,16 @@ func DeleteSingleTemporaryMediaItemHandler(c *gin.Context) {
 		return
 	}
 
-	// Delete file (local or CDN)
+	// Delete video file (local or CDN)
 	if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 		log.Printf("Warning: failed to delete file %s: %v", item.FilePath, err)
 	}
-	// Delete thumbnail (best-effort local cleanup; CDN posters are cleaned via poster_url separately)
-	thumbPath := item.FilePath + ".jpg"
-	os.Remove(thumbPath)
+	// Delete poster (local or CDN)
+	if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+		if err := utils.DeleteMediaFile(item.PosterURL); err != nil {
+			log.Printf("Warning: failed to delete poster %s: %v", item.PosterURL, err)
+		}
+	}
 
 	// Delete DB record
 	if err := DB.Delete(&item).Error; err != nil {
@@ -487,11 +490,10 @@ func DeleteTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 		}
 		log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Deleted file '%s'", item.FilePath)
 
-		thumbnailPath := item.FilePath + ".jpg"
-		if err := os.Remove(thumbnailPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Warning - Failed to delete thumbnail '%s': %v", thumbnailPath, err)
-		} else {
-			log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Deleted thumbnail '%s'", thumbnailPath)
+		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+			if err := utils.DeleteMediaFile(item.PosterURL); err != nil {
+				log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Warning - Failed to delete poster '%s': %v", item.PosterURL, err)
+			}
 		}
 
 		if result := DB.Delete(&item); result.Error != nil {

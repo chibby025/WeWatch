@@ -201,11 +201,23 @@ func UploadLocalFileToBunnyCDN(localPath, remotePath, contentType string) (strin
 
 // DeleteMediaFile deletes a media file whether it is a BunnyCDN URL (https://...) or a local
 // filesystem path. Not-found errors are silently ignored in both cases.
+// For CDN URLs it derives the storage path from BUNNY_PULL_ZONE_URL so the full folder
+// prefix (e.g. "temp-media/") is preserved in the DELETE request.
 func DeleteMediaFile(filePathOrURL string) error {
 	if filePathOrURL == "" {
 		return nil
 	}
 	if strings.HasPrefix(filePathOrURL, "http://") || strings.HasPrefix(filePathOrURL, "https://") {
+		// Derive the storage-zone path from the pull-zone URL so folder prefixes are kept.
+		// e.g. "https://letswatchout.b-cdn.net/temp-media/uuid.mp4" → "temp-media/uuid.mp4"
+		if BunnyCDNPullZoneURL != "" {
+			base := strings.TrimRight(BunnyCDNPullZoneURL, "/")
+			if strings.HasPrefix(filePathOrURL, base+"/") {
+				remotePath := strings.TrimPrefix(filePathOrURL, base+"/")
+				return DeletePathFromBunnyCDNStorage(remotePath)
+			}
+		}
+		// Fallback for URLs not matching the configured pull zone
 		return DeleteFromBunnyCDN(filePathOrURL)
 	}
 	if err := os.Remove(filePathOrURL); err != nil && !os.IsNotExist(err) {

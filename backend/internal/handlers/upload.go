@@ -671,6 +671,25 @@ func AssembleUploadHandler(c *gin.Context) {
 
 	posterURL := "/icons/placeholder-poster.jpg"
 
+	// Extract poster synchronously from the assembled temp file while it's still on disk.
+	// This avoids a CDN propagation race (the pull-zone URL may 404 for several seconds
+	// after upload) and saves a redundant ~40 MB re-download in the goroutine.
+	posterFilename := strings.TrimSuffix(filepath.Base(remotePath), filepath.Ext(remotePath)) + "_poster.jpg"
+	var posterLocalPath string
+	if isTemporary {
+		_ = os.MkdirAll(filepath.Join(UploadDir, "temp"), os.ModePerm)
+		posterLocalPath = filepath.Join(UploadDir, "temp", posterFilename)
+	} else {
+		posterLocalPath = filepath.Join(UploadDir, posterFilename)
+	}
+	posterReady := utils.ExtractThumbnail(tmpPath, posterLocalPath) == nil
+	if !posterReady {
+		log.Printf("[Assemble] Poster extraction failed (ffmpeg missing?), will use placeholder")
+		posterLocalPath = ""
+	} else {
+		log.Printf("[Assemble] Poster extracted: %s", posterLocalPath)
+	}
+
 	if isTemporary {
 		newItem := models.TemporaryMediaItem{
 			FileName:     filepath.Base(remotePath),
@@ -704,38 +723,29 @@ func AssembleUploadHandler(c *gin.Context) {
 			})
 		}
 
-		// Async: generate poster + delete chunk files from BunnyCDN
-		go func(itemID uint, roomID uint, cdnURL, remotePath, sid, mimeType, uploadID string, totalChunks int) {
-			// Delete chunk files
+		// Async: upload already-extracted poster to CDN + delete chunk files
+		go func(itemID uint, roomID uint, sid, uploadID, posterLocalPath string, totalChunks int) {
 			for i := 0; i < totalChunks; i++ {
 				utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("temp-media/%s/chunk_%d", uploadID, i))
 			}
 			log.Printf("[Assemble] Deleted %d chunk files for uploadId=%s", totalChunks, uploadID)
 
-			// Poster generation
-			posterFilename := strings.TrimSuffix(filepath.Base(remotePath), filepath.Ext(remotePath)) + "_poster.jpg"
-			posterLocalPath := filepath.Join(UploadDir, "temp", posterFilename)
 			posterCDNURL := "/icons/placeholder-poster.jpg"
-
-			localVideoPath, err := utils.DownloadFileToTemp(cdnURL, filepath.Ext(remotePath))
-			if err != nil {
-				log.Printf("[Assemble Async] Download for poster failed: %v", err)
-			} else {
-				if err := utils.ExtractThumbnail(localVideoPath, posterLocalPath); err != nil {
-					log.Printf("[Assemble Async] Poster extraction failed: %v", err)
-				} else if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "temp-media/"+posterFilename, "image/jpeg"); err != nil {
+			if posterLocalPath != "" {
+				defer os.Remove(posterLocalPath)
+				pBase := filepath.Base(posterLocalPath)
+				if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "temp-media/"+pBase, "image/jpeg"); err != nil {
 					log.Printf("[Assemble Async] Poster CDN upload failed: %v", err)
 				} else {
 					posterCDNURL = pURL
-					os.Remove(posterLocalPath)
 				}
-				os.Remove(localVideoPath)
 			}
 
 			if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
 				log.Printf("[Assemble Async] poster_url update failed: %v", err)
 				return
 			}
+			log.Printf("[Assemble Async] Poster updated for item %d: %s", itemID, posterCDNURL)
 			if sid != "" {
 				broadcastData := map[string]interface{}{
 					"type": "session_preview_updated", "session_id": sid,
@@ -749,7 +759,7 @@ func AssembleUploadHandler(c *gin.Context) {
 			}
 			roomJSON, _ := json.Marshal(roomBroadcast)
 			hub.BroadcastToRoom(roomID, OutgoingMessage{Data: roomJSON, IsBinary: false}, nil)
-		}(newItem.ID, roomIDUint, cdnURL, remotePath, input.SessionID, mimeType, input.UploadID, input.TotalChunks)
+		}(newItem.ID, roomIDUint, input.SessionID, input.UploadID, posterLocalPath, input.TotalChunks)
 
 		c.JSON(http.StatusCreated, gin.H{
 			"message":       "Temporary media item uploaded successfully",
@@ -780,25 +790,20 @@ func AssembleUploadHandler(c *gin.Context) {
 			return
 		}
 
-		go func(itemID uint, cdnURL, remotePath, mimeType, uploadID string, totalChunks int) {
+		go func(itemID uint, uploadID, posterLocalPath string, totalChunks int) {
 			for i := 0; i < totalChunks; i++ {
 				utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("temp-media/%s/chunk_%d", uploadID, i))
 			}
-			posterFilename := strings.TrimSuffix(filepath.Base(remotePath), filepath.Ext(remotePath)) + "_poster.jpg"
-			posterLocalPath := filepath.Join(UploadDir, posterFilename)
 			posterCDNURL := "/icons/placeholder-poster.jpg"
-			localVideoPath, err := utils.DownloadFileToTemp(cdnURL, filepath.Ext(remotePath))
-			if err == nil {
-				if err := utils.ExtractThumbnail(localVideoPath, posterLocalPath); err == nil {
-					if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "media/"+posterFilename, "image/jpeg"); err == nil {
-						posterCDNURL = pURL
-						os.Remove(posterLocalPath)
-					}
+			if posterLocalPath != "" {
+				defer os.Remove(posterLocalPath)
+				pBase := filepath.Base(posterLocalPath)
+				if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "media/"+pBase, "image/jpeg"); err == nil {
+					posterCDNURL = pURL
 				}
-				os.Remove(localVideoPath)
 			}
 			DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL)
-		}(newItem.ID, cdnURL, remotePath, mimeType, input.UploadID, input.TotalChunks)
+		}(newItem.ID, input.UploadID, posterLocalPath, input.TotalChunks)
 
 		c.JSON(http.StatusCreated, gin.H{
 			"message":       "Media item uploaded successfully",

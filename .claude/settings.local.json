@@ -86,11 +86,27 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"which go || find /usr /home -name 'go' -type f 2>/dev/null | head -5\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/handlers/liveshare/... 2>&1\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /usr/local/go/bin/go build ./... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"which go || find /usr /home -name 'go' -type f 2>/dev/null | head -5\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1\")"
     ],
     "additionalDirectories": [
       "\\dev",
-      "\\\\wsl.localhost\\Ubuntu-22.04\\tmp"
+      "\\\\wsl.localhost\\Ubuntu-22.04\\tmp",
+      "\\home\\chibuzor_dev\\WeWatch\\frontend\\api",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\frontend\\api",
+      "\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\services",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\services",
+      "\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\components\\cinema\\ui",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\components\\cinema\\ui",
+      "\\home\\chibuzor_dev\\WeWatch\\backend\\internal\\utils",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\backend\\internal\\utils",
+      "\\home\\chibuzor_dev\\WeWatch\\backend\\internal\\handlers",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\backend\\internal\\handlers",
+      "\\home\\chibuzor_dev\\WeWatch\\backend\\cmd\\server",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\backend\\cmd\\server"
     ]
   }
 }

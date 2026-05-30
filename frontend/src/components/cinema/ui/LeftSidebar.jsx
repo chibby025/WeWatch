@@ -555,7 +555,7 @@ export default function LeftSidebar({
       setTimeout(async () => {
         try {
           console.log('🎨 [Poster Retry] Fetching updated media items for poster...');
-          const token = localStorage.getItem('token');
+          const token = localStorage.getItem('wewatch_token');
           const response = await fetch(`${API_BASE_URL}/api/rooms/${roomId}/temporary-media`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });

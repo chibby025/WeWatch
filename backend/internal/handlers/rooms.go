@@ -1145,8 +1145,11 @@ func cleanupSession(sessionID string, roomID uint) {
 	var tempItems []models.TemporaryMediaItem
 	tx.Where("session_id = ?", sessionID).Find(&tempItems)
 	for _, item := range tempItems {
-		if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+		if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 			log.Printf("⚠️ cleanupSession: Failed to delete temp file: %s", item.FilePath)
+		}
+		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+			utils.DeleteMediaFile(item.PosterURL) //nolint
 		}
 		tx.Delete(&item)
 	}
@@ -2337,13 +2340,14 @@ func DeleteRoomHandler(c *gin.Context) {
         if err := DB.Unscoped().Where("room_id = ?", roomIDUint).Find(&mediaItems).Error; err == nil {
             for _, item := range mediaItems {
                 if item.FilePath != "" {
-                    os.Remove(item.FilePath)
-                    log.Printf("Deleted file: %s", item.FilePath)
+                    if err := utils.DeleteMediaFile(item.FilePath); err != nil {
+                        log.Printf("⚠️ Failed to delete media file %s: %v", item.FilePath, err)
+                    } else {
+                        log.Printf("Deleted file: %s", item.FilePath)
+                    }
                 }
-                // Also delete poster if exists
-                if item.PosterURL != "" {
-                    os.Remove(item.PosterURL)
-                    log.Printf("Deleted poster: %s", item.PosterURL)
+                if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+                    utils.DeleteMediaFile(item.PosterURL) //nolint
                 }
             }
         }

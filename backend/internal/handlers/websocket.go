@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
 	"wewatch-backend/internal/services"
+	"wewatch-backend/internal/utils"
     "wewatch-backend/internal/handlers/games"
     "wewatch-backend/internal/handlers/liveshare"
 )
@@ -5315,10 +5316,13 @@ func (client *Client) handleMessage(message []byte) {
                 if err := DB.Where("session_id = ?", activeSession.SessionID).Find(&tempItems).Error; err == nil {
                     deletedFiles := 0
                     for _, item := range tempItems {
-                        if err := os.Remove(item.FilePath); err != nil && !os.IsNotExist(err) {
+                        if err := utils.DeleteMediaFile(item.FilePath); err != nil {
                             log.Printf("⚠️ Failed to delete temp file %s: %v", item.FilePath, err)
                         } else {
                             deletedFiles++
+                        }
+                        if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+                            utils.DeleteMediaFile(item.PosterURL) //nolint
                         }
                         DB.Delete(&item) // Delete DB record
                     }

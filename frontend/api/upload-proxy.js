@@ -55,6 +55,7 @@ export default async function handler(request) {
       'Content-Type': contentType,
     },
     body: request.body,
+    duplex: 'half', // required when streaming a ReadableStream body in Edge runtimes
   });
 
   const responseText = await bunnyResponse.text();
