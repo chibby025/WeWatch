@@ -181,6 +181,9 @@ func UploadLocalFileToBunnyCDN(localPath, remotePath, contentType string) (strin
 	req.Header.Set("AccessKey", BunnyCDNAccessKey)
 	req.Header.Set("Content-Type", contentType)
 	req.ContentLength = fi.Size()
+	// GetBody lets Go's HTTP/2 transport retry on GOAWAY by re-opening the file
+	// instead of failing with "cannot retry after Request.Body was written".
+	req.GetBody = func() (io.ReadCloser, error) { return os.Open(localPath) }
 
 	client := &http.Client{Timeout: 15 * time.Minute}
 	resp, err := client.Do(req)

@@ -90,7 +90,10 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /usr/local/go/bin/go build ./... 2>&1\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"which go || find /usr /home -name 'go' -type f 2>/dev/null | head -5\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- git -C /home/chibuzor_dev/WeWatch status --short 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 -- git -C /home/chibuzor_dev/WeWatch log --oneline -5 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 -- git -C /home/chibuzor_dev/WeWatch show --stat 7597d47 2>&1)"
     ],
     "additionalDirectories": [
       "\\dev",
