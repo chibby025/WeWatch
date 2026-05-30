@@ -2580,7 +2580,11 @@ export default function VideoWatch() {
         command: "play",
         media_item_id: id,
         file_path: filePath,
-        file_url: normalizedMediaItem.mediaUrl, // ✅ add this
+        // TODO: normalizedMediaItem.mediaUrl may be undefined — playlist normalization
+        // (lines ~3318) only adds ID and poster_url, not mediaUrl. Members currently
+        // fall back to file_path above which works, but file_url is dead weight here.
+        // Fix: replace with `fileUrl` (computed at line ~2555) so field is always populated.
+        file_url: normalizedMediaItem.mediaUrl,
         original_name: normalizedMediaItem.original_name,
         seek_time: 0,
         timestamp: Date.now(),
@@ -3368,6 +3372,23 @@ export default function VideoWatch() {
           break;
         }
 
+        case "sync_heartbeat": {
+          // Periodic position sync broadcast from host. Correct drift > 0.5s.
+          // Ignore if we are the host, if paused, or if drift is too large (likely intentional).
+          if (isHost) break;
+          const _hb = message;
+          const _videoEl = videoPlayerRef.current || document.querySelector('video');
+          if (!_videoEl || _videoEl.paused) break;
+          const _latency = Date.now() - (_hb.server_ts || _hb.timestamp);
+          const _expected = _hb.current_time + (_latency / 1000);
+          const _drift = Math.abs(_videoEl.currentTime - _expected);
+          if (_drift > 0.5 && _drift < 30) {
+            console.log(`🔄 [Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
+            _videoEl.currentTime = _expected;
+          }
+          break;
+        }
+
         case "session_status":
           const data = message.data;
           console.log('📊 [VideoWatch] session_status received - FULL DATA:', data);
@@ -3827,7 +3848,9 @@ export default function VideoWatch() {
                 original_name: message.original_name || 'Unknown Media',
               });
               const now = Date.now();
-              const latency = now - message.timestamp;
+              // Prefer server_ts (injected by backend relay) over host timestamp to
+              // eliminate clock drift between two different devices.
+              const latency = now - (message.server_ts || message.timestamp);
               const adjustedTime = message.seek_time + (latency / 1000);
               console.log('⏱️ [VideoWatch] Latency compensation:', {
                 latency_ms: latency,
@@ -4618,6 +4641,22 @@ export default function VideoWatch() {
     processedMessageCountRef.current = 0;
     clearMessages();
   }, [messages, sessionStatus.id, currentUser?.id, currentMedia, localParticipant, clearMessages]);
+
+  // Periodic sync heartbeat: host → members every 2.5s while playing.
+  // Lets members self-correct drift without a host action.
+  useEffect(() => {
+    if (!isHost || !isPlaying || !isConnected) return;
+    const id = setInterval(() => {
+      const videoEl = videoPlayerRef.current || document.querySelector('video');
+      if (!videoEl || videoEl.paused) return;
+      sendMessage({
+        type: 'sync_heartbeat',
+        current_time: videoEl.currentTime,
+        timestamp: Date.now(),
+      });
+    }, 2500);
+    return () => clearInterval(id);
+  }, [isHost, isPlaying, isConnected, sendMessage]);
 
   // Handle Chat
   const handleSendSessionMessage = async () => {

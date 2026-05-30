@@ -5688,11 +5688,34 @@ func (client *Client) handleMessage(message []byte) {
             }
         }
         
-        // Broadcast to room (other participants need to sync playback)
+        // Inject server_ts before relay so all members use a common clock for
+        // latency compensation instead of comparing two potentially-drifted device clocks.
+        var pcMap map[string]interface{}
+        if err := json.Unmarshal(message, &pcMap); err == nil {
+            pcMap["server_ts"] = time.Now().UnixMilli()
+            if relayMsg, err := json.Marshal(pcMap); err == nil {
+                client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: relayMsg, IsBinary: false}, client)
+                return
+            }
+        }
+        // Fallback: relay without server_ts
         client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
         return
     }
-    
+
+    // Handle sync_heartbeat: host → members periodic position sync.
+    // Relay immediately with server_ts; no DB write needed (high-frequency, low-cost).
+    if msg.Type == "sync_heartbeat" {
+        var hbMap map[string]interface{}
+        if err := json.Unmarshal(message, &hbMap); err == nil {
+            hbMap["server_ts"] = time.Now().UnixMilli()
+            if relayMsg, err := json.Marshal(hbMap); err == nil {
+                client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: relayMsg, IsBinary: false}, client)
+            }
+        }
+        return
+    }
+
     // ✅ Handle screen_share_started: LiveShare/WatchFrom screen sharing begins
     if msg.Type == "screen_share_started" {
         var shareData struct {
