@@ -877,7 +877,9 @@ export default function VideoWatch() {
     // ✅ Primary: Use sessionStatus.hostId from WebSocket
     // ✅ Fallback: Use roomHostId from session_status members
     const hostId = sessionStatus?.hostId || roomHostId;
-    const result = currentUser?.id === hostId;
+    // Normalize both sides to Number — JWT/localStorage may return a string
+    // while WS/API may return a number, so === would silently fail.
+    const result = !!hostId && Number(currentUser?.id) === Number(hostId);
 
     return result;
   }, [currentUser?.id, sessionStatus?.hostId, roomHostId]);

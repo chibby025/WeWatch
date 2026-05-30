@@ -686,6 +686,9 @@ func EndWatchSessionHandler(c *gin.Context) {
 			if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 				log.Printf("⚠️ [EndWatchSession cleanup] Failed to delete file %s: %v", item.FilePath, err)
 			}
+			if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+				utils.DeleteMediaFile(item.PosterURL) //nolint
+			}
 			if err := tx.Delete(&item).Error; err != nil {
 				log.Printf("⚠️ [EndWatchSession cleanup] Failed to delete temp media record: %v", err)
 			}
