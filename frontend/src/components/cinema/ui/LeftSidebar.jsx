@@ -443,6 +443,24 @@ export default function LeftSidebar({
     }
   }, [onSessionCleanup, cleanupSessionState]);
 
+  // Retrying onError for poster images: CDN propagation can take 10-30s after upload.
+  // Retries the original URL up to 3 times with increasing delays before falling back.
+  const handlePosterError = (e) => {
+    const img = e.target;
+    const retries = parseInt(img.dataset.posterRetries || '0');
+    if (!img.dataset.posterOrigSrc) img.dataset.posterOrigSrc = img.src;
+    const origSrc = img.dataset.posterOrigSrc;
+    const isPlaceholder = origSrc.includes('placeholder-poster');
+    if (!isPlaceholder && retries < 3) {
+      img.dataset.posterRetries = String(retries + 1);
+      setTimeout(() => {
+        img.src = origSrc + (origSrc.includes('?') ? '&' : '?') + '_r=' + Date.now();
+      }, 5000 * (retries + 1)); // 5s → 10s → 15s
+    } else {
+      img.src = '/icons/placeholder-poster.jpg';
+    }
+  };
+
   const getVideoDurationFromFile = (file) =>
     new Promise((resolve) => {
       const video = document.createElement('video');
@@ -1606,6 +1624,7 @@ export default function LeftSidebar({
                     <img
                       src={currentMedia.poster_url || '/icons/placeholder-poster.jpg'}
                       alt={currentMedia.original_name}
+                      onError={handlePosterError}
                       className="w-10 h-10 sm:w-12 sm:h-12 rounded object-cover"
                     />
                     <div className="flex-1 min-w-0">
@@ -1657,7 +1676,7 @@ export default function LeftSidebar({
                     >
                       <img
                         src={item.poster_url || '/icons/placeholder-poster.jpg'}
-                        onError={(e) => e.target.src = '/icons/placeholder-poster.jpg'}
+                        onError={handlePosterError}
                         alt={item.original_name}
                         className="w-10 h-10 sm:w-12 sm:h-12 rounded object-cover"
                       />

@@ -760,7 +760,8 @@ export default function VideoWatch() {
         // console.log('📤 [fetchSessionMembers] formattedMembers:', formattedMembers);
         setRoomMembers(formattedMembers);
         // console.log('✅ [fetchSessionMembers] setRoomMembers called successfully');
-        
+        setIsMembersInitialized(true);
+
       } catch (error) {
         console.error('❌ [fetchSessionMembers] API call FAILED');
         console.error('❌ [fetchSessionMembers] Error object:', error);
@@ -769,6 +770,7 @@ export default function VideoWatch() {
         console.error('❌ [fetchSessionMembers] Error response data:', error?.response?.data);
         console.error('❌ [fetchSessionMembers] Error response status:', error?.response?.status);
         // Don't show error to user - member list will populate from WebSocket events
+        setIsMembersInitialized(true);
       }
     };
     
@@ -778,6 +780,7 @@ export default function VideoWatch() {
   }, [roomId]);
   
   const [loadingMembers, setLoadingMembers] = useState(false);
+  const [isMembersInitialized, setIsMembersInitialized] = useState(false);
   const [screenShareUrl, setScreenShareUrl] = useState(null);
   const sidebarRef = useRef(null);
   const processedMessageCountRef = useRef(0);
@@ -3432,6 +3435,7 @@ export default function VideoWatch() {
             const membersArray = Array.from(memberMap.values());
             console.log(`✅ [VideoWatch] Setting ${membersArray.length} session members:`, membersArray);
             setRoomMembers(membersArray);
+            setIsMembersInitialized(true);
             
             // ✅ Request current audio states from all members in the room
             console.log('🎤 [VideoWatch] Requesting audio states from all members');
@@ -6059,7 +6063,8 @@ export default function VideoWatch() {
           userSeats={userSeats}
           currentUser={currentUser}
           watchSessionMembers={roomMembers}
-          onMembersClick={() => { 
+          isMembersLoading={!isMembersInitialized}
+          onMembersClick={() => {
             // ✅ Don't fetch room members - use session members already in state from session_status WebSocket message
             console.log('👥 [VideoWatch] Members button clicked, current roomMembers:', roomMembers);
             console.log('👥 [VideoWatch] Members count:', roomMembers?.length);

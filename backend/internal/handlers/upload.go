@@ -745,12 +745,16 @@ func AssembleUploadHandler(c *gin.Context) {
 			})
 		}
 
-		// Async: upload already-extracted poster to CDN + delete chunk files
+		// Async: upload poster to CDN (priority), then clean up chunks in background.
+		// Chunk deletion runs in a nested goroutine so it doesn't delay the poster upload.
 		go func(itemID uint, roomID uint, sid, uploadID, posterLocalPath string, totalChunks int) {
-			for i := 0; i < totalChunks; i++ {
-				utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("temp-media/%s/chunk_%d", uploadID, i))
-			}
-			log.Printf("[Assemble] Deleted %d chunk files for uploadId=%s", totalChunks, uploadID)
+			// Clean up chunk files in the background — don't block poster upload on this.
+			go func() {
+				for i := 0; i < totalChunks; i++ {
+					utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("temp-media/%s/chunk_%d", uploadID, i))
+				}
+				log.Printf("[Assemble] Deleted %d chunk files for uploadId=%s", totalChunks, uploadID)
+			}()
 
 			posterCDNURL := "/icons/placeholder-poster.jpg"
 			if posterLocalPath != "" {

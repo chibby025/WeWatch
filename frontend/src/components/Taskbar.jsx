@@ -24,18 +24,19 @@ const BoardIcon = '/icons/board.svg'; // Board icon for lecture hall left sideba
 const QuizIcon = '📝'; // Quiz emoji icon for lecture hall
 
 // ✅ Extracted and memoized — won't reset hover on parent re-renders
-const TaskbarButton = React.memo(({ 
-  icon, 
-  label, 
-  onClick, 
+const TaskbarButton = React.memo(({
+  icon,
+  label,
+  onClick,
   onRightClick,
-  showCancelIndicator = false, 
+  showCancelIndicator = false,
   isEmoji = false,
   shouldPulse = false,
   subtitle = null,
   buttonRef = null,
   notificationCount = 0, // ✅ Notification badge count
-  localAudioLevel = 0 // ✅ Audio level for waveform animation (0-255)
+  localAudioLevel = 0, // ✅ Audio level for waveform animation (0-255)
+  isLoading = false // ✅ Show spinner instead of icon
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   
@@ -63,13 +64,15 @@ const TaskbarButton = React.memo(({
         aria-label={label}
       >
         <div className="relative h-8 w-8 flex items-center justify-center">
-          {isEmoji ? (
+          {isLoading ? (
+            <div className="h-6 w-6 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+          ) : isEmoji ? (
             <EmojiImage emoji={icon} size={32} />
           ) : (
             <img src={icon} alt={label} className="h-8 w-8" />
           )}
           {/* ✅ Show animated waveform overlay when speaking (replaces simple pulse) */}
-          {label === 'Audio' && shouldPulse && localAudioLevel > 0 && (
+          {!isLoading && label === 'Audio' && shouldPulse && localAudioLevel > 0 && (
             <TaskbarAudioWaveform audioLevel={localAudioLevel} />
           )}
           {showCancelIndicator && (
@@ -191,6 +194,7 @@ const Taskbar = ({
   // Chat Bubble Visibility
   showChatBubbles = true,
   onToggleChatBubbles,
+  isMembersLoading = false, // ✅ Show spinner on members button until first fetch resolves
   // Unread Messages
   unreadMessages = {}, // {userId: unreadCount}
   // 🎮 Game props (for cinema mode)
@@ -605,7 +609,8 @@ const Taskbar = ({
           <TaskbarButton
             buttonRef={membersButtonRef}
             icon={MembersIcon}
-            label={`${memberCount}`}
+            label={isMembersLoading ? '' : `${memberCount}`}
+            isLoading={isMembersLoading}
             onClick={() => {
               // If host has raised hands, show quick popup first
               if (isHost && raisedHandsCount > 0) {
