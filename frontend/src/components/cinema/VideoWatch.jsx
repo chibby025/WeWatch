@@ -774,9 +774,11 @@ export default function VideoWatch() {
       }
     };
     
-    // console.log('⏱️ [fetchSessionMembers useEffect] About to call fetchSessionMembers()...');
     fetchSessionMembers();
-    // console.log('⏱️ [fetchSessionMembers useEffect] fetchSessionMembers() called (async, will complete later)');
+    // Retry after 10s — catches Railway cold-start delay where the first fetch
+    // returns empty before the container has fully woken up.
+    const retryTimer = setTimeout(fetchSessionMembers, 10000);
+    return () => clearTimeout(retryTimer);
   }, [roomId]);
   
   const [loadingMembers, setLoadingMembers] = useState(false);
@@ -3435,7 +3437,11 @@ export default function VideoWatch() {
             const membersArray = Array.from(memberMap.values());
             console.log(`✅ [VideoWatch] Setting ${membersArray.length} session members:`, membersArray);
             setRoomMembers(membersArray);
-            setIsMembersInitialized(true);
+            // Only mark initialized when we have real data — an empty session_status
+            // fires immediately on join and would clear the spinner before REST resolves.
+            if (membersArray.length > 0) {
+              setIsMembersInitialized(true);
+            }
             
             // ✅ Request current audio states from all members in the room
             console.log('🎤 [VideoWatch] Requesting audio states from all members');
