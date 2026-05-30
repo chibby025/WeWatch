@@ -970,16 +970,20 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
   const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB — safely under Vercel's 4.5MB Edge Function limit
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   const uploadId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-  // Network-aware concurrency: more parallel chunks on fast connections
-  const effectiveType = navigator.connection?.effectiveType || 'unknown';
-  const CONCURRENCY = { '2g': 1, '3g': 2, '4g': 4, 'unknown': 3 }[effectiveType] ?? 5;
-
-  console.log(`[BunnyCDN Chunked] ${totalChunks} chunks x 3MB, ${CONCURRENCY} parallel (${effectiveType}) for uploadId=${uploadId}`);
-
   let completedChunks = 0;
 
-  const uploadSingleChunk = async (i) => {
+  // Concurrency is set from a real speed measurement on chunk 0 (the probe).
+  // This works on every browser/OS including iOS Safari which has no navigator.connection.
+  let concurrency = 1; // conservative until probe result is known
+
+  const getConcurrencyFromSpeed = (speedMBps) => {
+    if (speedMBps < 1) return 1; // < 1 MB/s  — 3G / weak signal
+    if (speedMBps < 3) return 2; // 1–3 MB/s  — decent 4G / congested WiFi
+    if (speedMBps < 6) return 4; // 3–6 MB/s  — good 4G / average WiFi
+    return 6;                     // > 6 MB/s  — strong WiFi / 5G / desktop
+  };
+
+  const uploadSingleChunk = async (i, measureSpeed = false) => {
     if (abortSignal?.aborted) throw Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' });
 
     const start = i * CHUNK_SIZE;
@@ -990,6 +994,8 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
 
     const MAX_RETRIES = 3;
     let lastErr;
+    const t0 = measureSpeed ? performance.now() : 0;
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         await _uploadChunkToProxy(proxyUrl, chunk, i, abortSignal);
@@ -1008,6 +1014,13 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
     }
     if (lastErr) throw lastErr;
 
+    if (measureSpeed) {
+      const elapsed = (performance.now() - t0) / 1000; // seconds
+      const speedMBps = ((end - start) / 1024 / 1024) / Math.max(elapsed, 0.001);
+      concurrency = getConcurrencyFromSpeed(speedMBps);
+      console.log(`[BunnyCDN] Probe chunk: ${speedMBps.toFixed(2)} MB/s → concurrency set to ${concurrency}`);
+    }
+
     completedChunks++;
     if (onProgress) {
       const loaded = Math.min(completedChunks * CHUNK_SIZE, file.size);
@@ -1016,13 +1029,52 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
     console.log(`[BunnyCDN Chunked] chunk ${i + 1}/${totalChunks} done (${completedChunks} complete)`);
   };
 
-  // Upload in parallel batches
-  for (let i = 0; i < totalChunks; i += CONCURRENCY) {
-    const batch = Array.from(
-      { length: Math.min(CONCURRENCY, totalChunks - i) },
-      (_, k) => uploadSingleChunk(i + k)
-    );
-    await Promise.all(batch);
+  // Step 1: Upload chunk 0 as a speed probe to calibrate concurrency.
+  console.log(`[BunnyCDN Chunked] ${totalChunks} chunks × 3MB for uploadId=${uploadId} — probing speed…`);
+  await uploadSingleChunk(0, true);
+  if (totalChunks === 1) return { uploadId, totalChunks };
+
+  // Step 2: Rolling semaphore pool for the remaining chunks.
+  // A new chunk starts the moment any in-flight slot frees — no idle gaps between batches.
+  let nextChunk = 1;
+  let inFlight = 0;
+
+  // On mobile, listen for network-type changes and cap concurrency down immediately
+  // (only downgrade — we don't upgrade mid-upload to avoid overwhelming a recovering link).
+  const handleConnectionChange = () => {
+    const newType = navigator.connection?.effectiveType;
+    const cap = { '2g': 1, '3g': 1, '4g': 3 }[newType];
+    if (cap && cap < concurrency) {
+      console.log(`[BunnyCDN] Network changed to ${newType} — concurrency ${concurrency} → ${cap}`);
+      concurrency = cap;
+    }
+  };
+  navigator.connection?.addEventListener('change', handleConnectionChange);
+
+  try {
+    await new Promise((resolve, reject) => {
+      const schedule = () => {
+        while (inFlight < concurrency && nextChunk < totalChunks) {
+          const i = nextChunk++;
+          inFlight++;
+          uploadSingleChunk(i)
+            .then(() => {
+              inFlight--;
+              if (nextChunk < totalChunks) {
+                schedule();
+              } else if (inFlight === 0) {
+                resolve();
+              }
+            })
+            .catch(reject);
+        }
+        // All chunks dispatched and nothing in flight.
+        if (nextChunk >= totalChunks && inFlight === 0) resolve();
+      };
+      schedule();
+    });
+  } finally {
+    navigator.connection?.removeEventListener('change', handleConnectionChange);
   }
 
   return { uploadId, totalChunks };
