@@ -97,7 +97,13 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- grep -n \"hostId\\\\|host_id\\\\|roomHost\\\\|HostId\" \"/home/chibuzor_dev/WeWatch/frontend/src/components/cinema/VideoWatch.jsx\" 2>&1)",
       "PowerShell(wsl -d Ubuntu-22.04 sh -c 'grep -n \"hostId\\\\|host_id\\\\|roomHost\\\\|HostId\\\\|isHost\" /home/chibuzor_dev/WeWatch/frontend/src/components/cinema/VideoWatch.jsx 2>&1 | head -50')",
       "PowerShell(wsl -d Ubuntu-22.04 sh -c 'grep -c \"isHost\" /home/chibuzor_dev/WeWatch/frontend/src/components/cinema/VideoWatch.jsx')",
-      "PowerShell(wsl -d Ubuntu-22.04 sh -c 'grep -n \"fetchRoomMembers\\\\b\" /home/chibuzor_dev/WeWatch/frontend/src/components/cinema/VideoWatch.jsx 2>/dev/null')"
+      "PowerShell(wsl -d Ubuntu-22.04 sh -c 'grep -n \"fetchRoomMembers\\\\b\" /home/chibuzor_dev/WeWatch/frontend/src/components/cinema/VideoWatch.jsx 2>/dev/null')",
+      "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- /usr/local/go/bin/go build ./... 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- which go 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- go version 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- bash -lc \"which go && go version\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./internal/... 2>&1\")"
     ],
     "additionalDirectories": [
       "\\dev",

@@ -967,23 +967,27 @@ const _uploadChunkToProxy = (proxyUrl, chunk, chunkIndex, abortSignal) =>
   });
 
 export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSignal) => {
-  const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB — safely under Vercel's 4MB Edge Function limit
+  const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB — safely under Vercel's 4.5MB Edge Function limit
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   const uploadId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-  console.log(`[BunnyCDN Chunked] ${totalChunks} chunks x 3MB for uploadId=${uploadId}`);
+  // Network-aware concurrency: more parallel chunks on fast connections
+  const effectiveType = navigator.connection?.effectiveType || 'unknown';
+  const CONCURRENCY = { '2g': 1, '3g': 2, '4g': 4, 'unknown': 3 }[effectiveType] ?? 5;
 
-  for (let i = 0; i < totalChunks; i++) {
+  console.log(`[BunnyCDN Chunked] ${totalChunks} chunks x 3MB, ${CONCURRENCY} parallel (${effectiveType}) for uploadId=${uploadId}`);
+
+  let completedChunks = 0;
+
+  const uploadSingleChunk = async (i) => {
     if (abortSignal?.aborted) throw Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' });
 
     const start = i * CHUNK_SIZE;
     const end = Math.min(start + CHUNK_SIZE, file.size);
     const chunk = file.slice(start, end);
-
     const chunkPath = `temp-media/${uploadId}/chunk_${i}`;
     const proxyUrl = `/api/upload-proxy?path=${encodeURIComponent(chunkPath)}`;
 
-    // Retry up to 3 times on transient 5xx / network errors; fail fast on 4xx.
     const MAX_RETRIES = 3;
     let lastErr;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -992,11 +996,11 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
         lastErr = null;
         break;
       } catch (err) {
-        if (err.name === 'CanceledError') throw err;           // user cancelled — stop immediately
-        if (err.status >= 400 && err.status < 500) throw err;  // client error — retrying won't help
+        if (err.name === 'CanceledError') throw err;
+        if (err.status >= 400 && err.status < 500) throw err;
         lastErr = err;
         if (attempt < MAX_RETRIES) {
-          const delay = 500 * Math.pow(2, attempt); // 500ms → 1s → 2s
+          const delay = 500 * Math.pow(2, attempt);
           console.warn(`⚠️ [BunnyCDN] Chunk ${i} attempt ${attempt + 1} failed (${err.message}), retrying in ${delay}ms…`);
           await new Promise(r => setTimeout(r, delay));
         }
@@ -1004,12 +1008,21 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
     }
     if (lastErr) throw lastErr;
 
+    completedChunks++;
     if (onProgress) {
-      const loaded = Math.min((i + 1) * CHUNK_SIZE, file.size);
+      const loaded = Math.min(completedChunks * CHUNK_SIZE, file.size);
       onProgress(Math.round(loaded * 100 / file.size), loaded, file.size);
     }
+    console.log(`[BunnyCDN Chunked] chunk ${i + 1}/${totalChunks} done (${completedChunks} complete)`);
+  };
 
-    console.log(`[BunnyCDN Chunked] chunk ${i + 1}/${totalChunks} uploaded`);
+  // Upload in parallel batches
+  for (let i = 0; i < totalChunks; i += CONCURRENCY) {
+    const batch = Array.from(
+      { length: Math.min(CONCURRENCY, totalChunks - i) },
+      (_, k) => uploadSingleChunk(i + k)
+    );
+    await Promise.all(batch);
   }
 
   return { uploadId, totalChunks };

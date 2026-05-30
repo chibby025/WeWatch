@@ -2456,11 +2456,12 @@ export default function VideoWatch() {
 
   // Handle Share Room
   const handleShareRoom = () => {
-    if (!sessionStatus.id) {
-      alert('Session not ready yet.');
+    const sessionId = sessionStatus?.id || urlSessionId;
+    if (!sessionId) {
+      toast.error('No active session to share.');
       return;
     }
-    const url = `${window.location.origin}/watch/${roomId}?session_id=${sessionStatus.id}`;
+    const url = `${window.location.origin}/watch/${roomId}?session_id=${sessionId}`;
     setShareUrl(url);
     setShowShareModal(true);
   };

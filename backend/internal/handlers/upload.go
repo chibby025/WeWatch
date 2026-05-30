@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -626,20 +627,41 @@ func AssembleUploadHandler(c *gin.Context) {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	// Download and append each chunk
-	for i := 0; i < input.TotalChunks; i++ {
-		chunkPath := fmt.Sprintf("temp-media/%s/chunk_%d", input.UploadID, i)
-		log.Printf("[Assemble] Downloading chunk %d/%d", i+1, input.TotalChunks)
+	// Download all chunks in parallel (8 concurrent), then write in order.
+	type chunkResult struct {
+		index int
+		data  []byte
+		err   error
+	}
 
-		chunkData, err := utils.DownloadChunkFromBunnyCDNStorage(chunkPath)
-		if err != nil {
+	const downloadConcurrency = 8
+	results := make([]chunkResult, input.TotalChunks)
+	sem := make(chan struct{}, downloadConcurrency)
+	var wg sync.WaitGroup
+
+	for i := 0; i < input.TotalChunks; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			chunkPath := fmt.Sprintf("temp-media/%s/chunk_%d", input.UploadID, idx)
+			log.Printf("[Assemble] Downloading chunk %d/%d", idx+1, input.TotalChunks)
+			data, err := utils.DownloadChunkFromBunnyCDNStorage(chunkPath)
+			results[idx] = chunkResult{index: idx, data: data, err: err}
+		}(i)
+	}
+	wg.Wait()
+
+	// Write chunks to temp file in order
+	for i, r := range results {
+		if r.err != nil {
 			tmpFile.Close()
-			log.Printf("[Assemble] Failed to download chunk %d: %v", i, err)
+			log.Printf("[Assemble] Failed to download chunk %d: %v", i, r.err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to download chunk %d", i)})
 			return
 		}
-
-		if _, err := tmpFile.Write(chunkData); err != nil {
+		if _, err := tmpFile.Write(r.data); err != nil {
 			tmpFile.Close()
 			log.Printf("[Assemble] Failed to write chunk %d: %v", i, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to assemble file"})

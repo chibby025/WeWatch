@@ -222,10 +222,6 @@ const Taskbar = ({
   const hideTimerRef = useRef(null);
   const lastEventTimeRef = useRef(0);
 
-  // 🔍 Debug: Log member count changes
-  useEffect(() => {
-    console.log('👥 [Taskbar] Member count updated:', memberCount, 'members:', watchSessionMembers?.map(m => ({ id: m.id, username: m.username, user_role: m.user_role })));
-  }, [memberCount, watchSessionMembers]);
 
   // Auto-show for 3 seconds on mount
   useEffect(() => {

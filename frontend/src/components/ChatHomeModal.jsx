@@ -86,67 +86,50 @@ export default function ChatHomeModal({
             <div className="text-blue-400">→</div>
           </button>
 
-          {/* Divider */}
-          <div className="relative py-3">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-purple-500/30"></div>
-            </div>
-            <div className="relative flex justify-center">
-              <span className="bg-black px-3 text-purple-400 text-xs font-semibold uppercase tracking-wider">
-                Direct Messages
-              </span>
-            </div>
-          </div>
-
-          {/* Recent Private Chats */}
-          {recentChats.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="text-6xl mb-4">💬</div>
-              <div className="text-gray-400 text-sm">No direct messages yet</div>
-              <div className="text-gray-500 text-xs mt-2">
-                Click on a member's avatar to start chatting
+          {/* Direct Messages — only shown when conversations exist */}
+          {recentChats.length > 0 && (
+            <>
+              <div className="relative py-3">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-purple-500/30"></div>
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-black px-3 text-purple-400 text-xs font-semibold uppercase tracking-wider">
+                    Direct Messages
+                  </span>
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {recentChats.map(user => (
-                <button
-                  key={user.id}
-                  onClick={() => onOpenPrivateChat(user)}
-                  className="w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-xl bg-purple-900/20 hover:bg-purple-900/40 border border-purple-500/20 hover:border-purple-500/40 flex items-center gap-3 sm:gap-4 transition-all group"
-                >
-                  {/* Avatar */}
-                  <div className="relative flex-shrink-0">
-                    <Avatar
-                      user={user}
-                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover ring-2 ring-purple-500/50 group-hover:ring-purple-400 transition-all"
-                    />
-                    {/* Unread Badge */}
-                    {user.unreadCount > 0 && (
-                      <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] sm:text-xs font-bold rounded-full min-w-[18px] h-[18px] sm:min-w-[20px] sm:h-[20px] flex items-center justify-center px-1 shadow-lg ring-2 ring-black animate-pulse">
-                        {user.unreadCount > 99 ? '99+' : user.unreadCount}
+
+              <div className="space-y-2">
+                {recentChats.map(user => (
+                  <button
+                    key={user.id}
+                    onClick={() => onOpenPrivateChat(user)}
+                    className="w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-xl bg-purple-900/20 hover:bg-purple-900/40 border border-purple-500/20 hover:border-purple-500/40 flex items-center gap-3 sm:gap-4 transition-all group"
+                  >
+                    <div className="relative flex-shrink-0">
+                      <Avatar
+                        user={user}
+                        className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover ring-2 ring-purple-500/50 group-hover:ring-purple-400 transition-all"
+                      />
+                      {user.unreadCount > 0 && (
+                        <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] sm:text-xs font-bold rounded-full min-w-[18px] h-[18px] sm:min-w-[20px] sm:h-[20px] flex items-center justify-center px-1 shadow-lg ring-2 ring-black animate-pulse">
+                          {user.unreadCount > 99 ? '99+' : user.unreadCount}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className="font-semibold text-white truncate text-sm sm:text-base">{user.username}</span>
+                        <span className="text-[10px] sm:text-xs text-purple-400 flex-shrink-0">{user.messageCount} msgs</span>
                       </div>
-                    )}
-                  </div>
-                  
-                  {/* User Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <span className="font-semibold text-white truncate text-sm sm:text-base">{user.username}</span>
-                      <span className="text-[10px] sm:text-xs text-purple-400 flex-shrink-0">{user.messageCount} msgs</span>
+                      <div className="text-xs sm:text-sm text-gray-400 truncate">{user.lastMessage}</div>
                     </div>
-                    <div className="text-xs sm:text-sm text-gray-400 truncate">
-                      {user.lastMessage}
-                    </div>
-                  </div>
-                  
-                  {/* Arrow */}
-                  <div className="text-purple-400 group-hover:translate-x-1 transition-transform">
-                    →
-                  </div>
-                </button>
-              ))}
-            </div>
+                    <div className="text-purple-400 group-hover:translate-x-1 transition-transform">→</div>
+                  </button>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>

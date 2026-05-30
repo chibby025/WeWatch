@@ -130,7 +130,7 @@ const SettingsModal = ({
                   <img src={ShareIcon} alt="Share" className="w-5 h-5" />
                 </div>
                 <div className="flex-1 text-left">
-                  <span className="text-sm font-semibold block">Share Room</span>
+                  <span className="text-sm font-semibold block">Share</span>
                   <span className="text-xs text-gray-400">Invite others to join</span>
                 </div>
                 <span className="text-gray-500 group-hover:text-gray-300 transition-colors">→</span>
