@@ -3322,8 +3322,11 @@ const LobbyPage = () => {
           : "Live WatchOuts — tap any card to jump in and watch together."}
       </p>
 
-      {/* Search Bar Section - Rooms tab, collapsible via taskbar Search button */}
-      {activeTab === 'rooms' && showRoomsSearch && (
+      {/* Unified search bar — appears above the tab bar for whichever tab is active */}
+      {((activeTab === 'rooms'    && showRoomsSearch)    ||
+        (activeTab === 'chats'   && showChatsSearch)    ||
+        (activeTab === 'watching' && showSessionSearch)  ||
+        (activeTab === 'feed'    && showDiscoverSearch)) && (
         <div className="px-4 pb-2">
           <div className="relative">
             <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
@@ -3332,15 +3335,43 @@ const LobbyPage = () => {
               </svg>
             </div>
             <input
+              key={activeTab}
               type="text"
-              placeholder="Search rooms..."
-              value={searchTerm}
-              onChange={handleSearchChange}
               autoFocus
+              placeholder={
+                activeTab === 'rooms'    ? 'Search rooms...'                  :
+                activeTab === 'chats'   ? 'Search friends or find people…'   :
+                activeTab === 'watching' ? 'Search sessions...'               :
+                                          'Search posts...'
+              }
+              value={
+                activeTab === 'rooms'    ? searchTerm       :
+                activeTab === 'chats'   ? friendsSearchTerm :
+                activeTab === 'watching' ? sessionSearch    :
+                                          discoverSearch
+              }
+              onChange={e => {
+                const v = e.target.value;
+                if      (activeTab === 'rooms')    handleSearchChange(e);
+                else if (activeTab === 'chats')    { setFriendsSearchTerm(v); setAddFriendQuery(v); }
+                else if (activeTab === 'watching') setSessionSearch(v);
+                else                               setDiscoverSearch(v);
+              }}
               className="w-full pl-10 pr-10 py-2 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
             />
-            {searchTerm && (
-              <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+            {(activeTab === 'rooms'    ? searchTerm       :
+              activeTab === 'chats'   ? friendsSearchTerm :
+              activeTab === 'watching' ? sessionSearch    :
+                                        discoverSearch) && (
+              <button
+                onClick={() => {
+                  if      (activeTab === 'rooms')    setSearchTerm('');
+                  else if (activeTab === 'chats')    { setFriendsSearchTerm(''); setAddFriendQuery(''); setAddFriendResults([]); }
+                  else if (activeTab === 'watching') setSessionSearch('');
+                  else                               setDiscoverSearch('');
+                }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             )}
@@ -4522,33 +4553,6 @@ const LobbyPage = () => {
                   <div className="bg-gradient-to-r from-green-600 to-green-700 p-3 sm:p-4">
                     <h3 className="text-white font-bold text-lg sm:text-xl mb-3">Chats</h3>
                     
-                    {/* ✅ Search Bar — visible only when taskbar Search is active */}
-                    {showChatsSearch && (
-                      <div className="relative mt-2">
-                        <input
-                          type="text"
-                          autoFocus
-                          value={friendsSearchTerm}
-                          onChange={(e) => {
-                            setFriendsSearchTerm(e.target.value);
-                            setAddFriendQuery(e.target.value);
-                          }}
-                          placeholder="Search friends or find people…"
-                          className="w-full pl-10 pr-8 py-2 bg-white/10 border border-white/20 rounded-full text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-white/40 text-sm"
-                        />
-                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                        {friendsSearchTerm && (
-                          <button
-                            onClick={() => { setFriendsSearchTerm(''); setAddFriendQuery(''); setAddFriendResults([]); }}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-white/60 hover:text-white"
-                          >
-                            <XMarkIcon className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    )}
                   </div>
                 
                 {/* Sub-tabs: Friends / Requests */}
@@ -5974,26 +5978,7 @@ const LobbyPage = () => {
 
       {/* ✅ FEED TAB CONTENT */}
       {activeTab === 'feed' && (
-        <div className="pt-14">
-          {showDiscoverSearch && (
-            <div className="px-4 pb-2 pt-2">
-              <div className="relative">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
-                <input type="text" placeholder="Search posts..." value={discoverSearch} onChange={e => setDiscoverSearch(e.target.value)} autoFocus
-                  className="w-full pl-10 pr-10 py-2 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 dark:text-white placeholder-gray-400"
-                />
-                {discoverSearch && (
-                  <button onClick={() => setDiscoverSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+        <div className="pt-2">
           <DiscoverFeed
             ref={discoverFeedRef}
             searchQuery={discoverSearch}

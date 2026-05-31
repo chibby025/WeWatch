@@ -24,6 +24,7 @@ import {
   FileText
 } from 'lucide-react';
 import LiveShareLayoutSelector from './LiveShareLayoutSelector';
+import LiveShareBreakOverlay from './LiveShareBreakOverlay';
 import LiveShareWizard from '../../liveshare/LiveShareWizard';
 import GuestInvitationPopup from '../../liveshare/GuestInvitationPopup';
 import InSessionAdPanel from '../../ads/InSessionAdPanel';
@@ -116,6 +117,13 @@ export default function LiveShareManager({
   autoOpenGuestInvite = null, // { mode, title, hostUsername } — triggers guest popup automatically
   onGuestInviteConsumed = null, // callback to clear autoOpenGuestInvite in parent
 }) {
+  // Debounce ref for color change broadcasts — prevents spamming Railway+WS on every drag tick
+  const _debounceRef = useRef({});
+  const _debounce = (key, fn, delay = 300) => {
+    clearTimeout(_debounceRef.current[key]);
+    _debounceRef.current[key] = setTimeout(fn, delay);
+  };
+
   // Modal state - now using unified wizard
   const [showLiveShareWizard, setShowLiveShareWizard] = useState(false);
   
@@ -1514,43 +1522,21 @@ export default function LiveShareManager({
   
   // Color change handlers that re-broadcast graphics
   const handleTickerColorChange = (newColor) => {
-    console.log('🎨 [LiveShareManager] Ticker color changed to:', newColor);
-    console.log('🎨 [LiveShareManager] Ticker active:', tickerActive, 'Items:', tickerItems);
     setTickerColor(newColor);
-    
-    // If ticker is active, re-broadcast with new color
     if (tickerActive && tickerItems.length > 0) {
-      const graphicData = {
-        type: 'ticker',
-        content: { 
-          items: tickerItems,
-          style: { 
-            bgColor: newColor,
-            timeBoxColor: timeBoxColor // Include time box color
-          }
-        },
-        position: 'bottom',
-        active: true,
-        z_index: 9
-      };
-      
-      console.log('🎨 [LiveShareManager] Broadcasting ticker with new color:', graphicData);
-      
-      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(graphicData)
-      }).catch(err => console.error('Ticker color update error:', err));
-      
-      if (sendMessage) {
-        sendMessage({
-          type: 'liveshare_graphics_update',
-          data: { graphic: graphicData }
-        });
-      }
-    } else {
-      console.log('🎨 [LiveShareManager] Not broadcasting - ticker not active or no items');
+      _debounce('tickerColor', () => {
+        const graphicData = {
+          type: 'ticker',
+          content: { items: tickerItems, style: { bgColor: newColor, timeBoxColor: timeBoxColor } },
+          position: 'bottom', active: true, z_index: 9
+        };
+        fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(graphicData)
+        }).catch(err => console.error('Ticker color update error:', err));
+        if (sendMessage) sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
+      });
     }
   };
   
@@ -1594,124 +1580,50 @@ export default function LiveShareManager({
   };
   
   const handleBannerColorChange = (newColor) => {
-    console.log('🎨 [LiveShareManager] Banner color changed to:', newColor);
-    console.log('🎨 [LiveShareManager] Banner active:', bannerActive, 'Text:', bannerText);
     setBannerColor(newColor);
-    
-    // If banner is active, re-broadcast with new color
     if (bannerActive && bannerText.trim()) {
-      // Get podcast logo position and size from localStorage
-      let podcastLogoSize = 100;
-      let podcastLogoX = 10;
-      let podcastLogoY = 80;
-      try {
-        const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${sessionId}`);
-        if (savedLogoStyles) {
-          const styles = JSON.parse(savedLogoStyles);
-          podcastLogoSize = styles.size || 100;
-          podcastLogoX = styles.x || 10;
-          podcastLogoY = styles.y || 80;
-        }
-      } catch (err) {
-        console.warn('Failed to load podcast logo styles:', err);
-      }
-      
-      const graphicData = {
-        type: 'banner',
-        content: { 
-          text: bannerText,
-          style: { bgColor: newColor },
-          logoUrl: podcastConfig?.logoUrl || logoBugPreview,
-          podcastLogoSize,
-          podcastLogoX,
-          podcastLogoY,
-          layout: bannerLayout
-        },
-        position: 'bottom',
-        active: true,
-        z_index: 11
-      };
-      
-      console.log('🎨 [LiveShareManager] Broadcasting banner with new color:', graphicData);
-      
-      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(graphicData)
-      }).catch(err => console.error('Banner color update error:', err));
-      
-      if (sendMessage) {
-        sendMessage({
-          type: 'liveshare_graphics_update',
-          data: { graphic: graphicData }
-        });
-      }
-    } else {
-      console.log('🎨 [LiveShareManager] Not broadcasting - banner not active or no text');
+      _debounce('bannerColor', () => {
+        let podcastLogoSize = 100, podcastLogoX = 10, podcastLogoY = 80;
+        try {
+          const s = JSON.parse(localStorage.getItem(`podcast_logo_style_${sessionId}`) || '{}');
+          podcastLogoSize = s.size || 100; podcastLogoX = s.x || 10; podcastLogoY = s.y || 80;
+        } catch {}
+        const graphicData = {
+          type: 'banner',
+          content: { text: bannerText, style: { bgColor: newColor }, logoUrl: podcastConfig?.logoUrl || logoBugPreview, podcastLogoSize, podcastLogoX, podcastLogoY, layout: bannerLayout },
+          position: 'bottom', active: true, z_index: 11
+        };
+        fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(graphicData)
+        }).catch(err => console.error('Banner color update error:', err));
+        if (sendMessage) sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
+      });
     }
   };
-  
+
   const handleBannerTextColorChange = (newColor) => {
-    console.log('🎨 [LiveShareManager] Banner text color changed to:', newColor);
-    console.log('🎨 [LiveShareManager] Banner active:', bannerActive, 'Text:', bannerText);
     setBannerTextColor(newColor);
-    
-    // If banner is active, re-broadcast with new text color
     if (bannerActive && bannerText.trim()) {
-      // Get podcast logo position and size from localStorage
-      let podcastLogoSize = 100;
-      let podcastLogoX = 10;
-      let podcastLogoY = 80;
-      try {
-        const savedLogoStyles = localStorage.getItem(`podcast_logo_style_${sessionId}`);
-        if (savedLogoStyles) {
-          const styles = JSON.parse(savedLogoStyles);
-          podcastLogoSize = styles.size || 100;
-          podcastLogoX = styles.x || 10;
-          podcastLogoY = styles.y || 80;
-        }
-      } catch (err) {
-        console.warn('Failed to load podcast logo styles:', err);
-      }
-      
-      const graphicData = {
-        type: 'banner',
-        content: { 
-          text: bannerText,
-          style: { 
-            bgColor: bannerColor,
-            textColor: newColor // Use the new color immediately
-          },
-          layout: bannerLayout,
-          podcastLogo: {
-            size: podcastLogoSize,
-            x: podcastLogoX,
-            y: podcastLogoY
-          }
-        },
-        position: 'bottom',
-        active: true,
-        z_index: 11
-      };
-      
-      console.log('🎨 [LiveShareManager] Broadcasting banner with new text color:', graphicData);
-      
-      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(graphicData)
-      }).catch(err => console.error('Banner text color update error:', err));
-      
-      if (sendMessage) {
-        sendMessage({
-          type: 'liveshare_graphics_update',
-          data: { graphic: graphicData }
-        });
-      }
-    } else {
-      console.log('🎨 [LiveShareManager] Not broadcasting - banner not active or no text');
+      _debounce('bannerTextColor', () => {
+        let podcastLogoSize = 100, podcastLogoX = 10, podcastLogoY = 80;
+        try {
+          const s = JSON.parse(localStorage.getItem(`podcast_logo_style_${sessionId}`) || '{}');
+          podcastLogoSize = s.size || 100; podcastLogoX = s.x || 10; podcastLogoY = s.y || 80;
+        } catch {}
+        const graphicData = {
+          type: 'banner',
+          content: { text: bannerText, style: { bgColor: bannerColor, textColor: newColor }, layout: bannerLayout, podcastLogo: { size: podcastLogoSize, x: podcastLogoX, y: podcastLogoY } },
+          position: 'bottom', active: true, z_index: 11
+        };
+        fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(graphicData)
+        }).catch(err => console.error('Banner text color update error:', err));
+        if (sendMessage) sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
+      });
     }
   };
   
@@ -2036,6 +1948,7 @@ export default function LiveShareManager({
     if (!isOnBreak || !breakStartTime) return;
     
     const updateCountdown = () => {
+      if (document.hidden) return; // don't burn CPU/battery when tab is not visible
       const elapsed = Math.floor((Date.now() - breakStartTime) / 1000); // seconds
       const remaining = Math.max(0, (breakDuration * 60) - elapsed); // convert duration to seconds
       setBreakTimeRemaining(remaining);
@@ -2081,6 +1994,19 @@ export default function LiveShareManager({
     localStorage.setItem('liveshare_break_turn_off_camera', breakTurnOffCamera.toString());
   }, [breakTurnOffCamera]);
   
+  // Pre-fetch break ad when LiveShare activates so it's ready instantly when break starts.
+  useEffect(() => {
+    if (!liveShareMode || liveShareMode === 'regular') return;
+    if (!sessionId || !currentUser?.id) return;
+    const userAge = currentUser?.date_of_birth ? calculateAge(currentUser.date_of_birth) : null;
+    const params = new URLSearchParams({ user_id: currentUser.id, session_id: sessionId, ad_type: 'video', placement: 'break_screen' });
+    if (userAge) params.append('user_age', userAge);
+    fetch(`${API_BASE_URL}/api/ads/in-session?${params}`)
+      .then(r => r.json())
+      .then(data => { if (data.ad) setBreakAdData(data.ad); })
+      .catch(() => {}); // silent — actual break start retries
+  }, [liveShareMode, sessionId, currentUser?.id]);
+
   // Reset media selection when screen source changes away from media
   useEffect(() => {
     if (breakScreenSource !== 'media') {
@@ -2095,6 +2021,11 @@ export default function LiveShareManager({
 
   return (
     <>
+      {/* ZZZ break overlay — only for static source; non-static sources use GraphicsRenderer canvas */}
+      {isOnBreak && breakScreenSource === 'static' && (
+        <LiveShareBreakOverlay timeRemaining={breakTimeRemaining} />
+      )}
+
       <style>{`
         details[open] > summary svg:first-of-type {
           transform: rotate(180deg);

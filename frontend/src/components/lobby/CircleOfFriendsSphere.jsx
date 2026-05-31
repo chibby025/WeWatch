@@ -8,8 +8,6 @@ import Avatar from '../Avatar';
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 const SPHERE_CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Chewy&display=swap');
-
   @keyframes orbitCW  { from{transform:rotate(0deg);}  to{transform:rotate(360deg);}  }
   @keyframes orbitCCW { from{transform:rotate(0deg);}  to{transform:rotate(-360deg);} }
   @keyframes cofPulse {
@@ -69,6 +67,27 @@ const SPHERE_CSS = `
     background:linear-gradient(to right, transparent, rgba(255,255,255,0.95) 50%, rgba(180,210,255,0.3));
     border-radius:9999px;
   }
+
+  @keyframes cofBtnBarIn {
+    from { opacity:0; transform:translateY(32px); }
+    to   { opacity:1; transform:translateY(0);    }
+  }
+  @keyframes cofBtnWFloat {
+    0%,100% { transform:translateY(0)   scale(1);    filter:drop-shadow(0 0 0px  rgba(139,92,246,0));   }
+    50%     { transform:translateY(-6px) scale(1.06); filter:drop-shadow(0 0 10px rgba(139,92,246,0.75)); }
+  }
+  @keyframes cofBtnCallGlow {
+    0%,100% { box-shadow:0 4px 12px rgba(5,150,105,0.30); }
+    50%     { box-shadow:0 4px 28px rgba(8,145,178,0.75), 0 0 18px rgba(5,150,105,0.55); }
+  }
+  @keyframes cofBtnChatGlow {
+    0%,100% { box-shadow:0 4px 12px rgba(37,99,235,0.30); }
+    50%     { box-shadow:0 4px 28px rgba(124,58,237,0.75), 0 0 18px rgba(37,99,235,0.55); }
+  }
+  .cof-btn-bar  { animation:cofBtnBarIn    0.45s cubic-bezier(.22,.68,0,1.2) 0.1s both; }
+  .cof-btn-w    { animation:cofBtnWFloat   3.2s  ease-in-out infinite; }
+  .cof-btn-call { animation:cofBtnCallGlow 2.6s  ease-in-out infinite  0.9s; }
+  .cof-btn-chat { animation:cofBtnChatGlow 2.6s  ease-in-out infinite  1.8s; }
 `;
 
 // Ring radii — keep in sync with OrbitRing usage
@@ -273,63 +292,87 @@ const CircleOfFriendsSphere = ({
 
       {/* ═══ HEADER ═══════════════════════════════════════════════════════════ */}
       <div
-        className="relative flex-shrink-0 pb-3"
-        style={{ background: 'linear-gradient(180deg, rgba(26,16,96,0.95) 0%, transparent 100%)' }}
-        onClick={e => e.stopPropagation()} // header clicks don't reset rings
+        className="relative flex-shrink-0"
+        onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center px-3 pt-10 pb-0.5">
-          <button onClick={onClose}
-            className="p-2 rounded-full text-white/70 hover:bg-white/10 transition-colors active:scale-90 flex-shrink-0">
-            <ChevronLeftIcon className="w-6 h-6" />
-          </button>
-          <div className="flex-1 text-center">
-            <h2 className="text-white leading-none" style={{ fontFamily: '"Chewy", cursive', letterSpacing: '0.01em', fontSize: '2.75rem' }}>Circle of Friends</h2>
-          </div>
-          <div className="w-10 flex-shrink-0" />
-        </div>
+        {/* Back button — floats over the banner */}
+        <button
+          onClick={onClose}
+          className="absolute top-10 left-3 z-10 p-2 rounded-full text-white/70 hover:bg-white/10 transition-colors active:scale-90"
+        >
+          <ChevronLeftIcon className="w-6 h-6" />
+        </button>
 
-        {/* Editable group label */}
-        <div className="flex items-center justify-center gap-1 px-2 mt-0">
-          {editingLabel ? (
-            <div className="flex items-center gap-2">
-              <input
-                ref={labelInputRef}
-                value={groupLabel}
-                onChange={e => setGroupLabel(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && saveLabel()}
-                maxLength={32}
-                className="bg-white/10 text-white text-sm text-center rounded-lg px-3 py-1 outline-none border border-purple-400/60 w-48"
-              />
-              <button onClick={saveLabel}
-                className="p-1.5 rounded-full bg-purple-600/80 text-white active:scale-90">
-                <CheckIcon className="w-3.5 h-3.5" />
+        {/* ── Title banner ── */}
+        <div
+          className="w-full pt-10 pb-1.5 px-4 flex flex-col items-center"
+          style={{
+            background: 'linear-gradient(180deg, rgba(88,28,220,0.18) 0%, rgba(26,16,96,0.70) 55%, transparent 100%)',
+            borderBottom: '1px solid rgba(139,92,246,0.18)',
+          }}
+        >
+          {/* Decorative side lines */}
+          <div className="flex items-center gap-3 w-full justify-center mb-0">
+            <div style={{ flex: 1, maxWidth: 56, height: 1, background: 'linear-gradient(to right, transparent, rgba(139,92,246,0.55))' }} />
+            <h1
+              style={{
+                fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+                fontWeight: 800,
+                fontSize: '1.85rem',
+                letterSpacing: '-0.025em',
+                lineHeight: 1,
+                color: 'white',
+                textShadow: '0 0 28px rgba(139,92,246,0.55), 0 2px 8px rgba(0,0,0,0.6)',
+              }}
+            >
+              Circle of Friends
+            </h1>
+            <div style={{ flex: 1, maxWidth: 56, height: 1, background: 'linear-gradient(to left, transparent, rgba(139,92,246,0.55))' }} />
+          </div>
+
+          {/* Editable group label */}
+          <div className="flex items-center justify-center gap-1 mt-0.5">
+            {editingLabel ? (
+              <div className="flex items-center gap-2">
+                <input
+                  ref={labelInputRef}
+                  value={groupLabel}
+                  onChange={e => setGroupLabel(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveLabel()}
+                  maxLength={32}
+                  className="bg-white/10 text-white text-sm text-center rounded-lg px-3 py-1 outline-none border border-purple-400/60 w-48"
+                />
+                <button onClick={saveLabel}
+                  className="p-1.5 rounded-full bg-purple-600/80 text-white active:scale-90">
+                  <CheckIcon className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setEditingLabel(true)} className="flex items-center gap-1.5 group">
+                <span className="text-sm font-semibold text-purple-400/90">{groupLabel}</span>
+                <PencilIcon className="w-3 h-3 text-white/20 group-hover:text-white/55 transition-colors" />
               </button>
+            )}
+          </div>
+
+          {/* Stacked mini-avatars */}
+          {circleMembers.length > 0 && (
+            <div className="flex justify-center mt-1">
+              <div className="flex items-center -space-x-2">
+                {circleMembers.slice(0, 6).map(m => (
+                  <Avatar key={m.id} user={m} size={22}
+                    className="rounded-full border-2 border-[#080c18] shadow-sm" />
+                ))}
+                {circleMembers.length > 6 && (
+                  <div className="w-6 h-6 rounded-full border-2 border-[#080c18] bg-white/15 flex items-center justify-center">
+                    <span className="text-white text-[8px] font-bold">+{circleMembers.length - 6}</span>
+                  </div>
+                )}
+                <span className="ml-2 text-white/60 text-[11px]">{circleMembers.length} in orbit</span>
+              </div>
             </div>
-          ) : (
-            <button onClick={() => setEditingLabel(true)} className="flex items-center gap-1.5 group">
-              <span className="text-xl font-bold text-purple-400">{groupLabel}</span>
-              <PencilIcon className="w-3.5 h-3.5 text-white/25 group-hover:text-white/60 transition-colors" />
-            </button>
           )}
         </div>
-
-        {/* Stacked mini-avatars */}
-        {circleMembers.length > 0 && (
-          <div className="flex justify-center mt-0.5">
-            <div className="flex items-center -space-x-2">
-              {circleMembers.slice(0, 6).map(m => (
-                <Avatar key={m.id} user={m} size={26}
-                  className="rounded-full border-2 border-[#080c18] shadow-sm" />
-              ))}
-              {circleMembers.length > 6 && (
-                <div className="w-7 h-7 rounded-full border-2 border-[#080c18] bg-white/15 flex items-center justify-center">
-                  <span className="text-white text-[9px] font-bold">+{circleMembers.length - 6}</span>
-                </div>
-              )}
-              <span className="ml-2.5 text-white text-xs">{circleMembers.length} in orbit</span>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* ═══ SPHERE ═══════════════════════════════════════════════════════════ */}
@@ -506,7 +549,7 @@ const CircleOfFriendsSphere = ({
 
       {/* ═══ BOTTOM 3-ICON ACTION ROW ════════════════════════════════════════ */}
       <div
-        className="flex justify-center gap-10 px-6 pb-10 pt-2 flex-shrink-0"
+        className="cof-btn-bar flex justify-center gap-10 px-6 pb-10 pt-3 flex-shrink-0"
         onClick={e => e.stopPropagation()}
       >
         <button
@@ -514,7 +557,7 @@ const CircleOfFriendsSphere = ({
           disabled={circleMembers.length === 0}
           className="flex flex-col items-center gap-1.5 group disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          <div className="w-14 h-14 flex items-center justify-center transition-transform group-active:scale-90 group-hover:scale-105">
+          <div className={`cof-btn-w w-14 h-14 flex items-center justify-center group-active:scale-90 ${circleMembers.length === 0 ? '' : 'group-hover:scale-110'}`}>
             <WIcon size={48} />
           </div>
           <span className="text-white/60 text-[10px] font-semibold uppercase tracking-wider">WatchOut</span>
@@ -525,8 +568,10 @@ const CircleOfFriendsSphere = ({
           disabled={circleMembers.length === 0}
           className="flex flex-col items-center gap-1.5 group disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          <div className="w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-transform group-active:scale-90 group-hover:scale-105"
-            style={{ background: 'linear-gradient(135deg, #059669, #0891b2)' }}>
+          <div
+            className={`cof-btn-call w-14 h-14 rounded-full flex items-center justify-center transition-transform group-active:scale-90 ${circleMembers.length === 0 ? '' : 'group-hover:scale-110'}`}
+            style={{ background: 'linear-gradient(135deg, #059669, #0891b2)' }}
+          >
             <PhoneIcon className="w-7 h-7 text-white" />
           </div>
           <span className="text-white/60 text-[10px] font-semibold uppercase tracking-wider">Call</span>
@@ -537,8 +582,10 @@ const CircleOfFriendsSphere = ({
           disabled={circleMembers.length === 0}
           className="flex flex-col items-center gap-1.5 group disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          <div className="w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-transform group-active:scale-90 group-hover:scale-105"
-            style={{ background: 'linear-gradient(135deg, #2563eb, #7c3aed)' }}>
+          <div
+            className={`cof-btn-chat w-14 h-14 rounded-full flex items-center justify-center transition-transform group-active:scale-90 ${circleMembers.length === 0 ? '' : 'group-hover:scale-110'}`}
+            style={{ background: 'linear-gradient(135deg, #2563eb, #7c3aed)' }}
+          >
             <ChatBubbleLeftIcon className="w-7 h-7 text-white" />
           </div>
           <span className="text-white/60 text-[10px] font-semibold uppercase tracking-wider">Group Chat</span>

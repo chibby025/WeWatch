@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { registerUser } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import GoogleLoginButton from './GoogleLoginButton';
 
 const Register = () => {
@@ -16,6 +17,7 @@ const Register = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
   const navigate = useNavigate();
+  const { refreshUser } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -47,12 +49,10 @@ const Register = () => {
 
       const { user } = data;
       if (user) {
-        // ✅ Save user data immediately
         localStorage.setItem('user', JSON.stringify(user));
-        console.log('✅ User data saved on registration:', user);
+        await refreshUser();
       }
 
-      // Show success and redirect to lobby (user is auto-logged in)
       setSuccess(true);
       setTimeout(() => {
         navigate('/lobby');
@@ -133,7 +133,7 @@ const Register = () => {
                     <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                     </svg>
-                    <span>Account created! Redirecting to login...</span>
+                    <span>Account created! Taking you to your lobby...</span>
                   </div>
                 </div>
               )}
@@ -342,8 +342,8 @@ const Register = () => {
                   Sign in here
                 </Link>
               </p>
-              <p className="mt-2 text-center text-xs text-gray-500">
-                <Link to="/explore" className="hover:text-gray-400 transition-colors underline underline-offset-2">
+              <p className="mt-2 text-center text-xs text-gray-300">
+                <Link to="/explore" className="text-white hover:text-gray-200 transition-colors underline underline-offset-2">
                   Browse without signing in
                 </Link>
               </p>

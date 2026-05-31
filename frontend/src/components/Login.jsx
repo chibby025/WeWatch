@@ -276,13 +276,13 @@ const Login = () => {
                 Don't have an account?{' '}
                 <Link
                   to="/register"
-                  className="font-semibold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400 hover:from-purple-300 hover:to-blue-300 transition-all"
+                  className="font-bold text-white hover:text-gray-200 transition-colors"
                 >
                   Create one now
                 </Link>
               </p>
-              <p className="mt-2 text-center text-xs text-gray-500">
-                <Link to="/explore" className="hover:text-gray-400 transition-colors underline underline-offset-2">
+              <p className="mt-2 text-center text-xs text-gray-300">
+                <Link to="/explore" className="text-white hover:text-gray-200 transition-colors underline underline-offset-2">
                   Browse without signing in
                 </Link>
               </p>

@@ -24,6 +24,7 @@ import CameraSidebar from './ui/CameraSidebar';
 import VideoTiles from './ui/VideoTiles';
 import CinemaSeatView from './ui/CinemaSeatView';
 import ScrollableSeatGrid from './ui/ScrollableSeatGrid';
+import LiveShareBreakOverlay from './ui/LiveShareBreakOverlay';
 import ShareModal from '../ShareModal';
 import MembersModal from '../../components/MembersModal.jsx';
 import RemoteAudioPlayer from './ui/RemoteAudioPlayer';
@@ -780,9 +781,25 @@ export default function VideoWatch() {
     const retryTimer = setTimeout(fetchSessionMembers, 10000);
     return () => clearTimeout(retryTimer);
   }, [roomId]);
+
+  // Viewer break countdown — ticks while a static break is active
+  useEffect(() => {
+    if (!viewerBreakEndTime) return;
+    const tick = () => {
+      if (document.hidden) return;
+      setViewerBreakSeconds(Math.max(0, Math.floor((viewerBreakEndTime - Date.now()) / 1000)));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [viewerBreakEndTime]);
   
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [isMembersInitialized, setIsMembersInitialized] = useState(false);
+  // Viewer-side break overlay state (static source only — other sources use GraphicsRenderer canvas)
+  const [isBreakActive, setIsBreakActive] = useState(false);
+  const [viewerBreakEndTime, setViewerBreakEndTime] = useState(null);
+  const [viewerBreakSeconds, setViewerBreakSeconds] = useState(0);
   const [screenShareUrl, setScreenShareUrl] = useState(null);
   const sidebarRef = useRef(null);
   const processedMessageCountRef = useRef(0);
@@ -4517,20 +4534,26 @@ export default function VideoWatch() {
           
         case "liveshare_break_started":
           console.log('⏸️ [VideoWatch] Break started:', message.data);
-          
-          // Show break screen overlay if GraphicsRenderer exists
-          if (graphicsRendererRef.current && message.data) {
-            graphicsRendererRef.current.addLayer('break_screen', {
-              type: 'break_screen',
-              content: {
-                screenSource: message.data.screenSource,
-                customImage: message.data.customImage,
-                timeRemaining: message.data.duration * 60, // Convert to seconds
-                keepAudio: message.data.keepAudio
-              },
-              zIndex: 100 // Top layer
-            });
-            graphicsRendererRef.current.render();
+          {
+            const bSource = message.data?.screenSource;
+            if (!bSource || bSource === 'static') {
+              // React DOM overlay — CSS animations, countdown, no canvas needed
+              setIsBreakActive(true);
+              setViewerBreakEndTime(Date.now() + (message.data?.duration ?? 5) * 60 * 1000);
+            } else if (graphicsRendererRef.current && message.data) {
+              // Non-static sources (custom image, ad, media) use the canvas renderer
+              graphicsRendererRef.current.addLayer('break_screen', {
+                type: 'break_screen',
+                content: {
+                  screenSource: bSource,
+                  customImage: message.data.customImage,
+                  timeRemaining: message.data.duration * 60,
+                  keepAudio: message.data.keepAudio
+                },
+                zIndex: 100
+              });
+              graphicsRendererRef.current.render();
+            }
           }
           
           // Mute camera video using LiveKit API if turnOffCamera is true
@@ -4549,8 +4572,10 @@ export default function VideoWatch() {
           
         case "liveshare_break_ended":
           console.log('▶️ [VideoWatch] Break ended');
-          
-          // Remove break screen overlay
+          // Clear React overlay
+          setIsBreakActive(false);
+          setViewerBreakEndTime(null);
+          // Also clear canvas layer in case non-static source was active
           if (graphicsRendererRef.current) {
             graphicsRendererRef.current.removeLayer('break_screen');
             graphicsRendererRef.current.render();
@@ -6028,6 +6053,9 @@ export default function VideoWatch() {
           </div>
         )}
       </div>
+
+      {/* Viewer break overlay — ZZZ animation + countdown for static break source */}
+      {isBreakActive && <LiveShareBreakOverlay timeRemaining={viewerBreakSeconds} />}
 
       {/* 🔊 Remote Audio Player - Handles audio from screen share */}
       {room && <RemoteAudioPlayer room={room} silenceMode={isSilenceMode} />}

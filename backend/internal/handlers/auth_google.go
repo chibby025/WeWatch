@@ -46,8 +46,16 @@ func GoogleLoginHandler(c *gin.Context) {
 	// Generate random state for CSRF protection
 	state := fmt.Sprintf("%d", time.Now().Unix())
 	
-	// Store state in cookie for verification in callback
-	c.SetCookie("oauth_state", state, 300, "/", "", false, true)
+	// SameSite=None + Secure required for cross-site XHR (Vercel frontend → Railway backend)
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		MaxAge:   300,
+		Path:     "/",
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteNoneMode,
+	})
 	
 	// Generate OAuth URL
 	url := googleOauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)

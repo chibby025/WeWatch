@@ -184,6 +184,21 @@ const RoomPageNew = () => {
   const reconnectTimeoutRef = useRef(null);
   const isMountedRef = useRef(true); // Track if component is mounted
 
+  // Preload PricingModal content-rating icons on mount so they appear instantly when
+  // the host clicks Begin Watch (avoids the visible delay from cold image fetches).
+  useEffect(() => {
+    [
+      '/icons/G Rating Icon.png',
+      '/icons/PG Rating Icon.png',
+      '/icons/Educational_Rating_Icon.png',
+      '/icons/Religious Rating.png',
+      '/icons/13_ Rating Icon.png',
+      '/icons/16_ Rating Icon.png',
+      '/icons/18_ Rating Icon.png',
+      '/icons/Mature Rating Icon.png',
+    ].forEach(src => { const img = new Image(); img.src = src; });
+  }, []);
+
   // Auto-open WatchTypeModal when navigated here with openSession state (from "Watch in Your Room")
   useEffect(() => {
     if (room && isHost && location.state?.openSession && !sessionAutoOpened.current) {

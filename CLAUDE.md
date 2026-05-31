@@ -167,6 +167,7 @@ ALTER TABLE watch_sessions
 - mimeType priority: `video/mp4;codecs=h264,aac` → `video/webm;codecs=vp9` → `video/webm;codecs=vp8` (H.264 source → instant `-c copy` remux on server)
 - Free users: 5 recordings max. Gate in `CreatePost` handler checks `IsPremium` + `PremiumExpiresAt`. Returns `403 { code: "recording_limit" }`. Frontend `useSessionRecording.js` catches this and shows toast.
 - Premium fields on `User` model: `IsPremium bool`, `PremiumExpiresAt *time.Time`
+- **Upload size limit**: Free = 1 GB (enforced in `LeftSidebar.jsx` `handleFileUpload`). Premium = higher limit (TBD, gate same place with `currentUser.is_premium` check before the `maxSize` constant).
 
 ### MP4 Download Pipeline
 - `Post` model has `Mp4URL string`, `Mp4Ready bool`, `Mp4Processing bool`
@@ -320,6 +321,10 @@ These patterns were applied to `LectureHallPage.jsx` (2026-05) for network resil
 
 ## Premium Model
 `User.IsPremium bool` + `User.PremiumExpiresAt *time.Time` — checked inline in handlers. No subscriptions table until billing is wired up (Phase 3). To grant premium: `UPDATE users SET is_premium=true WHERE id=?`.
+
+**Planned premium-only features (implement when billing is wired):**
+- Upload size limit: Free = 1 GB, Premium = higher limit (TBD — gate in `LeftSidebar.jsx` `handleFileUpload` with `currentUser.is_premium`)
+- Recording count: Free = 5 lifetime, Premium = unlimited
 
 ## DB Migration SQL (pending — user must run in psql)
 
