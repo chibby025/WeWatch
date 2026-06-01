@@ -266,38 +266,34 @@ export default function VideoWatch() {
   const handleDoubleClickLike = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     const activeSessionId = sessionStatus?.id || urlSessionId;
     if (!activeSessionId) return;
-    
-    // Debounce (prevent rapid double-clicks)
+
+    // Debounce rapid double-clicks
     const now = Date.now();
-    if (now - lastLikeTimeRef.current < 1000) return;
+    if (now - lastLikeTimeRef.current < 800) return;
     lastLikeTimeRef.current = now;
-    
-    // Don't allow liking again if already liked
-    if (isSessionLiked) {
-      toast.error('You already liked this session!', { duration: 2000 });
-      return;
-    }
-    
-    // Show animation immediately
+
+    // Always show animation locally
     setShowHeartAnimation(true);
-    
-    // Optimistic UI update
-    setIsSessionLiked(true);
-    setSessionLikesCount(prev => prev + 1);
-    
-    // Call API
-    try {
-      await apiClient.post(`/api/sessions/${activeSessionId}/like`);
-      toast.success('Liked! ❤️', { duration: 2000 });
-    } catch (err) {
-      console.error('Failed to like session:', err);
-      // Revert on error
-      setIsSessionLiked(false);
-      setSessionLikesCount(prev => prev - 1);
-      toast.error(err.response?.data?.error || 'Failed to like session');
+
+    // Broadcast animation to other room members
+    if (sendMessage) {
+      sendMessage({ type: 'heart_animation', user_id: currentUser?.id });
+    }
+
+    // Only hit the API once per session
+    if (!isSessionLiked) {
+      setIsSessionLiked(true);
+      setSessionLikesCount(prev => prev + 1);
+      try {
+        await apiClient.post(`/api/sessions/${activeSessionId}/like`);
+      } catch (err) {
+        console.error('Failed to like session:', err);
+        setIsSessionLiked(false);
+        setSessionLikesCount(prev => prev - 1);
+      }
     }
   };
 
@@ -782,6 +778,13 @@ export default function VideoWatch() {
     return () => clearTimeout(retryTimer);
   }, [roomId]);
 
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [isMembersInitialized, setIsMembersInitialized] = useState(false);
+  // Viewer-side break overlay state (static source only — other sources use GraphicsRenderer canvas)
+  const [isBreakActive, setIsBreakActive] = useState(false);
+  const [viewerBreakEndTime, setViewerBreakEndTime] = useState(null);
+  const [viewerBreakSeconds, setViewerBreakSeconds] = useState(0);
+
   // Viewer break countdown — ticks while a static break is active
   useEffect(() => {
     if (!viewerBreakEndTime) return;
@@ -793,13 +796,6 @@ export default function VideoWatch() {
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [viewerBreakEndTime]);
-  
-  const [loadingMembers, setLoadingMembers] = useState(false);
-  const [isMembersInitialized, setIsMembersInitialized] = useState(false);
-  // Viewer-side break overlay state (static source only — other sources use GraphicsRenderer canvas)
-  const [isBreakActive, setIsBreakActive] = useState(false);
-  const [viewerBreakEndTime, setViewerBreakEndTime] = useState(null);
-  const [viewerBreakSeconds, setViewerBreakSeconds] = useState(0);
   const [screenShareUrl, setScreenShareUrl] = useState(null);
   const sidebarRef = useRef(null);
   const processedMessageCountRef = useRef(0);
@@ -4158,6 +4154,8 @@ export default function VideoWatch() {
           // Clear private messages and unread counts
           setPrivateMessages({});
           setUnreadMessages({});
+          // Reset sidebar tab so next session starts on Upload, not LiveShare
+          sessionStorage.removeItem('wewatch_active_sidebar_tab');
           
           // Clear compression state from LeftSidebar
           if (leftSidebarCleanupRef.current) {
@@ -4206,6 +4204,10 @@ export default function VideoWatch() {
           
           performCleanupAndExit(message.data?.is_temporary);
           break;
+        case 'heart_animation':
+          setShowHeartAnimation(true);
+          break;
+
         case 'kicked_from_room': {
           const kickReason = message.data?.reason;
           if (kickReason === 'banned') {

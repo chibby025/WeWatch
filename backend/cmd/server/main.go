@@ -104,7 +104,9 @@ func main() {
 		// Notification model (room posts, session alerts, friend events)
 		&models.Notification{},
 		// Session likes
-		&models.SessionLike{})
+		&models.SessionLike{},
+		// User statuses (stories)
+		&models.UserStatus{}, &models.UserStatusView{}, &models.UserStatusExclusion{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -183,6 +185,7 @@ func main() {
 			handlers.CleanupAllTemporaryMedia()    // ✅ Clean temp files from ALL ended sessions
 			handlers.CleanupOrphanedPreviews()     // ✅ Clean orphaned preview files
 			handlers.CleanupOrphanedPodcastLogos() // ✅ Clean podcast logos from ended sessions
+			handlers.CleanupExpiredStatusMedia()   // ✅ Fallback: delete expired status images missed by AfterFunc timers
 		}
 	}()
 	
@@ -657,6 +660,18 @@ func main() {
 	
 	// Room posts routes (public)
 	r.GET("/api/rooms/:id/posts", handlers.GetRoomPosts)      // GET /api/rooms/:id/posts (Get posts created in room context)
+
+	// --- USER STATUSES / STORIES ---
+	statusGroup := r.Group("/api/statuses")
+	statusGroup.Use(handlers.AuthMiddleware())
+	{
+		statusGroup.POST("", handlers.CreateStatusHandler)              // POST /api/statuses
+		statusGroup.GET("/feed", handlers.GetStatusFeedHandler)         // GET /api/statuses/feed
+		statusGroup.DELETE("/:id", handlers.DeleteStatusHandler)        // DELETE /api/statuses/:id
+		statusGroup.POST("/:id/view", handlers.MarkStatusViewedHandler) // POST /api/statuses/:id/view
+		statusGroup.GET("/privacy", handlers.GetStatusPrivacyHandler)   // GET /api/statuses/privacy
+		statusGroup.PUT("/privacy", handlers.UpdateStatusPrivacyHandler) // PUT /api/statuses/privacy
+	}
 
 	// Room visit tracking + unread badge (protected)
 	roomVisitGroup := r.Group("/api/rooms")

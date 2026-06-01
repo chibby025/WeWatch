@@ -1010,7 +1010,8 @@ const RoomPageNew = () => {
           
           setMessages(prev => {
             const id = message.data?.id || message.data?.ID;
-            if (id && prev.some(m => (m.id || m.ID) === id)) return prev;
+            const existingIds = prev.map(m => m.id || m.ID);
+            if (id && existingIds.includes(id)) return prev;
             return [...prev, message.data];
           });
           
@@ -1251,11 +1252,12 @@ const RoomPageNew = () => {
         room_group_id: selectedGroupId || null,
       });
 
-      const serverMsg = response.data?.data;
+      const serverMsg = response.data?.message;
       const newId = serverMsg?.id || serverMsg?.ID;
       // Only add if the WS broadcast hasn't already inserted it (WS often beats the HTTP response)
       setMessages(prev => {
-        if (newId && prev.some(m => (m.id || m.ID) === newId)) return prev;
+        const existingIds = prev.map(m => m.id || m.ID);
+        if (newId && existingIds.includes(newId)) return prev;
         return [...prev, {
           id: newId || Date.now(),
           user_id: currentUser?.id,

@@ -6,7 +6,6 @@ import EmotePicker from './cinema/ui/EmotePicker';
 import EmojiImage from './cinema/ui/EmojiImage';
 import AudioSettingsDropdown from './AudioSettingsDropdown';
 import { playMicOnSound, playMicOffSound } from '../utils/audio';
-import { TaskbarAudioWaveform } from './AudioWaveform';
 
 // Import SVG icons
 const LeaveCallIcon = '/icons/LeaveCallIcon.svg';
@@ -71,9 +70,14 @@ const TaskbarButton = React.memo(({
           ) : (
             <img src={icon} alt={label} className="h-8 w-8" />
           )}
-          {/* ✅ Show animated waveform overlay when speaking (replaces simple pulse) */}
-          {!isLoading && label === 'Audio' && shouldPulse && localAudioLevel > 0 && (
-            <TaskbarAudioWaveform audioLevel={localAudioLevel} />
+          {/* Green ring: static when mic is on, pulsing when speaking */}
+          {!isLoading && label === 'Audio' && shouldPulse && (
+            <>
+              <div className="absolute inset-0 rounded-full border-2 border-green-400 opacity-50 pointer-events-none" />
+              {localAudioLevel > 20 && (
+                <div className="absolute inset-0 rounded-full border-2 border-green-400 animate-ping pointer-events-none" />
+              )}
+            </>
           )}
           {showCancelIndicator && (
             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center">
@@ -547,7 +551,7 @@ const Taskbar = ({
                     
                     // Show row number for row-based audio
                     const userSeatId = userSeats?.[authenticatedUserID];
-                    if (!userSeatId) return '?';
+                    if (!userSeatId) return null;
                     
                     // Detect seat format: Cinema uses "row-col", Lecture Hall uses integers
                     const seatIdStr = String(userSeatId);

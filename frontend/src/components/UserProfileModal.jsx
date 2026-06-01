@@ -43,6 +43,7 @@ export default function UserProfileModal({
   const emojiPickerRef = useRef(null);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
+  const [showShareSheet, setShowShareSheet] = useState(false);
   const [followingCount, setFollowingCount] = useState(0);
   const [loadingFollowingCount, setLoadingFollowingCount] = useState(true);
   const [showFollowingPublic, setShowFollowingPublic] = useState(false);
@@ -171,6 +172,30 @@ export default function UserProfileModal({
     }
   };
 
+  const getShareUrl = () => {
+    if (user?.main_room?.id) return `${window.location.origin}/rooms/${user.main_room.id}`;
+    return window.location.origin;
+  };
+
+  const handleCopyProfileLink = async () => {
+    const url = getShareUrl();
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.style.position = 'fixed';
+        ta.style.left = '-999999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setShowShareSheet(false);
+    } catch {}
+  };
+
   const handleOpenFollowingList = async () => {
     if (showFollowingList) { setShowFollowingList(false); return; }
     setShowFollowingList(true);
@@ -271,15 +296,26 @@ export default function UserProfileModal({
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={() => setIsEditing(true)}
-                  className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 py-2.5 rounded-lg text-white font-medium transition-all shadow-lg hover:shadow-purple-500/50 transform hover:scale-105 flex items-center justify-center gap-2"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="white" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                  Edit Profile
-                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="flex-1 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 py-2.5 rounded-lg text-white font-medium transition-all shadow-lg hover:shadow-purple-500/50 transform hover:scale-105 flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="white" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    Edit Profile
+                  </button>
+                  <button
+                    onClick={() => setShowShareSheet(true)}
+                    className="bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20 py-2.5 px-3 rounded-lg text-white transition-all flex items-center justify-center"
+                    title="Share profile"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                    </svg>
+                  </button>
+                </div>
               )
             ) : (
               <div className="flex gap-3">
@@ -360,6 +396,16 @@ export default function UserProfileModal({
                     Message
                   </button>
                 )}
+                {/* Share */}
+                <button
+                  onClick={() => setShowShareSheet(true)}
+                  className="bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20 py-2.5 px-3 rounded-lg text-white transition-all flex items-center justify-center flex-shrink-0"
+                  title="Share profile"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                  </svg>
+                </button>
               </div>
             )}
           </div>
@@ -581,6 +627,89 @@ export default function UserProfileModal({
             />
           </div>
         </div>
+
+        {/* Share Sheet */}
+        {showShareSheet && (() => {
+          const shareUrl = getShareUrl();
+          const shareText = user?.main_room
+            ? `Check out ${user.username}'s room on WeWatch!`
+            : `Check out ${user.username} on WeWatch!`;
+          return (
+            <div
+              className="absolute inset-0 bg-black/60 z-[70] flex items-end justify-center rounded-lg sm:rounded-2xl overflow-hidden"
+              onClick={() => setShowShareSheet(false)}
+            >
+              <div
+                className="bg-gray-900 border border-white/10 rounded-t-2xl w-full p-5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <p className="font-semibold text-white text-sm truncate pr-4">Share @{user.username}</p>
+                  <button onClick={() => setShowShareSheet(false)} className="text-gray-400 hover:text-white">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="grid grid-cols-4 gap-3 mb-4">
+                  {/* Copy Link */}
+                  <button onClick={handleCopyProfileLink} className="flex flex-col items-center gap-1.5">
+                    <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                      </svg>
+                    </div>
+                    <span className="text-[10px] text-gray-300">Copy Link</span>
+                  </button>
+                  {/* WhatsApp */}
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(`${shareText} ${shareUrl}`)}`}
+                    target="_blank" rel="noopener noreferrer"
+                    onClick={() => setShowShareSheet(false)}
+                    className="flex flex-col items-center gap-1.5"
+                  >
+                    <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center">
+                      <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.025.507 3.927 1.399 5.591L0 24l6.59-1.383A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.006-1.366l-.36-.214-3.713.979.994-3.63-.234-.373A9.818 9.818 0 1112 21.818z"/></svg>
+                    </div>
+                    <span className="text-[10px] text-gray-300">WhatsApp</span>
+                  </a>
+                  {/* X / Twitter */}
+                  <a
+                    href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`${shareText} ${shareUrl}`)}`}
+                    target="_blank" rel="noopener noreferrer"
+                    onClick={() => setShowShareSheet(false)}
+                    className="flex flex-col items-center gap-1.5"
+                  >
+                    <div className="w-12 h-12 rounded-full bg-black border border-white/20 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.748l7.73-8.835L1.254 2.25H8.08l4.261 5.632 5.903-5.632zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                    </div>
+                    <span className="text-[10px] text-gray-300">X</span>
+                  </a>
+                  {/* Telegram */}
+                  <a
+                    href={`https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`}
+                    target="_blank" rel="noopener noreferrer"
+                    onClick={() => setShowShareSheet(false)}
+                    className="flex flex-col items-center gap-1.5"
+                  >
+                    <div className="w-12 h-12 rounded-full bg-sky-500 flex items-center justify-center">
+                      <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.04 9.607c-.153.676-.554.84-1.12.523l-3.1-2.284-1.496 1.44c-.165.165-.304.304-.624.304l.222-3.147 5.73-5.175c.249-.222-.054-.345-.387-.123L6.3 14.28l-3.047-.952c-.662-.207-.675-.662.138-.979l11.9-4.59c.552-.2 1.034.134.271.489z"/></svg>
+                    </div>
+                    <span className="text-[10px] text-gray-300">Telegram</span>
+                  </a>
+                </div>
+                {typeof navigator.share === 'function' && (
+                  <button
+                    onClick={async () => { try { await navigator.share({ title: user.username, url: shareUrl }); } catch {} setShowShareSheet(false); }}
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white text-sm font-medium transition-colors"
+                  >
+                    Share via…
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Expanded Avatar Overlay */}
         {isAvatarExpanded && (

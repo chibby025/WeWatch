@@ -46,6 +46,11 @@ import { formatCount } from '../utils/formatCount';
 import TwemojiText from './TwemojiText';
 import ReportModal from './ReportModal';
 import TikTokHeartAnimation from './TikTokHeartAnimation';
+import StatusRow from './StatusRow';
+import StatusViewer from './StatusViewer';
+import StatusCreator from './StatusCreator';
+import StatusPrivacySheet from './StatusPrivacySheet';
+import { getStatusFeed } from '../services/api';
 import FeedAdCard from './ads/FeedAdCard';
 import { calculateAge } from '../utils/ageUtils';
 
@@ -149,6 +154,12 @@ const LobbyPage = () => {
     catch { return []; }
   });
 
+  // ✅ Status / Stories state
+  const [statusFeed, setStatusFeed] = useState([]);
+  const [viewingStatus, setViewingStatus] = useState(null); // StatusFeedUser being viewed
+  const [showStatusCreator, setShowStatusCreator] = useState(false);
+  const [showStatusPrivacy, setShowStatusPrivacy] = useState(false);
+
   // ✅ Lobby Chat State
   const [friendsList, setFriendsList] = useState([]); // Users to chat with
   const [selectedChatUser, setSelectedChatUser] = useState(null); // Currently open chat
@@ -232,6 +243,8 @@ const LobbyPage = () => {
   const [isCreateNewModalOpen, setIsCreateNewModalOpen] = useState(false);
   const [isPostUploadModalOpen, setIsPostUploadModalOpen] = useState(false);
   const [openMenuRoomId, setOpenMenuRoomId] = useState(null);
+  const [openMenuPosition, setOpenMenuPosition] = useState(null); // { top, right } in viewport coords
+  const [shareSheetRoom, setShareSheetRoom] = useState(null); // { id, name } for share options panel
   const [openRoomContextMenuId, setOpenRoomContextMenuId] = useState(null); // non-host room menu
   const [roomToDelete, setRoomToDelete] = useState(null);
   
@@ -300,6 +313,8 @@ const LobbyPage = () => {
   // ❤️ Like Animation State
   const [showHeartAnimation, setShowHeartAnimation] = useState(false);
   const lastLikeTimeRef = React.useRef({});
+  const roomLongPressRef = React.useRef(null);
+  const roomLongPressActive = React.useRef(false);
   
   // Helper: Get content rating glow color (matches PricingModal)
   const getRatingGlowColor = (rating) => {
@@ -367,6 +382,7 @@ const LobbyPage = () => {
   const discoverFeedRef = React.useRef(null);
   const tabBarRef = React.useRef(null);
   const [watchingTopOffset, setWatchingTopOffset] = React.useState(190);
+  const [watchingBottomPad, setWatchingBottomPad] = React.useState(64);
   
   // ✅ Get current user from Auth Context
   const { currentUser, wsToken, refreshUser } = useAuth();
@@ -560,6 +576,8 @@ const LobbyPage = () => {
         const bottom = tabBarRef.current.getBoundingClientRect().bottom;
         setWatchingTopOffset(prev => (prev === bottom ? prev : bottom));
       }
+      // Reduce the bottom gap on desktop where there is no fixed bottom nav
+      setWatchingBottomPad(window.innerWidth >= 1024 ? 8 : 64);
     };
     measure();
     window.addEventListener('resize', measure);
@@ -629,6 +647,7 @@ const LobbyPage = () => {
     const handleClickOutside = (event) => {
       if (openMenuRoomId && !event.target.closest('.room-menu')) {
         setOpenMenuRoomId(null);
+        setOpenMenuPosition(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -1007,6 +1026,14 @@ const LobbyPage = () => {
     } finally {
       setSessionsLoading(false);
     }
+  };
+
+  // ✅ Fetch status feed (stories)
+  const fetchStatusFeed = async () => {
+    try {
+      const data = await getStatusFeed();
+      setStatusFeed(data.feed || []);
+    } catch {}
   };
 
   // ✅ Fetch friends list for chat
@@ -2211,6 +2238,7 @@ const LobbyPage = () => {
     fetchSessionsData();
     if (currentUser) {
       fetchFriendsList();
+      fetchStatusFeed();
       fetchPendingRequests();
       fetchSentRequests();
       fetchNotifications();
@@ -3461,25 +3489,28 @@ const LobbyPage = () => {
                 className={`relative flex-1 py-2 transition-colors
                   ${isActive ? 'font-bold text-white' : 'font-semibold text-white/40 hover:text-white/70'}`}
               >
-                <span className="text-sm sm:text-base md:text-lg">{tab.label}</span>
+                {/* Wrap label + badge together so badge anchors to text width */}
+                <span className="relative inline-flex items-center">
+                  <span className="text-sm sm:text-base md:text-lg">{tab.label}</span>
+
+                  {/* Chats unread badge */}
+                  {chatUnread > 0 && (
+                    <span className="absolute -top-2 -right-4 min-w-[16px] h-4 px-0.5 flex items-center justify-center text-[9px] font-bold bg-green-600 text-white rounded-full">
+                      {chatUnread}
+                    </span>
+                  )}
+
+                  {/* WatchOuts session badge */}
+                  {tab.id === 'watching' && sessions.length > 0 && (
+                    <span className="absolute -top-2 -right-4 min-w-[16px] h-4 px-0.5 flex items-center justify-center text-[9px] font-bold bg-red-500 text-white rounded-full">
+                      {sessions.length}
+                    </span>
+                  )}
+                </span>
 
                 {/* Active underline */}
                 {isActive && (
                   <span className="absolute bottom-0 left-1/4 right-1/4 h-0.5 rounded-full bg-white" />
-                )}
-
-                {/* Chats unread badge */}
-                {chatUnread > 0 && (
-                  <span className="absolute top-1 right-2 min-w-[16px] h-4 px-0.5 flex items-center justify-center text-[9px] font-bold bg-green-600 text-white rounded-full">
-                    {chatUnread}
-                  </span>
-                )}
-
-                {/* WatchOuts session badge */}
-                {tab.id === 'watching' && sessions.length > 0 && (
-                  <span className="absolute top-1 right-2 min-w-[16px] h-4 px-0.5 flex items-center justify-center text-[9px] font-bold bg-red-500 text-white rounded-full">
-                    {sessions.length}
-                  </span>
                 )}
               </button>
             );
@@ -3523,15 +3554,47 @@ const LobbyPage = () => {
                 const RoomCard = (room) => (
                   <div
                     key={`card-${room.id}`}
-                    className={`bg-white dark:bg-gray-800 shadow-md rounded-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 relative cursor-pointer ${
+                    className={`group bg-white dark:bg-gray-800 shadow-md rounded-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 relative cursor-pointer ${
                       room.host_id === authenticatedUserID
                         ? 'ring-2 ring-purple-500 dark:ring-purple-400'
                         : room.is_member
                         ? 'ring-2 ring-blue-500 dark:ring-blue-400'
                         : 'border border-gray-200 dark:border-gray-700'
                     }`}
-                    onClick={() => navigate(`/rooms/${room.id}`)}
-                  >{/* Room Card inner — identical to original */}
+                    onClick={() => {
+                      if (roomLongPressActive.current) { roomLongPressActive.current = false; return; }
+                      navigate(`/rooms/${room.id}`);
+                    }}
+                    onTouchStart={() => {
+                      roomLongPressActive.current = false;
+                      roomLongPressRef.current = setTimeout(() => {
+                        roomLongPressActive.current = true;
+                        setOpenMenuRoomId(room.id);
+                        if (navigator.vibrate) navigator.vibrate(50);
+                      }, 500);
+                    }}
+                    onTouchMove={() => { if (roomLongPressRef.current) { clearTimeout(roomLongPressRef.current); roomLongPressRef.current = null; } }}
+                    onTouchEnd={() => { if (roomLongPressRef.current) { clearTimeout(roomLongPressRef.current); roomLongPressRef.current = null; } }}
+                  >
+                  {/* 3-dot button — visible on hover (desktop) and after long-press (mobile) */}
+                  <button
+                    className="room-menu absolute top-2 right-2 z-10 p-1.5 rounded-full bg-black/10 dark:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (openMenuRoomId === room.id) {
+                        setOpenMenuRoomId(null);
+                        setOpenMenuPosition(null);
+                      } else {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setOpenMenuPosition({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                        setOpenMenuRoomId(room.id);
+                      }
+                    }}
+                    title="More options"
+                  >
+                    <EllipsisVerticalIcon className="w-4 h-4 text-gray-700 dark:text-gray-200" />
+                  </button>
+                  {/* Room Card inner — identical to original */}
                   <div className="flex items-center p-3 sm:p-4 gap-3 sm:gap-5">
                       <div className="flex-shrink-0 relative">
                         {room.is_active_session && (
@@ -3601,6 +3664,120 @@ const LobbyPage = () => {
 
                 return (
                 <>
+                {/* Fixed room card dropdown — renders outside scroll container so it's never clipped */}
+                {openMenuRoomId && openMenuPosition && (() => {
+                  const room = [...ownedRooms, ...memberRooms, ...discoveryRooms].find(r => r.id === openMenuRoomId);
+                  if (!room) return null;
+                  return (
+                    <div
+                      className="room-menu fixed z-[9999] bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-100 dark:border-gray-700 py-1 min-w-[180px]"
+                      style={{ top: openMenuPosition.top, right: openMenuPosition.right }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2.5 transition-colors"
+                        onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); navigate(`/rooms/${room.id}`); }}
+                      >
+                        <ArrowUpIcon className="w-4 h-4 rotate-90" /> Enter Room
+                      </button>
+                      <button
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2.5 transition-colors"
+                        onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); setShareSheetRoom({ id: room.id, name: room.name }); }}
+                      >
+                        <ShareIcon className="w-4 h-4" /> Share
+                      </button>
+                      <button
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2.5 transition-colors"
+                        onClick={(e) => { setOpenMenuRoomId(null); setOpenMenuPosition(null); handleToggleFavourite(room.id, e); }}
+                      >
+                        <BookmarkIcon className="w-4 h-4" /> {savedRooms[room.id] ? 'Unfavourite' : 'Favourite'}
+                      </button>
+                      {(room.host_id === authenticatedUserID || currentUser?.role === 'super_admin') && (
+                        <>
+                          <div className="mx-3 my-1 border-t border-gray-100 dark:border-gray-700" />
+                          <button
+                            className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2.5 transition-colors"
+                            onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); handleOpenDeleteModal(room); }}
+                          >
+                            <TrashIcon className="w-4 h-4" /> Delete Room
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Share sheet — shown when Share is tapped from room card menu */}
+                {shareSheetRoom && (
+                  <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center" onClick={() => setShareSheetRoom(null)}>
+                    <div className="bg-white dark:bg-gray-800 rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:w-80 p-5 border border-gray-100 dark:border-gray-700" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="font-semibold text-gray-900 dark:text-white text-sm truncate pr-4">{shareSheetRoom.name}</p>
+                        <button onClick={() => setShareSheetRoom(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 flex-shrink-0">
+                          <XMarkIcon className="w-5 h-5" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-4 gap-3">
+                        {/* Copy Link */}
+                        <button
+                          onClick={async () => { await handleShareRoom(shareSheetRoom.id, shareSheetRoom.name); setShareSheetRoom(null); }}
+                          className="flex flex-col items-center gap-1.5"
+                        >
+                          <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
+                            <svg className="w-5 h-5 text-gray-700 dark:text-gray-200" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                          </div>
+                          <span className="text-[10px] text-gray-600 dark:text-gray-300">Copy Link</span>
+                        </button>
+                        {/* WhatsApp */}
+                        <a
+                          href={`https://wa.me/?text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on WeWatch! ${window.location.origin}/rooms/${shareSheetRoom.id}`)}`}
+                          target="_blank" rel="noopener noreferrer"
+                          onClick={() => setShareSheetRoom(null)}
+                          className="flex flex-col items-center gap-1.5"
+                        >
+                          <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center">
+                            <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.025.507 3.927 1.399 5.591L0 24l6.59-1.383A11.945 11.945 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.006-1.366l-.36-.214-3.713.979.994-3.63-.234-.373A9.818 9.818 0 1112 21.818z"/></svg>
+                          </div>
+                          <span className="text-[10px] text-gray-600 dark:text-gray-300">WhatsApp</span>
+                        </a>
+                        {/* Twitter / X */}
+                        <a
+                          href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`Watching "${shareSheetRoom.name}" on WeWatch — join me! ${window.location.origin}/rooms/${shareSheetRoom.id}`)}`}
+                          target="_blank" rel="noopener noreferrer"
+                          onClick={() => setShareSheetRoom(null)}
+                          className="flex flex-col items-center gap-1.5"
+                        >
+                          <div className="w-12 h-12 rounded-full bg-black flex items-center justify-center">
+                            <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.748l7.73-8.835L1.254 2.25H8.08l4.261 5.632 5.903-5.632zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                          </div>
+                          <span className="text-[10px] text-gray-600 dark:text-gray-300">X</span>
+                        </a>
+                        {/* Telegram */}
+                        <a
+                          href={`https://t.me/share/url?url=${encodeURIComponent(`${window.location.origin}/rooms/${shareSheetRoom.id}`)}&text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on WeWatch!`)}`}
+                          target="_blank" rel="noopener noreferrer"
+                          onClick={() => setShareSheetRoom(null)}
+                          className="flex flex-col items-center gap-1.5"
+                        >
+                          <div className="w-12 h-12 rounded-full bg-sky-500 flex items-center justify-center">
+                            <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.04 9.607c-.153.676-.554.84-1.12.523l-3.1-2.284-1.496 1.44c-.165.165-.304.304-.624.304l.222-3.147 5.73-5.175c.249-.222-.054-.345-.387-.123L6.3 14.28l-3.047-.952c-.662-.207-.675-.662.138-.979l11.9-4.59c.552-.2 1.034.134.271.489z"/></svg>
+                          </div>
+                          <span className="text-[10px] text-gray-600 dark:text-gray-300">Telegram</span>
+                        </a>
+                      </div>
+                      {/* Native share if supported */}
+                      {navigator.share && (
+                        <button
+                          onClick={async () => { try { await navigator.share({ title: shareSheetRoom.name, url: `${window.location.origin}/rooms/${shareSheetRoom.id}` }); } catch {} setShareSheetRoom(null); }}
+                          className="mt-4 w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors"
+                        >
+                          Share via…
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Owned rooms — always visible at top */}
                 {ownedRooms.length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
@@ -3723,7 +3900,7 @@ const LobbyPage = () => {
       <div
           ref={watchingNowScrollRef}
           className="overflow-y-scroll snap-y snap-mandatory bg-black"
-          style={{ display: activeTab === 'watching' ? 'block' : 'none', height: `calc(100dvh - ${watchingTopOffset}px - 64px)`, scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          style={{ display: activeTab === 'watching' ? 'block' : 'none', height: `calc(100dvh - ${watchingTopOffset}px - ${watchingBottomPad}px)`, scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           aria-hidden={activeTab !== 'watching'}
           onTouchStart={activeTab === 'watching' ? handleTouchStart : undefined}
           onTouchMove={activeTab === 'watching' ? handleTouchMove : undefined}
@@ -4744,6 +4921,19 @@ const LobbyPage = () => {
                           </div>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* ✅ Status / Stories strip */}
+                  {activeRequestsTab === 'friends' && !showChatsSearch && (
+                    <div className="border-b border-gray-100 dark:border-gray-700">
+                      <StatusRow
+                        feed={statusFeed}
+                        currentUser={currentUser}
+                        onView={entry => setViewingStatus(entry)}
+                        onAdd={() => setShowStatusCreator(true)}
+                        onPrivacy={() => setShowStatusPrivacy(true)}
+                      />
                     </div>
                   )}
 
@@ -5976,6 +6166,14 @@ const LobbyPage = () => {
                       }
                     </button>
                   )}
+
+                  {/* Share */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleShareRoom(session.room_id, session.room_name || session.title || 'Room'); }}
+                    className="flex flex-col items-center gap-1.5 transition-transform active:scale-90"
+                  >
+                    <ShareIcon className="w-11 h-11 text-white" style={{ filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.9))' }} />
+                  </button>
                 </div>
 
                 {/* Sleek Join Now Button - Fixed Bottom Center */}
@@ -6186,6 +6384,50 @@ const LobbyPage = () => {
             </div>
           </div>
         </>
+      )}
+
+      {/* Status Viewer */}
+      {viewingStatus && (
+        <StatusViewer
+          feedUser={viewingStatus}
+          isOwnProfile={viewingStatus.user_id === currentUser?.id}
+          onClose={() => setViewingStatus(null)}
+          onDeleted={(deletedId) => {
+            setStatusFeed(prev => prev.map(u =>
+              u.user_id === viewingStatus.user_id
+                ? { ...u, statuses: u.statuses.filter(s => s.id !== deletedId) }
+                : u
+            ).filter(u => u.statuses.length > 0));
+          }}
+        />
+      )}
+
+      {/* Status Privacy Sheet */}
+      {showStatusPrivacy && (
+        <StatusPrivacySheet
+          friendsList={friendsList}
+          onClose={() => setShowStatusPrivacy(false)}
+        />
+      )}
+
+      {/* Status Creator */}
+      {showStatusCreator && (
+        <StatusCreator
+          onClose={() => setShowStatusCreator(false)}
+          liveRooms={liveRooms}
+          onCreated={(newStatus) => {
+            setStatusFeed(prev => {
+              const ownIdx = prev.findIndex(u => u.user_id === currentUser?.id);
+              const item = { ...newStatus, has_viewed: true };
+              if (ownIdx >= 0) {
+                const updated = [...prev];
+                updated[ownIdx] = { ...updated[ownIdx], statuses: [...updated[ownIdx].statuses, item] };
+                return updated;
+              }
+              return [{ user_id: currentUser?.id, username: currentUser?.username, avatar_url: currentUser?.avatar_url, has_unseen: false, statuses: [item] }, ...prev];
+            });
+          }}
+        />
       )}
 
       {/* Report Modal */}

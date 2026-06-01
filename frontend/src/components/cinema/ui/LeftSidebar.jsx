@@ -1261,7 +1261,7 @@ export default function LeftSidebar({
           {availableTabs.map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => { intendedTabRef.current = tab; setActiveTab(tab); }}
               className={`flex-1 h-[40px] sm:h-[43px] flex items-center justify-center transition-colors px-2 ${
                 activeTab === tab
                   ? 'text-white font-bold text-base sm:text-base md:text-[17px] bg-[#D9D9D9]/25 rounded-full'

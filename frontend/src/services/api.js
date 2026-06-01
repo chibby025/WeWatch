@@ -1826,3 +1826,37 @@ export const inviteUserToRoom = (roomId, userId) =>
 // Export the configured axios instance if needed for direct calls
 // or for setting up other interceptors elsewhere.
 export default apiClient;
+
+// ==================== USER STATUSES / STORIES ====================
+
+export const getStatusFeed = async () => {
+  const response = await apiClient.get('/api/statuses/feed');
+  return response.data;
+};
+
+export const createStatus = async (formData) => {
+  const response = await apiClient.post('/api/statuses', formData, {
+    headers: { 'Content-Type': undefined },
+  });
+  return response.data;
+};
+
+export const deleteStatus = async (id) => {
+  const response = await apiClient.delete(`/api/statuses/${id}`);
+  return response.data;
+};
+
+export const markStatusViewed = async (id) => {
+  const response = await apiClient.post(`/api/statuses/${id}/view`);
+  return response.data;
+};
+
+export const getStatusPrivacy = async () => {
+  const response = await apiClient.get('/api/statuses/privacy');
+  return response.data;
+};
+
+export const updateStatusPrivacy = async (excludedIds) => {
+  const response = await apiClient.put('/api/statuses/privacy', { excluded_ids: excludedIds });
+  return response.data;
+};
