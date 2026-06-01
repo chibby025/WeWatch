@@ -7,6 +7,7 @@ import {
   DocumentDuplicateIcon, UserCircleIcon, BookmarkIcon,
 } from '@heroicons/react/24/solid';
 import { toggleRoomFavourite, joinRoom } from '../../services/api';
+import TwemojiText from '../TwemojiText';
 
 const LobbyMessageBubble = ({
   message,
@@ -292,7 +293,7 @@ const LobbyMessageBubble = ({
               </div>
             ) : (
               <>
-                <p className="text-xs sm:text-sm break-words whitespace-pre-wrap text-left">{message.message}</p>
+                <TwemojiText as="p" className="text-xs sm:text-sm break-words whitespace-pre-wrap text-left">{message.message}</TwemojiText>
                 {message.edited && (
                   <p className={`text-[10px] italic mt-0.5 ${isOwn ? 'text-green-100' : 'text-gray-500 dark:text-gray-400'}`}>(edited)</p>
                 )}

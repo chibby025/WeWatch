@@ -1,6 +1,7 @@
 // WeWatch/frontend/src/components/MessageItem.jsx
 import React, { useState, useEffect } from 'react';
 import { EllipsisVerticalIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
+import TwemojiText from './TwemojiText';
 
 const MessageItem = ({ message, isOwnMessage, onReact, onDelete, onEdit, authenticatedUserID }) => {
   const [showMenu, setShowMenu] = useState(false);
@@ -156,9 +157,9 @@ const MessageItem = ({ message, isOwnMessage, onReact, onDelete, onEdit, authent
             </div>
           </div>
         ) : (
-          <div className={`whitespace-pre-wrap ${message.DeletedByHost ? 'italic opacity-75' : ''}`}>
+          <TwemojiText className={`whitespace-pre-wrap ${message.DeletedByHost ? 'italic opacity-75' : ''}`}>
             {message.Message}
-          </div>
+          </TwemojiText>
         )}
 
         {/* Selected Reaction */}

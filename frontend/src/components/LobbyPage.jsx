@@ -43,6 +43,7 @@ import DateOfBirthPromptModal from './DateOfBirthPromptModal';
 import { checkDateOfBirth, updateDateOfBirth } from '../services/api';
 import SessionChatPreviewModal from './SessionChatPreviewModal';
 import { formatCount } from '../utils/formatCount';
+import TwemojiText from './TwemojiText';
 import ReportModal from './ReportModal';
 import TikTokHeartAnimation from './TikTokHeartAnimation';
 import FeedAdCard from './ads/FeedAdCard';
@@ -5254,7 +5255,7 @@ const LobbyPage = () => {
                                 <p className="text-[10px] font-semibold text-purple-500 mb-0.5">
                                   {replyingTo.sender_id === currentUser?.id ? 'You' : selectedChatUser?.username}
                                 </p>
-                                <p className="text-xs text-gray-600 dark:text-gray-400 line-clamp-1">{replyingTo.message}</p>
+                                <TwemojiText as="p" className="text-xs text-gray-600 dark:text-gray-400 line-clamp-1">{replyingTo.message}</TwemojiText>
                               </div>
                               <button
                                 type="button"

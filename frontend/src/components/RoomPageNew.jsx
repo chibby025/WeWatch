@@ -44,6 +44,7 @@ import RoomPageLeftSidebar from './RoomPageLeftSidebar';
 import RoomGroupEditModal from './RoomGroupEditModal';
 import RoomJoinRequestsModal from './RoomJoinRequestsModal';
 import { checkDateOfBirth, updateDateOfBirth, getRoomJoinRequests } from '../services/api';
+import TwemojiText from './TwemojiText';
 // TODO: Review MediaBanner integration later - currently commented out for future use
 // import MediaBanner from './MediaBanner';
 
@@ -1007,7 +1008,11 @@ const RoomPageNew = () => {
             break; // Don't add message to display
           }
           
-          setMessages(prev => [...prev, message.data]);
+          setMessages(prev => {
+            const id = message.data?.id || message.data?.ID;
+            if (id && prev.some(m => (m.id || m.ID) === id)) return prev;
+            return [...prev, message.data];
+          });
           
           // Check if user is scrolled up - if so, increment unread count
           if (messagesContainerRef.current) {
@@ -1247,18 +1252,22 @@ const RoomPageNew = () => {
       });
 
       const serverMsg = response.data?.data;
-      // Add message to local state immediately — backend doesn't WS-broadcast own messages
-      setMessages(prev => [...prev, {
-        id: serverMsg?.id || serverMsg?.ID || Date.now(),
-        user_id: currentUser?.id,
-        username: currentUser?.username,
-        message: msgToSend,
-        created_at: serverMsg?.created_at || new Date().toISOString(),
-        reply_to: replyContext
-          ? { id: replyContext.id, username: replyContext.username, message: replyContext.message }
-          : null,
-        room_group_id: selectedGroupId,
-      }]);
+      const newId = serverMsg?.id || serverMsg?.ID;
+      // Only add if the WS broadcast hasn't already inserted it (WS often beats the HTTP response)
+      setMessages(prev => {
+        if (newId && prev.some(m => (m.id || m.ID) === newId)) return prev;
+        return [...prev, {
+          id: newId || Date.now(),
+          user_id: currentUser?.id,
+          username: currentUser?.username,
+          message: msgToSend,
+          created_at: serverMsg?.created_at || new Date().toISOString(),
+          reply_to: replyContext
+            ? { id: replyContext.id, username: replyContext.username, message: replyContext.message }
+            : null,
+          room_group_id: selectedGroupId,
+        }];
+      });
       scrollToBottom();
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -2542,9 +2551,9 @@ const RoomPageNew = () => {
                             </div>
                           </div>
                         ) : (
-                          <div className={msg.deleted_by_host ? 'italic opacity-75 text-sm' : 'text-sm'}>
+                          <TwemojiText className={msg.deleted_by_host ? 'italic opacity-75 text-sm' : 'text-sm'}>
                             {msg.message}
-                          </div>
+                          </TwemojiText>
                         )}
                       </>
                     )}
