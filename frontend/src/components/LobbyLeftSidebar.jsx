@@ -17,6 +17,7 @@ import {
   MegaphoneIcon,
   InformationCircleIcon,
   AdjustmentsHorizontalIcon,
+  EyeSlashIcon,
 } from '@heroicons/react/24/outline';
 import HelpSupportModal from './HelpSupportModal';
 import SecurityModal from './SecurityModal';
@@ -29,13 +30,14 @@ import Avatar from './Avatar';
 import { useNavigate } from 'react-router-dom';
 import { clearAllCaches } from '../utils/cinemaCache';
 
-const LobbyLeftSidebar = ({ 
-  isOpen, 
-  onClose, 
+const LobbyLeftSidebar = ({
+  isOpen,
+  onClose,
   currentUser,
   onMyProfileClick,
   onSettingsClick,
-  onCallUser // Function to initiate a call to a user
+  onCallUser,
+  onStatusPrivacy,
 }) => {
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
@@ -155,6 +157,14 @@ const LobbyLeftSidebar = ({
       enabled: true,
       badge: currentUser?.two_factor_enabled ? '2FA ✓' : null,
       highlight: !currentUser?.two_factor_enabled
+    },
+    {
+      id: 'status_privacy',
+      label: 'Status Privacy',
+      icon: EyeSlashIcon,
+      onClick: () => { onClose(); onStatusPrivacy?.(); },
+      enabled: true,
+      description: 'Choose who sees your status'
     },
     {
       id: 'data_saver',

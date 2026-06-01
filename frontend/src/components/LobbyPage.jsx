@@ -3189,10 +3189,11 @@ const LobbyPage = () => {
       {/* ✅ Hamburger Menu Button - Fixed Top Left */}
       <button
         onClick={() => setIsLobbyLeftSidebarOpen(true)}
-        className="fixed top-3 left-3 z-30 bg-gray-800/70 hover:bg-gray-700 text-white p-1.5 rounded-lg shadow-lg transition-colors duration-200"
+        className="fixed top-3 left-3 z-30 bg-gray-800/70 hover:bg-gray-700 text-white rounded-md shadow-lg transition-colors duration-200 flex items-center justify-center"
+        style={{ width: '18px', height: '18px' }}
         aria-label="Open menu"
       >
-        <Bars3Icon className="h-6 w-6" />
+        <Bars3Icon style={{ width: '24px', height: '24px' }} />
       </button>
 
 
@@ -3290,6 +3291,7 @@ const LobbyPage = () => {
           setIsLobbyLeftSidebarOpen(false);
           setIsSettingsModalOpen(true);
         }}
+        onStatusPrivacy={() => setShowStatusPrivacy(true)}
       />
 
       {/* ✅ User Profile Modal */}
@@ -3402,15 +3404,30 @@ const LobbyPage = () => {
             className="h-[68px] sm:h-[107px] w-auto"
           />
         </div>
-      <p className={`block text-center mb-6 text-gray-700 dark:text-gray-300 transition-opacity duration-700 ${showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        {activeTab === 'rooms'
-          ? 'Welcome! Find or create a room to start watching together.'
-          : activeTab === 'chats'
-          ? "Say hi! Connect with friends and see what they're watching."
-          : activeTab === 'feed'
-          ? 'Explore posts and recordings from the community.'
-          : "Live WatchOuts — tap any card to jump in and watch together."}
-      </p>
+      {activeTab === 'chats' ? (
+        /* Fixed-height container so hint text and StatusRow share the same space */
+        <div className="relative h-[96px]">
+          <p className={`absolute inset-x-0 text-center px-4 py-3 text-gray-700 dark:text-gray-300 transition-opacity duration-700 ${showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            Say hi! Connect with friends and see what they&apos;re watching.
+          </p>
+          <div className={`absolute inset-x-0 transition-opacity duration-700 ${!showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            <StatusRow
+              feed={statusFeed}
+              currentUser={currentUser}
+              onView={entry => setViewingStatus(entry)}
+              onAdd={() => setShowStatusCreator(true)}
+            />
+          </div>
+        </div>
+      ) : (
+        <p className={`block text-center mb-6 text-gray-700 dark:text-gray-300 transition-opacity duration-700 ${showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+          {activeTab === 'rooms'
+            ? 'Welcome! Find or create a room to start watching together.'
+            : activeTab === 'feed'
+            ? 'Explore posts and recordings from the community.'
+            : "Live WatchOuts — tap any card to jump in and watch together."}
+        </p>
+      )}
 
       {/* Unified search bar — appears above the tab bar for whichever tab is active */}
       {((activeTab === 'rooms'    && showRoomsSearch)    ||
@@ -4921,19 +4938,6 @@ const LobbyPage = () => {
                           </div>
                         </div>
                       )}
-                    </div>
-                  )}
-
-                  {/* ✅ Status / Stories strip */}
-                  {activeRequestsTab === 'friends' && !showChatsSearch && (
-                    <div className="border-b border-gray-100 dark:border-gray-700">
-                      <StatusRow
-                        feed={statusFeed}
-                        currentUser={currentUser}
-                        onView={entry => setViewingStatus(entry)}
-                        onAdd={() => setShowStatusCreator(true)}
-                        onPrivacy={() => setShowStatusPrivacy(true)}
-                      />
                     </div>
                   )}
 
