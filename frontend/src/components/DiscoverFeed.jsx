@@ -1,7 +1,7 @@
 // WeWatch/frontend/src/components/DiscoverFeed.jsx
 // Instagram/TikTok-style discover feed with infinite scroll grid
 import React, { useState, useEffect, useRef, useReducer, forwardRef, useImperativeHandle } from 'react';
-import { Eye, Heart, MessageCircle, MoreVertical, Trash2, X, Reply, Edit, Trash, Lock, Flag, Gift } from 'lucide-react';
+import { Eye, Heart, MessageCircle, MoreVertical, Trash2, X, Reply, Edit, Trash, Lock, Flag, Gift, Paperclip } from 'lucide-react';
 import apiClient, { getFollowersCount, joinRoom, leaveRoom, tipPost } from '../services/api';
 import { formatCount } from '../utils/formatCount';
 import AdBanner from './AdBanner';
@@ -11,6 +11,38 @@ import PostPurchaseModal from './payment/PostPurchaseModal';
 import ReportModal from './ReportModal';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
+
+const LIKE_CSS = `
+  @keyframes likePop {
+    0%   { transform: scale(1);    filter: drop-shadow(0 0 0px rgba(239,68,68,0)); }
+    20%  { transform: scale(1.55); filter: drop-shadow(0 0 6px rgba(239,68,68,0.9)); }
+    50%  { transform: scale(0.85); filter: drop-shadow(0 0 2px rgba(239,68,68,0.4)); }
+    75%  { transform: scale(1.2);  filter: drop-shadow(0 0 4px rgba(239,68,68,0.6)); }
+    100% { transform: scale(1);    filter: drop-shadow(0 0 0px rgba(239,68,68,0)); }
+  }
+  @keyframes likeRipple {
+    0%   { transform: scale(0.3); opacity: 0.9; }
+    100% { transform: scale(2.2); opacity: 0; }
+  }
+  @keyframes likeFloat {
+    0%   { transform: translateY(0)   scale(0.8); opacity: 1; }
+    100% { transform: translateY(-28px) scale(0.5); opacity: 0; }
+  }
+  .like-pop    { animation: likePop 0.4s cubic-bezier(0.36,0.07,0.19,0.97); }
+  .like-ripple { animation: likeRipple 0.45s ease-out forwards; position:absolute; inset:-6px; border-radius:9999px; border:2px solid rgba(239,68,68,0.6); pointer-events:none; }
+  .like-float  { animation: likeFloat 0.55s ease-out forwards; position:absolute; top:-4px; left:50%; transform:translateX(-50%); pointer-events:none; font-size:10px; }
+`;
+
+const formatCommentTime = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const isToday = d.getFullYear() === now.getFullYear() &&
+                  d.getMonth() === now.getMonth() &&
+                  d.getDate() === now.getDate();
+  if (isToday) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+};
 
 const formatTimeAgo = (dateStr) => {
   if (!dateStr) return '';
@@ -43,9 +75,16 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   const [followersCount, setFollowersCount] = useState({}); // {userId: count}
   const [followingRooms, setFollowingRooms] = useState({}); // {postId: isFollowing}
   const [postLikes, setPostLikes] = useState({}); // {postId: {isLiked: bool, count: number}}
+  const [likingPosts, setLikingPosts] = useState(new Set()); // postIds currently mid-animation
   const [openComments, setOpenComments] = useState(null); // postId with open comments
   const [comments, setComments] = useState({}); // {postId: [comments]}
   const [commentInput, setCommentInput] = useState('');
+  const [commentAttachment, setCommentAttachment] = useState(null); // File
+  const [commentAttachPreview, setCommentAttachPreview] = useState(null); // data URL
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const commentAttachRef = useRef(null);
+  const [replyingToCommentId, setReplyingToCommentId] = useState(null);
+  const [openCommentMenu, setOpenCommentMenu] = useState(null); // commentId with open 3-dot menu
   const [loadingComments, setLoadingComments] = useState(false);
   const [hoveredComment, setHoveredComment] = useState(null); // commentId being hovered
   const [editingComment, setEditingComment] = useState(null); // commentId being edited
@@ -405,31 +444,76 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     }
   };
 
+  const handleCommentAttachmentSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const isImage = file.type.startsWith('image/');
+    const isDoc = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (!isImage && !isDoc) { toast.error('Only images and DOCX files allowed'); return; }
+    const maxMB = isDoc ? 10 : 5;
+    if (file.size > maxMB * 1024 * 1024) { toast.error(`Max ${maxMB}MB for ${isDoc ? 'documents' : 'images'}`); return; }
+    setCommentAttachment(file);
+    if (isImage) {
+      const reader = new FileReader();
+      reader.onloadend = () => setCommentAttachPreview(reader.result);
+      reader.readAsDataURL(file);
+    } else {
+      setCommentAttachPreview(null);
+    }
+    e.target.value = '';
+  };
+
+  const clearCommentAttachment = () => { setCommentAttachment(null); setCommentAttachPreview(null); };
+
   // Post a comment
   const handlePostComment = async (postId) => {
-    if (!commentInput.trim()) return;
-    
+    if (!commentInput.trim() && !commentAttachment) return;
+
     try {
-      const response = await apiClient.post(`/api/posts/${postId}/comments`, {
-        content: commentInput
-      });
-      
-      // Add new comment to list
-      setComments(prev => ({
-        ...prev,
-        [postId]: [response.data.comment, ...(prev[postId] || [])]
-      }));
-      
-      // Update comment count
-      setPosts(prev => prev.map(p => 
-        p.id === postId 
-          ? { ...p, comments_count: (p.comments_count || 0) + 1 }
-          : p
-      ));
-      
+      let attachmentUrl = null;
+      if (commentAttachment) {
+        setUploadingAttachment(true);
+        const fd = new FormData();
+        fd.append('file', commentAttachment, commentAttachment.name);
+        const res = await apiClient.post('/api/posts/comment-attachment', fd, {
+          headers: { 'Content-Type': undefined },
+        });
+        attachmentUrl = res.data.url;
+        setUploadingAttachment(false);
+      }
+
+      const body = { content: commentInput.trim() || '📎' };
+      if (attachmentUrl) body.attachment_url = attachmentUrl;
+      if (replyingToCommentId) body.parent_comment_id = replyingToCommentId;
+
+      const response = await apiClient.post(`/api/posts/${postId}/comments`, body);
+
+      if (replyingToCommentId) {
+        // Nest reply under its parent
+        setComments(prev => ({
+          ...prev,
+          [postId]: (prev[postId] || []).map(c =>
+            c.id === replyingToCommentId
+              ? { ...c, replies: [...(c.replies || []), response.data.comment] }
+              : c
+          )
+        }));
+        setReplyingToCommentId(null);
+      } else {
+        setComments(prev => ({
+          ...prev,
+          [postId]: [response.data.comment, ...(prev[postId] || [])]
+        }));
+        setPosts(prev => prev.map(p =>
+          p.id === postId ? { ...p, comments_count: (p.comments_count || 0) + 1 } : p
+        ));
+      }
+
       setCommentInput('');
+      clearCommentAttachment();
       toast.success('Comment posted!');
     } catch (error) {
+      setUploadingAttachment(false);
       console.error('Failed to post comment:', error);
       toast.error('Failed to post comment');
     }
@@ -463,26 +547,20 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     }
   };
 
-  // Handle delete comment
+  // Handle delete comment (works for both top-level and replies)
   const handleDeleteComment = async (postId, commentId) => {
     if (!confirm('Delete this comment?')) return;
-    
     try {
-      await apiClient.delete(`/api/posts/${postId}/comments/${commentId}`);
-      
-      // Remove comment from list
+      await apiClient.delete(`/api/posts/comments/${commentId}`);
       setComments(prev => ({
         ...prev,
-        [postId]: prev[postId].filter(c => c.id !== commentId)
+        [postId]: (prev[postId] || [])
+          .filter(c => c.id !== commentId)
+          .map(c => ({ ...c, replies: (c.replies || []).filter(r => r.id !== commentId) }))
       }));
-      
-      // Update comment count
-      setPosts(prev => prev.map(p => 
-        p.id === postId 
-          ? { ...p, comments_count: Math.max((p.comments_count || 1) - 1, 0) }
-          : p
+      setPosts(prev => prev.map(p =>
+        p.id === postId ? { ...p, comments_count: Math.max((p.comments_count || 1) - 1, 0) } : p
       ));
-      
       toast.success('Comment deleted!');
     } catch (error) {
       console.error('Failed to delete comment:', error);
@@ -492,8 +570,9 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
 
   // Handle reply to comment
   const handleReplyToComment = (comment) => {
+    setReplyingToCommentId(comment.id);
     setCommentInput(`@${comment.user?.username} `);
-    document.querySelector('input[placeholder="Add a comment..."]')?.focus();
+    setTimeout(() => document.querySelector('input[placeholder="Add a comment..."]')?.focus(), 50);
   };
 
   // Handle like/unlike from card
@@ -516,6 +595,12 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
         count: currentLikeState.count + (wasLiked ? -1 : 1)
       }
     }));
+
+    // Trigger like animation only when liking (not unliking)
+    if (!wasLiked) {
+      setLikingPosts(prev => new Set([...prev, post.id]));
+      setTimeout(() => setLikingPosts(prev => { const n = new Set(prev); n.delete(post.id); return n; }), 500);
+    }
     
     try {
       if (wasLiked) {
@@ -654,6 +739,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
 
   return (
     <div className="w-full px-0 sm:px-4 pb-8">
+      <style>{LIKE_CSS}</style>
       <div className={isSearching ? "grid grid-cols-2 gap-2" : "md:grid md:grid-cols-2 md:gap-4"}>
         {posts.map((post, index) => {
           return (
@@ -914,15 +1000,24 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                       className="flex items-center gap-1.5 transition-colors group"
                       onClick={(e) => handleLikeToggle(post, e)}
                     >
-                      <Heart
-                        className={`w-6 h-6 transition-all ${
-                          postLikes[post.id]?.isLiked
-                            ? 'fill-red-500 stroke-red-500'
-                            : 'stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-red-500'
-                        }`}
-                        fill="none"
-                        strokeWidth={2}
-                      />
+                      <span className="relative inline-flex items-center justify-center">
+                        {likingPosts.has(post.id) && (
+                          <>
+                            <span className="like-ripple" />
+                            <span className="like-float">❤️</span>
+                          </>
+                        )}
+                        <Heart
+                          key={`${post.id}-${postLikes[post.id]?.isLiked}`}
+                          className={`w-6 h-6 ${likingPosts.has(post.id) ? 'like-pop' : 'transition-all'} ${
+                            postLikes[post.id]?.isLiked
+                              ? 'fill-red-500 stroke-red-500'
+                              : 'stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-red-500'
+                          }`}
+                          fill="none"
+                          strokeWidth={2}
+                        />
+                      </span>
                       <span className={`text-sm font-semibold ${postLikes[post.id]?.isLiked ? 'text-red-500' : 'text-gray-800 dark:text-gray-100'}`}>
                         {formatCount(postLikes[post.id]?.count ?? (post.likes_count || 0))}
                       </span>
@@ -971,8 +1066,9 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                       title="Share"
                     >
                       <svg className="w-6 h-6 stroke-gray-800 dark:stroke-gray-100 group-hover:stroke-purple-500" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                        <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                        <polyline points="16 6 12 2 8 6"/>
+                        <line x1="12" y1="2" x2="12" y2="15"/>
                       </svg>
                     </button>
                     <span className="text-[10px] text-gray-400 dark:text-gray-500 whitespace-nowrap">
@@ -1044,111 +1140,152 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
               ) : (
                 (comments[openComments] || []).map((comment) => {
                   const isCommentPoster = currentUser?.id === comment.user?.id;
-                  const isSuperAdmin = currentUser?.is_super_admin || false;
+                  const isSuperAdmin = currentUser?.role === 'super_admin';
                   const isEditing = editingComment === comment.id;
-                  
+                  const replies = comment.replies || [];
+
                   return (
-                    <div 
-                      key={comment.id} 
-                      className="flex gap-3 group relative"
-                      onMouseEnter={() => setHoveredComment(comment.id)}
-                      onMouseLeave={() => setHoveredComment(null)}
-                    >
-                      <Avatar
-                        user={comment.user}
-                        className="w-8 h-8 rounded-full flex-shrink-0"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-sm text-gray-900 dark:text-white">
-                              @{comment.user?.username}
-                            </p>
-                            
-                            {isEditing ? (
-                              <div className="mt-1 space-y-2">
-                                <input
-                                  type="text"
-                                  value={editText}
-                                  onChange={(e) => setEditText(e.target.value)}
-                                  onKeyPress={(e) => e.key === 'Enter' && handleEditComment(openComments, comment.id)}
-                                  className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                                  autoFocus
-                                />
-                                <div className="flex gap-2">
-                                  <button
-                                    onClick={() => handleEditComment(openComments, comment.id)}
-                                    className="px-3 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setEditingComment(null);
-                                      setEditText('');
-                                    }}
-                                    className="px-3 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 break-words">
-                                {comment.content}
+                    <div key={comment.id} className="space-y-2">
+                      {/* Top-level comment */}
+                      <div className="flex gap-3 group">
+                        <Avatar user={comment.user} className="w-8 h-8 rounded-full flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-1">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                                @{comment.user?.username}
                               </p>
-                            )}
-                          </div>
-                          
-                          {/* Action buttons - visible on hover or always on mobile */}
-                          {!isEditing && (hoveredComment === comment.id || window.innerWidth < 768) && (
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              {/* Reply button - visible to all */}
-                              <button
-                                onClick={() => handleReplyToComment(comment)}
-                                className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
-                                title="Reply"
-                              >
-                                <Reply className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-                              </button>
-                              
-                              {/* Edit button - visible to comment poster */}
-                              {isCommentPoster && (
-                                <button
-                                  onClick={() => {
-                                    setEditingComment(comment.id);
-                                    setEditText(comment.content);
-                                  }}
-                                  className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
-                                  title="Edit"
-                                >
-                                  <Edit className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-                                </button>
-                              )}
-                              
-                              {/* Delete button - visible to comment poster or super admin */}
-                              {(isCommentPoster || isSuperAdmin) && (
-                                <button
-                                  onClick={() => handleDeleteComment(openComments, comment.id)}
-                                  className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-full transition-colors"
-                                  title="Delete"
-                                >
-                                  <Trash className="w-4 h-4 text-red-600 dark:text-red-400" />
-                                </button>
+
+                              {isEditing ? (
+                                <div className="mt-1 space-y-2">
+                                  <input
+                                    type="text"
+                                    value={editText}
+                                    onChange={(e) => setEditText(e.target.value)}
+                                    onKeyPress={(e) => e.key === 'Enter' && handleEditComment(openComments, comment.id)}
+                                    className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                    autoFocus
+                                  />
+                                  <div className="flex gap-2">
+                                    <button onClick={() => handleEditComment(openComments, comment.id)} className="px-3 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700">Save</button>
+                                    <button onClick={() => { setEditingComment(null); setEditText(''); }} className="px-3 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">Cancel</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  {comment.content && comment.content !== '📎' && (
+                                    <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5 break-words">{comment.content}</p>
+                                  )}
+                                  {comment.attachment_url && (
+                                    comment.attachment_url.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i) ? (
+                                      <img src={comment.attachment_url} alt="attachment" className="mt-1.5 max-w-[220px] rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer" onClick={() => window.open(comment.attachment_url, '_blank')} />
+                                    ) : (
+                                      <a href={comment.attachment_url} target="_blank" rel="noopener noreferrer" className="mt-1.5 flex items-center gap-1.5 text-blue-500 text-xs hover:underline"><Paperclip className="w-3 h-3" /> Document</a>
+                                    )
+                                  )}
+                                  <div className="flex items-center gap-3 mt-1">
+                                    <span className="text-[11px] text-gray-400">{formatCommentTime(comment.created_at)}</span>
+                                    <button onClick={() => handleReplyToComment(comment)} className="text-[11px] text-gray-500 hover:text-purple-500 transition-colors flex items-center gap-0.5">
+                                      <Reply className="w-3 h-3" /> Reply
+                                    </button>
+                                  </div>
+                                </>
                               )}
                             </div>
-                          )}
-                        </div>
-                        
-                        {/* Date at bottom right */}
-                        {!isEditing && (
-                          <div className="flex justify-end mt-1">
-                            <p className="text-xs text-gray-500">
-                              {new Date(comment.created_at).toLocaleString()}
-                            </p>
+
+                            {/* 3-dot menu */}
+                            {!isEditing && (isCommentPoster || isSuperAdmin) && (
+                              <div className="relative flex-shrink-0">
+                                <button
+                                  onClick={() => setOpenCommentMenu(openCommentMenu === comment.id ? null : comment.id)}
+                                  className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 opacity-0 group-hover:opacity-100 transition-opacity"
+                                >
+                                  <MoreVertical className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                                </button>
+                                {openCommentMenu === comment.id && (
+                                  <div className="absolute right-0 top-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 py-1 min-w-[110px]">
+                                    {isCommentPoster && (
+                                      <button
+                                        onClick={() => { setEditingComment(comment.id); setEditText(comment.content); setOpenCommentMenu(null); }}
+                                        className="w-full px-3 py-1.5 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                                      >
+                                        <Edit className="w-3.5 h-3.5" /> Edit
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => { handleDeleteComment(openComments, comment.id); setOpenCommentMenu(null); }}
+                                      className="w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+                                    >
+                                      <Trash className="w-3.5 h-3.5" /> Delete
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </div>
+
+                      {/* Indented replies */}
+                      {replies.length > 0 && (
+                        <div className="ml-11 pl-3 border-l-2 border-gray-200 dark:border-gray-700 space-y-2">
+                          {replies.map(reply => {
+                            const isReplyPoster = currentUser?.id === reply.user?.id;
+                            return (
+                              <div key={reply.id} className="flex gap-2 group">
+                                <Avatar user={reply.user} className="w-6 h-6 rounded-full flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-start justify-between gap-1">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-semibold text-xs text-gray-900 dark:text-white">@{reply.user?.username}</p>
+                                      {reply.content && reply.content !== '📎' && (
+                                        <p className="text-xs text-gray-700 dark:text-gray-300 mt-0.5 break-words">{reply.content}</p>
+                                      )}
+                                      {reply.attachment_url && (
+                                        reply.attachment_url.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i) ? (
+                                          <img src={reply.attachment_url} alt="attachment" className="mt-1 max-w-[180px] rounded-lg cursor-pointer" onClick={() => window.open(reply.attachment_url, '_blank')} />
+                                        ) : (
+                                          <a href={reply.attachment_url} target="_blank" rel="noopener noreferrer" className="mt-1 flex items-center gap-1 text-blue-500 text-xs hover:underline"><Paperclip className="w-3 h-3" /> Document</a>
+                                        )
+                                      )}
+                                      <span className="text-[10px] text-gray-400 mt-0.5 block">{formatCommentTime(reply.created_at)}</span>
+                                    </div>
+                                    {(isReplyPoster || isSuperAdmin) && (
+                                      <div className="relative flex-shrink-0">
+                                        <button
+                                          onClick={() => setOpenCommentMenu(openCommentMenu === reply.id ? null : reply.id)}
+                                          className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        >
+                                          <MoreVertical className="w-3.5 h-3.5 text-gray-500" />
+                                        </button>
+                                        {openCommentMenu === reply.id && (
+                                          <div className="absolute right-0 top-5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 py-1 min-w-[100px]">
+                                            <button
+                                              onClick={() => { handleDeleteComment(openComments, reply.id); setOpenCommentMenu(null); }}
+                                              className="w-full px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+                                            >
+                                              <Trash className="w-3.5 h-3.5" /> Delete
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Replying-to indicator */}
+                      {replyingToCommentId === comment.id && (
+                        <div className="ml-11 flex items-center gap-1 text-[11px] text-purple-500">
+                          <Reply className="w-3 h-3" />
+                          Replying to @{comment.user?.username}
+                          <button onClick={() => { setReplyingToCommentId(null); setCommentInput(''); }} className="ml-1 text-gray-400 hover:text-red-400 text-xs">✕</button>
+                        </div>
+                      )}
                     </div>
                   );
                 })
@@ -1157,7 +1294,36 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
             
             {/* Comment input */}
             <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex gap-2">
+              {/* Attachment preview */}
+              {(commentAttachment || commentAttachPreview) && (
+                <div className="relative mb-2 inline-flex items-center gap-2 bg-gray-100 dark:bg-gray-800 rounded-lg px-3 py-1.5">
+                  {commentAttachPreview
+                    ? <img src={commentAttachPreview} alt="attach" className="h-12 rounded" />
+                    : <Paperclip className="w-4 h-4 text-gray-500" />
+                  }
+                  {!commentAttachPreview && commentAttachment && (
+                    <span className="text-xs text-gray-600 dark:text-gray-400 max-w-[120px] truncate">{commentAttachment.name}</span>
+                  )}
+                  <button onClick={clearCommentAttachment} className="ml-1 text-gray-500 hover:text-red-500">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              <div className="flex gap-2 items-center">
+                <input
+                  type="file"
+                  ref={commentAttachRef}
+                  className="hidden"
+                  accept="image/*,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  onChange={handleCommentAttachmentSelect}
+                />
+                <button
+                  onClick={() => commentAttachRef.current?.click()}
+                  className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex-shrink-0"
+                  title="Attach image or document"
+                >
+                  <Paperclip className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                </button>
                 <input
                   type="text"
                   value={commentInput}
@@ -1168,10 +1334,10 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                 />
                 <button
                   onClick={() => handlePostComment(openComments)}
-                  disabled={!commentInput.trim()}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-full hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  disabled={(!commentInput.trim() && !commentAttachment) || uploadingAttachment}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-full hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
                 >
-                  Post
+                  {uploadingAttachment ? '…' : 'Post'}
                 </button>
               </div>
             </div>

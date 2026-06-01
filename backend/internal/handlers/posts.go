@@ -861,8 +861,9 @@ func isValidMediaType(contentType string, mediaType string) bool {
 
 // CreateCommentRequest represents the request body for creating a comment
 type CreateCommentRequest struct {
-	Content         string `json:"content" binding:"required,max=1000"`
-	ParentCommentID *uint  `json:"parent_comment_id"`
+	Content         string  `json:"content" binding:"required,max=1000"`
+	ParentCommentID *uint   `json:"parent_comment_id"`
+	AttachmentURL   *string `json:"attachment_url"`
 }
 
 // GetPostComments handles GET /api/posts/:id/comments
@@ -955,6 +956,7 @@ func CreatePostComment(c *gin.Context) {
 		UserID:          userID,
 		Content:         req.Content,
 		ParentCommentID: req.ParentCommentID,
+		AttachmentURL:   req.AttachmentURL,
 	}
 
 	if err := DB.Create(&comment).Error; err != nil {
@@ -1541,4 +1543,53 @@ func GetFollowingFeedHandler(c *gin.Context) {
 
 	log.Printf("✅ [GetFollowingFeed] user=%d page=%d posts=%d (authors=%d)", currentUserID, page, len(resp), len(authorIDs))
 	c.JSON(http.StatusOK, gin.H{"posts": resp, "total": total, "page": page})
+}
+
+// UploadCommentAttachmentHandler handles POST /api/posts/comment-attachment
+// Uploads an image or DOCX for use in a comment reply; returns CDN URL.
+func UploadCommentAttachmentHandler(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided"})
+		return
+	}
+	defer file.Close()
+
+	const maxImageSize = 5 * 1024 * 1024  // 5 MB for images
+	const maxDocSize = 10 * 1024 * 1024   // 10 MB for documents
+
+	ct := strings.ToLower(strings.Split(header.Header.Get("Content-Type"), ";")[0])
+	isImage := ct == "image/jpeg" || ct == "image/png" || ct == "image/webp" || ct == "image/gif"
+	isDoc := ct == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+	if !isImage && !isDoc {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only images (JPEG, PNG, WebP, GIF) and DOCX files are allowed"})
+		return
+	}
+
+	maxSize := int64(maxImageSize)
+	if isDoc {
+		maxSize = maxDocSize
+	}
+	if header.Size > maxSize {
+		limitMB := maxSize / (1024 * 1024)
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("File too large. Max %dMB", limitMB)})
+		return
+	}
+
+	cdnURL, err := utils.UploadMultipartFileToBunnyCDN(file, header)
+	if err != nil {
+		log.Printf("❌ [CommentAttachment] BunnyCDN upload failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Upload failed"})
+		return
+	}
+
+	log.Printf("✅ [CommentAttachment] user=%d uploaded %s", userID, cdnURL)
+	c.JSON(http.StatusOK, gin.H{"url": cdnURL})
 }

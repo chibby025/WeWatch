@@ -1,8 +1,8 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup, toggleRoomFavourite, joinRoom } from '../services/api';
-import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon, EyeIcon, ChatBubbleOvalLeftEllipsisIcon, BookmarkIcon } from '@heroicons/react/24/solid';
+import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup, toggleRoomFavourite, joinRoom, clearAllNotifications } from '../services/api';
+import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon, EyeIcon, ChatBubbleOvalLeftEllipsisIcon, BookmarkIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/solid';
 import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon, FaceSmileIcon as FaceSmileOutlineIcon, MicrophoneIcon as MicrophoneOutlineIcon, PaperClipIcon as PaperClipOutlineIcon, ChartBarSquareIcon as ChartBarSquareOutlineIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
 import { Plus, Home, Search } from 'lucide-react';
 import jwtDecodeUtil from '../utils/jwt';
@@ -154,6 +154,7 @@ const LobbyPage = () => {
   const [lightboxAvatarUser, setLightboxAvatarUser] = useState(null); // Avatar lightbox target (clicked avatar in chat tab)
   const [chatMessages, setChatMessages] = useState({}); // { userId: [messages] }
   const [newChatMessage, setNewChatMessage] = useState('');
+  const [replyingTo, setReplyingTo] = useState(null); // message being replied to
   const [chatsLoading, setChatsLoading] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState({}); // { userId: count }
   const [friendsSearchTerm, setFriendsSearchTerm] = useState(''); // Search friends
@@ -1384,20 +1385,20 @@ const LobbyPage = () => {
   const handleSendChatMessage = async (e) => {
     e.preventDefault();
     if (!newChatMessage.trim() || !selectedChatUser) return;
-    
+
+    const payload = { recipient_id: selectedChatUser.id, message: newChatMessage };
+    if (replyingTo) payload.reply_to_id = replyingTo.id;
+
     try {
-      const response = await apiClient.post('/api/lobby-chats/send', {
-        recipient_id: selectedChatUser.id,
-        message: newChatMessage
-      });
-      
-      // Add message to local state
+      const response = await apiClient.post('/api/lobby-chats/send', payload);
+
       setChatMessages(prev => ({
         ...prev,
         [selectedChatUser.id]: [...(prev[selectedChatUser.id] || []), response.data]
       }));
-      
+
       setNewChatMessage('');
+      setReplyingTo(null);
       scrollToBottomChat();
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -2169,6 +2170,14 @@ const LobbyPage = () => {
       await apiClient.patch('/api/notifications/read-all');
       setUnreadNotifCount(0);
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    } catch (e) {}
+  };
+
+  const handleClearAllNotifications = async () => {
+    try {
+      await clearAllNotifications();
+      setNotifications([]);
+      setUnreadNotifCount(0);
     } catch (e) {}
   };
 
@@ -3160,28 +3169,80 @@ const LobbyPage = () => {
 
       {/* 🔔 Notification Panel */}
       {showNotifPanel && (
-        <div className="fixed bottom-20 right-4 z-40 w-80 max-h-96 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed bottom-20 right-4 z-40 w-80 max-h-[28rem] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl flex flex-col overflow-hidden">
+          {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
             <span className="font-semibold text-white text-sm">Notifications</span>
-            <button onClick={() => setShowNotifPanel(false)} className="text-gray-400 hover:text-white">
-              <XMarkIcon className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              {notifications.length > 0 && (
+                <button
+                  onClick={handleClearAllNotifications}
+                  className="text-xs text-red-400 hover:text-red-300 transition-colors font-medium"
+                >
+                  Clear all
+                </button>
+              )}
+              <button onClick={() => setShowNotifPanel(false)} className="text-gray-400 hover:text-white">
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
           </div>
+          {/* List */}
           <div className="overflow-y-auto flex-1">
             {notifications.length === 0 ? (
               <p className="text-gray-400 text-sm text-center py-8">No notifications yet</p>
             ) : (
-              notifications.map(n => (
-                <button
-                  key={n.id}
-                  onClick={() => handleNotificationClick(n)}
-                  className={`w-full text-left px-4 py-3 border-b border-gray-800 hover:bg-gray-750 transition-colors ${!n.is_read ? 'bg-gray-800' : ''}`}
-                >
-                  <p className="text-white text-sm font-medium">{n.title}</p>
-                  <p className="text-gray-400 text-xs mt-0.5">{n.body}</p>
-                  <p className="text-gray-600 text-xs mt-1">{new Date(n.created_at).toLocaleString()}</p>
-                </button>
-              ))
+              notifications.map(n => {
+                const nType = n.notif_type || n.type;
+                // Pick icon + colour per notification type
+                let Icon = BellIcon;
+                let iconBg = 'bg-gray-700';
+                let iconColor = 'text-gray-300';
+                if (nType === 'friend_request' || nType === 'friend_accepted') {
+                  Icon = UserIcon; iconBg = 'bg-blue-900'; iconColor = 'text-blue-400';
+                } else if (nType === 'dm_received') {
+                  Icon = ChatBubbleLeftIcon; iconBg = 'bg-purple-900'; iconColor = 'text-purple-400';
+                } else if (nType === 'missed_call') {
+                  Icon = PhoneIcon; iconBg = 'bg-red-900'; iconColor = 'text-red-400';
+                } else if (nType === 'session_started') {
+                  Icon = VideoCameraIcon; iconBg = 'bg-green-900'; iconColor = 'text-green-400';
+                } else if (nType === 'session_ended') {
+                  Icon = VideoCameraIcon; iconBg = 'bg-gray-800'; iconColor = 'text-gray-400';
+                } else if (nType === 'room_post') {
+                  Icon = FilmIcon; iconBg = 'bg-orange-900'; iconColor = 'text-orange-400';
+                } else if (nType === 'post_like') {
+                  Icon = HeartIcon; iconBg = 'bg-pink-900'; iconColor = 'text-pink-400';
+                } else if (nType === 'post_comment' || nType === 'reply') {
+                  Icon = ChatBubbleOvalLeftEllipsisIcon; iconBg = 'bg-sky-900'; iconColor = 'text-sky-400';
+                } else if (nType === 'event_booking' || nType === 'event_booking_confirm') {
+                  Icon = CalendarDaysIcon; iconBg = 'bg-teal-900'; iconColor = 'text-teal-400';
+                } else if (nType === 'watch_invite') {
+                  Icon = EyeIcon; iconBg = 'bg-purple-900'; iconColor = 'text-purple-400';
+                } else if (nType === 'token_gift') {
+                  Icon = HeartIcon; iconBg = 'bg-yellow-900'; iconColor = 'text-yellow-400';
+                }
+                return (
+                  <button
+                    key={n.id}
+                    onClick={() => handleNotificationClick(n)}
+                    className={`w-full text-left px-4 py-3 border-b border-gray-800 hover:bg-gray-800/60 transition-colors flex items-start gap-3 ${!n.is_read ? 'bg-gray-800' : ''}`}
+                  >
+                    {/* Icon bubble */}
+                    <div className={`flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center mt-0.5 ${iconBg}`}>
+                      <Icon className={`h-4 w-4 ${iconColor}`} />
+                    </div>
+                    {/* Text */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-1">
+                        <p className={`text-sm font-medium leading-snug ${!n.is_read ? 'text-white' : 'text-gray-300'}`}>{n.title}</p>
+                        {!n.is_read && <span className="flex-shrink-0 w-2 h-2 rounded-full bg-purple-500 mt-1" />}
+                      </div>
+                      {n.body ? <p className="text-gray-400 text-xs mt-0.5 line-clamp-2">{n.body}</p> : null}
+                      <p className="text-gray-600 text-xs mt-1">{new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {new Date(n.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</p>
+                    </div>
+                  </button>
+                );
+              })
             )}
           </div>
         </div>
@@ -5140,6 +5201,7 @@ const LobbyPage = () => {
                             onDelete={handleDeleteMessage}
                             onVotePoll={handleVotePoll}
                             onViewUser={() => setLightboxAvatarUser(selectedChatUser)}
+                            onReply={(msg) => { setReplyingTo(msg); setTimeout(() => document.querySelector('textarea[placeholder="What do wanna do today?"]')?.focus(), 50); }}
                             liveRooms={liveRooms}
                             endedSessionIds={endedSessionIds}
                           />
@@ -5185,6 +5247,24 @@ const LobbyPage = () => {
                       /* Redesigned Message Input - Modern Chat UI */
                       <form onSubmit={handleSendChatMessage} className="absolute bottom-0 left-0 right-0">
                         <div className="mb-2 mx-3 relative bg-white dark:bg-gray-900 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-2">
+                          {/* Reply strip */}
+                          {replyingTo && (
+                            <div className="flex items-start gap-2 mb-2 px-2 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-xl border-l-2 border-purple-500">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[10px] font-semibold text-purple-500 mb-0.5">
+                                  {replyingTo.sender_id === currentUser?.id ? 'You' : selectedChatUser?.username}
+                                </p>
+                                <p className="text-xs text-gray-600 dark:text-gray-400 line-clamp-1">{replyingTo.message}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setReplyingTo(null)}
+                                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 flex-shrink-0 p-0.5"
+                              >
+                                <XMarkIcon className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
                           {/* Text Input */}
                           <textarea
                             value={newChatMessage}
@@ -6217,7 +6297,7 @@ const LobbyPage = () => {
                 className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-500 dark:hover:text-purple-400 transition-all active:scale-90"
                 title="New Group"
               >
-                <UsersIcon className="w-7 h-7" />
+                <ChatBubbleLeftRightIcon className="w-7 h-7" />
               </button>
             ) : (
               <button

@@ -480,8 +480,9 @@ func main() {
     	roomGroup.GET("/:id/users/:user_id/role", handlers.GetUserRoleHandler)
 		roomGroup.POST("/:id/join", handlers.JoinRoomHandler)
 		roomGroup.POST("/:id/leave", handlers.LeaveRoomHandler)
-		roomGroup.DELETE("/:id/members/:user_id", handlers.KickMemberHandler)      // DELETE /api/rooms/:id/members/:user_id
+		roomGroup.DELETE("/:id/members/:user_id", handlers.KickMemberHandler)        // DELETE /api/rooms/:id/members/:user_id
 		roomGroup.POST("/:id/members/:user_id/ban", handlers.BanMemberHandler)      // POST /api/rooms/:id/members/:user_id/ban
+		roomGroup.POST("/:id/invite-user", handlers.InviteUserToRoomHandler)        // POST /api/rooms/:id/invite-user
 		roomGroup.POST("/:id/favourite", handlers.ToggleRoomFavouriteHandler)       // POST /api/rooms/:id/favourite (Toggle room favourite)
 		roomGroup.GET("/favourites", handlers.GetFavouriteRoomsHandler)             // GET /api/rooms/favourites (List user's favourite rooms)
 		roomGroup.DELETE("/:id", handlers.DeleteRoomHandler)
@@ -645,6 +646,7 @@ func main() {
 		postsProtected.DELETE("/comments/:id", handlers.DeletePostComment)                 // DELETE /api/posts/comments/:id (Delete comment)
 		postsProtected.POST("/:id/purchase", handlers.PurchasePost)        // POST /api/posts/:id/purchase (Buy paid post with tokens, 75/25 split)
 		postsProtected.POST("/:id/tip", handlers.TipPost)                  // POST /api/posts/:id/tip (Tip post, 1 token)
+		postsProtected.POST("/comment-attachment", handlers.UploadCommentAttachmentHandler) // POST /api/posts/comment-attachment (Upload image/DOCX for comment)
 	}
 	
 	// Following feed (protected — needs auth to know which rooms user joined)
@@ -668,9 +670,10 @@ func main() {
 	notifGroup := r.Group("/api/notifications")
 	notifGroup.Use(handlers.AuthMiddleware())
 	{
-		notifGroup.GET("", handlers.GetMyNotificationsHandler)              // GET /api/notifications
+		notifGroup.GET("", handlers.GetMyNotificationsHandler)                 // GET /api/notifications
 		notifGroup.PATCH("/read-all", handlers.MarkAllNotificationsReadHandler) // PATCH /api/notifications/read-all
-		notifGroup.PATCH("/:id/read", handlers.MarkNotificationReadHandler)    // PATCH /api/notifications/:id/read
+		notifGroup.PATCH("/:id/read", handlers.MarkNotificationReadHandler)     // PATCH /api/notifications/:id/read
+		notifGroup.DELETE("", handlers.ClearAllNotificationsHandler)            // DELETE /api/notifications
 	}
 
 	theaterGroup := r.Group("/api/theaters")

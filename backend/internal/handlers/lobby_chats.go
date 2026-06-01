@@ -137,6 +137,7 @@ func GetLobbyChatMessagesHandler(c *gin.Context) {
 type SendLobbyChatMessageRequest struct {
 	RecipientID uint   `json:"recipient_id" binding:"required"`
 	Message     string `json:"message" binding:"required,max=1000"`
+	ReplyToID   *uint  `json:"reply_to_id"`
 }
 
 // SendLobbyChatMessageHandler sends a message to another user
@@ -222,11 +223,27 @@ func SendLobbyChatMessageHandler(c *gin.Context) {
 		return
 	}
 
-	// Create lobby chat message
+	// Build chat message — attach reply snapshot if provided
 	chat := models.LobbyChat{
 		SenderID:    senderID,
 		RecipientID: req.RecipientID,
 		Message:     trimmedMessage,
+	}
+	if req.ReplyToID != nil {
+		var original models.LobbyChat
+		if err := db.Select("id, sender_id, recipient_id, message").First(&original, req.ReplyToID).Error; err == nil {
+			// Verify the original belongs to this conversation
+			isInConvo := (original.SenderID == senderID && original.RecipientID == req.RecipientID) ||
+				(original.SenderID == req.RecipientID && original.RecipientID == senderID)
+			if isInConvo {
+				snap := original.Message
+				if len([]rune(snap)) > 100 {
+					snap = string([]rune(snap)[:100]) + "…"
+				}
+				chat.ReplyToID = req.ReplyToID
+				chat.ReplyToSnap = &snap
+			}
+		}
 	}
 
 	if err := db.Create(&chat).Error; err != nil {
@@ -286,6 +303,8 @@ func BroadcastLobbyChatMessage(db *gorm.DB, chat models.LobbyChat, sender models
 		"attachment_name": chat.AttachmentName,
 		"attachment_size": chat.AttachmentSize,
 		"metadata":        chat.Metadata,
+		"reply_to_id":     chat.ReplyToID,
+		"reply_to_snap":   chat.ReplyToSnap,
 		"created_at":      chat.CreatedAt,
 		"read_at":         chat.ReadAt,
 		"sender_username": sender.Username,

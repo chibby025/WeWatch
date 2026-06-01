@@ -307,11 +307,13 @@ func UpdateRoomHandler(c *gin.Context) {
 
 	// Bind update data
 	var input struct {
-		Name            string `json:"name"`
-		Description     string `json:"description"`
-		ShowHost        *bool  `json:"show_host"`
-		ShowDescription *bool  `json:"show_description"`
-		Handle          string `json:"handle"`
+		Name                string `json:"name"`
+		Description         string `json:"description"`
+		ShowHost            *bool  `json:"show_host"`
+		ShowDescription     *bool  `json:"show_description"`
+		Handle              string `json:"handle"`
+		HostOnlyChat        *bool  `json:"host_only_chat"`
+		AutoInviteFollowers *bool  `json:"auto_invite_followers"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -347,6 +349,12 @@ func UpdateRoomHandler(c *gin.Context) {
 			}
 			room.Handle = newHandle
 		}
+	}
+	if input.HostOnlyChat != nil {
+		room.HostOnlyChat = *input.HostOnlyChat
+	}
+	if input.AutoInviteFollowers != nil {
+		room.AutoInviteFollowers = *input.AutoInviteFollowers
 	}
 
 	// Save updates

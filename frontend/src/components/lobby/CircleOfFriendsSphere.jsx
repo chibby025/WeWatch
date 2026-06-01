@@ -509,14 +509,6 @@ const CircleOfFriendsSphere = ({
             </div>
           </div>
 
-          {/* Empty hint */}
-          {circleMembers.length === 0 && activeRing === null && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <p className="text-white/20 text-xs text-center mt-24 leading-relaxed px-14">
-                Tap a ring to freeze it,<br />then add friends to that orbit
-              </p>
-            </div>
-          )}
         </div>
       </div>
 
@@ -545,6 +537,13 @@ const CircleOfFriendsSphere = ({
             <XMarkIcon className="w-4 h-4" />
           </button>
         </div>
+      )}
+
+      {/* ═══ EMPTY ORBIT HINT ════════════════════════════════════════════════ */}
+      {circleMembers.length === 0 && (
+        <p className="text-center text-white/30 text-xs font-medium tracking-wide pb-1 flex-shrink-0 pointer-events-none">
+          Tap to add friends to orbit
+        </p>
       )}
 
       {/* ═══ BOTTOM 3-ICON ACTION ROW ════════════════════════════════════════ */}

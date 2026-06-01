@@ -32,8 +32,9 @@ type RegisterInput struct {
 }
 
 // LoginInput defines the expected structure of the request body for login.
+// The Email field accepts either an email address or a username.
 type LoginInput struct {
-    Email    string `json:"email" binding:"required,email"` // Can also allow username
+    Email    string `json:"email" binding:"required"` // email address or username
     Password string `json:"password" binding:"required"`
 }
 
@@ -182,11 +183,11 @@ func LoginHandler(c *gin.Context) {
     }
 
     var user models.User
-    result := DB.Where("email = ?", input.Email).First(&user)
+    result := DB.Where("LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)", input.Email, input.Email).First(&user)
     if result.Error != nil {
         if result.Error == gorm.ErrRecordNotFound {
             // ✅ P0 Security Fix: Log failed login attempt (user not found)
-            models.LogSecurityEvent(DB, nil, models.EventFailedLogin, c.ClientIP(), c.GetHeader("User-Agent"), fmt.Sprintf(`{"email": "%s", "reason": "user_not_found"}`, input.Email))
+            models.LogSecurityEvent(DB, nil, models.EventFailedLogin, c.ClientIP(), c.GetHeader("User-Agent"), fmt.Sprintf(`{"identifier": "%s", "reason": "user_not_found"}`, input.Email))
             c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
             return
         } else {

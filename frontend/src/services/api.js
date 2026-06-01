@@ -1815,6 +1815,14 @@ export const deleteLobbyGroup = (groupId) =>
 export const renameLobbyGroup = (groupId, name) =>
   apiClient.patch(`/api/lobby-groups/${groupId}`, { name }).then(r => r.data);
 
+// Notifications
+export const clearAllNotifications = () =>
+  apiClient.delete('/api/notifications').then(r => r.data);
+
+// Room member invite
+export const inviteUserToRoom = (roomId, userId) =>
+  apiClient.post(`/api/rooms/${roomId}/invite-user`, { user_id: userId }).then(r => r.data);
+
 // Export the configured axios instance if needed for direct calls
 // or for setting up other interceptors elsewhere.
 export default apiClient;

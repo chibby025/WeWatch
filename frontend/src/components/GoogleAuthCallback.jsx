@@ -29,7 +29,7 @@ const GoogleAuthCallback = () => {
         console.log('✅ Google OAuth login successful');
         
         // Redirect to lobby
-        navigate('/lobby');
+        navigate('/lobby', { replace: true });
       } catch (error) {
         console.error('Failed to fetch user after Google OAuth:', error);
         navigate('/login');

@@ -2,7 +2,8 @@
 // Modal for editing room settings and preferences
 import React, { useState, useEffect } from 'react';
 import { XMarkIcon, FilmIcon, PhotoIcon, TrashIcon, PencilIcon, ShareIcon, PlusIcon, UserPlusIcon } from '@heroicons/react/24/outline';
-import apiClient, { createRoomGroup, getRoomGroups, updateRoomGroup, deleteRoomGroup } from '../services/api';
+import { InformationCircleIcon, Squares2X2Icon, UsersIcon, UserGroupIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/solid';
+import apiClient, { createRoomGroup, getRoomGroups, updateRoomGroup, deleteRoomGroup, searchUsers, inviteUserToRoom } from '../services/api';
 import toast from 'react-hot-toast';
 import PostsGrid from './PostsGrid';
 import PostViewModal from './PostViewModal';
@@ -51,6 +52,13 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
   const [groupImagePreview, setGroupImagePreview] = useState(null); // Preview URL for new group
   const [editGroupImageFile, setEditGroupImageFile] = useState(null); // For editing group image
   const [editGroupImagePreview, setEditGroupImagePreview] = useState(null); // Preview for editing
+
+  // Add member state
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [addMemberQuery, setAddMemberQuery] = useState('');
+  const [addMemberResults, setAddMemberResults] = useState([]);
+  const [addMemberLoading, setAddMemberLoading] = useState(false);
+  const [invitedIds, setInvitedIds] = useState(new Set());
 
   // Initialize form data when room changes
   useEffect(() => {
@@ -343,6 +351,34 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
     }));
   };
 
+  const handleAddMemberSearch = async (query) => {
+    setAddMemberQuery(query);
+    if (query.trim().length < 2) { setAddMemberResults([]); return; }
+    try {
+      setAddMemberLoading(true);
+      const data = await searchUsers(query);
+      const existingIds = new Set([
+        room?.host_id,
+        ...(members || []).map(m => m.id),
+      ]);
+      setAddMemberResults((data.users || []).filter(u => !existingIds.has(u.id)));
+    } catch {
+      // silently ignore search errors
+    } finally {
+      setAddMemberLoading(false);
+    }
+  };
+
+  const handleInviteUser = async (user) => {
+    try {
+      await inviteUserToRoom(room?.id || room?.ID, user.id);
+      setInvitedIds(prev => new Set([...prev, user.id]));
+      toast.success(`Invitation sent to @${user.username}`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to send invitation');
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -391,7 +427,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                     handleImageDelete();
                   }}
                   disabled={uploadingImage}
-                  className="absolute top-0 right-0 bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 rounded-full p-2 shadow-xl transition-all transform hover:scale-110 disabled:opacity-50"
+                  className="absolute -top-1 left-1/2 -translate-x-1/2 flex items-center justify-center bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 rounded-full p-2 shadow-xl transition-all transform hover:scale-110 disabled:opacity-50"
                   title="Remove image"
                 >
                   <TrashIcon className="w-4 h-4 text-white" />
@@ -446,7 +482,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 />
               ) : (
                 <h2 
-                  className={`text-lg sm:text-xl font-bold text-white truncate mb-2 ${isHost ? 'cursor-pointer hover:text-purple-400 transition-colors' : ''}`}
+                  className={`text-xl sm:text-2xl font-bold text-white truncate mb-0.5 ${isHost ? 'cursor-pointer hover:text-purple-400 transition-colors' : ''}`}
                   onClick={() => isHost && setIsEditingName(true)}
                   title={isHost ? 'Click to edit' : ''}
                 >
@@ -454,47 +490,9 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 </h2>
               )}
               
-              {/* Description - Display/Edit */}
-              {isEditingDescription ? (
-                <div className="flex items-start gap-2">
-                  <input
-                    type="text"
-                    value={formData.description}
-                    onChange={handleChange}
-                    name="description"
-                    placeholder="Add a description..."
-                    className="flex-1 px-3 py-1.5 text-sm bg-gray-800/50 border border-gray-600 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    autoFocus
-                    onBlur={() => setIsEditingDescription(false)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') setIsEditingDescription(false);
-                      if (e.key === 'Escape') {
-                        setFormData(prev => ({ ...prev, description: room?.description || room?.Description || '' }));
-                        setIsEditingDescription(false);
-                      }
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="flex items-start gap-2 group">
-                  <p className="text-xs sm:text-sm text-gray-400 line-clamp-2 flex-1">
-                    {formData.description || 'No description'}
-                  </p>
-                  {isHost && (
-                    <button
-                      onClick={() => setIsEditingDescription(true)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-700/50 rounded"
-                      title="Edit description"
-                    >
-                      <PencilIcon className="w-3 h-3 text-gray-400" />
-                    </button>
-                  )}
-                </div>
-              )}
-
               {/* Handle */}
               {isEditingHandle && isHost ? (
-                <div className="flex items-center gap-1 mt-1.5">
+                <div className="flex items-center gap-1 mt-1">
                   <span className="text-gray-500 text-xs font-semibold">@</span>
                   <input
                     type="text"
@@ -514,7 +512,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   />
                 </div>
               ) : (
-                <div className="flex items-center gap-1 mt-1.5 group">
+                <div className="flex items-center gap-1 mt-0 group">
                   <p className="text-[10px] text-gray-500 font-medium">
                     {formData.handle ? `@${formData.handle}` : (isHost ? '@handle' : '')}
                   </p>
@@ -525,6 +523,44 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                       title="Edit handle"
                     >
                       <PencilIcon className="w-2.5 h-2.5 text-gray-500" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Description - Display/Edit */}
+              {isEditingDescription ? (
+                <div className="flex items-start gap-2 mt-1.5">
+                  <input
+                    type="text"
+                    value={formData.description}
+                    onChange={handleChange}
+                    name="description"
+                    placeholder="Add a description..."
+                    className="flex-1 px-3 py-1.5 text-sm bg-gray-800/50 border border-gray-600 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    autoFocus
+                    onBlur={() => setIsEditingDescription(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') setIsEditingDescription(false);
+                      if (e.key === 'Escape') {
+                        setFormData(prev => ({ ...prev, description: room?.description || room?.Description || '' }));
+                        setIsEditingDescription(false);
+                      }
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 mt-1.5 group">
+                  <p className="text-xs sm:text-sm text-gray-400 line-clamp-2 flex-1">
+                    {formData.description || 'No description'}
+                  </p>
+                  {isHost && (
+                    <button
+                      onClick={() => setIsEditingDescription(true)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-700/50 rounded"
+                      title="Edit description"
+                    >
+                      <PencilIcon className="w-3 h-3 text-gray-400" />
                     </button>
                   )}
                 </div>
@@ -556,38 +592,36 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
         <div className="flex border-b border-gray-700/50 px-4 sm:px-6">
           <button
             onClick={() => setActiveTab('info')}
-            className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
-              activeTab === 'info' 
-                ? 'text-purple-400 border-b-2 border-purple-400' 
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium transition-all ${
+              activeTab === 'info'
+                ? 'text-purple-400 border-b-2 border-purple-400'
                 : 'text-gray-400 hover:text-white'
             }`}
           >
-            <span>ℹ️</span>
+            <InformationCircleIcon className="w-4 h-4" />
             <span>Info</span>
           </button>
           <button
             onClick={() => setActiveTab('posts')}
-            className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
-              activeTab === 'posts' 
-                ? 'text-purple-400 border-b-2 border-purple-400' 
+            className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium transition-all ${
+              activeTab === 'posts'
+                ? 'text-purple-400 border-b-2 border-purple-400'
                 : 'text-gray-400 hover:text-white'
             }`}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-            </svg>
+            <Squares2X2Icon className="w-4 h-4" />
             <span>Posts</span>
           </button>
           {isHost && (
             <button
               onClick={() => setActiveTab('groups')}
-              className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
-                activeTab === 'groups' 
-                  ? 'text-purple-400 border-b-2 border-purple-400' 
+              className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium transition-all ${
+                activeTab === 'groups'
+                  ? 'text-purple-400 border-b-2 border-purple-400'
                   : 'text-gray-400 hover:text-white'
               }`}
             >
-              <span>👥</span>
+              <ChatBubbleLeftRightIcon className="w-4 h-4" />
               <span>Groups</span>
             </button>
           )}
@@ -603,6 +637,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 <span className="w-1 h-4 bg-purple-500 rounded-full"></span>
                 Room Info
               </h3>
+              {/* Host row */}
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-400 flex items-center gap-2">
                   <Avatar
@@ -613,7 +648,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   />
                   Host
                 </span>
-                <span 
+                <span
                   className="text-white font-medium cursor-pointer hover:text-purple-400 transition-colors"
                   onClick={() => setIsHostProfileModalOpen(true)}
                   title="View host profile"
@@ -621,63 +656,143 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   {room?.host_username || `User ${room?.host_id || 'Unknown'}`}
                 </span>
               </div>
-              <div 
-                onClick={() => setShowMembersList(!showMembersList)}
-                className="flex items-center justify-between text-sm cursor-pointer hover:bg-white/5 -mx-2 px-2 py-1.5 rounded-lg transition-colors"
-              >
-                <span className="text-gray-400 flex items-center gap-2">
-                  <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4 opacity-70" />
-                  Members
-                  <svg 
-                    className={`w-3 h-3 transition-transform ${showMembersList ? 'rotate-180' : ''}`}
-                    fill="none" 
-                    stroke="currentColor" 
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </span>
-                <span className="text-white font-medium bg-purple-600/30 px-3 py-1 rounded-full">
-                  {membersInRoom}
-                </span>
-              </div>
-              
-              {/* Inline Members List */}
-              {showMembersList && members.length > 0 && (
-                <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto scrollbar-hide">
-                  {members.map((member) => (
-                    <div 
-                      key={member.id}
-                      className="flex items-center gap-2 p-2 rounded-lg bg-gray-800/30 hover:bg-gray-800/50 transition-colors"
-                    >
-                      <Avatar
-                        user={member}
-                        onClick={() => setExpandedMemberAvatar(resolveAvatarUrl(member.avatar_url))}
-                        title="Click to view full size"
-                        className="w-7 h-7 rounded-full object-cover flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all"
-                      />
-                      <span className="text-sm text-white flex-1 truncate">
-                        {member.username || `User ${member.id}`}
-                      </span>
-                      {member.id === room?.host_id && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-medium">
-                          Host
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              
+
+              {/* Avg. Audience */}
               {room?.average_watchers > 0 && (
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-400 flex items-center gap-2">
-                    <span className="text-base">👥</span>
-                    Avg. Watchers
+                    <UserGroupIcon className="h-5 w-5 text-white" />
+                    Avg. Audience
                   </span>
                   <span className="text-white font-medium">
                     {typeof room.average_watchers === 'number' ? room.average_watchers.toFixed(1) : room.average_watchers}
                   </span>
+                </div>
+              )}
+
+              {/* Members row — chevron toggles list, UserPlus toggles search */}
+              <div
+                onClick={() => {
+                  const next = !showMembersList;
+                  setShowMembersList(next);
+                  if (!next) { setShowAddMember(false); setAddMemberQuery(''); setAddMemberResults([]); }
+                }}
+                className="flex items-center justify-between text-sm cursor-pointer hover:bg-white/5 -mx-2 px-2 py-1.5 rounded-lg transition-colors"
+              >
+                <span className="text-white flex items-center gap-2">
+                  <UsersIcon className="h-5 w-5 text-white" />
+                  Members
+                  <svg
+                    className={`w-3 h-3 transition-transform ${showMembersList ? 'rotate-180' : ''}`}
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </span>
+                <div className="flex items-center gap-2">
+                  {isHost && (
+                    <button
+                      type="button"
+                      title="Invite member"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const next = !showAddMember;
+                        setShowAddMember(next);
+                        if (next) { setShowMembersList(true); }
+                        else { setAddMemberQuery(''); setAddMemberResults([]); }
+                      }}
+                      className={`p-1 rounded-md transition-colors ${showAddMember ? 'bg-purple-600/40 text-purple-300' : 'hover:bg-white/10 text-white'}`}
+                    >
+                      <UserPlusIcon className="w-5 h-5" />
+                    </button>
+                  )}
+                  <span className="text-white font-medium bg-purple-600/30 px-3 py-1 rounded-full">
+                    {membersInRoom}
+                  </span>
+                </div>
+              </div>
+
+              {/* Search bar — shown above the card when invite is open */}
+              {isHost && showAddMember && (
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={addMemberQuery}
+                    onChange={(e) => handleAddMemberSearch(e.target.value)}
+                    placeholder="Search by username…"
+                    autoFocus
+                    className="flex-1 px-3 py-1.5 text-sm bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setShowAddMember(false); setAddMemberQuery(''); setAddMemberResults([]); }}
+                    className="text-gray-400 hover:text-white text-xs px-2 shrink-0"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {/* Unified card — member list when idle, search results when typing */}
+              {showMembersList && (
+                <div className="relative mt-2">
+                  <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-hide rounded-xl bg-white/5 border border-white/10 p-1.5">
+                    {addMemberQuery.trim().length >= 2 ? (
+                      addMemberLoading ? (
+                        <p className="text-xs text-gray-400 px-2 py-3 text-center">Searching…</p>
+                      ) : addMemberResults.length === 0 ? (
+                        <p className="text-xs text-gray-500 px-2 py-3 text-center">No users found</p>
+                      ) : (
+                        addMemberResults.map(user => (
+                          <div key={user.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/10 transition-colors">
+                            <Avatar user={user} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                            <span className="text-sm text-gray-200 flex-1 truncate">@{user.username}</span>
+                            {invitedIds.has(user.id) ? (
+                              <span className="text-xs text-green-400 font-medium">Invited ✓</span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleInviteUser(user)}
+                                className="text-xs px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors shrink-0"
+                              >
+                                Invite
+                              </button>
+                            )}
+                          </div>
+                        ))
+                      )
+                    ) : (
+                      members.length > 0 ? (
+                        members.map((member) => (
+                          <div
+                            key={member.id}
+                            className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/10 transition-colors"
+                          >
+                            <Avatar
+                              user={member}
+                              onClick={() => setExpandedMemberAvatar(resolveAvatarUrl(member.avatar_url))}
+                              title="Click to view full size"
+                              className="w-7 h-7 rounded-full object-cover flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all"
+                            />
+                            <span className="text-sm text-gray-200 flex-1 truncate">
+                              {member.username || `User ${member.id}`}
+                            </span>
+                            {member.id === room?.host_id && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-medium">
+                                Host
+                              </span>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-xs text-gray-500 px-2 py-3 text-center">No members yet</p>
+                      )
+                    )}
+                  </div>
+                  {/* Scroll hint — member list only, when 5+ rows */}
+                  {addMemberQuery.trim().length < 2 && members.length > 4 && (
+                    <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-8 rounded-b-xl bg-gradient-to-t from-gray-900/80 to-transparent" />
+                  )}
                 </div>
               )}
             </div>
@@ -694,78 +809,81 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               
               {/* Host-Only Chat Toggle */}
               <div className="bg-gradient-to-br from-gray-800/40 to-gray-900/40 rounded-xl p-4 border border-gray-700/30">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-lg">🔒</span>
-                      <label htmlFor="host_only_chat" className="text-sm font-medium text-white">
-                        Host-Only Chat
-                      </label>
-                    </div>
-                    <p className="text-xs text-gray-400 leading-relaxed">
-                      When enabled, only you (the host) can send messages in the room chat. Members can still view messages but cannot reply.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    id="host_only_chat"
-                    onClick={() => setFormData(prev => ({ ...prev, host_only_chat: !prev.host_only_chat }))}
-                    className={`relative inline-flex h-6 !w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
-                      formData.host_only_chat ? 'bg-purple-600' : 'bg-gray-600'
-                    }`}
-                    style={{ minWidth: '2.75rem', width: '2.75rem' }}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                        formData.host_only_chat ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-base">🔒</span>
+                  <label htmlFor="host_only_chat" className="text-sm font-medium text-white">
+                    Host-only chat
+                  </label>
                 </div>
-                
-                {/* Active State Indicator */}
+                <p className="text-xs text-gray-400 mb-3">
+                  Only you can send messages. Members can still read.
+                </p>
+                <label
+                  htmlFor="host_only_chat"
+                  className="relative cursor-pointer"
+                  style={{ display: 'inline-block', width: '44px', height: '24px', flexShrink: 0 }}
+                >
+                  <input
+                    type="checkbox"
+                    id="host_only_chat"
+                    className="sr-only"
+                    checked={!!formData.host_only_chat}
+                    onChange={() => setFormData(prev => ({ ...prev, host_only_chat: !prev.host_only_chat }))}
+                  />
+                  <span
+                    className="absolute inset-0 rounded-full transition-colors duration-200"
+                    style={{ backgroundColor: formData.host_only_chat ? '#9333ea' : '#4b5563' }}
+                  />
+                  <span
+                    className="absolute rounded-full bg-white shadow transition-transform duration-200"
+                    style={{
+                      width: '20px', height: '20px',
+                      top: '2px', left: '2px',
+                      transform: formData.host_only_chat ? 'translateX(20px)' : 'translateX(0)',
+                    }}
+                  />
+                </label>
                 {formData.host_only_chat && (
-                  <div className="mt-3 pt-3 border-t border-gray-700/50">
-                    <div className="flex items-center gap-2 text-xs text-yellow-400">
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                      </svg>
-                      <span>Chat is locked - only you can send messages</span>
-                    </div>
-                  </div>
+                  <p className="mt-2 text-xs text-yellow-400">Chat is locked — only you can send messages</p>
                 )}
               </div>
 
               {/* Auto-Invite Followers Toggle */}
               <div className="bg-gradient-to-br from-gray-800/40 to-gray-900/40 rounded-xl p-4 border border-gray-700/30 mt-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-lg">🔔</span>
-                      <label htmlFor="auto_invite_followers" className="text-sm font-medium text-white">
-                        Auto-invite followers to room
-                      </label>
-                    </div>
-                    <p className="text-xs text-gray-400 leading-relaxed">
-                      When someone follows you, automatically send them an invite to join your room. Public rooms auto-accept; private rooms require your approval.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    id="auto_invite_followers"
-                    onClick={() => setFormData(prev => ({ ...prev, auto_invite_followers: !prev.auto_invite_followers }))}
-                    className={`relative inline-flex h-6 !w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
-                      formData.auto_invite_followers ? 'bg-purple-600' : 'bg-gray-600'
-                    }`}
-                    style={{ minWidth: '2.75rem', width: '2.75rem' }}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                        formData.auto_invite_followers ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-base">🔔</span>
+                  <label htmlFor="auto_invite_followers" className="text-sm font-medium text-white cursor-pointer">
+                    Auto-invite followers
+                  </label>
                 </div>
+                <p className="text-xs text-gray-400 mb-3">
+                  New followers get a room invite automatically.
+                </p>
+                <label
+                  htmlFor="auto_invite_followers"
+                  className="relative cursor-pointer"
+                  style={{ display: 'inline-block', width: '44px', height: '24px', flexShrink: 0 }}
+                >
+                  <input
+                    type="checkbox"
+                    id="auto_invite_followers"
+                    className="sr-only"
+                    checked={!!formData.auto_invite_followers}
+                    onChange={() => setFormData(prev => ({ ...prev, auto_invite_followers: !prev.auto_invite_followers }))}
+                  />
+                  <span
+                    className="absolute inset-0 rounded-full transition-colors duration-200"
+                    style={{ backgroundColor: formData.auto_invite_followers ? '#9333ea' : '#4b5563' }}
+                  />
+                  <span
+                    className="absolute rounded-full bg-white shadow transition-transform duration-200"
+                    style={{
+                      width: '20px', height: '20px',
+                      top: '2px', left: '2px',
+                      transform: formData.auto_invite_followers ? 'translateX(20px)' : 'translateX(0)',
+                    }}
+                  />
+                </label>
               </div>
             </div>
           </div>
@@ -1123,7 +1241,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 </>
               ) : (
                 <>
-                  <img src="/icons/saveIcon.svg" alt="Save" className="w-5 h-5" />
+                  <img src="/icons/saveIcon.svg" alt="Save" className="w-6 h-6 brightness-0 invert" />
                   <span>Save Changes</span>
                 </>
               )}

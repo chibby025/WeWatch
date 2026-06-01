@@ -13,6 +13,7 @@ type PostComment struct {
 	UserID          uint           `gorm:"not null;index" json:"user_id"`
 	ParentCommentID *uint          `gorm:"index" json:"parent_comment_id,omitempty"` // NULL for top-level comments
 	Content         string         `gorm:"type:text;not null" json:"content"`
+	AttachmentURL   *string        `gorm:"type:text" json:"attachment_url,omitempty"`
 	LikesCount      int            `gorm:"default:0;not null" json:"likes_count"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`

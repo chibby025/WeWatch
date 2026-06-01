@@ -1,7 +1,16 @@
 // WeWatch/frontend/src/components/PostViewModal.jsx
 // Fullscreen post viewer with engagement features (like, comment, share)
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Heart, MessageCircle, Share2, MoreVertical, Send, Trash2, UserPlus, UserCheck, Link, Download, CornerDownLeft, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, Heart, MessageCircle, Share2, MoreVertical, Send, Trash2, UserPlus, UserCheck, Link, Download, CornerDownLeft, ChevronDown, ChevronUp, Paperclip, Reply as ReplyIcon } from 'lucide-react';
+
+const formatCommentTime = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if (isToday) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+};
 import apiClient, { getFollowersCount, joinRoom, leaveRoom, tipPost } from '../services/api';
 import toast from 'react-hot-toast';
 import { formatCount } from '../utils/formatCount';
@@ -16,6 +25,10 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
   const [comments, setComments] = useState([]);
   const [commentsCount, setCommentsCount] = useState(0);
   const [newComment, setNewComment] = useState('');
+  const [commentAttachment, setCommentAttachment] = useState(null);
+  const [commentAttachPreview, setCommentAttachPreview] = useState(null);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const commentAttachRef = useRef(null);
   const [loadingComments, setLoadingComments] = useState(false);
   const [submittingComment, setSubmittingComment] = useState(false);
   const [viewTracked, setViewTracked] = useState(false);
@@ -24,6 +37,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
   const [showControls, setShowControls] = useState(true); // YouTube-style auto-hide
   const [replyingToId, setReplyingToId] = useState(null);
   const [replyingToUsername, setReplyingToUsername] = useState('');
+  const [openCommentMenu, setOpenCommentMenu] = useState(null);
   const [expandedReplies, setExpandedReplies] = useState(new Set());
   const commentInputRef = useRef(null);
   const [followersCount, setFollowersCount] = useState(0);
@@ -324,15 +338,49 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
     }
   };
 
+  const handleCommentAttachmentSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const isImage = file.type.startsWith('image/');
+    const isDoc = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (!isImage && !isDoc) { toast.error('Only images and DOCX files allowed'); return; }
+    const maxMB = isDoc ? 10 : 5;
+    if (file.size > maxMB * 1024 * 1024) { toast.error(`Max ${maxMB}MB`); return; }
+    setCommentAttachment(file);
+    if (isImage) {
+      const reader = new FileReader();
+      reader.onloadend = () => setCommentAttachPreview(reader.result);
+      reader.readAsDataURL(file);
+    } else {
+      setCommentAttachPreview(null);
+    }
+    e.target.value = '';
+  };
+
+  const clearCommentAttachment = () => { setCommentAttachment(null); setCommentAttachPreview(null); };
+
   const handleCommentSubmit = async (e) => {
     e.preventDefault();
-    if (!newComment.trim() || submittingComment || !post) return;
+    if ((!newComment.trim() && !commentAttachment) || submittingComment || !post) return;
 
     setSubmittingComment(true);
     const postId = post.id || post.ID;
     try {
-      const body = { content: newComment.trim() };
+      let attachmentUrl = null;
+      if (commentAttachment) {
+        setUploadingAttachment(true);
+        const fd = new FormData();
+        fd.append('file', commentAttachment, commentAttachment.name);
+        const res = await apiClient.post('/api/posts/comment-attachment', fd, {
+          headers: { 'Content-Type': undefined },
+        });
+        attachmentUrl = res.data.url;
+        setUploadingAttachment(false);
+      }
+
+      const body = { content: newComment.trim() || '📎' };
       if (replyingToId) body.parent_comment_id = replyingToId;
+      if (attachmentUrl) body.attachment_url = attachmentUrl;
 
       const response = await apiClient.post(`/api/posts/${postId}/comments`, body);
       const newCommentData = response.data.comment;
@@ -354,7 +402,9 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
         if (onCommentAdded) onCommentAdded(postId);
       }
       setNewComment('');
+      clearCommentAttachment();
     } catch (err) {
+      setUploadingAttachment(false);
       console.error('Failed to add comment:', err);
       toast.error(err.response?.data?.error || 'Failed to add comment');
     } finally {
@@ -684,29 +734,44 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
                           {avatar}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className="font-semibold text-sm">{username}</span>
-                            <span className="text-xs text-gray-500">
-                              {new Date(createdAt).toLocaleDateString()}
-                            </span>
+                          {comment.content && comment.content !== '📎' && (
+                            <p className="text-sm text-gray-300 break-words">{comment.content}</p>
+                          )}
+                          {comment.attachment_url && (
+                            comment.attachment_url.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i) ? (
+                              <img src={comment.attachment_url} alt="attachment" className="mt-1.5 max-w-[200px] rounded-lg cursor-pointer" onClick={() => window.open(comment.attachment_url, '_blank')} />
+                            ) : (
+                              <a href={comment.attachment_url} target="_blank" rel="noopener noreferrer" className="mt-1 flex items-center gap-1 text-blue-400 text-xs hover:underline"><Paperclip className="w-3 h-3" /> Document</a>
+                            )
+                          )}
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="text-[11px] text-gray-500">{formatCommentTime(createdAt)}</span>
+                            <button onClick={() => handleReply(comment)} className="text-[11px] text-gray-500 hover:text-blue-400 transition-colors flex items-center gap-0.5">
+                              <ReplyIcon className="w-3 h-3" /> Reply
+                            </button>
                           </div>
-                          <p className="text-sm text-gray-300 break-words">{comment.content}</p>
-                          <button
-                            onClick={() => handleReply(comment)}
-                            className="mt-1 flex items-center gap-1 text-xs text-gray-500 hover:text-blue-400 transition-colors"
-                          >
-                            <CornerDownLeft className="w-3 h-3" />
-                            Reply
-                          </button>
                         </div>
-                        {currentUser && (currentUser.id === comment.user_id || currentUser.id === (comment.user?.id || comment.User?.id)) && (
-                          <button
-                            onClick={() => handleDeleteComment(commentId)}
-                            disabled={deletingCommentId === commentId}
-                            className="text-gray-500 hover:text-red-500 transition-colors disabled:opacity-50 flex-shrink-0"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                        {/* 3-dot menu */}
+                        {currentUser && (currentUser.id === (comment.user?.id || comment.User?.id) || currentUser.role === 'super_admin') && (
+                          <div className="relative flex-shrink-0">
+                            <button
+                              onClick={() => setOpenCommentMenu(openCommentMenu === commentId ? null : commentId)}
+                              className="p-1 rounded-full hover:bg-gray-700 text-gray-500 hover:text-white transition-colors"
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </button>
+                            {openCommentMenu === commentId && (
+                              <div className="absolute right-0 top-6 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-20 py-1 min-w-[100px]">
+                                <button
+                                  onClick={() => { handleDeleteComment(commentId); setOpenCommentMenu(null); }}
+                                  disabled={deletingCommentId === commentId}
+                                  className="w-full px-3 py-1.5 text-left text-sm text-red-400 hover:bg-gray-700 flex items-center gap-2 disabled:opacity-50"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
 
@@ -724,11 +789,18 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 mb-0.5">
                                     <span className="font-semibold text-xs">{replyUsername}</span>
-                                    <span className="text-xs text-gray-600">
-                                      {new Date(replyCreatedAt).toLocaleDateString()}
-                                    </span>
+                                    <span className="text-[10px] text-gray-500">{formatCommentTime(replyCreatedAt)}</span>
                                   </div>
-                                  <p className="text-xs text-gray-300 break-words">{reply.content}</p>
+                                  {reply.content && reply.content !== '📎' && (
+                                    <p className="text-xs text-gray-300 break-words">{reply.content}</p>
+                                  )}
+                                  {reply.attachment_url && (
+                                    reply.attachment_url.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i) ? (
+                                      <img src={reply.attachment_url} alt="attachment" className="mt-1 max-w-[160px] rounded-lg cursor-pointer" onClick={() => window.open(reply.attachment_url, '_blank')} />
+                                    ) : (
+                                      <a href={reply.attachment_url} target="_blank" rel="noopener noreferrer" className="mt-1 flex items-center gap-1 text-blue-400 text-xs hover:underline"><Paperclip className="w-3 h-3" /> Document</a>
+                                    )
+                                  )}
                                 </div>
                               </div>
                             );
@@ -767,7 +839,37 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
                   </button>
                 </div>
               )}
-              <div className="flex gap-2">
+              {/* Attachment preview */}
+              {(commentAttachment || commentAttachPreview) && (
+                <div className="relative mb-2 inline-flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-1.5">
+                  {commentAttachPreview
+                    ? <img src={commentAttachPreview} alt="attach" className="h-12 rounded" />
+                    : <Paperclip className="w-4 h-4 text-gray-400" />
+                  }
+                  {!commentAttachPreview && commentAttachment && (
+                    <span className="text-xs text-gray-400 max-w-[120px] truncate">{commentAttachment.name}</span>
+                  )}
+                  <button type="button" onClick={clearCommentAttachment} className="ml-1 text-gray-500 hover:text-red-400">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              <div className="flex gap-2 items-center">
+                <input
+                  type="file"
+                  ref={commentAttachRef}
+                  className="hidden"
+                  accept="image/*,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  onChange={handleCommentAttachmentSelect}
+                />
+                <button
+                  type="button"
+                  onClick={() => commentAttachRef.current?.click()}
+                  className="p-1.5 rounded-full hover:bg-gray-700 text-gray-400 hover:text-white transition-colors flex-shrink-0"
+                  title="Attach image or document"
+                >
+                  <Paperclip className="w-5 h-5" />
+                </button>
                 <input
                   ref={commentInputRef}
                   type="text"
@@ -775,12 +877,12 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
                   onChange={(e) => setNewComment(e.target.value)}
                   placeholder={replyingToId ? `Reply to @${replyingToUsername}…` : 'Add a comment…'}
                   className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-full text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  disabled={submittingComment}
+                  disabled={submittingComment || uploadingAttachment}
                 />
                 <button
                   type="submit"
-                  disabled={!newComment.trim() || submittingComment}
-                  className="p-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-full transition-colors"
+                  disabled={(!newComment.trim() && !commentAttachment) || submittingComment || uploadingAttachment}
+                  className="p-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-full transition-colors flex-shrink-0"
                 >
                   <Send className="w-5 h-5" />
                 </button>

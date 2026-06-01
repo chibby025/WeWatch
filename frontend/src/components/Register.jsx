@@ -55,7 +55,7 @@ const Register = () => {
 
       setSuccess(true);
       setTimeout(() => {
-        navigate('/lobby');
+        navigate('/lobby', { replace: true });
       }, 1500);
     } catch (err) {
       console.error("Registration failed:", err);
@@ -159,6 +159,7 @@ const Register = () => {
                   <input
                     type="text"
                     id="username"
+                    autoComplete="username"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     required
@@ -176,6 +177,7 @@ const Register = () => {
                   <input
                     type="email"
                     id="email"
+                    autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required

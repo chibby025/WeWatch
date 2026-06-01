@@ -417,3 +417,78 @@ func LeaveRoomHandler(c *gin.Context) {
         "message": "Successfully left room",
     })
 }
+
+// InviteUserToRoomHandler handles POST /api/rooms/:id/invite-user
+// Host-only: directly adds a user as an active member and sends them a watch_invite notification.
+// Bypasses the pending-request flow because the host has explicitly chosen this person.
+func InviteUserToRoomHandler(c *gin.Context) {
+    callerID := c.MustGet("user_id").(uint)
+
+    roomID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+    if err != nil || roomID == 0 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+        return
+    }
+
+    var input struct {
+        UserID uint `json:"user_id" binding:"required"`
+    }
+    if err := c.ShouldBindJSON(&input); err != nil || input.UserID == 0 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+        return
+    }
+
+    var room models.Room
+    if err := DB.First(&room, roomID).Error; err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+        return
+    }
+    if room.HostID != callerID {
+        c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can invite members"})
+        return
+    }
+    if input.UserID == callerID {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot invite yourself"})
+        return
+    }
+
+    var targetUser models.User
+    if err := DB.First(&targetUser, input.UserID).Error; err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+        return
+    }
+
+    // Check existing membership
+    var existing models.UserRoom
+    if err := DB.Where("user_id = ? AND room_id = ?", input.UserID, roomID).First(&existing).Error; err == nil {
+        if existing.IsBanned || existing.Status == "banned" {
+            c.JSON(http.StatusForbidden, gin.H{"error": "This user is banned from the room"})
+            return
+        }
+        c.JSON(http.StatusOK, gin.H{"message": "User is already a member of this room"})
+        return
+    }
+
+    userRoom := models.UserRoom{
+        UserID:   input.UserID,
+        RoomID:   uint(roomID),
+        UserRole: "member",
+        Status:   "active",
+    }
+    if err := DB.Create(&userRoom).Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to invite user"})
+        return
+    }
+
+    go CreateNotification(
+        input.UserID,
+        "watch_invite",
+        "You've been invited to "+room.Name,
+        "Tap to join the room",
+        "room",
+        uint(roomID),
+    )
+
+    log.Printf("✅ [InviteUser] Host %d invited user %d to room %d", callerID, input.UserID, roomID)
+    c.JSON(http.StatusOK, gin.H{"message": "Invitation sent"})
+}

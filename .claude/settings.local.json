@@ -103,7 +103,11 @@
       "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- go version 2>&1)",
       "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- bash -lc \"which go && go version\")",
       "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./... 2>&1\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./internal/... 2>&1\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -u chibuzor_dev -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./internal/... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- /bin/bash -c 'export PATH=$PATH:/usr/local/go/bin && cd /home/chibuzor_dev/WeWatch/backend && go build ./...')",
+      "PowerShell(wsl -d Ubuntu-22.04 -e /usr/local/go/bin/go build ./... 2>&1)",
+      "PowerShell($LASTEXITCODE)",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\")"
     ],
     "additionalDirectories": [
       "\\dev",

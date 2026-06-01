@@ -32,6 +32,7 @@ type Room struct {
     HostBroadcastEnabled bool `json:"host_broadcast_enabled"`
 	ShowHost             bool `gorm:"default:true" json:"show_host"`
 	ShowDescription      bool `gorm:"default:true" json:"show_description"`
+	HostOnlyChat         bool `gorm:"default:false" json:"host_only_chat"`
 	
 	// Rating fields (competitive quality system)
 	AverageRating       float64 `gorm:"type:decimal(3,2);default:0.00" json:"average_rating"`

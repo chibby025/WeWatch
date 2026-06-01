@@ -164,3 +164,12 @@ func MarkAllNotificationsReadHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "All notifications marked as read"})
 }
+
+// ClearAllNotificationsHandler handles DELETE /api/notifications — hard-deletes all notifications for the user
+func ClearAllNotificationsHandler(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+
+	DB.Unscoped().Where("user_id = ?", userID).Delete(&models.Notification{})
+
+	c.JSON(http.StatusOK, gin.H{"message": "Notifications cleared"})
+}

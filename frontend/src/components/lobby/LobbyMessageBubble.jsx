@@ -16,6 +16,7 @@ const LobbyMessageBubble = ({
   onDelete,
   onVotePoll,
   onViewUser,
+  onReply,
   liveRooms = [],
   endedSessionIds = new Set(),
 }) => {
@@ -32,6 +33,9 @@ const LobbyMessageBubble = ({
   const [favLoading, setFavLoading] = useState(false);
   const [joinStatus, setJoinStatus] = useState(null); // null | 'active' | 'pending'
   const [joinLoading, setJoinLoading] = useState(false);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const touchStartXRef = useRef(null);
+  const isSwipingRef = useRef(false);
   const audioRef = useRef(null);
   const bubbleRef = useRef(null);
   const longPressTimerRef = useRef(null);
@@ -50,12 +54,32 @@ const LobbyMessageBubble = ({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Long-press detection for mobile
-  const handleTouchStart = () => {
+  // Long-press + swipe-to-reply detection
+  const handleTouchStart = (e) => {
     if (messageType === 'poll' || messageType === 'watch_out') return;
+    touchStartXRef.current = e.touches[0].clientX;
+    isSwipingRef.current = false;
     longPressTimerRef.current = setTimeout(() => setIsSelected(true), 500);
   };
-  const handleTouchEnd = () => clearTimeout(longPressTimerRef.current);
+  const handleTouchMove = (e) => {
+    if (touchStartXRef.current === null) return;
+    const deltaX = e.touches[0].clientX - touchStartXRef.current;
+    if (Math.abs(deltaX) > 10) {
+      clearTimeout(longPressTimerRef.current);
+      isSwipingRef.current = true;
+    }
+    // Right swipe only, clamp to 70px
+    if (deltaX > 0) setSwipeOffset(Math.min(deltaX, 70));
+  };
+  const handleTouchEnd = () => {
+    clearTimeout(longPressTimerRef.current);
+    if (isSwipingRef.current && swipeOffset >= 52 && onReply) {
+      onReply(message);
+    }
+    setSwipeOffset(0);
+    isSwipingRef.current = false;
+    touchStartXRef.current = null;
+  };
 
   const handleBubbleClick = (e) => {
     if (messageType === 'poll' || messageType === 'watch_out' || messageType === 'system_call') return;
@@ -181,11 +205,26 @@ const LobbyMessageBubble = ({
   );
 
   return (
-    <div className={`flex ${messageType === 'system_call' ? 'justify-center' : isOwn ? 'justify-end' : 'justify-start'}`}>
+    <div
+      className={`flex items-center ${messageType === 'system_call' ? 'justify-center' : isOwn ? 'justify-end' : 'justify-start'}`}
+      style={{
+        transform: `translateX(${swipeOffset}px)`,
+        transition: swipeOffset === 0 ? 'transform 0.2s ease-out' : 'none',
+      }}
+    >
+      {/* Reply arrow — visible while swiping (left side for received, fades in) */}
+      {!isOwn && swipeOffset > 15 && (
+        <div className="mr-1 flex-shrink-0" style={{ opacity: Math.min(swipeOffset / 52, 1) }}>
+          <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 0 1 8 8v2M3 10l6 6M3 10l6-6" />
+          </svg>
+        </div>
+      )}
       <div
         ref={bubbleRef}
         onClick={handleBubbleClick}
         onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
         onContextMenu={e => { e.preventDefault(); if (messageType !== 'poll' && messageType !== 'watch_out') setIsSelected(s => !s); }}
@@ -198,6 +237,13 @@ const LobbyMessageBubble = ({
             : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white'
           }`}
       >
+        {/* Reply quote block */}
+        {message.reply_to_snap && (
+          <div className={`mx-2 mt-2 px-2 py-1 rounded border-l-2 border-purple-400 text-xs line-clamp-2 ${isOwn ? 'bg-green-700/50 text-green-100' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
+            {message.reply_to_snap}
+          </div>
+        )}
+
         {/* Floating context menu */}
         {isSelected && <ContextMenu />}
 

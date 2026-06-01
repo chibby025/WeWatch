@@ -9,6 +9,27 @@ import toast from 'react-hot-toast';
 import { apiClient } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
+async function compressImage(file, maxPx = 1280, quality = 0.82) {
+  if (!file || !file.type.startsWith('image/') || file.type === 'image/gif') return file;
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      // Skip tiny files already under 250 KB
+      if (file.size < 250 * 1024 && width <= maxPx) return resolve(file);
+      if (width > maxPx) { height = Math.round(height * maxPx / width); width = maxPx; }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(blob => resolve(blob || file), 'image/jpeg', quality);
+    };
+    img.onerror = () => resolve(file);
+    img.src = url;
+  });
+}
+
 const RATINGS = [
   { value: 'G',           label: 'G',      bg: 'bg-green-600',  text: 'text-white', minAge: 0,  icon: '/icons/G Rating Icon.png',           desc: 'General Audiences — all ages admitted' },
   { value: 'PG',          label: 'PG',     bg: 'bg-teal-600',   text: 'text-white', minAge: 0,  icon: '/icons/PG Rating Icon.png',          desc: 'Parental Guidance — some material may not suit children' },
@@ -351,6 +372,7 @@ export default function PostUploadModal({ isOpen, onClose, onSuccess }) {
       });
       const postId = createResponse.data.post.id;
       setUploadProgress(10);
+      if (finalMediaType === 'image') finalFile = await compressImage(finalFile);
       const ext = finalMediaType === 'video' ? (uploadFile?.name?.split('.').pop() || 'webm') : 'jpg';
       const formData = new FormData();
       formData.append('file', finalFile, `post_${postId}.${ext}`);

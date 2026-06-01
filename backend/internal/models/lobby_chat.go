@@ -21,6 +21,8 @@ type LobbyChat struct {
 	AttachmentSize      *int64         `json:"attachment_size,omitempty"`
 	Metadata            *string        `gorm:"type:jsonb" json:"metadata,omitempty"`
 	GroupID             *uint          `gorm:"index" json:"group_id,omitempty"`
+	ReplyToID           *uint          `gorm:"index" json:"reply_to_id,omitempty"`
+	ReplyToSnap         *string        `gorm:"type:text" json:"reply_to_snap,omitempty"` // snapshot of replied-to message text
 	Edited              bool           `gorm:"default:false" json:"edited"`
 	DeletedBySender     bool           `gorm:"default:false" json:"deleted_by_sender"`
 	DeletedByRecipient  bool           `gorm:"default:false" json:"deleted_by_recipient"`

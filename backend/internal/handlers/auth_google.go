@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +20,40 @@ import (
 	"wewatch-backend/internal/models"
 	"wewatch-backend/internal/utils"
 )
+
+var nonAlphanumeric = regexp.MustCompile(`[^a-z0-9_]+`)
+
+// generateUsername builds a clean username from a Google profile name, falling
+// back to the email local-part. It appends a random 3-digit suffix until it
+// finds a username that isn't already taken.
+func generateUsername(db *gorm.DB, givenName, familyName, email string) string {
+	base := strings.ToLower(strings.TrimSpace(givenName + "_" + familyName))
+	if strings.TrimSpace(familyName) == "" {
+		base = strings.ToLower(strings.TrimSpace(givenName))
+	}
+	if base == "" || base == "_" {
+		// Fall back to the part before @ in the email
+		base = strings.ToLower(strings.SplitN(email, "@", 2)[0])
+	}
+	base = nonAlphanumeric.ReplaceAllString(base, "_")
+	base = strings.Trim(base, "_")
+	if len(base) > 20 {
+		base = base[:20]
+	}
+	if base == "" {
+		base = "user"
+	}
+
+	candidate := base
+	for {
+		var count int64
+		db.Model(&models.User{}).Where("username = ?", candidate).Count(&count)
+		if count == 0 {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s_%03d", base, rand.Intn(900)+100)
+	}
+}
 
 var googleOauthConfig = &oauth2.Config{
 	ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
@@ -131,7 +168,7 @@ func GoogleCallbackHandler(c *gin.Context) {
 		// Create new user
 		provider := "google"
 		user = models.User{
-			Username:        googleUser.Email, // Use email as username initially
+			Username:        generateUsername(DB, googleUser.GivenName, googleUser.FamilyName, googleUser.Email),
 			Email:           googleUser.Email,
 			PasswordHash:    "", // No password for OAuth users
 			AvatarURL:       googleUser.Picture,
