@@ -3404,29 +3404,31 @@ const LobbyPage = () => {
             className="h-[68px] sm:h-[107px] w-auto"
           />
         </div>
-      {activeTab === 'chats' ? (
-        /* Fixed-height container so hint text and StatusRow share the same space */
-        <div className="relative h-[96px]">
-          <p className={`absolute inset-x-0 text-center px-4 py-3 text-gray-700 dark:text-gray-300 transition-opacity duration-700 ${showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-            Say hi! Connect with friends and see what they&apos;re watching.
-          </p>
-          <div className={`absolute inset-x-0 transition-opacity duration-700 ${!showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-            <StatusRow
-              feed={statusFeed}
-              currentUser={currentUser}
-              onView={entry => setViewingStatus(entry)}
-              onAdd={() => setShowStatusCreator(true)}
-            />
+      {activeTab !== 'watching' && (
+        activeTab === 'chats' ? (
+          /* Fixed-height container so hint text and StatusRow share the same space */
+          <div className="relative h-[108px]">
+            <p className={`absolute inset-x-0 text-center px-4 py-3 text-gray-700 dark:text-gray-300 transition-opacity duration-700 ${showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+              Say hi! Connect with friends and see what they&apos;re watching.
+            </p>
+            <div className={`absolute inset-x-0 transition-opacity duration-700 ${!showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+              <StatusRow
+                feed={statusFeed}
+                currentUser={currentUser}
+                onView={entry => setViewingStatus(entry)}
+                onAdd={() => setShowStatusCreator(true)}
+              />
+            </div>
           </div>
-        </div>
-      ) : (
-        <p className={`block text-center mb-6 text-gray-700 dark:text-gray-300 transition-opacity duration-700 ${showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-          {activeTab === 'rooms'
-            ? 'Welcome! Find or create a room to start watching together.'
-            : activeTab === 'feed'
-            ? 'Explore posts and recordings from the community.'
-            : "Live WatchOuts — tap any card to jump in and watch together."}
-        </p>
+        ) : (
+          <p className={`block text-center mb-6 text-gray-700 dark:text-gray-300 transition-opacity duration-700 ${showTabHint ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            {activeTab === 'rooms'
+              ? 'Welcome! Find or create a room to start watching together.'
+              : activeTab === 'feed'
+              ? 'Explore posts and recordings from the community.'
+              : ''}
+          </p>
+        )
       )}
 
       {/* Unified search bar — appears above the tab bar for whichever tab is active */}

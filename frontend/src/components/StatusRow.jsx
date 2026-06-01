@@ -17,7 +17,7 @@ export default function StatusRow({ feed = [], currentUser, onView, onAdd }) {
           className="flex flex-col items-center gap-0.5 flex-shrink-0"
         >
           <div className="relative">
-            <div className={`w-14 h-14 rounded-full overflow-hidden border-2 ${
+            <div className={`w-16 h-16 rounded-full overflow-hidden border-2 ${
               ownEntry ? 'border-purple-500' : 'border-dashed border-gray-500'
             } flex items-center justify-center bg-gray-800`}>
               {currentUser?.avatar_url ? (
@@ -53,7 +53,7 @@ export default function StatusRow({ feed = [], currentUser, onView, onAdd }) {
             onClick={() => onView(entry)}
             className="flex flex-col items-center gap-0.5 flex-shrink-0"
           >
-            <div className={`w-14 h-14 rounded-full p-0.5 ${
+            <div className={`w-16 h-16 rounded-full p-0.5 ${
               entry.has_unseen
                 ? 'bg-gradient-to-tr from-purple-500 via-pink-500 to-orange-400'
                 : 'bg-gray-600'
