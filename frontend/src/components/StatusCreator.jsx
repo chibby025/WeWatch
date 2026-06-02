@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { createStatus } from '../services/api';
+import { PencilSquareIcon, PhotoIcon, TvIcon } from '@heroicons/react/24/outline';
 
 const BG_COLORS = [
   '#7c3aed', '#2563eb', '#059669', '#dc2626',
@@ -93,20 +94,21 @@ export default function StatusCreator({ onClose, onCreated, liveRooms = [] }) {
         {/* Mode tabs */}
         <div className="flex gap-2 mb-4">
           {[
-            { id: 'text', label: '✏️ Text' },
-            { id: 'image', label: '🖼️ Image' },
-            ...(liveRooms.length > 0 ? [{ id: 'session', label: '📺 Session' }] : []),
-          ].map(m => (
+            { id: 'text',    Icon: PencilSquareIcon, label: 'Text' },
+            { id: 'image',   Icon: PhotoIcon,        label: 'Image' },
+            ...(liveRooms.length > 0 ? [{ id: 'session', Icon: TvIcon, label: 'Session' }] : []),
+          ].map(({ id, Icon, label }) => (
             <button
-              key={m.id}
-              onClick={() => setMode(m.id)}
-              className={`flex-1 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                mode === m.id
+              key={id}
+              onClick={() => setMode(id)}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                mode === id
                   ? 'bg-purple-600 text-white'
                   : 'bg-white/10 text-gray-300 hover:bg-white/20'
               }`}
             >
-              {m.label}
+              <Icon className="w-4 h-4" />
+              {label}
             </button>
           ))}
         </div>

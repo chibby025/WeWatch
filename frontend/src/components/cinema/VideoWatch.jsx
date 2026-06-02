@@ -496,6 +496,7 @@ export default function VideoWatch() {
   const [sessionLikesCount, setSessionLikesCount] = useState(0);
   const [showHeartAnimation, setShowHeartAnimation] = useState(false);
   const lastLikeTimeRef = useRef(0);
+  const isExitingRef = useRef(false); // guard against double-exit (WS session_ended + manual Leave)
   
   // 📺 Ad pre-roll disabled — join experience should feel instant and classy
   const [showAdPreroll, setShowAdPreroll] = useState(false); // eslint-disable-line no-unused-vars
@@ -3448,13 +3449,21 @@ export default function VideoWatch() {
             });
             
             const membersArray = Array.from(memberMap.values());
-            console.log(`✅ [VideoWatch] Setting ${membersArray.length} session members:`, membersArray);
-            setRoomMembers(membersArray);
-            // Only mark initialized when we have real data — an empty session_status
-            // fires immediately on join and would clear the spinner before REST resolves.
-            if (membersArray.length > 0) {
-              setIsMembersInitialized(true);
-            }
+            console.log(`✅ [VideoWatch] Reconciling ${membersArray.length} session members from WS`);
+
+            // Reconcile: retain existing array, remove departed, add arrivals.
+            // Never replace outright — avoids a flash-to-zero on reconnect.
+            setRoomMembers(prev => {
+              if (prev.length === 0) return membersArray;
+              const incomingIds = new Set(membersArray.map(m => m.id));
+              const kept = prev.filter(m => incomingIds.has(m.id));
+              const keptIds = new Set(kept.map(m => m.id));
+              const added = membersArray.filter(m => !keptIds.has(m.id));
+              return [...kept, ...added];
+            });
+
+            // Always mark initialized — empty is a valid resolved state, not a loading state
+            setIsMembersInitialized(true);
             
             // ✅ Request current audio states from all members in the room
             console.log('🎤 [VideoWatch] Requesting audio states from all members');
@@ -4814,7 +4823,7 @@ export default function VideoWatch() {
         if (finalSessionId) {
           await apiClient.post(`/api/rooms/${roomId}/sessions/${finalSessionId}/end`);
           sessionStorage.setItem(`session_ended_${roomId}`, 'true');
-          await new Promise(resolve => setTimeout(resolve, 300));
+          // No artificial delay — backend broadcasts session_ended immediately after DB write
         }
       } catch (error) {
         console.error('Failed to end session:', error);
@@ -4826,16 +4835,17 @@ export default function VideoWatch() {
 
   // Cleanup and navigate helper
   const performCleanupAndExit = async (isTemporaryRoom = null) => {
-    // 1. Disconnect LiveKit — race against 2s timeout so a hung disconnect can't block navigation
+    // Guard: session_ended WS and manual Leave Call can race — only exit once
+    if (isExitingRef.current) return;
+    isExitingRef.current = true;
+
+    // 1. Fire LiveKit disconnect in the background — don't block navigation on WebRTC teardown.
+    // disconnectLiveKit() may return undefined if LiveKit is already disconnected — guard the .catch().
     if (disconnectLiveKit) {
       try {
-        await Promise.race([
-          disconnectLiveKit(),
-          new Promise(resolve => setTimeout(resolve, 2000)),
-        ]);
-      } catch (error) {
-        console.error('Error disconnecting LiveKit:', error);
-      }
+        const p = disconnectLiveKit();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch (_) {}
     }
 
     // 2. Stop camera stream
@@ -4960,7 +4970,8 @@ export default function VideoWatch() {
       }
     } catch (err) {
       console.error("Failed to fetch room members:", err);
-      setRoomMembers([]);
+      // Keep existing members on error — a failed refresh is less harmful than a blank list
+      setIsMembersInitialized(true);
     } finally {
       setLoadingMembers(false);
     }

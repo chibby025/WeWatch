@@ -31,6 +31,7 @@ import WithdrawalRequestForm from './components/payment/WithdrawalRequestForm';
 import KYCSubmissionForm from './components/payment/KYCSubmissionForm';
 import SVGComparison from './components/dev/SVGComparison';
 import ExplorePage from './pages/ExplorePage';
+import BackButtonGuard from './components/BackButtonGuard';
 
 // ✅ ALL AVATAR DEMO IMPORTS COMMENTED/REMOVED
 /*
@@ -114,6 +115,7 @@ function App() {
     <AuthProvider>
       <PaymentProvider>
         <Router>
+          <BackButtonGuard />
           <div className="min-h-screen bg-gray-900">
           <Routes>
           {/* Public routes */}
@@ -124,14 +126,9 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/auth/google/success" element={<GoogleAuthCallback />} />
           
-          {/* Protected routes */}
-          <Route path="/" element={
-            <ProtectedRoute><LobbyPage /></ProtectedRoute>
-          } />
-          
-          <Route path="/lobby" element={
-            <ProtectedRoute><LobbyPage /></ProtectedRoute>
-          } />
+          {/* Lobby — public browse mode for guests, full mode for authenticated users */}
+          <Route path="/" element={<LobbyPage />} />
+          <Route path="/lobby" element={<LobbyPage />} />
           
           {/* Post sharing route - redirects to lobby with post modal */}
           <Route path="/post/:id" element={

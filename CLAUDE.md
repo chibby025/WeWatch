@@ -207,6 +207,70 @@ ALTER TABLE watch_sessions
 - `LobbyMessageBubble.jsx`: `watch_out` message type renders as a card with live badge, room details, "Watch Now →" button that `navigate('/rooms/:room_id')`
 - No new DB tables — reuses `lobby_chats` with `message_type` field
 
+### Community Events Feed (added 2026-06)
+A fullscreen horizontal carousel that appears every 5 live session cards in the WatchOuts vertical snap-scroll feed, but only when there are new items since the user last saw it.
+
+**Placement & navigation:**
+- Injected in `LobbyPage.jsx` `filtered.map()` section — every 5th card is a `CommunityEventsCard` wrapper
+- Swiping up/down exits back to live session cards (standard snap-scroll)
+- Within the card: swipe left/right navigates the horizontal carousel
+- Carousel interleaves: scheduled event card → community request card → scheduled event card → ...
+
+**`CommunityEventsCard.jsx`** (`frontend/src/components/community/`)
+- Fullscreen horizontal carousel wrapper; touch/drag swiping + chevron buttons
+- Dot indicators at bottom; "Make a Request" button (opens `MakeRequestSheet`)
+- `buildInterleavedCards(events, requests)` alternates the two types
+
+**`ScheduledEventPreviewCard.jsx`**
+- Shows: room name, event title, content rating, watch type, date/time, host avatar + username
+- Trailer video background if available; gradient fallback otherwise
+- CTA: "RSVP — It's Free" or "Get Ticket · N tokens" → calls `onRSVP(event)` → opens existing `CalendarModal`
+
+**`CommunityRequestCard.jsx`**
+- Shows: title, content rating, description, preferred date, requester username, upvote count, list of claiming hosts (name + room rating)
+- Upvote toggle: `POST /api/community-requests/:id/upvote` — optimistic update
+- "I'll host this →" button: `POST /api/community-requests/:id/claim` → navigates to host's room with `{ openSchedule: true, schedulePrefill: { title, description, content_rating, preferred_date } }` router state
+
+**`MakeRequestSheet.jsx`**
+- Slide-up sheet (CSS transform, no portal needed); fields: title (required), content_rating (required), description, preferred_date (optional)
+
+**`ScheduleEventModal.jsx` changes:**
+- Added `prefill` prop: `{ title, description, content_rating, preferred_date }` — populates form when a host claims a request
+- `RoomPageNew.jsx` reads `location.state?.openSchedule` → auto-opens modal after 300ms; passes `location.state?.schedulePrefill` as `prefill` prop
+
+**Backend — `handlers/community_events_handler.go`:**
+- `GET /api/community-events?since=<RFC3339>` → `{ scheduled_events, requests, has_new }`. Fetches public scheduled events within next 14 days (filtered by user content prefs) + community requests (open/claimed, sorted by upvotes desc). `has_new` compares item `created_at` against `since` param.
+- `POST /api/community-requests` → create request (title, content_rating, description, preferred_date)
+- `POST /api/community-requests/:id/upvote` → toggle upvote; returns `{ has_upvoted, upvote_count }`
+- `POST /api/community-requests/:id/claim` → host claims; host must own a non-temporary room; returns `{ claim, prefill }` for ScheduleEventModal pre-fill. Updates request status to `claimed`. Multiple hosts can claim the same request.
+
+**`has_new` gate in LobbyPage:**
+- `communityEventsLastSeen` in localStorage (ISO timestamp)
+- `fetchCommunityEvents()` passes `since` param; only updates state + refreshes timestamp if `has_new: true`
+- Card not rendered in feed if `communityEventsData.scheduledEvents.length === 0 && requests.length === 0`
+
+**DB tables (NOT YET RUN):**
+```sql
+CREATE TABLE IF NOT EXISTS community_requests (
+  id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title VARCHAR(200) NOT NULL, content_rating VARCHAR(20) NOT NULL DEFAULT 'G',
+  preferred_date DATE, description TEXT, status VARCHAR(20) NOT NULL DEFAULT 'open',
+  upvote_count INT NOT NULL DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS community_request_upvotes (
+  id BIGSERIAL PRIMARY KEY, request_id BIGINT NOT NULL REFERENCES community_requests(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(request_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS community_request_claims (
+  id BIGSERIAL PRIMARY KEY, request_id BIGINT NOT NULL REFERENCES community_requests(id) ON DELETE CASCADE,
+  host_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  room_id BIGINT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  scheduled_event_id BIGINT REFERENCES scheduled_events(id) ON DELETE SET NULL,
+  claimed_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(request_id, host_user_id)
+);
+```
+
 ### WatchOut Layer 2 — Streaks (designed, not yet built)
 **Mechanic A — Friend daily co-watch streak (DM header)**
 - Two friends both attend any session on the same calendar day = +1 streak
@@ -312,6 +376,19 @@ These patterns were applied to `LectureHallPage.jsx` (2026-05) for network resil
   - `token_gift` → `navigate('/payment')`
 - Notification panel rows are `<button>` elements — were plain `<div>` before.
 
+### Content Rating UI Framing (TODO — revisit before marketing push)
+Current state: raw rating strings ("G", "PG", "Religious", "Mature") appear as labels in some UI surfaces.
+
+Planned improvement: show human category labels instead of rating codes wherever users see them:
+- `Religious` → ✝️ Church / Fellowship
+- `Educational` → 📚 Learning
+- `G` / `PG` → 🎬 General
+- `18+` / `Mature` → 🔒 18+ (access control framing, not content warning framing)
+
+The rating string drives all backend logic unchanged — this is purely a display layer change. Rating labels should be **invisible infrastructure** in the feed (filtering happens silently). The only place a label earns its place is at the session join gate ("This is an 18+ session").
+
+Twitter iOS precedent: sensitive content toggle removed entirely from iOS App Store build. Mature content accessible via web only. Capacitor iOS build variant should disable Mature the same way (already noted in CLAUDE.md deploy section).
+
 ### Encryption
 - Transport: WSS (TLS) — sufficient for beta
 - No E2E: kills server-side moderation and adds huge complexity; revisit post-beta
@@ -361,6 +438,36 @@ ALTER TABLE users
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS text_content TEXT;
 -- Optional cleanup (title column is ignored by GORM but still exists in DB):
 -- ALTER TABLE posts DROP COLUMN IF EXISTS title;
+
+-- Community Events (NOT YET RUN — 2026-06)
+CREATE TABLE IF NOT EXISTS community_requests (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title VARCHAR(200) NOT NULL,
+  content_rating VARCHAR(20) NOT NULL DEFAULT 'G',
+  preferred_date DATE,
+  description TEXT,
+  status VARCHAR(20) NOT NULL DEFAULT 'open',
+  upvote_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS community_request_upvotes (
+  id BIGSERIAL PRIMARY KEY,
+  request_id BIGINT NOT NULL REFERENCES community_requests(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(request_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS community_request_claims (
+  id BIGSERIAL PRIMARY KEY,
+  request_id BIGINT NOT NULL REFERENCES community_requests(id) ON DELETE CASCADE,
+  host_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  room_id BIGINT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  scheduled_event_id BIGINT REFERENCES scheduled_events(id) ON DELETE SET NULL,
+  claimed_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(request_id, host_user_id)
+);
 
 -- Room favourites (NOT YET RUN — 2026-05)
 CREATE TABLE IF NOT EXISTS user_room_favourites (

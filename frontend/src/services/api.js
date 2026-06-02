@@ -1860,3 +1860,31 @@ export const updateStatusPrivacy = async (excludedIds) => {
   const response = await apiClient.put('/api/statuses/privacy', { excluded_ids: excludedIds });
   return response.data;
 };
+
+// --- Public (no-auth) ---
+export const getPublicLiveSessions = async () => {
+  const response = await apiClient.get('/api/public/live-sessions');
+  return response.data;
+};
+
+// --- Community Events ---
+export const getCommunityEvents = async (since) => {
+  const params = since ? { since } : {};
+  const response = await apiClient.get('/api/community-events', { params });
+  return response.data;
+};
+
+export const createCommunityRequest = async (data) => {
+  const response = await apiClient.post('/api/community-requests', data);
+  return response.data;
+};
+
+export const toggleCommunityRequestUpvote = async (id) => {
+  const response = await apiClient.post(`/api/community-requests/${id}/upvote`);
+  return response.data;
+};
+
+export const claimCommunityRequest = async (id) => {
+  const response = await apiClient.post(`/api/community-requests/${id}/claim`);
+  return response.data;
+};

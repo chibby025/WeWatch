@@ -14,6 +14,7 @@ import InstantWatchInfoModal from './InstantWatchInfoModal';
 import toast, { Toaster } from 'react-hot-toast';
 import Avatar from './Avatar';
 import LobbyLeftSidebar from './LobbyLeftSidebar';
+import CallHistoryModal from './CallHistoryModal';
 import UserProfileModal from './UserProfileModal';
 import SettingsModal from './SettingsModal';
 import CreateNewModal from './CreateNewModal';
@@ -53,6 +54,8 @@ import StatusPrivacySheet from './StatusPrivacySheet';
 import { getStatusFeed } from '../services/api';
 import FeedAdCard from './ads/FeedAdCard';
 import { calculateAge } from '../utils/ageUtils';
+import CommunityEventsCard from './community/CommunityEventsCard';
+import { getCommunityEvents, getPublicLiveSessions } from '../services/api';
 
 // Resolve a backend-relative preview URL to a full absolute URL
 const resolvePreviewUrl = (url) => {
@@ -238,6 +241,9 @@ const LobbyPage = () => {
   
   // ✅ Left Sidebar & Modals State
   const [isLobbyLeftSidebarOpen, setIsLobbyLeftSidebarOpen] = useState(false);
+  const [isCallHistoryModalOpen, setIsCallHistoryModalOpen] = useState(false);
+  const [showGuestBanner, setShowGuestBanner] = useState(false);
+  const [guestBannerDismissed, setGuestBannerDismissed] = useState(false);
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isCreateNewModalOpen, setIsCreateNewModalOpen] = useState(false);
@@ -355,6 +361,9 @@ const LobbyPage = () => {
   const touchStartRef = React.useRef({ x: 0, y: 0 });
   const swipeStateRef = React.useRef({ startX: 0, startY: 0, locked: null });
 
+  // Community Events carousel data
+  const [communityEventsData, setCommunityEventsData] = useState({ scheduledEvents: [], requests: [] });
+
   // 🪟 Modal state for W button (hides Post option when opened from Watching Live)
   const [createModalHidePosts, setCreateModalHidePosts] = React.useState(false);
 
@@ -399,14 +408,16 @@ const LobbyPage = () => {
     });
   };
   
+  // Redirect guests to register before any write interaction
+  const requireAuth = (action) => {
+    if (!currentUser) { navigate('/register'); return; }
+    action();
+  };
+
   // ❤️ Handle session like/unlike (single click to toggle)
   const handleSessionLike = async (sessionId, e) => {
     e.stopPropagation();
-    
-    if (!currentUser) {
-      toast.error('Please login to like sessions');
-      return;
-    }
+    if (!currentUser) { navigate('/register'); return; }
     
     const currentLikeState = sessionLikes[sessionId] || { count: 0, isLiked: false };
     
@@ -474,6 +485,7 @@ const LobbyPage = () => {
 
   const handleToggleFavourite = async (roomId, e) => {
     e.stopPropagation();
+    if (!currentUser) { navigate('/register'); return; }
     try {
       const res = await toggleRoomFavourite(roomId);
       setSavedRooms(prev => ({ ...prev, [roomId]: res.is_favourite }));
@@ -482,6 +494,7 @@ const LobbyPage = () => {
 
   const handleJoinRoomFromCard = async (roomId, e) => {
     e.stopPropagation();
+    if (!currentUser) { navigate('/register'); return; }
     if (joinedRooms[roomId]) return;
     try {
       const res = await joinRoom(roomId);
@@ -1064,6 +1077,23 @@ const LobbyPage = () => {
     }
   };
   
+  // Fetch community events (scheduled + requests) for the feed carousel
+  const fetchCommunityEvents = async () => {
+    try {
+      const since = localStorage.getItem('communityEventsLastSeen') || undefined;
+      const data = await getCommunityEvents(since);
+      if (data.has_new || !since) {
+        setCommunityEventsData({
+          scheduledEvents: data.scheduled_events || [],
+          requests: data.requests || [],
+        });
+        localStorage.setItem('communityEventsLastSeen', new Date().toISOString());
+      }
+    } catch (err) {
+      // Non-critical — fail silently
+    }
+  };
+
   // ✅ STEP 1: Pre-fetch first 10 sessions + trailers on lobby mount (background)
   const prefetchWatchingNowContent = async () => {
     try {
@@ -1389,6 +1419,14 @@ const LobbyPage = () => {
     return () => clearTimeout(t);
   }, [activeTab, watchingSubTab]);
 
+  // Back button closes open DM / group chat instead of leaving the app
+  useEffect(() => {
+    if (chatView === 'friends') return;
+    const handlePopState = () => handleBackToFriends();
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [chatView]);
+
   // Debounced user search for "Add Friend"
   useEffect(() => {
     if (addFriendQuery.trim().length < 2) {
@@ -1450,8 +1488,10 @@ const LobbyPage = () => {
     setSelectedChatUser(normalizedUser);
     setChatView('messages'); // ✅ Switch to messages view
     fetchChatMessages(userId);
+    // Push a history entry so the browser back button closes the chat
+    window.history.pushState({ wewatch: true, chatView: 'messages', userId }, '');
   };
-  
+
   // ✅ Handle back to friends list
   const handleBackToFriends = () => {
     setChatView('friends');
@@ -1478,6 +1518,8 @@ const LobbyPage = () => {
     setSelectedGroup(group);
     setChatView('group_messages');
     setGroupMenuOpen(false);
+    // Push a history entry so the browser back button closes the group chat
+    window.history.pushState({ wewatch: true, chatView: 'group_messages', groupId: group.id }, '');
     try {
       const data = await getLobbyGroupMessages(group.id);
       setGroupMessages(prev => ({ ...prev, [group.id]: data.messages || [] }));
@@ -2244,12 +2286,42 @@ const LobbyPage = () => {
       fetchNotifications();
       fetchUpcomingEventsCount();
       fetchGroupsList();
-
-      // ✅ STEP 2: Pre-fetch "Watching Now" content in background
       prefetchWatchingNowContent();
-
+      fetchCommunityEvents();
     }
   }, [currentUser]);
+
+  // Guest mode: fetch public sessions + show banner + 30s refresh
+  useEffect(() => {
+    if (currentUser) return;
+
+    const loadPublicSessions = () => {
+      getPublicLiveSessions().then(data => {
+        const sessions = (data.sessions || []).map(s => ({ ...s, is_member: false }));
+        setSessionsPage({ data: sessions, offset: sessions.length, hasMore: false, loading: false });
+      }).catch(() => {});
+    };
+
+    loadPublicSessions();
+    const interval = setInterval(loadPublicSessions, 30000);
+
+    let bannerTimer;
+    if (!guestBannerDismissed) {
+      bannerTimer = setTimeout(() => setShowGuestBanner(true), 800);
+    }
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(bannerTimer);
+    };
+  }, []);
+
+  // Auto-dismiss guest banner after 5 seconds
+  useEffect(() => {
+    if (!showGuestBanner) return;
+    const t = setTimeout(() => setShowGuestBanner(false), 5000);
+    return () => clearTimeout(t);
+  }, [showGuestBanner]);
   
   // ✅ STEP 4: Infinite scroll - Intersection Observer for load trigger
   useEffect(() => {
@@ -2802,6 +2874,7 @@ const LobbyPage = () => {
 
   // ✅ Handle direct join from session preview
   const handleJoinSessionDirect = async (session) => {
+    if (!currentUser) { navigate('/register'); return; }
     try {
       // 1. Verify session still exists (for temporary rooms)
       if (session.is_temporary) {
@@ -3186,14 +3259,45 @@ const LobbyPage = () => {
 
   return (
     <div className="relative min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-white transition-colors duration-200 pb-20">
+
+      {/* Guest banner — slides down from top, auto-dismisses after 5s */}
+      {!currentUser && (
+        <div
+          className={`fixed top-3 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ease-out ${
+            showGuestBanner ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none'
+          }`}
+        >
+          <div className="flex items-center gap-3 bg-gray-950/95 backdrop-blur-sm border border-white/15 rounded-full px-4 py-2 shadow-xl">
+            <span className="text-white/75 text-sm whitespace-nowrap">Browsing as guest</span>
+            <button
+              onClick={() => navigate('/register')}
+              className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-1 rounded-full transition-colors"
+            >
+              Sign Up
+            </button>
+            <button
+              onClick={() => navigate('/login')}
+              className="text-white/60 hover:text-white text-xs font-medium transition-colors"
+            >
+              Log In
+            </button>
+            <button
+              onClick={() => { setShowGuestBanner(false); setGuestBannerDismissed(true); }}
+              className="text-white/40 hover:text-white/80 transition-colors ml-1"
+            >
+              <XMarkIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
       {/* ✅ Hamburger Menu Button - Fixed Top Left */}
       <button
         onClick={() => setIsLobbyLeftSidebarOpen(true)}
         className="fixed top-3 left-3 z-30 bg-gray-800/70 hover:bg-gray-700 text-white rounded-md shadow-lg transition-colors duration-200 flex items-center justify-center"
-        style={{ width: '18px', height: '18px' }}
+        style={{ width: '36px', height: '36px' }}
         aria-label="Open menu"
       >
-        <Bars3Icon style={{ width: '24px', height: '24px' }} />
+        <Bars3Icon style={{ width: '22px', height: '22px' }} />
       </button>
 
 
@@ -4025,7 +4129,8 @@ const LobbyPage = () => {
                 s.watch_type?.toLowerCase().includes(q)
               );
             });
-            return filtered.map((session) => {
+            const hasCommunityContent = communityEventsData.scheduledEvents.length > 0 || communityEventsData.requests.length > 0;
+            const sessionCards = filtered.map((session) => {
               const preview = sessionPreviews[session.session_id] || {};
               const watchTypeConfig = {
                 classroom: { emoji: '🎓', name: 'Classroom' },
@@ -4099,7 +4204,7 @@ const LobbyPage = () => {
                       <img src="/icons/view.png" alt="viewers" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
                       <span className="text-white text-xs font-bold" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.9)' }}>{formatCount(session.member_count || 0)}</span>
                     </div>
-                    {!session.is_temporary && (
+                    {!session.is_temporary && session.host_id !== currentUser?.id && (
                       <button onClick={(e) => handleToggleFavourite(session.room_id, e)} className="flex flex-col items-center gap-1 transition-transform active:scale-90">
                         {savedRooms[session.room_id]
                           ? <BookmarkIcon className="w-9 h-9 text-purple-400" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
@@ -4125,6 +4230,17 @@ const LobbyPage = () => {
                             ? <img src={cdnThumb(session.room_avatar_url, 72)} alt={session.room_name} className="w-full h-full object-cover" />
                             : session.room_name?.[0]?.toUpperCase() || 'R'}
                         </div>
+                        {/* design preview — restore conditions after sign-off */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleJoinRoomFromCard(session.room_id, e); }}
+                          className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 bg-purple-600 rounded-full flex items-center justify-center z-10 shadow-md transition-transform active:scale-90"
+                          style={{ width: '14px', height: '14px', minWidth: '14px', minHeight: '14px' }}
+                        >
+                          <svg viewBox="0 0 10 10" fill="white" style={{ width: '9px', height: '9px', flexShrink: 0 }}>
+                            <rect x="4.2" y="1" width="1.6" height="8" rx="0.8"/>
+                            <rect x="1" y="4.2" width="8" height="1.6" rx="0.8"/>
+                          </svg>
+                        </button>
                       </div>
                       <span className="font-bold text-white text-base truncate" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>{session.room_name}</span>
                       {session.average_rating > 0 && (
@@ -4132,15 +4248,6 @@ const LobbyPage = () => {
                           <svg className="w-3.5 h-3.5 fill-yellow-400" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                           <span className="text-white text-sm font-bold">{session.average_rating.toFixed(1)}</span>
                         </div>
-                      )}
-                      {!session.is_member && !session.is_temporary && (
-                        joinedRooms[session.room_id]
-                          ? <div className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-500 rounded-full flex items-center justify-center shadow-md">
-                              <span className="text-white text-[9px] sm:text-[11px] font-black leading-none">✓</span>
-                            </div>
-                          : <button onClick={(e) => handleJoinRoomFromCard(session.room_id, e)} className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-600 hover:bg-purple-500 rounded-full overflow-hidden shadow-md transition-transform active:scale-90">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" className="w-full h-full p-[5px]"><path d="M12 2v20M2 12h20" /></svg>
-                            </button>
                       )}
                     </div>
                     <h3 className="text-base font-bold leading-tight line-clamp-2 mb-1" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}>
@@ -4164,6 +4271,36 @@ const LobbyPage = () => {
                 </div>
               );
             });
+
+            // Interleave CommunityEventsCard every 5 live session cards
+            if (!hasCommunityContent) return sessionCards;
+            const result = [];
+            sessionCards.forEach((card, idx) => {
+              result.push(card);
+              if ((idx + 1) % 5 === 0) {
+                result.push(
+                  <div key={`community-events-${idx}`} className="relative h-full w-full snap-start snap-always overflow-hidden">
+                    <CommunityEventsCard
+                      scheduledEvents={communityEventsData.scheduledEvents}
+                      requests={communityEventsData.requests}
+                      currentUser={currentUser}
+                      apiBaseUrl={API_BASE_URL}
+                      onRSVP={(event) => {
+                        setSelectedEventForCalendar(event);
+                        setIsCalendarModalOpen(true);
+                      }}
+                      onNewRequest={(newReq) => {
+                        setCommunityEventsData(prev => ({
+                          ...prev,
+                          requests: [newReq, ...prev.requests],
+                        }));
+                      }}
+                    />
+                  </div>
+                );
+              }
+            });
+            return result;
           })()}
 
           {/* Infinite scroll trigger */}
@@ -4397,6 +4534,15 @@ const LobbyPage = () => {
                               session.room_name?.[0]?.toUpperCase() || 'R'
                             )}
                           </div>
+                          {!session.is_temporary && !session.is_member && session.host_id !== currentUser?.id && (
+                            joinedRooms[session.room_id]
+                              ? <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center shadow-md z-10 pointer-events-none">
+                                  <span className="text-white text-[8px] font-black leading-none">✓</span>
+                                </div>
+                              : <button onClick={(e) => { e.stopPropagation(); handleJoinRoomFromCard(session.room_id, e); }} className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-green-500 hover:bg-green-400 rounded-full flex items-center justify-center shadow-md z-10 transition-transform active:scale-90">
+                                  <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" className="w-2.5 h-2.5"><path d="M12 2v20M2 12h20" /></svg>
+                                </button>
+                          )}
                         </div>
 
                         {/* Room Name + Star Rating */}
@@ -4417,15 +4563,6 @@ const LobbyPage = () => {
                                 {session.average_rating.toFixed(1)}
                               </span>
                             </div>
-                          )}
-                          {!session.is_member && !session.is_temporary && (
-                            joinedRooms[session.room_id]
-                              ? <div className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-500 rounded-full flex items-center justify-center shadow-md">
-                                  <span className="text-white text-[9px] sm:text-[11px] font-black leading-none">✓</span>
-                                </div>
-                              : <button onClick={(e) => handleJoinRoomFromCard(session.room_id, e)} className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-600 hover:bg-purple-500 rounded-full overflow-hidden shadow-md transition-transform active:scale-90">
-                                  <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" className="w-full h-full p-[5px]"><path d="M12 2v20M2 12h20" /></svg>
-                                </button>
                           )}
                         </div>
                       </div>
@@ -5747,6 +5884,14 @@ const LobbyPage = () => {
         onCommentAdded={() => {}}
       />
 
+      {/* Call History Modal (opened from taskbar calls button on chats tab) */}
+      <CallHistoryModal
+        isOpen={isCallHistoryModalOpen}
+        onClose={() => setIsCallHistoryModalOpen(false)}
+        currentUser={currentUser}
+        onCallUser={initiateCall}
+      />
+
       {/* ✅ Call Modals */}
       <OutgoingCallModal
         isOpen={!!outgoingCall}
@@ -6032,6 +6177,15 @@ const LobbyPage = () => {
                           session.room_name?.[0]?.toUpperCase() || 'R'
                         )}
                       </div>
+                      {!session.is_temporary && !session.is_member && session.host_id !== currentUser?.id && (
+                        joinedRooms[session.room_id]
+                          ? <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center shadow-md z-10 pointer-events-none">
+                              <span className="text-white text-[9px] font-black leading-none">✓</span>
+                            </div>
+                          : <button onClick={(e) => { e.stopPropagation(); handleJoinRoomFromCard(session.room_id, e); }} className="absolute -bottom-0.5 -right-0.5 w-5 h-5 bg-green-500 hover:bg-green-400 rounded-full flex items-center justify-center shadow-md z-10 transition-transform active:scale-90">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5" strokeLinecap="round" className="w-3 h-3"><path d="M12 2v20M2 12h20" /></svg>
+                            </button>
+                      )}
                     </div>
 
                     {/* Room Name + Star Rating */}
@@ -6052,15 +6206,6 @@ const LobbyPage = () => {
                             {session.average_rating.toFixed(1)}
                           </span>
                         </div>
-                      )}
-                      {!session.is_member && !session.is_temporary && (
-                        joinedRooms[session.room_id]
-                          ? <div className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-500 rounded-full flex items-center justify-center shadow-md">
-                              <span className="text-white text-[9px] sm:text-[11px] font-black leading-none">✓</span>
-                            </div>
-                          : <button onClick={(e) => handleJoinRoomFromCard(session.room_id, e)} className="relative -top-1.5 flex-shrink-0 w-3.5 h-3.5 sm:w-5 sm:h-5 bg-purple-600 hover:bg-purple-500 rounded-full overflow-hidden shadow-md transition-transform active:scale-90">
-                              <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" className="w-full h-full p-[5px]"><path d="M12 2v20M2 12h20" /></svg>
-                            </button>
                       )}
                     </div>
                   </div>
@@ -6480,20 +6625,29 @@ const LobbyPage = () => {
               </div>
             </button>
 
-            {/* Notifications */}
-            <button
-              onClick={() => { setShowNotifPanel(prev => !prev); if (unreadNotifCount > 0) markAllNotifsRead(); }}
-              className="p-2 relative text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
-            >
-              <div className="relative">
-                <BellIcon className="h-7 w-7" />
-                {unreadNotifCount > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full h-3.5 w-3.5 flex items-center justify-center">
-                    {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
-                  </span>
-                )}
-              </div>
-            </button>
+            {/* Calls (chats tab) / Notifications (all other tabs) */}
+            {activeTab === 'chats' ? (
+              <button
+                onClick={() => setIsCallHistoryModalOpen(true)}
+                className="p-2 relative text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
+              >
+                <PhoneIcon className="h-7 w-7" />
+              </button>
+            ) : (
+              <button
+                onClick={() => { setShowNotifPanel(prev => !prev); if (unreadNotifCount > 0) markAllNotifsRead(); }}
+                className="p-2 relative text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
+              >
+                <div className="relative">
+                  <BellIcon className="h-7 w-7" />
+                  {unreadNotifCount > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full h-3.5 w-3.5 flex items-center justify-center">
+                      {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
+                    </span>
+                  )}
+                </div>
+              </button>
+            )}
 
             {/* Center FAB */}
             <div className="relative -mt-5">

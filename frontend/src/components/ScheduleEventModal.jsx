@@ -36,6 +36,7 @@ const ScheduleEventModal = ({
   eventToEdit,
   isHost,
   activeTab = 'create', // 'create' or 'upcoming'
+  prefill = null, // { title, description, content_rating, preferred_date } from community request claim
 }) => {
   // Tab state
   const [currentTab, setCurrentTab] = useState(activeTab);
@@ -96,7 +97,7 @@ const ScheduleEventModal = ({
     }
   }, [isOpen, currentTab, roomId]);
   
-  // Populate form if editing
+  // Populate form if editing or if prefill data provided (from community request claim)
   useEffect(() => {
     if (eventToEdit) {
       setWatchType(eventToEdit.watch_type || '3d_cinema');
@@ -108,9 +109,9 @@ const ScheduleEventModal = ({
       // Reset form for new event
       setWatchType('3d_cinema');
       setMediaFile(null);
-      setStartTime(null);
-      setTitle('');
-      setDescription('');
+      setStartTime(prefill?.preferred_date ? new Date(prefill.preferred_date) : null);
+      setTitle(prefill?.title || '');
+      setDescription(prefill?.description || '');
       setTrailerFile(null);
       setTrailerTitle('');
       setTrailerPreview(null);
@@ -120,10 +121,10 @@ const ScheduleEventModal = ({
       setEarlyBirdPriceNaira('');
       setRecurrenceType('none');
       setRecurrenceEndDate(null);
-      setContentRating(getRoomTypeDefaultRating(roomType));
+      setContentRating(prefill?.content_rating || getRoomTypeDefaultRating(roomType));
       setCreateStep(1);
     }
-  }, [eventToEdit, roomType]);
+  }, [eventToEdit, roomType, prefill]);
   
   // Fetch scheduled events
   const fetchEvents = async () => {

@@ -106,7 +106,9 @@ func main() {
 		// Session likes
 		&models.SessionLike{},
 		// User statuses (stories)
-		&models.UserStatus{}, &models.UserStatusView{}, &models.UserStatusExclusion{})
+		&models.UserStatus{}, &models.UserStatusView{}, &models.UserStatusExclusion{},
+		// Community Events (requests + upvotes + claims)
+		&models.CommunityRequest{}, &models.CommunityRequestUpvote{}, &models.CommunityRequestClaim{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -734,6 +736,12 @@ func main() {
 		protected.GET("/users/me/data-export", handlers.DataExportHandler(DB))   // GET /api/users/me/data-export (NDPR right of access)
 		protected.DELETE("/users/me/account", handlers.DeleteAccountHandler(DB)) // DELETE /api/users/me/account (NDPR right to erasure)
 		
+		// --- COMMUNITY EVENTS ROUTES ---
+		protected.GET("/community-events", handlers.GetCommunityEventsHandler)                         // GET /api/community-events
+		protected.POST("/community-requests", handlers.CreateCommunityRequestHandler)                  // POST /api/community-requests
+		protected.POST("/community-requests/:id/upvote", handlers.ToggleCommunityRequestUpvoteHandler) // POST /api/community-requests/:id/upvote
+		protected.POST("/community-requests/:id/claim", handlers.ClaimCommunityRequestHandler)         // POST /api/community-requests/:id/claim
+
 		// --- SUPPORT ROUTES ---
 		protected.POST("/support/send", handlers.SendSupportEmail) // POST /api/support/send (Send help/support email)
 		

@@ -208,6 +208,16 @@ const RoomPageNew = () => {
     }
   }, [room, isHost]);
 
+  // Auto-open ScheduleEventModal when navigated here after claiming a community request
+  useEffect(() => {
+    if (room && isHost && location.state?.openSchedule) {
+      setTimeout(() => {
+        setScheduleModalTab('create');
+        setIsScheduleModalOpen(true);
+      }, 300);
+    }
+  }, [room, isHost]);
+
   // ✅ INSTANT membership check from auth context
   useEffect(() => {
     if (roomMemberships && roomMemberships.length > 0) {
@@ -2936,6 +2946,7 @@ const RoomPageNew = () => {
         onCreate={handleCreateScheduledEvent}
         isHost={isHost}
         activeTab={scheduleModalTab}
+        prefill={location.state?.schedulePrefill || null}
       />
 
       {/* ✅ Room Edit Modal */}

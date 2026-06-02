@@ -5,7 +5,6 @@ import {
   CreditCardIcon,
   UserGroupIcon,
   UserPlusIcon,
-  PhoneIcon,
   BookmarkIcon,
   Cog6ToothIcon,
   QuestionMarkCircleIcon,
@@ -21,7 +20,6 @@ import {
 } from '@heroicons/react/24/outline';
 import HelpSupportModal from './HelpSupportModal';
 import SecurityModal from './SecurityModal';
-import CallHistoryModal from './CallHistoryModal';
 import ContactsModal from './ContactsModal';
 import AdsManagementModal from './AdsManagementModal';
 import CreditsModal from './CreditsModal';
@@ -41,7 +39,6 @@ const LobbyLeftSidebar = ({
 }) => {
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
-  const [isCallHistoryModalOpen, setIsCallHistoryModalOpen] = useState(false);
   const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
   const [isAdsManagementModalOpen, setIsAdsManagementModalOpen] = useState(false);
   const [isCreditsModalOpen, setIsCreditsModalOpen] = useState(false);
@@ -135,15 +132,6 @@ const LobbyLeftSidebar = ({
       icon: UserPlusIcon,
       onClick: () => {
         setIsContactsModalOpen(true);
-      },
-      enabled: true
-    },
-    {
-      id: 'calls',
-      label: 'Calls',
-      icon: PhoneIcon,
-      onClick: () => {
-        setIsCallHistoryModalOpen(true);
       },
       enabled: true
     },
@@ -318,14 +306,6 @@ const LobbyLeftSidebar = ({
         isOpen={isSecurityModalOpen}
         onClose={() => setIsSecurityModalOpen(false)}
         currentUser={currentUser}
-      />
-
-      {/* Call History Modal */}
-      <CallHistoryModal 
-        isOpen={isCallHistoryModalOpen}
-        onClose={() => setIsCallHistoryModalOpen(false)}
-        currentUser={currentUser}
-        onCallUser={onCallUser}
       />
 
       {/* Contacts Modal */}
