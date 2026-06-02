@@ -21,7 +21,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
 import { useMobile } from '../hooks/useMobile';
-import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup, getAssetUrl } from '../services/api';
+import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup, getAssetUrl, uploadRoomChatAttachment } from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
 import WatchTypeInfoModal from './WatchTypeInfoModal';
 import ClassTypeModal from './modals/ClassTypeModal';
@@ -338,7 +338,11 @@ const RoomPageNew = () => {
         // Show notification at 5 minutes and 1 minute before event
         if ((minutesUntilEvent === 5 || minutesUntilEvent === 1) && !notifiedEvents.has(notificationKey)) {
           // Mark as notified
-          setNotifiedEvents(prev => new Set([...prev, notificationKey]));
+          setNotifiedEvents(prev => {
+            const next = new Set([...prev, notificationKey]);
+            if (next.size > 50) { const [oldest] = next; next.delete(oldest); }
+            return next;
+          });
           
           // Show in-app toast notification
           toast(`📅 Event "${event.title}" starts in ${minutesUntilEvent} minute${minutesUntilEvent > 1 ? 's' : ''}!`, {
@@ -409,17 +413,20 @@ const RoomPageNew = () => {
     return () => {
       isMountedRef.current = false;
       clearInterval(interval);
-      
+
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
-      
+
       wsConnectedRef.current = false;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
+
+      // Clean up cached data no longer needed after leaving the room
+      sessionStorage.removeItem('lecture_hall_seats');
     };
   }, [roomId]);
 
@@ -625,7 +632,8 @@ const RoomPageNew = () => {
       console.log('📨 [Reply Debug] First message structure:', msgs[0]);
       const msgsWithReply = msgs.filter(m => m.reply_to);
       console.log('📨 [Reply Debug] Messages with reply_to:', msgsWithReply.length, msgsWithReply);
-      setMessages(msgs);
+      const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
+      setMessages(capped);
       scrollToBottom();
     } catch (err) {
       console.error('Failed to fetch messages:', err);
@@ -782,7 +790,8 @@ const RoomPageNew = () => {
         : `/api/rooms/${roomId}/messages?room_group_id=null`;
       
       const response = await apiClient.get(url);
-      setMessages(response.data.messages || []);
+      const msgs = response.data.messages || [];
+      setMessages(msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs);
     } catch (err) {
       console.error('Failed to fetch messages:', err);
       toast.error('Failed to load messages');
@@ -1022,7 +1031,8 @@ const RoomPageNew = () => {
             const id = message.data?.id || message.data?.ID;
             const existingIds = prev.map(m => m.id || m.ID);
             if (id && existingIds.includes(id)) return prev;
-            return [...prev, message.data];
+            const next = [...prev, message.data];
+            return next.length > 200 ? next.slice(next.length - 200) : next;
           });
           
           // Check if user is scrolled up - if so, increment unread count
@@ -1268,7 +1278,7 @@ const RoomPageNew = () => {
       setMessages(prev => {
         const existingIds = prev.map(m => m.id || m.ID);
         if (newId && existingIds.includes(newId)) return prev;
-        return [...prev, {
+        const next = [...prev, {
           id: newId || Date.now(),
           user_id: currentUser?.id,
           username: currentUser?.username,
@@ -1279,6 +1289,7 @@ const RoomPageNew = () => {
             : null,
           room_group_id: selectedGroupId,
         }];
+        return next.length > 200 ? next.slice(next.length - 200) : next;
       });
       scrollToBottom();
     } catch (err) {
@@ -1341,8 +1352,13 @@ const RoomPageNew = () => {
       } else {
         // Owner deleted their own message (hard delete) - remove from state
         setMessages(messages.filter(msg => msg.id !== messageId));
+        // Release any Audio element held for this message
+        if (audioRefs.current[messageId]) {
+          audioRefs.current[messageId].pause();
+          delete audioRefs.current[messageId];
+        }
       }
-      
+
       toast.success('Message deleted');
     } catch (err) {
       console.error('Failed to delete message:', err);
@@ -1951,6 +1967,59 @@ const RoomPageNew = () => {
     }
   };
 
+  // Compress an image file using canvas before upload.
+  // GIFs are returned unchanged (compression would strip animation).
+  const compressImage = (file) => new Promise((resolve) => {
+    if (file.type === 'image/gif') { resolve(file); return; }
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX_WIDTH = 1920;
+      let { width, height } = img;
+      if (width > MAX_WIDTH) {
+        height = Math.round(height * MAX_WIDTH / width);
+        width = MAX_WIDTH;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })),
+        'image/jpeg',
+        0.82,
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+
+  // Upload a chat attachment (image or document) to BunnyCDN via the backend.
+  const uploadChatAttachment = async (file, type) => {
+    let fileToUpload = file;
+    if (type === 'image') fileToUpload = await compressImage(file);
+    const loadingToast = toast.loading(`Uploading ${type}…`);
+    try {
+      const msg = await uploadRoomChatAttachment(roomId, fileToUpload, type, selectedGroupId);
+      toast.dismiss(loadingToast);
+      // Add the new message to local state (WS broadcast also fires but may arrive after)
+      setMessages(prev => {
+        const exists = prev.some(m => m.id === msg.id);
+        if (exists) return prev;
+        const next = [...prev, msg];
+        return next.length > 200 ? next.slice(next.length - 200) : next;
+      });
+    } catch (err) {
+      toast.dismiss(loadingToast);
+      toast.error(err?.response?.data?.error || `Failed to upload ${type}`);
+    }
+  };
+
+  // Hidden file inputs for image and document pickers
+  const imagePickerRef = React.useRef(null);
+  const documentPickerRef = React.useRef(null);
+
   // ✅ Handle attachment type selection
   const handleAttachmentTypeSelected = (type) => {
     switch (type) {
@@ -1958,15 +2027,12 @@ const RoomPageNew = () => {
         setIsCreatePollModalOpen(true);
         break;
       case 'image':
-        // TODO: Implement image upload
-        toast('Image upload coming soon!', { icon: '📸' });
+        imagePickerRef.current?.click();
         break;
       case 'document':
-        // TODO: Implement document upload
-        toast('Document upload coming soon!', { icon: '📄' });
+        documentPickerRef.current?.click();
         break;
       case 'link':
-        // TODO: Implement link sharing
         toast('Link sharing coming soon!', { icon: '🔗' });
         break;
       default:
@@ -2035,7 +2101,7 @@ const RoomPageNew = () => {
                     e.stopPropagation();
                     navigate('/lobby');
                   }}
-                  className="h-5 w-5 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
+                  className="h-5 w-5 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 ml-1"
                 />
 
                 {/* Middle section: Image + Name with info below */}
@@ -2077,17 +2143,17 @@ const RoomPageNew = () => {
                       (() => {
                         const displayName = selectedGroupId ? (roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name) : room.name;
                         const length = displayName.length;
-                        if (length <= 8) return 'text-2xl';
-                        if (length <= 12) return 'text-xl';
-                        return 'text-lg';
+                        if (length <= 8) return 'text-2xl lg:text-2xl';
+                        if (length <= 12) return 'text-xl lg:text-xl';
+                        return 'text-lg lg:text-lg';
                       })()
                     }`}>
                       {selectedGroupId ? (roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name) : room.name}
                     </h1>
                     
-                    {/* Host/Member Info below room name (only when no session) */}
+                    {/* Host/Member Info below room name (only when no session, hidden on mobile) */}
                     {!activeSession && (
-                      <div className="flex flex-col gap-0.5">
+                      <div className="hidden lg:flex flex-col gap-0.5">
                         <div className="flex items-center gap-1.5 text-[10px] text-gray-300">
                           {room.show_host !== false && (
                             <span className="flex items-center gap-0.5">
@@ -2174,11 +2240,6 @@ const RoomPageNew = () => {
                     </button>
                   )}
 
-                  {/* Ellipse */}
-                  <EllipsisVerticalIcon
-                    onClick={() => setIsEditModalOpen(true)}
-                    className="h-6 w-6 text-white cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
-                  />
                 </div>
               </div>
             </>
@@ -2321,7 +2382,7 @@ const RoomPageNew = () => {
                   
                   <EllipsisVerticalIcon
                     onClick={() => setIsEditModalOpen(true)}
-                    className="h-8 w-8 text-white cursor-pointer hover:opacity-80 transition-opacity"
+                    className="hidden lg:block h-8 w-8 text-white cursor-pointer hover:opacity-80 transition-opacity"
                     title="Room Settings"
                   />
                 </div>
@@ -2430,10 +2491,12 @@ const RoomPageNew = () => {
                 className={`flex group relative ${isOwnMessage ? 'justify-end' : 'justify-start'} transition-colors duration-700 rounded-lg ${
                   isHighlighted ? 'bg-purple-500/20' : ''
                 }`}
+                style={{ touchAction: 'pan-y' }}
                 onTouchStart={(e) => {
                   const touch = e.touches[0];
                   e.currentTarget.dataset.touchStartX = touch.clientX;
                   e.currentTarget.dataset.touchStartY = touch.clientY;
+                  e.currentTarget.dataset.swipeLocked = 'false';
                   setSwipingMsgIndex(index);
                   setSwipeX(0);
                 }}
@@ -2444,6 +2507,8 @@ const RoomPageNew = () => {
                   const deltaX = touch.clientX - startX;
                   const deltaY = touch.clientY - startY;
                   if (Math.abs(deltaX) > Math.abs(deltaY) && deltaX > 0) {
+                    e.preventDefault();
+                    e.currentTarget.dataset.swipeLocked = 'true';
                     const clamped = Math.min(deltaX, 90);
                     setSwipeX(clamped);
                   }
@@ -2451,7 +2516,7 @@ const RoomPageNew = () => {
                 onTouchEnd={(e) => {
                   const startX = parseFloat(e.currentTarget.dataset.touchStartX);
                   const deltaX = e.changedTouches[0].clientX - startX;
-                  if (deltaX > 70) startReply(msg);
+                  if (deltaX > 60) startReply(msg);
                   setSwipingMsgIndex(null);
                   setSwipeX(0);
                 }}
@@ -2562,6 +2627,27 @@ const RoomPageNew = () => {
                               )}
                             </div>
                           </div>
+                        ) : msg.message_type === 'image' && msg.attachment_url ? (
+                          <a href={msg.attachment_url} target="_blank" rel="noopener noreferrer">
+                            <img
+                              src={msg.attachment_url}
+                              alt={msg.attachment_name || 'Image'}
+                              className="max-w-[220px] rounded-lg object-cover"
+                              onLoad={() => scrollToBottom && scrollToBottom()}
+                            />
+                          </a>
+                        ) : msg.message_type === 'document' && msg.attachment_url ? (
+                          <a
+                            href={msg.attachment_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 text-sm underline opacity-90 hover:opacity-100"
+                          >
+                            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span className="truncate max-w-[180px]">{msg.attachment_name || 'Document'}</span>
+                          </a>
                         ) : (
                           <TwemojiText className={msg.deleted_by_host ? 'italic opacity-75 text-sm' : 'text-sm'}>
                             {msg.message}
@@ -3053,6 +3139,30 @@ const RoomPageNew = () => {
         isOpen={isAttachModalOpen}
         onClose={() => setIsAttachModalOpen(false)}
         onSelectType={handleAttachmentTypeSelected}
+      />
+
+      {/* Hidden file pickers for chat attachments */}
+      <input
+        ref={imagePickerRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        className="hidden"
+        onChange={e => {
+          const file = e.target.files?.[0];
+          if (file) uploadChatAttachment(file, 'image');
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={documentPickerRef}
+        type="file"
+        accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+        className="hidden"
+        onChange={e => {
+          const file = e.target.files?.[0];
+          if (file) uploadChatAttachment(file, 'document');
+          e.target.value = '';
+        }}
       />
 
       {/* ✅ Create Poll Modal */}

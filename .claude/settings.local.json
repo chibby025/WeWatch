@@ -108,7 +108,13 @@
       "PowerShell(wsl -d Ubuntu-22.04 -e /usr/local/go/bin/go build ./... 2>&1)",
       "PowerShell($LASTEXITCODE)",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm install twemoji 2>&1 | tail -5\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm install twemoji 2>&1 | tail -5\")",
+      "PowerShell(wsl -e bash -c \"cd ~/WeWatch/backend && go build ./... 2>&1\")",
+      "PowerShell(wsl bash -c 'export PATH=$PATH:/usr/local/go/bin && cd ~/WeWatch/backend && go build ./... 2>&1')",
+      "PowerShell(wsl bash -c 'cd ~/WeWatch/backend && /usr/local/go/bin/go build ./... 2>&1')",
+      "PowerShell(wsl bash -c 'which go || find /usr/local /home/chibuzor_dev -name go -type f 2>/dev/null | head -5')",
+      "PowerShell(wsl bash -c 'cd ~/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1')",
+      "PowerShell(wsl bash -c 'cd ~/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1')"
     ],
     "additionalDirectories": [
       "\\dev",

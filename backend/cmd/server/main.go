@@ -108,7 +108,9 @@ func main() {
 		// User statuses (stories)
 		&models.UserStatus{}, &models.UserStatusView{}, &models.UserStatusExclusion{},
 		// Community Events (requests + upvotes + claims)
-		&models.CommunityRequest{}, &models.CommunityRequestUpvote{}, &models.CommunityRequestClaim{})
+		&models.CommunityRequest{}, &models.CommunityRequestUpvote{}, &models.CommunityRequestClaim{},
+		// Room message attachments
+		&models.RoomMessage{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -508,7 +510,8 @@ func main() {
 		roomGroup.POST("/:id/messages", handlers.CreateRoomMessage)      // POST /api/rooms/:id/messages (Send room message)
 		roomGroup.DELETE("/:id/messages/:message_id", handlers.DeleteRoomMessage) // DELETE /api/rooms/:id/messages/:message_id (Delete room message)
 		roomGroup.PUT("/:id/messages/:message_id", handlers.EditRoomMessage)      // PUT /api/rooms/:id/messages/:message_id (Edit room message)
-		roomGroup.POST("/:id/messages/voice-note", handlers.UploadVoiceNote)      // POST /api/rooms/:id/messages/voice-note (Upload voice note)
+		roomGroup.POST("/:id/messages/voice-note", handlers.UploadVoiceNote)        // POST /api/rooms/:id/messages/voice-note (Upload voice note)
+		roomGroup.POST("/:id/messages/attachment", handlers.UploadRoomChatAttachmentHandler) // POST /api/rooms/:id/messages/attachment (Upload image/doc to BunnyCDN)
 		roomGroup.POST("/:id/messages/poll", handlers.CreatePoll)                 // POST /api/rooms/:id/messages/poll (Create poll)
 		
 		// --- Poll routes ---

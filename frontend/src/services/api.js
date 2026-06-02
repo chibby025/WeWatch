@@ -1861,9 +1861,15 @@ export const updateStatusPrivacy = async (excludedIds) => {
   return response.data;
 };
 
-// --- Public (no-auth) ---
-export const getPublicLiveSessions = async () => {
-  const response = await apiClient.get('/api/public/live-sessions');
+// --- Room chat attachments ---
+export const uploadRoomChatAttachment = async (roomId, file, type, roomGroupId) => {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('type', type);
+  if (roomGroupId) fd.append('room_group_id', String(roomGroupId));
+  const response = await apiClient.post(`/api/rooms/${roomId}/messages/attachment`, fd, {
+    headers: { 'Content-Type': undefined },
+  });
   return response.data;
 };
 

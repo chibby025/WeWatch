@@ -92,7 +92,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
     {
       id: 'Mature',
       name: 'Mature',
-      desc: 'Mature Content - Explicit, nude content for adults 18+',
+      desc: 'For mature audiences only. May contain strong language, violence, or nude & explicit scenes.',
       icon: '/icons/Mature Rating Icon.png',
       gradient: 'from-purple-400 to-purple-600',
       minAge: 18

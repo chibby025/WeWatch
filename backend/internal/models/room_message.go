@@ -52,9 +52,11 @@ type RoomMessage struct {
 	Username      string     `gorm:"-" json:"username"` // Not stored, populated from User
 	Message       string     `gorm:"type:text;not null" json:"message"`
 	DeletedByHost bool       `gorm:"default:false" json:"deleted_by_host"` // Track if deleted by host
-	AudioURL      *string    `gorm:"type:varchar(500)" json:"audio_url,omitempty"` // Voice note URL
-	Duration      *int       `gorm:"type:int" json:"duration,omitempty"` // Voice note duration in seconds
-	MessageType   string     `gorm:"type:varchar(20);default:'text'" json:"message_type"` // text, voice_note, poll, etc.
+	AudioURL       *string    `gorm:"type:varchar(500)" json:"audio_url,omitempty"`        // Voice note URL
+	Duration       *int       `gorm:"type:int" json:"duration,omitempty"`                  // Voice note duration in seconds
+	MessageType    string     `gorm:"type:varchar(20);default:'text'" json:"message_type"` // text, voice_note, poll, image, document
+	AttachmentURL  *string    `gorm:"type:text" json:"attachment_url,omitempty"`           // BunnyCDN URL for image/document
+	AttachmentName *string    `gorm:"type:varchar(255)" json:"attachment_name,omitempty"`  // Original filename (for documents)
 	PollData      *PollData  `gorm:"type:jsonb" json:"poll_data,omitempty"` // Poll data (PostgreSQL JSONB)
 	ReplyToID     *uint      `gorm:"index" json:"reply_to_id,omitempty"` // Message being replied to
 	ReplyTo       *RoomMessage `gorm:"foreignKey:ReplyToID;constraint:OnDelete:SET NULL" json:"reply_to,omitempty"` // Populated reply context

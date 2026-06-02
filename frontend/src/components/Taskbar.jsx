@@ -449,12 +449,7 @@ const Taskbar = ({
           />
         </div>
 
-        <div className="flex items-center space-x-4 overflow-x-auto portrait:space-x-2 scrollbar-hide flex-nowrap"
-          style={{
-            scrollbarWidth: 'none', /* Firefox */
-            msOverflowStyle: 'none',  /* IE and Edge */
-          }}
-        >
+        <div className="flex items-center gap-4 portrait:gap-1 flex-nowrap overflow-hidden">
           <TaskbarButton 
             icon={ChatIcon} 
             label="Chat" 
@@ -848,7 +843,31 @@ const Taskbar = ({
         /* Portrait mode adjustments */
         @media (orientation: portrait) {
           .taskbar-container {
-            padding: 0 8px !important;
+            padding: 0 6px !important;
+          }
+        }
+
+        /* Compact icon sizing — portrait phones only */
+        @media (orientation: portrait) and (max-width: 640px) {
+          .taskbar-container button {
+            padding: 4px 3px !important;
+          }
+          .taskbar-container button > .relative {
+            height: 22px !important;
+            width: 22px !important;
+          }
+          .taskbar-container button img {
+            height: 22px !important;
+            width: 22px !important;
+          }
+          .taskbar-container button > span {
+            font-size: 8px !important;
+            margin-top: 1px !important;
+            line-height: 1.2 !important;
+          }
+          /* Hide subtitles (mic status, row number) to keep height tidy */
+          .taskbar-container button + span {
+            display: none !important;
           }
         }
       `}</style>
