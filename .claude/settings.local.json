@@ -144,7 +144,10 @@
       "PowerShell(wsl -e bash -c 'grep -n \"friend_request\\\\|fetchFriends\\\\|fetchPending\\\\|setPendingRequests\\\\|setFriendsList\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -30')",
       "PowerShell(wsl -e bash -c 'grep -n \"request\\\\|friend\\\\|Friend\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -40')",
       "PowerShell(wsl -e bash -c 'grep -c \"\" ~/WeWatch/frontend/src/components/LobbyPage.jsx && grep -n \"pendingRequests\\\\|sentRequests\\\\|friendsList\\\\|fetchFriend\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -20')",
-      "PowerShell(wsl -e bash -c 'cd ~/WeWatch && git diff origin/main...HEAD --stat 2>/dev/null | head -20 && echo \"---\" && git log --oneline origin/main..HEAD 2>/dev/null | head -10')"
+      "PowerShell(wsl -e bash -c 'cd ~/WeWatch && git diff origin/main...HEAD --stat 2>/dev/null | head -20 && echo \"---\" && git log --oneline origin/main..HEAD 2>/dev/null | head -10')",
+      "PowerShell(wsl -e bash -c 'grep -n \"showGuestBanner\\\\|!currentUser\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -15')",
+      "PowerShell(wsl -e bash -c 'grep -n \"lwoIcon\\\\|LWO1\\\\|logo\\\\|Logo\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -15')",
+      "PowerShell(wsl -e bash -c 'grep -n \"fixed top\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -20')"
     ],
     "additionalDirectories": [
       "\\dev",

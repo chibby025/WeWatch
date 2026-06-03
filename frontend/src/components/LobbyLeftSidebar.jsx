@@ -64,22 +64,31 @@ const LobbyLeftSidebar = ({
   // Handle logout
   const handleLogout = () => {
     console.log('🚪 [Logout] Clearing auth data and cache...');
-    
-    // Clear all auth data
-    localStorage.removeItem('user');
-    localStorage.removeItem('token');
-    
-    // Clear all cinema/user caches
-    clearAllCaches();
-    console.log('✅ [Logout] Cinema cache cleared');
-    
-    // Clear any remaining localStorage items
+
+    // Preserve per-user UX flags so they survive the logout/login cycle
+    const preserve = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (
+        k?.startsWith('wewatch_onboarding_done_') ||
+        k === 'wewatch_last_tab' ||
+        k === 'wewatch_room_explainer_seen' ||
+        k === 'wewatch_room_explainer_seen' ||
+        k === 'dataSaverMode' ||
+        k === 'pref_default_content_rating'
+      ) {
+        preserve[k] = localStorage.getItem(k);
+      }
+    }
+
     localStorage.clear();
-    
-    // Close sidebar
+    clearAllCaches();
+
+    // Restore preserved flags
+    Object.entries(preserve).forEach(([k, v]) => localStorage.setItem(k, v));
+
+    console.log('✅ [Logout] Auth cleared, UX flags preserved');
     onClose();
-    
-    // Redirect to login
     navigate('/login');
   };
 

@@ -403,7 +403,7 @@ const LobbyPage = () => {
   const [watchingBottomPad, setWatchingBottomPad] = React.useState(64);
   
   // ✅ Get current user from Auth Context
-  const { currentUser, wsToken, refreshUser } = useAuth();
+  const { currentUser, wsToken, refreshUser, loading: authLoading } = useAuth();
   
   // Use currentUser.id for authenticated user ID
   const authenticatedUserID = currentUser?.id || null;
@@ -2301,14 +2301,15 @@ const LobbyPage = () => {
   }, [currentUser]);
 
   // Onboarding: open UserProfileModal once for any user who hasn't completed it
+  // Gate on authLoading so we never fire during the brief null-user window on page load
   useEffect(() => {
-    if (!currentUser?.id) return;
+    if (authLoading || !currentUser?.id) return;
     const key = `wewatch_onboarding_done_${currentUser.id}`;
     if (!localStorage.getItem(key)) {
       const timer = setTimeout(() => setIsUserProfileModalOpen(true), 700);
       return () => clearTimeout(timer);
     }
-  }, [currentUser?.id]);
+  }, [authLoading, currentUser?.id]);
 
   // Guest mode: fetch public sessions + show banner + 30s refresh
   useEffect(() => {
@@ -3292,7 +3293,7 @@ const LobbyPage = () => {
     <div className="relative min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-white transition-colors duration-200 pb-20">
 
       {/* Guest banner — slides down from top, auto-dismisses after 5s */}
-      {!currentUser && (
+      {!authLoading && !currentUser && (
         <div
           className={`fixed top-3 left-1/2 -translate-x-1/2 z-50 w-[calc(100vw-32px)] max-w-sm transition-all duration-500 ease-out ${
             showGuestBanner ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none'
@@ -3334,7 +3335,7 @@ const LobbyPage = () => {
       {/* ✅ Hamburger Menu Button - Fixed Top Left */}
       <button
         onClick={() => setIsLobbyLeftSidebarOpen(true)}
-        className="fixed top-3 left-3 z-30 rounded-lg shadow-lg transition-colors duration-200 flex items-center justify-center p-1.5 sm:p-2 bg-gray-800/70 hover:bg-gray-700 text-white dark:bg-white dark:hover:bg-gray-100 dark:text-gray-800"
+        className="fixed top-3 left-3 z-30 rounded-md shadow-lg transition-colors duration-200 flex items-center justify-center p-1 sm:p-1.5 bg-gray-800/70 hover:bg-gray-700 text-white dark:bg-white dark:hover:bg-gray-100 dark:text-gray-800"
         aria-label="Open menu"
       >
         <Bars3Icon className="h-6 w-6 sm:h-7 sm:w-7" />
@@ -3602,7 +3603,7 @@ const LobbyPage = () => {
           <img
             src="/icons/LetsWatchOut Logo.svg"
             alt="LetsWatchOut"
-            className="h-[68px] sm:h-[107px] w-auto"
+            className="h-[62px] sm:h-[107px] w-auto"
           />
         </div>
       {activeTab !== 'watching' && (
