@@ -94,9 +94,12 @@ const CACHE_TTL = 60_000; // 60 s
 const LobbyPage = () => {
   // ✅ Tab State
   // Default to Watching Live if we have cached sessions, otherwise Rooms
-  const [activeTab, setActiveTab] = useState(() =>
-    _lobbyCache.sessions?.length > 0 ? 'watching' : 'rooms'
-  );
+  const [activeTab, setActiveTab] = useState(() => {
+    // Restore last tab on refresh; use smart default only on first visit
+    const saved = localStorage.getItem('wewatch_last_tab');
+    if (saved) return saved;
+    return _lobbyCache.sessions?.length > 0 ? 'watching' : 'rooms';
+  });
   
   // ✅ Data Saver State
   const [dataSaverEnabled, setDataSaverEnabled] = React.useState(
@@ -117,6 +120,11 @@ const LobbyPage = () => {
     };
   }, []);
   
+  // Persist active tab so refresh returns user to where they were
+  useEffect(() => {
+    localStorage.setItem('wewatch_last_tab', activeTab);
+  }, [activeTab]);
+
   // 🔔 Notification state
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [notifications, setNotifications] = useState([]);
@@ -2292,6 +2300,16 @@ const LobbyPage = () => {
     }
   }, [currentUser]);
 
+  // Onboarding: open UserProfileModal once for any user who hasn't completed it
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const key = `wewatch_onboarding_done_${currentUser.id}`;
+    if (!localStorage.getItem(key)) {
+      const timer = setTimeout(() => setIsUserProfileModalOpen(true), 700);
+      return () => clearTimeout(timer);
+    }
+  }, [currentUser?.id]);
+
   // Guest mode: fetch public sessions + show banner + 30s refresh
   useEffect(() => {
     if (currentUser) return;
@@ -2505,14 +2523,15 @@ const LobbyPage = () => {
                 break;
                 
               case 'friend_request_received':
-                // Refresh pending requests when new request received
                 fetchPendingRequests();
+                fetchFriendsList();
                 toast.success(`${message.from_username} sent you a friend request!`);
                 break;
-                
+
               case 'friend_request_accepted':
-                // Refresh friends list when request accepted
                 fetchFriendsList();
+                fetchPendingRequests();
+                fetchSentRequests();
                 toast.success(`${message.from_username} accepted your friend request!`);
                 break;
                 
@@ -3315,11 +3334,10 @@ const LobbyPage = () => {
       {/* ✅ Hamburger Menu Button - Fixed Top Left */}
       <button
         onClick={() => setIsLobbyLeftSidebarOpen(true)}
-        className="fixed top-3 left-3 z-30 bg-gray-800/70 hover:bg-gray-700 text-white rounded-md shadow-lg transition-colors duration-200 flex items-center justify-center"
-        style={{ width: '36px', height: '36px' }}
+        className="fixed top-3 left-3 z-30 rounded-lg shadow-lg transition-colors duration-200 flex items-center justify-center p-1.5 sm:p-2 bg-gray-800/70 hover:bg-gray-700 text-white dark:bg-white dark:hover:bg-gray-100 dark:text-gray-800"
         aria-label="Open menu"
       >
-        <Bars3Icon style={{ width: '22px', height: '22px' }} />
+        <Bars3Icon className="h-6 w-6 sm:h-7 sm:w-7" />
       </button>
 
 
@@ -3424,7 +3442,12 @@ const LobbyPage = () => {
       <UserProfileModal
         user={currentUser}
         isOpen={isUserProfileModalOpen}
-        onClose={() => setIsUserProfileModalOpen(false)}
+        onClose={() => {
+          if (currentUser?.id) {
+            localStorage.setItem(`wewatch_onboarding_done_${currentUser.id}`, 'true');
+          }
+          setIsUserProfileModalOpen(false);
+        }}
         isOwnProfile={true}
         onSaveProfile={handleSaveProfile}
       />
@@ -3487,8 +3510,11 @@ const LobbyPage = () => {
                   <h2 className="text-white text-lg font-bold leading-tight">Your Room is Your Channel</h2>
                 </div>
 
-                <p className="text-gray-300 text-sm leading-relaxed mb-4">
+                <p className="text-gray-300 text-sm leading-relaxed mb-3">
                   Think of it as your personal TV channel on WeWatch — you host live watch sessions, your audience joins, and you can even earn from paid tickets.
+                </p>
+                <p className="text-amber-400 text-xs font-medium mb-4">
+                  ⚠️ You can only create 1 room — make it count!
                 </p>
 
                 <ul className="space-y-2 mb-6">
@@ -3664,7 +3690,7 @@ const LobbyPage = () => {
       )}
 
       {/* ── Inline 4-tab bar — always dark so active=white works on all tabs ── */}
-      <div ref={tabBarRef} className="mb-1 sm:mb-2 bg-gray-900 dark:bg-gray-900 rounded-xl">
+      <div ref={tabBarRef} className="mb-1 sm:mb-2 bg-gray-900 dark:bg-gray-700 rounded-xl">
         <div className="flex border-b border-white/10">
           {[
             { id: 'chats',    label: 'Chats' },
@@ -3691,6 +3717,13 @@ const LobbyPage = () => {
                   {chatUnread > 0 && (
                     <span className="absolute -top-2 -right-4 min-w-[16px] h-4 px-0.5 flex items-center justify-center text-[9px] font-bold bg-green-600 text-white rounded-full">
                       {chatUnread}
+                    </span>
+                  )}
+
+                  {/* Friend request badge — purple "+N", offset right when unread badge also showing */}
+                  {tab.id === 'chats' && pendingRequests.length > 0 && (
+                    <span className={`absolute -top-2 min-w-[16px] h-4 px-0.5 flex items-center justify-center text-[9px] font-bold bg-purple-500 text-white rounded-full ${chatUnread > 0 ? '-right-8' : '-right-4'}`}>
+                      +{pendingRequests.length}
                     </span>
                   )}
 
@@ -5043,7 +5076,14 @@ const LobbyPage = () => {
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700 flex flex-col h-full">
                   {/* ✅ Friends List Header */}
                   <div className="bg-gradient-to-r from-green-600 to-green-700 p-3 sm:p-4">
-                    <h3 className="text-white font-bold text-lg sm:text-xl mb-3">Chats</h3>
+                    <h3 className="text-white font-bold text-lg sm:text-xl mb-3 flex items-center gap-2">
+                      Chats
+                      {pendingRequests.length > 0 && (
+                        <span className="text-xs font-bold bg-purple-500 text-white px-2 py-0.5 rounded-full">
+                          +{pendingRequests.length}
+                        </span>
+                      )}
+                    </h3>
                     
                   </div>
                 
@@ -5124,6 +5164,8 @@ const LobbyPage = () => {
                                       try {
                                         await sendFriendRequest(user.id);
                                         setSentFriendRequestIds(prev => new Set([...prev, user.id]));
+                                        fetchSentRequests();
+                                        fetchFriendsList();
                                       } catch {
                                         toast.error('Could not send request');
                                       }

@@ -129,7 +129,22 @@
       "PowerShell(wsl -e bash -c 'ls ~/WeWatch/frontend/public/sounds/ 2>/dev/null || echo \"No sounds folder\"')",
       "PowerShell(wsl -e bash -c 'chmod +x ~/WeWatch/frontend/compress-all-icons.sh && ~/WeWatch/frontend/compress-all-icons.sh')",
       "PowerShell(wsl -e bash -c 'chmod +x ~/WeWatch/frontend/update-icon-refs.sh && ~/WeWatch/frontend/update-icon-refs.sh')",
-      "PowerShell(wsl -e bash -c 'rm ~/WeWatch/frontend/compress-all-icons.sh ~/WeWatch/frontend/update-icon-refs.sh ~/WeWatch/frontend/list-icons.sh')"
+      "PowerShell(wsl -e bash -c 'rm ~/WeWatch/frontend/compress-all-icons.sh ~/WeWatch/frontend/update-icon-refs.sh ~/WeWatch/frontend/list-icons.sh')",
+      "PowerShell(wsl -e bash -c 'chmod +x ~/WeWatch/frontend/cleanup-pngs.sh && ~/WeWatch/frontend/cleanup-pngs.sh')",
+      "PowerShell(wsl -e bash -c 'chmod +x ~/WeWatch/frontend/cleanup-pngs.sh; ~/WeWatch/frontend/cleanup-pngs.sh; true')",
+      "PowerShell(wsl -e bash ~/WeWatch/frontend/cleanup-pngs.sh)",
+      "PowerShell(wsl -e bash -c 'bash ~/WeWatch/frontend/cleanup-pngs.sh')",
+      "PowerShell(wsl -e bash -c 'rm ~/WeWatch/frontend/cleanup-pngs.sh && du -sh ~/WeWatch/frontend/public/icons/')",
+      "PowerShell(wsl -e bash -c 'grep -n \"isUserProfileModalOpen\\\\|UserProfileModal\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -20')",
+      "PowerShell(wsl -e bash -c 'grep -n \"ProfileModal\\\\|profileModal\\\\|profile_modal\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -20')",
+      "PowerShell(wsl -e bash -c 'grep -n \"UserProfile\\\\|isUserProfile\\\\|onMyProfile\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -20')",
+      "PowerShell(wsl -e bash -c 'grep -rn \"UserProfile\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -20')",
+      "PowerShell(wsl -e bash -c 'grep -n \"friend_request\\\\|fetchFriendsList\\\\|fetchPending\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -30')",
+      "PowerShell(wsl -e bash -c 'grep -n \"activeTab\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -20')",
+      "PowerShell(wsl -e bash -c 'grep -n \"friend_request\\\\|fetchFriends\\\\|fetchPending\\\\|setPendingRequests\\\\|setFriendsList\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -30')",
+      "PowerShell(wsl -e bash -c 'grep -n \"request\\\\|friend\\\\|Friend\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -40')",
+      "PowerShell(wsl -e bash -c 'grep -c \"\" ~/WeWatch/frontend/src/components/LobbyPage.jsx && grep -n \"pendingRequests\\\\|sentRequests\\\\|friendsList\\\\|fetchFriend\" ~/WeWatch/frontend/src/components/LobbyPage.jsx | head -20')",
+      "PowerShell(wsl -e bash -c 'cd ~/WeWatch && git diff origin/main...HEAD --stat 2>/dev/null | head -20 && echo \"---\" && git log --oneline origin/main..HEAD 2>/dev/null | head -10')"
     ],
     "additionalDirectories": [
       "\\dev",
