@@ -279,7 +279,7 @@ const CircleOfFriendsSphere = ({
   };
 
   const WIcon = ({ size = 22 }) => (
-    <img src="/icons/lwoIcon.png" alt="WatchOut" style={{ width: size, height: size }} className="object-contain" />
+    <img src="/icons/lwoIcon.webp" alt="WatchOut" style={{ width: size, height: size }} className="object-contain" />
   );
 
   return (

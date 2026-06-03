@@ -31,14 +31,14 @@ async function compressImage(file, maxPx = 1280, quality = 0.82) {
 }
 
 const RATINGS = [
-  { value: 'G',           label: 'G',      bg: 'bg-green-600',  text: 'text-white', minAge: 0,  icon: '/icons/G Rating Icon.png',           desc: 'General Audiences — all ages admitted' },
-  { value: 'PG',          label: 'PG',     bg: 'bg-teal-600',   text: 'text-white', minAge: 0,  icon: '/icons/PG Rating Icon.png',          desc: 'Parental Guidance — some material may not suit children' },
-  { value: 'Educational', label: 'Edu',    bg: 'bg-blue-600',   text: 'text-white', minAge: 0,  icon: '/icons/Educational_Rating_Icon.png', desc: 'Educational — tutorials, classes, university material' },
-  { value: 'Religious',   label: 'Faith',  bg: 'bg-indigo-600', text: 'text-white', minAge: 0,  icon: '/icons/Religious Rating.png',        desc: 'Religious — church services, Bible study, worship' },
-  { value: '13+',         label: '13+',    bg: 'bg-amber-500',  text: 'text-black', minAge: 13, icon: '/icons/13_ Rating Icon.png',         desc: 'Teens 13+ — may not be suitable for younger audiences' },
-  { value: '16+',         label: '16+',    bg: 'bg-orange-500', text: 'text-white', minAge: 16, icon: '/icons/16_ Rating Icon.png',         desc: 'Older Teens 16+ — may not suit viewers under 16' },
-  { value: '18+',         label: '18+',    bg: 'bg-red-600',    text: 'text-white', minAge: 18, icon: '/icons/18_ Rating Icon.png',         desc: 'Adults Only — restricted to viewers 18 and over' },
-  { value: 'Mature',      label: 'Mature', bg: 'bg-rose-700',   text: 'text-white', minAge: 18, icon: '/icons/Mature Rating Icon.png',      desc: 'Mature Content — explicit content for adults 18+' },
+  { value: 'G',           label: 'G',      bg: 'bg-green-600',  text: 'text-white', minAge: 0,  icon: '/icons/G Rating Icon.webp',           desc: 'General Audiences — all ages admitted' },
+  { value: 'PG',          label: 'PG',     bg: 'bg-teal-600',   text: 'text-white', minAge: 0,  icon: '/icons/PG Rating Icon.webp',          desc: 'Parental Guidance — some material may not suit children' },
+  { value: 'Educational', label: 'Edu',    bg: 'bg-blue-600',   text: 'text-white', minAge: 0,  icon: '/icons/Educational_Rating_Icon.webp', desc: 'Educational — tutorials, classes, university material' },
+  { value: 'Religious',   label: 'Faith',  bg: 'bg-indigo-600', text: 'text-white', minAge: 0,  icon: '/icons/Religious Rating.webp',        desc: 'Religious — church services, Bible study, worship' },
+  { value: '13+',         label: '13+',    bg: 'bg-amber-500',  text: 'text-black', minAge: 13, icon: '/icons/13_ Rating Icon.webp',         desc: 'Teens 13+ — may not be suitable for younger audiences' },
+  { value: '16+',         label: '16+',    bg: 'bg-orange-500', text: 'text-white', minAge: 16, icon: '/icons/16_ Rating Icon.webp',         desc: 'Older Teens 16+ — may not suit viewers under 16' },
+  { value: '18+',         label: '18+',    bg: 'bg-red-600',    text: 'text-white', minAge: 18, icon: '/icons/18_ Rating Icon.webp',         desc: 'Adults Only — restricted to viewers 18 and over' },
+  { value: 'Mature',      label: 'Mature', bg: 'bg-rose-700',   text: 'text-white', minAge: 18, icon: '/icons/Mature Rating Icon.webp',      desc: 'Mature Content — explicit content for adults 18+' },
 ];
 
 export default function PostUploadModal({ isOpen, onClose, onSuccess }) {

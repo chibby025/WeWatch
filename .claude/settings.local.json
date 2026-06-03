@@ -114,7 +114,22 @@
       "PowerShell(wsl bash -c 'cd ~/WeWatch/backend && /usr/local/go/bin/go build ./... 2>&1')",
       "PowerShell(wsl bash -c 'which go || find /usr/local /home/chibuzor_dev -name go -type f 2>/dev/null | head -5')",
       "PowerShell(wsl bash -c 'cd ~/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1')",
-      "PowerShell(wsl bash -c 'cd ~/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1')"
+      "PowerShell(wsl bash -c 'cd ~/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1')",
+      "PowerShell(wsl bash -c 'ls -lh /home/chibuzor_dev/WeWatch/frontend/public/icons/ | grep -iE \"rating|Rating\"')",
+      "PowerShell(wsl bash -c 'ls -lh ~/WeWatch/frontend/public/icons/')",
+      "PowerShell(wsl bash -c 'which cwebp && cwebp --version 2>/dev/null || echo \"cwebp not found\"; which convert && convert --version 2>/dev/null | head -1 || echo \"imagemagick not found\"')",
+      "PowerShell(wsl bash -c 'cd ~/WeWatch/frontend/public/icons && for f in \"G Rating Icon.png\" \"PG Rating Icon.png\" \"18_ Rating Icon.png\" \"13_ Rating Icon.png\" \"16_ Rating Icon.png\" \"Religious Rating.png\" \"Educational_Rating_Icon.png\" \"Mature Rating Icon.png\"; do echo -n \"$f: \"; identify -format \"%wx%h\\\\n\" \"$f\" 2>/dev/null || python3 -c \"from PIL import Image; img=Image.open\\(\\\\\"$f\\\\\"\\); print\\(f\\\\\"{img.size[0]}x{img.size[1]}\\\\\"\\)\" 2>/dev/null || echo \"unknown dims\"; done')",
+      "PowerShell(wsl -e bash -c 'cd ~/WeWatch/frontend/public/icons && cwebp -q 85 -preset icon -resize 400 600 \"G Rating Icon.png\" -o \"G_Rating_Icon.webp\" 2>&1; echo \"exit: $?\"')",
+      "PowerShell(wsl -e bash -c 'chmod +x ~/WeWatch/frontend/compress-rating-icons.sh && ~/WeWatch/frontend/compress-rating-icons.sh')",
+      "PowerShell(wsl -e bash -c 'chmod +x ~/WeWatch/frontend/update-rating-refs.sh && ~/WeWatch/frontend/update-rating-refs.sh')",
+      "PowerShell(wsl -e bash -c 'grep -n \"Rating\\\\|webp\\\\|\\\\.png\" ~/WeWatch/frontend/src/components/PricingModal.jsx | head -20')",
+      "PowerShell(wsl -e bash -c 'grep -n \"icons\" ~/WeWatch/frontend/src/components/PricingModal.jsx | head -20')",
+      "PowerShell(wsl -e bash -c 'rm ~/WeWatch/frontend/compress-rating-icons.sh ~/WeWatch/frontend/update-rating-refs.sh')",
+      "PowerShell(wsl -e bash -c 'grep -n \"png\\\\|webp\\\\|icon\\\\|Rating\" ~/WeWatch/frontend/src/components/ContentRatingSelector.jsx | head -30')",
+      "PowerShell(wsl -e bash -c 'ls ~/WeWatch/frontend/public/sounds/ 2>/dev/null || echo \"No sounds folder\"')",
+      "PowerShell(wsl -e bash -c 'chmod +x ~/WeWatch/frontend/compress-all-icons.sh && ~/WeWatch/frontend/compress-all-icons.sh')",
+      "PowerShell(wsl -e bash -c 'chmod +x ~/WeWatch/frontend/update-icon-refs.sh && ~/WeWatch/frontend/update-icon-refs.sh')",
+      "PowerShell(wsl -e bash -c 'rm ~/WeWatch/frontend/compress-all-icons.sh ~/WeWatch/frontend/update-icon-refs.sh ~/WeWatch/frontend/list-icons.sh')"
     ],
     "additionalDirectories": [
       "\\dev",

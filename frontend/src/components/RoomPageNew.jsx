@@ -189,14 +189,14 @@ const RoomPageNew = () => {
   // the host clicks Begin Watch (avoids the visible delay from cold image fetches).
   useEffect(() => {
     [
-      '/icons/G Rating Icon.png',
-      '/icons/PG Rating Icon.png',
-      '/icons/Educational_Rating_Icon.png',
-      '/icons/Religious Rating.png',
-      '/icons/13_ Rating Icon.png',
-      '/icons/16_ Rating Icon.png',
-      '/icons/18_ Rating Icon.png',
-      '/icons/Mature Rating Icon.png',
+      '/icons/G Rating Icon.webp',
+      '/icons/PG Rating Icon.webp',
+      '/icons/Educational_Rating_Icon.webp',
+      '/icons/Religious Rating.webp',
+      '/icons/13_ Rating Icon.webp',
+      '/icons/16_ Rating Icon.webp',
+      '/icons/18_ Rating Icon.webp',
+      '/icons/Mature Rating Icon.webp',
     ].forEach(src => { const img = new Image(); img.src = src; });
   }, []);
 

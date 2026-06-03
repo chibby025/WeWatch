@@ -351,7 +351,7 @@ export default function LiveShareManager({
   });
   const [bannerActive, setBannerActive] = useState(false);
   const [bannerLayout, setBannerLayout] = useState(() => {
-    // Load persisted layout choice: 'bn' (BN.png on right) or 'breakin' (Breakin.png on top-left)
+    // Load persisted layout choice: 'bn' (BN.webp on right) or 'breakin' (Breakin.webp on top-left)
     return localStorage.getItem('liveshare_banner_layout') || 'bn';
   });
   
@@ -2437,7 +2437,7 @@ export default function LiveShareManager({
                 className="flex items-center gap-1 p-1 hover:bg-gray-700/50 rounded transition-colors"
                 title="Customize colors"
               >
-                <img src="/icons/colorPaletteIcon.png" alt="Colors" className="w-5 h-5" />
+                <img src="/icons/colorPaletteIcon.webp" alt="Colors" className="w-5 h-5" />
                 <div className="flex gap-0.5">
                   <div className="w-3 h-3 rounded-sm border border-gray-600" style={{ backgroundColor: lowerThirdColors.background }}></div>
                   <div className="w-3 h-3 rounded-sm border border-gray-600" style={{ backgroundColor: lowerThirdColors.accent }}></div>
@@ -2790,7 +2790,7 @@ export default function LiveShareManager({
                 className="flex items-center gap-1 p-1 hover:bg-gray-700/50 rounded transition-colors"
                 title="Customize color"
               >
-                <img src="/icons/colorPaletteIcon.png" alt="Colors" className="w-5 h-5" />
+                <img src="/icons/colorPaletteIcon.webp" alt="Colors" className="w-5 h-5" />
                 <div className="w-4 h-4 rounded-sm border border-gray-600" style={{ backgroundColor: tickerColor }}></div>
               </button>
             </summary>
@@ -2900,7 +2900,7 @@ export default function LiveShareManager({
                 className="flex items-center gap-1 p-1 hover:bg-gray-700/50 rounded transition-colors"
                 title="Customize colors"
               >
-                <img src="/icons/colorPaletteIcon.png" alt="Colors" className="w-5 h-5" />
+                <img src="/icons/colorPaletteIcon.webp" alt="Colors" className="w-5 h-5" />
                 <div className="flex gap-0.5">
                   <div className="w-3 h-3 rounded-sm border border-gray-600" style={{ backgroundColor: bannerColor }}></div>
                   <div className="w-3 h-3 rounded-sm border border-gray-600" style={{ backgroundColor: bannerTextColor }}></div>

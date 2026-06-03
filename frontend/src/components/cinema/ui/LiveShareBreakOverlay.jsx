@@ -31,7 +31,7 @@ export default function LiveShareBreakOverlay({ timeRemaining = 0 }) {
       {/* Sleeping icon + floating Zzz — same layout as LobbyPage WatchOut empty state */}
       <div style={{ position: 'relative', width: 112, height: 112, marginBottom: 32 }}>
         <img
-          src="/icons/lwoIcon.png"
+          src="/icons/lwoIcon.webp"
           alt=""
           style={{ width: 80, height: 80, opacity: 0.25, position: 'absolute', top: 16, left: 16 }}
           onError={e => { e.target.style.display = 'none'; }}

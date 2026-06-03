@@ -30,9 +30,9 @@ const SetTicketPriceModal = ({ isOpen, onClose, onSetPrice, watchType }) => {
   // Get ticket image based on watch type (live sessions have no content_rating)
   const getTicketImage = () => {
     const type = watchType?.toLowerCase() || '';
-    if (type === 'classroom' || type === 'lecture_hall') return '/icons/LectureTicket.png';
-    if (type === '3d_cinema') return '/icons/CinemaTicket.png';
-    return '/icons/VWTicket.png';
+    if (type === 'classroom' || type === 'lecture_hall') return '/icons/LectureTicket.webp';
+    if (type === '3d_cinema') return '/icons/CinemaTicket.webp';
+    return '/icons/VWTicket.webp';
   };
 
   // Currency locked to NGN (Paystack Nigeria only)

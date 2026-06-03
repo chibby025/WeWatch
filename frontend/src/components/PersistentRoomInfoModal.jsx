@@ -15,22 +15,22 @@ const PersistentRoomInfoModal = ({ isOpen, onClose, onContinue }) => {
 
   const images = [
     {
-      src: '/icons/premiere.png',
+      src: '/icons/premiere.webp',
       title: '🎬 Indie Film Premiere',
       description: 'Host your independent film, sell tickets, build your audience'
     },
     {
-      src: '/icons/modal5.png',
+      src: '/icons/modal5.webp',
       title: '⛪ Worship & Community Hall',
       description: 'Weekly services, Bible study, spiritual gatherings'
     },
     {
-      src: '/icons/modal7.png',
+      src: '/icons/modal7.webp',
       title: '📚 Digital Education Space',
       description: 'Teach from home, reach students everywhere'
     },
     {
-      src: '/icons/modal10.png',
+      src: '/icons/modal10.webp',
       title: '🎮 African Gamehouse Stream',
       description: 'Local gaming, global audience, viewer donations'
     }

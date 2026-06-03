@@ -20,11 +20,11 @@ const getRoomTypeDefaultRating = (roomType) => {
 };
 
 const getTicketImage = (watchType, contentRating) => {
-  if (contentRating === 'Religious') return '/icons/CCTicket.png';
-  if (contentRating === 'Educational' && watchType !== 'classroom') return '/icons/CTicket.png';
-  if (watchType === 'classroom') return '/icons/LectureTicket.png';
-  if (watchType === '3d_cinema') return '/icons/CinemaTicket.png';
-  return '/icons/VWTicket.png';
+  if (contentRating === 'Religious') return '/icons/CCTicket.webp';
+  if (contentRating === 'Educational' && watchType !== 'classroom') return '/icons/CTicket.webp';
+  if (watchType === 'classroom') return '/icons/LectureTicket.webp';
+  if (watchType === '3d_cinema') return '/icons/CinemaTicket.webp';
+  return '/icons/VWTicket.webp';
 };
 
 const ScheduleEventModal = ({

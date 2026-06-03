@@ -37,7 +37,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       id: 'G',
       name: 'G',
       desc: 'General Audiences - All ages admitted',
-      icon: '/icons/G Rating Icon.png',
+      icon: '/icons/G Rating Icon.webp',
       gradient: 'from-green-400 to-green-600',
       minAge: 0
     },
@@ -45,7 +45,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       id: 'PG',
       name: 'PG',
       desc: 'Parental Guidance - Some material may not be suitable for children',
-      icon: '/icons/PG Rating Icon.png',
+      icon: '/icons/PG Rating Icon.webp',
       gradient: 'from-blue-400 to-blue-600',
       minAge: 0
     },
@@ -53,7 +53,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       id: 'Educational',
       name: 'Educational',
       desc: 'Educational Content - Online classes, tutorials, school & university material',
-      icon: '/icons/Educational_Rating_Icon.png',
+      icon: '/icons/Educational_Rating_Icon.webp',
       gradient: 'from-teal-400 to-teal-600',
       minAge: 0
     },
@@ -61,7 +61,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       id: 'Religious',
       name: 'Religious',
       desc: 'Religious & Spiritual Content - Church services, Bible studies, worship',
-      icon: '/icons/Religious Rating.png',
+      icon: '/icons/Religious Rating.webp',
       gradient: 'from-yellow-400 to-amber-600',
       minAge: 0
     },
@@ -69,7 +69,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       id: '13+',
       name: '13+',
       desc: 'Teens 13+ - May contain content inappropriate for children under 13',
-      icon: '/icons/13_ Rating Icon.png',
+      icon: '/icons/13_ Rating Icon.webp',
       gradient: 'from-yellow-400 to-yellow-600',
       minAge: 13
     },
@@ -77,7 +77,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       id: '16+',
       name: '16+',
       desc: 'Older Teens 16+ - May not be suitable for viewers under 16',
-      icon: '/icons/16_ Rating Icon.png',
+      icon: '/icons/16_ Rating Icon.webp',
       gradient: 'from-orange-400 to-orange-600',
       minAge: 16
     },
@@ -85,7 +85,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       id: '18+',
       name: '18+',
       desc: 'Adults Only - Restricted to adults 18 and over',
-      icon: '/icons/18_ Rating Icon.png',
+      icon: '/icons/18_ Rating Icon.webp',
       gradient: 'from-red-400 to-red-600',
       minAge: 18
     },
@@ -93,7 +93,7 @@ const PricingModal = ({ isOpen, onClose, onSelectPricing, watchType }) => {
       id: 'Mature',
       name: 'Mature',
       desc: 'For mature audiences only. May contain strong language, violence, or nude & explicit scenes.',
-      icon: '/icons/Mature Rating Icon.png',
+      icon: '/icons/Mature Rating Icon.webp',
       gradient: 'from-purple-400 to-purple-600',
       minAge: 18
     }

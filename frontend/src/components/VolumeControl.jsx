@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
  * Volume Control Component - Shows on hover over video
  * Displays volume slider and mute button for uploaded media playback
  */
-export default function VolumeControl({ videoRef }) {
+export default function VolumeControl({ videoRef, onDismiss }) {
   const [volume, setVolume] = useState(() => {
     const saved = localStorage.getItem('wewatch_video_volume');
     return saved ? parseFloat(saved) : 1.0;
@@ -49,6 +49,16 @@ export default function VolumeControl({ videoRef }) {
 
   return (
     <div className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/80 backdrop-blur-md rounded-lg px-3 py-4 flex flex-col items-center gap-3 shadow-xl border border-gray-700 z-50">
+      {/* Dismiss button */}
+      {onDismiss && (
+        <button
+          onClick={onDismiss}
+          className="absolute top-1 right-1 text-gray-400 hover:text-white text-base leading-none p-1 rounded"
+          aria-label="Close volume control"
+        >
+          ×
+        </button>
+      )}
       {/* Volume percentage */}
       <span className="text-white text-sm font-medium">
         {Math.round((isMuted ? 0 : volume) * 100)}%

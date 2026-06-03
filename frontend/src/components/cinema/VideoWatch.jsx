@@ -4819,17 +4819,19 @@ export default function VideoWatch() {
         return;
       }
 
-      try {
-        if (finalSessionId) {
-          await apiClient.post(`/api/rooms/${roomId}/sessions/${finalSessionId}/end`);
-          sessionStorage.setItem(`session_ended_${roomId}`, 'true');
-          // No artificial delay — backend broadcasts session_ended immediately after DB write
-        }
-      } catch (error) {
-        console.error('Failed to end session:', error);
+      // Mark ended immediately so re-fetch on RoomPage doesn't resurrect the session
+      sessionStorage.setItem(`session_ended_${roomId}`, 'true');
+
+      // Fire the end-session API call in the background — do NOT await it.
+      // Backend writes DB + broadcasts session_ended to all participants immediately.
+      // Awaiting the round-trip (Vercel → Railway) was blocking navigation for 500ms-2s.
+      if (finalSessionId) {
+        apiClient.post(`/api/rooms/${roomId}/sessions/${finalSessionId}/end`)
+          .catch(err => console.error('[handleLeaveRoom] background end-session failed:', err));
       }
     }
-    
+
+    // Navigate immediately — cleanup is non-blocking
     await performCleanupAndExit(isInstantWatch);
   };
 
@@ -5809,7 +5811,7 @@ export default function VideoWatch() {
                     height: `${bannerHeight}px`,
                     backgroundColor: bgColor,
                     zIndex: 5, // Behind logo (logo is 10)
-                    overflow: 'visible' // Allow BN.png to extend beyond banner
+                    overflow: 'visible' // Allow BN.webp to extend beyond banner
                   }}
                 >
                   {/* Layout: BN icon on right */}
@@ -5886,7 +5888,7 @@ export default function VideoWatch() {
                         height: `${bannerHeight * 3 * (screenSize === 'mobile' ? 0.80 : 1)}px` // 20% smaller on mobile only
                       }}>
                         <img 
-                          src="/icons/BN.png" 
+                          src="/icons/BN.webp" 
                           alt="Breaking News"
                           className="object-contain"
                           style={{ 
@@ -5973,7 +5975,7 @@ export default function VideoWatch() {
                         height: `${bannerHeight * 3.15}px` // Another 50% larger (2.1 * 1.5)
                       }}>
                         <img 
-                          src="/icons/Breakin.png" 
+                          src="/icons/Breakin.webp" 
                           alt="Breaking"
                           className="object-contain"
                           style={{ 
@@ -6450,6 +6452,7 @@ export default function VideoWatch() {
         onRequestBroadcast={null}
         broadcastRequests={[]}
         watchType="video_watch"
+        contentRating={contentRating}
         onMuteAll={handleMuteAll}
         isMuteAllActive={isMuteAllActive}
         onUnmuteMember={handleUnmuteMember}

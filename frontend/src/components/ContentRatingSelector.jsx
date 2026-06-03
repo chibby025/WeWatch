@@ -18,7 +18,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAg
       id: 'G',
       name: 'G - General',
       desc: 'Suitable for all ages',
-      icon: '/icons/G Rating Icon.png',
+      icon: '/icons/G Rating Icon.webp',
       color: 'from-green-500 to-green-600',
       minAge: 0
     },
@@ -26,7 +26,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAg
       id: 'PG',
       name: 'PG - Parental Guidance',
       desc: 'May not be suitable for children',
-      icon: '/icons/PG Rating Icon.png',
+      icon: '/icons/PG Rating Icon.webp',
       color: 'from-blue-500 to-blue-600',
       minAge: 0
     },
@@ -34,7 +34,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAg
       id: 'Educational',
       name: 'Educational',
       desc: 'Online classes, tutorials, school & university',
-      icon: '/icons/Educational_Rating_Icon.png',
+      icon: '/icons/Educational_Rating_Icon.webp',
       color: 'from-teal-500 to-teal-600',
       minAge: 0
     },
@@ -42,7 +42,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAg
       id: 'Religious',
       name: 'Religious',
       desc: 'Church services, Bible studies, worship',
-      icon: '/icons/Religious Rating.png',
+      icon: '/icons/Religious Rating.webp',
       color: 'from-yellow-500 to-amber-600',
       minAge: 0
     },
@@ -50,7 +50,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAg
       id: '13+',
       name: '13+ Teens',
       desc: 'For ages 13 and older',
-      icon: '/icons/13_ Rating Icon.png',
+      icon: '/icons/13_ Rating Icon.webp',
       color: 'from-yellow-500 to-yellow-600',
       minAge: 13
     },
@@ -58,7 +58,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAg
       id: '16+',
       name: '16+ Older Teens',
       desc: 'For ages 16 and older',
-      icon: '/icons/16_ Rating Icon.png',
+      icon: '/icons/16_ Rating Icon.webp',
       color: 'from-orange-500 to-orange-600',
       minAge: 16
     },
@@ -66,7 +66,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAg
       id: '18+',
       name: '18+ Adults',
       desc: 'Adults only',
-      icon: '/icons/18_ Rating Icon.png',
+      icon: '/icons/18_ Rating Icon.webp',
       color: 'from-red-500 to-red-600',
       minAge: 18
     },
@@ -74,7 +74,7 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAg
       id: 'Mature',
       name: 'Mature - Explicit',
       desc: 'Explicit, nude adult content',
-      icon: '/icons/Mature Rating Icon.png',
+      icon: '/icons/Mature Rating Icon.webp',
       color: 'from-purple-600 to-purple-700',
       minAge: 18
     },

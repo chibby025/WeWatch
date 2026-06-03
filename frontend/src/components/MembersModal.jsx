@@ -28,6 +28,7 @@ export default function MembersModal({
   raisedHands = [], // ✅ Array of {userId, username, timestamp}
   liveShareGuestId = null, // ✅ Selected guest ID for LiveShare (exempt from mute)
   memberEmotes = {}, // ✅ Map of userId -> {emote, timestamp} for displaying emotes on cards
+  contentRating = '', // content rating of session (e.g. 'Religious')
 }) {
   // ✅ ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
   const [friendshipStatuses, setFriendshipStatuses] = React.useState({}); // userId -> friendship status
@@ -145,11 +146,12 @@ export default function MembersModal({
     return colors[(theaterNumber - 1) % colors.length];
   };
 
-  // Dynamic title based on watch type
+  // Dynamic title based on content rating and watch type
   const getModalTitle = () => {
+    if (contentRating === 'Religious') return 'Church Members';
     if (watchType === '3d_cinema') return 'Cinema Members';
     if (watchType === 'classroom' || watchType === 'lecture_hall') return 'Lecture Hall Members';
-    return 'Watch Party Members'; // video_watch or default
+    return 'WatchOut Members';
   };
 
   // ✅ CONDITIONAL RETURN AFTER ALL HOOKS
@@ -174,18 +176,21 @@ export default function MembersModal({
             {getModalTitle()} ({members.length})
           </h3>
           <div className="flex items-center gap-3">
-            {/* Mute All Toggle Button (Host only) */}
+            {/* Mute All Toggle Button (Host only) — pill with icon above label */}
             {isHost && onMuteAll && (
               <button
                 onClick={onMuteAll}
-                className={`px-3 py-1.5 ${
-                  isMuteAllActive 
-                    ? 'bg-green-600 hover:bg-green-700' 
+                className={`flex flex-col items-center px-4 py-2 rounded-full ${
+                  isMuteAllActive
+                    ? 'bg-green-600 hover:bg-green-700'
                     : 'bg-red-600 hover:bg-red-700'
-                } text-white text-sm font-medium rounded transition-all`}
+                } text-white transition-all min-w-[68px]`}
                 title={isMuteAllActive ? "Unmute all members" : "Mute all members"}
               >
-                {isMuteAllActive ? '🔊 Unmute All' : '🔇 Mute All'}
+                <span className="text-base leading-none">{isMuteAllActive ? '🔊' : '🔇'}</span>
+                <span className="text-[10px] font-semibold mt-0.5 whitespace-nowrap">
+                  {isMuteAllActive ? 'Unmute All' : 'Mute All'}
+                </span>
               </button>
             )}
             <button onClick={onClose} className="text-gray-400 hover:text-white">×</button>

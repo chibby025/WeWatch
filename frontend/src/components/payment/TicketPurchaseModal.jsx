@@ -147,11 +147,11 @@ const TicketPurchaseModal = ({ isOpen, onClose, session, onSuccess }) => {
     const rating = session.content_rating || '';
     const type = session.watch_type?.toLowerCase() || '';
 
-    if (rating === 'Religious') return '/icons/CCTicket.png';
-    if (rating === 'Educational' && type !== 'classroom') return '/icons/CTicket.png';
-    if (type === 'classroom') return '/icons/LectureTicket.png';
-    if (type === '3d_cinema') return '/icons/CinemaTicket.png';
-    return '/icons/VWTicket.png';
+    if (rating === 'Religious') return '/icons/CCTicket.webp';
+    if (rating === 'Educational' && type !== 'classroom') return '/icons/CTicket.webp';
+    if (type === 'classroom') return '/icons/LectureTicket.webp';
+    if (type === '3d_cinema') return '/icons/CinemaTicket.webp';
+    return '/icons/VWTicket.webp';
   };
 
   return (

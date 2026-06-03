@@ -15,22 +15,22 @@ const InstantWatchInfoModal = ({ isOpen, onClose, onContinue }) => {
 
   const images = [
     {
-      src: '/icons/ConnectedWorlds.png',
+      src: '/icons/ConnectedWorlds.webp',
       title: '👥 Friends Reconnect',
       description: 'Connect with friends old and new across any distance'
     },
     {
-      src: '/icons/modal2.png',
+      src: '/icons/modal2.webp',
       title: '💕 Long Distance Date',
       description: 'Private cinema for you and your partner'
     },
     {
-      src: '/icons/fanmeet.png',
+      src: '/icons/fanmeet.webp',
       title: '📚 Manga Fan Meetup',
       description: 'Connect with fans worldwide, discuss latest chapters'
     },
     {
-      src: '/icons/modal8.png',
+      src: '/icons/modal10.webp',
       title: '🎮 Gaming Community Hangout',
       description: 'Watch streams together, live reactions, shared excitement'
     }

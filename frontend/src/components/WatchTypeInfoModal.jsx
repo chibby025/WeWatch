@@ -14,22 +14,22 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
       emoji: '🎬',
       images: [
         {
-          src: '/icons/Videowatch1.png',
+          src: '/icons/Videowatch1.webp',
           title: 'Turn Any Video Into An Event',
           description: 'Shared experiences made easy'
         },
         {
-          src: '/icons/Videowatch2.png',
+          src: '/icons/Videowatch2.webp',
           title: 'No Setup, Just Show Up',
           description: 'Instant watch parties'
         },
         {
-          src: '/icons/Videowatch3.png',
+          src: '/icons/Videowatch3.webp',
           title: 'Connect Without Limits',
           description: 'From 2 to 200 people'
         },
         {
-          src: '/icons/Videowatch4.png',
+          src: '/icons/Videowatch4.webp',
           title: 'Infinite Possibilities',
           description: 'From telemedicine to TV shows, any video works together'
         }
@@ -49,22 +49,22 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
       emoji: '🎭',
       images: [
         {
-          src: '/icons/cinema1.png',
+          src: '/icons/cinema1.webp',
           title: 'Your Stage for Premieres',
           description: 'Launch indie films, comedy, podcasts & music in virtual luxury'
         },
         {
-          src: '/icons/cinema2.png',
+          src: '/icons/cinema2.webp',
           title: 'Spatial Audio Magic',
           description: 'Hear every laugh, every note - spatial audio brings seats to life'
         },
         {
-          src: '/icons/cinema3.png',
+          src: '/icons/cinema3.webp',
           title: 'Monetize Your Craft',
           description: 'Sell tickets, host paid premieres, earn from your art'
         },
         {
-          src: '/icons/cinema4.png',
+          src: '/icons/cinema4.webp',
           title: 'From Premiere to Big Screen',
           description: 'Build your audience, prove market demand, unlock festival & distribution opportunities'
         }
@@ -86,22 +86,22 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
       emoji: '🎓',
       images: [
         {
-          src: '/icons/lecture1.png',
+          src: '/icons/lecture1.webp',
           title: 'The Digital Academy',
           description: 'Where questions spark wisdom and knowledge flows freely'
         },
         {
-          src: '/icons/lecture2.png',
+          src: '/icons/lecture2.webp',
           title: 'Tools of Discovery',
           description: 'Whiteboard wisdom meets instant assessment technology'
         },
         {
-          src: '/icons/lecture3.png',
+          src: '/icons/lecture3.webp',
           title: 'Community of Minds',
           description: 'Every voice heard, every answer counted, learning together'
         },
         {
-          src: '/icons/onlineclass.png',
+          src: '/icons/onlineclass.webp',
           title: 'Attend Classes Online',
           description: 'Learning without borders, education from anywhere, presence that transcends distance'
         }

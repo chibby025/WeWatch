@@ -101,12 +101,12 @@ const Register = () => {
         <div className="lg:w-1/2 flex items-center justify-center p-8 md:p-12 lg:p-16 animate-fade-in bg-black">
           <div className="text-center max-w-2xl">
             <img
-              src="/icons/lwoIcon.png"
+              src="/icons/lwoIcon.webp"
               alt="W"
               className="w-14 h-14 md:w-20 md:h-20 mx-auto object-contain mb-1"
             />
             <img
-              src="/icons/LetsWatchOutLogo.png"
+              src="/icons/LetsWatchOutLogo.webp"
               alt="LetsWatchOut Logo"
               className="w-80 h-80 md:w-[420px] md:h-[420px] lg:w-[512px] lg:h-[512px] mx-auto mb-0 drop-shadow-2xl hover:scale-105 transition-transform duration-300"
             />

@@ -15,12 +15,12 @@ const CreateNewInfoModal = ({ isOpen, onClose, onContinue }) => {
 
   const images = [
     {
-      src: '/icons/modal2.png',
+      src: '/icons/modal2.webp',
       title: 'Instant Watch',
       description: 'Quick meetups, date nights, and spontaneous hangouts'
     },
     {
-      src: '/icons/modal10.png',
+      src: '/icons/modal10.webp',
       title: 'Persistent Rooms',
       description: 'Build communities, stream content, and grow your audience - monetize content you own'
     }

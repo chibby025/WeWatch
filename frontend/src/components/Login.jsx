@@ -101,7 +101,7 @@ const Login = () => {
           <div className="text-center">
             {/* lwoIcon above main logo — one unified brand mark */}
             <img
-              src="/icons/lwoIcon.png"
+              src="/icons/lwoIcon.webp"
               alt="W"
               className="w-10 h-10 sm:w-14 sm:h-14 mx-auto object-contain mb-1"
             />
@@ -113,7 +113,7 @@ const Login = () => {
             />
             {/* PNG on sm+ */}
             <img
-              src="/icons/LetsWatchOutLogo.png"
+              src="/icons/LetsWatchOutLogo.webp"
               alt="LetsWatchOut Logo"
               className="hidden sm:block sm:w-36 sm:h-36 md:w-56 md:h-56 lg:w-80 lg:h-80 mx-auto drop-shadow-2xl hover:scale-105 transition-transform duration-300"
             />

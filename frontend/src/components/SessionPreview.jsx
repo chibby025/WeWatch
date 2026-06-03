@@ -152,7 +152,7 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
         <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-purple-500 to-blue-600">
           <div className="flex items-center justify-center mb-5">
             <img
-              src="/icons/lwoIcon.png"
+              src="/icons/lwoIcon.webp"
               alt="WeWatch"
               className="w-14 h-14 object-contain"
               style={{ animation: 'iconFloat 3s ease-in-out infinite' }}

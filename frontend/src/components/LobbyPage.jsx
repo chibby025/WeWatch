@@ -248,6 +248,7 @@ const LobbyPage = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isCreateNewModalOpen, setIsCreateNewModalOpen] = useState(false);
   const [isPostUploadModalOpen, setIsPostUploadModalOpen] = useState(false);
+  const [isRoomExplainerOpen, setIsRoomExplainerOpen] = useState(false);
   const [openMenuRoomId, setOpenMenuRoomId] = useState(null);
   const [openMenuPosition, setOpenMenuPosition] = useState(null); // { top, right } in viewport coords
   const [shareSheetRoom, setShareSheetRoom] = useState(null); // { id, name } for share options panel
@@ -2996,8 +2997,19 @@ const LobbyPage = () => {
     }
   };
 
-  // Handle create room
+  // Handle create room — show explainer once, then navigate directly on repeat visits
   const handleCreateRoom = () => {
+    const seen = localStorage.getItem('wewatch_room_explainer_seen');
+    if (!seen) {
+      setIsRoomExplainerOpen(true);
+    } else {
+      navigate('/rooms/create');
+    }
+  };
+
+  const handleRoomExplainerProceed = () => {
+    localStorage.setItem('wewatch_room_explainer_seen', 'true');
+    setIsRoomExplainerOpen(false);
     navigate('/rooms/create');
   };
 
@@ -3206,7 +3218,7 @@ const LobbyPage = () => {
       setIsPostUploadModalOpen(true);
     } else if (activeTab === 'rooms') {
       if (!currentUser?.main_room_id) {
-        navigate('/create-room');
+        handleCreateRoom();
       } else {
         setCreateModalHidePosts(true);
         setIsCreateNewModalOpen(true);
@@ -3263,30 +3275,40 @@ const LobbyPage = () => {
       {/* Guest banner — slides down from top, auto-dismisses after 5s */}
       {!currentUser && (
         <div
-          className={`fixed top-3 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ease-out ${
+          className={`fixed top-3 left-1/2 -translate-x-1/2 z-50 w-[calc(100vw-32px)] max-w-sm transition-all duration-500 ease-out ${
             showGuestBanner ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4 pointer-events-none'
           }`}
         >
-          <div className="flex items-center gap-3 bg-gray-950/95 backdrop-blur-sm border border-white/15 rounded-full px-4 py-2 shadow-xl">
-            <span className="text-white/75 text-sm whitespace-nowrap">Browsing as guest</span>
-            <button
-              onClick={() => navigate('/register')}
-              className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-1 rounded-full transition-colors"
-            >
-              Sign Up
-            </button>
-            <button
-              onClick={() => navigate('/login')}
-              className="text-white/60 hover:text-white text-xs font-medium transition-colors"
-            >
-              Log In
-            </button>
-            <button
-              onClick={() => { setShowGuestBanner(false); setGuestBannerDismissed(true); }}
-              className="text-white/40 hover:text-white/80 transition-colors ml-1"
-            >
-              <XMarkIcon className="w-3.5 h-3.5" />
-            </button>
+          <div className="bg-gray-950/95 backdrop-blur-sm border border-white/15 rounded-2xl px-4 py-3 shadow-xl">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-white/75 text-xs font-medium">Browsing as guest</span>
+              <button
+                onClick={() => { setShowGuestBanner(false); setGuestBannerDismissed(true); }}
+                className="text-white/40 hover:text-white/80 transition-colors"
+              >
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex items-stretch gap-2">
+              <button
+                onClick={() => navigate('/register')}
+                className="flex-1 flex flex-col items-center gap-1 bg-purple-600 hover:bg-purple-500 text-white py-2.5 px-2 rounded-xl transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                </svg>
+                <span className="text-xs font-semibold whitespace-nowrap">Sign Up</span>
+              </button>
+              <button
+                onClick={() => navigate('/login')}
+                className="flex-1 flex flex-col items-center gap-1 bg-gray-700/80 hover:bg-gray-600/80 text-white py-2.5 px-2 rounded-xl transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                </svg>
+                <span className="text-xs font-medium whitespace-nowrap">Log In</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -3449,6 +3471,55 @@ const LobbyPage = () => {
           onSelectClassType={handleClassTypeSelected}
           currentUser={currentUser}
         />
+
+        {/* Room explainer — shown once before first room creation */}
+        {isRoomExplainerOpen && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4">
+            <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-sm shadow-2xl animate-slide-up sm:animate-fade-in">
+              {/* Top accent */}
+              <div className="h-1 w-full bg-gradient-to-r from-purple-600 to-pink-600 rounded-t-2xl" />
+              <div className="p-6">
+                {/* Icon + title */}
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center flex-shrink-0">
+                    <span className="text-2xl">📺</span>
+                  </div>
+                  <h2 className="text-white text-lg font-bold leading-tight">Your Room is Your Channel</h2>
+                </div>
+
+                <p className="text-gray-300 text-sm leading-relaxed mb-4">
+                  Think of it as your personal TV channel on WeWatch — you host live watch sessions, your audience joins, and you can even earn from paid tickets.
+                </p>
+
+                <ul className="space-y-2 mb-6">
+                  {[
+                    ['🎬', 'Host live watch sessions anytime'],
+                    ['👥', 'Build a loyal community of followers'],
+                    ['💰', 'Earn tokens from paid sessions'],
+                  ].map(([icon, text]) => (
+                    <li key={text} className="flex items-center gap-2.5 text-sm text-gray-300">
+                      <span className="text-base flex-shrink-0">{icon}</span>
+                      <span>{text}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                <button
+                  onClick={handleRoomExplainerProceed}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-semibold text-sm transition-all mb-2"
+                >
+                  Create My Room →
+                </button>
+                <button
+                  onClick={() => setIsRoomExplainerOpen(false)}
+                  className="w-full py-2 text-gray-400 hover:text-white text-sm transition-colors"
+                >
+                  Maybe Later
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ✅ Create New Modal */}
         <CreateNewModal
@@ -3670,7 +3741,16 @@ const LobbyPage = () => {
               (() => {
                 const ownedRooms = filteredRooms.filter(r => r.host_id === authenticatedUserID);
                 const memberRooms = filteredRooms.filter(r => r.is_member && r.host_id !== authenticatedUserID);
-                const discoveryRooms = filteredRooms.filter(r => !r.is_member && r.host_id !== authenticatedUserID);
+                const discoveryRoomsRaw = filteredRooms.filter(r => !r.is_member && r.host_id !== authenticatedUserID);
+                // Guests see all public rooms sorted by rating desc, then oldest first
+                const discoveryRooms = authenticatedUserID
+                  ? discoveryRoomsRaw
+                  : [...discoveryRoomsRaw].sort((a, b) => {
+                      const aR = a.average_rating || 0;
+                      const bR = b.average_rating || 0;
+                      if (bR !== aR) return bR - aR;
+                      return new Date(a.created_at) - new Date(b.created_at);
+                    });
                 const collapseMemberRooms = memberRooms.length > 10;
 
                 // Helper: renders a single room card (shared across all sections)
@@ -3901,6 +3981,23 @@ const LobbyPage = () => {
                   </div>
                 )}
 
+                {/* Guest CTA — shown when not signed in */}
+                {!authenticatedUserID && (
+                  <div className="flex items-center gap-3 bg-purple-900/20 border border-purple-500/30 rounded-xl p-3 mb-4">
+                    <span className="text-2xl flex-shrink-0">👋</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-purple-300 text-sm font-medium">Join to watch together!</p>
+                      <p className="text-gray-400 text-xs">Sign up to join rooms and connect with others.</p>
+                    </div>
+                    <button
+                      onClick={() => navigate('/register')}
+                      className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-1.5 rounded-full transition-colors whitespace-nowrap flex-shrink-0"
+                    >
+                      Sign Up Free
+                    </button>
+                  </div>
+                )}
+
                 {/* Owned rooms — always visible at top */}
                 {ownedRooms.length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
@@ -4037,7 +4134,7 @@ const LobbyPage = () => {
               <style>{pulseAnimationStyles}</style>
               {/* Sleeping icon with floating Zzz */}
               <div className="relative mb-8 flex items-center justify-center w-28 h-28">
-                <img src="/icons/lwoIcon.png" alt="WatchOut" className="w-20 h-20 opacity-25" onError={e => { e.target.style.display='none'; }} />
+                <img src="/icons/lwoIcon.webp" alt="WatchOut" className="w-20 h-20 opacity-25" onError={e => { e.target.style.display='none'; }} />
                 {/* Zzz float up from top-right of icon */}
                 <span className="zzz-1 absolute text-white/70 font-bold select-none pointer-events-none"
                   style={{ fontSize: '12px', top: '8px', right: '8px' }}>z</span>
@@ -4180,7 +4277,7 @@ const LobbyPage = () => {
                   <div className="absolute bottom-28 right-4 flex flex-col items-center gap-5 pointer-events-auto">
                     {session.content_rating && (
                       session.content_rating === 'Educational' ? (
-                        <img src="/icons/E.png" alt="Educational" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
+                        <img src="/icons/E.webp" alt="Educational" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
                       ) : session.content_rating === 'Religious' ? (
                         <img src="/icons/R.png" alt="Religious" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
                       ) : (
@@ -4619,7 +4716,7 @@ const LobbyPage = () => {
                       {/* Content Rating */}
                       {session.content_rating && (
                         session.content_rating === 'Educational' ? (
-                          <img src="/icons/E.png" alt="Educational" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
+                          <img src="/icons/E.webp" alt="Educational" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
                         ) : session.content_rating === 'Religious' ? (
                           <img src="/icons/R.png" alt="Religious" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
                         ) : (
@@ -4922,7 +5019,7 @@ const LobbyPage = () => {
                             title="Send Watch Out"
                           >
                             <span className="relative inline-block h-8 w-8">
-                              <img src="/icons/lwoIcon.png" alt="Watch Out" className="h-8 w-8 object-contain" />
+                              <img src="/icons/lwoIcon.webp" alt="Watch Out" className="h-8 w-8 object-contain" />
                               {liveRooms.length > 0 && (
                                 <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                               )}
@@ -5658,7 +5755,7 @@ const LobbyPage = () => {
                                 title="Send Watch Out"
                               >
                                 <span className="relative inline-block h-8 w-8">
-                                  <img src="/icons/lwoIcon.png" alt="Watch Out" className="h-8 w-8 object-contain" />
+                                  <img src="/icons/lwoIcon.webp" alt="Watch Out" className="h-8 w-8 object-contain" />
                                   {liveRooms.length > 0 && (
                                     <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                                   )}
@@ -6262,7 +6359,7 @@ const LobbyPage = () => {
                   {/* Content Rating */}
                   {session.content_rating && (
                     session.content_rating === 'Educational' ? (
-                      <img src="/icons/E.png" alt="Educational" className="w-11 h-11 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
+                      <img src="/icons/E.webp" alt="Educational" className="w-11 h-11 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
                     ) : session.content_rating === 'Religious' ? (
                       <img src="/icons/R.png" alt="Religious" className="w-11 h-11 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
                     ) : (
@@ -6669,7 +6766,7 @@ const LobbyPage = () => {
                   onClick={handleCenterFAB}
                   className="w-14 h-14 flex items-center justify-center transition-all active:scale-95"
                 >
-                  <img src="/icons/lwoIcon.png" alt="Watch" className="w-14 h-14 object-contain" />
+                  <img src="/icons/lwoIcon.webp" alt="Watch" className="w-14 h-14 object-contain" />
                 </button>
               ) : (
                 <button

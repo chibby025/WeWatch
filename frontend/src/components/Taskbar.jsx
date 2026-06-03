@@ -238,6 +238,13 @@ const Taskbar = ({
     return () => clearTimeout(timer);
   }, []);
 
+  // Allow LeftSidebar to open Settings via custom event
+  useEffect(() => {
+    const handler = () => setShowSettingsMenu(true);
+    window.addEventListener('wewatch:open-settings', handler);
+    return () => window.removeEventListener('wewatch:open-settings', handler);
+  }, []);
+
   // Mouse visibility logic — stable during media playback
   useEffect(() => {
     // ✅ Force hide taskbar when modal is open
@@ -449,7 +456,7 @@ const Taskbar = ({
           />
         </div>
 
-        <div className="flex items-center gap-4 portrait:gap-1 flex-nowrap overflow-hidden">
+        <div className="flex items-center gap-4 portrait:flex-1 portrait:justify-evenly portrait:gap-0 flex-nowrap overflow-hidden">
           <TaskbarButton 
             icon={ChatIcon} 
             label="Chat" 
@@ -667,11 +674,6 @@ const Taskbar = ({
               }}
             />
           )}
-          <TaskbarButton
-            icon={SettingsIcon}
-            label="Settings"
-            onClick={() => setShowSettingsMenu(!showSettingsMenu)}
-          />
         </div>
       </div>
 
@@ -847,22 +849,22 @@ const Taskbar = ({
           }
         }
 
-        /* Compact icon sizing — portrait phones only */
+        /* Portrait phone icon sizing — bigger now that Settings is removed */
         @media (orientation: portrait) and (max-width: 640px) {
           .taskbar-container button {
-            padding: 4px 3px !important;
+            padding: 6px 5px !important;
           }
           .taskbar-container button > .relative {
-            height: 22px !important;
-            width: 22px !important;
+            height: 36px !important;
+            width: 36px !important;
           }
           .taskbar-container button img {
-            height: 22px !important;
-            width: 22px !important;
+            height: 36px !important;
+            width: 36px !important;
           }
           .taskbar-container button > span {
-            font-size: 8px !important;
-            margin-top: 1px !important;
+            font-size: 10px !important;
+            margin-top: 2px !important;
             line-height: 1.2 !important;
           }
           /* Hide subtitles (mic status, row number) to keep height tidy */

@@ -587,7 +587,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         
         {/* Volume Control */}
         {showVolumeControl && isHovering && (
-          <VolumeControl videoRef={videoRef} />
+          <VolumeControl videoRef={videoRef} onDismiss={() => setIsHovering(false)} />
         )}
       </div>
     );
