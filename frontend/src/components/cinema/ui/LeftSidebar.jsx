@@ -144,6 +144,7 @@ export default function LeftSidebar({
   const [selectedCameraDeviceId, setSelectedCameraDeviceId] = useState('');
   const currentPreviewStreamRef = useRef(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadPaused, setUploadPaused] = useState(false); // same-session pause on network drop
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadSpeed, setUploadSpeed] = useState(0); // MB/s
   const [uploadETA, setUploadETA] = useState(''); // Estimated time remaining
@@ -153,6 +154,10 @@ export default function LeftSidebar({
   const uploadStartTimeRef = useRef(null);
   const lastProgressUpdateRef = useRef(0); // Throttle progress updates
   const progressPersistenceTimerRef = useRef(null); // Save progress every 5s
+  // Refs for same-session auto-retry — always current, no stale-closure risk.
+  const uploadFileRef = useRef(null);        // the live File object for the current upload
+  const uploadPausedRef = useRef(false);     // mirrors uploadPaused without closure staleness
+  const uploadFileDirectRef = useRef(null);  // always points at the latest uploadFileDirect fn
   
   // Network quality state
   const [networkQuality, setNetworkQuality] = useState('unknown'); // '2g', '3g', '4g', 'wifi', 'unknown'
@@ -202,41 +207,58 @@ export default function LeftSidebar({
   const [showHymnSelector, setShowHymnSelector] = useState(false);
   const [showSermonSelector, setShowSermonSelector] = useState(false);
   
-  // Check for incomplete uploads on mount
+  // Check for incomplete uploads on mount (dev chunked path + production BunnyCDN path).
   useEffect(() => {
+    // Dev path: chunks sent directly to Railway
     const uploadId = localStorage.getItem('current_upload_id');
-    if (!uploadId) return;
-    
-    const stateStr = localStorage.getItem(`upload_chunks_${uploadId}`);
-    if (!stateStr) {
-      localStorage.removeItem('current_upload_id');
-      return;
-    }
-    
-    const state = JSON.parse(stateStr);
-    const uploadedChunks = state.uploadedChunks || [];
-    const remainingChunks = [];
-    
-    for (let i = 0; i < state.totalChunks; i++) {
-      if (!uploadedChunks.includes(i)) {
-        remainingChunks.push(i);
+    if (uploadId) {
+      const stateStr = localStorage.getItem(`upload_chunks_${uploadId}`);
+      if (!stateStr) {
+        localStorage.removeItem('current_upload_id');
+      } else {
+        const state = JSON.parse(stateStr);
+        const uploadedChunks = state.uploadedChunks || [];
+        const remaining = state.totalChunks - uploadedChunks.length;
+        if (remaining > 0) {
+          console.log('📋 [Resume] Found incomplete dev upload:', {
+            uploadId,
+            fileName: state.fileName,
+            progress: Math.round((uploadedChunks.length / state.totalChunks) * 100),
+            remainingChunks: remaining,
+          });
+          setPendingResumeData({ ...state, uploadPath: 'dev' });
+          setShowResumeUpload(true);
+          return; // only show one resume prompt at a time
+        } else {
+          clearChunkUploadState(uploadId);
+          localStorage.removeItem('current_upload_id');
+        }
       }
     }
-    
-    if (remainingChunks.length > 0) {
-      console.log('📋 [Resume] Found incomplete upload:', {
-        uploadId,
+
+    // Production path: chunks go to BunnyCDN via Vercel edge function
+    const bunnyId = localStorage.getItem('current_bunny_upload_id');
+    if (!bunnyId) return;
+    const bunnyStr = localStorage.getItem(`wewatch_bunny_upload_${bunnyId}`);
+    if (!bunnyStr) {
+      localStorage.removeItem('current_bunny_upload_id');
+      return;
+    }
+    try {
+      const state = JSON.parse(bunnyStr);
+      const completed = state.completedChunks?.length ?? 0;
+      const total = state.totalChunks ?? Math.ceil(state.fileSize / (state.chunkSize || 1));
+      console.log('📋 [Resume] Found incomplete BunnyCDN upload:', {
+        uploadId: bunnyId,
         fileName: state.fileName,
-        progress: Math.round((uploadedChunks.length / state.totalChunks) * 100),
-        remainingChunks: remainingChunks.length
+        progress: Math.round((completed / total) * 100),
+        needsAssembly: state.needsAssembly ?? false,
       });
-      
-      setPendingResumeData(state);
+      setPendingResumeData({ ...state, uploadPath: 'bunny' });
       setShowResumeUpload(true);
-    } else {
-      // Upload was complete, clean up
-      clearChunkUploadState(uploadId);
-      localStorage.removeItem('current_upload_id');
+    } catch (_) {
+      localStorage.removeItem(`wewatch_bunny_upload_${bunnyId}`);
+      localStorage.removeItem('current_bunny_upload_id');
     }
   }, []);
   
@@ -334,6 +356,33 @@ export default function LeftSidebar({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [uploading, uploadSW, roomId, sessionId]);
 
+
+  // Same-session auto-retry: when the device reconnects after a network drop,
+  // automatically continue the upload without any user action.
+  // Uses refs so the handler is registered once and never goes stale.
+  useEffect(() => {
+    const handleOnline = () => {
+      if (!uploadPausedRef.current || !uploadFileRef.current) return;
+
+      // Read the latest chunk state from localStorage.
+      const bunnyId = localStorage.getItem('current_bunny_upload_id');
+      let savedState = null;
+      if (bunnyId) {
+        try {
+          savedState = JSON.parse(localStorage.getItem(`wewatch_bunny_upload_${bunnyId}`) || 'null');
+        } catch (_) {}
+      }
+
+      console.log('🔄 [AutoRetry] Connection restored — resuming upload automatically…');
+      toast('Connection restored — resuming upload…', { icon: '📶' });
+
+      // uploadFileDirectRef.current always points at the latest closure.
+      uploadFileDirectRef.current?.(uploadFileRef.current, savedState);
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, []); // empty deps — refs handle staleness
 
   // Helper function to check if media has saved resume state
   const getSavedResumeState = (mediaItem) => {
@@ -636,9 +685,17 @@ export default function LeftSidebar({
   // Direct BunnyCDN upload path (production only).
   // Browser → Vercel Edge Function → BunnyCDN (no Railway for binary data).
   // After upload, Railway is notified via a tiny JSON confirm call.
-  const uploadFileDirect = async (file) => {
+  // resumeState: saved state from a previous interrupted upload (Option A).
+  const uploadFileDirect = async (file, resumeState = null) => {
+    // Keep the ref current so the online-event auto-retry handler always finds this function.
+    uploadFileDirectRef.current = uploadFileDirect;
+
     setUploading(true);
-    setUploadProgress(0);
+    setUploadPaused(false);
+    uploadPausedRef.current = false;
+    setUploadProgress(resumeState
+      ? Math.round(((resumeState.completedChunks?.length ?? 0) / (resumeState.totalChunks ?? 1)) * 100)
+      : 0);
     setUploadSpeed(0);
     setUploadETA('Calculating...');
     setUploadedBytes(0);
@@ -647,25 +704,47 @@ export default function LeftSidebar({
 
     const abortController = new AbortController();
     uploadAbortControllerRef.current = abortController;
+    let shouldPause = false; // local flag — safe to read inside finally
+
+    // Option A: track the uploadId once the first chunk completes so we can clean up on success.
+    let activeBunnyUploadId = null;
+
+    // Option A: save progress to localStorage after each successful chunk.
+    const handleChunkComplete = (completedIndices, uploadId, chunkSize) => {
+      activeBunnyUploadId = uploadId;
+      const totalChunksEstimate = Math.ceil(file.size / chunkSize);
+      localStorage.setItem('current_bunny_upload_id', uploadId);
+      localStorage.setItem(`wewatch_bunny_upload_${uploadId}`, JSON.stringify({
+        uploadId,
+        fileName: file.name,
+        fileSize: file.size,
+        chunkSize,
+        totalChunks: totalChunksEstimate,
+        completedChunks: completedIndices,
+        roomId,
+        sessionId: sessionId || '',
+        timestamp: Date.now(),
+      }));
+    };
 
     try {
       const ext = file.name.split('.').pop()?.toLowerCase() || 'mp4';
-      const uniqueId = crypto.randomUUID();
-      const cdnFolder = sessionId ? 'temp-media' : 'media';
-      const cdnPath = `${cdnFolder}/${uniqueId}.${ext}`;
+      // Reuse the cdnPath and cdnUrl from the original upload if resuming; otherwise generate fresh.
+      const uniqueId = resumeState?.uniqueId ?? crypto.randomUUID();
+      const cdnFolder = (sessionId || resumeState?.sessionId) ? 'temp-media' : 'media';
+      const cdnPath = resumeState?.cdnPath ?? `${cdnFolder}/${uniqueId}.${ext}`;
       const pullZoneUrl = import.meta.env.VITE_BUNNY_PULL_ZONE_URL?.replace(/\/$/, '');
-      const cdnUrl = `${pullZoneUrl}/${cdnPath}`;
+      const cdnUrl = resumeState?.cdnUrl ?? `${pullZoneUrl}/${cdnPath}`;
 
-      console.log(`🚀 [DirectUpload] Starting: ${file.name} → ${cdnPath}`);
+      console.log(`🚀 [DirectUpload] ${resumeState ? 'Resuming' : 'Starting'}: ${file.name} → ${cdnPath}`);
 
       // Get duration before upload (fast, runs locally in browser)
-      const duration = await getVideoDurationFromFile(file);
+      const duration = resumeState?.duration ?? await getVideoDurationFromFile(file);
 
-      // Upload in 3MB chunks via Vercel Edge Function → BunnyCDN
       const startTime = Date.now();
       const { uploadId, totalChunks } = await uploadFileToBunnyCDN(
         file,
-        cdnPath, // ignored internally, kept for signature compat
+        cdnPath,
         (percent, loaded, total) => {
           const now = Date.now();
           if (now - lastProgressUpdateRef.current < 500 && percent < 100) return;
@@ -683,13 +762,35 @@ export default function LeftSidebar({
           else if (etaSeconds < 3600) setUploadETA(`${Math.round(etaSeconds / 60)}m`);
           else setUploadETA(`${Math.round(etaSeconds / 3600)}h`);
         },
-        abortController.signal
+        abortController.signal,
+        resumeState,      // Option A: pass saved state (null = fresh upload)
+        handleChunkComplete, // Option A: persist per-chunk progress
       );
 
       console.log(`[DirectUpload] All chunks on BunnyCDN, requesting assembly...`);
-      setUploadProgress(99); // Show near-complete while Railway assembles
+      setUploadProgress(99);
 
-      // Tell Railway to download chunks, assemble, and create the DB record
+      // Save assembly metadata in case assembleUpload itself fails (so we can retry without
+      // re-uploading all chunks — they're already on BunnyCDN).
+      if (activeBunnyUploadId) {
+        localStorage.setItem(`wewatch_bunny_upload_${activeBunnyUploadId}`, JSON.stringify({
+          uploadId,
+          fileName: file.name,
+          fileSize: file.size,
+          chunkSize: resumeState?.chunkSize ?? Math.ceil(file.size / totalChunks),
+          totalChunks,
+          completedChunks: Array.from({ length: totalChunks }, (_, i) => i), // all done
+          roomId,
+          sessionId: sessionId || '',
+          cdnPath,
+          cdnUrl,
+          uniqueId,
+          duration,
+          needsAssembly: true,
+          timestamp: Date.now(),
+        }));
+      }
+
       await assembleUpload(roomId, {
         upload_id: uploadId,
         total_chunks: totalChunks,
@@ -700,23 +801,44 @@ export default function LeftSidebar({
         duration,
       });
 
+      // Option A: success — clear persisted state.
+      if (activeBunnyUploadId) {
+        localStorage.removeItem(`wewatch_bunny_upload_${activeBunnyUploadId}`);
+        localStorage.removeItem('current_bunny_upload_id');
+      }
+
       console.log('✅ [DirectUpload] DB record created');
       if (onUploadComplete) onUploadComplete();
     } catch (err) {
       if (err.name === 'CanceledError' || err.message?.includes('cancel')) {
         console.log('🚫 [DirectUpload] Cancelled');
+        // On cancel, clear saved state — user explicitly stopped.
+        if (activeBunnyUploadId) {
+          localStorage.removeItem(`wewatch_bunny_upload_${activeBunnyUploadId}`);
+          localStorage.removeItem('current_bunny_upload_id');
+        }
+        uploadFileRef.current = null;
         toast('Upload cancelled.');
       } else {
-        console.error('❌ [DirectUpload] Failed:', err);
-        toast.error(`Upload failed: ${err.message}`);
+        console.error('❌ [DirectUpload] Network error, entering paused state:', err);
+        // Same-session: File object is still in memory. Pause and auto-retry on reconnect
+        // rather than giving up. localStorage state is already up-to-date.
+        shouldPause = true;
+        uploadPausedRef.current = true;
+        setUploadPaused(true);
+        setUploadSpeed(0);
+        setUploadETA('Waiting for connection…');
       }
     } finally {
-      setUploading(false);
-      setUploadProgress(0);
-      setUploadSpeed(0);
-      setUploadETA('');
-      setUploadedBytes(0);
-      setTotalBytes(0);
+      if (!shouldPause) {
+        // Clean reset — either success or cancel.
+        setUploading(false);
+        setUploadProgress(0);
+        setUploadSpeed(0);
+        setUploadETA('');
+        setUploadedBytes(0);
+        setTotalBytes(0);
+      }
       uploadAbortControllerRef.current = null;
     }
   };
@@ -743,21 +865,39 @@ export default function LeftSidebar({
       toast.error('File too small. Please select a valid video file.');
       return;
     }
-    
+
     console.log('✅ [Validation] Passed:', {
       name: file.name,
       type: file.type,
       size: formatFileSize(file.size)
     });
-    
+
     if (!hasAcceptedTerms) {
       setShowUploadDisclaimer(true);
       return;
     }
-    
-    // ✅ START UPLOAD DIRECTLY (no compression)
+
+    // Option A: check if this file matches a pending BunnyCDN resume by name + size.
+    let resumeState = null;
+    if (
+      pendingResumeData?.uploadPath === 'bunny' &&
+      pendingResumeData.fileName === file.name &&
+      pendingResumeData.fileSize === file.size
+    ) {
+      resumeState = pendingResumeData;
+      setShowResumeUpload(false);
+      setPendingResumeData(null);
+      const completed = resumeState.completedChunks?.length ?? 0;
+      const total = resumeState.totalChunks ?? 1;
+      toast.success(`Resuming from ${Math.round((completed / total) * 100)}%…`);
+    }
+
+    // Keep the File object alive for same-session auto-retry on network drop.
+    uploadFileRef.current = file;
+    uploadFileDirectRef.current = uploadFileDirect;
+
     if (import.meta.env.PROD) {
-      await uploadFileDirect(file);
+      await uploadFileDirect(file, resumeState);
     } else {
       await uploadFileChunked(file);
     }
@@ -768,17 +908,33 @@ export default function LeftSidebar({
       uploadAbortControllerRef.current.abort();
       console.log('🚫 [LeftSidebar] Upload cancel requested');
     }
-    
+
     // Clear persistence timer
     if (progressPersistenceTimerRef.current) {
       clearInterval(progressPersistenceTimerRef.current);
       progressPersistenceTimerRef.current = null;
     }
-    
-    // Clear any saved upload state
+
+    // Clear any saved upload state (dev path + BunnyCDN path)
     const uploads = Object.keys(localStorage).filter(key => key.startsWith('wewatch_chunk_upload_'));
     uploads.forEach(key => localStorage.removeItem(key));
     localStorage.removeItem('wewatch_active_upload');
+    const bunnyId = localStorage.getItem('current_bunny_upload_id');
+    if (bunnyId) {
+      localStorage.removeItem(`wewatch_bunny_upload_${bunnyId}`);
+      localStorage.removeItem('current_bunny_upload_id');
+    }
+
+    // Clear same-session refs so auto-retry doesn't fire after a deliberate cancel.
+    uploadFileRef.current = null;
+    uploadPausedRef.current = false;
+    setUploadPaused(false);
+    setUploading(false);
+    setUploadProgress(0);
+    setUploadSpeed(0);
+    setUploadETA('');
+    setUploadedBytes(0);
+    setTotalBytes(0);
   };
   
   const formatFileSize = (bytes) => {
@@ -1323,7 +1479,7 @@ export default function LeftSidebar({
                     disabled={uploading}
                     className="flex-1 px-3 sm:px-4 py-2 bg-[#444AF7]/20 text-white rounded-full font-medium text-sm sm:text-[15px] hover:bg-[#444AF7]/30 disabled:opacity-50 transition-colors"
                   >
-                    {uploading ? 'Uploading...' : 'Browse Files'}
+                    {uploading ? (uploadPaused ? 'Paused…' : 'Uploading...') : 'Browse Files'}
                   </button>
                   <button
                     onClick={() => {
@@ -1381,11 +1537,22 @@ export default function LeftSidebar({
                 
                 {uploading && (
                   <div className="w-full mt-3">
-                    {/* Progress bar */}
+                    {/* Progress bar — amber when paused, blue when active */}
                     <div className="bg-gray-700 rounded-full h-2 mb-2">
-                      <div className="bg-blue-500 h-2 rounded-full transition-all" style={{ width: `${uploadProgress}%` }} />
+                      <div
+                        className={`h-2 rounded-full transition-all ${uploadPaused ? 'bg-amber-500' : 'bg-blue-500'}`}
+                        style={{ width: `${uploadProgress}%` }}
+                      />
                     </div>
-                    
+
+                    {/* Paused banner */}
+                    {uploadPaused && (
+                      <p className="text-amber-400 text-xs font-medium mb-1 flex items-center gap-1">
+                        <span>⏸</span>
+                        <span>Paused — will resume automatically when connection returns</span>
+                      </p>
+                    )}
+
                     {/* Progress details */}
                     <div className="flex justify-between items-center text-xs text-gray-300">
                       <div className="flex items-center gap-2">
@@ -1394,23 +1561,41 @@ export default function LeftSidebar({
                         <span>{formatFileSize(uploadedBytes)} / {formatFileSize(totalBytes)}</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        {uploadSpeed > 0 && (
+                        {uploadSpeed > 0 && !uploadPaused && (
                           <>
                             <span className="text-green-400">{uploadSpeed.toFixed(1)} MB/s</span>
                             <span className="text-gray-400">•</span>
                           </>
                         )}
-                        <span className="text-blue-400">{uploadETA}</span>
+                        <span className={uploadPaused ? 'text-amber-400' : 'text-blue-400'}>{uploadETA}</span>
                       </div>
                     </div>
-                    
-                    {/* Cancel button */}
-                    <button
-                      onClick={handleCancelUpload}
-                      className="w-full mt-2 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg font-medium text-xs transition-colors"
-                    >
-                      Cancel Upload
-                    </button>
+
+                    {/* Action buttons */}
+                    <div className="flex gap-2 mt-2">
+                      {uploadPaused && (
+                        <button
+                          onClick={() => {
+                            if (!uploadFileRef.current) return;
+                            const bunnyId = localStorage.getItem('current_bunny_upload_id');
+                            let savedState = null;
+                            if (bunnyId) {
+                              try { savedState = JSON.parse(localStorage.getItem(`wewatch_bunny_upload_${bunnyId}`) || 'null'); } catch (_) {}
+                            }
+                            uploadFileDirectRef.current?.(uploadFileRef.current, savedState);
+                          }}
+                          className="flex-1 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 rounded-lg font-medium text-xs transition-colors"
+                        >
+                          Retry Now
+                        </button>
+                      )}
+                      <button
+                        onClick={handleCancelUpload}
+                        className="flex-1 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg font-medium text-xs transition-colors"
+                      >
+                        Cancel Upload
+                      </button>
+                    </div>
                   </div>
                 )}
                 <input
@@ -2001,65 +2186,114 @@ export default function LeftSidebar({
       )}
 
       {/* 🔄 Resume Upload Modal */}
-      {showResumeUpload && pendingResumeData && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-gray-800 rounded-xl p-6 max-w-md w-full shadow-2xl">
-            <h3 className="text-xl font-bold text-white mb-4">Resume Upload?</h3>
-            <p className="text-gray-300 mb-2">
-              You have an incomplete upload:
-            </p>
-            <p className="text-white font-semibold mb-4">
-              {pendingResumeData.fileName}
-            </p>
-            <div className="mb-4 bg-gray-700 rounded-lg p-3">
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-gray-400">Progress:</span>
-                <span className="text-white">
-                  {Math.round(((pendingResumeData.uploadedChunks?.length || 0) / pendingResumeData.totalChunks) * 100)}%
-                </span>
+      {showResumeUpload && pendingResumeData && (() => {
+        const isBunny = pendingResumeData.uploadPath === 'bunny';
+        const needsAssembly = isBunny && pendingResumeData.needsAssembly;
+        const completedCount = isBunny
+          ? (pendingResumeData.completedChunks?.length ?? 0)
+          : (pendingResumeData.uploadedChunks?.length ?? 0);
+        const totalCount = pendingResumeData.totalChunks ?? 1;
+        const progressPct = Math.round((completedCount / totalCount) * 100);
+
+        const handleDiscard = () => {
+          // Clear dev path state
+          const devId = localStorage.getItem('current_upload_id');
+          if (devId) { clearChunkUploadState(devId); localStorage.removeItem('current_upload_id'); }
+          // Clear BunnyCDN path state
+          const bunnyId = localStorage.getItem('current_bunny_upload_id');
+          if (bunnyId) {
+            localStorage.removeItem(`wewatch_bunny_upload_${bunnyId}`);
+            localStorage.removeItem('current_bunny_upload_id');
+          }
+          setShowResumeUpload(false);
+          setPendingResumeData(null);
+        };
+
+        const handleResumeAssembly = async () => {
+          setShowResumeUpload(false);
+          const state = pendingResumeData;
+          setPendingResumeData(null);
+          try {
+            toast('Finalising upload…');
+            await assembleUpload(roomId, {
+              upload_id: state.uploadId,
+              total_chunks: state.totalChunks,
+              original_name: state.fileName,
+              mime_type: state.mimeType || `video/${state.fileName.split('.').pop()?.toLowerCase() || 'mp4'}`,
+              file_size: state.fileSize,
+              session_id: state.sessionId || '',
+              duration: state.duration || '00:00:00',
+            });
+            localStorage.removeItem(`wewatch_bunny_upload_${state.uploadId}`);
+            localStorage.removeItem('current_bunny_upload_id');
+            toast.success('Upload finalised!');
+            if (onUploadComplete) onUploadComplete();
+          } catch (err) {
+            toast.error(`Finalisation failed: ${err.message}`);
+          }
+        };
+
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-gray-800 rounded-xl p-6 max-w-md w-full shadow-2xl">
+              <h3 className="text-xl font-bold text-white mb-4">
+                {needsAssembly ? 'Finalise Upload?' : 'Resume Upload?'}
+              </h3>
+              <p className="text-gray-300 mb-2">
+                {needsAssembly
+                  ? 'All chunks uploaded — just needs finalising:'
+                  : 'You have an incomplete upload:'}
+              </p>
+              <p className="text-white font-semibold mb-4 truncate">{pendingResumeData.fileName}</p>
+              <div className="mb-4 bg-gray-700 rounded-lg p-3">
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-gray-400">Progress:</span>
+                  <span className="text-white">{progressPct}%</span>
+                </div>
+                <div className="bg-gray-600 rounded-full h-2 overflow-hidden">
+                  <div className="bg-blue-500 h-full" style={{ width: `${progressPct}%` }} />
+                </div>
               </div>
-              <div className="bg-gray-600 rounded-full h-2 overflow-hidden">
-                <div 
-                  className="bg-blue-500 h-full"
-                  style={{ 
-                    width: `${((pendingResumeData.uploadedChunks?.length || 0) / pendingResumeData.totalChunks) * 100}%` 
-                  }}
-                />
+              <p className="text-sm text-gray-400 mb-6">
+                {needsAssembly
+                  ? 'Tap "Finalise" to complete without re-uploading.'
+                  : isBunny
+                    ? 'Tap "Resume", then re-select the same file to continue where you left off.'
+                    : 'Would you like to continue where you left off?'}
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleDiscard}
+                  className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                >
+                  Discard
+                </button>
+                {needsAssembly ? (
+                  <button
+                    onClick={handleResumeAssembly}
+                    className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors font-semibold"
+                  >
+                    Finalise
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setShowResumeUpload(false);
+                      if (!isBunny) {
+                        toast('Use the upload button and re-select the same file.', { duration: 5000 });
+                      }
+                      // For bunny path, pendingResumeData stays set so handleFileUpload can match it.
+                    }}
+                    className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-semibold"
+                  >
+                    Resume
+                  </button>
+                )}
               </div>
-            </div>
-            <p className="text-sm text-gray-400 mb-6">
-              Would you like to continue where you left off?
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  const uploadId = localStorage.getItem('current_upload_id');
-                  if (uploadId) {
-                    clearChunkUploadState(uploadId);
-                    localStorage.removeItem('current_upload_id');
-                  }
-                  setShowResumeUpload(false);
-                  setPendingResumeData(null);
-                }}
-                className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
-              >
-                Discard
-              </button>
-              <button
-                onClick={() => {
-                  setShowResumeUpload(false);
-                  toast('To resume, use the upload button and re-select the same file.', { duration: 5000 });
-                  // Note: We can't resume without the user re-selecting the file
-                  // because we don't have access to the File object
-                }}
-                className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-semibold"
-              >
-                Resume
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* End of modals */}
 

@@ -966,25 +966,65 @@ const _uploadChunkToProxy = (proxyUrl, chunk, chunkIndex, abortSignal) =>
     xhr.send(chunk);
   });
 
-export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSignal) => {
-  const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB — safely under Vercel's 4.5MB Edge Function limit
-  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-  const uploadId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  let completedChunks = 0;
+// Option C: pick chunk size before the upload based on connection type so every chunk —
+// including the probe — uses the correct size. Must stay fixed for the whole upload because
+// totalChunks is computed from it and Railway assembles by chunk index.
+const _getBunnyCDNChunkSize = (savedChunkSize) => {
+  if (savedChunkSize) return savedChunkSize; // resume: honour original size
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!conn) return 1 * 1024 * 1024;          // unknown / iOS Safari → 1 MB (safe)
+  const t = conn.effectiveType;
+  if (t === 'slow-2g' || t === '2g') return 256 * 1024;  // 256 KB
+  if (t === '3g')                    return 1 * 1024 * 1024; // 1 MB
+  if (t === '4g')                    return 2 * 1024 * 1024; // 2 MB
+  return 3 * 1024 * 1024;                                     // WiFi / 5G
+};
 
-  // Concurrency is set from a real speed measurement on chunk 0 (the probe).
-  // This works on every browser/OS including iOS Safari which has no navigator.connection.
+// Option B: wait until the browser is back online before retrying.
+const _waitForOnline = () =>
+  new Promise(resolve => {
+    if (navigator.onLine !== false) { resolve(); return; }
+    const h = () => { window.removeEventListener('online', h); resolve(); };
+    window.addEventListener('online', h);
+  });
+
+export const uploadFileToBunnyCDN = async (
+  file,
+  _cdnPath,
+  onProgress,
+  abortSignal,
+  savedState = null,       // Option A: { uploadId, chunkSize, completedChunks: number[] }
+  onChunkComplete = null,  // Option A: (completedIndices: number[], uploadId, chunkSize) => void
+) => {
+  const CHUNK_SIZE = _getBunnyCDNChunkSize(savedState?.chunkSize); // Option C
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  const uploadId = savedState?.uploadId ?? `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  // Option A: seed completedSet from saved state so skipped chunks aren't re-uploaded.
+  const completedSet = new Set(savedState?.completedChunks ?? []);
+  let completedChunks = completedSet.size; // start counter at already-done count
+
   let concurrency = 1; // conservative until probe result is known
 
   const getConcurrencyFromSpeed = (speedMBps) => {
-    if (speedMBps < 1) return 1; // < 1 MB/s  — 3G / weak signal
-    if (speedMBps < 3) return 2; // 1–3 MB/s  — decent 4G / congested WiFi
-    if (speedMBps < 6) return 4; // 3–6 MB/s  — good 4G / average WiFi
-    return 6;                     // > 6 MB/s  — strong WiFi / 5G / desktop
+    if (speedMBps < 1) return 1;
+    if (speedMBps < 3) return 2;
+    if (speedMBps < 6) return 4;
+    return 6;
   };
 
   const uploadSingleChunk = async (i, measureSpeed = false) => {
     if (abortSignal?.aborted) throw Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' });
+
+    // Option A: skip chunks that already succeeded (resume path).
+    if (completedSet.has(i)) {
+      completedChunks++;
+      if (onProgress) {
+        const loaded = Math.min(completedChunks * CHUNK_SIZE, file.size);
+        onProgress(Math.round(loaded * 100 / file.size), loaded, file.size);
+      }
+      return;
+    }
 
     const start = i * CHUNK_SIZE;
     const end = Math.min(start + CHUNK_SIZE, file.size);
@@ -992,21 +1032,26 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
     const chunkPath = `temp-media/${uploadId}/chunk_${i}`;
     const proxyUrl = `/api/upload-proxy?path=${encodeURIComponent(chunkPath)}`;
 
-    const MAX_RETRIES = 3;
+    const MAX_RETRIES = 6; // Option B: was 3
     let lastErr;
     const t0 = measureSpeed ? performance.now() : 0;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      // Option B: if offline, wait until the device reconnects before attempting.
+      await _waitForOnline();
+      if (abortSignal?.aborted) throw Object.assign(new Error('Upload cancelled'), { name: 'CanceledError' });
+
       try {
         await _uploadChunkToProxy(proxyUrl, chunk, i, abortSignal);
         lastErr = null;
         break;
       } catch (err) {
         if (err.name === 'CanceledError') throw err;
-        if (err.status >= 400 && err.status < 500) throw err;
+        if (err.status >= 400 && err.status < 500) throw err; // 4xx = client error, don't retry
         lastErr = err;
         if (attempt < MAX_RETRIES) {
-          const delay = 500 * Math.pow(2, attempt);
+          // Option B: longer backoff (1s → 2s → 4s → 8s → 16s → 30s cap) instead of 500 ms
+          const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
           console.warn(`⚠️ [BunnyCDN] Chunk ${i} attempt ${attempt + 1} failed (${err.message}), retrying in ${delay}ms…`);
           await new Promise(r => setTimeout(r, delay));
         }
@@ -1015,13 +1060,17 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
     if (lastErr) throw lastErr;
 
     if (measureSpeed) {
-      const elapsed = (performance.now() - t0) / 1000; // seconds
+      const elapsed = (performance.now() - t0) / 1000;
       const speedMBps = ((end - start) / 1024 / 1024) / Math.max(elapsed, 0.001);
       concurrency = getConcurrencyFromSpeed(speedMBps);
       console.log(`[BunnyCDN] Probe chunk: ${speedMBps.toFixed(2)} MB/s → concurrency set to ${concurrency}`);
     }
 
     completedChunks++;
+    completedSet.add(i); // Option A: mark done
+    // Option A: persist completion so a page-reload can resume.
+    if (onChunkComplete) onChunkComplete(Array.from(completedSet), uploadId, CHUNK_SIZE);
+
     if (onProgress) {
       const loaded = Math.min(completedChunks * CHUNK_SIZE, file.size);
       onProgress(Math.round(loaded * 100 / file.size), loaded, file.size);
@@ -1029,18 +1078,28 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
     console.log(`[BunnyCDN Chunked] chunk ${i + 1}/${totalChunks} done (${completedChunks} complete)`);
   };
 
-  // Step 1: Upload chunk 0 as a speed probe to calibrate concurrency.
-  console.log(`[BunnyCDN Chunked] ${totalChunks} chunks × 3MB for uploadId=${uploadId} — probing speed…`);
-  await uploadSingleChunk(0, true);
-  if (totalChunks === 1) return { uploadId, totalChunks };
+  // Find the first chunk that still needs uploading (skip already-done on resume).
+  let probeChunk = 0;
+  while (probeChunk < totalChunks && completedSet.has(probeChunk)) probeChunk++;
 
-  // Step 2: Rolling semaphore pool for the remaining chunks.
-  // A new chunk starts the moment any in-flight slot frees — no idle gaps between batches.
-  let nextChunk = 1;
+  if (probeChunk < totalChunks) {
+    const isResume = savedState != null;
+    console.log(
+      `[BunnyCDN Chunked] ${totalChunks} chunks × ${(CHUNK_SIZE / 1024 / 1024).toFixed(2)} MB` +
+      ` for uploadId=${uploadId}` +
+      (isResume ? ` (resuming from chunk ${probeChunk})` : ' — probing speed…')
+    );
+    // Probe speed only on fresh uploads; resuming uses concurrency=1 (safe default).
+    await uploadSingleChunk(probeChunk, !isResume);
+  }
+
+  if (completedSet.size >= totalChunks) return { uploadId, totalChunks, chunkSize: CHUNK_SIZE };
+
+  // Rolling semaphore pool for the remaining chunks.
+  let nextChunk = probeChunk + 1;
   let inFlight = 0;
 
-  // On mobile, listen for network-type changes and cap concurrency down immediately
-  // (only downgrade — we don't upgrade mid-upload to avoid overwhelming a recovering link).
+  // Option B: on mobile, cap concurrency down immediately when connection degrades.
   const handleConnectionChange = () => {
     const newType = navigator.connection?.effectiveType;
     const cap = { '2g': 1, '3g': 1, '4g': 3 }[newType];
@@ -1068,7 +1127,6 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
             })
             .catch(reject);
         }
-        // All chunks dispatched and nothing in flight.
         if (nextChunk >= totalChunks && inFlight === 0) resolve();
       };
       schedule();
@@ -1077,7 +1135,7 @@ export const uploadFileToBunnyCDN = async (file, _cdnPath, onProgress, abortSign
     navigator.connection?.removeEventListener('change', handleConnectionChange);
   }
 
-  return { uploadId, totalChunks };
+  return { uploadId, totalChunks, chunkSize: CHUNK_SIZE };
 };
 
 /**
