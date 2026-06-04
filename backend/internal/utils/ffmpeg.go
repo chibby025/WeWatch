@@ -11,14 +11,42 @@ import (
 )
 
 
+// thumbnailSeek returns a seek position (as a decimal-seconds string) that skips
+// over typical black intros: max(5s, min(30s, 10% of duration)).
+// Returns "5" if the duration cannot be probed so the caller always gets a valid string.
+func thumbnailSeek(inputPath string) string {
+	out, err := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-show_entries", "format=duration",
+		"-of", "csv=p=0",
+		inputPath,
+	).Output()
+	if err != nil {
+		return "5"
+	}
+	dur, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil || dur <= 0 {
+		return "5"
+	}
+	seek := dur * 0.10 // 10 % of duration
+	if seek < 5 {
+		seek = 5
+	}
+	if seek > 30 {
+		seek = 30
+	}
+	return fmt.Sprintf("%.1f", seek)
+}
+
 // ExtractThumbnail generates a representative poster from a video.
 //
 // Strategy:
-//  1. thumbnail filter (primary) — ffmpeg scores each of the first 50 frames by
-//     histogram variance and picks the most visually interesting one.  This
-//     naturally skips pure-black leader frames without needing any seek guess.
-//  2. Seek fallback — if the thumbnail filter fails (e.g. very short clip where
-//     the filter produces no output), try fixed seek positions 3 s → 1 s → 0 s.
+//  1. Seek past any black intro (max 5 s, min 30 s, 10 % of duration), then let
+//     ffmpeg's thumbnail filter pick the most visually interesting frame from the
+//     next ~50 frames (~2 s at 24 fps).  Avoids black-leader / fade-in posters.
+//  2. Plain frame grab at the same smart-seek position — fallback when the
+//     thumbnail filter produces no output (e.g. very short clip).
+//  3. Fixed seek fallback chain: 5 s → 3 s → 1 s → 0 s.
 func ExtractThumbnail(inputPath, outputPath string) error {
 	runCmd := func(args []string) bool {
 		var stderr bytes.Buffer
@@ -33,20 +61,31 @@ func ExtractThumbnail(inputPath, outputPath string) error {
 	}
 
 	scaleFilter := "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease"
+	seek := thumbnailSeek(inputPath)
 
-	// Primary: thumbnail filter picks best frame from first 50 frames (~2 s at 24 fps)
+	// Primary: seek past intro, then thumbnail filter picks best frame in next ~2 s
 	if runCmd([]string{
-		"-y", "-i", inputPath,
+		"-y", "-ss", seek, "-i", inputPath,
 		"-vf", "thumbnail=n=50," + scaleFilter,
 		"-frames:v", "1", "-q:v", "2", outputPath,
 	}) {
 		return nil
 	}
 
-	// Fallback: fixed seek positions for very short or unusual clips
-	for _, seek := range []string{"00:00:03", "00:00:01", "00:00:00"} {
+	// Secondary: plain frame grab at the same seek point (short clips where
+	// thumbnail filter produces no output because too few frames remain)
+	if runCmd([]string{
+		"-y", "-ss", seek, "-i", inputPath,
+		"-vf", scaleFilter,
+		"-frames:v", "1", "-q:v", "2", outputPath,
+	}) {
+		return nil
+	}
+
+	// Fallback chain: try progressively earlier positions
+	for _, s := range []string{"00:00:05", "00:00:03", "00:00:01", "00:00:00"} {
 		if runCmd([]string{
-			"-y", "-ss", seek, "-i", inputPath,
+			"-y", "-ss", s, "-i", inputPath,
 			"-vf", scaleFilter,
 			"-vframes", "1", "-q:v", "2", outputPath,
 		}) {
