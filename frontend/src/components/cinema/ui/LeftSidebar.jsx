@@ -1894,8 +1894,16 @@ export default function LeftSidebar({
                       } transition-colors flex items-center gap-2 sm:gap-3`}
                       onClick={() => {
                         if (isHost) {
+                          console.log('🎬 [LeftSidebar] HOST clicked media item:', {
+                            id: item.ID || item.id,
+                            name: item.original_name,
+                            file_path: item.file_path,
+                            file_url: item.file_url,
+                            watchType,
+                            classType,
+                          });
                           onMediaSelect({ ...item, type: 'upload' });
-                          
+
                           // Send WebSocket message for lecture hall/classroom blackboard display
                           if ((watchType === 'classroom' || classType === 'lecture_hall') && sendMessage) {
                             // ✅ Construct absolute URL for WebSocket broadcast

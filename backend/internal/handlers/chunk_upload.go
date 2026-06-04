@@ -19,11 +19,12 @@ import (
 
 const ChunkUploadDir = "./uploads/chunks"
 
-// bunnyConfigured returns true when BunnyCDN credentials are present in the environment.
-// When false (local dev), all media is served directly from the Go static handler and no
-// CDN upload or local-file deletion is attempted.
+// bunnyConfigured returns true when the backend is deployed (not local dev) AND
+// BunnyCDN credentials are configured.  Credential presence alone is NOT enough —
+// on localhost we always serve from local disk even if the developer has CDN
+// credentials in their .env.
 func bunnyConfigured() bool {
-	return os.Getenv("BUNNY_ACCESS_KEY") != "" && os.Getenv("BUNNY_STORAGE_ZONE") != ""
+	return !utils.IsLocalDev() && os.Getenv("BUNNY_ACCESS_KEY") != "" && os.Getenv("BUNNY_STORAGE_ZONE") != ""
 }
 
 func init() {

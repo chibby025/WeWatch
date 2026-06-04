@@ -208,7 +208,10 @@ func UploadMediaHandler(c *gin.Context) {
 					log.Printf("⚠️ [Async] Poster CDN upload failed for temp item %d: %v", itemID, err)
 				} else {
 					posterCDNURL = cdnURL
-					os.Remove(posterPath)
+					// Only delete local poster if it actually moved to CDN (not the local fallback)
+					if strings.HasPrefix(cdnURL, "http") {
+						os.Remove(posterPath)
+					}
 				}
 			}
 			if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
@@ -227,7 +230,10 @@ func UploadMediaHandler(c *gin.Context) {
 				log.Printf("❌ [Async] Failed to update file_path for temp item %d: %v", itemID, err)
 			} else {
 				log.Printf("✅ [Async] CDN upload complete for temp item %d: %s", itemID, videoCDNURL)
-				os.Remove(videoPath)
+				// Only delete local file if it actually moved to CDN (not the local fallback)
+				if strings.HasPrefix(videoCDNURL, "http") {
+					os.Remove(videoPath)
+				}
 			}
 		}(newTempMediaItem.ID, filePath, posterPath, getMimeType(ext), uniqueFilename)
 
@@ -296,7 +302,9 @@ func UploadMediaHandler(c *gin.Context) {
 					log.Printf("⚠️ [Async] Poster CDN upload failed for item %d: %v", itemID, err)
 				} else {
 					posterCDNURL = cdnURL
-					os.Remove(posterPath)
+					if strings.HasPrefix(cdnURL, "http") {
+						os.Remove(posterPath)
+					}
 				}
 			}
 			if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
@@ -315,7 +323,9 @@ func UploadMediaHandler(c *gin.Context) {
 				log.Printf("❌ [Async] Failed to update file_path for item %d: %v", itemID, err)
 			} else {
 				log.Printf("✅ [Async] CDN upload complete for item %d: %s", itemID, videoCDNURL)
-				os.Remove(videoPath)
+				if strings.HasPrefix(videoCDNURL, "http") {
+					os.Remove(videoPath)
+				}
 			}
 		}(newMediaItem.ID, filePath, posterPath, getMimeType(ext), uniqueFilename)
 
@@ -472,7 +482,9 @@ func ConfirmUploadHandler(c *gin.Context) {
 					log.Printf("⚠️ [ConfirmUpload Async] Poster CDN upload failed: %v", err)
 				} else {
 					posterCDNURL = pURL
-					os.Remove(posterLocalPath)
+					if strings.HasPrefix(pURL, "http") {
+						os.Remove(posterLocalPath)
+					}
 				}
 				os.Remove(localVideoPath)
 			}
@@ -543,7 +555,9 @@ func ConfirmUploadHandler(c *gin.Context) {
 					log.Printf("⚠️ [ConfirmUpload Async] Poster CDN upload failed: %v", err)
 				} else {
 					posterCDNURL = pURL
-					os.Remove(posterLocalPath)
+					if strings.HasPrefix(pURL, "http") {
+						os.Remove(posterLocalPath)
+					}
 				}
 				os.Remove(localVideoPath)
 			}
@@ -758,12 +772,15 @@ func AssembleUploadHandler(c *gin.Context) {
 
 			posterCDNURL := "/icons/placeholder-poster.jpg"
 			if posterLocalPath != "" {
-				defer os.Remove(posterLocalPath)
 				pBase := filepath.Base(posterLocalPath)
 				if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "temp-media/"+pBase, "image/jpeg"); err != nil {
 					log.Printf("[Assemble Async] Poster CDN upload failed: %v", err)
 				} else {
 					posterCDNURL = pURL
+					// Only delete local poster if it actually moved to CDN
+					if strings.HasPrefix(pURL, "http") {
+						os.Remove(posterLocalPath)
+					}
 				}
 			}
 
@@ -822,10 +839,12 @@ func AssembleUploadHandler(c *gin.Context) {
 			}
 			posterCDNURL := "/icons/placeholder-poster.jpg"
 			if posterLocalPath != "" {
-				defer os.Remove(posterLocalPath)
 				pBase := filepath.Base(posterLocalPath)
 				if pURL, err := utils.UploadLocalFileToBunnyCDN(posterLocalPath, "media/"+pBase, "image/jpeg"); err == nil {
 					posterCDNURL = pURL
+					if strings.HasPrefix(pURL, "http") {
+						os.Remove(posterLocalPath)
+					}
 				}
 			}
 			DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL)

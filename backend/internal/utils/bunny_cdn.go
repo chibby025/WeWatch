@@ -22,6 +22,19 @@ var (
 	BunnyCDNPullZoneURL   = os.Getenv("BUNNY_PULL_ZONE_URL")      // e.g., "https://wewatch-posts.b-cdn.net"
 )
 
+// IsLocalDev reports whether the backend is running on a local developer machine.
+//
+// Detection: Railway automatically sets RAILWAY_ENVIRONMENT in every deployed
+// environment (production, staging, preview). Its absence means the server is
+// running locally.
+//
+// CDN credentials may still be present in a developer's .env file, but on
+// localhost we always skip CDN and serve files directly from the Go static
+// handler (/uploads/*).  Environment determines behaviour — not credential presence.
+func IsLocalDev() bool {
+	return os.Getenv("RAILWAY_ENVIRONMENT") == ""
+}
+
 // BunnyCDN API endpoints by region.
 // Frankfurt (DE) uses the base endpoint — no region prefix.
 // Other regions: https://{region}.storage.bunnycdn.com/{zone}
@@ -37,8 +50,8 @@ func getBunnyCDNStorageURL() string {
 // Returns the CDN URL or an error
 // Falls back to local storage if BunnyCDN is not configured
 func UploadToBunnyCDN(fileData []byte, filename string, contentType string) (string, error) {
-	if BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {
-		log.Println("⚠️  BunnyCDN not configured, using local storage fallback")
+	if IsLocalDev() || BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {
+		log.Println("🏠 [CDN skip] Local dev or unconfigured — using local storage")
 		return uploadToLocalStorage(fileData, filename)
 	}
 
@@ -155,9 +168,19 @@ func DeleteFromBunnyCDN(cdnURL string) error {
 // Local dev fallback: if BunnyCDN is not configured, returns a /uploads/... URL derived from
 // the local path and leaves the file on disk unchanged.
 func UploadLocalFileToBunnyCDN(localPath, remotePath, contentType string) (string, error) {
-	if BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {
+	// On localhost: never touch CDN regardless of whether credentials are configured.
+	// Files are served directly by the Go static handler at /uploads/*.
+	if IsLocalDev() {
 		rel := strings.TrimPrefix(localPath, "./")
-		return "/" + rel, nil
+		if !strings.HasPrefix(rel, "/") {
+			rel = "/" + rel
+		}
+		log.Printf("🏠 [CDN skip] Local dev — keeping file on disk: %s", rel)
+		return rel, nil
+	}
+
+	if BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {
+		return "", fmt.Errorf("BunnyCDN not configured in production (BUNNY_STORAGE_ZONE or BUNNY_ACCESS_KEY missing)")
 	}
 
 	f, err := os.Open(localPath)

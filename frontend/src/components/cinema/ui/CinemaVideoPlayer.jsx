@@ -239,11 +239,9 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
     }
 
     else if (mediaItem?.mediaUrl) {
-      console.log('📁 [CinemaVideoPlayer] Loading uploaded media:', {
-        url: mediaItem.mediaUrl,
-        type: mediaItem.type,
-        currentSrcObject: video.srcObject?.id || 'none',
-        currentSrc: video.src || 'none'
+      console.log('📁 [DEBUG CinemaVideoPlayer] Setting video.src to:', mediaItem.mediaUrl, {
+        previousSrc: video.src || '(empty)',
+        isHost,
       });
       video.srcObject = null;
       video.src = mediaItem.mediaUrl;
@@ -344,15 +342,15 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !video.src) return;
-    
+    // Guard: only apply to URL-based media (not LiveShare streams)
+    if (!video || !mediaItem?.mediaUrl || video.srcObject) return;
+
     console.log('🎮 [CinemaVideoPlayer isPlaying] Effect triggered', {
       isPlaying,
       hasSrc: !!video.src,
-      hasSrcObject: !!video.srcObject,
       readyState: video.readyState
     });
-    
+
     const handleCanPlay = () => {
       if (isPlaying) {
         video.play().catch((err) => {
@@ -363,7 +361,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         });
       }
     };
-    
+
     if (isPlaying) {
       if (video.readyState >= 3) {
         console.log('✅ [CinemaVideoPlayer isPlaying] Calling play (readyState >= 3)');
@@ -378,21 +376,16 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         video.addEventListener('canplay', handleCanPlay, { once: true });
       }
     } else {
-      // ⚠️ CRITICAL: Don't pause LiveShare streams (they use srcObject, not src)
-      // This useEffect only runs when video.src exists (URL-based media)
-      // But when transitioning from URL → LiveShare, src might still be set
       if (!video.srcObject) {
-        console.log('⏸️ [CinemaVideoPlayer isPlaying] Pausing (isPlaying=false, no srcObject)');
+        console.log('⏸️ [CinemaVideoPlayer isPlaying] Pausing');
         video.pause();
-      } else {
-        console.log('⏭️ [CinemaVideoPlayer isPlaying] Skipping pause (has srcObject - LiveShare stream)');
       }
     }
-    
+
     return () => {
       video.removeEventListener('canplay', handleCanPlay);
     };
-  }, [isPlaying, onError]);
+  }, [isPlaying, mediaItem, onError]);
 
   // 🎯 Apply latency-compensated seek time when media loads (VideoWatch only)
   useEffect(() => {

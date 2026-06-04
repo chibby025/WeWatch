@@ -818,6 +818,8 @@ export default function VideoWatch() {
   const videoPlayerRef = useRef(null); // 🎬 Direct access to video element
   const [localScreenTrack, setLocalScreenTrack] = useState(null);
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // ⏱️ State-based seek (triggers re-renders)
+  const wsArrivalTimeRef = useRef(null); // ⏱️ Tracks WS message arrival time for post-play correction
+  const syncRefRef = useRef(null);       // 💓 Last heartbeat reference: { hostTime, receivedAt }
   
   // 📹 LiveShare state (screen + camera)
   const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both' - the share type
@@ -2331,26 +2333,56 @@ export default function VideoWatch() {
     if (!video || !currentMedia || liveShareMode || liveShareContentMode) return;
 
     const handleLoadedData = () => {
-      console.log('✅ [VideoWatch] Video data loaded', {
+      const t0 = Date.now();
+      console.log(`⏱️ [MEMBER] loadeddata fired`, {
         readyState: video.readyState,
         currentTime: video.currentTime,
         isPlaying,
-        hasPendingSeek: pendingSeekTime !== null,
-        pendingSeekTime
+        pendingSeekTime,
+        t: t0,
       });
-      
-      // 🎯 Apply pending seek time if available (for mid-playback sync)
+
+      // Option 3: after the full load+seek pipeline, jump ahead by the total elapsed time
+      // so the member's position matches the host instead of being pipeline-delay behind.
+      const doPlay = () => {
+        if (!isPlaying) {
+          console.log(`⏸️ [MEMBER] isPlaying=false — skipping play()`);
+          return;
+        }
+        if (wsArrivalTimeRef.current) {
+          const wsElapsed = (Date.now() - wsArrivalTimeRef.current) / 1000;
+          const correctedTime = video.currentTime + wsElapsed;
+          wsArrivalTimeRef.current = null;
+          console.log(`▶️ [MEMBER] Post-play correction +${(wsElapsed * 1000).toFixed(0)}ms → ${correctedTime.toFixed(3)}s`);
+          video.currentTime = correctedTime;
+          // Wait for this tiny correction seek before calling play()
+          const onCorrectionSeeked = () => {
+            video.removeEventListener('seeked', onCorrectionSeeked);
+            video.play().catch(err => console.error(`❌ [MEMBER] play() failed (${err.name})`));
+          };
+          video.addEventListener('seeked', onCorrectionSeeked);
+        } else {
+          console.log(`▶️ [MEMBER] play() — T+${Date.now() - t0}ms since loadeddata`);
+          video.play().catch(err => console.error(`❌ [MEMBER] play() failed (${err.name}): ${err.message}`));
+        }
+      };
+
       if (pendingSeekTime !== null && pendingSeekTime > 0) {
-        console.log(`🎯 [VideoWatch] Applying pending seek time: ${pendingSeekTime}s`);
+        // Seek is async: currentTime assignment fires `seeking`, completes at `seeked`.
+        // Calling play() before `seeked` causes AbortError and leaves video on first frame.
+        // Wait for `seeked` before starting playback.
+        console.log(`🔍 [MEMBER] Seeking to ${pendingSeekTime.toFixed(3)}s — deferring play() until seeked`);
         video.currentTime = pendingSeekTime;
-        setPendingSeekTime(null); // Clear after applying
-      }
-      
-      if (isPlaying) {
-        console.log('▶️ [VideoWatch] Starting playback after load...');
-        video.play().catch(err => console.error('❌ [VideoWatch] Failed to play:', err));
+        setPendingSeekTime(null);
+        const onSeeked = () => {
+          video.removeEventListener('seeked', onSeeked);
+          console.log(`✅ [MEMBER] seeked fired — T+${Date.now() - t0}ms since loadeddata`);
+          doPlay();
+        };
+        video.addEventListener('seeked', onSeeked);
       } else {
-        console.log('⏸️ [VideoWatch] Video loaded but isPlaying=false, not starting playback');
+        console.log(`🎯 [MEMBER] No seek needed (pendingSeekTime=${pendingSeekTime}) — calling play() directly`);
+        doPlay();
       }
     };
 
@@ -2608,11 +2640,14 @@ export default function VideoWatch() {
     setIsPlaying(true);
     playbackPositionRef.current = 0;
 
-    console.log('🎬 [VideoWatch] Host about to send playback_control:', {
+    console.log('🎬 [DEBUG handlePlayMedia] Resolved URLs:', {
+      raw_file_path: mediaItem.file_path,
+      raw_file_url: mediaItem.file_url,
+      computed_filePath: filePath,
+      computed_mediaUrl: mediaUrl,
       isHost,
       isConnected,
-      mediaUrl: normalizedMediaItem.mediaUrl,
-      currentUserId: currentUser?.id
+      userId: currentUser?.id,
     });
 
     if (isHost && isConnected) {
@@ -2627,14 +2662,15 @@ export default function VideoWatch() {
         timestamp: Date.now(),
         sender_id: currentUser.id,
       };
-      console.log('📤 [VideoWatch] HOST SENDING playback_control:', playbackMsg);
+      console.log('📤 [DEBUG handlePlayMedia] Sending playback_control via WS:', {
+        file_path: playbackMsg.file_path,
+        file_url: playbackMsg.file_url,
+        media_item_id: playbackMsg.media_item_id,
+        sender_id: playbackMsg.sender_id,
+      });
       sendMessage(playbackMsg);
     } else {
-      console.warn('⚠️ [VideoWatch] NOT sending playback_control:', {
-        isHost,
-        isConnected,
-        reason: !isHost ? 'Not host' : 'Not connected'
-      });
+      console.warn('⚠️ [DEBUG handlePlayMedia] NOT sending playback_control — reason:', !isHost ? 'isHost=false' : 'isConnected=false', { isHost, isConnected });
     }
     
     if (isHost && isConnected) {
@@ -2668,7 +2704,7 @@ export default function VideoWatch() {
     }
 
     const updateInterval = setInterval(() => {
-      const currentSeekTime = Math.floor(playbackPositionRef.current);
+      const currentSeekTime = playbackPositionRef.current;
       // console.log(`⏰ [VideoWatch] Periodic seek time update: ${currentSeekTime}s`);
       
       sendMessage({
@@ -3448,19 +3484,17 @@ export default function VideoWatch() {
         }
 
         case "sync_heartbeat": {
-          // Periodic position sync broadcast from host. Correct drift > 0.5s.
-          // Ignore if we are the host, if paused, or if drift is too large (likely intentional).
           if (isHost) break;
-          const _hb = message;
-          const _videoEl = videoPlayerRef.current || document.querySelector('video');
-          if (!_videoEl || _videoEl.paused) break;
-          const _latency = Date.now() - (_hb.server_ts || _hb.timestamp);
-          const _expected = _hb.current_time + (_latency / 1000);
-          const _drift = Math.abs(_videoEl.currentTime - _expected);
-          if (_drift > 0.5 && _drift < 30) {
-            console.log(`🔄 [Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
-            _videoEl.currentTime = _expected;
-          }
+          // Store the host's position + when we received it.
+          // The member's drift-check effect uses this reference to detect drift locally
+          // every 2s without needing more WS messages.
+          // Use host browser clock (message.timestamp) — not server_ts which has WSL skew.
+          const _hbLatency = Math.max(0, Date.now() - message.timestamp);
+          syncRefRef.current = {
+            hostTime: message.current_time + (_hbLatency / 1000),
+            receivedAt: Date.now(),
+          };
+          console.log(`💓 [HB] Reference updated → host=${syncRefRef.current.hostTime.toFixed(3)}s (transit=${_hbLatency}ms)`);
           break;
         }
 
@@ -3893,74 +3927,94 @@ export default function VideoWatch() {
             stream: null
           }]);
           break;
-        case "playback_control":
-          console.log('📥 [VideoWatch] RECEIVED playback_control:', {
+        case "playback_control": {
+          const pcArrivalTime = Date.now();
+          console.log(`📥 [MEMBER] playback_control arrived t=${pcArrivalTime}`, {
             sender_id: message.sender_id,
-            currentUserId: currentUser?.id,
             command: message.command,
+            seek_time: message.seek_time,
+            server_ts: message.server_ts,
             file_path: message.file_path,
-            file_url: message.file_url,
-            timestamp: message.timestamp
+            isHost,
+            currentUserId: currentUser?.id,
           });
-          
-          if (message.sender_id && message.sender_id === currentUser?.id) {
-            console.log('⏭️ [VideoWatch] Ignoring own playback_control message');
+
+          if (isHost) {
+            console.log('⏭️ [MEMBER] Skipping — host tab, already applied locally');
             break;
           }
-          
-          if (message.file_path) {
-            const isSameMedia = currentMedia && currentMedia.file_path === message.file_path;
-            console.log('🔍 [VideoWatch] Playback control check:', {
-              isSameMedia,
-              currentMediaPath: currentMedia?.file_path,
-              newMediaPath: message.file_path,
-              isPlaying,
-              newCommand: message.command
-            });
-            
-            if (!isSameMedia || isPlaying !== (message.command === "play")) {
-              const mediaUrl = toAbsUrl(message.file_url || message.file_path) || message.file_url || message.file_path;
-              
-              console.log('✅ [VideoWatch] MEMBER loading media:', {
-                mediaUrl,
-                original_name: message.original_name
-              });
-              
-              setCurrentMedia({
-                ID: message.media_item_id,
-                type: 'upload',
-                file_path: message.file_path,
-                mediaUrl: mediaUrl,
-                original_name: message.original_name || 'Unknown Media',
-              });
-              const now = Date.now();
-              // Prefer server_ts (injected by backend relay) over host timestamp to
-              // eliminate clock drift between two different devices.
-              const latency = now - (message.server_ts || message.timestamp);
-              const adjustedTime = message.seek_time + (latency / 1000);
-              console.log('⏱️ [VideoWatch] Latency compensation:', {
-                latency_ms: latency,
-                seek_time: message.seek_time,
-                adjusted_time: adjustedTime,
-                command: message.command,
-                current_isPlaying: isPlaying,
-                will_change_playState: message.command === "play" || message.command === "pause"
-              });
-              setPendingSeekTime(adjustedTime); // ✅ Use state instead of ref
-              
-              // 🎯 FIX: Only update play/pause for explicit play/pause commands, not seek-only
-              if (message.command === "play" || message.command === "pause") {
-                setIsPlaying(message.command === "play");
-                console.log(`🎬 [VideoWatch] ${message.command === "play" ? "Playing" : "Pausing"} video from playback_control`);
+
+          if (!message.file_path) {
+            console.warn('⚠️ [MEMBER] playback_control has no file_path');
+            break;
+          }
+
+          const isSameMedia = currentMedia && currentMedia.file_path === message.file_path;
+          // Option 1: use host browser clock (message.timestamp), not server_ts.
+          // Both host and member tabs share the same Windows clock — no WSL/browser drift.
+          // server_ts comes from WSL which can be 600ms+ ahead of Windows Date.now().
+          const transitLatency = Math.max(0, pcArrivalTime - message.timestamp);
+          const adjustedTime = message.seek_time + (transitLatency / 1000);
+          console.log(`⏱️ [MEMBER] transit=${transitLatency}ms seek_time=${message.seek_time} adjusted=${adjustedTime.toFixed(3)}s`);
+
+          if (isSameMedia) {
+            // Option 2: same media already loaded — operate directly on the video element.
+            // Reloading video.src for a seek adds ~275ms load + ~318ms seek = ~593ms wasted.
+            const videoEl = videoPlayerRef.current || document.querySelector('video');
+
+            if (message.command === "seek" || (message.command === "play" && isPlaying)) {
+              // Already playing — just reposition, video continues
+              if (videoEl && adjustedTime >= 0) {
+                console.log(`🔍 [MEMBER] Same-media reposition → ${adjustedTime.toFixed(3)}s`);
+                videoEl.currentTime = adjustedTime;
               }
-              // For "seek" commands, maintain current play state
-            } else {
-              console.log('⏭️ [VideoWatch] Skipping - same media and state');
+            } else if (message.command === "play" && !isPlaying) {
+              // Was paused — seek to position then resume
+              if (videoEl) {
+                console.log(`▶️ [MEMBER] Same-media resume → ${adjustedTime.toFixed(3)}s`);
+                wsArrivalTimeRef.current = pcArrivalTime;
+                if (adjustedTime > 0) videoEl.currentTime = adjustedTime;
+                const onSeekedResume = () => {
+                  videoEl.removeEventListener('seeked', onSeekedResume);
+                  const elapsed = wsArrivalTimeRef.current
+                    ? (Date.now() - wsArrivalTimeRef.current) / 1000 : 0;
+                  wsArrivalTimeRef.current = null;
+                  if (elapsed > 0) videoEl.currentTime = videoEl.currentTime + elapsed;
+                  videoEl.play().catch(err =>
+                    console.error(`❌ [MEMBER] resume play failed: ${err.name}`)
+                  );
+                };
+                videoEl.addEventListener('seeked', onSeekedResume);
+              }
+              setIsPlaying(true);
+            } else if (message.command === "pause") {
+              console.log(`⏸️ [MEMBER] Same-media pause`);
+              videoEl?.pause();
+              setIsPlaying(false);
             }
           } else {
-            console.warn('⚠️ [VideoWatch] playback_control missing file_path!');
+            // Different media — full load path; handleLoadedData will apply seek + play
+            const mediaUrl = toAbsUrl(message.file_url || message.file_path) || message.file_url || message.file_path;
+            console.log(`✅ [MEMBER] New media load: ${message.original_name || 'unknown'}`);
+            wsArrivalTimeRef.current = pcArrivalTime;
+            // Seed syncRef so the drift-check loop has a reference immediately,
+            // without waiting up to 10s for the first heartbeat.
+            syncRefRef.current = { hostTime: adjustedTime, receivedAt: pcArrivalTime };
+            setCurrentMedia({
+              ID: message.media_item_id,
+              type: 'upload',
+              file_path: message.file_path,
+              mediaUrl,
+              original_name: message.original_name || 'Unknown Media',
+            });
+            setPendingSeekTime(adjustedTime);
+            if (message.command === "play" || message.command === "pause") {
+              setIsPlaying(message.command === "play");
+              console.log(`🎬 [MEMBER] setIsPlaying(${message.command === "play"})`);
+            }
           }
           break;
+        }
         case "camera_toggle":
           const { user_id, is_camera_on } = message.data;
           setParticipants(prev => {
@@ -4742,21 +4796,38 @@ export default function VideoWatch() {
     clearMessages();
   }, [messages, sessionStatus.id, currentUser?.id, currentMedia, localParticipant, clearMessages]);
 
-  // Periodic sync heartbeat: host → members every 2.5s while playing.
-  // Lets members self-correct drift without a host action.
+  // Host → members reference heartbeat every 10s.
+  // Just refreshes the member's syncRefRef — the member does its own drift checks locally.
   useEffect(() => {
     if (!isHost || !isPlaying || !isConnected) return;
     const id = setInterval(() => {
       const videoEl = videoPlayerRef.current || document.querySelector('video');
       if (!videoEl || videoEl.paused) return;
-      sendMessage({
-        type: 'sync_heartbeat',
-        current_time: videoEl.currentTime,
-        timestamp: Date.now(),
-      });
-    }, 2500);
+      sendMessage({ type: 'sync_heartbeat', current_time: videoEl.currentTime, timestamp: Date.now() });
+    }, 10000);
     return () => clearInterval(id);
   }, [isHost, isPlaying, isConnected, sendMessage]);
+
+  // Member autonomous drift check every 2s.
+  // Computes expected = lastKnownHostTime + elapsed and corrects only when drift > 1s.
+  // No WS traffic — purely local arithmetic against the stored syncRefRef reference.
+  useEffect(() => {
+    if (isHost || !isPlaying) return;
+    const id = setInterval(() => {
+      if (!syncRefRef.current) return;
+      const videoEl = videoPlayerRef.current || document.querySelector('video');
+      if (!videoEl || videoEl.paused) return;
+      const elapsed = (Date.now() - syncRefRef.current.receivedAt) / 1000;
+      const expected = syncRefRef.current.hostTime + elapsed;
+      const drift = videoEl.currentTime - expected; // positive = member ahead
+      const absDrift = Math.abs(drift);
+      if (absDrift > 1.0 && absDrift < 30) {
+        console.log(`🔄 [Drift] Auto-correct ${drift > 0 ? 'ahead' : 'behind'} ${absDrift.toFixed(2)}s → ${expected.toFixed(2)}s`);
+        videoEl.currentTime = expected;
+      }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [isHost, isPlaying]);
 
   // Handle Chat
   const handleSendSessionMessage = async () => {

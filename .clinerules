@@ -8911,3 +8911,43 @@ Applies to all 3 card layouts in `LobbyPage.jsx` (small TikTok, grid, fullscreen
 Code-switching style (e.g. "Abi you wan watch alone?") signals who this is for without saying Nigeria explicitly.
 Use this tone in onboarding, empty states, and marketing copy.
 
+---
+
+## Media Playback Sync Architecture (2026-06)
+
+### How co-watch sync works
+
+**Initial play (new media)**
+1. Host: `handlePlayMedia` → sets local state → sends `playback_control { command, seek_time (float), timestamp: Date.now() }`.
+2. Backend: relays to members immediately (with `server_ts` injected), then goroutine does DB work. Never block relay on DB.
+3. Member `playback_control` handler:
+   - `transitLatency = max(0, arrivalTime - message.timestamp)` — host browser clock only.
+   - Different media path: `setCurrentMedia` + `setPendingSeekTime(adjustedTime)` + seeds `syncRefRef`.
+   - Same media path: `videoEl.currentTime = adjustedTime` directly — no src reload.
+4. `handleLoadedData` → seek to `pendingSeekTime` → wait `seeked` → `doPlay()` applies post-play correction (`video.currentTime += elapsed since WS arrival`) → `play()`.
+
+**Ongoing drift correction**
+- Host sends `sync_heartbeat { current_time, timestamp }` every 10s (reference only, no correctional intent).
+- Member stores `syncRefRef = { hostTime, receivedAt }` on receipt.
+- Member `setInterval` (2s): `expected = syncRefRef.hostTime + elapsed` → if `|drift| > 1s` → correct.
+- All correction logic is local arithmetic — zero WS traffic for corrections.
+
+### Critical rules
+
+- **Never use `server_ts` for latency on the frontend.** WSL clock runs 600–700ms ahead of Windows `Date.now()`. Using `server_ts` makes `adjustedTime = seek_time - 0.66s` → member seeks backwards → visible scene replays. Use `message.timestamp` (host browser clock) everywhere: `playback_control` handler AND `sync_heartbeat` handler.
+- **Always wait for `seeked` before calling `play()`.** `video.currentTime = X` is async. Calling `play()` mid-seek throws `AbortError` (caught and swallowed) → video freezes on first frame. Pattern: set `currentTime` → `video.addEventListener('seeked', onSeeked)` → `video.play()` inside `onSeeked`. This applies to the initial seek AND the post-play correction seek.
+- **Same-media commands must never reload `video.src`.** For `playback_control` where the same file is already loaded, operate directly on `videoPlayerRef.current`. Reloading src adds ~275ms + ~318ms = ~593ms pipeline delay per correction.
+- **`seek_time` is `float64` in Go, float in JS.** Do not use `Math.floor()` on playback position before sending. Truncating to int loses up to 1s of position precision.
+- **`playback_control` relay before DB work.** Backend must broadcast to members before any synchronous DB operations. Move all DB writes (playback time update, preview generation) into a goroutine that runs after the relay.
+
+### Key refs in VideoWatch.jsx
+| Ref | Purpose |
+|---|---|
+| `wsArrivalTimeRef` | Set when `playback_control` arrives; consumed in `doPlay()` for post-play time correction; cleared after use |
+| `syncRefRef` | `{ hostTime, receivedAt }` — last known host position + local receipt time; used by autonomous drift check |
+| `pendingSeekTime` | State (not ref) — seek target for new media loads; consumed and cleared by `handleLoadedData` |
+| `videoPlayerRef` | Direct `<video>` element access; used for same-media repositions and drift corrections |
+
+### VolumeControl layout rule
+The dismiss (×) button must be the **last child** in the `flex flex-col items-center` column — not `absolute top-1 right-1`. It sits as a centered bottom cap below the mute icon. Absolute positioning breaks the layout and pushes the button to the corner.
+

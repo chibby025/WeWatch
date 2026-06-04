@@ -98,6 +98,49 @@ ALTER TABLE table_name ADD COLUMN IF NOT EXISTS col_name TYPE DEFAULT value;
 - **Session end broadcast pattern** (`EndWatchSessionHandler` in `rooms.go`): single blocking DB write (`ended_at`, `is_active=false`), then broadcast `session_ended` + lobby broadcast immediately. All remaining cleanup (media, seating, chat, LiveKit, quizzes, etc.) runs in a background goroutine. This keeps navigation snappy — never add slow operations before the broadcast.
 - `CleanupStaleSessions` goroutine (hourly, in `websocket.go`) sweeps both stale active sessions AND orphaned `watch_session_members` rows (active = true but session already ended within last 7 days). Safety net for background goroutine failures.
 
+### Media Playback Sync (updated 2026-06)
+Co-watch sync keeps host and member video positions within ~50ms. All sync logic lives in `VideoWatch.jsx` (frontend) and `websocket.go` (backend).
+
+**Sync flow — initial play (new media)**
+1. Host clicks play → `handlePlayMedia` → sets `currentMedia`, `isPlaying` locally → sends `playback_control { command:"play", seek_time: currentTime, timestamp: Date.now() }` via WS.
+2. Backend (`websocket.go` `playback_control` handler): relays immediately with `server_ts` injected, then does DB work (playback time, preview) in a goroutine. **Relay always happens before any DB work.**
+3. Member receives → `playback_control` case in WS switch:
+   - Computes `transitLatency = max(0, arrivalTime - message.timestamp)` — uses **host browser clock only** (not `server_ts` which has WSL drift).
+   - `adjustedTime = seek_time + transitLatency / 1000`
+   - If different media: `setCurrentMedia`, `setPendingSeekTime(adjustedTime)`, `setIsPlaying(true)`, seeds `syncRefRef`.
+   - If same media: direct `videoEl.currentTime = adjustedTime`, no reload.
+4. `handleLoadedData` effect fires when video loads → seeks to `pendingSeekTime` → waits for `seeked` event → `doPlay()` applies post-play correction: `video.currentTime += (Date.now() - wsArrivalTimeRef.current) / 1000` (compensates for the full load+seek pipeline) → then calls `play()`.
+
+**Key refs**
+- `wsArrivalTimeRef` — set when `playback_control` arrives; consumed in `doPlay()` for post-play correction; cleared after use.
+- `syncRefRef` — `{ hostTime, receivedAt }` — stores last known host position + local timestamp; seeded from `playback_control` and refreshed by `sync_heartbeat`; used by autonomous drift check.
+- `pendingSeekTime` — state (triggers re-render); seek target for new media loads; consumed by `handleLoadedData`.
+
+**Sync flow — ongoing drift correction**
+- Host sends `sync_heartbeat { current_time, timestamp }` every 10s (just a reference, no correctional intent).
+- Member `sync_heartbeat` case: stores `syncRefRef = { hostTime: current_time + transitLatency/1000, receivedAt: now }`. No immediate correction.
+- Member autonomous drift-check (`useEffect`, 2s interval): `expected = syncRefRef.hostTime + elapsed` → if `|drift| > 1.0s && < 30s` → `videoEl.currentTime = expected`.
+- Drift threshold is 1.0s (not 0.5s) — tolerates normal jitter without triggering corrections.
+
+**Backend — `playback_control` in `websocket.go`**
+- `SeekTime float64` (not int) — preserves subsecond precision.
+- Relay fires first (before any DB work); DB writes run in a goroutine.
+- `server_ts` is still injected into the relayed message for reference, but **frontend must not use it for latency calc** — use `message.timestamp` (host clock).
+
+**`handleLoadedData` seek-then-play pattern**
+- Setting `video.currentTime` is async (fires `seeking`, completes at `seeked`).
+- Calling `play()` before `seeked` fires causes `AbortError` → video freezes on first frame.
+- Always: set `currentTime` → wait for `seeked` → then call `play()`.
+- Same pattern applies to the post-play correction seek inside `doPlay()`.
+
+**Same-media commands (no reload)**
+- For `seek` / `play` / `pause` commands where the same media is already loaded, operate directly on `videoPlayerRef.current` — never call `setCurrentMedia` (which reloads the video src, adding ~275ms load + ~318ms seek = ~593ms unnecessary delay).
+
+**Clock skew gotcha (WSL dev environment)**
+- WSL `time.Now().UnixMilli()` (`server_ts`) can be 600–700ms ahead of Windows `Date.now()`.
+- Using `server_ts` for latency on the frontend makes `adjustedTime = seek_time - 0.66s` → member seeks backwards every correction → visible scene replays.
+- Fix: always use `message.timestamp` (set by host browser `Date.now()`) for latency on both `playback_control` and `sync_heartbeat` handlers.
+
 ### Session Preview Pipeline (added 2026-05)
 Live-session preview cards in LobbyPage show a looping video clip (or static poster) instead of a plain icon. The pipeline has three layers:
 
@@ -526,3 +569,8 @@ Key vars expected in `.env` or Railway config:
 - **Go multipart handler field ordering**: always read `c.PostForm("source_type")` BEFORE calling `c.Request.MultipartForm` or checking `form.File["frames"]`. Some upload paths (e.g. liveshare clip) send a `clip` field instead of `frames` — checking for frames first returns a false 400.
 - **`http.ServeFile` leading-slash path**: `c.Param("filepath")` returns a path starting with `/` (e.g. `/previews/foo.jpg`). Use `strings.TrimPrefix(urlPath, "/")` before `filepath.Join("./uploads", trimmedPath)` — a leading slash causes `filepath.Join` to treat the segment as an absolute path and `http.ServeFile` returns 404.
 - **`ERR_CANCELED` / `CanceledError` in axios interceptors**: React StrictMode double-invokes effects, causing in-flight requests to be aborted on the first unmount. These produce `error.code === 'ERR_CANCELED'` — check for this (and `error.name === 'CanceledError'` / `'AbortError'`) in the response error interceptor and return early without logging. They are not real errors.
+- **`video.play()` after `currentTime` assignment**: Setting `video.currentTime` is async — the browser fires `seeking` and only completes at `seeked`. Calling `play()` before `seeked` causes `AbortError` (swallowed silently) and leaves video frozen on the first frame. Always attach a one-time `seeked` listener and call `play()` from inside it.
+- **`playback_control` latency clock**: Always use `message.timestamp` (host browser `Date.now()`) for transit latency, never `message.server_ts`. On WSL dev setups, `server_ts` (WSL Linux clock) runs 600–700ms ahead of Windows `Date.now()`, making every `adjustedTime` negative — member seeks backwards and replays scenes. On production, NTP-synced devices make `timestamp` equally accurate.
+- **Same-media seek must not reload `video.src`**: For `playback_control` commands where the media is already loaded, operate directly on the video element (`videoEl.currentTime = adjustedTime`). Calling `setCurrentMedia` for a seek-only command reloads the src, adding ~275ms load + ~318ms seek = ~593ms of unnecessary pipeline delay.
+- **`sync_heartbeat` drift corrections replaying scenes**: If heartbeat corrections cause the member to repeatedly seek backwards, the `sync_heartbeat` handler is using `server_ts` instead of `message.timestamp` for latency. The handler's `_latency = Date.now() - _hb.timestamp` line must use `timestamp`, not `server_ts || timestamp`.
+- **VolumeControl dismiss button**: The × button must be the last child in the flex column (below the mute icon), not `absolute top-1 right-1`. Absolute positioning takes it out of flow; being the last flex item keeps it centered as a natural bottom cap of the bar.
