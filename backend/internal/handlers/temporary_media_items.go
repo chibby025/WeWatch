@@ -2,14 +2,10 @@
 package handlers
 
 import (
-	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	//"encoding/json"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -180,47 +176,6 @@ func GetTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 		return
 	}
 
-	// ✅ Generate missing posters for old uploads
-	for i := range temporaryMediaItems {
-		item := &temporaryMediaItems[i]
-		
-		// Skip if poster already exists and is not placeholder
-		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
-			continue
-		}
-		
-		// Generate poster for items without one — skip if FilePath is a CDN URL (remote)
-		if item.FilePath != "" &&
-			!strings.HasPrefix(item.FilePath, "http://") &&
-			!strings.HasPrefix(item.FilePath, "https://") {
-			log.Printf("🎨 Generating missing poster for %s", item.FileName)
-
-			posterFilename := fmt.Sprintf("%s_poster.jpg", strings.TrimSuffix(item.FileName, filepath.Ext(item.FileName)))
-			posterPath := filepath.Join("./uploads/temp", posterFilename)
-			posterURL := fmt.Sprintf("/uploads/temp/%s", posterFilename)
-
-			// Check if poster file already exists on disk
-			if _, err := os.Stat(posterPath); os.IsNotExist(err) {
-				// Generate new poster
-				err = utils.ExtractThumbnail(item.FilePath, posterPath)
-				if err != nil {
-					log.Printf("⚠️ Failed to generate poster for %s: %v", item.FileName, err)
-					item.PosterURL = "/icons/placeholder-poster.jpg"
-				} else {
-					log.Printf("✅ Poster generated: %s", posterPath)
-					item.PosterURL = posterURL
-				}
-			} else {
-				// Poster file exists, just update the URL
-				log.Printf("✅ Found existing poster on disk: %s", posterPath)
-				item.PosterURL = posterURL
-			}
-
-			// Update database with new poster URL
-			DB.Model(item).Update("poster_url", item.PosterURL)
-		}
-	}
-
 	log.Printf("GetTemporaryMediaItemsForRoomHandler: Fetched %d temporary media items for room %d", len(temporaryMediaItems), roomIDUint)
 	c.JSON(http.StatusOK, gin.H{
 		"message":              "Temporary media items fetched successfully",
@@ -280,53 +235,14 @@ func GetTemporaryMediaItemsForSessionHandler(c *gin.Context) {
 		return
 	}
 
-	// ✅ Generate missing posters (same logic as room handler)
+	// Ensure stream items always have a non-empty poster URL.
+	// File-based poster generation is handled exclusively by the upload goroutine;
+	// doing it here too caused a race where the goroutine's CDN upload deleted the
+	// local file while this handler had already told the client to use the local path.
 	for i := range temporaryMediaItems {
 		item := &temporaryMediaItems[i]
-		
-		// ✅ Skip poster generation for stream URLs (they're remote, not local files)
-		if item.IsStream {
-			log.Printf("⏭️ Skipping poster generation for stream URL: %s", item.OriginalStreamURL)
-			if item.PosterURL == "" {
-				item.PosterURL = "/icons/placeholder-poster.jpg"
-				DB.Model(item).Update("poster_url", item.PosterURL)
-			}
-			continue
-		}
-		
-		// Skip if poster already exists and is not placeholder
-		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
-			continue
-		}
-		
-		// Generate poster for items without one — skip if FilePath is a CDN URL (remote)
-		if item.FilePath != "" &&
-			!strings.HasPrefix(item.FilePath, "http://") &&
-			!strings.HasPrefix(item.FilePath, "https://") {
-			log.Printf("🎨 Generating missing poster for %s", item.FileName)
-
-			posterFilename := fmt.Sprintf("%s_poster.jpg", strings.TrimSuffix(item.FileName, filepath.Ext(item.FileName)))
-			posterPath := filepath.Join("./uploads/temp", posterFilename)
-			posterURL := fmt.Sprintf("/uploads/temp/%s", posterFilename)
-
-			// Check if poster file already exists on disk
-			if _, err := os.Stat(posterPath); os.IsNotExist(err) {
-				// Generate new poster
-				err = utils.ExtractThumbnail(item.FilePath, posterPath)
-				if err != nil {
-					log.Printf("⚠️ Failed to generate poster for %s: %v", item.FileName, err)
-					item.PosterURL = "/icons/placeholder-poster.jpg"
-				} else {
-					log.Printf("✅ Poster generated: %s", posterPath)
-					item.PosterURL = posterURL
-				}
-			} else {
-				// Poster file exists, just update the URL
-				log.Printf("✅ Found existing poster on disk: %s", posterPath)
-				item.PosterURL = posterURL
-			}
-
-			// Update database with new poster URL
+		if item.IsStream && item.PosterURL == "" {
+			item.PosterURL = "/icons/placeholder-poster.jpg"
 			DB.Model(item).Update("poster_url", item.PosterURL)
 		}
 	}

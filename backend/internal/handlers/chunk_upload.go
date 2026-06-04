@@ -19,6 +19,13 @@ import (
 
 const ChunkUploadDir = "./uploads/chunks"
 
+// bunnyConfigured returns true when BunnyCDN credentials are present in the environment.
+// When false (local dev), all media is served directly from the Go static handler and no
+// CDN upload or local-file deletion is attempted.
+func bunnyConfigured() bool {
+	return os.Getenv("BUNNY_ACCESS_KEY") != "" && os.Getenv("BUNNY_STORAGE_ZONE") != ""
+}
+
 func init() {
 	err := os.MkdirAll(ChunkUploadDir, os.ModePerm)
 	if err != nil {
@@ -220,45 +227,49 @@ func ChunkUploadHandler(c *gin.Context) {
 
 			// ✅ ASYNC POSTER + CDN UPLOAD
 			go func(itemID uint, roomID uint, videoPath, posterPath, sid, mimeType, uniqueFilename string) {
-				// 1. Generate poster
-				posterCDNURL := fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
+				// 1. Generate poster thumbnail.
+				posterURL := "/icons/placeholder-poster.jpg"
 				if err := utils.ExtractThumbnail(videoPath, posterPath); err != nil {
 					log.Printf("⚠️ [Async] Poster generation failed for temp item %d: %v", itemID, err)
-				} else {
+				} else if bunnyConfigured() {
+					// Production: upload to CDN and remove local copy.
 					if cdnURL, err := utils.UploadLocalFileToBunnyCDN(posterPath, "temp-media/"+filepath.Base(posterPath), "image/jpeg"); err != nil {
 						log.Printf("⚠️ [Async] Poster CDN upload failed for temp item %d: %v", itemID, err)
+						posterURL = fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
 					} else {
-						posterCDNURL = cdnURL
+						posterURL = cdnURL
 						os.Remove(posterPath)
 					}
+				} else {
+					// Dev: no CDN — serve directly from the Go static handler.
+					posterURL = fmt.Sprintf("/uploads/temp/%s", filepath.Base(posterPath))
+					log.Printf("📂 [Async] Poster stored locally (no CDN) for temp item %d", itemID)
 				}
-				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
+
+				if err := DB.Model(&models.TemporaryMediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
 					log.Printf("❌ [Async] Failed to update poster_url for temp item %d: %v", itemID, err)
 				} else {
-					log.Printf("✅ [Async] Poster updated for temp item %d: %s", itemID, posterCDNURL)
-					// Notify lobby (session preview card)
+					log.Printf("✅ [Async] Poster updated for temp item %d: %s", itemID, posterURL)
 					if sid != "" {
 						broadcastData := map[string]interface{}{
-							"type":        "session_preview_updated",
-							"session_id":  sid,
-							"poster_url":  posterCDNURL,
-							"preview_url": "",
+							"type": "session_preview_updated", "session_id": sid,
+							"poster_url": posterURL, "preview_url": "",
 						}
 						broadcastJSON, _ := json.Marshal(broadcastData)
-						log.Printf("📡 [Poster] Broadcasting poster update to lobby for session %s", sid)
 						hub.BroadcastToLobby(OutgoingMessage{Data: broadcastJSON, IsBinary: false})
 					}
-					// Notify room members so sidebar playlist refreshes immediately
 					roomBroadcast := map[string]interface{}{
-						"type":     "playlist_poster_updated",
-						"item_id":  itemID,
-						"poster_url": posterCDNURL,
+						"type": "playlist_poster_updated", "item_id": itemID, "poster_url": posterURL,
 					}
 					roomJSON, _ := json.Marshal(roomBroadcast)
 					hub.BroadcastToRoom(roomID, OutgoingMessage{Data: roomJSON, IsBinary: false}, nil)
 				}
 
-				// 2. Upload video to CDN; update file_path so cleanup targets CDN
+				// 2. Upload video to CDN (production only).
+				// In dev the video is already playable from the Go static handler.
+				if !bunnyConfigured() {
+					return
+				}
 				videoCDNURL, err := utils.UploadLocalFileToBunnyCDN(videoPath, "temp-media/"+uniqueFilename, mimeType)
 				if err != nil {
 					log.Printf("⚠️ [Async] Video CDN upload failed for temp item %d: %v", itemID, err)
@@ -268,7 +279,6 @@ func ChunkUploadHandler(c *gin.Context) {
 					log.Printf("❌ [Async] Failed to update file_path for temp item %d: %v", itemID, err)
 				} else {
 					log.Printf("✅ [Async] CDN upload complete for temp item %d: %s", itemID, videoCDNURL)
-					os.Remove(videoPath)
 				}
 			}(newTempMediaItem.ID, roomIDUint, finalFilePath, posterPath, sessionID, mimeType, uniqueFilename)
 			
@@ -319,25 +329,32 @@ func ChunkUploadHandler(c *gin.Context) {
 			
 			// ✅ ASYNC POSTER + CDN UPLOAD
 			go func(itemID uint, videoPath, posterPath, mimeType, uniqueFilename string) {
-				// 1. Generate poster
-				posterCDNURL := fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
+				// 1. Generate poster thumbnail.
+				posterURL := "/icons/placeholder-poster.jpg"
 				if err := utils.ExtractThumbnail(videoPath, posterPath); err != nil {
 					log.Printf("⚠️ [Async] Poster generation failed for item %d: %v", itemID, err)
-				} else {
+				} else if bunnyConfigured() {
 					if cdnURL, err := utils.UploadLocalFileToBunnyCDN(posterPath, "media/"+filepath.Base(posterPath), "image/jpeg"); err != nil {
 						log.Printf("⚠️ [Async] Poster CDN upload failed for item %d: %v", itemID, err)
+						posterURL = fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
 					} else {
-						posterCDNURL = cdnURL
+						posterURL = cdnURL
 						os.Remove(posterPath)
 					}
+				} else {
+					posterURL = fmt.Sprintf("/uploads/%s", filepath.Base(posterPath))
+					log.Printf("📂 [Async] Poster stored locally (no CDN) for item %d", itemID)
 				}
-				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL).Error; err != nil {
+				if err := DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterURL).Error; err != nil {
 					log.Printf("❌ [Async] Failed to update poster_url for item %d: %v", itemID, err)
 				} else {
-					log.Printf("✅ [Async] Poster updated for item %d: %s", itemID, posterCDNURL)
+					log.Printf("✅ [Async] Poster updated for item %d: %s", itemID, posterURL)
 				}
 
-				// 2. Upload video to CDN; update file_path so cleanup targets CDN
+				// 2. Upload video to CDN (production only).
+				if !bunnyConfigured() {
+					return
+				}
 				videoCDNURL, err := utils.UploadLocalFileToBunnyCDN(videoPath, "media/"+uniqueFilename, mimeType)
 				if err != nil {
 					log.Printf("⚠️ [Async] Video CDN upload failed for item %d: %v", itemID, err)
@@ -347,7 +364,6 @@ func ChunkUploadHandler(c *gin.Context) {
 					log.Printf("❌ [Async] Failed to update file_path for item %d: %v", itemID, err)
 				} else {
 					log.Printf("✅ [Async] CDN upload complete for item %d: %s", itemID, videoCDNURL)
-					os.Remove(videoPath)
 				}
 			}(newMediaItem.ID, finalFilePath, posterPath, mimeType, uniqueFilename)
 			
@@ -392,8 +408,9 @@ func assembleChunks(uploadDir, originalFileName string, totalChunks int, uploade
 	// Get file extension
 	ext := strings.ToLower(filepath.Ext(originalFileName))
 	
-	// Generate unique filename (same as regular upload)
-	uniqueFilename := fmt.Sprintf("%s%s", strings.ReplaceAll(uploadDir[len(ChunkUploadDir)+1:], "/", "_"), ext)
+	// Use filepath.Base so the name is derived correctly regardless of whether
+	// filepath.Join normalised the "./" prefix off ChunkUploadDir.
+	uniqueFilename := fmt.Sprintf("%s%s", filepath.Base(uploadDir), ext)
 	
 	var finalPath string
 	if isTemporary {

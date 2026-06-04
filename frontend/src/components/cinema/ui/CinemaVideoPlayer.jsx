@@ -649,7 +649,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       
       {/* Volume Control - shows on hover for uploaded media */}
       {showVolumeControl && isHovering && (
-        <VolumeControl videoRef={videoRef} />
+        <VolumeControl videoRef={videoRef} onDismiss={() => setIsHovering(false)} />
       )}
     </div>
   );

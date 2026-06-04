@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,22 +11,35 @@ import (
 )
 
 
-// ExtractThumbnail generates a thumbnail at 5 seconds into the video
-// ✅ Resizes to max 1280x720 for fast generation and small file sizes
+// ExtractThumbnail generates a thumbnail from the video, trying 1s then 0s as fallback.
+// Fast-seek (-ss before -i) is used for speed; output file existence is verified because
+// ffmpeg can exit 0 without writing output when the seek position is past the video end.
 func ExtractThumbnail(inputPath, outputPath string) error {
-	cmd := exec.Command("ffmpeg", "-y",
-		"-ss", "00:00:05",      // Seek BEFORE input (faster)
-		"-i", inputPath,
-		"-vf", "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease", // Resize intelligently
-		"-vframes", "1",
-		"-q:v", "2",            // High quality JPEG
-		outputPath,
-	)
+	var lastErr error
+	for _, seekTime := range []string{"00:00:01", "00:00:00"} {
+		var stderr bytes.Buffer
+		cmd := exec.Command("ffmpeg", "-y",
+			"-ss", seekTime,
+			"-i", inputPath,
+			"-vf", "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease",
+			"-vframes", "1",
+			"-q:v", "2",
+			outputPath,
+		)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = &stderr
 
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			lastErr = fmt.Errorf("ffmpeg -ss %s failed: %w (stderr: %s)", seekTime, err, stderr.String())
+			continue
+		}
 
-	return cmd.Run()
+		if info, statErr := os.Stat(outputPath); statErr == nil && info.Size() > 0 {
+			return nil
+		}
+		lastErr = fmt.Errorf("ffmpeg -ss %s produced no output for %q (stderr: %s)", seekTime, inputPath, stderr.String())
+	}
+	return lastErr
 }
 
 

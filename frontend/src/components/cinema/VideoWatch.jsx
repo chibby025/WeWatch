@@ -5,10 +5,21 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
-import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory } from '../../services/api';
+import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory, API_BASE_URL } from '../../services/api';
 import apiClient from '../../services/api';
 import { getRoom, getRoomMembers, getActiveSession } from '../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
+
+// Prefix relative backend paths (e.g. /uploads/temp/...) with the Go server origin
+// so the browser fetches them from localhost:8080, not the Vite dev server.
+// Only prefix backend-served paths (/uploads/). Leave /icons/ and other
+// Vite public assets alone — the backend doesn't serve those.
+const toAbsUrl = (url) => {
+  if (!url) return null;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('/uploads/')) return `${API_BASE_URL}${url}`;
+  return url;
+};
 // ✅ Import LiveKit hook + events
 import useLiveKitRoom from '../../hooks/useLiveKitRoom';
 import { Track, ParticipantEvent, RoomEvent } from 'livekit-client';
@@ -3350,8 +3361,8 @@ export default function VideoWatch() {
         ...item,
         ID: item.ID || item.id || Date.now() + Math.random(),
         _isTemporary: true,
-        // Use backend-generated poster or fallback to placeholder
-        poster_url: item.poster_url || '/icons/placeholder-poster.jpg'
+        poster_url: toAbsUrl(item.poster_url) || '/icons/placeholder-poster.jpg',
+        file_path: toAbsUrl(item.file_path) || item.file_path,
       }));
       
       setPlaylist(normalizedItems);
@@ -3390,10 +3401,11 @@ export default function VideoWatch() {
         case "playlist_poster_updated": {
           // Backend sends a flat message {type, item_id, poster_url} — not nested under data.
           const _ppu = message.data || message;
-          console.log('🖼️ [VideoWatch] playlist_poster_updated:', _ppu.item_id, _ppu.poster_url);
+          const normalizedPosterUrl = toAbsUrl(_ppu.poster_url) || _ppu.poster_url;
+          console.log('🖼️ [VideoWatch] playlist_poster_updated:', _ppu.item_id, normalizedPosterUrl);
           setPlaylist(prev => prev.map(item =>
             (item.ID || item.id) === _ppu.item_id
-              ? { ...item, poster_url: _ppu.poster_url }
+              ? { ...item, poster_url: normalizedPosterUrl }
               : item
           ));
           break;

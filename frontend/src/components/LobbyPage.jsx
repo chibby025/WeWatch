@@ -3335,10 +3335,10 @@ const LobbyPage = () => {
       {/* ✅ Hamburger Menu Button - Fixed Top Left */}
       <button
         onClick={() => setIsLobbyLeftSidebarOpen(true)}
-        className="fixed top-3 left-3 z-30 rounded-md shadow-lg transition-colors duration-200 flex items-center justify-center p-1 sm:p-1.5 bg-gray-800/70 hover:bg-gray-700 text-white dark:bg-white dark:hover:bg-gray-100 dark:text-gray-800"
+        className="fixed top-3 left-3 z-30 rounded-md shadow-lg transition-colors duration-200 flex items-center justify-center p-0.5 sm:p-1 bg-gray-800/70 hover:bg-gray-700 text-white dark:bg-white dark:hover:bg-gray-100 dark:text-gray-800"
         aria-label="Open menu"
       >
-        <Bars3Icon className="h-6 w-6 sm:h-7 sm:w-7" />
+        <Bars3Icon className="h-7 w-7 sm:h-8 sm:w-8" />
       </button>
 
 

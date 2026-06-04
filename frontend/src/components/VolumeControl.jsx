@@ -49,16 +49,14 @@ export default function VolumeControl({ videoRef, onDismiss }) {
 
   return (
     <div className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/80 backdrop-blur-md rounded-lg px-3 py-4 flex flex-col items-center gap-3 shadow-xl border border-gray-700 z-50">
-      {/* Dismiss button */}
-      {onDismiss && (
-        <button
-          onClick={onDismiss}
-          className="absolute top-1 right-1 text-gray-400 hover:text-white text-base leading-none p-1 rounded"
-          aria-label="Close volume control"
-        >
-          ×
-        </button>
-      )}
+      {/* Dismiss button — always visible */}
+      <button
+        onClick={() => onDismiss?.()}
+        className="absolute top-1 right-1 text-gray-400 hover:text-white text-base leading-none p-1 rounded"
+        aria-label="Close volume control"
+      >
+        ×
+      </button>
       {/* Volume percentage */}
       <span className="text-white text-sm font-medium">
         {Math.round((isMuted ? 0 : volume) * 100)}%

@@ -158,6 +158,7 @@ export default function LeftSidebar({
   const uploadFileRef = useRef(null);        // the live File object for the current upload
   const uploadPausedRef = useRef(false);     // mirrors uploadPaused without closure staleness
   const uploadFileDirectRef = useRef(null);  // always points at the latest uploadFileDirect fn
+  const posterPollTimerRef = useRef(null);   // cleanup handle for poster polling
   
   // Network quality state
   const [networkQuality, setNetworkQuality] = useState('unknown'); // '2g', '3g', '4g', 'wifi', 'unknown'
@@ -383,6 +384,44 @@ export default function LeftSidebar({
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
   }, []); // empty deps — refs handle staleness
+
+  // Cancel any in-flight poster poll when the sidebar unmounts.
+  useEffect(() => {
+    return () => { if (posterPollTimerRef.current) clearTimeout(posterPollTimerRef.current); };
+  }, []);
+
+  // Poll the temporary-media API until the newly uploaded item has a real poster.
+  // Called after assembleUpload resolves. Stops after maxAttempts or on success.
+  // This is the safety net for when the WS `playlist_poster_updated` message is
+  // missed (e.g. because the WebSocket briefly dropped during the upload).
+  const pollForPoster = (itemId, attempt = 0) => {
+    const MAX_ATTEMPTS = 10;
+    const INTERVAL_MS = 3000;
+    if (attempt >= MAX_ATTEMPTS || !itemId) return;
+
+    posterPollTimerRef.current = setTimeout(async () => {
+      try {
+        const token = localStorage.getItem('wewatch_token');
+        const resp = await fetch(`${API_BASE_URL}/api/rooms/${roomId}/temporary-media`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const items = data.temporary_media_items || [];
+        const target = items.find(it => (it.ID || it.id) === itemId);
+        if (target?.poster_url && !target.poster_url.includes('placeholder-poster')) {
+          // Real poster is ready — refresh the playlist once more.
+          console.log(`🖼️ [PosterPoll] Poster ready for item ${itemId}: ${target.poster_url}`);
+          if (onUploadComplete) onUploadComplete();
+        } else {
+          // Not ready yet — schedule next poll.
+          pollForPoster(itemId, attempt + 1);
+        }
+      } catch (_) {
+        pollForPoster(itemId, attempt + 1);
+      }
+    }, INTERVAL_MS);
+  };
 
   // Helper function to check if media has saved resume state
   const getSavedResumeState = (mediaItem) => {
@@ -791,7 +830,7 @@ export default function LeftSidebar({
         }));
       }
 
-      await assembleUpload(roomId, {
+      const assembleResp = await assembleUpload(roomId, {
         upload_id: uploadId,
         total_chunks: totalChunks,
         original_name: file.name,
@@ -809,6 +848,13 @@ export default function LeftSidebar({
 
       console.log('✅ [DirectUpload] DB record created');
       if (onUploadComplete) onUploadComplete();
+
+      // Poster is generated async on Railway after assembly.
+      // The WS `playlist_poster_updated` message updates the UI instantly when the
+      // socket is healthy. pollForPoster is the fallback for when the WS message
+      // is missed (brief disconnect during a long mobile upload).
+      const newItemId = assembleResp?.data?.media_item_id;
+      if (newItemId) pollForPoster(newItemId);
     } catch (err) {
       if (err.name === 'CanceledError' || err.message?.includes('cancel')) {
         console.log('🚫 [DirectUpload] Cancelled');
@@ -2145,16 +2191,6 @@ export default function LeftSidebar({
                 <li>LetsWatchOut may remove content that violates copyright laws</li>
                 <li>Repeated violations may result in account suspension</li>
               </ul>
-              <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-                <p className="text-yellow-400 text-xs">
-                  <strong>⚡ Recommended:</strong> For copyrighted content (movies, shows), use the <strong>"Watch From"</strong> or <strong>"LiveShare"</strong> tabs to screen share from legal platforms (Netflix, YouTube, etc.) instead of uploading.
-                </p>
-              </div>
-              <div className="mt-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-                <p className="text-blue-400 text-xs">
-                  <strong>📝 File Limit:</strong> 500MB max (encourages personal videos, clips, presentations)
-                </p>
-              </div>
             </div>
 
             <div className="flex gap-3">
@@ -2215,7 +2251,7 @@ export default function LeftSidebar({
           setPendingResumeData(null);
           try {
             toast('Finalising upload…');
-            await assembleUpload(roomId, {
+            const finalResp = await assembleUpload(roomId, {
               upload_id: state.uploadId,
               total_chunks: state.totalChunks,
               original_name: state.fileName,
@@ -2228,6 +2264,8 @@ export default function LeftSidebar({
             localStorage.removeItem('current_bunny_upload_id');
             toast.success('Upload finalised!');
             if (onUploadComplete) onUploadComplete();
+            const resumedItemId = finalResp?.data?.media_item_id;
+            if (resumedItemId) pollForPoster(resumedItemId);
           } catch (err) {
             toast.error(`Finalisation failed: ${err.message}`);
           }
