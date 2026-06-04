@@ -11,35 +11,50 @@ import (
 )
 
 
-// ExtractThumbnail generates a thumbnail from the video, trying 1s then 0s as fallback.
-// Fast-seek (-ss before -i) is used for speed; output file existence is verified because
-// ffmpeg can exit 0 without writing output when the seek position is past the video end.
+// ExtractThumbnail generates a representative poster from a video.
+//
+// Strategy:
+//  1. thumbnail filter (primary) — ffmpeg scores each of the first 50 frames by
+//     histogram variance and picks the most visually interesting one.  This
+//     naturally skips pure-black leader frames without needing any seek guess.
+//  2. Seek fallback — if the thumbnail filter fails (e.g. very short clip where
+//     the filter produces no output), try fixed seek positions 3 s → 1 s → 0 s.
 func ExtractThumbnail(inputPath, outputPath string) error {
-	var lastErr error
-	for _, seekTime := range []string{"00:00:01", "00:00:00"} {
+	runCmd := func(args []string) bool {
 		var stderr bytes.Buffer
-		cmd := exec.Command("ffmpeg", "-y",
-			"-ss", seekTime,
-			"-i", inputPath,
-			"-vf", "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease",
-			"-vframes", "1",
-			"-q:v", "2",
-			outputPath,
-		)
+		cmd := exec.Command("ffmpeg", args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = &stderr
-
 		if err := cmd.Run(); err != nil {
-			lastErr = fmt.Errorf("ffmpeg -ss %s failed: %w (stderr: %s)", seekTime, err, stderr.String())
-			continue
+			return false
 		}
+		info, err := os.Stat(outputPath)
+		return err == nil && info.Size() > 0
+	}
 
-		if info, statErr := os.Stat(outputPath); statErr == nil && info.Size() > 0 {
+	scaleFilter := "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease"
+
+	// Primary: thumbnail filter picks best frame from first 50 frames (~2 s at 24 fps)
+	if runCmd([]string{
+		"-y", "-i", inputPath,
+		"-vf", "thumbnail=n=50," + scaleFilter,
+		"-frames:v", "1", "-q:v", "2", outputPath,
+	}) {
+		return nil
+	}
+
+	// Fallback: fixed seek positions for very short or unusual clips
+	for _, seek := range []string{"00:00:03", "00:00:01", "00:00:00"} {
+		if runCmd([]string{
+			"-y", "-ss", seek, "-i", inputPath,
+			"-vf", scaleFilter,
+			"-vframes", "1", "-q:v", "2", outputPath,
+		}) {
 			return nil
 		}
-		lastErr = fmt.Errorf("ffmpeg -ss %s produced no output for %q (stderr: %s)", seekTime, inputPath, stderr.String())
 	}
-	return lastErr
+
+	return fmt.Errorf("ExtractThumbnail: all strategies failed for %q", inputPath)
 }
 
 

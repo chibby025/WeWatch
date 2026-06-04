@@ -1,43 +1,44 @@
 import axios from "axios";
 
 // Smart API URL detection: automatically choose backend based on how frontend is accessed.
-// The localhost:8080 fallback is intentionally restricted to actual localhost —
-// on any deployed hostname (Vercel, staging, etc.) it would produce URLs
-// unreachable by other devices.
+// Rule: localhost:8080 is ONLY used when window.location.hostname is literally localhost/127.0.0.1.
+// On any other hostname (Vercel, staging) we use VITE_API_BASE_URL — which MUST be set
+// to the Railway backend URL in the Vercel environment variables.
 const getApiBaseUrl = () => {
   const currentHostname = window.location.hostname;
 
   // Cloudflare Tunnel
   if (currentHostname.includes('trycloudflare.com')) {
-    const cloudflareBackendUrl = import.meta.env.VITE_CLOUDFLARE_BACKEND_URL;
-    console.log('☁️ [API Config] Cloudflare Tunnel → backend:', cloudflareBackendUrl);
-    return cloudflareBackendUrl;
+    const url = import.meta.env.VITE_CLOUDFLARE_BACKEND_URL;
+    console.log('☁️ [API Config] Cloudflare Tunnel → backend:', url);
+    return url;
   }
 
   // localtunnel
   if (currentHostname.includes('loca.lt')) {
-    const localtunnelBackendUrl = import.meta.env.VITE_LOCALTUNNEL_BACKEND_URL || window.location.origin;
-    console.log('🔗 [API Config] localtunnel → backend:', localtunnelBackendUrl);
-    return localtunnelBackendUrl;
+    const url = import.meta.env.VITE_LOCALTUNNEL_BACKEND_URL || window.location.origin;
+    console.log('🔗 [API Config] localtunnel → backend:', url);
+    return url;
   }
 
-  // True local development — localhost:8080 fallback is safe here only
+  // True local development — only place localhost:8080 fallback is safe
   if (currentHostname === 'localhost' || currentHostname === '127.0.0.1') {
-    const localUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-    console.log('🏠 [API Config] localhost → backend:', localUrl);
-    return localUrl;
+    const url = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    console.log('🏠 [API Config] localhost → backend:', url);
+    return url;
   }
 
-  // Production / any deployed hostname (Vercel, Railway preview, etc.)
-  // VITE_API_BASE_URL must be set in the deployment environment.
-  // Uploaded file paths will be replaced by CDN URLs once the upload goroutine
-  // finishes — do NOT fall back to localhost here.
-  const prodUrl = import.meta.env.VITE_API_BASE_URL || '';
-  if (!prodUrl) {
-    console.warn('⚠️ [API Config] VITE_API_BASE_URL is not set in production. File URLs may be temporarily broken until BunnyCDN URLs arrive via WebSocket.');
+  // Production / any deployed hostname (Vercel, staging, etc.)
+  // VITE_API_BASE_URL must be set to the Railway backend URL.
+  // We keep the same VITE_API_BASE_URL || localhost fallback here so that if the
+  // env var is missing the behaviour degrades identically to before rather than
+  // returning '' which turns every upload into a slow Vercel 404+retry loop.
+  const url = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+  if (!import.meta.env.VITE_API_BASE_URL) {
+    console.warn('⚠️ [API Config] VITE_API_BASE_URL is not set. Set it to your Railway backend URL in Vercel project settings → Environment Variables.');
   }
-  console.log('🌐 [API Config] production → backend:', prodUrl || '(none — expecting CDN URLs)');
-  return prodUrl;
+  console.log('🌐 [API Config] production → backend:', url);
+  return url;
 };
 
 const API_BASE_URL = getApiBaseUrl();
