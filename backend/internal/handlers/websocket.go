@@ -172,7 +172,7 @@ type ReceiverStats struct {
 const (
     maxMessageSize = 10 * 1024 * 1024 // 10MB max message size
     writeWait = 10 * time.Second
-    pongWait = 60 * time.Second
+    pongWait = 120 * time.Second // Extended for mobile browsers that delay pong responses
     pingPeriod = (pongWait * 9) / 10
     closeGracePeriod = 10 * time.Second
 )

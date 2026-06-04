@@ -14,10 +14,13 @@ import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
 // so the browser fetches them from localhost:8080, not the Vite dev server.
 // Only prefix backend-served paths (/uploads/). Leave /icons/ and other
 // Vite public assets alone — the backend doesn't serve those.
+// DB stores paths without a leading slash ("uploads/temp/x.mp4") so we
+// normalise before checking — both forms are handled correctly.
 const toAbsUrl = (url) => {
   if (!url) return null;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  if (url.startsWith('/uploads/')) return `${API_BASE_URL}${url}`;
+  const withSlash = url.startsWith('/') ? url : `/${url}`;
+  if (withSlash.startsWith('/uploads/')) return `${API_BASE_URL}${withSlash}`;
   return url;
 };
 // ✅ Import LiveKit hook + events
@@ -470,7 +473,7 @@ export default function VideoWatch() {
         }
         // Network hiccups (5xx, timeout) are ignored — don't penalise tab-switchers
       }
-    }, 60000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [sessionStatus?.id, urlSessionId, roomId]);
@@ -2588,11 +2591,11 @@ export default function VideoWatch() {
       alert("❌ This media item is missing its file path and cannot be played.");
       return;
     }
-    // ✅ Construct full URL for uploaded media
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-    const fileUrl = mediaItem.file_url || filePath;
-    const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
-    
+    // Use toAbsUrl so that relative DB paths ("uploads/temp/x.mp4") and
+    // absolute CDN paths are both handled — avoids the localhost fallback
+    // that was making the URL unreachable on member devices.
+    const mediaUrl = toAbsUrl(mediaItem.file_url || filePath) || filePath;
+
     const normalizedMediaItem = {
       ...mediaItem,
       ID: id,
@@ -2604,25 +2607,21 @@ export default function VideoWatch() {
     setCurrentMedia(normalizedMediaItem);
     setIsPlaying(true);
     playbackPositionRef.current = 0;
-    
+
     console.log('🎬 [VideoWatch] Host about to send playback_control:', {
       isHost,
       isConnected,
       mediaUrl: normalizedMediaItem.mediaUrl,
       currentUserId: currentUser?.id
     });
-    
+
     if (isHost && isConnected) {
       const playbackMsg = {
         type: "playback_control",
         command: "play",
         media_item_id: id,
         file_path: filePath,
-        // TODO: normalizedMediaItem.mediaUrl may be undefined — playlist normalization
-        // (lines ~3318) only adds ID and poster_url, not mediaUrl. Members currently
-        // fall back to file_path above which works, but file_url is dead weight here.
-        // Fix: replace with `fileUrl` (computed at line ~2555) so field is always populated.
-        file_url: normalizedMediaItem.mediaUrl,
+        file_url: mediaUrl, // absolute URL — members use this directly
         original_name: normalizedMediaItem.original_name,
         seek_time: 0,
         timestamp: Date.now(),
@@ -3411,6 +3410,43 @@ export default function VideoWatch() {
           break;
         }
 
+        case 'temporary_media_item_added': {
+          const newItem = message.data;
+          if (!newItem) break;
+          const normalized = {
+            ...newItem,
+            ID: newItem.ID || newItem.id,
+            _isTemporary: true,
+            poster_url: toAbsUrl(newItem.poster_url) || '/icons/placeholder-poster.jpg',
+            file_path: toAbsUrl(newItem.file_path) || newItem.file_path,
+          };
+          console.log('📋 [VideoWatch] temporary_media_item_added:', normalized.ID, normalized.original_name);
+          setPlaylist(prev => {
+            if (prev.some(p => (p.ID || p.id) === normalized.ID)) return prev;
+            return [...prev, normalized];
+          });
+          break;
+        }
+
+        case 'playlist_file_updated': {
+          // Goroutine finished uploading to CDN — replace the temporary Railway path
+          // with the permanent CDN URL everywhere it appears.
+          const _pfu = message.data || message;
+          const cdnUrl = _pfu.file_path;
+          if (!cdnUrl || !_pfu.item_id) break;
+          console.log('🔄 [VideoWatch] playlist_file_updated → CDN URL for item', _pfu.item_id, cdnUrl);
+          setPlaylist(prev => prev.map(item =>
+            (item.ID || item.id) === _pfu.item_id
+              ? { ...item, file_path: cdnUrl, mediaUrl: cdnUrl }
+              : item
+          ));
+          setCurrentMedia(prev => {
+            if (!prev || (prev.ID || prev.id) !== _pfu.item_id) return prev;
+            return { ...prev, file_path: cdnUrl, mediaUrl: cdnUrl };
+          });
+          break;
+        }
+
         case "sync_heartbeat": {
           // Periodic position sync broadcast from host. Correct drift > 0.5s.
           // Ignore if we are the host, if paused, or if drift is too large (likely intentional).
@@ -3734,6 +3770,7 @@ export default function VideoWatch() {
         case 'session_member_joined':
           // Real-time member join from backend
           console.log('📨 [VideoWatch] session_member_joined RAW:', message);
+          try { new Audio('/sounds/userjoin.mp3').play(); } catch (_) {}
           if (message.data?.user_id && message.data?.username) {
             const userId = message.data.user_id;
             const username = message.data.username;
@@ -3882,10 +3919,7 @@ export default function VideoWatch() {
             });
             
             if (!isSameMedia || isPlaying !== (message.command === "play")) {
-              // ✅ Construct full URL for uploaded media
-              const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-              const fileUrl = message.file_url || message.file_path;
-              const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+              const mediaUrl = toAbsUrl(message.file_url || message.file_path) || message.file_url || message.file_path;
               
               console.log('✅ [VideoWatch] MEMBER loading media:', {
                 mediaUrl,

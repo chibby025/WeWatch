@@ -279,12 +279,44 @@ func ChunkUploadHandler(c *gin.Context) {
 					log.Printf("❌ [Async] Failed to update file_path for temp item %d: %v", itemID, err)
 				} else {
 					log.Printf("✅ [Async] CDN upload complete for temp item %d: %s", itemID, videoCDNURL)
+					// Replace the temporary Railway path with the stable CDN URL on all clients.
+					// This eliminates the window where clients would try to fetch a path that
+					// no longer exists on Railway after the local file is deleted below.
+					if cdnBroadcast, err := json.Marshal(map[string]interface{}{
+						"type":      "playlist_file_updated",
+						"item_id":   itemID,
+						"file_path": videoCDNURL,
+					}); err == nil {
+						hub.BroadcastToRoom(roomID, OutgoingMessage{Data: cdnBroadcast, IsBinary: false}, nil)
+					}
+					os.Remove(videoPath)
 				}
 			}(newTempMediaItem.ID, roomIDUint, finalFilePath, posterPath, sessionID, mimeType, uniqueFilename)
 			
 			// ✅ Construct public URL for browser access
 			publicURL := fmt.Sprintf("/uploads/temp/%s", uniqueFilename)
-			
+
+			// Broadcast to room so all connected members add this item to their playlist.
+			if broadcastData, err := json.Marshal(map[string]interface{}{
+				"type": "temporary_media_item_added",
+				"data": map[string]interface{}{
+					"id":            newTempMediaItem.ID,
+					"file_name":     newTempMediaItem.FileName,
+					"original_name": newTempMediaItem.OriginalName,
+					"mime_type":     newTempMediaItem.MimeType,
+					"file_size":     newTempMediaItem.FileSize,
+					"file_path":     publicURL,
+					"poster_url":    newTempMediaItem.PosterURL,
+					"duration":      newTempMediaItem.Duration,
+					"session_id":    sessionID,
+					"room_id":       roomIDUint,
+					"uploader_id":   newTempMediaItem.UploaderID,
+					"is_temporary":  true,
+				},
+			}); err == nil {
+				hub.BroadcastToRoom(roomIDUint, OutgoingMessage{Data: broadcastData, IsBinary: false}, nil)
+			}
+
 			log.Printf("🎉 [ChunkUpload] Temporary media item '%s' (ID: %d) uploaded successfully to room %d", newTempMediaItem.FileName, newTempMediaItem.ID, roomIDUint)
 			c.JSON(http.StatusCreated, gin.H{
 				"message":       "Temporary media item uploaded successfully",

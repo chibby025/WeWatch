@@ -1,27 +1,43 @@
 import axios from "axios";
 
-// Smart API URL detection: automatically choose backend based on how frontend is accessed
+// Smart API URL detection: automatically choose backend based on how frontend is accessed.
+// The localhost:8080 fallback is intentionally restricted to actual localhost —
+// on any deployed hostname (Vercel, staging, etc.) it would produce URLs
+// unreachable by other devices.
 const getApiBaseUrl = () => {
   const currentHostname = window.location.hostname;
-  
-  // If accessed via Cloudflare Tunnel, use Cloudflare backend
+
+  // Cloudflare Tunnel
   if (currentHostname.includes('trycloudflare.com')) {
     const cloudflareBackendUrl = import.meta.env.VITE_CLOUDFLARE_BACKEND_URL;
-    console.log('☁️ [API Config] Detected Cloudflare Tunnel access, using Cloudflare backend:', cloudflareBackendUrl);
+    console.log('☁️ [API Config] Cloudflare Tunnel → backend:', cloudflareBackendUrl);
     return cloudflareBackendUrl;
   }
-  
-  // If accessed via localtunnel, use localtunnel backend
+
+  // localtunnel
   if (currentHostname.includes('loca.lt')) {
     const localtunnelBackendUrl = import.meta.env.VITE_LOCALTUNNEL_BACKEND_URL || window.location.origin;
-    console.log('🔗 [API Config] Detected localtunnel access, using localtunnel backend:', localtunnelBackendUrl);
+    console.log('🔗 [API Config] localtunnel → backend:', localtunnelBackendUrl);
     return localtunnelBackendUrl;
   }
-  
-  // Otherwise, use localhost backend (or configured URL)
-  const localBackendUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-  console.log('🏠 [API Config] Detected localhost access, using local backend:', localBackendUrl);
-  return localBackendUrl;
+
+  // True local development — localhost:8080 fallback is safe here only
+  if (currentHostname === 'localhost' || currentHostname === '127.0.0.1') {
+    const localUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    console.log('🏠 [API Config] localhost → backend:', localUrl);
+    return localUrl;
+  }
+
+  // Production / any deployed hostname (Vercel, Railway preview, etc.)
+  // VITE_API_BASE_URL must be set in the deployment environment.
+  // Uploaded file paths will be replaced by CDN URLs once the upload goroutine
+  // finishes — do NOT fall back to localhost here.
+  const prodUrl = import.meta.env.VITE_API_BASE_URL || '';
+  if (!prodUrl) {
+    console.warn('⚠️ [API Config] VITE_API_BASE_URL is not set in production. File URLs may be temporarily broken until BunnyCDN URLs arrive via WebSocket.');
+  }
+  console.log('🌐 [API Config] production → backend:', prodUrl || '(none — expecting CDN URLs)');
+  return prodUrl;
 };
 
 const API_BASE_URL = getApiBaseUrl();
