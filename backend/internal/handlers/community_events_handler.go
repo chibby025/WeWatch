@@ -14,16 +14,14 @@ import (
 // GET /api/community-events
 // Returns public scheduled events + community requests for the feed.
 // Query param: since=<RFC3339 timestamp> — used to compute has_new for the feed gate.
+// Does NOT require authentication — guests see G/PG/Educational/Religious content by default.
 func GetCommunityEventsHandler(c *gin.Context) {
-	userIDValue, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-	currentUserID, ok := userIDValue.(uint)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-		return
+	userIDValue, userExists := c.Get("user_id")
+	var currentUserID uint
+	if userExists {
+		if id, ok := userIDValue.(uint); ok {
+			currentUserID = id
+		}
 	}
 
 	sinceStr := c.Query("since")
@@ -34,29 +32,35 @@ func GetCommunityEventsHandler(c *gin.Context) {
 		}
 	}
 
-	// Load viewer's age flags + preferences — same pattern as GetAllActiveSessionsHandler.
-	var viewerSettings models.UserSettings
-	DB.Where("user_id = ?", currentUserID).First(&viewerSettings)
-	// Lazy yearly recompute if flags are stale.
-	if viewerSettings.AgeFlagsYear != time.Now().Year() {
-		var viewerUser models.User
-		if err := DB.Select("id, date_of_birth").First(&viewerUser, currentUserID).Error; err == nil {
-			saveAgeFlagsForUser(DB, currentUserID, viewerUser.GetAge())
-			DB.Where("user_id = ?", currentUserID).First(&viewerSettings)
+	// Default guest-safe ratings; replaced by user prefs when authenticated.
+	allowedRatings := []string{"G", "PG", "Educational", "Religious"}
+	primaryRating := "G"
+
+	if currentUserID > 0 {
+		// Load viewer's age flags + preferences — same pattern as GetAllActiveSessionsHandler.
+		var viewerSettings models.UserSettings
+		DB.Where("user_id = ?", currentUserID).First(&viewerSettings)
+		// Lazy yearly recompute if flags are stale.
+		if viewerSettings.AgeFlagsYear != time.Now().Year() {
+			var viewerUser models.User
+			if err := DB.Select("id, date_of_birth").First(&viewerUser, currentUserID).Error; err == nil {
+				saveAgeFlagsForUser(DB, currentUserID, viewerUser.GetAge())
+				DB.Where("user_id = ?", currentUserID).First(&viewerSettings)
+			}
+		}
+
+		// Build allowed ratings list using the same canViewContentRating gate as posts + sessions.
+		allRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
+		allowedRatings = nil
+		for _, r := range allRatings {
+			if canViewContentRating(r, viewerSettings) {
+				allowedRatings = append(allowedRatings, r)
+			}
+		}
+		if viewerSettings.PrimaryRating != "" {
+			primaryRating = viewerSettings.PrimaryRating
 		}
 	}
-
-	// Build allowed ratings list using the same canViewContentRating gate as posts + sessions.
-	allRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
-	var allowedRatings []string
-	for _, r := range allRatings {
-		if canViewContentRating(r, viewerSettings) {
-			allowedRatings = append(allowedRatings, r)
-		}
-	}
-
-	// primaryRating is the user's preferred content category — used to boost matching content first.
-	primaryRating := viewerSettings.PrimaryRating
 
 	// Scheduled events: public, not yet started, within next 14 days, filtered by content rating
 	now := time.Now()
@@ -174,13 +178,13 @@ func GetCommunityEventsHandler(c *gin.Context) {
 		return
 	}
 
-	// Batch-load upvote status for current user
+	// Batch-load upvote status — only meaningful for authenticated users
 	var requestIDs []uint
 	for _, r := range rawRequests {
 		requestIDs = append(requestIDs, r.ID)
 	}
 	upvotedSet := map[uint]bool{}
-	if len(requestIDs) > 0 {
+	if currentUserID > 0 && len(requestIDs) > 0 {
 		var upvotedIDs []uint
 		DB.Model(&models.CommunityRequestUpvote{}).
 			Where("user_id = ? AND request_id IN ?", currentUserID, requestIDs).
@@ -463,5 +467,64 @@ func ClaimCommunityRequestHandler(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"claim":   claim,
 		"prefill": prefill,
+	})
+}
+
+// GET /api/admin/community-analytics — super-admin community request stats
+func GetCommunityAnalyticsHandler(c *gin.Context) {
+	type StatusRow struct {
+		Status string `gorm:"column:status"`
+		Count  int    `gorm:"column:count"`
+	}
+	var statusRows []StatusRow
+	DB.Raw("SELECT status, COUNT(*) AS count FROM community_requests GROUP BY status").Scan(&statusRows)
+	statusMap := map[string]int{}
+	for _, r := range statusRows {
+		statusMap[r.Status] = r.Count
+	}
+
+	var totalUpvotes int64
+	DB.Model(&models.CommunityRequestUpvote{}).Count(&totalUpvotes)
+
+	var totalClaims int64
+	DB.Model(&models.CommunityRequestClaim{}).Count(&totalClaims)
+
+	type TopRequest struct {
+		ID            uint   `json:"id"             gorm:"column:id"`
+		Title         string `json:"title"          gorm:"column:title"`
+		ContentRating string `json:"content_rating" gorm:"column:content_rating"`
+		UpvoteCount   int    `json:"upvote_count"   gorm:"column:upvote_count"`
+		Status        string `json:"status"         gorm:"column:status"`
+		ClaimCount    int    `json:"claim_count"    gorm:"column:claim_count"`
+	}
+	var topRequests []TopRequest
+	DB.Raw(`
+		SELECT cr.id, cr.title, cr.content_rating, cr.upvote_count, cr.status,
+		       COUNT(crc.id) AS claim_count
+		FROM community_requests cr
+		LEFT JOIN community_request_claims crc ON crc.request_id = cr.id
+		GROUP BY cr.id
+		ORDER BY cr.upvote_count DESC
+		LIMIT 10
+	`).Scan(&topRequests)
+
+	type RatingRow struct {
+		Rating string `json:"content_rating" gorm:"column:content_rating"`
+		Count  int    `json:"count"          gorm:"column:count"`
+	}
+	var byRating []RatingRow
+	DB.Raw("SELECT content_rating, COUNT(*) AS count FROM community_requests GROUP BY content_rating ORDER BY count DESC").Scan(&byRating)
+
+	c.JSON(http.StatusOK, gin.H{
+		"totals": gin.H{
+			"open":    statusMap["open"],
+			"claimed": statusMap["claimed"],
+			"closed":  statusMap["closed"],
+			"total":   statusMap["open"] + statusMap["claimed"] + statusMap["closed"],
+		},
+		"total_upvotes": totalUpvotes,
+		"total_claims":  totalClaims,
+		"top_requests":  topRequests,
+		"by_rating":     byRating,
 	})
 }

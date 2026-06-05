@@ -438,6 +438,18 @@ export const getRooms = async (limit = 20, offset = 0, { signal } = {}) => {
     }
 };
 
+export const getPublicRooms = async (limit = 20, offset = 0, { signal } = {}) => {
+    try {
+        const response = await apiClient.get('/api/public/rooms', {
+            params: { limit, offset },
+            signal,
+        });
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+};
+
 /**
  * Get details of a specific room by ID
  * @param {string|number} roomid

@@ -620,6 +620,31 @@ func AuthMiddleware() gin.HandlerFunc {
     }
 }
 
+// OptionalAuthMiddleware injects user_id into context if a valid token is present,
+// but allows the request through even with no token or an invalid one.
+func OptionalAuthMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        tokenString := ""
+        if authHeader := c.GetHeader("Authorization"); authHeader != "" {
+            const bearerPrefix = "Bearer "
+            if len(authHeader) > len(bearerPrefix) && authHeader[:len(bearerPrefix)] == bearerPrefix {
+                tokenString = authHeader[len(bearerPrefix):]
+            }
+        }
+        if tokenString == "" {
+            if cookie, err := c.Cookie("wewatch_token"); err == nil && cookie != "" {
+                tokenString = cookie
+            }
+        }
+        if tokenString != "" && !models.IsTokenBlacklisted(DB, tokenString) {
+            if userID, err := utils.ValidateJWT(tokenString); err == nil {
+                c.Set("user_id", userID)
+            }
+        }
+        c.Next()
+    }
+}
+
 // GetUserByUsernameHandler looks up a user by username (for ticket gifting)
 // GET /api/users/by-username/:username
 func GetUserByUsernameHandler(c *gin.Context) {

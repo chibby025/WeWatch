@@ -55,7 +55,7 @@ import { getStatusFeed } from '../services/api';
 import FeedAdCard from './ads/FeedAdCard';
 import { calculateAge } from '../utils/ageUtils';
 import CommunityEventsCard from './community/CommunityEventsCard';
-import { getCommunityEvents, getPublicLiveSessions } from '../services/api';
+import { getCommunityEvents, getPublicLiveSessions, getPublicRooms } from '../services/api';
 
 // Resolve a backend-relative preview URL to a full absolute URL
 const resolvePreviewUrl = (url) => {
@@ -372,6 +372,8 @@ const LobbyPage = () => {
 
   // Community Events carousel data
   const [communityEventsData, setCommunityEventsData] = useState({ scheduledEvents: [], requests: [] });
+  const [showCommunityEventsView, setShowCommunityEventsView] = useState(false);
+  const communityEventsTuneRef = React.useRef(null);
 
   // 🪟 Modal state for W button (hides Post option when opened from Watching Live)
   const [createModalHidePosts, setCreateModalHidePosts] = React.useState(false);
@@ -935,7 +937,8 @@ const LobbyPage = () => {
     try {
       const limit = 20;
       const offset = page * limit;
-      const data = await getRooms(limit, offset, { signal: controller.signal });
+      const fetchFn = authenticatedUserID ? getRooms : getPublicRooms;
+      const data = await fetchFn(limit, offset, { signal: controller.signal });
       
       const roomsList = data.rooms || [];
       
@@ -2286,8 +2289,9 @@ const LobbyPage = () => {
   // Initial fetch on mount
   useEffect(() => {
     fetchRoomsData();
-    fetchSessionsData();
+    fetchCommunityEvents(); // fetch for all users (guests see G/PG ratings)
     if (currentUser) {
+      fetchSessionsData(); // auth-required endpoint; guests use the separate guest useEffect
       fetchFriendsList();
       fetchStatusFeed();
       fetchPendingRequests();
@@ -2296,7 +2300,6 @@ const LobbyPage = () => {
       fetchUpcomingEventsCount();
       fetchGroupsList();
       prefetchWatchingNowContent();
-      fetchCommunityEvents();
     }
   }, [currentUser]);
 
@@ -2342,6 +2345,26 @@ const LobbyPage = () => {
     const t = setTimeout(() => setShowGuestBanner(false), 5000);
     return () => clearTimeout(t);
   }, [showGuestBanner]);
+
+  // Community events tune — plays while the fullscreen view is open
+  useEffect(() => {
+    if (!showCommunityEventsView) {
+      if (communityEventsTuneRef.current) {
+        communityEventsTuneRef.current.pause();
+        communityEventsTuneRef.current.currentTime = 0;
+      }
+      return;
+    }
+    const audio = new Audio('/sounds/communitymusic.mp3');
+    audio.loop = true;
+    audio.volume = 0.35;
+    communityEventsTuneRef.current = audio;
+    audio.play().catch(() => {}); // autoplay may be blocked; fail silently
+    return () => {
+      audio.pause();
+      audio.currentTime = 0;
+    };
+  }, [showCommunityEventsView]);
   
   // ✅ STEP 4: Infinite scroll - Intersection Observer for load trigger
   useEffect(() => {
@@ -6581,6 +6604,21 @@ const LobbyPage = () => {
               </button>
             </div>
 
+            {/* Community Events button */}
+            <button
+              onClick={() => { setShowCommunityEventsView(true); setShowCalendarDrawer(false); }}
+              className="mx-4 mt-4 mb-1 flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-purple-900/60 to-blue-900/60 border border-purple-700/40 hover:border-purple-500/60 text-white transition-all active:scale-95"
+            >
+              <span className="text-xl">📅</span>
+              <div className="flex-1 text-left">
+                <p className="text-sm font-semibold">Community Events</p>
+                <p className="text-xs text-gray-400">Requests &amp; scheduled sessions</p>
+              </div>
+              <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+
             {/* Content */}
             <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
               {calendarLoading ? (
@@ -6673,6 +6711,33 @@ const LobbyPage = () => {
                 );
               })()}
             </div>
+          </div>
+        </>
+      )}
+
+      {/* 🎪 Community Events fullscreen overlay (opened from calendar drawer) */}
+      {showCommunityEventsView && (
+        <>
+          <div
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm"
+            onClick={() => setShowCommunityEventsView(false)}
+          />
+          <div className="fixed inset-0 z-50 flex flex-col" onClick={(e) => e.stopPropagation()}>
+            {/* Close button */}
+            <button
+              onClick={() => setShowCommunityEventsView(false)}
+              className="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
+            >
+              <XMarkIcon className="w-6 h-6" />
+            </button>
+            <CommunityEventsCard
+              scheduledEvents={communityEventsData.scheduledEvents}
+              requests={communityEventsData.requests}
+              currentUser={currentUser}
+              apiBaseUrl={API_BASE_URL}
+              onRSVP={(event) => { setShowCommunityEventsView(false); setSelectedEventForCalendar(event); setIsCalendarModalOpen(true); }}
+              onNewRequest={(req) => setCommunityEventsData(prev => ({ ...prev, requests: [req, ...prev.requests] }))}
+            />
           </div>
         </>
       )}

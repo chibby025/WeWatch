@@ -2173,7 +2173,7 @@ const RoomPageNew = () => {
                 </div>
                 
                 {/* Right section: Action Icons + Ellipse */}
-                <div className="flex items-center gap-2 md:gap-5 flex-shrink-0 ml-auto" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2 md:gap-5 flex-shrink-0 ml-auto pr-2 md:pr-0" onClick={(e) => e.stopPropagation()}>
                 
                 {!selectedGroupId && (
                   <>

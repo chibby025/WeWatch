@@ -69,9 +69,7 @@ const CommunityEventsCard = ({
     onNewRequest?.(newReq);
   };
 
-  if (cards.length === 0) return null;
-
-  const card = cards[currentIndex];
+  const card = cards.length > 0 ? cards[currentIndex] : null;
 
   return (
     <div
@@ -80,8 +78,14 @@ const CommunityEventsCard = ({
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Current card */}
-      {card.type === 'event' ? (
+      {/* Current card or empty state */}
+      {card === null ? (
+        <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-slate-900 to-black flex flex-col items-center justify-center px-6 text-center">
+          <span className="text-6xl mb-4">📅</span>
+          <p className="text-white text-2xl font-black mb-2">Nothing scheduled yet</p>
+          <p className="text-white/50 text-sm">Be the first to request something for the community to watch!</p>
+        </div>
+      ) : card.type === 'event' ? (
         <ScheduledEventPreviewCard
           event={card.data}
           onRSVP={onRSVP}
@@ -99,13 +103,15 @@ const CommunityEventsCard = ({
       <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-center pt-3 pointer-events-none">
         <div className="bg-black/50 backdrop-blur-sm border border-white/20 rounded-full px-4 py-1">
           <span className="text-white/80 text-xs font-semibold tracking-wide">
-            📅 Community Events · {currentIndex + 1}/{cards.length}
+            {cards.length > 0
+              ? `📅 Community Events · ${currentIndex + 1}/${cards.length}`
+              : '📅 Community Events'}
           </span>
         </div>
       </div>
 
-      {/* Left/right nav arrows (desktop) */}
-      {currentIndex > 0 && (
+      {/* Left/right nav arrows — only when multiple cards */}
+      {cards.length > 0 && currentIndex > 0 && (
         <button
           onClick={() => goTo(currentIndex - 1)}
           className="absolute left-3 top-1/2 -translate-y-1/2 z-20
@@ -116,7 +122,7 @@ const CommunityEventsCard = ({
           <ChevronLeftIcon className="w-5 h-5" />
         </button>
       )}
-      {currentIndex < cards.length - 1 && (
+      {cards.length > 0 && currentIndex < cards.length - 1 && (
         <button
           onClick={() => goTo(currentIndex + 1)}
           className="absolute right-3 top-1/2 -translate-y-1/2 z-20
@@ -128,19 +134,21 @@ const CommunityEventsCard = ({
         </button>
       )}
 
-      {/* Dot indicators */}
-      <div className="absolute bottom-20 left-0 right-0 z-20 flex items-center justify-center gap-1.5 pointer-events-none">
-        {cards.map((_, i) => (
-          <div
-            key={i}
-            className={`rounded-full transition-all duration-200 ${
-              i === currentIndex
-                ? 'w-4 h-1.5 bg-white'
-                : 'w-1.5 h-1.5 bg-white/40'
-            }`}
-          />
-        ))}
-      </div>
+      {/* Dot indicators — only when multiple cards */}
+      {cards.length > 1 && (
+        <div className="absolute bottom-20 left-0 right-0 z-20 flex items-center justify-center gap-1.5 pointer-events-none">
+          {cards.map((_, i) => (
+            <div
+              key={i}
+              className={`rounded-full transition-all duration-200 ${
+                i === currentIndex
+                  ? 'w-4 h-1.5 bg-white'
+                  : 'w-1.5 h-1.5 bg-white/40'
+              }`}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Make a Request button — pinned at bottom */}
       <div className="absolute bottom-4 left-0 right-0 z-20 flex justify-center px-5">

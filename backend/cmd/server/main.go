@@ -627,6 +627,8 @@ func main() {
 
 	// --- PUBLIC (no-auth) routes for the /explore browse page ---
 	r.GET("/api/public/live-sessions", handlers.GetPublicLiveSessionsHandler)
+	r.GET("/api/public/rooms", handlers.GetRoomsHandler)                  // Guest room browsing — returns only public rooms
+	r.GET("/api/community-events", handlers.OptionalAuthMiddleware(), handlers.GetCommunityEventsHandler) // Guest-accessible; user_id injected if token present
 
 	// --- POSTS & USER-GENERATED CONTENT ROUTES (Phase 1: Post & Recording Feature) ---
 	// Public routes (discover feed, view single post, read comments)
@@ -740,7 +742,7 @@ func main() {
 		protected.DELETE("/users/me/account", handlers.DeleteAccountHandler(DB)) // DELETE /api/users/me/account (NDPR right to erasure)
 		
 		// --- COMMUNITY EVENTS ROUTES ---
-		protected.GET("/community-events", handlers.GetCommunityEventsHandler)                         // GET /api/community-events
+		// GET is public (handled separately below); POST routes require auth
 		protected.POST("/community-requests", handlers.CreateCommunityRequestHandler)                  // POST /api/community-requests
 		protected.POST("/community-requests/:id/upvote", handlers.ToggleCommunityRequestUpvoteHandler) // POST /api/community-requests/:id/upvote
 		protected.POST("/community-requests/:id/claim", handlers.ClaimCommunityRequestHandler)         // POST /api/community-requests/:id/claim
@@ -1083,6 +1085,7 @@ func main() {
 		superAdminGroup.GET("/analytics", handlers.GetPlatformAnalytics)                       // GET /api/admin/analytics (Platform metrics: revenue, users, sessions)
 		superAdminGroup.GET("/token-spending-analytics", handlers.GetTokenSpendingAnalytics)   // GET /api/admin/token-spending-analytics (Token spending by rooms/hosts)
 		superAdminGroup.GET("/event-analytics", handlers.GetEventAnalytics)                    // GET /api/admin/event-analytics (Event ticketing metrics)
+		superAdminGroup.GET("/community-analytics", handlers.GetCommunityAnalyticsHandler)     // GET /api/admin/community-analytics (Community request stats)
 		superAdminGroup.POST("/transfer-donation-commission", handlers.TransferTokenDonationCommission) // POST /api/admin/transfer-donation-commission (Transfer 5% token gift commissions)
 		
 		// Legacy pending payouts (for manually flagged accounts)

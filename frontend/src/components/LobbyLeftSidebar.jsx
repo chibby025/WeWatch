@@ -11,6 +11,7 @@ import {
   XMarkIcon,
   ChartBarIcon,
   ArrowRightOnRectangleIcon,
+  ArrowLeftOnRectangleIcon,
   ShieldCheckIcon,
   SignalIcon,
   MegaphoneIcon,
@@ -91,6 +92,69 @@ const LobbyLeftSidebar = ({
     onClose();
     navigate('/login');
   };
+
+  // Guest menu — shown when no user is authenticated
+  if (!currentUser) {
+    return (
+      <>
+        <div
+          className="fixed inset-0 bg-black/50 z-40 transition-opacity duration-300"
+          onClick={onClose}
+        />
+        <div className="fixed left-0 top-0 h-full w-[260px] sm:w-[300px] md:w-[350px] lg:w-[375px] max-w-[85vw] bg-[#2B2B2B] z-50 shadow-2xl transform transition-transform duration-300 ease-in-out overflow-y-auto custom-sleek-scrollbar">
+          {/* Header */}
+          <div className="relative pt-4 pb-3 px-3 sm:pt-6 sm:pb-4 sm:px-4 md:pt-8 md:pb-6 md:px-6 border-b border-gray-700">
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 lg:w-32 lg:h-32 rounded-full bg-gradient-to-br from-gray-600 to-gray-700 flex items-center justify-center border-2 sm:border-4 border-white/20">
+                <UserIcon className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 text-white/50" />
+              </div>
+              <h2 className="mt-2 sm:mt-3 md:mt-4 text-white text-sm sm:text-base md:text-lg lg:text-xl font-bold">
+                Guest
+              </h2>
+              <p className="text-gray-400 text-xs mt-1">Sign in to access all features</p>
+            </div>
+          </div>
+
+          {/* Auth buttons */}
+          <nav className="py-4 px-3 sm:py-6 sm:px-4">
+            <div className="space-y-3">
+              <button
+                onClick={() => { onClose(); navigate('/register'); }}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold shadow-lg transition-all"
+              >
+                <UserPlusIcon className="h-5 w-5 sm:h-6 sm:w-6 flex-shrink-0" />
+                <span className="text-sm sm:text-base">Sign Up</span>
+              </button>
+              <button
+                onClick={() => { onClose(); navigate('/login'); }}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-700 hover:bg-gray-600 text-white font-semibold transition-all"
+              >
+                <ArrowLeftOnRectangleIcon className="h-5 w-5 sm:h-6 sm:w-6 flex-shrink-0" />
+                <span className="text-sm sm:text-base">Sign In</span>
+              </button>
+            </div>
+          </nav>
+
+          {/* Help */}
+          <div className="px-3 pb-4 sm:px-4 sm:pb-6 mt-auto">
+            <button
+              onClick={() => setIsHelpModalOpen(true)}
+              className="w-full flex items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 sm:px-4 sm:py-3 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700/50 transition-colors"
+            >
+              <QuestionMarkCircleIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+              <span className="text-xs sm:text-sm font-medium">Help & Support</span>
+            </button>
+          </div>
+        </div>
+
+        <HelpSupportModal
+          isOpen={isHelpModalOpen}
+          onClose={() => setIsHelpModalOpen(false)}
+          currentUser={null}
+        />
+      </>
+    );
+  }
 
   const menuItems = [
     {
@@ -209,6 +273,7 @@ const LobbyLeftSidebar = ({
   ];
 
   const username = currentUser?.username || currentUser?.Username || 'User';
+  // (currentUser is guaranteed non-null here — guest case returns early above)
 
   return (
     <>

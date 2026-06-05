@@ -164,7 +164,12 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./...\" 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1 && echo OK\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go vet ./internal/... 2>&1 && echo OK\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go vet ./internal/... 2>&1 && echo OK\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/backend && go build ./cmd/server/ 2>&1 | tail -20\")",
+      "PowerShell(wsl -d Ubuntu-22.04 bash -c 'export PATH=$PATH:/usr/local/go/bin && cd /home/chibuzor_dev/WeWatch/backend && go build ./cmd/server/ 2>&1 | tail -20')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- /usr/local/go/bin/go build -C /home/chibuzor_dev/WeWatch/backend ./cmd/server/ 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"which go || ls /usr/local/go/bin/go 2>&1 || find /home -name go -type f 2>&1 | head -5\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/ 2>&1\")"
     ],
     "additionalDirectories": [
       "\\dev",

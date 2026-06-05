@@ -2223,6 +2223,39 @@ func CleanupStaleSessions() {
 		log.Printf("✅ [CleanupStaleSessions] Cleanup complete - ended %d stale sessions", len(staleSessions))
 	}
 
+	// Close community requests whose every linked scheduled event has started.
+	// A request stays 'claimed' (and visible) as long as at least one claim has no event
+	// or has a future event. Once all linked events are in the past it becomes 'closed'.
+	closedResult := DB.Exec(`
+		UPDATE community_requests
+		SET status = 'closed', updated_at = NOW()
+		WHERE status = 'claimed'
+		AND id NOT IN (
+			SELECT DISTINCT request_id FROM community_request_claims
+			WHERE scheduled_event_id IS NULL
+			   OR scheduled_event_id IN (
+			       SELECT id FROM scheduled_events WHERE start_time > NOW()
+			   )
+		)
+	`)
+	if closedResult.Error != nil {
+		log.Printf("⚠️ [CleanupStaleSessions] Community request close error: %v", closedResult.Error)
+	} else if closedResult.RowsAffected > 0 {
+		log.Printf("✅ [CleanupStaleSessions] Closed %d fulfilled community requests", closedResult.RowsAffected)
+	}
+
+	// Delete community requests that were closed more than 7 days ago.
+	deletedResult := DB.Exec(`
+		DELETE FROM community_requests
+		WHERE status = 'closed'
+		AND updated_at < NOW() - INTERVAL '7 days'
+	`)
+	if deletedResult.Error != nil {
+		log.Printf("⚠️ [CleanupStaleSessions] Community request delete error: %v", deletedResult.Error)
+	} else if deletedResult.RowsAffected > 0 {
+		log.Printf("🗑️ [CleanupStaleSessions] Deleted %d old closed community requests", deletedResult.RowsAffected)
+	}
+
 	// Sweep for members still marked active in sessions that have already ended.
 	// Catches goroutine failures during EndWatchSessionHandler background cleanup.
 	recentCutoff := time.Now().Add(-7 * 24 * time.Hour)

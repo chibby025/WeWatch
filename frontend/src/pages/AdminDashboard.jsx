@@ -43,6 +43,7 @@ const AdminDashboard = () => {
   const [processingPayout, setProcessingPayout] = useState(null);
   const [splitProfit, setSplitProfit] = useState(null);
   const [transferringSplitProfit, setTransferringSplitProfit] = useState(false);
+  const [communityAnalytics, setCommunityAnalytics] = useState(null);
 
   useEffect(() => {
     if (!currentUser) { navigate('/'); return; }
@@ -54,7 +55,7 @@ const AdminDashboard = () => {
 
   const fetchAnalytics = async () => {
     try {
-      const [analyticsRes, tokenSpendingRes, topDonorsRes, eventAnalyticsRes, pendingPayoutsRes, processingPayoutsRes, splitProfitRes] = await Promise.all([
+      const [analyticsRes, tokenSpendingRes, topDonorsRes, eventAnalyticsRes, pendingPayoutsRes, processingPayoutsRes, splitProfitRes, communityRes] = await Promise.all([
         apiClient.get('/api/admin/analytics'),
         apiClient.get('/api/admin/token-spending-analytics'),
         apiClient.get('/api/donations/top-donors?limit=20'),
@@ -62,6 +63,7 @@ const AdminDashboard = () => {
         getAdminPendingPayouts(),
         getAdminProcessingPayouts(),
         apiClient.get('/api/admin/split-profit-analytics').catch(() => ({ data: null })),
+        apiClient.get('/api/admin/community-analytics').catch(() => ({ data: null })),
       ]);
 
       setAnalytics(analyticsRes.data);
@@ -71,6 +73,7 @@ const AdminDashboard = () => {
       setPendingPayouts(pendingPayoutsRes.payouts || []);
       setProcessingPayouts(processingPayoutsRes.payouts || []);
       setSplitProfit(splitProfitRes.data);
+      setCommunityAnalytics(communityRes.data);
       setLastUpdated(new Date());
       setLoading(false);
     } catch {
@@ -999,6 +1002,104 @@ const AdminDashboard = () => {
                 <div className="text-sm text-gray-300">
                   {eventAnalytics.early_bird_tickets} tickets sold at early bird pricing
                   {eventAnalytics.early_bird_revenue > 0 && <span className="ml-2">• {formatTokens(eventAnalytics.early_bird_revenue)} 🪙 revenue</span>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Community Requests Analytics */}
+        {communityAnalytics && (
+          <div className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 backdrop-blur-lg rounded-xl p-6 border border-indigo-500/30">
+            <h2 className="text-2xl font-bold mb-6">📅 Community Requests Analytics</h2>
+
+            {/* Summary cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-white/10 rounded-xl p-4 border border-white/10 text-center">
+                <div className="text-3xl font-black text-white">{communityAnalytics.totals.total}</div>
+                <div className="text-xs text-gray-400 mt-1 uppercase tracking-wide">Total Requests</div>
+              </div>
+              <div className="bg-green-600/20 rounded-xl p-4 border border-green-500/30 text-center">
+                <div className="text-3xl font-black text-green-400">{communityAnalytics.totals.open}</div>
+                <div className="text-xs text-gray-400 mt-1 uppercase tracking-wide">Open</div>
+              </div>
+              <div className="bg-blue-600/20 rounded-xl p-4 border border-blue-500/30 text-center">
+                <div className="text-3xl font-black text-blue-400">{communityAnalytics.totals.claimed}</div>
+                <div className="text-xs text-gray-400 mt-1 uppercase tracking-wide">Claimed (Host Found)</div>
+              </div>
+              <div className="bg-gray-600/20 rounded-xl p-4 border border-gray-500/30 text-center">
+                <div className="text-3xl font-black text-gray-400">{communityAnalytics.totals.closed}</div>
+                <div className="text-xs text-gray-400 mt-1 uppercase tracking-wide">Closed (Event Done)</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div className="bg-yellow-600/20 rounded-xl p-4 border border-yellow-500/30 flex items-center gap-4">
+                <span className="text-4xl">👍</span>
+                <div>
+                  <div className="text-2xl font-bold text-yellow-400">{(communityAnalytics.total_upvotes || 0).toLocaleString()}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">Total upvotes across all requests</div>
+                </div>
+              </div>
+              <div className="bg-purple-600/20 rounded-xl p-4 border border-purple-500/30 flex items-center gap-4">
+                <span className="text-4xl">🙋</span>
+                <div>
+                  <div className="text-2xl font-bold text-purple-400">{(communityAnalytics.total_claims || 0).toLocaleString()}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">Total host claims made</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Top requested items */}
+            {communityAnalytics.top_requests?.length > 0 && (
+              <div className="bg-white/5 rounded-xl overflow-hidden mb-4">
+                <div className="px-4 py-3 border-b border-white/10">
+                  <h3 className="font-semibold text-white">🏆 Most Upvoted Requests</h3>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 text-left">
+                      <th className="px-4 py-2 text-gray-400 font-medium">#</th>
+                      <th className="px-4 py-2 text-gray-400 font-medium">Title</th>
+                      <th className="px-4 py-2 text-gray-400 font-medium">Rating</th>
+                      <th className="px-4 py-2 text-right text-gray-400 font-medium">Upvotes</th>
+                      <th className="px-4 py-2 text-right text-gray-400 font-medium">Claims</th>
+                      <th className="px-4 py-2 text-right text-gray-400 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {communityAnalytics.top_requests.map((req, i) => (
+                      <tr key={req.id} className="hover:bg-white/5">
+                        <td className="px-4 py-2.5 text-gray-400">{i + 1}</td>
+                        <td className="px-4 py-2.5 text-white font-medium max-w-[200px] truncate">{req.title}</td>
+                        <td className="px-4 py-2.5 text-gray-300">{req.content_rating}</td>
+                        <td className="px-4 py-2.5 text-right text-yellow-400 font-bold">{req.upvote_count}</td>
+                        <td className="px-4 py-2.5 text-right text-purple-400">{req.claim_count}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                            req.status === 'open' ? 'bg-green-500/20 text-green-300' :
+                            req.status === 'claimed' ? 'bg-blue-500/20 text-blue-300' :
+                            'bg-gray-500/20 text-gray-400'
+                          }`}>{req.status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* By content rating */}
+            {communityAnalytics.by_rating?.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-300 mb-3">Requests by Content Rating</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {communityAnalytics.by_rating.map(r => (
+                    <div key={r.content_rating} className="bg-white/5 border border-white/10 rounded-lg p-3 text-center">
+                      <div className="text-lg font-bold text-white">{r.count}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">{r.content_rating}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

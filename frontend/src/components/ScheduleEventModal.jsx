@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ClockIcon, TrashIcon, TicketIcon, XCircleIcon } from '@heroicons/react/24/outline';
+import React, { useState, useEffect, useRef } from 'react';
+import { ClockIcon, TrashIcon, TicketIcon, XCircleIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
 import apiClient from '../services/api';
 import CalendarDropdown from './CalendarDropdown';
 import toast from 'react-hot-toast';
@@ -25,6 +25,132 @@ const getTicketImage = (watchType, contentRating) => {
   if (watchType === 'classroom') return '/icons/LectureTicket.webp';
   if (watchType === '3d_cinema') return '/icons/CinemaTicket.webp';
   return '/icons/VWTicket.webp';
+};
+
+// Generate all 15-min slots in 24h, return as "HH:MM"
+const TIME_SLOTS = Array.from({ length: 96 }, (_, i) => {
+  const h = Math.floor(i / 4);
+  const m = (i % 4) * 15;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+});
+
+const formatTimeSlot = (val) => {
+  if (!val) return null;
+  const [h, m] = val.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour = h % 12 || 12;
+  return `${hour}:${String(m).padStart(2, '0')} ${period}`;
+};
+
+const TimePicker = ({ value, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const wrapRef = useRef(null);
+  const selectedRef = useRef(null);
+  const editInputRef = useRef(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  // Scroll selected slot into view when dropdown opens
+  useEffect(() => {
+    if (open && selectedRef.current) {
+      selectedRef.current.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+  }, [open]);
+
+  // Focus native input when entering edit mode
+  useEffect(() => {
+    if (editMode) editInputRef.current?.focus();
+  }, [editMode]);
+
+  const handleEditClick = (e) => {
+    e.stopPropagation();
+    setOpen(false);
+    setEditMode(true);
+  };
+
+  if (editMode) {
+    return (
+      <div className="relative" ref={wrapRef}>
+        <input
+          ref={editInputRef}
+          type="time"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={() => setEditMode(false)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') setEditMode(false); }}
+          className="block w-full px-3 py-2 text-sm border border-purple-500 rounded-md
+            bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+            [color-scheme:light] dark:[color-scheme:dark]
+            focus:outline-none focus:ring-2 focus:ring-purple-500"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={`flex items-center justify-between w-full px-3 py-2 text-sm rounded-md border transition-colors
+          ${value
+            ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20 text-gray-900 dark:text-white'
+            : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-400 dark:text-gray-500'
+          }`}
+      >
+        <span className={value ? '' : 'text-gray-400 dark:text-gray-500'}>
+          {value ? formatTimeSlot(value) : 'Select time'}
+        </span>
+        <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+          {/* Edit icon — enters manual input mode */}
+          <span
+            role="button"
+            tabIndex={-1}
+            onClick={handleEditClick}
+            className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors cursor-pointer"
+            title="Enter custom time"
+          >
+            <PencilSquareIcon className="w-3.5 h-3.5 text-gray-400" />
+          </span>
+          <ClockIcon className="w-4 h-4 text-gray-400" />
+        </div>
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 right-0 mt-1 z-[9999] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl shadow-2xl overflow-hidden">
+          <div className="max-h-52 overflow-y-auto overscroll-contain">
+            {TIME_SLOTS.map(slot => {
+              const isSelected = slot === value;
+              return (
+                <button
+                  key={slot}
+                  type="button"
+                  ref={isSelected ? selectedRef : null}
+                  onClick={() => { onChange(slot); setOpen(false); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors
+                    ${isSelected
+                      ? 'bg-purple-600 text-white font-semibold'
+                      : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    }`}
+                >
+                  {formatTimeSlot(slot)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 const ScheduleEventModal = ({
@@ -374,6 +500,23 @@ const ScheduleEventModal = ({
     ? trailerUnlockDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
     : null;
 
+  // Split date/time helpers — keep startTime as a single Date object
+  const handleDateChange = (date) => {
+    if (!date) { setStartTime(null); return; }
+    const merged = new Date(date);
+    if (startTime) merged.setHours(startTime.getHours(), startTime.getMinutes(), 0, 0);
+    setStartTime(merged);
+  };
+  const handleTimeChange = (val) => {
+    const [h, m] = val.split(':').map(Number);
+    const merged = startTime ? new Date(startTime) : new Date();
+    merged.setHours(h, m, 0, 0);
+    setStartTime(merged);
+  };
+  const timeValue = startTime
+    ? `${String(startTime.getHours()).padStart(2, '0')}:${String(startTime.getMinutes()).padStart(2, '0')}`
+    : '';
+
   // Room calendar helpers
   const calendarMonthLabel = new Date(calendarYear, calendarMonth).toLocaleString('default', { month: 'long', year: 'numeric' });
   const firstDayOfMonth = new Date(calendarYear, calendarMonth, 1).getDay();
@@ -558,29 +701,34 @@ const ScheduleEventModal = ({
             {createStep === 2 && (
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Start Time</label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
-                      <img src="/icons/schedule.svg" alt="" className="h-8 w-8 text-gray-400 dark:text-gray-500" />
+                  <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Start Time</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Date picker */}
+                    <div>
+                      <label className="block text-[10px] font-medium text-gray-500 dark:text-gray-400 mb-1 uppercase tracking-wide">Date</label>
+                      <DatePicker
+                        selected={startTime}
+                        onChange={handleDateChange}
+                        dateFormat="MMM d, yyyy"
+                        minDate={new Date()}
+                        placeholderText="Pick a date"
+                        className="block w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white cursor-pointer"
+                        calendarClassName="custom-datepicker"
+                        wrapperClassName="w-full"
+                        required
+                      />
                     </div>
-                    <DatePicker
-                      selected={startTime}
-                      onChange={(date) => setStartTime(date)}
-                      showTimeSelect
-                      timeFormat="HH:mm"
-                      timeIntervals={15}
-                      dateFormat="MMMM d, yyyy h:mm aa"
-                      minDate={new Date()}
-                      placeholderText="Select date and time"
-                      className="block w-full pl-14 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white cursor-pointer"
-                      calendarClassName="custom-datepicker"
-                      wrapperClassName="w-full"
-                      required
-                    />
+                    {/* Time picker */}
+                    <div>
+                      <label className="block text-[10px] font-medium text-gray-500 dark:text-gray-400 mb-1 uppercase tracking-wide">Time</label>
+                      <TimePicker value={timeValue} onChange={handleTimeChange} />
+                    </div>
                   </div>
-                  <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Selected: {startTime ? startTime.toLocaleString() : 'Not set'}
-                  </p>
+                  {startTime && (
+                    <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mt-1.5">
+                      {startTime.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+                    </p>
+                  )}
                 </div>
 
                 <div>
