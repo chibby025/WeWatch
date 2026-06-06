@@ -9,6 +9,9 @@ const SettingsModal = ({
   isOpen,
   onClose,
   onShareRoom,
+  isPrivateSession = false,
+  activeSessionId = null,
+  onInviteFriend = null,
   audioDevices = [],
   selectedAudioDeviceId,
   showPositionDebug,
@@ -119,22 +122,40 @@ const SettingsModal = ({
           <div className="px-6 py-4 bg-gray-800/30">
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Quick Actions</h3>
             <div className="space-y-2">
-              <button
-                onClick={() => {
-                  onShareRoom();
-                  onClose();
-                }}
-                className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-gray-700/50 text-gray-200 transition-all group bg-gray-800/50 border border-gray-700/30"
-              >
-                <div className="w-10 h-10 bg-blue-500/10 rounded-lg flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
-                  <img src={ShareIcon} alt="Share" className="w-5 h-5" />
+              {isPrivateSession ? (
+                /* Private session: invite panel instead of a broken link */
+                <div className="w-full bg-gray-800/50 border border-purple-500/30 rounded-xl px-4 py-3">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 bg-purple-500/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <img src={ShareIcon} alt="Invite" className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-semibold block text-white">Invite a Friend</span>
+                      <span className="text-xs text-purple-400">🔒 Private — link won't work; invite directly</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { onInviteFriend?.(); onClose(); }}
+                    className="w-full mt-1 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm font-semibold transition-colors"
+                  >
+                    + Invite Friend
+                  </button>
                 </div>
-                <div className="flex-1 text-left">
-                  <span className="text-sm font-semibold block">Share</span>
-                  <span className="text-xs text-gray-400">Invite others to join</span>
-                </div>
-                <span className="text-gray-500 group-hover:text-gray-300 transition-colors">→</span>
-              </button>
+              ) : (
+                <button
+                  onClick={() => { onShareRoom(); onClose(); }}
+                  className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-gray-700/50 text-gray-200 transition-all group bg-gray-800/50 border border-gray-700/30"
+                >
+                  <div className="w-10 h-10 bg-blue-500/10 rounded-lg flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
+                    <img src={ShareIcon} alt="Share" className="w-5 h-5" />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <span className="text-sm font-semibold block">Share</span>
+                    <span className="text-xs text-gray-400">Invite others to join</span>
+                  </div>
+                  <span className="text-gray-500 group-hover:text-gray-300 transition-colors">→</span>
+                </button>
+              )}
 
               <button
                 onClick={() => {

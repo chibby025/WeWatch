@@ -27,6 +27,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
     show_description: true,
     host_only_chat: false,
     auto_invite_followers: true,
+    is_public: true,
   });
   const [loading, setLoading] = useState(false);
   const [imageFile, setImageFile] = useState(null);
@@ -78,6 +79,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
         show_description: showDescription,
         host_only_chat: hostOnlyChat,
         auto_invite_followers: autoInviteFollowers,
+        is_public: room.is_public !== undefined ? room.is_public : true,
       });
       
       // Set existing image preview
@@ -323,13 +325,15 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
       const response = await apiClient.put(`/api/rooms/${roomId}`, updateData);
       
       // Update local state to reflect saved changes
-      setFormData({
+      setFormData(prev => ({
+        ...prev,
         name: response.data.name || response.data.Name || '',
         description: response.data.description || response.data.Description || '',
         handle: response.data.handle || response.data.Handle || '',
         show_host: true,
         show_description: true,
-      });
+        is_public: response.data.is_public !== undefined ? response.data.is_public : prev.is_public,
+      }));
       
       onUpdate(response.data);
       toast.success('Room updated successfully');
@@ -795,6 +799,57 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   )}
                 </div>
               )}
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-gray-700/50"></div>
+
+            {/* Room Visibility */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-purple-300 mb-3 flex items-center gap-2">
+                <span className="w-1 h-4 bg-purple-500 rounded-full"></span>
+                Room Visibility
+              </h3>
+              <div className="bg-gradient-to-br from-gray-800/40 to-gray-900/40 rounded-xl p-4 border border-gray-700/30">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-base">{formData.is_public ? '🌐' : '🔒'}</span>
+                      <span className="text-sm font-medium text-white">
+                        {formData.is_public ? 'Public room' : 'Private room'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {formData.is_public
+                        ? 'Anyone can find and join this room.'
+                        : 'Only invited members can join. Join requests need your approval.'}
+                    </p>
+                  </div>
+                  <label
+                    className="relative cursor-pointer ml-4 flex-shrink-0"
+                    style={{ display: 'inline-block', width: '44px', height: '24px' }}
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={!!formData.is_public}
+                      onChange={() => setFormData(prev => ({ ...prev, is_public: !prev.is_public }))}
+                    />
+                    <span
+                      className="absolute inset-0 rounded-full transition-colors duration-200"
+                      style={{ backgroundColor: formData.is_public ? '#9333ea' : '#4b5563' }}
+                    />
+                    <span
+                      className="absolute rounded-full bg-white shadow transition-transform duration-200"
+                      style={{
+                        width: '20px', height: '20px',
+                        top: '2px', left: '2px',
+                        transform: formData.is_public ? 'translateX(20px)' : 'translateX(0)',
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
 
             {/* Divider */}

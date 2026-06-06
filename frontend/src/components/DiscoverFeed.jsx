@@ -793,17 +793,19 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                   {deleteMenuOpen === post.id && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setDeleteMenuOpen(null); }} />
-                      <div className="absolute right-0 top-full mt-1 z-20 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1 min-w-[140px]">
+                      <div className="absolute right-0 top-full mt-1 z-20 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1 min-w-[160px]">
                         {post.user_id === currentUser?.id ? (
-                          canDeletePost(post) && (
-                            <button
-                              onClick={(e) => handleDeletePost(post.id, e)}
-                              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 transition-colors"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                              Delete
-                            </button>
-                          )
+                          <>
+                            {canDeletePost(post) && (
+                              <button
+                                onClick={(e) => handleDeletePost(post.id, e)}
+                                className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                Delete
+                              </button>
+                            )}
+                          </>
                         ) : (
                           <button
                             onClick={(e) => {
@@ -811,10 +813,10 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                               setDeleteMenuOpen(null);
                               setReportTarget({ targetType: 'post', targetId: post.id, targetName: post.description?.slice(0, 60) || '' });
                             }}
-                            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 transition-colors"
+                            className="w-full px-4 py-2 text-left text-sm text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 flex items-center gap-2 transition-colors"
                           >
                             <Flag className="w-4 h-4" />
-                            Report
+                            Report Post
                           </button>
                         )}
                       </div>

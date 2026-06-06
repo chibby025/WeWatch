@@ -135,20 +135,8 @@ func main() {
 	log.Println("✅ Preview generation system initialized")
 	
 	// --- Initialize Early Bird Scheduler ---
-	// Set the WebSocket hub for the scheduler to send notifications
+	// Set the WebSocket hub for the early bird broadcaster (still needed for WS notifications)
 	utils.SetWebSocketHub(handlers.GetHub())
-	// Start the scheduler to auto-deactivate early bird pricing 1 hour before events
-	utils.StartEarlyBirdScheduler(DB)
-	
-	// --- Initialize Event Cleanup Scheduler ---
-	// Start the scheduler to auto-delete old scheduled events (older than 30 days)
-	utils.StartEventCleanupScheduler(DB)
-	log.Println("✅ Event cleanup scheduler initialized")
-	
-	// --- Initialize Trailer Cleanup Scheduler ---
-	// Auto-delete trailers when events start (legal protection + cost savings)
-	utils.StartTrailerCleanupScheduler(DB)
-	log.Println("✅ Trailer cleanup scheduler initialized")
 	
 	// --- Initialize Multi-Account Payment System ---
 	err = utils.InitializeAccountManager()
@@ -168,65 +156,69 @@ func main() {
 	}
 
 
-	// Start background cleanup goroutines
-	// Session cleanup: Every 10 minutes (long-lived sessions)
+	// ── Central scheduler — ONE goroutine replaces 7 separate tickers ──────────────
+	// Base tick: 1 minute. Counter drives all less-frequent intervals.
+	// Saves ~8 goroutines and cuts DB calls from ~12/min to ~3/min.
 	go func() {
-		ticker := time.NewTicker(10 * time.Minute)
+		// Run startup tasks immediately (don't wait for first tick)
+		utils.DeactivateExpiredEarlyBird(DB)
+		utils.CleanupExpiredTrailers(DB)
+		utils.CleanupOldEvents(DB)
+
+		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
+		var tick uint64
 		for range ticker.C {
-			log.Println("🕗 Running scheduled cleanup of expired watch sessions...")
-			handlers.CleanupExpiredSessions()
-			handlers.CleanupOrphanedInstantWatchRooms() // ✅ Clean up orphaned instant watch rooms
+			tick++
+
+			// ── Every 1 min: time-sensitive pricing + trailer expiry ──────
+			utils.DeactivateExpiredEarlyBird(DB)
+			utils.CleanupExpiredTrailers(DB)
+
+			// ── Every 5 min: temp media, previews, status images ──────────
+			if tick%5 == 0 {
+				handlers.CleanupAllTemporaryMedia()
+				handlers.CleanupOrphanedPreviews()
+				handlers.CleanupOrphanedPodcastLogos()
+				handlers.CleanupExpiredStatusMedia()
+			}
+
+			// ── Every 10 min: expired sessions, orphaned instant rooms ────
+			if tick%10 == 0 {
+				handlers.CleanupExpiredSessions()
+				handlers.CleanupOrphanedInstantWatchRooms()
+			}
+
+			// ── Every 60 min: stale sessions + community request close ────
+			if tick%60 == 0 {
+				handlers.CleanupStaleSessions()
+			}
+
+			// ── Every 24 hr: JWT blacklist, old scheduled events ──────────
+			if tick%1440 == 0 {
+				if err := models.CleanupExpiredTokens(DB); err != nil {
+					log.Printf("⚠️ [Scheduler] JWT cleanup error: %v", err)
+				}
+				utils.CleanupOldEvents(DB)
+			}
+
+			// ── Every 7 days: webhook records (reset counter to avoid overflow) ──
+			if tick%10080 == 0 {
+				if err := models.CleanupOldWebhooks(DB); err != nil {
+					log.Printf("⚠️ [Scheduler] Webhook cleanup error: %v", err)
+				}
+				tick = 0
+			}
 		}
 	}()
-	
-	// ✅ NEW: Temporary media cleanup: Every 5 minutes (safety net for all rooms)
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
-			log.Println("🕗 Running scheduled cleanup of ALL temporary media (safety net)...")
-			handlers.CleanupAllTemporaryMedia()    // ✅ Clean temp files from ALL ended sessions
-			handlers.CleanupOrphanedPreviews()     // ✅ Clean orphaned preview files
-			handlers.CleanupOrphanedPodcastLogos() // ✅ Clean podcast logos from ended sessions
-			handlers.CleanupExpiredStatusMedia()   // ✅ Fallback: delete expired status images missed by AfterFunc timers
-		}
-	}()
-	
-	// RoomTV cleanup: Every 10 seconds (precise deletion)
+	log.Println("✅ Central scheduler started (1-min base tick, 7 tasks consolidated)")
+
+	// RoomTV cleanup: kept at 10 seconds — playlist timing precision requires it
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			handlers.CleanupExpiredRoomTVContent() // ✅ Event-driven cleanup with 10-sec precision
-		}
-	}()
-	
-	// ✅ P0 Security Fix: Token blacklist cleanup (daily)
-	go func() {
-		ticker := time.NewTicker(24 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
-			log.Println("🧹 Running daily cleanup of expired JWT tokens...")
-			if err := models.CleanupExpiredTokens(DB); err != nil {
-				log.Printf("⚠️ Error cleaning up expired tokens: %v", err)
-			} else {
-				log.Println("✅ Expired tokens cleaned successfully")
-			}
-		}
-	}()
-	
-	// ✅ P0 Security Fix: Webhook cleanup (every 7 days, keep 90 days history)
-	go func() {
-		ticker := time.NewTicker(7 * 24 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
-			log.Println("🧹 Running weekly cleanup of old webhook records...")
-			if err := models.CleanupOldWebhooks(DB); err != nil {
-				log.Printf("⚠️ Error cleaning up old webhooks: %v", err)
-			} else {
-				log.Println("✅ Old webhooks cleaned successfully")
-			}
+			handlers.CleanupExpiredRoomTVContent()
 		}
 	}()
 	
@@ -778,6 +770,7 @@ func main() {
 		paymentGroup.POST("/:id/donate", handlers.DonateToSessionHandler(DB))                  // POST /api/sessions/:id/donate
 		paymentGroup.GET("/:id/donations", handlers.GetSessionDonationsHandler(DB))            // GET /api/sessions/:id/donations
 		paymentGroup.GET("/:id/top-donors", handlers.GetSessionTopDonorsHandler(DB))           // GET /api/sessions/:id/top-donors
+		paymentGroup.POST("/:id/invite", handlers.InviteToSessionHandler)                        // POST /api/sessions/:id/invite
 	}
 
 	// --- DONATION ROUTES (Protected) - Wallet-to-Wallet Gifts ---
@@ -963,6 +956,7 @@ func main() {
 		lobbyChatsGroup.POST("/poll/:messageId/vote", handlers.VoteLobbyChatPollHandler) // POST /api/lobby-chats/poll/:messageId/vote
 		lobbyChatsGroup.POST("/watch-out", handlers.SendWatchOutHandler)                            // POST /api/lobby-chats/watch-out
 		lobbyChatsGroup.POST("/private-watchout", handlers.StartPrivateWatchoutHandler)             // POST /api/lobby-chats/private-watchout
+		lobbyChatsGroup.POST("/circle-watchout", handlers.StartCircleWatchoutHandler)              // POST /api/lobby-chats/circle-watchout
 		lobbyChatsGroup.GET("/watchout-ratings", handlers.GetWatchoutAllowedRatingsHandler)         // GET  /api/lobby-chats/watchout-ratings?recipient_id=X
 		
 		// Message actions

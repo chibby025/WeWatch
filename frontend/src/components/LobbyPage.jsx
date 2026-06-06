@@ -1,7 +1,7 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup, toggleRoomFavourite, joinRoom, clearAllNotifications } from '../services/api';
+import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup, toggleRoomFavourite, joinRoom, clearAllNotifications, startCircleWatchout } from '../services/api';
 import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon, EyeIcon, ChatBubbleOvalLeftEllipsisIcon, BookmarkIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/solid';
 import { HeartIcon as HeartOutlineIcon, ChatBubbleLeftIcon as ChatOutlineIcon, FaceSmileIcon as FaceSmileOutlineIcon, MicrophoneIcon as MicrophoneOutlineIcon, PaperClipIcon as PaperClipOutlineIcon, ChartBarSquareIcon as ChartBarSquareOutlineIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
 import { Plus, Home, Search } from 'lucide-react';
@@ -196,6 +196,8 @@ const LobbyPage = () => {
   // Tracks session_ids that ended via WS so private WatchOut cards grey out
   const [endedSessionIds, setEndedSessionIds] = useState(new Set());
   const [reportTarget, setReportTarget] = useState(null); // { targetType, targetId, targetName }
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const [chatProfileUser, setChatProfileUser] = useState(null); // user whose profile to view
 
   // ✅ Add Friend / unified chats search state
   const [showChatsSearch, setShowChatsSearch] = useState(false);
@@ -673,10 +675,13 @@ const LobbyPage = () => {
         setOpenMenuRoomId(null);
         setOpenMenuPosition(null);
       }
+      if (chatMenuOpen && !event.target.closest('.chat-options-menu')) {
+        setChatMenuOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [openMenuRoomId]);
+  }, [openMenuRoomId, chatMenuOpen]);
   
   // ✅ Manage Create Button pulse for new users
   useEffect(() => {
@@ -1071,6 +1076,24 @@ const LobbyPage = () => {
         id: friend.id || friend.ID
       }));
       setFriendsList(normalizedFriends);
+
+      // Seed lastMessagePreviews from the last_message fields returned by the API
+      // so previews appear in the friends list without opening each chat first.
+      const previews = {};
+      normalizedFriends.forEach(friend => {
+        if (friend.last_message_at) {
+          previews[friend.id] = {
+            text: friend.last_message_type === 'text'
+              ? friend.last_message
+              : `[${friend.last_message_type || 'message'}]`,
+            timestamp: friend.last_message_at,
+            isOwn: !!friend.last_message_own,
+          };
+        }
+      });
+      if (Object.keys(previews).length > 0) {
+        setLastMessagePreviews(prev => ({ ...prev, ...previews }));
+      }
     } catch (err) {
       console.error('❌ [Lobby] Failed to fetch friends list:', err);
       console.error('❌ [Lobby] Error details:', err.response?.data || err.message);
@@ -1089,12 +1112,13 @@ const LobbyPage = () => {
     }
   };
   
-  // Fetch community events (scheduled + requests) for the feed carousel
-  const fetchCommunityEvents = async () => {
+  // Fetch community events (scheduled + requests) for the feed carousel.
+  // Pass force=true to bypass the has_new gate (e.g. when user explicitly opens the view).
+  const fetchCommunityEvents = async (force = false) => {
     try {
-      const since = localStorage.getItem('communityEventsLastSeen') || undefined;
+      const since = force ? undefined : (localStorage.getItem('communityEventsLastSeen') || undefined);
       const data = await getCommunityEvents(since);
-      if (data.has_new || !since) {
+      if (force || data.has_new || !since) {
         setCommunityEventsData({
           scheduledEvents: data.scheduled_events || [],
           requests: data.requests || [],
@@ -1473,6 +1497,16 @@ const LobbyPage = () => {
       setChatMessages(prev => ({
         ...prev,
         [selectedChatUser.id]: [...(prev[selectedChatUser.id] || []), response.data]
+      }));
+
+      // Update preview immediately — don't wait for WS echo
+      setLastMessagePreviews(prev => ({
+        ...prev,
+        [selectedChatUser.id]: {
+          text: payload.message,
+          timestamp: response.data?.created_at || new Date().toISOString(),
+          isOwn: true,
+        },
       }));
 
       setNewChatMessage('');
@@ -1940,13 +1974,16 @@ const LobbyPage = () => {
     });
   };
 
-  const handleCircleWatchOut = (memberIds) => {
+  const handleCircleWatchOut = async (memberIds) => {
     if (!memberIds.length) return;
     setShowCircleSphere(false);
-    // Kick off an instant watch, then the new session_started WS event will trigger
-    // WatchOut invites to circle members can be sent once the session is live.
-    // For now, open the WatchType modal so the host can choose session type.
-    setIsWatchTypeModalOpen(true);
+    try {
+      const data = await startCircleWatchout(memberIds, 'video', 'G');
+      navigate(`/rooms/${data.room_id}`, { state: { openSession: true } });
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Failed to start Circle WatchOut';
+      toast.error(msg);
+    }
   };
 
   const handleCircleGroupChat = async (members) => {
@@ -3476,6 +3513,16 @@ const LobbyPage = () => {
         onSaveProfile={handleSaveProfile}
       />
 
+      {/* View other user's profile (from chat 3-dot menu) */}
+      {chatProfileUser && (
+        <UserProfileModal
+          user={chatProfileUser}
+          isOpen={true}
+          onClose={() => setChatProfileUser(null)}
+          isOwnProfile={false}
+        />
+      )}
+
       {/* ✅ Settings Modal */}
       <SettingsModal
         isOpen={isSettingsModalOpen}
@@ -3905,6 +3952,30 @@ const LobbyPage = () => {
                           <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-1.5 sm:mb-2 pr-10 sm:pr-12 leading-relaxed">{room.description}</p>
                         )}
                       </div>
+                      {/* Upcoming events badge — matches RoomPageNew scheduleWatchIcon style */}
+                      {room.has_upcoming_events && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedRoomForEvents(room);
+                            setIsEventsModalOpen(true);
+                          }}
+                          className="relative flex-shrink-0 ml-2 p-1 hover:opacity-80 transition-opacity"
+                          title={`${room.upcoming_events_count} upcoming event${room.upcoming_events_count !== 1 ? 's' : ''}`}
+                        >
+                          <img
+                            src="/icons/scheduleWatchIcon.svg"
+                            alt="Schedule"
+                            className="h-[34px] w-[34px]"
+                          />
+                          {room.upcoming_events_count > 0 && (
+                            <div className="absolute -top-1 -right-1 min-w-[18px] h-5 flex items-center justify-center rounded-full text-white text-[10px] font-bold px-1 shadow-lg bg-purple-500">
+                              {room.upcoming_events_count}
+                            </div>
+                          )}
+                        </button>
+                      )}
+
                       {/* Last chat message preview */}
                       {room.last_chat_message && (
                         <div className="flex-shrink-0 flex flex-col items-end justify-center gap-1 ml-2 max-w-[100px] sm:max-w-[130px]">
@@ -3952,6 +4023,15 @@ const LobbyPage = () => {
                       >
                         <BookmarkIcon className="w-4 h-4" /> {savedRooms[room.id] ? 'Unfavourite' : 'Favourite'}
                       </button>
+                      {room.host_id !== authenticatedUserID && (
+                        <button
+                          className="w-full text-left px-4 py-2.5 text-sm text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 flex items-center gap-2.5 transition-colors"
+                          onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); setReportTarget({ targetType: 'room', targetId: room.id, targetName: room.name }); }}
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" /></svg>
+                          Report Room
+                        </button>
+                      )}
                       {(room.host_id === authenticatedUserID || currentUser?.role === 'super_admin') && (
                         <>
                           <div className="mx-3 my-1 border-t border-gray-100 dark:border-gray-700" />
@@ -5665,13 +5745,33 @@ const LobbyPage = () => {
                           <PhoneIcon className="h-6 w-6" />
                         </button>
                         {/* 3-dot menu */}
-                        <button
-                          onClick={() => setLightboxAvatarUser(selectedChatUser)}
-                          className="p-2 text-white hover:bg-white/20 rounded-full transition-all active:scale-90 flex-shrink-0"
-                          title="View profile"
-                        >
-                          <EllipsisVerticalIcon className="h-6 w-6" />
-                        </button>
+                        <div className="chat-options-menu relative flex-shrink-0">
+                          <button
+                            onClick={() => setChatMenuOpen(prev => !prev)}
+                            className="p-2 text-white hover:bg-white/20 rounded-full transition-all active:scale-90"
+                            title="More options"
+                          >
+                            <EllipsisVerticalIcon className="h-6 w-6" />
+                          </button>
+                          {chatMenuOpen && (
+                            <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-100 dark:border-gray-700 py-1 min-w-[160px] z-50">
+                              <button
+                                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2.5 transition-colors"
+                                onClick={() => { setChatMenuOpen(false); setChatProfileUser(selectedChatUser); }}
+                              >
+                                <UserIcon className="w-4 h-4" /> View Profile
+                              </button>
+                              <div className="mx-3 my-1 border-t border-gray-100 dark:border-gray-700" />
+                              <button
+                                className="w-full text-left px-4 py-2.5 text-sm text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 flex items-center gap-2.5 transition-colors"
+                                onClick={() => { setChatMenuOpen(false); setReportTarget({ targetType: 'user', targetId: selectedChatUser.id, targetName: selectedChatUser.username }); }}
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" /></svg>
+                                Report User
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     
                     {/* Messages */}
@@ -6606,7 +6706,7 @@ const LobbyPage = () => {
 
             {/* Community Events button */}
             <button
-              onClick={() => { setShowCommunityEventsView(true); setShowCalendarDrawer(false); }}
+              onClick={() => { setShowCommunityEventsView(true); setShowCalendarDrawer(false); fetchCommunityEvents(true); }}
               className="mx-4 mt-4 mb-1 flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-purple-900/60 to-blue-900/60 border border-purple-700/40 hover:border-purple-500/60 text-white transition-all active:scale-95"
             >
               <span className="text-xl">📅</span>

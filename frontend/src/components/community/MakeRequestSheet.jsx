@@ -111,7 +111,7 @@ const MakeRequestSheet = ({ isOpen, onClose, onCreated }) => {
                 type="text"
                 value={title}
                 onChange={e => setTitle(e.target.value)}
-                placeholder='e.g. "Omo Ghetto (2010)" or "Lecture on fluid dynamics"'
+                placeholder="e.g. Gardener's daughter / JAMB tutorial / worship service / Dragon Ball edits"
                 maxLength={200}
                 className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3
                   text-white placeholder:text-white/40 text-sm

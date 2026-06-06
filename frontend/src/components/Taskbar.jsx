@@ -116,6 +116,8 @@ const Taskbar = ({
   showPositionDebug,
   onTogglePositionDebug,
   onShareRoom,
+  isPrivateSession = false,
+  onInviteFriend = null,
   onOpenUserProfile, // ✅ NEW: Handler for opening user's own profile
   onSeatsClick,
   onTheaterOverviewClick, // ✅ Right-click on Seats icon to open theater overview
@@ -198,6 +200,7 @@ const Taskbar = ({
   // Chat Bubble Visibility
   showChatBubbles = true,
   onToggleChatBubbles,
+  memberCount = 0, // ✅ Authoritative count from backend (overrides watchSessionMembers.length)
   isMembersLoading = false, // ✅ Show spinner on members button until first fetch resolves
   // Unread Messages
   unreadMessages = {}, // {userId: unreadCount}
@@ -225,8 +228,8 @@ const Taskbar = ({
   const [showRaisedHandsPopup, setShowRaisedHandsPopup] = useState(false);
   const audioButtonRef = useRef(null);
   const membersButtonRef = useRef(null);
-  // ✅ Use watchSessionMembers directly - API fetch is now stable with hasApiFetchedMembersRef guard
-  const memberCount = watchSessionMembers?.length || 0;
+  // Use authoritative backend count when available, fall back to local array length
+  const displayMemberCount = memberCount || watchSessionMembers?.length || 0;
   const hideTimerRef = useRef(null);
   const lastEventTimeRef = useRef(0);
 
@@ -615,7 +618,7 @@ const Taskbar = ({
           <TaskbarButton
             buttonRef={membersButtonRef}
             icon={MembersIcon}
-            label={isMembersLoading ? '' : `${memberCount}`}
+            label={isMembersLoading ? '' : `${displayMemberCount}`}
             isLoading={isMembersLoading}
             onClick={() => {
               // If host has raised hands, show quick popup first
@@ -684,6 +687,8 @@ const Taskbar = ({
         isOpen={showSettingsMenu}
         onClose={() => setShowSettingsMenu(false)}
         onShareRoom={onShareRoom}
+        isPrivateSession={isPrivateSession}
+        onInviteFriend={onInviteFriend}
         onOpenUserProfile={onOpenUserProfile} // ✅ NEW: Pass profile handler
         audioDevices={audioDevices}
         selectedAudioDeviceId={selectedAudioDeviceId}

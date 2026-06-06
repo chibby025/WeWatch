@@ -350,7 +350,7 @@ func GetSentFriendRequestsHandler(c *gin.Context) {
 	})
 }
 
-// GetFriendsListHandler returns all accepted friends for the current user
+// GetFriendsListHandler returns all accepted friends with last-message preview for each DM thread.
 func GetFriendsListHandler(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -377,6 +377,36 @@ func GetFriendsListHandler(c *gin.Context) {
 		return
 	}
 
+	// Batch-fetch last message per DM thread in one query so the friend list
+	// shows previews without the user having to open each chat first.
+	type lastMsgRow struct {
+		OtherUserID uint   `gorm:"column:other_user_id"`
+		Message     string `gorm:"column:message"`
+		MessageType string `gorm:"column:message_type"`
+		SenderID    uint   `gorm:"column:sender_id"`
+		CreatedAt   string `gorm:"column:created_at"`
+	}
+	var lastMsgs []lastMsgRow
+	db.Raw(`
+		SELECT DISTINCT ON (other_user_id)
+			other_user_id, message, message_type, sender_id, created_at
+		FROM (
+			SELECT
+				CASE WHEN sender_id = ? THEN recipient_id ELSE sender_id END AS other_user_id,
+				message, message_type, sender_id, created_at
+			FROM lobby_chats
+			WHERE (sender_id = ? OR recipient_id = ?)
+			  AND deleted_at IS NULL
+		) t
+		ORDER BY other_user_id, created_at DESC
+	`, currentUserID, currentUserID, currentUserID).Scan(&lastMsgs)
+
+	// Build lookup map: friend_user_id → last message row
+	previewMap := make(map[uint]lastMsgRow, len(lastMsgs))
+	for _, row := range lastMsgs {
+		previewMap[row.OtherUserID] = row
+	}
+
 	friends := make([]gin.H, 0, len(friendships))
 	for _, friendship := range friendships {
 		var friend models.User
@@ -385,19 +415,26 @@ func GetFriendsListHandler(c *gin.Context) {
 		} else {
 			friend = friendship.Requester
 		}
-		
-		// Return the raw avatar value (absolute URL for CDN, relative '/uploads/...' path
-		// for backend-served files, or '' for users with no avatar). The frontend's
-		// resolveAvatarUrl() helper handles URL resolution and the default fallback.
-		friends = append(friends, gin.H{
+
+		entry := gin.H{
 			"id":              friend.ID,
 			"username":        friend.Username,
-			"display_name":    friend.Username, // Use Username as display name
+			"display_name":    friend.Username,
 			"email":           friend.Email,
 			"avatar_url":      friend.AvatarURL,
-			"profile_picture": friend.AvatarURL, // Legacy alias; consumers should prefer avatar_url.
+			"profile_picture": friend.AvatarURL,
 			"created_at":      friend.CreatedAt,
-		})
+		}
+
+		// Attach last-message preview if a thread exists
+		if lm, ok := previewMap[friend.ID]; ok {
+			entry["last_message"]      = lm.Message
+			entry["last_message_type"] = lm.MessageType
+			entry["last_message_at"]   = lm.CreatedAt
+			entry["last_message_own"]  = lm.SenderID == currentUserID
+		}
+
+		friends = append(friends, entry)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

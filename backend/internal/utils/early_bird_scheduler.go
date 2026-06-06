@@ -20,26 +20,9 @@ func SetWebSocketHub(b WebSocketBroadcaster) {
 	broadcaster = b
 }
 
-// StartEarlyBirdScheduler starts a background job that deactivates early bird pricing
-// 1 hour before scheduled events start
-func StartEarlyBirdScheduler(db *gorm.DB) {
-	log.Println("🕐 [EarlyBirdScheduler] Starting Early Bird Auto-Deactivation Scheduler...")
-	log.Println("   Checking every 1 minute for events that need early bird deactivation")
-	log.Println("   Early bird pricing will end 1 hour before scheduled event start time")
-
-	// Run immediately on startup
-	go deactivateExpiredEarlyBird(db)
-
-	// Then check every minute
-	ticker := time.NewTicker(1 * time.Minute)
-	go func() {
-		for range ticker.C {
-			deactivateExpiredEarlyBird(db)
-		}
-	}()
-}
-
-func deactivateExpiredEarlyBird(db *gorm.DB) {
+// DeactivateExpiredEarlyBird deactivates early bird pricing 1 hour before scheduled events.
+// Called by the central scheduler every minute.
+func DeactivateExpiredEarlyBird(db *gorm.DB) {
 	now := time.Now()
 	oneHourFromNow := now.Add(1 * time.Hour)
 

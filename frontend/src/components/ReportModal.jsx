@@ -15,7 +15,7 @@ const REASONS = [
   { value: 'other',          label: 'Other' },
 ];
 
-const TARGET_LABELS = { room: 'room', post: 'post', user: 'user' };
+const TARGET_LABELS = { room: 'room', post: 'post', user: 'user', session: 'session' };
 
 const ReportModal = ({ targetType, targetId, targetName, onClose }) => {
   const [reason, setReason] = useState('');

@@ -314,6 +314,7 @@ func UpdateRoomHandler(c *gin.Context) {
 		Handle              string `json:"handle"`
 		HostOnlyChat        *bool  `json:"host_only_chat"`
 		AutoInviteFollowers *bool  `json:"auto_invite_followers"`
+		IsPublic            *bool  `json:"is_public"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -355,6 +356,9 @@ func UpdateRoomHandler(c *gin.Context) {
 	}
 	if input.AutoInviteFollowers != nil {
 		room.AutoInviteFollowers = *input.AutoInviteFollowers
+	}
+	if input.IsPublic != nil {
+		room.IsPublic = *input.IsPublic
 	}
 
 	// Save updates

@@ -231,7 +231,9 @@ const LobbyMessageBubble = ({
         onContextMenu={e => { e.preventDefault(); if (messageType !== 'poll' && messageType !== 'watch_out') setIsSelected(s => !s); }}
         className={`relative max-w-[75%] sm:max-w-md rounded-lg shadow-md select-none
           transition-all duration-150 ${isSelected ? 'scale-[0.97] opacity-90' : ''}
-          ${messageType === 'system_call'
+          ${messageType === 'watch_out'
+            ? 'bg-transparent shadow-none'
+            : messageType === 'system_call'
             ? 'bg-gray-100 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-700'
             : isOwn
             ? 'bg-green-600 text-white'
@@ -456,103 +458,76 @@ const LobbyMessageBubble = ({
 
         {/* ── WATCH OUT ── */}
         {messageType === 'watch_out' && (() => {
-          const watchTypeEmoji = { video: '🎬', '3d_cinema': '🎭', classroom: '📚', podcast: '🎙️', livestream: '📡' };
-          const isPrivate = metadata.is_private_watchout === true;
-          const emoji = isPrivate ? '👀' : (watchTypeEmoji[metadata.watch_type] || '📺');
-          const isEnded = isPrivate ? endedSessionIds.has(metadata.session_id) : !liveRooms.some(r => r.room_id === metadata.room_id);
-          return (
-            <div className="p-3">
-              <div className={`rounded-xl overflow-hidden border transition-opacity ${isOwn ? 'border-white/20 bg-white/10' : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900'} ${isEnded ? 'opacity-60' : ''}`}>
-                <div className="px-3 pt-3 pb-2">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    {isEnded ? (
-                      <><span className="inline-block w-2 h-2 rounded-full bg-gray-400 flex-shrink-0" /><span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">WatchOut Ended</span></>
-                    ) : isPrivate ? (
-                      <><span className="inline-block w-2 h-2 rounded-full bg-indigo-500 animate-pulse flex-shrink-0" /><span className={`text-[10px] font-semibold uppercase tracking-wide ${isOwn ? 'text-indigo-200' : 'text-indigo-500'}`}>Private WatchOut</span></>
-                    ) : (
-                      <><span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" /><span className={`text-[10px] font-semibold uppercase tracking-wide ${isOwn ? 'text-green-100' : 'text-red-500'}`}>Live Now</span></>
-                    )}
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="text-2xl leading-none flex-shrink-0">{emoji}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1">
-                        <p className={`text-sm font-semibold truncate ${isOwn ? 'text-white' : 'text-gray-900 dark:text-white'}`}>{metadata.room_name}</p>
-                        {!isPrivate && (
-                          joinStatus
-                            ? <div className="relative -top-1 flex-shrink-0 w-3.5 h-3.5 bg-purple-500 rounded-full flex items-center justify-center shadow-md">
-                                <span className="text-white text-[7px] font-black leading-none">✓</span>
-                              </div>
-                            : <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  if (joinLoading || !metadata.room_id) return;
-                                  setJoinLoading(true);
-                                  try {
-                                    const res = await joinRoom(metadata.room_id);
-                                    setJoinStatus(res.status || 'active');
-                                  } catch { /* silent */ }
-                                  finally { setJoinLoading(false); }
-                                }}
-                                className="relative -top-1 flex-shrink-0 w-3.5 h-3.5 bg-purple-600 hover:bg-purple-500 rounded-full overflow-hidden shadow-md transition-transform active:scale-90"
-                              >
-                                <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" className="w-full h-full"><path d="M12 2v20M2 12h20" /></svg>
-                              </button>
-                        )}
-                      </div>
-                      {metadata.session_title && <p className={`text-xs truncate mt-0.5 ${isOwn ? 'text-green-100' : 'text-gray-500 dark:text-gray-400'}`}>{metadata.session_title}</p>}
-                      {!isEnded && !isPrivate && <p className={`text-xs mt-1 ${isOwn ? 'text-green-100' : 'text-gray-500 dark:text-gray-400'}`}>{metadata.watching_count} watching</p>}
-                      {isPrivate && (metadata.watch_type || metadata.content_rating || metadata.price > 0) && (
-                        <div className="flex gap-1 mt-1.5 flex-wrap">
-                          {metadata.watch_type && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${isOwn ? 'bg-white/20 text-white' : 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300'}`}>{watchTypeEmoji[metadata.watch_type] || '📺'} {metadata.watch_type === '3d_cinema' ? '3D Cinema' : metadata.watch_type === 'classroom' ? 'Classroom' : 'Video'}</span>}
-                          {metadata.content_rating && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${isOwn ? 'bg-white/20 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'}`}>{metadata.content_rating}</span>}
-                          {metadata.price > 0 && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${isOwn ? 'bg-amber-400/30 text-amber-200' : 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'}`}>₦{metadata.price}</span>}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                {isEnded ? (
-                  <div className={`w-full py-2 text-xs text-center ${isOwn ? 'text-white/40' : 'text-gray-400 dark:text-gray-500'}`}>Session no longer active</div>
-                ) : (
-                  <>
-                    {/* Secondary action: Favourite */}
-                    <div className={`flex border-t ${isOwn ? 'border-white/10' : 'border-gray-200 dark:border-gray-700'}`}>
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if (favLoading || !metadata.room_id) return;
-                          setFavLoading(true);
-                          try {
-                            const res = await toggleRoomFavourite(metadata.room_id);
-                            setIsFav(res.is_favourite);
-                          } catch { /* silent */ }
-                          finally { setFavLoading(false); }
-                        }}
-                        disabled={favLoading}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-[11px] font-medium transition-colors disabled:opacity-50
-                          ${isOwn ? 'hover:bg-white/10 text-white/80' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'}`}
-                      >
-                        {isFav
-                          ? <BookmarkIcon className="w-3.5 h-3.5 text-purple-400" />
-                          : <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
-                              <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93z M11 7L13 7L13 9L15 9L15 11L13 11L13 13L11 13L11 11L9 11L9 9L11 9Z" />
-                            </svg>
-                        }
-                        {isFav ? 'Saved' : 'Save'}
-                      </button>
-                    </div>
+          const RATING_ICONS = {
+            'G': '/icons/G Rating Icon.webp',
+            'PG': '/icons/PG Rating Icon.webp',
+            'Educational': '/icons/Educational_Rating_Icon.webp',
+            'Religious': '/icons/Religious Rating.webp',
+            '13+': '/icons/13_ Rating Icon.webp',
+            '16+': '/icons/16_ Rating Icon.webp',
+            '18+': '/icons/18_ Rating Icon.webp',
+            'Mature': '/icons/Mature Rating Icon.webp',
+          };
+          const WATCH_EMOJI = { video: '🎬', '3d_cinema': '🎭', classroom: '📚', podcast: '🎙️', livestream: '📡' };
 
-                    {/* Primary CTA */}
-                    {isPrivate ? (
-                      <button onClick={(e) => { e.stopPropagation(); navigate(`/rooms/${metadata.room_id}`); }} className={`w-full py-2 text-xs font-semibold transition-colors ${isOwn ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>Join Watch Session →</button>
-                    ) : (
-                      <button onClick={(e) => { e.stopPropagation(); navigate(`/rooms/${metadata.room_id}`); }} className={`w-full py-2 text-xs font-semibold transition-colors ${isOwn ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}`}>Watch Now →</button>
-                    )}
-                  </>
+          const isPrivate = metadata.is_private_watchout === true;
+          const isEnded = isPrivate
+            ? endedSessionIds.has(metadata.session_id)
+            : !liveRooms.some(r => r.room_id === metadata.room_id);
+          const ratingIcon = RATING_ICONS[metadata.content_rating] || null;
+          const watchEmoji = WATCH_EMOJI[metadata.watch_type] || '📺';
+
+          // Extract host name: "WatchOut – chibi" or "Circle – chibi" → "WatchOut with chibi"
+          const hostName = (metadata.room_name || '').replace(/^(WatchOut|Circle)\s*[–\-]\s*/, '');
+          const displayTitle = `WatchOut with ${hostName}`;
+
+          return (
+            <div className="py-1 px-0.5">
+              <div
+                className={`rounded-2xl overflow-hidden border transition-all ${isEnded ? 'border-white/5 opacity-55 grayscale' : 'border-purple-500/25'}`}
+                style={{ background: 'linear-gradient(145deg, #1e1040 0%, #0f172a 55%, #1e1b4b 100%)' }}
+              >
+                {/* Single flat row — W icon · title · rating img · live dot */}
+                <div className="px-3 py-3 flex items-center gap-2">
+                  <img src="/icons/lwoIcon.webp" alt="W" className="w-10 h-10 object-contain flex-shrink-0" />
+
+                  <p className="text-sm font-bold text-white flex-1 min-w-0 truncate">{displayTitle}</p>
+
+                  {ratingIcon && (
+                    <img src={ratingIcon} alt={metadata.content_rating}
+                      className="w-10 h-10 object-contain flex-shrink-0 rounded" />
+                  )}
+
+                  {isEnded ? (
+                    <span className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[9px] font-bold text-gray-400 uppercase tracking-wider"
+                      style={{ background: 'rgba(75,85,99,0.4)', borderColor: 'rgba(107,114,128,0.3)' }}>
+                      Ended
+                    </span>
+                  ) : !isPrivate && (
+                    <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse flex-shrink-0" />
+                  )}
+                </div>
+
+                {/* CTA or ended */}
+                {isEnded ? (
+                  <div className="py-3 text-center" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <span className="text-xs text-gray-500">⭕ Session has ended</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); navigate(`/rooms/${metadata.room_id}`); }}
+                    className="w-full py-2.5 text-xs font-bold text-white flex items-center justify-center gap-1.5 transition-opacity hover:opacity-90 active:opacity-75"
+                    style={{ background: 'linear-gradient(90deg, #7c3aed 0%, #4f46e5 100%)' }}
+                  >
+                    <span className="text-sm leading-none">{watchEmoji}</span>
+                    {isPrivate ? 'Join Watch Session →' : 'Watch Now →'}
+                  </button>
                 )}
               </div>
-              <p className={`text-[10px] text-right mt-1 ${isOwn ? 'text-green-100' : 'text-gray-400 dark:text-gray-500'}`}>{formatMessageTime(message.created_at)}</p>
+
+              <p className={`text-[10px] mt-1 text-gray-500 ${isOwn ? 'text-right' : 'text-left'}`}>
+                {formatMessageTime(message.created_at)}
+              </p>
             </div>
           );
         })()}

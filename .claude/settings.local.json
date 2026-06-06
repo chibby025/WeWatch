@@ -169,7 +169,21 @@
       "PowerShell(wsl -d Ubuntu-22.04 bash -c 'export PATH=$PATH:/usr/local/go/bin && cd /home/chibuzor_dev/WeWatch/backend && go build ./cmd/server/ 2>&1 | tail -20')",
       "PowerShell(wsl -d Ubuntu-22.04 -- /usr/local/go/bin/go build -C /home/chibuzor_dev/WeWatch/backend ./cmd/server/ 2>&1)",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"which go || ls /usr/local/go/bin/go 2>&1 || find /home -name go -type f 2>&1 | head -5\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/ 2>&1\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/ 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'which go || ls /usr/local/go/bin/ 2>/dev/null || ls ~/go/bin/ 2>/dev/null')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'ls /usr/local/go/bin/')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'find / -name \"go\" -type f 2>/dev/null | grep -v proc | head -10')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'ls /home/chibuzor_dev/go/bin/ 2>/dev/null || ls /snap/bin/go 2>/dev/null || ls /usr/bin/go 2>/dev/null')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'ls /snap/bin/ 2>/dev/null')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /snap/bin/go build ./... 2>&1')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /snap/bin/go build ./cmd/server/ 2>&1')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -20')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'grep -n \"sessions\\\\|instant-watch\\\\|EndWatch\\\\|StartWatch\\\\|upload.frames\" /home/chibuzor_dev/WeWatch/backend/cmd/server/main.go | head -30')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'grep -n \"sessions\\\\|upload-frames\\\\|active-session\" /home/chibuzor_dev/WeWatch/backend/cmd/server/main.go | head -20')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -8')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -6')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -5')",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -4')"
     ],
     "additionalDirectories": [
       "\\dev",

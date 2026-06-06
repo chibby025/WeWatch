@@ -11,27 +11,10 @@ import (
 	"wewatch-backend/internal/models"
 )
 
-// StartTrailerCleanupScheduler initializes a goroutine that auto-deletes trailers
-// when their associated event start_time has passed
-func StartTrailerCleanupScheduler(db *gorm.DB) {
-	go func() {
-		// Run cleanup immediately on startup
-		cleanupExpiredTrailers(db)
 
-		// Then run every 1 minute
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			cleanupExpiredTrailers(db)
-		}
-	}()
-
-	log.Println("✅ [TrailerCleanup] Scheduler initialized - checking every 1 minute")
-}
-
-// cleanupExpiredTrailers deletes trailers for events that have already started
-func cleanupExpiredTrailers(db *gorm.DB) {
+// CleanupExpiredTrailers deletes trailers for events that have already started.
+// Called by the central scheduler every minute.
+func CleanupExpiredTrailers(db *gorm.DB) {
 	// Find events where:
 	// 1. start_time has passed (event started)
 	// 2. trailer_url is not empty (has trailer)

@@ -604,18 +604,26 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     // Get username for the joining user
     var joiningUser models.User
     if err := DB.First(&joiningUser, client.userID).Error; err == nil {
+        // Count active members so front-end can update the taskbar count without
+        // waiting for the follow-up session_status broadcast.
+        var activeMemberCount int64
+        DB.Model(&models.WatchSessionMember{}).
+            Where("watch_session_id = ? AND is_active = ?", session.ID, true).
+            Count(&activeMemberCount)
+
         memberJoinedMsg := WebSocketMessage{
             Type: "session_member_joined",
             Data: map[string]interface{}{
-                "user_id":    client.userID,
-                "username":   joiningUser.Username,
-                "session_id": sessionID,
-                "user_role":  userRole,
+                "user_id":      client.userID,
+                "username":     joiningUser.Username,
+                "session_id":   sessionID,
+                "user_role":    userRole,
+                "member_count": activeMemberCount,
             },
         }
         if memberJoinedBytes, err := json.Marshal(memberJoinedMsg); err == nil {
             h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: memberJoinedBytes, IsBinary: false}, nil)
-            log.Printf("[JoinWatchSession] 📢 Broadcasted session_member_joined for user %d (%s)", client.userID, joiningUser.Username)
+            log.Printf("[JoinWatchSession] 📢 Broadcasted session_member_joined for user %d (%s) count=%d", client.userID, joiningUser.Username, activeMemberCount)
         }
     }
 
@@ -5248,17 +5256,23 @@ func (client *Client) handleMessage(message []byte) {
             }
 
             // ✅ EVENT-DRIVEN: Broadcast session_member_left with updated member count
+            var remainingMemberCount int64
+            DB.Model(&models.WatchSessionMember{}).
+                Where("watch_session_id = ? AND is_active = ?", activeSession.ID, true).
+                Count(&remainingMemberCount)
+
             memberLeftMsg := WebSocketMessage{
                 Type: "session_member_left",
                 Data: map[string]interface{}{
-                    "user_id":    leaveData.UserID,
-                    "username":   leavingUser.Username,
-                    "session_id": activeSession.SessionID,
+                    "user_id":      leaveData.UserID,
+                    "username":     leavingUser.Username,
+                    "session_id":   activeSession.SessionID,
+                    "member_count": remainingMemberCount,
                 },
             }
             if memberLeftBytes, err := json.Marshal(memberLeftMsg); err == nil {
                 client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: memberLeftBytes, IsBinary: false}, nil)
-                log.Printf("[leave_session] 📢 Broadcasted session_member_left for user %d (%s)", leaveData.UserID, leavingUser.Username)
+                log.Printf("[leave_session] 📢 Broadcasted session_member_left for user %d (%s) count=%d", leaveData.UserID, leavingUser.Username, remainingMemberCount)
             }
         }
 

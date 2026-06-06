@@ -2,7 +2,7 @@
 import React from 'react';
 import AudioWaveform from './AudioWaveform';
 import Avatar from './Avatar';
-import { getBatchFriendshipStatuses, sendFriendRequest, acceptFriendRequest } from '../services/api';
+import { getBatchFriendshipStatuses, sendFriendRequest, acceptFriendRequest, inviteToSession, searchUsers } from '../services/api';
 import toast from 'react-hot-toast';
 
 export default function MembersModal({ 
@@ -29,11 +29,22 @@ export default function MembersModal({
   liveShareGuestId = null, // ✅ Selected guest ID for LiveShare (exempt from mute)
   memberEmotes = {}, // ✅ Map of userId -> {emote, timestamp} for displaying emotes on cards
   contentRating = '', // content rating of session (e.g. 'Religious')
+  // Mid-session invite
+  isPrivateSession = false,
+  activeSessionId = null, // session_id string for inviting
 }) {
   // ✅ ALL HOOKS MUST BE BEFORE ANY CONDITIONAL RETURNS
   const [friendshipStatuses, setFriendshipStatuses] = React.useState({}); // userId -> friendship status
   const [loadingFriendships, setLoadingFriendships] = React.useState(false);
   const [friendActionLoading, setFriendActionLoading] = React.useState({}); // userId -> boolean
+
+  // Invite panel state
+  const [showInvite, setShowInvite] = React.useState(false);
+  const [inviteQuery, setInviteQuery] = React.useState('');
+  const [inviteResults, setInviteResults] = React.useState([]);
+  const [inviteSearching, setInviteSearching] = React.useState(false);
+  const [inviteSending, setInviteSending] = React.useState({});
+  const inviteDebounceRef = React.useRef(null);
 
   React.useEffect(() => {
     if (isOpen && fetchMembers) {
@@ -155,6 +166,34 @@ export default function MembersModal({
   };
 
   // ✅ CONDITIONAL RETURN AFTER ALL HOOKS
+  const handleInviteSearch = (q) => {
+    setInviteQuery(q);
+    clearTimeout(inviteDebounceRef.current);
+    if (q.trim().length < 2) { setInviteResults([]); return; }
+    inviteDebounceRef.current = setTimeout(async () => {
+      setInviteSearching(true);
+      try {
+        const data = await searchUsers(q.trim());
+        const existingIds = new Set(members.map(m => m.id));
+        setInviteResults((data.users || []).filter(u => !existingIds.has(u.id)));
+      } catch { /* silent */ } finally { setInviteSearching(false); }
+    }, 350);
+  };
+
+  const handleSendInvite = async (user) => {
+    if (!activeSessionId) return;
+    setInviteSending(prev => ({ ...prev, [user.id]: true }));
+    try {
+      await inviteToSession(activeSessionId, user.id);
+      toast.success(`Invite sent to @${user.username}`);
+      setInviteResults(prev => prev.filter(u => u.id !== user.id));
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to send invite');
+    } finally {
+      setInviteSending(prev => ({ ...prev, [user.id]: false }));
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -193,9 +232,61 @@ export default function MembersModal({
                 </span>
               </button>
             )}
+            {/* Invite button — host only, requires active session */}
+            {isHost && activeSessionId && (
+              <button
+                onClick={() => { setShowInvite(v => !v); setInviteQuery(''); setInviteResults([]); }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${showInvite ? 'bg-purple-600 text-white' : 'bg-purple-600/20 text-purple-300 hover:bg-purple-600/40'}`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" /></svg>
+                Invite
+              </button>
+            )}
             <button onClick={onClose} className="text-gray-400 hover:text-white">×</button>
           </div>
         </div>
+
+        {/* Invite search panel */}
+        {showInvite && isHost && activeSessionId && (
+          <div className="mb-4 p-3 bg-gray-700/50 rounded-lg border border-purple-500/30">
+            <p className="text-xs text-purple-300 font-semibold mb-2">
+              {isPrivateSession ? '🔒 Private session — invitee gets room access + DM' : '🔗 Send a watch invite DM'}
+            </p>
+            <div className="relative">
+              <input
+                type="text"
+                value={inviteQuery}
+                onChange={e => handleInviteSearch(e.target.value)}
+                placeholder="Search by username…"
+                className="w-full bg-gray-800 text-white text-sm placeholder-gray-500 rounded-lg px-3 py-2 outline-none border border-gray-600 focus:border-purple-500"
+                autoFocus
+              />
+              {inviteSearching && (
+                <div className="absolute right-3 top-2.5 w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+              )}
+            </div>
+            {inviteResults.length > 0 && (
+              <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                {inviteResults.map(u => (
+                  <div key={u.id} className="flex items-center justify-between px-2 py-1.5 bg-gray-800/60 rounded-lg">
+                    <span className="text-sm text-white">@{u.username}</span>
+                    <button
+                      onClick={() => handleSendInvite(u)}
+                      disabled={inviteSending[u.id]}
+                      className="px-3 py-1 text-xs font-semibold rounded-full bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-50 transition-colors"
+                    >
+                      {inviteSending[u.id] ? '…' : 'Invite'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {inviteQuery.length >= 2 && !inviteSearching && inviteResults.length === 0 && (
+              <p className="mt-2 text-xs text-gray-500 text-center">No friends found matching "{inviteQuery}"</p>
+            )}
+          </div>
+        )}
+
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {members.map(member => {
             const audioState = audioStates[member.id] || {};

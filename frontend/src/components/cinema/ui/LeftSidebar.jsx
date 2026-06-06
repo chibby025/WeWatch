@@ -20,6 +20,7 @@ import {
 } from '../../../utils/uploadChunker';
 import { useUploadServiceWorker } from '../../../hooks/useUploadServiceWorker';
 import LiveShareManager from './LiveShareManager';
+import ReportModal from '../../ReportModal';
 
 export default function LeftSidebar({
   roomId,
@@ -188,6 +189,7 @@ export default function LeftSidebar({
 
   // 🔴 Recording state
   const [showRecordingModal, setShowRecordingModal] = useState(false);
+  const [showReportModal,    setShowReportModal]    = useState(false);
   const {
     isRecording,
     recordingTime,
@@ -1357,8 +1359,21 @@ export default function LeftSidebar({
         </div>
       )}
 
-      {/* ⚙️ Settings — far-right shortcut above ghost mode */}
-      <div className="flex justify-end mb-2">
+      {/* ⚙️ Settings + Report — far-right shortcuts above ghost mode */}
+      <div className="flex justify-end gap-2 mb-2">
+        {/* Report Session — only for non-hosts */}
+        {!isHostProp && (
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-700/50 hover:bg-red-600/30 transition-colors text-gray-400 hover:text-red-400 text-sm"
+            title="Report Session"
+          >
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" />
+            </svg>
+            <span>Report</span>
+          </button>
+        )}
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('wewatch:open-settings'))}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-700/50 hover:bg-gray-600/60 transition-colors text-gray-300 hover:text-white text-sm"
@@ -1371,6 +1386,15 @@ export default function LeftSidebar({
           <span>Settings</span>
         </button>
       </div>
+
+      {showReportModal && (
+        <ReportModal
+          targetType="session"
+          targetId={sessionId}
+          targetName={`Session in room ${roomId}`}
+          onClose={() => setShowReportModal(false)}
+        />
+      )}
 
       {/* 🖼️ Host Settings - Preview Thumbnails Toggle */}
       {isHost && (

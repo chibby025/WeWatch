@@ -795,6 +795,7 @@ export default function VideoWatch() {
 
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [isMembersInitialized, setIsMembersInitialized] = useState(false);
+  const [authorativeMemberCount, setAuthoritativeMemberCount] = useState(0);
   // Viewer-side break overlay state (static source only — other sources use GraphicsRenderer canvas)
   const [isBreakActive, setIsBreakActive] = useState(false);
   const [viewerBreakEndTime, setViewerBreakEndTime] = useState(null);
@@ -820,6 +821,7 @@ export default function VideoWatch() {
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // ⏱️ State-based seek (triggers re-renders)
   const wsArrivalTimeRef = useRef(null); // ⏱️ Tracks WS message arrival time for post-play correction
   const syncRefRef = useRef(null);       // 💓 Last heartbeat reference: { hostTime, receivedAt }
+  const memberJoinBroadcastRef = useRef(null); // debounce timer for host re-broadcast on session_member_joined
   
   // 📹 LiveShare state (screen + camera)
   const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both' - the share type
@@ -932,22 +934,18 @@ export default function VideoWatch() {
     return me?.user_role === 'admin';
   }, [roomMembers, currentUser?.id]);
 
-  // 🔄 MEMBER: Request current playback state on connect/reconnect
+  // 🔄 Layer 2: Self-healing retry — if still no media after 4s, keep requesting.
+  // Stops automatically when currentMedia is set (dep change clears the interval).
+  // Covers flaky mobile networks where the Layer 1 session_status trigger was missed.
   useEffect(() => {
-    if (!isConnected || !currentUser?.id || isHost) return;
-    
-    // Wait a moment for host to be established
-    const timer = setTimeout(() => {
-      console.log('🔄 [VideoWatch] MEMBER requesting current state from host');
-      sendMessage({
-        type: 'request_playback_state',
-        requester_id: currentUser.id,
-        timestamp: Date.now()
-      });
-    }, 500); // Small delay to ensure host is ready
-    
-    return () => clearTimeout(timer);
-  }, [isConnected, currentUser?.id, isHost, sendMessage]);
+    if (!isConnected || currentMedia || !currentUser?.id) return;
+    if (isHost && currentMedia) return;
+    const interval = setInterval(() => {
+      console.log('🔄 [VideoWatch] Layer 2 retry: requesting playback state');
+      sendMessage({ type: 'request_playback_state', requester_id: currentUser.id, timestamp: Date.now() });
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [isConnected, currentMedia, isHost, currentUser?.id, sendMessage]);
 
   // ✅ Connect to LiveKit when room and user are ready
   const hasAttemptedLiveKitConnection = useRef(false);
@@ -3673,6 +3671,20 @@ export default function VideoWatch() {
             setIsScreenSharingActive(false);
             setScreenSharerUserId(null);
           }
+
+          // ✅ Authoritative member count directly from server payload
+          if (typeof data.member_count === 'number') {
+            setAuthoritativeMemberCount(data.member_count);
+          }
+
+          // ✅ Layer 1: fire request_playback_state immediately on confirmed handshake.
+          // session_status arrival = server has processed client_ready = WS is stable.
+          // Replaces the old 500ms blind timer which fired before mobile WS was ready.
+          if (!isHost || (isHost && !currentMedia)) {
+            console.log('🔄 [VideoWatch] Layer 1: requesting playback state on session_status handshake');
+            sendMessage({ type: 'request_playback_state', requester_id: currentUser?.id, timestamp: Date.now() });
+          }
+
           break;
         case "update_room_status":
           // ✅ OPTIMIZE: Don't update currentMedia if we're already in LiveShare mode with same title
@@ -3812,29 +3824,25 @@ export default function VideoWatch() {
             
             console.log(`👥 [VideoWatch] ${username} (ID:${userId}, role:${userRole}) joined session`);
             
-            // 🎬 HOST: Broadcast current playback state to new member
+            // 🎬 HOST: Broadcast current playback state to new member (debounced for burst joins)
             if (isHost && currentMedia && currentMedia.type === 'upload' && isConnected) {
-              const videoEl = document.querySelector('video');
-              const currentTime = videoEl?.currentTime || 0;
-              
-              console.log('🎯 [VideoWatch] HOST sending current state to new member:', {
-                newMember: username,
-                currentTime,
-                mediaUrl: currentMedia.mediaUrl,
-                isPlaying
-              });
-              
-              sendMessage({
-                type: 'playback_control',
-                command: isPlaying ? 'play' : 'pause',
-                media_item_id: currentMedia.ID || currentMedia.id,
-                file_path: currentMedia.file_path,
-                file_url: currentMedia.mediaUrl,
-                original_name: currentMedia.original_name,
-                seek_time: currentTime,
-                timestamp: Date.now(),
-                sender_id: currentUser.id,
-              });
+              clearTimeout(memberJoinBroadcastRef.current);
+              memberJoinBroadcastRef.current = setTimeout(() => {
+                const videoEl = videoPlayerRef.current || document.querySelector('video');
+                const currentTime = videoEl?.currentTime || 0;
+                console.log('🎯 [VideoWatch] HOST re-broadcasting state for new member:', { username, currentTime, isPlaying });
+                sendMessage({
+                  type: 'playback_control',
+                  command: isPlaying ? 'play' : 'pause',
+                  media_item_id: currentMedia.ID || currentMedia.id,
+                  file_path: currentMedia.file_path,
+                  file_url: currentMedia.mediaUrl,
+                  original_name: currentMedia.original_name,
+                  seek_time: currentTime,
+                  timestamp: Date.now(),
+                  sender_id: currentUser.id,
+                });
+              }, 300);
             }
             
             setRoomMembers(prev => {
@@ -3852,23 +3860,30 @@ export default function VideoWatch() {
               console.log(`✅ [VideoWatch] ${username} added → Session now has ${newMembers.length} members:`, newMembers);
               return newMembers;
             });
+            // Use authoritative count from backend if available
+            if (typeof message.data.member_count === 'number') {
+              setAuthoritativeMemberCount(message.data.member_count);
+            }
           } else {
             console.error('❌ [VideoWatch] session_member_joined missing user_id or username:', message.data);
           }
           break;
-        
+
         case 'session_member_left':
           // Real-time member leave from backend
           if (message.data?.user_id) {
             const userId = message.data.user_id;
             const username = message.data.username;
-            
+
             console.log(`👋 [VideoWatch] ${username} (ID:${userId}) left session`);
             setRoomMembers(prev => {
               const updated = prev.filter(m => m.id !== userId);
               console.log(`👋 [VideoWatch] Session now has ${updated.length} members`);
               return updated;
             });
+            if (typeof message.data.member_count === 'number') {
+              setAuthoritativeMemberCount(message.data.member_count);
+            }
           }
           break;
         
@@ -3939,8 +3954,10 @@ export default function VideoWatch() {
             currentUserId: currentUser?.id,
           });
 
-          if (isHost) {
-            console.log('⏭️ [MEMBER] Skipping — host tab, already applied locally');
+          // Skip only if this host tab already has this exact media loaded.
+          // Allows host's 2nd device (isHost=true but no currentMedia) to receive and apply state.
+          if (isHost && currentMedia?.file_path === message.file_path) {
+            console.log('⏭️ [MEMBER] Skipping — host tab already at this media');
             break;
           }
 
@@ -4923,9 +4940,11 @@ export default function VideoWatch() {
   const handleLeaveRoom = async () => {
     const finalSessionId = sessionStatus?.id || urlSessionId || activeSessionId;
 
-    // Determine if this is an instant watch BEFORE any cleanup changes the URL
+    // Determine if this is a temporary room BEFORE any cleanup changes the URL.
+    // Check the URL param first (standard instant watch), then fall back to roomData
+    // (covers private watchout sessions which use /rooms/:id without ?instant=true).
     const urlParams = new URLSearchParams(window.location.search);
-    const isInstantWatch = urlParams.get('instant') === 'true';
+    const isInstantWatch = urlParams.get('instant') === 'true' || roomData?.is_temporary === true;
 
     if (isHost) {
       const confirmed = window.confirm(
@@ -5022,7 +5041,7 @@ export default function VideoWatch() {
       }
     } catch (err) {
       console.error('Navigation error:', err);
-      navigate(`/rooms/${roomId}`, { replace: true });
+      navigate(roomData?.is_temporary ? '/lobby' : `/rooms/${roomId}`, { replace: true });
     }
   };
 
@@ -6215,6 +6234,8 @@ export default function VideoWatch() {
           isVisible={isVisible}
           isGlowing={isGlowing}
           onShareRoom={handleShareRoom}
+          isPrivateSession={sessionStatus?.is_private || false}
+          onInviteFriend={() => setShowMembersModal(true)}
           setIsGlowing={setIsGlowing}
           onLeaveCall={handleLeaveRoom}
           openVideoSidebar={() => setIsVideoSidebarOpen(prev => !prev)}
@@ -6229,6 +6250,7 @@ export default function VideoWatch() {
           userSeats={userSeats}
           currentUser={currentUser}
           watchSessionMembers={roomMembers}
+          memberCount={authorativeMemberCount || roomMembers?.length || 0}
           isMembersLoading={!isMembersInitialized}
           onMembersClick={() => {
             // ✅ Don't fetch room members - use session members already in state from session_status WebSocket message
@@ -6576,6 +6598,8 @@ export default function VideoWatch() {
         raisedHands={raisedHands}
         liveShareGuestId={liveShareGuestId}
         memberEmotes={memberEmotes}
+        isPrivateSession={sessionStatus?.is_private || false}
+        activeSessionId={sessionStatus?.session_id || null}
       />
       {/* Chat Entry Modals */}
       {showChatHome && (

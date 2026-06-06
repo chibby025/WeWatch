@@ -1792,6 +1792,30 @@ export const startPrivateWatchout = async (recipientId, watchType = 'video', con
   }
 };
 
+export const inviteToSession = async (sessionId, userId) => {
+  try {
+    const response = await apiClient.post(`/api/sessions/${sessionId}/invite`, { user_id: userId });
+    return response.data;
+  } catch (error) {
+    console.error('API Error (inviteToSession):', error);
+    throw error;
+  }
+};
+
+export const startCircleWatchout = async (recipientIds, watchType = 'video', contentRating = 'G') => {
+  try {
+    const response = await apiClient.post('/api/lobby-chats/circle-watchout', {
+      recipient_ids: recipientIds,
+      watch_type: watchType,
+      content_rating: contentRating,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('API Error (startCircleWatchout):', error);
+    throw error;
+  }
+};
+
 export const getWatchoutAllowedRatings = async (recipientId) => {
   try {
     const response = await apiClient.get('/api/lobby-chats/watchout-ratings', { params: { recipient_id: recipientId } });

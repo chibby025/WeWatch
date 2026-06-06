@@ -516,8 +516,12 @@ const RoomPageNew = () => {
       }
     } catch (err) {
       console.error('Failed to fetch room:', err);
-      setError('Failed to load room data');
-      toast.error('Failed to load room');
+      if (err.response?.status === 404) {
+        setError('room_not_found');
+      } else {
+        setError('Failed to load room data');
+        toast.error('Failed to load room');
+      }
     } finally {
       setLoading(false);
     }
@@ -2063,10 +2067,43 @@ const RoomPageNew = () => {
     );
   }
 
-  if (error || !room) {
+  if (error === 'room_not_found' || (!loading && !room && !error)) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-black text-white text-center px-8">
+        <style>{`
+          @keyframes floatZzz {
+            0%   { opacity: 0;   transform: translateY(0)    scale(0.7); }
+            20%  { opacity: 0.9; }
+            80%  { opacity: 0.6; }
+            100% { opacity: 0;   transform: translateY(-60px) scale(1.2); }
+          }
+          .ended-zzz-1 { animation: floatZzz 2.4s ease-in-out infinite; animation-delay: 0s; }
+          .ended-zzz-2 { animation: floatZzz 2.4s ease-in-out infinite; animation-delay: 0.8s; }
+          .ended-zzz-3 { animation: floatZzz 2.4s ease-in-out infinite; animation-delay: 1.6s; }
+        `}</style>
+        <div className="relative mb-8 flex items-center justify-center w-28 h-28">
+          <img src="/icons/lwoIcon.webp" alt="WatchOut" className="w-20 h-20 opacity-25" />
+          <span className="ended-zzz-1 absolute text-white/70 font-bold select-none pointer-events-none" style={{ fontSize: 12, top: 8, right: 8 }}>z</span>
+          <span className="ended-zzz-2 absolute text-white/70 font-bold select-none pointer-events-none" style={{ fontSize: 16, top: 0, right: 18 }}>z</span>
+          <span className="ended-zzz-3 absolute text-white/70 font-bold select-none pointer-events-none" style={{ fontSize: 22, top: -10, right: 28 }}>Z</span>
+        </div>
+        <p className="text-xl font-semibold mb-2">Session has ended</p>
+        <p className="text-gray-400 text-sm mb-6">This WatchOut session is no longer active.</p>
+        <button
+          onClick={() => navigate('/lobby')}
+          className="px-6 py-2.5 rounded-full text-sm font-semibold text-white transition-opacity hover:opacity-80"
+          style={{ background: 'linear-gradient(90deg, #7c3aed, #4f46e5)' }}
+        >
+          ← Back to Lobby
+        </button>
+      </div>
+    );
+  }
+
+  if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="text-xl text-red-600">{error || 'Room not found'}</div>
+        <div className="text-xl text-red-600">{error}</div>
       </div>
     );
   }
@@ -2173,7 +2210,7 @@ const RoomPageNew = () => {
                 </div>
                 
                 {/* Right section: Action Icons + Ellipse */}
-                <div className="flex items-center gap-2 md:gap-5 flex-shrink-0 ml-auto pr-2 md:pr-0" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2 md:gap-5 flex-shrink-0 ml-auto pr-4 md:pr-6 lg:pr-8" onClick={(e) => e.stopPropagation()}>
                 
                 {!selectedGroupId && (
                   <>
@@ -2315,7 +2352,7 @@ const RoomPageNew = () => {
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-6 pr-6 lg:pr-10">
                   {!selectedGroupId && (
                     <>
                       {!activeSession && (

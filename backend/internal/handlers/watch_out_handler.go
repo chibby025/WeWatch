@@ -390,10 +390,13 @@ func StartPrivateWatchoutHandler(c *gin.Context) {
 		return
 	}
 
-	// Block if sender is already in any active watch session
+	// Block if sender is genuinely in a live session right now.
+	// Join watch_sessions to avoid false positives from stale watch_session_members rows
+	// where the session ended but cleanup hasn't swept the member row yet.
 	var activeMemberCount int64
 	db.Model(&models.WatchSessionMember{}).
-		Where("user_id = ? AND is_active = true", senderID).
+		Joins("JOIN watch_sessions ON watch_sessions.id = watch_session_members.watch_session_id").
+		Where("watch_session_members.user_id = ? AND watch_session_members.is_active = true AND watch_sessions.is_active = true AND watch_sessions.ended_at IS NULL AND watch_sessions.deleted_at IS NULL", senderID).
 		Count(&activeMemberCount)
 	if activeMemberCount > 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "You are already in an active watch session"})
@@ -503,6 +506,323 @@ func StartPrivateWatchoutHandler(c *gin.Context) {
 	log.Printf("StartPrivateWatchoutHandler: private WatchOut from user %d to user %d, room %d", senderID, req.RecipientID, newRoom.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Private WatchOut created",
+		"room_id":    newRoom.ID,
+		"session_id": sessionUUID,
+	})
+}
+
+// InviteToSessionHandler adds a user to an active session mid-stream by adding them to user_rooms
+// and sending them a WatchOut DM invite. For private sessions only the host may invite.
+// POST /api/sessions/:session_id/invite
+func InviteToSessionHandler(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	callerID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	sessionUUID := c.Param("id")
+	if sessionUUID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
+		return
+	}
+
+	var req struct {
+		UserID uint `json:"user_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.UserID == callerID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot invite yourself"})
+		return
+	}
+
+	db := c.MustGet("db").(*gorm.DB)
+
+	// Load session
+	var session models.WatchSession
+	if err := db.Where("session_id = ? AND is_active = true AND ended_at IS NULL", sessionUUID).First(&session).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "No active session found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	var room models.Room
+	if err := db.First(&room, session.RoomID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	// Caller must be a member of the room
+	var callerRoom models.UserRoom
+	if err := db.Where("room_id = ? AND user_id = ? AND deleted_at IS NULL", room.ID, callerID).First(&callerRoom).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not in this session"})
+		return
+	}
+
+	// Private sessions: only the host can invite
+	if session.IsPrivate && room.HostID != callerID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the host can invite to a private session"})
+		return
+	}
+
+	// Block check
+	var blockCount int64
+	db.Model(&models.UserBlock{}).Where(
+		"(blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)",
+		callerID, req.UserID, req.UserID, callerID,
+	).Count(&blockCount)
+	if blockCount > 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot invite — user blocked"})
+		return
+	}
+
+	// Upsert user_rooms — add invitee if not already a member
+	var existing models.UserRoom
+	err := db.Where("room_id = ? AND user_id = ? AND deleted_at IS NULL", room.ID, req.UserID).First(&existing).Error
+	if err == gorm.ErrRecordNotFound {
+		if err2 := db.Create(&models.UserRoom{UserID: req.UserID, RoomID: room.ID, UserRole: "member", Status: "active"}).Error; err2 != nil {
+			log.Printf("InviteToSessionHandler: failed to add user %d to room %d: %v", req.UserID, room.ID, err2)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add member"})
+			return
+		}
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Send WatchOut DM
+	var caller models.User
+	db.Select("id, username, avatar_url").First(&caller, callerID)
+
+	watchTypeEmoji := map[string]string{"video": "🎬", "3d_cinema": "🎭", "classroom": "📚", "podcast": "🎙️"}
+	_ = watchTypeEmoji
+
+	metadata := map[string]interface{}{
+		"room_id":             room.ID,
+		"room_name":           room.Name,
+		"room_type":           room.RoomType,
+		"watch_type":          session.WatchType,
+		"content_rating":      session.ContentRating,
+		"session_title":       session.SessionTitle,
+		"watching_count":      1,
+		"session_id":          session.SessionID,
+		"host_id":             room.HostID,
+		"is_private_watchout": session.IsPrivate,
+	}
+	metaJSON, _ := json.Marshal(metadata)
+	metaStr := string(metaJSON)
+
+	chat := models.LobbyChat{
+		SenderID:    callerID,
+		RecipientID: req.UserID,
+		Message:     "👀 You've been invited to join a watch session.",
+		MessageType: "watch_out",
+		Metadata:    &metaStr,
+	}
+	if err := db.Create(&chat).Error; err != nil {
+		log.Printf("InviteToSessionHandler: failed to create DM: %v", err)
+	} else {
+		BroadcastLobbyChatMessage(db, chat, caller)
+	}
+
+	notifTitle := "@" + caller.Username + " invited you to watch"
+	go CreateNotification(req.UserID, "watch_invite", notifTitle, "Join "+room.Name, "room", room.ID)
+
+	log.Printf("InviteToSessionHandler: user %d invited user %d to session %s (room %d)", callerID, req.UserID, sessionUUID, room.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"invited":    true,
+		"room_id":    room.ID,
+		"session_id": session.SessionID,
+	})
+}
+
+// StartCircleWatchoutHandler creates a single private temporary room for all circle members and sends each a DM invite.
+// POST /api/lobby-chats/circle-watchout
+func StartCircleWatchoutHandler(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	senderID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	var req struct {
+		RecipientIDs  []uint `json:"recipient_ids" binding:"required"`
+		WatchType     string `json:"watch_type"`
+		ContentRating string `json:"content_rating"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.RecipientIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "recipient_ids required"})
+		return
+	}
+	if len(req.RecipientIDs) > 14 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Too many recipients (max 14)"})
+		return
+	}
+
+	validWatchTypes := map[string]bool{"video": true, "3d_cinema": true, "classroom": true, "podcast": true, "livestream": true}
+	if req.WatchType == "" || !validWatchTypes[req.WatchType] {
+		req.WatchType = "video"
+	}
+	validRatings := map[string]bool{"G": true, "PG": true, "Educational": true, "Religious": true, "13+": true, "16+": true, "18+": true, "Mature": true}
+	if req.ContentRating == "" || !validRatings[req.ContentRating] {
+		req.ContentRating = "G"
+	}
+
+	db := c.MustGet("db").(*gorm.DB)
+
+	// Deduplicate and remove self
+	seen := map[uint]bool{senderID: true}
+	var recipients []uint
+	for _, id := range req.RecipientIDs {
+		if !seen[id] {
+			seen[id] = true
+			recipients = append(recipients, id)
+		}
+	}
+	if len(recipients) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No valid recipients"})
+		return
+	}
+
+	// All recipients must be accepted friends
+	for _, recipientID := range recipients {
+		var count int64
+		db.Model(&models.Friendship{}).Where(
+			"((requester_id = ? AND recipient_id = ?) OR (requester_id = ? AND recipient_id = ?)) AND status = ?",
+			senderID, recipientID, recipientID, senderID, models.FriendshipStatusAccepted,
+		).Count(&count)
+		if count == 0 {
+			c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("Not friends with user %d", recipientID)})
+			return
+		}
+	}
+
+	// Block if sender already has an active temporary session running
+	var existingCount int64
+	db.Model(&models.WatchSession{}).
+		Joins("JOIN rooms ON rooms.id = watch_sessions.room_id AND rooms.deleted_at IS NULL").
+		Where("watch_sessions.host_id = ? AND watch_sessions.ended_at IS NULL AND rooms.is_temporary = true AND watch_sessions.deleted_at IS NULL", senderID).
+		Count(&existingCount)
+	if existingCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "You already have an active private WatchOut"})
+		return
+	}
+
+	var sender models.User
+	db.Select("id, username, avatar_url").First(&sender, senderID)
+
+	tx := db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	newRoom := models.Room{
+		Name:          fmt.Sprintf("Circle – %s", sender.Username),
+		Description:   "Private Circle WatchOut – auto-deleted after session",
+		HostID:        senderID,
+		IsTemporary:   true,
+		IsPublic:      false,
+		ContentRating: req.ContentRating,
+	}
+	if err := tx.Create(&newRoom).Error; err != nil {
+		tx.Rollback()
+		log.Printf("StartCircleWatchoutHandler: failed to create room: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+		return
+	}
+
+	if err := tx.Create(&models.UserRoom{UserID: senderID, RoomID: newRoom.ID, UserRole: "host", Status: "active"}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+		return
+	}
+	for _, recipientID := range recipients {
+		if err := tx.Create(&models.UserRoom{UserID: recipientID, RoomID: newRoom.ID, UserRole: "member", Status: "active"}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+			return
+		}
+	}
+
+	sessionUUID := uuid.New().String()
+	watchSession := models.WatchSession{
+		SessionID:      sessionUUID,
+		RoomID:         newRoom.ID,
+		HostID:         senderID,
+		WatchType:      req.WatchType,
+		IsPrivate:      true,
+		ContentRating:  req.ContentRating,
+		StartedAt:      time.Now(),
+		PreviewEnabled: false,
+	}
+	if err := tx.Create(&watchSession).Error; err != nil {
+		tx.Rollback()
+		log.Printf("StartCircleWatchoutHandler: failed to create session: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to finalize session"})
+		return
+	}
+
+	// Send a DM invite to each recipient (best-effort after commit)
+	for _, recipientID := range recipients {
+		metadata := map[string]interface{}{
+			"room_id":             newRoom.ID,
+			"room_name":           newRoom.Name,
+			"room_type":           "general",
+			"watch_type":          req.WatchType,
+			"content_rating":      req.ContentRating,
+			"session_title":       "Circle WatchOut",
+			"watching_count":      1,
+			"session_id":          sessionUUID,
+			"host_id":             senderID,
+			"is_private_watchout": true,
+		}
+		metaJSON, _ := json.Marshal(metadata)
+		metaStr := string(metaJSON)
+
+		chat := models.LobbyChat{
+			SenderID:    senderID,
+			RecipientID: recipientID,
+			Message:     "👀 Circle WatchOut! Let's all watch together.",
+			MessageType: "watch_out",
+			Metadata:    &metaStr,
+		}
+		if err := db.Create(&chat).Error; err != nil {
+			log.Printf("StartCircleWatchoutHandler: failed to send DM to user %d: %v", recipientID, err)
+			continue
+		}
+		BroadcastLobbyChatMessage(db, chat, sender)
+		go CreateNotification(recipientID, "watch_invite", "@"+sender.Username+" invited you to a Circle WatchOut", "Join "+newRoom.Name, "room", newRoom.ID)
+	}
+
+	log.Printf("StartCircleWatchoutHandler: circle WatchOut from user %d to %d recipients, room %d", senderID, len(recipients), newRoom.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Circle WatchOut created",
 		"room_id":    newRoom.ID,
 		"session_id": sessionUUID,
 	})
