@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"wewatch-backend/internal/models"
@@ -73,30 +72,93 @@ func HandleStreamURL(c *gin.Context) {
 		return
 	}
 
-	// 5. Convert cloud storage URLs to direct stream URLs
+	// 5. Check if URL is a supported embed platform (Google Drive, YouTube, Twitch).
+	// Embed URLs bypass the video-extension and accessibility checks — they are rendered
+	// as iframes in the player rather than fed to a <video> element.
 	originalURL := req.StreamURL
-	directURL := utils.ConvertToDirectStreamURL(req.StreamURL)
+	embedResult := utils.DetectEmbedPlatform(originalURL)
+
+	if embedResult.IsEmbed {
+		log.Printf("✅ HandleStreamURL: Embed platform detected (%s) → %s", embedResult.Platform, embedResult.EmbedURL)
+
+		var room models.Room
+		if err := DB.First(&room, roomID).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			}
+			return
+		}
+
+		now := time.Now()
+		mediaItem := models.TemporaryMediaItem{
+			FilePath:          embedResult.EmbedURL,
+			FileName:          embedResult.Platform,
+			OriginalName:      originalURL,
+			MimeType:          "text/html",
+			FileSize:          0,
+			SessionID:         req.SessionID,
+			RoomID:            roomID,
+			UploaderID:        userID,
+			IsStream:          false,
+			IsEmbed:           true,
+			EmbedPlatform:     embedResult.Platform,
+			OriginalStreamURL: originalURL,
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		}
+		if err := DB.Create(&mediaItem).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save embed URL"})
+			return
+		}
+
+		hub := GetWebSocketManager()
+		if hub != nil {
+			broadcastMsg := map[string]interface{}{
+				"type":                "media_added",
+				"media_id":            mediaItem.ID,
+				"file_path":           mediaItem.FilePath,
+				"file_name":           mediaItem.FileName,
+				"original_name":       mediaItem.OriginalName,
+				"is_stream":           false,
+				"is_embed":            true,
+				"embed_platform":      embedResult.Platform,
+				"original_stream_url": originalURL,
+				"uploader_id":         mediaItem.UploaderID,
+				"created_at":          mediaItem.CreatedAt,
+				"session_id":          req.SessionID,
+			}
+			if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+				hub.BroadcastToRoom(roomID, OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "Embed URL added successfully",
+			"media": gin.H{
+				"id":             mediaItem.ID,
+				"file_path":      mediaItem.FilePath,
+				"original_name":  mediaItem.OriginalName,
+				"is_embed":       true,
+				"embed_platform": embedResult.Platform,
+				"uploader_id":    mediaItem.UploaderID,
+				"created_at":     mediaItem.CreatedAt,
+			},
+		})
+		return
+	}
+
+	// 6. Non-embed path: validate that URL points to a direct video file
+	directURL := utils.ConvertToDirectStreamURL(originalURL)
 	log.Printf("🔗 HandleStreamURL: Original URL: %s", originalURL)
 	log.Printf("🔗 HandleStreamURL: Direct URL: %s", directURL)
 
-	// 6. Validate that URL points to a video file
 	if !utils.IsValidVideoURL(directURL) {
 		log.Printf("❌ HandleStreamURL: URL validation failed for: %s", directURL)
-		
-		// Check if it's a cloud storage URL to provide helpful error
-		urlLower := strings.ToLower(req.StreamURL)
-		if strings.Contains(urlLower, "drive.google.com") || 
-		   strings.Contains(urlLower, "dropbox.com") || 
-		   strings.Contains(urlLower, "onedrive.live.com") || 
-		   strings.Contains(urlLower, "1drv.ms") {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Cloud storage URLs cannot be streamed due to CORS restrictions. Use 'Watch From' tab to screen share instead.",
-			})
-			return
-		}
-		
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "URL must point to a direct video file (.mp4, .webm, .m3u8, etc.)",
+			"error": "URL must point to a direct video file (.mp4, .webm, .m3u8, etc.). For Google Drive, YouTube, or Twitch links use those directly — they are supported as embeds.",
 		})
 		return
 	}
@@ -129,11 +191,11 @@ func HandleStreamURL(c *gin.Context) {
 	// 9. Create TemporaryMediaItem record
 	now := time.Now()
 	mediaItem := models.TemporaryMediaItem{
-		FilePath:          directURL, // Store the direct streaming URL
+		FilePath:          directURL,
 		FileName:          parsedURL.Path,
 		OriginalName:      originalURL,
-		MimeType:          "video/mp4", // Default MIME type for streams
-		FileSize:          0,            // Unknown for stream URLs
+		MimeType:          "video/mp4",
+		FileSize:          0,
 		SessionID:         req.SessionID,
 		RoomID:            roomID,
 		UploaderID:        userID,

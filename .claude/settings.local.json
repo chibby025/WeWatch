@@ -183,7 +183,12 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -8')",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -6')",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -5')",
-      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -4')"
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -4')",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch && git fetch origin && git diff origin/main -- frontend/src/components/cinema/3d-cinema/CinemaScene3DDemo.jsx\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd ~/WeWatch/frontend && npm install vite-plugin-pwa -D 2>&1 | tail -5\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd ~/WeWatch/frontend && npx vite build --mode development 2>&1 | tail -20\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd ~/WeWatch/frontend && npx vite build --mode development 2>&1 | tail -10\")",
+      "Read(//c/Users/Chinw/Downloads/**)"
     ],
     "additionalDirectories": [
       "\\dev",
@@ -199,7 +204,11 @@
       "\\home\\chibuzor_dev\\WeWatch\\backend\\internal\\handlers",
       "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\backend\\internal\\handlers",
       "\\home\\chibuzor_dev\\WeWatch\\backend\\cmd\\server",
-      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\backend\\cmd\\server"
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\backend\\cmd\\server",
+      "\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\hooks",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\hooks",
+      "\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\components\\cinema\\3d-cinema",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\components\\cinema\\3d-cinema"
     ]
   }
 }

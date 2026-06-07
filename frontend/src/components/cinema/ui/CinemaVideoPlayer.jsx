@@ -464,6 +464,38 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   // 🎨 ADAPTIVE SPLIT-VIEW: Only log state changes (reduced verbosity)
   // Removed: excessive split-view waiting logs
 
+  // 🖼️ EMBED RENDER: Google Drive, YouTube, Twitch — iframe fills the player area
+  if (mediaItem?.type === 'embed' && mediaItem?.mediaUrl) {
+    const platformLabel = {
+      google_drive: 'Google Drive',
+      youtube: 'YouTube',
+      twitch: 'Twitch',
+    }[mediaItem.embed_platform] || 'Embedded Content';
+
+    return (
+      <div className="w-full h-full relative bg-black flex flex-col">
+        {/* Thin header strip so users know what's playing */}
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-black/60 border-b border-white/10 flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-white/60 text-[10px] flex-shrink-0">{platformLabel}</span>
+            <span className="text-white/40 text-[10px] truncate">{mediaItem.original_name || mediaItem.mediaUrl}</span>
+          </div>
+          {mediaItem.embed_platform === 'google_drive' && (
+            <span className="text-yellow-400/70 text-[9px] flex-shrink-0">File must be publicly shared</span>
+          )}
+        </div>
+        <iframe
+          src={mediaItem.mediaUrl}
+          className="flex-1 w-full border-0"
+          allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+          allowFullScreen
+          title={platformLabel}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
+        />
+      </div>
+    );
+  }
+
   // 🎨 Render different layouts based on selection
   // Split View: 50/50 side-by-side (desktop) or stacked (mobile)
   // ADAPTIVE: Show split-view ONLY when both streams are available

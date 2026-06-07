@@ -22,6 +22,9 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
   const cleanupTimerRef = useRef(null); // Delay cleanup for StrictMode remounts
   const pendingAcksRef = useRef(new Map()); // Track pending acknowledgment promises
   const componentIdRef = useRef(`component-${Date.now()}-${Math.random()}`); // Stable component identifier
+  // Per-component direct message handler. Called synchronously in ws.onmessage BEFORE setMessages.
+  // If it returns true the message is NOT added to React state for this subscriber — no re-render.
+  const directHandlerRef = useRef(null);
   const MAX_RECONNECT_ATTEMPTS = 5;
   const RECONNECT_INTERVAL = 2000; // 2 seconds
 
@@ -122,7 +125,8 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
             setIsConnected: stableSetIsConnected,
             setMessages: stableSetMessages,
             setSessionStatus: stableSetSessionStatus,
-            onBinaryMessageRef
+            onBinaryMessageRef,
+            directHandlerRef
           });
           console.log(`➕ [useWebSocket] Added subscriber for ${componentId} (total: ${poolEntry.subscribers.size})`);
         } else {
@@ -224,7 +228,8 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
         setIsConnected: stableSetIsConnected,
         setMessages: stableSetMessages,
         setSessionStatus: stableSetSessionStatus,
-        onBinaryMessageRef
+        onBinaryMessageRef,
+        directHandlerRef
       }]),
       cleanupTimer: null,
       connectionKey,
@@ -307,8 +312,14 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
             console.log(`🔍 [useWebSocket] ${message.type} → ${poolEntry.subscribers.size} subscribers`);
           }
           
-          // Update all subscribers with the new message (cap at 500 as safety net)
+          // Update all subscribers with the new message (cap at 500 as safety net).
+          // If a subscriber's directHandlerRef returns true, the message is handled
+          // directly without touching React state — no re-render for that subscriber.
           poolEntry.subscribers.forEach(sub => {
+            if (sub.directHandlerRef?.current) {
+              const intercepted = sub.directHandlerRef.current(message);
+              if (intercepted) return; // skip setMessages for this subscriber
+            }
             sub.setMessages(prev => {
               const next = [...prev, message];
               return next.length > 500 ? next.slice(-500) : next;
@@ -882,6 +893,10 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
     sessionStatus.error
   ]);
 
+  const registerDirectMessageHandler = useCallback((handler) => {
+    directHandlerRef.current = handler;
+  }, []);
+
   // ✅ Memoize return value to prevent causing re-renders in parent components
   return useMemo(() => ({
     sendMessage,
@@ -893,5 +908,6 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
     disconnect,
     waitForAcknowledgment,
     clearMessages,
-  }), [sendMessage, messages, isConnected, isReconnecting, setBinaryMessageHandler, memoizedSessionStatus, disconnect, waitForAcknowledgment, clearMessages]);
+    registerDirectMessageHandler,
+  }), [sendMessage, messages, isConnected, isReconnecting, setBinaryMessageHandler, memoizedSessionStatus, disconnect, waitForAcknowledgment, clearMessages, registerDirectMessageHandler]);
 }

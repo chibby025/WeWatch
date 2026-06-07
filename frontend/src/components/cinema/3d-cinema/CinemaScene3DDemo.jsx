@@ -540,7 +540,7 @@ export default function CinemaScene3DDemo() {
   // 💬 Chat bubble visibility preference (persisted in localStorage)
   const [showChatBubbles, setShowChatBubbles] = useState(() => {
     const saved = localStorage.getItem('cinema_show_chat_bubbles');
-    return saved === null ? true : saved === 'true'; // Default: ON
+    return saved === null ? false : saved === 'true'; // Default: OFF
   });
   
   // Save chat bubble preference to localStorage
@@ -724,15 +724,19 @@ export default function CinemaScene3DDemo() {
     };
   }, []);
   
-  // 📍 Load cinemaSeats.json on mount
+  // 📍 Load cinemaSeats.json on mount — cache-first, network fallback
   useEffect(() => {
     const loadCinemaSeats = async () => {
+      const cached = getCachedCinemaSeats();
+      if (cached) {
+        setCinemaSeats({ seats: cached });
+        return;
+      }
       try {
-        console.log('🔄 [CinemaSeats] Starting to load cinemaSeats.json...');
         const response = await fetch('/cinema/cinemaSeats.json');
         const data = await response.json();
         setCinemaSeats(data);
-        console.log('✅ [CinemaSeats] Loaded cinemaSeats.json:', data.seats.length, 'seats');
+        cacheCinemaSeats(data.seats);
       } catch (err) {
         console.error('❌ [CinemaSeats] Failed to load cinemaSeats.json:', err);
       }
@@ -757,7 +761,9 @@ export default function CinemaScene3DDemo() {
     }
   }, [currentUser]);
  
-  const [currentTime, setCurrentTime] = useState(0);
+  // currentTimeRef: read via ref so timeupdate never triggers React re-renders.
+  // Using state here caused ~4 re-renders/sec of this 5000-line component during playback.
+  const currentTimeRef = useRef(0);
   // === VIDEO/PLAYBACK STATE ===
   const [currentMedia, setCurrentMedia] = useState(null);
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // 🎯 Pending seek time for sync
@@ -798,6 +804,16 @@ export default function CinemaScene3DDemo() {
   const fullscreenContainerRef = useRef(null); // 🎬 Stable ref for fullscreen container (prevents re-renders)
   const fullscreenUploadContainerRef = useRef(null); // 📹 Container for moved upload video in fullscreen
   const loadStartTimeRef = useRef(Date.now()); // ⏱️ Track video loading start time for sync compensation
+  // Refs that shadow frequently-changing values so the media loading effect doesn't need them as deps.
+  // This prevents the effect from tearing down/re-adding video event listeners on every WS message
+  // that causes a parent re-render (chat, member join, sync) — which was causing CinemaTheaterGLB
+  // useFrame gaps and visible jitter on the 3D cinema screen for members.
+  const isPlayingRef = useRef(false);
+  const pendingSeekTimeRef = useRef(null);
+  const sendMessageRef = useRef(null);
+  const isHostRef = useRef(false);
+  const currentMediaRef = useRef(null); // mirrors currentMedia state for use inside direct handler
+  const syncRefRef = useRef(null);      // { hostTime, receivedAt } — seeded from playback_control, used by autonomous drift check
   const [isFullscreenHovering, setIsFullscreenHovering] = useState(false);
   
   // 🚀 PHASE 2: Model preload handled in CinemaScene3D.jsx (module-level import)
@@ -937,7 +953,7 @@ export default function CinemaScene3DDemo() {
     stableTokenRef.current = wsToken;
   }
 
-  const { sendMessage, messages, isConnected, sessionStatus } = useWebSocket(
+  const { sendMessage, messages, isConnected, sessionStatus, registerDirectMessageHandler } = useWebSocket(
     roomId,
     stableTokenRef.current,
     finalSessionId
@@ -1205,6 +1221,13 @@ export default function CinemaScene3DDemo() {
   const isHostFromMembers = currentUser?.id === roomMembers.find(m => m.user_role === 'host')?.id;
   const isHost = isHostFromState || isHostFromSession || isHostFromMembers; // Use || not ?? (false is falsy but not null)
 
+  // Keep shadow refs in sync so the media loading effect can read current values without deps.
+  isPlayingRef.current = isPlaying;
+  isHostRef.current = isHost;
+  sendMessageRef.current = sendMessage;
+  pendingSeekTimeRef.current = pendingSeekTime;
+  currentMediaRef.current = currentMedia;
+
   // 📡 Fetch active session from REST API on mount (reliable source for host_id)
   useEffect(() => {
     const fetchActiveSession = async () => {
@@ -1222,30 +1245,28 @@ export default function CinemaScene3DDemo() {
     fetchActiveSession();
   }, [roomId]);
   
-  // 💾 Save playback state to localStorage (per-media, for resume functionality)
+  // 💾 Save playback state to localStorage every 5 seconds (for resume functionality).
+  // Uses setInterval instead of a currentTime state dep — avoids the 4x/sec re-render chain.
   useEffect(() => {
-    if (!isHost || !roomId || !finalSessionId || !currentMedia || currentMedia.type !== 'upload') return;
-    
-    // Only save if media is playing and has valid ID
-    if (isPlaying && currentMedia.ID && videoRef.current) {
-      const storageKey = `cinema_playback_${roomId}_${finalSessionId}_${currentMedia.original_name}_${currentMedia.ID}`;
-      
-      const playbackState = {
+    if (!isHost || !roomId || !finalSessionId || !currentMedia || currentMedia.type !== 'upload' || !currentMedia.ID) return;
+
+    const storageKey = `cinema_playback_${roomId}_${finalSessionId}_${currentMedia.original_name}_${currentMedia.ID}`;
+    const interval = setInterval(() => {
+      if (!isPlaying || !videoRef.current) return;
+      const t = currentTimeRef.current;
+      localStorage.setItem(storageKey, JSON.stringify({
         mediaId: currentMedia.ID,
         title: currentMedia.original_name,
         file_path: currentMedia.file_path,
         mediaUrl: currentMedia.mediaUrl,
-        seekTime: videoRef.current.currentTime,
+        seekTime: t,
         timestamp: Date.now(),
-      };
-      
-      // Throttle to every 5 seconds to avoid excessive writes
-      if (Math.floor(currentTime) % 5 === 0 && Math.abs(currentTime - Math.floor(currentTime)) < 0.1) {
-        localStorage.setItem(storageKey, JSON.stringify(playbackState));
-        console.log('💾 [Resume] Saved seek time for', currentMedia.original_name, ':', Math.floor(videoRef.current.currentTime), 's');
-      }
-    }
-  }, [isHost, currentMedia, currentTime, isPlaying, roomId, finalSessionId]);
+      }));
+      console.log('💾 [Resume] Saved seek time for', currentMedia.original_name, ':', Math.floor(t), 's');
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [isHost, currentMedia, isPlaying, roomId, finalSessionId]);
 
   // MEMBER: Request current playback state on connect (upload media only)
   useEffect(() => {
@@ -1364,30 +1385,29 @@ export default function CinemaScene3DDemo() {
     }
 
     const handleLoadedData = () => {
+      // Read current values from refs — avoids stale closure without adding volatile deps
+      const seekTime = pendingSeekTimeRef.current;
       console.log('✅ [Media Loading] Video data loaded, attempting play...', {
         readyState: video.readyState,
         currentTime: video.currentTime,
-        isPlaying,
-        hasPendingSeek: pendingSeekTime !== null
+        isPlaying: isPlayingRef.current,
+        hasPendingSeek: seekTime !== null
       });
-      
+
       // 🎯 Apply pending seek time if available (for mid-playback sync)
-      if (pendingSeekTime !== null && pendingSeekTime > 0) {
-        // 🚀 Triple compensation: network latency + loading time
+      if (seekTime !== null && seekTime > 0) {
         const loadingDuration = (Date.now() - loadStartTimeRef.current) / 1000;
-        const compensatedTime = pendingSeekTime + loadingDuration;
-        
+        const compensatedTime = seekTime + loadingDuration;
         console.log(`🎯 [Sync] Latency compensation applied:`, {
-          originalSeekTime: pendingSeekTime.toFixed(2),
+          originalSeekTime: seekTime.toFixed(2),
           loadingDuration: loadingDuration.toFixed(2),
           compensatedTime: compensatedTime.toFixed(2)
         });
-        
         video.currentTime = compensatedTime;
-        setPendingSeekTime(null); // Clear after applying
+        setPendingSeekTime(null);
       }
-      
-      if (isPlaying) {
+
+      if (isPlayingRef.current) {
         console.log('▶️ [Media Loading] Starting playback...');
         video.play().catch(err => console.error('❌ [Media Loading] Failed to play:', err));
       } else {
@@ -1396,14 +1416,13 @@ export default function CinemaScene3DDemo() {
     };
 
     const handleTimeUpdate = () => {
-      setCurrentTime(video.currentTime);
+      currentTimeRef.current = video.currentTime;
     };
 
     const handleEnded = () => {
       console.log('🏁 [Media Loading] Video ended');
       setIsPlaying(false);
-      
-      // Clear saved playback state when video ends naturally
+
       if (currentMedia?.type === 'upload') {
         const mediaId = currentMedia.ID || currentMedia.id;
         const originalName = currentMedia.metadata?.originalName || currentMedia.originalName || currentMedia.title;
@@ -1411,9 +1430,10 @@ export default function CinemaScene3DDemo() {
         localStorage.removeItem(storageKey);
         console.log('🧹 [Resume State] Cleared on video end:', storageKey);
       }
-      
-      if (isHost) {
-        sendMessage({
+
+      // Read sendMessage and isHost from refs — stable references, no stale closure risk
+      if (isHostRef.current && sendMessageRef.current) {
+        sendMessageRef.current({
           type: 'media_ended',
           data: {
             media_id: currentMedia.ID || currentMedia.id,
@@ -1423,16 +1443,51 @@ export default function CinemaScene3DDemo() {
       }
     };
 
+    // 🔍 Debug: track every seek on the video element — seeks block texture updates
+    // and are the most common cause of visual jitter on the 3D cinema screen.
+    let seekStartTime = 0;
+    const handleSeeking = () => {
+      seekStartTime = Date.now();
+      console.warn(`🔍 [VideoSeek] SEEKING START — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState} paused=${video.paused}`);
+    };
+    const handleSeeked = () => {
+      const seekDuration = Date.now() - seekStartTime;
+      console.warn(`🔍 [VideoSeek] SEEKED COMPLETE — currentTime=${video.currentTime.toFixed(3)} duration=${seekDuration}ms readyState=${video.readyState}`);
+    };
+    const handleWaiting = () => {
+      console.warn(`🔍 [VideoBuffer] WAITING (buffering) — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState}`);
+    };
+    const handlePlaying = () => {
+      console.log(`🔍 [VideoBuffer] PLAYING resumed — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState}`);
+    };
+    const handleStalled = () => {
+      console.warn(`🔍 [VideoBuffer] STALLED — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState}`);
+    };
+
     video.addEventListener('loadeddata', handleLoadedData);
     video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('ended', handleEnded);
+    video.addEventListener('seeking', handleSeeking);
+    video.addEventListener('seeked', handleSeeked);
+    video.addEventListener('waiting', handleWaiting);
+    video.addEventListener('playing', handlePlaying);
+    video.addEventListener('stalled', handleStalled);
 
     return () => {
       video.removeEventListener('loadeddata', handleLoadedData);
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('ended', handleEnded);
+      video.removeEventListener('seeking', handleSeeking);
+      video.removeEventListener('seeked', handleSeeked);
+      video.removeEventListener('waiting', handleWaiting);
+      video.removeEventListener('playing', handlePlaying);
+      video.removeEventListener('stalled', handleStalled);
     };
-  }, [currentMedia, liveShareMode, isPlaying, isHost, sendMessage, pendingSeekTime]);
+  // Only re-run when the actual media source or mode changes.
+  // sendMessage, isPlaying, isHost, pendingSeekTime are read via refs above — listing them
+  // here would cause the effect to re-run on every WS message, tearing down video listeners
+  // and triggering CinemaTheaterGLB re-renders that gap the useFrame loop → jitter.
+  }, [currentMedia, liveShareMode, roomId, finalSessionId]);
 
   // 🎬 Sync play/pause state to video element
   useEffect(() => {
@@ -1469,7 +1524,7 @@ export default function CinemaScene3DDemo() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // ⏰ Playback sync — managed by usePlaybackSync hook (fixed 8s interval, drift detection in hook)
+  // Host broadcasts current position every 8s so members can sync.
   usePlaybackSync({
     isHost,
     currentMedia,
@@ -1478,6 +1533,81 @@ export default function CinemaScene3DDemo() {
     sendMessage,
     userId: currentUser?.id,
   });
+
+  // Autonomous 2s drift check — mirrors VideoWatch.jsx.
+  // Reads syncRefRef (seeded on initial playback_control) and corrects drift locally.
+  // No WS round-trip, no setState — direct video element write only, so RAF is never blocked.
+  useEffect(() => {
+    if (isHost || !isPlaying) return;
+    const id = setInterval(() => {
+      if (!syncRefRef.current) return;
+      const video = videoRef.current;
+      if (!video || video.paused) return;
+      const elapsed = (Date.now() - syncRefRef.current.receivedAt) / 1000;
+      const expected = syncRefRef.current.hostTime + elapsed;
+      const drift = video.currentTime - expected;
+      const absDrift = Math.abs(drift);
+      if (absDrift > 1.0 && absDrift < 30) {
+        console.log(`🔄 [3D Drift] Auto-correct ${drift > 0 ? 'ahead' : 'behind'} ${absDrift.toFixed(2)}s → ${expected.toFixed(2)}s`);
+        video.currentTime = expected;
+      }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [isHost, isPlaying]);
+
+  // Intercept same-media playback_control seek messages before they reach setMessages.
+  // Applies smooth playback-rate correction (< 5s drift) or a hard seek (>= 5s drift)
+  // directly on the video element — no React state update, no re-render, no RAF gap.
+  // play/pause and media-change commands return false and go through the normal state path.
+  useEffect(() => {
+    registerDirectMessageHandler((msg) => {
+      if (msg.type !== 'playback_control') return false;
+      // Swallow own echoes
+      if (msg.sender_id && msg.sender_id === currentUser?.id) return true;
+      if (msg.command !== 'seek' || !msg.file_path) return false;
+
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+      const fileUrl = msg.file_url || msg.file_path;
+      const mediaUrl = fileUrl.startsWith('http')
+        ? fileUrl
+        : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+
+      const media = currentMediaRef.current;
+      const isSameMedia = media && media.ID === msg.media_item_id && media.mediaUrl === mediaUrl;
+      if (!isSameMedia) return false;
+
+      const video = videoRef.current;
+      if (!video) return true;
+
+      const latency = Math.max(0, Date.now() - (msg.timestamp || Date.now()));
+      const adjustedTime = (msg.seek_time || 0) + (latency / 1000);
+      const drift = video.currentTime - adjustedTime; // positive = member ahead
+      const absDrift = Math.abs(drift);
+
+      if (absDrift > 5.0) {
+        // Large drift — hard seek
+        console.log(`🚨 [3D Sync] Hard seek drift=${drift.toFixed(2)}s → ${adjustedTime.toFixed(2)}s`);
+        video.currentTime = adjustedTime;
+        video.playbackRate = 1.0;
+      } else if (absDrift > 0.8) {
+        // Medium drift — smooth rate adjustment (max ±15%)
+        const correction = Math.min(absDrift * 0.08, 0.15);
+        video.playbackRate = drift > 0 ? 1.0 - correction : 1.0 + correction;
+        console.log(`🎵 [3D Sync] Rate adjust drift=${drift.toFixed(2)}s rate=${video.playbackRate.toFixed(3)}x`);
+      } else {
+        // In sync — reset rate if it was previously adjusted
+        if (video.playbackRate !== 1.0) {
+          video.playbackRate = 1.0;
+          console.log(`✅ [3D Sync] In sync (drift=${drift.toFixed(2)}s) — rate reset`);
+        }
+      }
+
+      // Refresh syncRef so the autonomous drift check has an up-to-date reference
+      syncRefRef.current = { hostTime: adjustedTime, receivedAt: Date.now() };
+
+      return true; // Intercepted — skip setMessages, no re-render
+    });
+  }, [registerDirectMessageHandler, currentUser?.id]);
 
   // 📱 Mobile orientation detection and landscape lock — managed by useMobileOrientation hook
 
@@ -3684,58 +3814,31 @@ export default function CinemaScene3DDemo() {
             const now = Date.now();
             const latency = now - (msg.timestamp || now); // Fallback to 0 if no timestamp
             const adjustedTime = (msg.seek_time || 0) + (latency / 1000);
-            
-            console.log('⏱️ [3D Cinema] Playback control received:', {
-              command: msg.command,
-              seek_time: msg.seek_time,
-              latency_ms: latency,
-              adjusted_time: adjustedTime,
-              current_isPlaying: isPlaying,
-              will_change_playState: msg.command === "play" || msg.command === "pause"
-            });
-            
+
+            console.log(`[3D Cinema] playback_control received — latency=${latency}ms command=${msg.command} seek_time=${msg.seek_time}`);
+
             const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
             const fileUrl = msg.file_url || msg.file_path;
             const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
-            
+
             // 🎯 OPTIMIZATION: Skip setCurrentMedia if same media is already loaded (prevents unnecessary re-renders)
-            const isSameMedia = currentMedia && 
-                                currentMedia.ID === msg.media_item_id && 
+            const isSameMedia = currentMedia &&
+                                currentMedia.ID === msg.media_item_id &&
                                 currentMedia.mediaUrl === mediaUrl;
-            
+
+            // Same-media seek: direct handler above intercepts these before setMessages,
+            // so this branch only fires if the direct handler wasn't registered yet (e.g. on mount).
             if (isSameMedia && msg.command === "seek") {
-              // ✅ Same media, just apply seek directly without triggering React re-render
-              console.log('⏩ [3D Cinema] Same media - applying seek without re-render');
-              if (videoRef.current) {
-                const video = videoRef.current;
-                const drift = video.currentTime - adjustedTime; // Positive = member ahead, negative = member behind
-                const absDrift = Math.abs(drift);
-                
-                if (absDrift > 5.0) {
-                  // 🚨 Large drift (>5s) - hard seek (rare, but necessary)
-                  console.log(`🚨 [Sync] Large drift: ${drift.toFixed(2)}s - hard seeking to ${adjustedTime.toFixed(2)}s`);
-                  video.currentTime = adjustedTime;
-                  video.playbackRate = 1.0; // Reset to normal speed
-                } else if (absDrift > 0.8) {
-                  // 🎵 Medium drift (0.8-5s) - smooth correction via playback rate
-                  // Catch up/slow down by adjusting speed (1-15% variation)
-                  const correction = Math.min(drift * 0.08, 0.15); // Max 15% speed change
-                  video.playbackRate = 1.0 - correction; // Behind = speed up, ahead = slow down
-                  console.log(`🎵 [Sync] Smooth correction - drift: ${drift.toFixed(2)}s, playbackRate: ${video.playbackRate.toFixed(3)}x`);
-                } else {
-                  // ✅ Small drift (<0.8s) - in sync, normal speed
-                  if (video.playbackRate !== 1.0) {
-                    video.playbackRate = 1.0;
-                    console.log(`✅ [Sync] In sync (drift: ${drift.toFixed(2)}s) - normal speed`);
-                  }
-                }
-              }
-              break; // Skip setCurrentMedia() to avoid re-render
+              break; // Direct handler already applied the correction — nothing to do here
             }
-            
+
             // 🎯 Different media or play/pause command - update state
             console.log('🔄 [3D Cinema] New media or play/pause - updating state');
             loadStartTimeRef.current = Date.now(); // ⏱️ Track loading start for compensation
+
+            // Seed syncRef so the autonomous drift check has a reference immediately.
+            syncRefRef.current = { hostTime: adjustedTime, receivedAt: Date.now() };
+
             setPendingSeekTime(adjustedTime);
             
             setCurrentMedia({
@@ -4933,7 +5036,7 @@ export default function CinemaScene3DDemo() {
           
           // Add timeupdate listener for 3D sync
           const updateTime = () => {
-            setCurrentTime(screenVideo.currentTime);
+            currentTimeRef.current = screenVideo.currentTime;
             if (videoTextureUpdateRef.current) {
               videoTextureUpdateRef.current();
             }

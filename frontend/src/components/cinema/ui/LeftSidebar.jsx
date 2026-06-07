@@ -140,6 +140,7 @@ export default function LeftSidebar({
   const [isValidatingUrl, setIsValidatingUrl] = useState(false);
   const [urlError, setUrlError] = useState(null);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
+  const [urlInputFocused, setUrlInputFocused] = useState(false);
   const sidebarRef = useRef(null);
   const [cameraDevices, setCameraDevices] = useState([]);
   const [selectedCameraDeviceId, setSelectedCameraDeviceId] = useState('');
@@ -1015,31 +1016,32 @@ export default function LeftSidebar({
     
     const urlLower = url.toLowerCase();
     
-    // ❌ Reject cloud storage providers (CORS/403 issues - use "Watch From" tab instead)
-    const cloudProviders = [
-      { domain: 'drive.google.com', name: 'Google Drive' },
+    // ✅ Embed platforms are resolved server-side — pass them straight through
+    const embedPlatforms = ['drive.google.com', 'youtube.com', 'youtu.be', 'twitch.tv'];
+    if (embedPlatforms.some(p => urlLower.includes(p))) {
+      console.log('✅ [validateStreamUrl] Embed platform URL — passing to backend');
+      return { valid: true };
+    }
+
+    // ❌ Other cloud storage providers are still blocked (CORS issues)
+    const blockedProviders = [
       { domain: 'dropbox.com', name: 'Dropbox' },
       { domain: 'onedrive.live.com', name: 'OneDrive' },
       { domain: '1drv.ms', name: 'OneDrive' }
     ];
-    
-    for (const provider of cloudProviders) {
+    for (const provider of blockedProviders) {
       if (urlLower.includes(provider.domain)) {
-        console.log('❌ [validateStreamUrl] Cloud storage URL rejected:', provider.name);
-        return { 
-          valid: false, 
-          error: `${provider.name} links can't be streamed due to CORS restrictions. Use "Watch From" tab to screen share instead!` 
-        };
+        return { valid: false, error: `${provider.name} isn't supported. Try Google Drive instead.` };
       }
     }
-    
+
     // For direct URLs, check for video file extensions
     const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.m3u8', '.avi', '.mkv', '.flv', '.wmv', '.m4v'];
     const hasVideoExtension = videoExtensions.some(ext => urlLower.includes(ext));
-    
+
     if (!hasVideoExtension) {
       console.log('❌ [validateStreamUrl] No video extension found in URL');
-      return { valid: false, error: 'URL must point to a direct video file (.mp4, .webm, .m3u8, etc.)' };
+      return { valid: false, error: 'Paste a Google Drive / YouTube / Twitch link, or a direct video URL (.mp4, .webm, .m3u8).' };
     }
     
     console.log('✅ [validateStreamUrl] Valid video URL');
@@ -1572,19 +1574,45 @@ export default function LeftSidebar({
                 
                 {/* URL Input (hidden by default) */}
                 <div id="stream-url-input" style={{ display: 'none' }} className="mb-3 space-y-2">
+                  {/* Platform logo chips — shown on focus to signal what's supported */}
+                  {urlInputFocused && (
+                    <div className="flex flex-wrap gap-1.5 pb-1">
+                      {/* Google Drive — embed supported */}
+                      <div className="flex items-center gap-1 px-2 py-1 bg-green-900/40 border border-green-700/50 rounded-full">
+                        <svg className="w-3 h-3" viewBox="0 0 87.3 78" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3L28 52H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066DA"/>
+                          <path d="M43.65 25L29.4 0c-1.35.8-2.5 1.9-3.3 3.3l-25.8 44.7A9.06 9.06 0 000 52h28z" fill="#00AC47"/>
+                          <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.3l5.9 11.5z" fill="#EA4335"/>
+                          <path d="M43.65 25L57.9 0H29.4z" fill="#00832D"/>
+                          <path d="M59.3 52H28L13.75 76.8h49.9z" fill="#2684FC"/>
+                          <path d="M73.4 26.45l-12.9-22.3c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25 59.3 52h27.9c0-1.55-.4-3.1-1.2-4.5z" fill="#FFBA00"/>
+                        </svg>
+                        <span className="text-green-300 text-[9px] font-medium">Google Drive</span>
+                        <span className="text-green-500 text-[8px]">embed ✓</span>
+                      </div>
+                      {/* YouTube — Watch From */}
+                      <div className="flex items-center gap-1 px-2 py-1 bg-gray-700/50 border border-gray-600/50 rounded-full" title="YouTube works via Watch From (screen share)">
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="#FF0000"><path d="M23.5 6.19a3.02 3.02 0 00-2.12-2.14C19.52 3.6 12 3.6 12 3.6s-7.52 0-9.38.45A3.02 3.02 0 00.5 6.19C.06 8.07 0 12 0 12s.06 3.93.5 5.81a3.02 3.02 0 002.12 2.14C4.48 20.4 12 20.4 12 20.4s7.52 0 9.38-.45a3.02 3.02 0 002.12-2.14C23.94 15.93 24 12 24 12s-.06-3.93-.5-5.81zM9.6 15.6V8.4l6.4 3.6-6.4 3.6z"/></svg>
+                        <span className="text-gray-400 text-[9px]">YouTube</span>
+                        <span className="text-gray-500 text-[8px]">Watch From</span>
+                      </div>
+                      {/* Twitch — Watch From */}
+                      <div className="flex items-center gap-1 px-2 py-1 bg-gray-700/50 border border-gray-600/50 rounded-full" title="Twitch works via Watch From (screen share)">
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="#9146FF"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+                        <span className="text-gray-400 text-[9px]">Twitch</span>
+                        <span className="text-gray-500 text-[8px]">Watch From</span>
+                      </div>
+                    </div>
+                  )}
+
                   <input
                     type="url"
                     value={streamUrl}
-                    onChange={(e) => {
-                      setStreamUrl(e.target.value);
-                      setUrlError(null);
-                    }}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter' && !isValidatingUrl) {
-                        handleStreamFromUrl();
-                      }
-                    }}
-                    placeholder="Paste video URL (mp4, webm, m3u8...)"
+                    onChange={(e) => { setStreamUrl(e.target.value); setUrlError(null); }}
+                    onFocus={() => setUrlInputFocused(true)}
+                    onBlur={() => setTimeout(() => setUrlInputFocused(false), 200)}
+                    onKeyPress={(e) => { if (e.key === 'Enter' && !isValidatingUrl) handleStreamFromUrl(); }}
+                    placeholder="Paste Google Drive, YouTube, Twitch, or direct video URL…"
                     className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white text-xs placeholder-gray-400 focus:outline-none focus:border-purple-500 transition-colors"
                   />
                   {urlError && (
@@ -1595,14 +1623,8 @@ export default function LeftSidebar({
                     disabled={isValidatingUrl || !streamUrl.trim()}
                     className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium text-xs disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
-                    {isValidatingUrl ? 'Validating...' : 'Add to Playlist'}
+                    {isValidatingUrl ? 'Adding…' : 'Add to Playlist'}
                   </button>
-                  <p className="text-gray-400 text-[9px] leading-tight">
-                    💡 Direct video URLs only (.mp4, .webm, .m3u8)
-                  </p>
-                  <p className="text-blue-400 text-[9px] leading-tight mt-1">
-                    📺 For Google Drive/Dropbox: Use "Watch From" tab to screen share
-                  </p>
                 </div>
                 
                 {uploading && (
@@ -1926,7 +1948,7 @@ export default function LeftSidebar({
                             watchType,
                             classType,
                           });
-                          onMediaSelect({ ...item, type: 'upload' });
+                          onMediaSelect({ ...item, type: item.is_embed ? 'embed' : 'upload' });
 
                           // Send WebSocket message for lecture hall/classroom blackboard display
                           if ((watchType === 'classroom' || classType === 'lecture_hall') && sendMessage) {
@@ -1952,15 +1974,40 @@ export default function LeftSidebar({
                       }}
                       title={!isHost ? "Only the host can play media" : ""}
                     >
-                      <img
-                        src={item.poster_url || '/icons/placeholder-poster.jpg'}
-                        onError={handlePosterError}
-                        alt={item.original_name}
-                        className="w-10 h-10 sm:w-12 sm:h-12 rounded object-cover"
-                      />
+                      {item.is_embed ? (
+                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded flex items-center justify-center bg-gray-700 flex-shrink-0">
+                          {item.embed_platform === 'google_drive' && (
+                            <svg className="w-6 h-6" viewBox="0 0 87.3 78" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3L28 52H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066DA"/>
+                              <path d="M43.65 25L29.4 0c-1.35.8-2.5 1.9-3.3 3.3l-25.8 44.7A9.06 9.06 0 000 52h28z" fill="#00AC47"/>
+                              <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.3l5.9 11.5z" fill="#EA4335"/>
+                              <path d="M43.65 25L57.9 0H29.4z" fill="#00832D"/>
+                              <path d="M59.3 52H28L13.75 76.8h49.9z" fill="#2684FC"/>
+                              <path d="M73.4 26.45l-12.9-22.3c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25 59.3 52h27.9c0-1.55-.4-3.1-1.2-4.5z" fill="#FFBA00"/>
+                            </svg>
+                          )}
+                          {item.embed_platform === 'youtube' && (
+                            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="#FF0000"><path d="M23.5 6.19a3.02 3.02 0 00-2.12-2.14C19.52 3.6 12 3.6 12 3.6s-7.52 0-9.38.45A3.02 3.02 0 00.5 6.19C.06 8.07 0 12 0 12s.06 3.93.5 5.81a3.02 3.02 0 002.12 2.14C4.48 20.4 12 20.4 12 20.4s7.52 0 9.38-.45a3.02 3.02 0 002.12-2.14C23.94 15.93 24 12 24 12s-.06-3.93-.5-5.81zM9.6 15.6V8.4l6.4 3.6-6.4 3.6z"/></svg>
+                          )}
+                          {item.embed_platform === 'twitch' && (
+                            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="#9146FF"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+                          )}
+                        </div>
+                      ) : (
+                        <img
+                          src={item.poster_url || '/icons/placeholder-poster.jpg'}
+                          onError={handlePosterError}
+                          alt={item.original_name}
+                          className="w-10 h-10 sm:w-12 sm:h-12 rounded object-cover flex-shrink-0"
+                        />
+                      )}
                       <div className="flex-1 min-w-0">
                         <p className="text-white text-xs sm:text-sm font-medium truncate">{item.original_name}</p>
-                        <p className="text-gray-400 text-[10px] sm:text-xs">{item.duration}</p>
+                        <p className="text-gray-400 text-[10px] sm:text-xs">
+                          {item.is_embed
+                            ? ({ google_drive: 'Google Drive', youtube: 'YouTube', twitch: 'Twitch' }[item.embed_platform] || 'Embed')
+                            : item.duration}
+                        </p>
                       </div>
                       {isHost && (() => {
                         const savedState = getSavedResumeState(item);

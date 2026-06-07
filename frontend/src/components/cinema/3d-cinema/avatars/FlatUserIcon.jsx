@@ -35,6 +35,7 @@ export default function FlatUserIcon({
   lectureHallScale = 1, // 🎯 Scale multiplier for lecture hall (default 1 for cinema)
   isHost = false, // 🎯 Host flag for special rendering
   showChatBubbles = true, // 🎯 User preference for chat bubble visibility (default: ON)
+  speechStyle = 'pulse', // 'pulse' = lecture hall sonar ring | 'glow' = cinema orb brightness
 }) {
   const groupRef = useRef();
   const planeRef = useRef();
@@ -42,10 +43,7 @@ export default function FlatUserIcon({
   const [isLoading, setIsLoading] = useState(false);
   const orbRef = useRef();
   const [isPulsing, setIsPulsing] = useState(false);
-  
-  // 🌊 Cascading ripple ring pool (2 bright white rings for cinema visibility)
-  const ripple1Ref = useRef();
-  const ripple2Ref = useRef();
+  const auraRef = useRef();
 
   // 🔍 DEBUG: Log when component mounts and updates - DISABLED FOR PERFORMANCE
   // useEffect(() => {
@@ -72,6 +70,30 @@ export default function FlatUserIcon({
     const hue = Math.abs(hash) % 360;
     return `hsl(${hue}, 65%, 50%)`;
   }, [userId, isPremium, avatarColor]);
+
+  // Extract hue + saturation from userColor for per-frame lightness animation
+  // Returns null for hex colors (host/premium) — those stay static
+  const orbBaseHSL = React.useMemo(() => {
+    const match = userColor.match(/hsl\((\d+\.?\d*),\s*(\d+)%/);
+    if (!match) return null;
+    return { h: parseFloat(match[1]), s: parseInt(match[2]) };
+  }, [userColor]);
+
+  // Dim version of orb color for cinema glow mode resting state (30% lightness)
+  const dimColor = React.useMemo(() => {
+    if (speechStyle !== 'glow' || !orbBaseHSL) return userColor;
+    return `hsl(${orbBaseHSL.h}, ${orbBaseHSL.s}%, 30%)`;
+  }, [speechStyle, orbBaseHSL, userColor]);
+
+  // Pulse ring color — same hue source, mapped into 220°–280° (blue→purple arc)
+  const pulseColor = React.useMemo(() => {
+    const hash = userId.toString().split('').reduce((acc, char) => {
+      return char.charCodeAt(0) + ((acc << 5) - acc);
+    }, 0);
+    const hue = Math.abs(hash) % 360;
+    const mappedHue = 220 + (hue / 360) * 60;
+    return `hsl(${mappedHue}, 75%, 65%)`;
+  }, [userId]);
 
   // ✅ Load black silhouette SVG (same for everyone)
   useEffect(() => {
@@ -148,36 +170,35 @@ export default function FlatUserIcon({
     setIsPulsing(!!isSpeaking);
   }, [isSpeaking]);
 
-  // 🌊 Animate cascading ripples with audio levels (scale-based — no geometry allocation)
+  // Speech indicator — branches on speechStyle
   useFrame(({ camera }) => {
-    if (isSpeaking && ripple1Ref.current && ripple2Ref.current) {
-      const time = Date.now() * 0.001;
-      const level = audioLevel || 0.5;
-      const speedMultiplier = 0.8 + level * 0.4;
+    const t = Date.now() * 0.001;
 
-      // Ring 1: base geometry radius 0.02, grows to 0.07 → maxScale 3.5
-      // Ring 2: base geometry radius 0.07, grows to 0.12 → maxScale ~1.71
-      const ripples = [
-        { ref: ripple1Ref, maxScale: 3.5,  delay: 0.0 },
-        { ref: ripple2Ref, maxScale: 1.714, delay: 0.5 },
-      ];
-
-      const cycleDuration = 1.5;
-
-      ripples.forEach(({ ref, maxScale, delay }) => {
-        const progress = ((time * speedMultiplier + delay) % cycleDuration) / cycleDuration;
-        const s = 1 + progress * (maxScale - 1);
-        ref.current.scale.set(s, s, 1);
-
-        const fadeStart = 0.8;
-        const fade = progress < fadeStart ? 1.0 : 1.0 - (progress - fadeStart) / (1.0 - fadeStart);
-        ref.current.material.opacity = fade * Math.max(level, 0.8);
-
-        ref.current.lookAt(camera.position);
-      });
-    } else if (ripple1Ref.current && ripple2Ref.current) {
-      ripple1Ref.current.material.opacity = 0;
-      ripple2Ref.current.material.opacity = 0;
+    if (speechStyle === 'glow') {
+      // Cinema: orb dims to 30% at rest, brightens to 85% when speaking — no ring
+      if (orbRef.current && orbBaseHSL) {
+        const lightness = isSpeaking ? 30 + audioLevel * 55 : 30;
+        orbRef.current.material.color.setStyle(`hsl(${orbBaseHSL.h}, ${orbBaseHSL.s}%, ${lightness}%)`);
+      }
+    } else {
+      // Lecture hall pulse: orb lightness 50%→85%, sonar ping ring
+      if (orbRef.current && orbBaseHSL) {
+        const lightness = isSpeaking ? 50 + audioLevel * 35 : 50;
+        orbRef.current.material.color.setStyle(`hsl(${orbBaseHSL.h}, ${orbBaseHSL.s}%, ${lightness}%)`);
+      }
+      if (auraRef.current) {
+        // audioLevel > 0.01 guard prevents ghost ring when muted mid-speech
+        if (isSpeaking && audioLevel > 0.01) {
+          const level = Math.max(audioLevel, 0.1);
+          const progress = (t % 2.8) / 2.8;
+          auraRef.current.scale.setScalar(1 + progress * 2.5);
+          auraRef.current.material.opacity = 0.55 * (1 - progress) * level;
+          auraRef.current.lookAt(camera.position);
+        } else {
+          auraRef.current.scale.setScalar(1);
+          auraRef.current.material.opacity = 0;
+        }
+      }
     }
   });
 
@@ -205,33 +226,19 @@ export default function FlatUserIcon({
         />
       </mesh>
 
-    {/* GLOWING DOT - inside avatar's head (mouth area) */}
+    {/* GLOWING DOT - inside avatar's head; dimColor sets correct resting brightness per mode */}
     <mesh ref={orbRef} position={[0, 0.08, 0.01]}>
       <sphereGeometry args={[0.02, 12, 12]} />
-      <meshBasicMaterial color={userColor} />
+      <meshBasicMaterial color={dimColor} />
     </mesh>
 
-    {/* 🌊 RIPPLE 1 - Inner ring (0.02 → 0.07) ⚪ WHITE FOR VISIBILITY */}
-    <mesh ref={ripple1Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.02, 0.022, 32]} />
-      <meshBasicMaterial
-        color="#ffffff"
-        transparent
-        opacity={0}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
-
-    {/* 🌊 RIPPLE 2 - Outer ring (0.07 → 0.12) ⚪ WHITE FOR VISIBILITY */}
-    <mesh ref={ripple2Ref} position={[0, 0.08, 0.01]}>
-      <ringGeometry args={[0.07, 0.072, 32]} />
-      <meshBasicMaterial
-        color="#ffffff"
-        transparent
-        opacity={0}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
+    {/* SONAR PING — pulse mode only (lecture hall) */}
+    {speechStyle === 'pulse' && (
+      <mesh ref={auraRef} position={[0, 0.08, 0.005]}>
+        <ringGeometry args={[0.022, 0.032, 32]} />
+        <meshBasicMaterial color={pulseColor} transparent opacity={0} side={THREE.DoubleSide} />
+      </mesh>
+    )}
 
       {/* Loading spinner */}
       {isLoading && (

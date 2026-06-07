@@ -610,7 +610,7 @@ const PaymentPage = () => {
                 </svg>
               </button>
               <div>
-                <h1 className="text-3xl font-bold text-gray-900">Payment & Earnings</h1>
+                <h1 className="text-lg sm:text-3xl font-bold text-gray-900 whitespace-nowrap">Payment & Earnings</h1>
                 <p className="text-sm text-gray-600 mt-1">Manage your balance, bank accounts, and withdrawals</p>
               </div>
             </div>

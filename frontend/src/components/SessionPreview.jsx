@@ -234,4 +234,12 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
   );
 };
 
-export default SessionPreview;
+export default React.memo(SessionPreview, (prev, next) =>
+  prev.previewUrl === next.previewUrl &&
+  prev.posterUrl === next.posterUrl &&
+  prev.isGenerating === next.isGenerating &&
+  prev.isClearing === next.isClearing &&
+  prev.muted === next.muted &&
+  prev.previewVersion === next.previewVersion &&
+  prev.session?.session_id === next.session?.session_id
+);

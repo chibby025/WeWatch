@@ -1,13 +1,32 @@
 // frontend/src/components/cinema/3d-cinema/ui/DiscussionModeBar.jsx
 import React, { useState, useEffect } from 'react';
-import './AudioModeBar.css'; // Reuse AudioModeBar styles
+import './AudioModeBar.css';
+
+// Desktop: solid white SVG for lecture (graduation cap)
+function LectureIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+      <path d="M5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82zM12 3L1 9l11 6 9-4.91V17h2V9L12 3z" />
+    </svg>
+  );
+}
+
+// Desktop: solid white SVG for discussion (two speech bubbles)
+function DiscussionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+      <path d="M15 4v7H5l-2 2V4h12zm0-2H3c-1.1 0-2 .9-2 2v14l4-4h10c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
+      <path d="M21 8h-2v7H8v2c0 1.1.9 2 2 2h11l4 4V10c0-1.1-.9-2-2-2z" />
+    </svg>
+  );
+}
 
 export default function DiscussionModeBar({
-  discussionMode,      // bool: true = discussion, false = lecture
+  discussionMode,
   isHost,
-  onToggleMode,        // () => void — host only
-  isSilenceMode,       // bool
-  onToggleSilenceMode, // () => void
+  onToggleMode,
+  isSilenceMode,
+  onToggleSilenceMode,
 }) {
   const [isVisible, setIsVisible] = useState(true);
   const [lastActivity, setLastActivity] = useState(Date.now());
@@ -26,7 +45,6 @@ export default function DiscussionModeBar({
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  // Auto-hide after 3 seconds of inactivity
   useEffect(() => {
     const interval = setInterval(() => {
       if (Date.now() - lastActivity > 3000) setIsVisible(false);
@@ -45,51 +63,68 @@ export default function DiscussionModeBar({
     setLastActivity(Date.now());
   };
 
-  const modeIcon = discussionMode ? '🗣️' : '🎓';
-  const modeText = discussionMode ? 'Discussion Mode' : 'Lecture Mode';
-  const modeDesc = discussionMode ? 'All participants can speak' : 'Only the host speaks';
+  const modeDesc = discussionMode
+    ? 'Open floor · Everyone speaks and hears everyone'
+    : 'Host: speaks to all, hears none · Members: hear host, speak with row';
+
+  const visibilityClass = isVisible ? 'visible' : 'hidden';
 
   return (
-    <div className={`audio-mode-bar ${isVisible ? 'visible' : 'hidden'}`}>
+    <div className="audio-mode-wrapper">
       <div
-        className="audio-mode-content"
-        style={{
-          borderColor: discussionMode
-            ? 'rgba(239, 68, 68, 0.5)'
-            : 'rgba(59, 130, 246, 0.5)',
-        }}
+        className={`audio-mode-bar ${visibilityClass}`}
+        style={{ position: 'relative', top: 'unset', left: 'unset', transform: 'none' }}
       >
-        <span className="audio-mode-icon">{modeIcon}</span>
-        <div className="audio-mode-label">
-          <span className="audio-mode-text">{modeText}</span>
-          <span className="audio-mode-status">{modeDesc}</span>
-        </div>
-
-        {isHost && (
-          <button
-            className="audio-mode-toggle"
-            onClick={handleToggle}
-            style={{
-              background: discussionMode
-                ? 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)'
-                : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-            }}
-            title={`Switch to ${discussionMode ? 'Lecture Mode' : 'Discussion Mode'}`}
-          >
-            {discussionMode ? 'Lecture Mode' : 'Discussion Mode'}
-          </button>
-        )}
-
-        <span className="audio-mode-divider" />
-
-        <button
-          className={`audio-mode-silence ${isSilenceMode ? 'active' : ''}`}
-          onClick={handleSilenceToggle}
-          title={isSilenceMode ? 'Unmute others' : 'Watch in silence'}
+        <div
+          className="audio-mode-content"
+          style={{
+            borderColor: discussionMode
+              ? 'rgba(239, 68, 68, 0.5)'
+              : 'rgba(59, 130, 246, 0.5)',
+          }}
         >
-          {isSilenceMode ? '🔇 Silence' : '🔊 Silence'}
-        </button>
+          {/* Mobile: emoji · Desktop: solid SVG */}
+          <span className="audio-mode-icon md:hidden">
+            {discussionMode ? '🗣️' : '🎓'}
+          </span>
+          <span className="audio-mode-icon hidden md:flex items-center text-white">
+            {discussionMode ? <DiscussionIcon /> : <LectureIcon />}
+          </span>
+
+          <div className="audio-mode-label">
+            <span className="audio-mode-text">
+              {discussionMode ? 'Discussion Mode' : 'Lecture Mode'}
+            </span>
+          </div>
+
+          {isHost && (
+            <button
+              className="audio-mode-toggle"
+              onClick={handleToggle}
+              style={{
+                background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
+              }}
+              title={`Switch to ${discussionMode ? 'Lecture Mode' : 'Discussion Mode'}`}
+            >
+              {discussionMode ? 'Switch to Lecture Mode' : 'Switch to Discussion Mode'}
+            </button>
+          )}
+
+          <span className="audio-mode-divider" />
+
+          <button
+            className={`audio-mode-silence ${isSilenceMode ? 'active' : ''}`}
+            onClick={handleSilenceToggle}
+            title={isSilenceMode ? 'Restore others\' audio' : 'Mute all other audio'}
+          >
+            {isSilenceMode ? '🔈 Quiet Mode' : '🤫 Quiet Mode'}
+          </button>
+        </div>
       </div>
+
+      <p className={`audio-mode-description ${visibilityClass}`}>
+        {modeDesc}
+      </p>
     </div>
   );
 }

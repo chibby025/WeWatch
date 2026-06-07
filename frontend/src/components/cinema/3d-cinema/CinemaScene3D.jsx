@@ -621,11 +621,19 @@ const CinemaScene3D = forwardRef(({
   const screenRef = useRef();
   const theaterRef = useRef();
   const controlsRef = useRef(); // 📱 Store controls ref for triggerViewPreset
-  const [currentCameraPos, setCurrentCameraPos] = useState({ 
-    position: [0, 0, 0], 
+  const [currentCameraPos, setCurrentCameraPos] = useState({
+    position: [0, 0, 0],
     rotation: [0, 0, 0],
     lookingAt: [0, 0, 0]
   });
+
+  // Pause the render loop when the tab is hidden — zero GPU/battery drain when user switches apps.
+  const [isTabVisible, setIsTabVisible] = useState(true);
+  useEffect(() => {
+    const handleVisibility = () => setIsTabVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
   const [currentUserEmote, setCurrentUserEmote] = useState(null); // Current user's active emote
   const [localEmoteNotifications, setLocalEmoteNotifications] = useState([]); // Array of {id, emote} for 2D overlay
 
@@ -818,6 +826,10 @@ const CinemaScene3D = forwardRef(({
   const activeCameraPosition = assignedSeat.cameraPosition;
   const activeCameraRotation = assignedSeat.rotation;
 
+  // Row 1 = front (screen side), row 6 = back. Users cannot see rows behind them.
+  // Default to 6 so all avatars render when seat data hasn't loaded yet.
+  const currentUserRow = assignedSeat.row ?? 6;
+
   // Log only when seat actually changes (not on every render)
   const prevSeatIdRef = useRef(assignedSeat.id);
   useEffect(() => {
@@ -833,13 +845,13 @@ const CinemaScene3D = forwardRef(({
       <div className="absolute inset-0">
         <Canvas
           shadows={false}
-          frameloop="demand" // 🚀 PHASE 2: Only render when scene changes (static GLB model)
-          gl={{ 
-            antialias: true, 
+          frameloop={isTabVisible ? 'always' : 'demand'}
+          gl={{
+            antialias: true,
             alpha: false,
             powerPreference: 'high-performance',
           }}
-          flat // 🚀 PHASE 2: Flat shading for better performance
+          flat
         >
           {/* Camera positioned INSIDE the cinema box */}
           <CinemaCamera 
@@ -1000,6 +1012,7 @@ const CinemaScene3D = forwardRef(({
                 cinemaSeats={cinemaSeats} // ✅ Pass cinemaSeats.json for accurate positioning
                 showChatBubbles={showChatBubbles} // 💬 User preference for chat bubble visibility
                 activeSpeakers={activeSpeakers} // 🎤 Pass active speakers for ripple animation
+                maxRow={currentUserRow} // Only render avatars in rows the user can see
               />
             );
           })()}

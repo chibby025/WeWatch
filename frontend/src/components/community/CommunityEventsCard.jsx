@@ -23,6 +23,18 @@ const TAGLINES = [
   "Request what you want to watch and have the community create it...",
   "See a topic you love? Put it out there — someone will host it!",
   "Your request could be the next community event!",
+  "Debate anime what-ifs live — Goku vs Saitama, who wins?",
+  "Host your own sports debate show. Your take, your stage.",
+  "Teach what you know. Get paid from your house.",
+  "Make your own series. Drop episodes. Build your audience.",
+  "Religious debates, philosophy nights, faith discussions — your community, your rules.",
+  "Replay your best sessions for new fans — the Telemundo model, indie style.",
+  "Become the director, the talent, the brand — all in one room.",
+  "Virtual hangouts with people who get it. No flights needed.",
+  "Science battles, history debates, culture clashes — the community decides.",
+  "Monetise your craft. Post your work. Get paid to create.",
+  "Animal kingdom debates, nature battles, wildlife clashes — who's the apex?",
+  "Your ideas are the programming. You control the schedule.",
 ];
 
 const WATCH_LABELS = {

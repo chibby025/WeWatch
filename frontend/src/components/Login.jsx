@@ -6,6 +6,12 @@ import { loginUser, getCurrentUser } from '../services/api'; // Adjust path if n
 import { cacheUserData } from '../utils/cinemaCache';
 import GoogleLoginButton from './GoogleLoginButton';
 import { useAuth } from '../contexts/AuthContext'; // ✅ Import auth context
+import { useGLTF } from '@react-three/drei';
+
+// Start downloading 3D models while the user is on the auth page.
+// By the time they enter a cinema or lecture hall room they'll be in THREE.Cache.
+useGLTF.preload('/models/cinema.glb');
+useGLTF.preload('/models/lecture_hall.glb');
 
 const Login = () => {
   const [email, setEmail] = useState('');

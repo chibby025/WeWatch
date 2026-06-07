@@ -25,6 +25,36 @@ This is more than a project - it's a testament to perseverance, continuous learn
 
 ---
 
+## 📍 PROJECT STATUS (June 7, 2026 - AVATAR SPEECH INDICATORS + LOBBY EFFICIENCY + UI POLISH)
+
+### ✅ LATEST UPDATES (June 7, 2026):
+
+**Avatar Speech Indicator System — FlatUserIcon** ✅
+- Added `speechStyle` prop (`'pulse'` | `'glow'`) to `FlatUserIcon.jsx`
+- **Cinema (`speechStyle="glow"`)**: Orb dims to 30% HSL lightness at rest, brightens 30%→85% with `audioLevel`. No ring mesh — zero extra draw calls in the dark cinema environment.
+- **Lecture Hall (`speechStyle="pulse"`)**: Sonar-ping ring (`ringGeometry [0.022, 0.032]`, 2.8s cycle, expands 1→3.5×, fades opacity 0.55→0). Orb lightens 50%→85% with `audioLevel`. Ring guarded by `audioLevel > 0.01` to prevent ghost artifact on mute.
+- `pulseColor`: user hue mapped into 220°–280° blue-purple arc (distinct from orb's `userColor`).
+- `dimColor` memo: `hsl(h, s%, 30%)` for glow resting state; falls back to `userColor` for hex colors.
+- `CinemaAvatarManager` passes `speechStyle="glow"`. `LectureHallAvatarManager` passes `speechStyle="pulse"`.
+
+**LobbyPage Efficiency Improvements** ✅
+- `filteredRooms` / `filteredSessions`: removed state + useEffect double-render; now `useMemo` derived values.
+- Rooms lazy-load: `roomsFetchedRef` gates the initial `fetchRoomsData()` call; warm cache served instantly from `_lobbyCache`; network fetch deferred to first rooms-tab visit.
+- Unified 30s poll: one stable `setInterval` (empty deps) using `wsConnectedPollRef` + `activeTabPollRef` refs replaces the separate 30s liveRooms + 60s fallback intervals.
+- `SessionPreview` wrapped in `React.memo` with 7-prop custom comparator — unchanged cards skip re-render when any sibling's preview updates.
+- `videoMuted` default changed `true` → `false` (previews unmuted).
+- `showChatBubbles` (cinema) default changed `true` → `false`.
+
+**Debug / Security** ✅
+- `LectureHallPage.jsx`: 4 debug overlays (camera markers, position overlay, seat panel, LiveKit audio panel) now also check `currentUser?.role === 'super_admin'` at render site. `SettingsModal.jsx` debug sections were already gated.
+
+**UI Polish** ✅
+- `PaymentPage.jsx` heading: `text-lg sm:text-3xl whitespace-nowrap` — stays on one line on mobile.
+- `LobbyPage.jsx`: home-button refresh toast relabelled from "Watching Now refreshed!" → "WatchOut refreshed!" when on the watching tab.
+- `CommunityEventsCard.jsx`: TAGLINES expanded from 3 → 15 items covering anime debates, sports shows, religious discussions, creator monetisation, indie series, virtual hangouts, etc.
+
+---
+
 ## 📍 PROJECT STATUS (May 28, 2026 - SESSION PREVIEW PIPELINE + CONSOLE CLEANUP)
 
 ### 🚀 LAUNCH STATUS: PRODUCTION LIVE ✅

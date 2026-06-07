@@ -1,5 +1,5 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup, toggleRoomFavourite, joinRoom, clearAllNotifications, startCircleWatchout } from '../services/api';
 import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon, EyeIcon, ChatBubbleOvalLeftEllipsisIcon, BookmarkIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/solid';
@@ -136,8 +136,7 @@ const LobbyPage = () => {
   const [loading, setLoading] = useState(true);
   const [sessionsLoading, setSessionsLoading] = useState(true); // ✅ Separate loading for sessions
   const [error, setError] = useState(null);
-  const [filteredRooms, setFilteredRooms] = useState([]);
-  const [filteredSessions, setFilteredSessions] = useState([]); // ✅ Filtered sessions
+  // filteredRooms and filteredSessions are derived — computed via useMemo below sortRooms
   
   // ✅ Infinite Scroll State
   const [roomsPage, setRoomsPage] = useState(0);
@@ -395,9 +394,12 @@ const LobbyPage = () => {
   // 🔇 Video Mute State (persistent across sessions)
   const [videoMuted, setVideoMuted] = useState(() => {
     const saved = localStorage.getItem('videoAutoplayMuted');
-    return saved === null ? true : saved === 'true'; // Default muted
+    return saved === null ? false : saved === 'true'; // Default unmuted
   });
   
+  // Tracks whether the initial rooms network fetch has been dispatched
+  const roomsFetchedRef = React.useRef(false);
+
   // ✅ Infinite scroll refs
   const watchingNowScrollRef = React.useRef(null);
   const loadMoreTriggerRef = React.useRef(null);
@@ -875,27 +877,24 @@ const LobbyPage = () => {
     return [...owned, ...member];
   };
 
-  // Filter rooms and sessions effect
-  useEffect(() => {
-    if (searchTerm === '') {
-      setFilteredRooms(sortRooms(rooms));
-      setFilteredSessions(sessions);
-    } else {
-      const termLower = searchTerm.toLowerCase().trim();
-      const filtered = rooms.filter(room =>
-        (room.name && room.name.toLowerCase().includes(termLower)) ||
-        (room.description && room.description.toLowerCase().includes(termLower))
-      );
-      setFilteredRooms(sortRooms(filtered));
-      
-      // ✅ Filter sessions by room name or host username
-      const filteredSess = sessions.filter(session =>
-        (session.room_name && session.room_name.toLowerCase().includes(termLower)) ||
-        (session.host_username && session.host_username.toLowerCase().includes(termLower))
-      );
-      setFilteredSessions(filteredSess);
-    }
-  }, [rooms, sessions, searchTerm]);
+  // Derived — no state, no effect, no double-render
+  const filteredRooms = useMemo(() => {
+    if (!searchTerm) return sortRooms(rooms);
+    const t = searchTerm.toLowerCase().trim();
+    return sortRooms(rooms.filter(r =>
+      (r.name && r.name.toLowerCase().includes(t)) ||
+      (r.description && r.description.toLowerCase().includes(t))
+    ));
+  }, [rooms, searchTerm]);
+
+  const filteredSessions = useMemo(() => {
+    if (!searchTerm) return sessions;
+    const t = searchTerm.toLowerCase().trim();
+    return sessions.filter(s =>
+      (s.room_name && s.room_name.toLowerCase().includes(t)) ||
+      (s.host_username && s.host_username.toLowerCase().includes(t))
+    );
+  }, [sessions, searchTerm]);
 
   // ✅ Infinite scroll observer for rooms
   useEffect(() => {
@@ -986,7 +985,6 @@ const LobbyPage = () => {
       setError('Failed to load rooms. Please try again later.');
       if (!append) {
         setRooms([]);
-        setFilteredRooms([]);
       }
     } finally {
       setLoading(false);
@@ -1292,7 +1290,7 @@ const LobbyPage = () => {
         loading: false
       });
       
-      toast.success('Watching Now refreshed!');
+      toast.success('WatchOut refreshed!');
     } catch (err) {
       console.error('❌ [LobbyPage] Failed to refresh Watching Now:', err);
       toast.error('Failed to refresh content');
@@ -1440,12 +1438,9 @@ const LobbyPage = () => {
     }
   };
 
-  // Poll every 30s when in chats tab so the WatchOut button stays fresh
+  // Immediate liveRooms fetch when entering chats tab
   useEffect(() => {
-    if (activeTab !== 'chats') return;
-    fetchLiveRooms();
-    const interval = setInterval(fetchLiveRooms, 30000);
-    return () => clearInterval(interval);
+    if (activeTab === 'chats') fetchLiveRooms();
   }, [activeTab]);
 
   // Tab hint text: show briefly, then fade
@@ -2325,7 +2320,15 @@ const LobbyPage = () => {
 
   // Initial fetch on mount
   useEffect(() => {
-    fetchRoomsData();
+    // Rooms: serve warm cache instantly; only hit network if cache is stale AND starting on rooms tab.
+    // Users starting on 'watching' get rooms lazily on first rooms-tab visit (see effect below).
+    if (_lobbyCache.rooms && Date.now() - _lobbyCache.roomsTs < CACHE_TTL) {
+      setRooms(_lobbyCache.rooms);
+      roomsFetchedRef.current = true;
+    } else if (activeTab === 'rooms') {
+      fetchRoomsData();
+      roomsFetchedRef.current = true;
+    }
     fetchCommunityEvents(); // fetch for all users (guests see G/PG ratings)
     if (currentUser) {
       fetchSessionsData(); // auth-required endpoint; guests use the separate guest useEffect
@@ -2339,6 +2342,14 @@ const LobbyPage = () => {
       prefetchWatchingNowContent();
     }
   }, [currentUser]);
+
+  // Lazy rooms fetch: fires when user first visits rooms tab if not already fetched on mount
+  useEffect(() => {
+    if (activeTab === 'rooms' && !roomsFetchedRef.current) {
+      roomsFetchedRef.current = true;
+      fetchRoomsData();
+    }
+  }, [activeTab]);
 
   // Onboarding: open UserProfileModal once for any user who hasn't completed it
   // Gate on authLoading so we never fire during the brief null-user window on page load
@@ -2931,17 +2942,23 @@ const LobbyPage = () => {
     };
   }, [wsToken]); // Re-run when wsToken becomes available
 
-  // Fallback polling every 60 seconds (when WebSocket disconnects)  
+  // Unified 30s poll — one interval for the component lifetime.
+  // Reads current state via refs so the interval never needs to restart.
+  const wsConnectedPollRef = React.useRef(wsConnected);
+  const activeTabPollRef   = React.useRef(activeTab);
+  useEffect(() => { wsConnectedPollRef.current = wsConnected; }, [wsConnected]);
+  useEffect(() => { activeTabPollRef.current   = activeTab;   }, [activeTab]);
+
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!wsConnected) {
+      if (!wsConnectedPollRef.current) {
         fetchRoomsData();
         fetchSessionsData();
       }
-    }, 60000); // 60 seconds
-  
+      if (activeTabPollRef.current === 'chats') fetchLiveRooms();
+    }, 30000);
     return () => clearInterval(interval);
-  }, [wsConnected]);
+  }, []); // stable for component lifetime
 
   // Handle search change
   const handleSearchChange = (event) => {

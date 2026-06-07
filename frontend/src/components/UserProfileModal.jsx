@@ -319,8 +319,8 @@ export default function UserProfileModal({
               )
             ) : (
               <div className="flex gap-3">
-                {/* Follow button — hidden when already a room member */}
-                {!isInRoom && (
+                {/* Follow button — hidden when already a room member or already following */}
+                {!isInRoom && !isFollowing && (
                   <button
                     onClick={handleFollowToggle}
                     disabled={followLoading}

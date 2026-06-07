@@ -436,6 +436,112 @@ Twitter iOS precedent: sensitive content toggle removed entirely from iOS App St
 - Transport: WSS (TLS) — sufficient for beta
 - No E2E: kills server-side moderation and adds huge complexity; revisit post-beta
 
+## 3D Cinema (added 2026-06)
+
+### Key files
+| File | Role |
+|---|---|
+| `frontend/src/components/cinema/3d-cinema/CinemaScene3DDemo.jsx` | Main 3D cinema component (~280KB). All playback, sync, WS handling, LiveShare, seats. |
+| `frontend/src/components/cinema/3d-cinema/CinemaScene3D.jsx` | R3F Canvas + lighting + camera controls + avatar manager |
+| `frontend/src/components/cinema/3d-cinema/CinemaTheaterGLB.jsx` | Three.js GLB model + VideoTexture + `useFrame` loop |
+| `frontend/src/hooks/usePlaybackSync.js` | Broadcasts `playback_control` seek from host every 8s |
+
+### Canvas rendering pipeline
+- `THREE.VideoTexture` wraps the `<video>` element ref
+- `useFrame` in `CinemaTheaterGLB` sets `videoTextureRef.current.needsUpdate = true` every RAF
+- Canvas runs `frameloop="always"` — renders every RAF unconditionally
+- **Critical**: if `useFrame` misses any frame (main thread blocked), the GPU shows a stale video frame → visible stutter
+- `CinemaTheaterGLB` is `React.memo`'d with a custom `arePropsEqual` comparator — only re-renders when `videoElement`, `cameraVideoElement`, `gameCanvas`, `podcastCanvas`, or `liveShareMode` changes
+
+### Sync architecture (current state — 2026-06)
+Two-layer sync for members:
+
+**Layer 1 — Direct handler (every 8s, zero re-renders)**
+- Host's `usePlaybackSync` broadcasts `playback_control` seek every 8s
+- `registerDirectMessageHandler` in `CinemaScene3DDemo` intercepts these BEFORE `setMessages()`
+- For same-media seeks: applies smooth `playbackRate` correction (0.8–5s drift) or hard seek (>5s drift) directly on `videoRef.current` — no React state, no re-render, no RAF gap
+- Also refreshes `syncRefRef` on every intercept so Layer 2 stays current
+
+**Layer 2 — Autonomous drift check (every 2s, zero WS)**
+- `syncRefRef = { hostTime, receivedAt }` seeded from the initial `playback_control` play message
+- 2s `setInterval` computes `expected = hostTime + elapsed` and corrects `video.currentTime` directly if drift > 1s
+- No WS round-trip, no setState — purely local arithmetic
+
+**Why host never jitters**: backend filters sender from their own broadcasts — host never receives own `playback_control` echoes → no re-renders for host.
+
+**Shadow refs pattern** (prevents effect re-runs on every WS message):
+`isPlayingRef`, `pendingSeekTimeRef`, `sendMessageRef`, `isHostRef`, `currentMediaRef` mirror state/callbacks so the media loading `useEffect` can read current values without listing volatile deps. Effect deps reduced to `[currentMedia, liveShareMode, roomId, finalSessionId]`.
+
+### Browser vs native performance
+**Jitter observed in Firefox is unavoidable** — Firefox's WebGL pipeline for `THREE.VideoTexture` is significantly slower than Chrome's. Chrome uses `CHROMIUM_copy_texture` internally; Firefox goes through a slower path. **Chrome is the supported browser for 3D cinema.** Consider adding a browser detection warning for Firefox users.
+
+The general browser overhead vs native apps (COD Mobile etc.):
+- JS → WebGL API → Chrome GPU process (sandboxed) → driver → GPU vs C++ → driver → GPU directly
+- Chrome security-validates every WebGL call (native apps don't pay this)
+- JS main thread shared between React, WS, and render loop (native render runs on dedicated thread)
+- No hardware texture compression access (KTX2/ASTC) without explicit pipeline
+- Phase 3 Capacitor build will improve this — WKWebView/WebView has better GPU access and no browser process sandboxing
+
+### Scalability
+- **Backend**: Scales well. Overfill system distributes users across isolated 42-seat rooms. 1000 users = ~24 rooms, each running independently. WS + LiveKit per room is lightweight.
+- **Mobile browser**: Not yet optimised. Current scene (GLB model + 20 lights + 42 avatars + VideoTexture) is heavy for mid-range Android in a browser context.
+
+### Mobile performance — pending optimisations (priority order)
+1. **Pause RAF when tab hidden** — `document.visibilityState === 'hidden'` → stop `invalidate()`. Zero GPU/battery when user switches apps.
+2. **Behind-seat avatar culling** — skip rendering avatars whose seat Z > current user's seat Z. Users cannot look behind them (OrbitControls constrained to left/right/center). Could eliminate 30–50% of avatar draw calls.
+3. **Service worker cache** — cache GLB, seat JSON, JS bundles on first load. Repeat visits load from disk.
+4. **`THREE.Cache.enabled = true`** — one line at app startup, caches geometries/textures in memory for the session.
+5. **Disable OrbitControls damping on mobile** — damping keeps animating after finger lift → continuous `invalidate()` calls for nothing.
+6. **Reduce lights on mobile** — detect `isMobile` and render 4-5 lights (ambient + screen + 2 ceiling + 1 fill) instead of 20+.
+7. **Device tier detection → 2D fallback** — `navigator.hardwareConcurrency <= 4` or frame-rate probe on load → route low-end devices to existing 2D fullscreen view.
+8. **Sprite/billboard avatars at distance** — replace distant avatar meshes with flat `PlaneGeometry` sprites. One draw call per distant avatar.
+9. **`THREE.InstancedMesh` for avatars** — all 42 avatars share same geometry → one draw call total instead of 42.
+10. **KTX2 compressed textures in GLB** — re-export cinema.glb with KTX2/Basis textures; decompresses directly on GPU → less VRAM + faster upload.
+
+### Caching opportunities
+- `cinemaSeats.json` — cache in `sessionStorage` on first fetch; never changes mid-session
+- GLB model — confirm Railway serves with `Cache-Control: max-age` and `ETag` headers
+- Service worker (PWA) — cache GLB + JS bundles for offline/repeat-visit instant load
+- KTX2 textures — GPU-native format, decompress on GPU not CPU
+
+### Avatar speech indicator system (added 2026-06)
+`FlatUserIcon` has a `speechStyle` prop that switches between two speech modes. Set by the avatar manager, not by FlatUserIcon itself.
+
+| Prop value | Set by | Behaviour |
+|---|---|---|
+| `'pulse'` | `LectureHallAvatarManager` | Sonar-ping ring + orb lightness shift |
+| `'glow'` | `CinemaAvatarManager` | Orb brightness only, no ring |
+
+**Glow mode (`speechStyle="glow"`)** — cinema dark environment:
+- Orb rests at 30% HSL lightness (nearly invisible), brightens 30%→85% with `audioLevel`
+- No ring mesh rendered — zero extra draw calls
+- `dimColor` memo returns `hsl(h, s%, 30%)` as the JSX initial color so the orb starts dim without waiting for the first `useFrame`
+
+**Pulse mode (`speechStyle="pulse"`)** — lecture hall bright environment:
+- Orb lightness shifts 50%→85% with `audioLevel`
+- Sonar-ping ring (`ringGeometry [0.022, 0.032]`): expands scale 1→3.5× over 2.8s cycle, opacity 0.55→0 linearly
+- **Ghost-fix**: ring only activates when `isSpeaking && audioLevel > 0.01` — prevents the frozen last-frame artifact when user mutes mid-speech
+- `pulseColor`: user's hue mapped into 220°–280° blue-purple arc — distinct from the orb's `userColor` so the two elements never merge into one mass
+
+**Key memos in FlatUserIcon:**
+- `orbBaseHSL` — extracts `{ h, s }` from `userColor` HSL string; `null` for hex colors (host/premium) which stay static
+- `dimColor` — `hsl(h, s%, 30%)` for glow mode; falls back to `userColor` for hex colors and pulse mode
+- `pulseColor` — `hsl(mappedHue, 75%, 65%)` where `mappedHue = 220 + (hue/360)*60`
+
+### LobbyPage Efficiency Patterns (added 2026-06)
+Applied to `LobbyPage.jsx` and `SessionPreview.jsx`:
+
+- **`filteredRooms` / `filteredSessions` as `useMemo`** — were `useState` + `useEffect`, which caused a double-render on every search/session update. Now computed inline as `useMemo([rooms/sessions, searchTerm])`. Never use `setFilteredRooms` / `setFilteredSessions` — they no longer exist as state.
+- **Rooms lazy-load with `roomsFetchedRef`** — `fetchRoomsData()` is no longer called unconditionally on mount. On mount: if `_lobbyCache.rooms` is warm, serve instantly from cache without network; else fetch only if starting on `'rooms'` tab. A separate `useEffect([activeTab])` fires `fetchRoomsData()` on the user's first visit to the rooms tab. WS events still call `fetchRoomsData()` directly.
+- **Unified 30s poll** — replaces two separate intervals (30s liveRooms + 60s WS-fallback). One stable `setInterval` (empty dep array) reads current values via `wsConnectedPollRef` + `activeTabPollRef` refs, never restarts. Covers both: WS-fallback refreshes (rooms + sessions when WS down) and liveRooms refresh (when in chats tab). Immediate liveRooms fetch on entering chats tab is a separate `useEffect([activeTab])`.
+- **`SessionPreview` wrapped in `React.memo`** — custom 7-prop comparator (`previewUrl`, `posterUrl`, `isGenerating`, `isClearing`, `muted`, `previewVersion`, `session.session_id`). When any one session's preview updates via WS, only that card re-renders; unchanged cards skip.
+- **`videoMuted` default `false`** — previews unmuted by default (stored in `localStorage('videoAutoplayMuted')`). Browser autoplay policy still applies — audio plays only after user interaction.
+- **`showChatBubbles` default `false`** — cinema chat bubbles are off until the user explicitly enables them in Settings (`localStorage('cinema_show_chat_bubbles')`).
+
+### SettingsModal / LectureHallPage debug gating (added 2026-06)
+- All debug sections in `SettingsModal.jsx` are already gated by `currentUser?.role === 'super_admin'` — no change needed there.
+- `LectureHallPage.jsx`: four debug overlays (camera markers, position overlay, seat management panel, LiveKit audio debug) now also check `currentUser?.role === 'super_admin'` at the render site, as belt-and-suspenders protection even if the boolean flags are somehow set to `true`.
+
 ## Follow Model
 "Follow" = join the host's main room. There is **no separate follows table**. Do not add one.
 
@@ -574,3 +680,6 @@ Key vars expected in `.env` or Railway config:
 - **Same-media seek must not reload `video.src`**: For `playback_control` commands where the media is already loaded, operate directly on the video element (`videoEl.currentTime = adjustedTime`). Calling `setCurrentMedia` for a seek-only command reloads the src, adding ~275ms load + ~318ms seek = ~593ms of unnecessary pipeline delay.
 - **`sync_heartbeat` drift corrections replaying scenes**: If heartbeat corrections cause the member to repeatedly seek backwards, the `sync_heartbeat` handler is using `server_ts` instead of `message.timestamp` for latency. The handler's `_latency = Date.now() - _hb.timestamp` line must use `timestamp`, not `server_ts || timestamp`.
 - **VolumeControl dismiss button**: The × button must be the last child in the flex column (below the mute icon), not `absolute top-1 right-1`. Absolute positioning takes it out of flow; being the last flex item keeps it centered as a natural bottom cap of the bar.
+- **Avatar ring ghost on mute**: In `FlatUserIcon` pulse mode, the sonar ring must check `isSpeaking && audioLevel > 0.01` (not `isSpeaking` alone). LiveKit's `isSpeaking` flag has a ~300–500ms cooldown after audio drops, so the ring keeps animating briefly after muting. The `audioLevel > 0.01` guard kills it instantly.
+- **`filteredRooms`/`filteredSessions` are not state**: They are `useMemo` values derived from `rooms`, `sessions`, and `searchTerm`. Do not add `setFilteredRooms` or `setFilteredSessions` calls — they don't exist. Filter the source arrays and `setRooms`/`setSessions` instead, and the memo will recompute.
+- **`roomsFetchedRef` controls rooms initial fetch**: Don't add a bare `fetchRoomsData()` call to new mount effects in LobbyPage — it would bypass the lazy-load gate. Check `roomsFetchedRef.current` first, or just let the existing unified effect handle it.

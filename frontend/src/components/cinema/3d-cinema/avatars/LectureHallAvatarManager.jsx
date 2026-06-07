@@ -170,7 +170,7 @@ export default function LectureHallAvatarManager({
             isSpeaking={user.isSpeaking}
             audioLevel={user.audioLevel}
             isHost={user.isHost}
-            // ✅ Directly call the onAvatarClick prop passed from the parent
+            speechStyle="pulse"
             onClick={() => onAvatarClick({
               id: user.userId,
               username: user.username,

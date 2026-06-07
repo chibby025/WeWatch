@@ -8,6 +8,78 @@ import (
 	"time"
 )
 
+// EmbedPlatformResult holds the result of embed platform detection.
+type EmbedPlatformResult struct {
+	IsEmbed  bool
+	Platform string // "google_drive" | "youtube" | "twitch"
+	EmbedURL string // The iframe-ready URL
+}
+
+// DetectEmbedPlatform checks if the URL is a supported embed platform and returns
+// the iframe-ready URL. Supported platforms: Google Drive, YouTube, Twitch.
+func DetectEmbedPlatform(originalURL string) EmbedPlatformResult {
+	urlLower := strings.ToLower(originalURL)
+
+	// Google Drive — convert share link to preview embed
+	if strings.Contains(urlLower, "drive.google.com") {
+		fileID := extractGoogleDriveFileID(originalURL)
+		if fileID != "" {
+			embedURL := fmt.Sprintf("https://drive.google.com/file/d/%s/preview", fileID)
+			fmt.Printf("✅ [DetectEmbedPlatform] Google Drive → %s\n", embedURL)
+			return EmbedPlatformResult{IsEmbed: true, Platform: "google_drive", EmbedURL: embedURL}
+		}
+		fmt.Printf("⚠️ [DetectEmbedPlatform] Google Drive URL but could not extract file ID\n")
+		return EmbedPlatformResult{}
+	}
+
+	// YouTube — convert watch/short links to embed
+	if strings.Contains(urlLower, "youtube.com/watch") || strings.Contains(urlLower, "youtu.be/") {
+		videoID := extractYouTubeVideoID(originalURL)
+		if videoID != "" {
+			embedURL := fmt.Sprintf("https://www.youtube.com/embed/%s?autoplay=1&mute=1&rel=0", videoID)
+			fmt.Printf("✅ [DetectEmbedPlatform] YouTube → %s\n", embedURL)
+			return EmbedPlatformResult{IsEmbed: true, Platform: "youtube", EmbedURL: embedURL}
+		}
+	}
+
+	// Twitch channel — convert to player embed
+	if strings.Contains(urlLower, "twitch.tv/") && !strings.Contains(urlLower, "clips.twitch.tv") {
+		channelName := extractTwitchChannel(originalURL)
+		if channelName != "" {
+			embedURL := fmt.Sprintf("https://player.twitch.tv/?channel=%s&parent=letswatchout.com&autoplay=true&muted=false", channelName)
+			fmt.Printf("✅ [DetectEmbedPlatform] Twitch → %s\n", embedURL)
+			return EmbedPlatformResult{IsEmbed: true, Platform: "twitch", EmbedURL: embedURL}
+		}
+	}
+
+	return EmbedPlatformResult{}
+}
+
+// extractYouTubeVideoID extracts the video ID from YouTube URLs.
+func extractYouTubeVideoID(url string) string {
+	// youtu.be/{ID}
+	shortPattern := regexp.MustCompile(`youtu\.be/([^?&/]+)`)
+	if m := shortPattern.FindStringSubmatch(url); len(m) > 1 {
+		return m[1]
+	}
+	// youtube.com/watch?v={ID}
+	watchPattern := regexp.MustCompile(`[?&]v=([^&]+)`)
+	if m := watchPattern.FindStringSubmatch(url); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+// extractTwitchChannel extracts the channel name from a Twitch URL.
+func extractTwitchChannel(url string) string {
+	// twitch.tv/{channel}
+	pattern := regexp.MustCompile(`twitch\.tv/([^/?&#]+)`)
+	if m := pattern.FindStringSubmatch(url); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
 // ConvertToDirectStreamURL converts cloud storage share links to direct streaming URLs
 func ConvertToDirectStreamURL(originalURL string) string {
 	fmt.Printf("🔗 [ConvertToDirectStreamURL] Input: %s\n", originalURL)

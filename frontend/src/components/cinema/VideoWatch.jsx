@@ -2626,16 +2626,18 @@ export default function VideoWatch() {
     // that was making the URL unreachable on member devices.
     const mediaUrl = toAbsUrl(mediaItem.file_url || filePath) || filePath;
 
+    const isEmbed = !!(mediaItem.is_embed || mediaItem.isEmbed);
     const normalizedMediaItem = {
       ...mediaItem,
       ID: id,
-      type: 'upload',
+      type: isEmbed ? 'embed' : 'upload',
       file_path: filePath,
-      mediaUrl: mediaUrl,
+      mediaUrl: isEmbed ? filePath : mediaUrl, // embed uses file_path directly (already the iframe URL)
       original_name: mediaItem.original_name || mediaItem.OriginalName || 'Unknown Media',
+      embed_platform: mediaItem.embed_platform || mediaItem.EmbedPlatform || null,
     };
     setCurrentMedia(normalizedMediaItem);
-    setIsPlaying(true);
+    setIsPlaying(!isEmbed); // embeds control their own playback
     playbackPositionRef.current = 0;
 
     console.log('🎬 [DEBUG handlePlayMedia] Resolved URLs:', {
@@ -2654,11 +2656,13 @@ export default function VideoWatch() {
         command: "play",
         media_item_id: id,
         file_path: filePath,
-        file_url: mediaUrl, // absolute URL — members use this directly
+        file_url: isEmbed ? filePath : mediaUrl,
         original_name: normalizedMediaItem.original_name,
         seek_time: 0,
         timestamp: Date.now(),
         sender_id: currentUser.id,
+        is_embed: isEmbed,
+        embed_platform: normalizedMediaItem.embed_platform || null,
       };
       console.log('📤 [DEBUG handlePlayMedia] Sending playback_control via WS:', {
         file_path: playbackMsg.file_path,
@@ -3963,6 +3967,20 @@ export default function VideoWatch() {
 
           if (!message.file_path) {
             console.warn('⚠️ [MEMBER] playback_control has no file_path');
+            break;
+          }
+
+          // Embed media (Google Drive, YouTube, Twitch) — just load the iframe URL, no seek logic
+          if (message.is_embed) {
+            if (!currentMedia || currentMedia.file_path !== message.file_path) {
+              setCurrentMedia({
+                type: 'embed',
+                file_path: message.file_path,
+                mediaUrl: message.file_path,
+                original_name: message.original_name || 'Embedded Content',
+                embed_platform: message.embed_platform || null,
+              });
+            }
             break;
           }
 

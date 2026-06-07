@@ -18,6 +18,7 @@ export default function CinemaAvatarManager({
   cinemaSeats = { seats: [] }, // ✅ NEW: cinemaSeats.json data
   showChatBubbles = true, // 🎯 User preference for chat bubble visibility
   activeSpeakers = new Map(), // 🎤 Active speakers with audio levels
+  maxRow = 6, // Behind-seat culling: only render avatars in rows 1–maxRow
 }) {
   const [userEmotes, setUserEmotes] = useState({});
   const [userMessages, setUserMessages] = useState({});
@@ -182,6 +183,7 @@ export default function CinemaAvatarManager({
         if (!seatAssignment) return null;
         const isCurrentUser = member.id === currentUserId;
         if (isCurrentUser) return null;
+        if (seatAssignment.row > maxRow) return null; // Behind-seat culling
 
         const currentEmote = userEmotes[member.id] || null;
         const recentMessage = userMessages[member.id] || null;
@@ -250,9 +252,10 @@ export default function CinemaAvatarManager({
               isHovered={isHovered}
               onHover={handleUserHover}
               isSpeaking={isSpeaking}
-              audioLevel={audioLevel} // 🎵 Pass audio level for pulsation
-              lectureHallScale={0.525} // 🎯 Avatar size (5% larger than 0.5)
-              showChatBubbles={showChatBubbles} // 🎯 User preference for chat bubble visibility
+              audioLevel={audioLevel}
+              lectureHallScale={0.525}
+              showChatBubbles={showChatBubbles}
+              speechStyle="glow"
             />
           </group>
         );

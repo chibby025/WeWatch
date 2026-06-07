@@ -78,13 +78,13 @@ export default function AudioModeBar({
         {/* Divider */}
         <span className="audio-mode-divider" />
 
-        {/* Silence toggle — available to everyone */}
+        {/* Quiet Mode toggle — available to everyone */}
         <button
           className={`audio-mode-silence ${isSilenceMode ? 'active' : ''}`}
           onClick={handleSilenceToggle}
-          title={isSilenceMode ? 'Unmute others' : 'Watch in silence'}
+          title={isSilenceMode ? 'Restore others\' audio' : 'Mute all other audio'}
         >
-          {isSilenceMode ? '🔇 Silence' : '🔊 Silence'}
+          {isSilenceMode ? '🔈 Quiet Mode' : '🤫 Quiet Mode'}
         </button>
       </div>
     </div>

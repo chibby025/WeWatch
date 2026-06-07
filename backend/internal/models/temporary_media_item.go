@@ -30,6 +30,10 @@ type TemporaryMediaItem struct {
 	IsStream          bool   `gorm:"type:boolean;default:false" json:"is_stream"` // True if this is a stream URL (not uploaded file)
 	OriginalStreamURL string `gorm:"type:text" json:"original_stream_url,omitempty"` // Original cloud storage link before conversion
 
+	// --- Embed Support ---
+	IsEmbed           bool   `gorm:"type:boolean;default:false" json:"is_embed"` // True if rendered as iframe (Google Drive, YouTube, Twitch)
+	EmbedPlatform     string `gorm:"type:varchar(50)" json:"embed_platform,omitempty"` // "google_drive" | "youtube" | "twitch"
+
 	// --- Foreign Keys for Relationships ---
 	RoomID       uint      `gorm:"not null;index" json:"room_id"` // Link to the room this media belongs to
 	UploaderID   uint      `gorm:"not null;index" json:"uploader_id"` // Link to the user who uploaded this media

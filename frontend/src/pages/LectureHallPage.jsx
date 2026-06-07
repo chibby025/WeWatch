@@ -1065,7 +1065,7 @@ const PositionCalculatorPage = () => {
   const [showPositionDebug, setShowPositionDebug] = useState(false);
   const [freeRoamMode, setFreeRoamMode] = useState(true); // Enable by default for correct camera positioning
   const [lockMovement, setLockMovement] = useState(true); // Lock pan/zoom by default
-  const [lockOrbit, setLockOrbit] = useState(false); // Allow rotation by default
+  const [lockOrbit, setLockOrbit] = useState(true); // Locked by default
   
   // Saved camera positions for specific seats - will be populated when modelType is known
   const [savedCameraPositions, setSavedCameraPositions] = useState({});
@@ -1188,6 +1188,14 @@ const PositionCalculatorPage = () => {
   // Avatar system - enabled by default to show real users
   const [showAvatars, setShowAvatars] = useState(true);
   const [hoveredAvatarId, setHoveredAvatarId] = useState(null);
+
+  // Pause the render loop when the tab is hidden — zero GPU/battery drain
+  const [isTabVisible, setIsTabVisible] = useState(true);
+  useEffect(() => {
+    const handleVisibility = () => setIsTabVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
   
   // Save camera modal
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
@@ -6910,6 +6918,8 @@ const PositionCalculatorPage = () => {
         <LectureHallErrorBoundary>
         <Canvas
           camera={{ position: initialCameraPosition, fov: 50 }}
+          shadows={false}
+          frameloop={isTabVisible ? 'always' : 'demand'}
           onCreated={({ gl }) => {
             gl.setClearColor('#1a1a1a');
           }}
@@ -6948,7 +6958,7 @@ const PositionCalculatorPage = () => {
           </>
           
           {/* Camera position markers for generated seats */}
-          {showCameraMarkers && previewSeats.length > 0 && (
+          {showCameraMarkers && previewSeats.length > 0 && currentUser?.role === 'super_admin' && (
             <>
               {previewSeats.map((seat) => {
                 if (seat.id <= 5) {
@@ -6984,8 +6994,8 @@ const PositionCalculatorPage = () => {
           />
           
           {(() => {
-            // ✅ Only host and super_admin can move camera (pan/zoom/rotate)
-            const isPrivilegedUser = isHost || currentUser?.role === 'super_admin';
+            // ✅ Only super_admin can move camera (pan/zoom/rotate)
+            const isPrivilegedUser = currentUser?.role === 'super_admin';
             
             return (
               <OrbitControls 
@@ -6993,7 +7003,7 @@ const PositionCalculatorPage = () => {
                 enabled={true}
                 enablePan={isPrivilegedUser ? (freeRoamMode ? true : !lockMovement) : false}
                 enableZoom={isPrivilegedUser ? (freeRoamMode ? true : !lockMovement) : false}
-                enableRotate={isPrivilegedUser ? (freeRoamMode ? true : !lockOrbit) : false}
+                enableRotate={isPrivilegedUser ? !lockOrbit : false}
                 minDistance={1}
                 maxDistance={freeRoamMode ? 500 : (lockMovement ? 50 : 500)}
                 // When Free Roam is OFF: lock vertical rotation, allow horizontal (left/right)
@@ -7085,20 +7095,35 @@ const PositionCalculatorPage = () => {
               </button>
             )}
             
-            {/* 🔄 Turnaround Icon (Host Only) - Positioned above right arrow */}
+            {/* 🔄 Turnaround (Host Only) — Face Board or Face Class */}
             {isHost && (
               <button
                 onClick={handleTurnaround}
-                className="absolute right-2 md:right-8 top-1/2 -mt-20 md:-mt-32 z-40 bg-blue-600/80 hover:bg-blue-700/90 p-2 md:p-3 rounded-lg transition-all duration-300 hover:scale-110 flex flex-col items-center gap-1 touch-manipulation"
-                title={`Turn to view ${hostViewSeat === 145 ? 'Board' : 'Students'}`}
+                className={`absolute right-2 md:right-8 top-1/2 -mt-20 md:-mt-32 z-40 p-2 md:p-3 rounded-lg transition-all duration-300 hover:scale-110 flex flex-col items-center gap-1 touch-manipulation ${
+                  hostViewSeat === 145
+                    ? 'bg-blue-600/80 hover:bg-blue-700/90'
+                    : 'bg-purple-600/80 hover:bg-purple-700/90'
+                }`}
+                title={hostViewSeat === 145 ? 'Face Board' : 'Face Class'}
               >
-                <img 
-                  src="/icons/turnaround.svg" 
-                  alt="Turnaround" 
-                  className="h-5 w-5 md:h-6 md:w-6 filter invert"
-                />
+                {hostViewSeat === 145 ? (
+                  /* Currently facing class → button = Face Board (blackboard icon) */
+                  <svg className="h-5 w-5 md:h-6 md:w-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="1" />
+                    <line x1="6" y1="8" x2="18" y2="8" />
+                    <line x1="6" y1="12" x2="13" y2="12" />
+                    <path d="M9 17v2M15 17v2M7 19h10" />
+                  </svg>
+                ) : (
+                  /* Currently facing board → button = Face Class (group icon) */
+                  <svg className="h-5 w-5 md:h-6 md:w-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                )}
                 <span className="text-white text-[9px] md:text-[10px] font-semibold whitespace-nowrap">
-                  {hostViewSeat === 145 ? 'Board' : 'Students'}
+                  {hostViewSeat === 145 ? 'Face Board' : 'Face Class'}
                 </span>
               </button>
             )}
@@ -7106,7 +7131,7 @@ const PositionCalculatorPage = () => {
         )}
         
         {/* Overlay - Camera & Click Position Display */}
-        {showPositionDebug && showDebugPanels && (
+        {showPositionDebug && showDebugPanels && currentUser?.role === 'super_admin' && (
           <div className="absolute top-4 left-4 bg-black/70 rounded-lg p-4 space-y-3 text-xs">
             <div className="font-bold text-blue-400">📹 Camera Position</div>
             <div className="font-mono">
@@ -7459,7 +7484,7 @@ const PositionCalculatorPage = () => {
       </div>
       
       {/* Side Panel - Seat Management */}
-      {showDebugPanels && (
+      {showDebugPanels && currentUser?.role === 'super_admin' && (
       <div className="w-96 bg-gray-800 border-l border-gray-700 flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-gray-700">
@@ -7830,8 +7855,8 @@ const PositionCalculatorPage = () => {
           - No JSX rendering needed - pure DOM manipulation for stability
       */}
       
-      {/* 🔍 Phase 1: LiveKit Audio Debug Panel */}
-      {showAudioDebugPanel && isLivekitConnected && livekitRoom && (
+      {/* LiveKit Audio Debug Panel - super admin only */}
+      {showAudioDebugPanel && isLivekitConnected && livekitRoom && currentUser?.role === 'super_admin' && (
         <LiveKitAudioDebugPanel
           livekitRoom={livekitRoom}
           currentUser={currentUser}
