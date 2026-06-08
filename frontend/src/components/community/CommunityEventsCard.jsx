@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import ScheduledEventPreviewCard from './ScheduledEventPreviewCard';
 import CommunityRequestCard from './CommunityRequestCard';
 import MakeRequestSheet from './MakeRequestSheet';
-import { PlusCircleIcon } from '@heroicons/react/24/outline';
+import { PlusCircleIcon, CalendarDaysIcon, MegaphoneIcon } from '@heroicons/react/24/outline';
 import { PlayIcon } from '@heroicons/react/24/solid';
 
 const marqueeStyle = `
@@ -335,13 +335,39 @@ const CommunityEventsCard = ({
               }}
             >
               {card.type === 'event' ? (
-                <ScheduledEventPreviewCard event={card.data} onRSVP={onRSVP} apiBaseUrl={apiBaseUrl} />
+                <>
+                  <ScheduledEventPreviewCard event={card.data} onRSVP={onRSVP} apiBaseUrl={apiBaseUrl} />
+                  <div style={{
+                    position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+                    zIndex: 46, display: 'flex', alignItems: 'center', gap: 4,
+                    whiteSpace: 'nowrap', pointerEvents: 'none',
+                    background: 'linear-gradient(135deg, #2563eb, #7c3aed)',
+                    borderRadius: '0 0 10px 10px', padding: '3px 10px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+                  }}>
+                    <CalendarDaysIcon style={{ width: 12, height: 12, color: '#fff', flexShrink: 0 }} />
+                    <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>Scheduled Event</span>
+                  </div>
+                </>
               ) : (
-                <CommunityRequestCard
-                  request={localRequests.find(r => r.id === card.data.id) || card.data}
-                  currentUser={currentUser}
-                  onRequestUpdate={handleReqUpdate}
-                />
+                <>
+                  <CommunityRequestCard
+                    request={localRequests.find(r => r.id === card.data.id) || card.data}
+                    currentUser={currentUser}
+                    onRequestUpdate={handleReqUpdate}
+                  />
+                  <div style={{
+                    position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+                    zIndex: 46, display: 'flex', alignItems: 'center', gap: 4,
+                    whiteSpace: 'nowrap', pointerEvents: 'none',
+                    background: 'linear-gradient(135deg, #7c3aed, #db2777)',
+                    borderRadius: '0 0 10px 10px', padding: '3px 10px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+                  }}>
+                    <MegaphoneIcon style={{ width: 12, height: 12, color: '#fff', flexShrink: 0 }} />
+                    <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>Community Request</span>
+                  </div>
+                </>
               )}
               {!isCenter && (
                 <div

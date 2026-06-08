@@ -3363,6 +3363,8 @@ const LobbyPage = () => {
     swipeStateRef.current.locked = dx > dy ? 'h' : 'v';
   };
   const handleTouchEnd = (e) => {
+    // When the community events snap card is active, let CommunityEventsCard own horizontal swipe
+    if (communityCardVisible) return;
     if (swipeStateRef.current.locked !== 'h') return;
     const dx = e.changedTouches[0].clientX - swipeStateRef.current.startX;
     if (Math.abs(dx) < 50) return;
