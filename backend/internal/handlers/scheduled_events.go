@@ -465,15 +465,19 @@ func DeleteScheduledEventHandler(c *gin.Context) {
 		return
 	}
 
-	// 5. Auto-refund paid tickets before deleting
+	// 5. Auto-refund paid token tickets before deleting.
+	// Free events have no paid tickets — skip entirely to avoid querying an
+	// event_tickets table that may not yet have all columns on this env.
 	var paidTickets []models.EventTicket
-	if err := DB.Where(
-		"scheduled_event_id = ? AND payment_method = ? AND is_refunded = ? AND is_cancelled = ?",
-		event.ID, "tokens", false, false,
-	).Find(&paidTickets).Error; err != nil {
-		log.Printf("Error fetching tickets for refund: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tickets for refund"})
-		return
+	if event.IsPaid {
+		if err := DB.Where(
+			"scheduled_event_id = ? AND payment_method = ? AND is_refunded = ? AND is_cancelled = ?",
+			event.ID, "tokens", false, false,
+		).Find(&paidTickets).Error; err != nil {
+			log.Printf("Error fetching tickets for refund: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tickets for refund"})
+			return
+		}
 	}
 
 	if len(paidTickets) > 0 {

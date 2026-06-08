@@ -199,6 +199,9 @@ const ScheduleEventModal = ({
   // Content rating
   const [contentRating, setContentRating] = useState(() => getRoomTypeDefaultRating(roomType));
 
+  // Submitting state — prevents double-submit and shows spinner
+  const [submitting, setSubmitting] = useState(false);
+
   // Stepper for create tab
   const [createStep, setCreateStep] = useState(1);
 
@@ -266,11 +269,12 @@ const ScheduleEventModal = ({
     }
   };
 
-  // Handle form submit
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!watchType || !startTime || !title) return;
+  // Handle form submit — called directly from the Create Event button onClick, never via
+  // the form's native submit event (which can fire spuriously during the step 3→4 re-render).
+  const handleSubmit = async () => {
+    if (!watchType || !startTime || !title || submitting) return;
 
+    setSubmitting(true);
     try {
       // Convert Date object to UTC ISO string
       const utcTime = startTime.toISOString();
@@ -356,6 +360,8 @@ const ScheduleEventModal = ({
     } catch (error) {
       console.error('❌ [ScheduleModal] Error creating event:', error);
       alert(error.message || 'Failed to create event');
+    } finally {
+      setSubmitting(false);
     }
   };
   
@@ -608,7 +614,7 @@ const ScheduleEventModal = ({
         
         {/* Tab Content */}
         {currentTab === 'create' && isHost && (
-          <form onSubmit={handleSubmit} className="max-w-md mx-auto">
+          <form onSubmit={(e) => e.preventDefault()} className="max-w-md mx-auto">
             {/* Stepper header */}
             <div className="flex items-center justify-between mb-5">
               {['Basics', 'Schedule', 'Pricing', 'Trailer'].map((label, idx) => {
@@ -904,18 +910,18 @@ const ScheduleEventModal = ({
                           }
                         }}
                         className="hidden"
-                        accept="video/mp4,video/webm,video/quicktime"
+                        accept="video/mp4,video/webm,video/quicktime,image/*"
                       />
                       <div className="border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-xl p-8 flex flex-col items-center gap-3 transition-all group-hover:border-purple-500 group-hover:bg-purple-50/50 dark:group-hover:bg-purple-900/10">
                         <div className="w-14 h-14 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-2xl">
                           🎞️
                         </div>
                         <div className="text-center">
-                          <p className="text-sm font-semibold text-purple-700 dark:text-purple-300">Upload Trailer</p>
+                          <p className="text-sm font-semibold text-purple-700 dark:text-purple-300">Upload Trailer or Poster</p>
                           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Click to browse or drag &amp; drop</p>
                         </div>
                         <div className="flex flex-wrap justify-center gap-2 mt-1">
-                          {['MP4 · WebM · MOV', 'Max 60 seconds', 'Max 50 MB'].map(tag => (
+                          {['MP4 · WebM · MOV · Image', 'Max 60s for video', 'Max 50 MB'].map(tag => (
                             <span key={tag} className="px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-[11px] text-gray-500 dark:text-gray-400">
                               {tag}
                             </span>
@@ -926,16 +932,25 @@ const ScheduleEventModal = ({
                   ) : (
                     /* ── Preview state ── */
                     <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-600 bg-black">
-                      <video
-                        src={trailerPreview}
-                        controls
-                        className="w-full max-h-52 bg-black"
-                      />
+                      {trailerFile.type.startsWith('image/') ? (
+                        <img
+                          src={trailerPreview}
+                          alt="trailer poster"
+                          className="w-full max-h-52 object-contain bg-black"
+                        />
+                      ) : (
+                        <video
+                          src={trailerPreview}
+                          controls
+                          className="w-full max-h-52 bg-black"
+                        />
+                      )}
                       <div className="bg-gray-50 dark:bg-gray-800 px-3 py-2.5 flex items-center justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-xs font-medium text-gray-800 dark:text-white truncate">{trailerFile.name}</p>
                           <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
                             {(trailerFile.size / 1024 / 1024).toFixed(1)} MB
+                            {trailerFile.type.startsWith('image/') && ' · Poster image'}
                           </p>
                         </div>
                         <button
@@ -1028,10 +1043,15 @@ const ScheduleEventModal = ({
                 </button>
               ) : (
                 <button
-                  type="submit"
-                  className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors font-medium"
+                  type="button"
+                  disabled={submitting}
+                  onClick={handleSubmit}
+                  className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors font-medium disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  Create Event
+                  {submitting && (
+                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />
+                  )}
+                  {submitting ? (trailerFile ? 'Uploading...' : 'Creating...') : 'Create Event'}
                 </button>
               )}
             </div>

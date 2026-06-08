@@ -25,11 +25,12 @@ const ScheduledEventPreviewCard = ({ event, onRSVP, apiBaseUrl }) => {
           className="absolute inset-0 w-full h-full object-cover"
         />
       ) : (
-        <div className="absolute inset-0 bg-gradient-to-br from-purple-900 via-indigo-900 to-black">
+        <div className="absolute inset-0 bg-gradient-to-br from-purple-950 via-indigo-950 to-black flex items-center justify-center">
           <img
-            src="/icons/lwoIcon.png"
+            src="/icons/lwoIcon.webp"
             alt=""
-            className="absolute inset-0 m-auto w-12 h-12 sm:w-16 sm:h-16 object-contain opacity-20"
+            className="w-28 h-28 sm:w-36 sm:h-36 object-contain opacity-30 animate-pulse"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
         </div>
       )}

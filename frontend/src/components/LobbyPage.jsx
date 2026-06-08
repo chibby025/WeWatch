@@ -389,6 +389,7 @@ const LobbyPage = () => {
   const [communityEventsData, setCommunityEventsData] = useState({ scheduledEvents: [], requests: [] });
   const [showCommunityEventsView, setShowCommunityEventsView] = useState(false);
   const communityEventsTuneRef = React.useRef(null);
+  const [communityCardVisible, setCommunityCardVisible] = React.useState(false);
 
   // 🪟 Modal state for W button (hides Post option when opened from Watching Live)
   const [createModalHidePosts, setCreateModalHidePosts] = React.useState(false);
@@ -614,6 +615,27 @@ const LobbyPage = () => {
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, [activeTab]);
+
+  // Detect when a community card snap item is ≥80% visible inside the scroll container.
+  // Drives pseudo-fullscreen (container goes position:fixed) and music playback.
+  React.useEffect(() => {
+    const container = watchingNowScrollRef.current;
+    if (!container) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const anyVisible = entries.some(e => e.isIntersecting && e.intersectionRatio >= 0.8);
+        setCommunityCardVisible(prev => (prev === anyVisible ? prev : anyVisible));
+      },
+      { root: container, threshold: 0.8 },
+    );
+    const cards = container.querySelectorAll('[data-community-card]');
+    if (!cards.length) {
+      setCommunityCardVisible(false);
+      return () => observer.disconnect();
+    }
+    cards.forEach(c => observer.observe(c));
+    return () => observer.disconnect();
+  }, [sessionsPage.data.length, communityEventsData]);
 
   // 🧹 Close chat when exiting fullscreen
   useEffect(() => {
@@ -1133,11 +1155,13 @@ const LobbyPage = () => {
     try {
       const since = force ? undefined : (localStorage.getItem('communityEventsLastSeen') || undefined);
       const data = await getCommunityEvents(since);
+      // Always populate so peekaboo + snap-scroll slot always reflect current events.
+      // has_new only controls whether we refresh the "last seen" badge timestamp.
+      setCommunityEventsData({
+        scheduledEvents: data.scheduled_events || [],
+        requests: data.requests || [],
+      });
       if (force || data.has_new || !since) {
-        setCommunityEventsData({
-          scheduledEvents: data.scheduled_events || [],
-          requests: data.requests || [],
-        });
         localStorage.setItem('communityEventsLastSeen', new Date().toISOString());
       }
     } catch (err) {
@@ -2436,9 +2460,9 @@ const LobbyPage = () => {
     return () => clearTimeout(t);
   }, [showGuestBanner]);
 
-  // Community events tune — plays while the fullscreen view is open
+  // Community events tune — plays while the calendar drawer view OR the feed card is active
   useEffect(() => {
-    if (!showCommunityEventsView) {
+    if (!showCommunityEventsView && !communityCardVisible) {
       if (communityEventsTuneRef.current) {
         communityEventsTuneRef.current.pause();
         communityEventsTuneRef.current.currentTime = 0;
@@ -2454,7 +2478,7 @@ const LobbyPage = () => {
       audio.pause();
       audio.currentTime = 0;
     };
-  }, [showCommunityEventsView]);
+  }, [showCommunityEventsView, communityCardVisible]);
   
   // ✅ STEP 4: Infinite scroll - Intersection Observer for load trigger
   useEffect(() => {
@@ -3307,6 +3331,7 @@ const LobbyPage = () => {
       }
     });
   }, [sessionsPage.data]);
+
 
   // ── scroll-position memory for feed tabs ──────────────────────────────────
   const saveWatchingScrollPos = () => {
@@ -4315,18 +4340,24 @@ const LobbyPage = () => {
       <div
           ref={watchingNowScrollRef}
           className="overflow-y-scroll snap-y snap-mandatory bg-black"
-          style={{ display: activeTab === 'watching' ? 'block' : 'none', height: `calc(100dvh - ${watchingTopOffset}px - ${watchingBottomPad}px)`, scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          style={
+            activeTab !== 'watching'
+              ? { display: 'none' }
+              : communityCardVisible
+              ? { display: 'block', position: 'relative', top: -watchingTopOffset, height: `calc(100dvh - ${watchingTopOffset}px - ${watchingBottomPad}px)`, zIndex: 45, scrollbarWidth: 'none', msOverflowStyle: 'none' }
+              : { display: 'block', height: `calc(100dvh - ${watchingTopOffset}px - ${watchingBottomPad}px)`, scrollbarWidth: 'none', msOverflowStyle: 'none' }
+          }
           aria-hidden={activeTab !== 'watching'}
           onTouchStart={activeTab === 'watching' ? handleTouchStart : undefined}
           onTouchMove={activeTab === 'watching' ? handleTouchMove : undefined}
           onTouchEnd={activeTab === 'watching' ? handleTouchEnd : undefined}
       >
           <style>{`.watching-scroll::-webkit-scrollbar { display: none; }`}</style>
+          <style>{pulseAnimationStyles}</style>
 
           {/* Empty state */}
           {!sessionsPage.loading && sessionsPage.data.length === 0 && trailersPage.data.length === 0 && (
             <div className="relative h-full w-full snap-start flex flex-col items-center justify-center bg-gradient-to-br from-purple-900 via-gray-900 to-black text-white text-center px-8 overflow-hidden">
-              <style>{pulseAnimationStyles}</style>
               {/* Sleeping icon with floating Zzz */}
               <div className="relative mb-8 flex items-center justify-center w-28 h-28">
                 <img src="/icons/lwoIcon.webp" alt="WatchOut" className="w-20 h-20 opacity-25" onError={e => { e.target.style.display='none'; }} />
@@ -4576,22 +4607,15 @@ const LobbyPage = () => {
             if (!hasCommunityContent) return sessionCards;
 
             const communitySlot = (key) => (
-              <div key={key} className="relative h-full w-full snap-start snap-always overflow-hidden">
+              <div key={key} data-community-card className="relative h-full w-full flex-shrink-0 snap-start snap-always overflow-hidden bg-black">
                 <CommunityEventsCard
                   scheduledEvents={communityEventsData.scheduledEvents}
                   requests={communityEventsData.requests}
                   currentUser={currentUser}
                   apiBaseUrl={API_BASE_URL}
-                  onRSVP={(event) => {
-                    setSelectedEventForCalendar(event);
-                    setIsCalendarModalOpen(true);
-                  }}
-                  onNewRequest={(newReq) => {
-                    setCommunityEventsData(prev => ({
-                      ...prev,
-                      requests: [newReq, ...prev.requests],
-                    }));
-                  }}
+                  onRSVP={(event) => { setSelectedEventForCalendar(event); setIsCalendarModalOpen(true); }}
+                  onNewRequest={(newReq) => setCommunityEventsData(prev => ({ ...prev, requests: [newReq, ...prev.requests] }))}
+                  fixedBottom={communityCardVisible ? watchingBottomPad : undefined}
                 />
               </div>
             );

@@ -3,7 +3,16 @@ import ScheduledEventPreviewCard from './ScheduledEventPreviewCard';
 import CommunityRequestCard from './CommunityRequestCard';
 import MakeRequestSheet from './MakeRequestSheet';
 import { PlusCircleIcon } from '@heroicons/react/24/outline';
-import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
+import { PlayIcon } from '@heroicons/react/24/solid';
+
+const marqueeStyle = `
+  @keyframes marqueeScroll {
+    0%, 10%  { transform: translateX(0); }
+    45%, 55% { transform: translateX(var(--mx, -60%)); }
+    90%, 100%{ transform: translateX(0); }
+  }
+  .marquee-text { animation: marqueeScroll 10s ease-in-out infinite; display: inline-block; white-space: nowrap; }
+`;
 
 /**
  * CommunityEventsCard — flat fan carousel.
@@ -87,6 +96,7 @@ const CommunityEventsCard = ({
   apiBaseUrl,
   onRSVP,
   onNewRequest,
+  fixedBottom,
 }) => {
   const cards = buildInterleavedCards(scheduledEvents, requests);
 
@@ -244,13 +254,9 @@ const CommunityEventsCard = ({
         {/* Same pinned bottom button as the carousel view */}
         <div
           className="absolute left-0 right-0 bottom-0 flex items-center justify-center px-4"
-          style={{
-            height:         BTN_AREA_H,
-            zIndex:         10,
-            background:     'linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.60))',
-            backdropFilter: 'blur(12px)',
-            borderTop:      '1px solid rgba(255,255,255,0.06)',
-          }}
+          style={fixedBottom !== undefined
+            ? { position: 'fixed', bottom: fixedBottom, left: 0, right: 0, height: BTN_AREA_H, zIndex: 30 }
+            : { height: BTN_AREA_H, zIndex: 10 }}
         >
           <button
             onClick={() => setShowRequestSheet(true)}
@@ -376,8 +382,9 @@ const CommunityEventsCard = ({
 
       {/* ── Expanded info panel — floats directly under card ── */}
       {/* Outer row: arrows span full height, info in the middle */}
+      <style>{marqueeStyle}</style>
       <div
-        className="absolute left-0 right-0 flex items-center gap-2 px-3"
+        className="absolute left-0 right-0 flex items-center gap-1 px-2"
         style={{
           top:            navTopPx,
           height:         NAV_H,
@@ -386,42 +393,42 @@ const CommunityEventsCard = ({
           backdropFilter: 'blur(12px)',
         }}
       >
-        {/* ← centred across full panel height */}
+        {/* ◀ bare play arrow, no container */}
         <button
           onClick={() => goTo(currentIndex - 1)}
           disabled={currentIndex === 0}
-          className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full
-            bg-white/25 hover:bg-white/40 disabled:opacity-20 disabled:cursor-not-allowed
-            text-white transition-colors active:scale-90 shadow-lg border border-white/20"
+          className="flex-shrink-0 p-1 text-white transition-all active:scale-90
+            disabled:opacity-20 disabled:cursor-not-allowed hover:opacity-100 opacity-70"
         >
-          <ChevronLeftIcon className="w-5 h-5" />
+          <PlayIcon className="w-6 h-6 rotate-180" />
         </button>
 
         {/* Middle: two rows of info */}
-        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5">
+        <div className="flex-1 min-w-0 overflow-hidden flex flex-col justify-center gap-1.5">
 
-          {/* Row 1: prominent rating badge + title [+ Ticketed] */}
-          <div className="flex items-center gap-2">
-            {/* Rating badge — tall, stands out */}
+          {/* Row 1: rating badge + scrolling title */}
+          <div className="flex items-center gap-2 overflow-hidden">
             <span
-              className={`flex-shrink-0 text-white text-xs font-black px-2.5 py-1 rounded-lg ${
+              className={`flex-shrink-0 text-white text-xs font-black px-2 py-0.5 rounded-lg ${
                 RATING_COLOR[cur?.data?.content_rating] || 'bg-gray-600'
               }`}
             >
               {cur?.data?.content_rating || '—'}
             </span>
             {cur?.type === 'event' && cur.data.is_paid && (
-              <span className="flex-shrink-0 text-white text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/90">
+              <span className="flex-shrink-0 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/90">
                 Ticketed
               </span>
             )}
-            <p className="text-white text-sm font-bold truncate">
-              {cur?.type === 'event' ? cur.data.title : `"${cur?.data?.title}"`}
-            </p>
+            <div className="flex-1 min-w-0 overflow-hidden">
+              <p className="marquee-text text-white text-sm font-bold" style={{ '--mx': '-60%' }}>
+                {cur?.data?.title}
+              </p>
+            </div>
           </div>
 
-          {/* Row 2: host / metadata */}
-          <div className="flex items-center gap-1.5">
+          {/* Row 2: host / metadata — scrolling */}
+          <div className="flex items-center gap-1.5 overflow-hidden">
             {cur?.type === 'event' ? (
               <>
                 {cur.data.host_avatar_url ? (
@@ -433,8 +440,8 @@ const CommunityEventsCard = ({
                 ) : (
                   <div className="w-5 h-5 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex-shrink-0" />
                 )}
-                <div className="flex-1 min-w-0">
-                  <p className="text-white/70 text-xs truncate">
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <p className="marquee-text text-white/70 text-xs" style={{ '--mx': '-70%' }}>
                     <span className="text-white/90 font-semibold">@{cur.data.host_username}</span>
                     {' · '}
                     {WATCH_LABELS[cur.data.watch_type] || '🎬 Watch'}
@@ -447,22 +454,25 @@ const CommunityEventsCard = ({
                         {' '}{cur.data.is_paid ? 'booked' : 'going'}
                       </span>
                     )}
+                    {cur.data.description ? (
+                      <span className="text-white/45 italic">
+                        {' · '}
+                        {cur.data.description}
+                      </span>
+                    ) : null}
                   </p>
-                  {cur.data.description ? (
-                    <p className="text-white/45 text-[10px] truncate mt-0.5 italic">
-                      {cur.data.description}
-                    </p>
-                  ) : null}
                 </div>
               </>
             ) : cur?.type === 'request' ? (
               <>
-                <p className="text-white/70 text-xs truncate flex-1">
-                  <span className="text-purple-300 font-semibold">{cur.data.upvote_count ?? 0}</span>
-                  {' want this · @'}
-                  <span className="text-white/80">{cur.data.requester_username}</span>
-                </p>
-                <span className={`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <p className="marquee-text text-white/70 text-xs" style={{ '--mx': '-60%' }}>
+                    <span className="text-purple-300 font-semibold">{cur.data.upvote_count ?? 0}</span>
+                    {' want this · @'}
+                    <span className="text-white/80">{cur.data.requester_username}</span>
+                  </p>
+                </div>
+                <span className={`flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
                   cur.data.status === 'claimed'
                     ? 'bg-green-500/20 text-green-300 border border-green-500/30'
                     : 'bg-white/10 text-white/50'
@@ -474,28 +484,23 @@ const CommunityEventsCard = ({
           </div>
         </div>
 
-        {/* → centred across full panel height */}
+        {/* ▶ bare play arrow, no container */}
         <button
           onClick={() => goTo(currentIndex + 1)}
           disabled={currentIndex === cards.length - 1}
-          className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full
-            bg-white/25 hover:bg-white/40 disabled:opacity-20 disabled:cursor-not-allowed
-            text-white transition-colors active:scale-90 shadow-lg border border-white/20"
+          className="flex-shrink-0 p-1 text-white transition-all active:scale-90
+            disabled:opacity-20 disabled:cursor-not-allowed hover:opacity-100 opacity-70"
         >
-          <ChevronRightIcon className="w-5 h-5" />
+          <PlayIcon className="w-6 h-6" />
         </button>
       </div>
 
       {/* ── "Make a Community Request" — pinned to container bottom ── */}
       <div
         className="absolute left-0 right-0 bottom-0 flex items-center justify-center px-4"
-        style={{
-          height:         BTN_AREA_H,
-          zIndex:         30,
-          background:     'linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.60))',
-          backdropFilter: 'blur(12px)',
-          borderTop:      '1px solid rgba(255,255,255,0.06)',
-        }}
+        style={fixedBottom !== undefined
+          ? { position: 'fixed', bottom: fixedBottom, left: 0, right: 0, height: BTN_AREA_H, zIndex: 30 }
+          : { height: BTN_AREA_H, zIndex: 30 }}
       >
         <button
           onClick={() => setShowRequestSheet(true)}
