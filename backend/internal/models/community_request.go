@@ -15,6 +15,7 @@ type CommunityRequest struct {
 	Description   string     `gorm:"type:text" json:"description"`
 	Status        string     `gorm:"type:varchar(20);not null;default:'open'" json:"status"` // open, claimed, closed
 	UpvoteCount   int        `gorm:"not null;default:0" json:"upvote_count"`
+	ImageURL      string     `gorm:"type:text" json:"image_url,omitempty"`
 
 	User   *User                   `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Claims []CommunityRequestClaim `gorm:"foreignKey:RequestID" json:"claims,omitempty"`

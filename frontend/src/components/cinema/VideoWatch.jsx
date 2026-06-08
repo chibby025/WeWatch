@@ -5,24 +5,10 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
-import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory, API_BASE_URL } from '../../services/api';
+import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory } from '../../services/api';
 import apiClient from '../../services/api';
 import { getRoom, getRoomMembers, getActiveSession } from '../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
-
-// Prefix relative backend paths (e.g. /uploads/temp/...) with the Go server origin
-// so the browser fetches them from localhost:8080, not the Vite dev server.
-// Only prefix backend-served paths (/uploads/). Leave /icons/ and other
-// Vite public assets alone — the backend doesn't serve those.
-// DB stores paths without a leading slash ("uploads/temp/x.mp4") so we
-// normalise before checking — both forms are handled correctly.
-const toAbsUrl = (url) => {
-  if (!url) return null;
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  const withSlash = url.startsWith('/') ? url : `/${url}`;
-  if (withSlash.startsWith('/uploads/')) return `${API_BASE_URL}${withSlash}`;
-  return url;
-};
 // ✅ Import LiveKit hook + events
 import useLiveKitRoom from '../../hooks/useLiveKitRoom';
 import { Track, ParticipantEvent, RoomEvent } from 'livekit-client';
@@ -280,34 +266,38 @@ export default function VideoWatch() {
   const handleDoubleClickLike = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-
+    
     const activeSessionId = sessionStatus?.id || urlSessionId;
     if (!activeSessionId) return;
-
-    // Debounce rapid double-clicks
+    
+    // Debounce (prevent rapid double-clicks)
     const now = Date.now();
-    if (now - lastLikeTimeRef.current < 800) return;
+    if (now - lastLikeTimeRef.current < 1000) return;
     lastLikeTimeRef.current = now;
-
-    // Always show animation locally
-    setShowHeartAnimation(true);
-
-    // Broadcast animation to other room members
-    if (sendMessage) {
-      sendMessage({ type: 'heart_animation', user_id: currentUser?.id });
+    
+    // Don't allow liking again if already liked
+    if (isSessionLiked) {
+      toast.error('You already liked this session!', { duration: 2000 });
+      return;
     }
-
-    // Only hit the API once per session
-    if (!isSessionLiked) {
-      setIsSessionLiked(true);
-      setSessionLikesCount(prev => prev + 1);
-      try {
-        await apiClient.post(`/api/sessions/${activeSessionId}/like`);
-      } catch (err) {
-        console.error('Failed to like session:', err);
-        setIsSessionLiked(false);
-        setSessionLikesCount(prev => prev - 1);
-      }
+    
+    // Show animation immediately
+    setShowHeartAnimation(true);
+    
+    // Optimistic UI update
+    setIsSessionLiked(true);
+    setSessionLikesCount(prev => prev + 1);
+    
+    // Call API
+    try {
+      await apiClient.post(`/api/sessions/${activeSessionId}/like`);
+      toast.success('Liked! ❤️', { duration: 2000 });
+    } catch (err) {
+      console.error('Failed to like session:', err);
+      // Revert on error
+      setIsSessionLiked(false);
+      setSessionLikesCount(prev => prev - 1);
+      toast.error(err.response?.data?.error || 'Failed to like session');
     }
   };
 
@@ -456,7 +446,6 @@ export default function VideoWatch() {
         const res = await getActiveSession(roomId);
         const session = res?.data;
         // Backend returns is_existing:true when an active session is found.
-        // is_active is not in the response — checking it would always be undefined (falsy).
         if (!session?.is_existing) {
           consecutiveMisses++;
           if (consecutiveMisses >= 2) {
@@ -464,7 +453,29 @@ export default function VideoWatch() {
             setSessionEndedInfo({ reason: 'ended' });
           }
         } else {
-          consecutiveMisses = 0; // reset on a healthy response
+          consecutiveMisses = 0;
+
+          // ✅ Member ID reconciliation: compare heartbeat member set against local map.
+          // Catches any WS events missed due to network blips or simultaneous join+leave.
+          if (Array.isArray(session.members) && session.members.length > 0) {
+            const heartbeatIds = new Set(session.members.map(m => m.user_id));
+            const localIds = new Set(memberMapRef.current.keys());
+            const mismatch =
+              heartbeatIds.size !== localIds.size ||
+              [...heartbeatIds].some(id => !localIds.has(id)) ||
+              [...localIds].some(id => !heartbeatIds.has(id));
+            if (mismatch) {
+              console.log('[VideoWatch] Heartbeat member mismatch — reconciling map from DB truth');
+              const normalized = session.members.map(m => ({
+                id: m.user_id,
+                username: m.username || `User ${m.user_id}`,
+                avatar_url: m.avatar_url || null,
+                user_role: m.user_role || 'viewer',
+              }));
+              updateMemberMap('replace', normalized);
+              setMemberCount(normalized.length);
+            }
+          }
         }
       } catch (err) {
         if (err?.response?.status === 404 || err?.response?.status === 410) {
@@ -510,7 +521,6 @@ export default function VideoWatch() {
   const [sessionLikesCount, setSessionLikesCount] = useState(0);
   const [showHeartAnimation, setShowHeartAnimation] = useState(false);
   const lastLikeTimeRef = useRef(0);
-  const isExitingRef = useRef(false); // guard against double-exit (WS session_ended + manual Leave)
   
   // 📺 Ad pre-roll disabled — join experience should feel instant and classy
   const [showAdPreroll, setShowAdPreroll] = useState(false); // eslint-disable-line no-unused-vars
@@ -551,6 +561,35 @@ export default function VideoWatch() {
   const [isHostBroadcasting, setIsHostBroadcasting] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
+  // Backing map for O(1) add/remove. roomMembers is always derived from this via setRoomMembers.
+  const memberMapRef = useRef(new Map());
+  const [isMembersInitialized, setIsMembersInitialized] = useState(false);
+  // Authoritative member count delivered by backend in every join/leave event.
+  // null = no event received yet (falls back to roomMembers.length in Taskbar).
+  // 0    = confirmed empty (e.g. session_ended).
+  const [memberCount, setMemberCount] = useState(null);
+  const driftCheckCooldownRef = useRef(false);   // true while on cooldown after a reconciliation
+  const driftCheckTimerRef = useRef(null);        // pending debounce timer
+  // Central helper for all member map mutations. Must be declared before any useEffect that calls it.
+  // 'add'     → payload is a normalised member object {id, username, avatar_url, user_role}
+  // 'remove'  → payload is a userId (number)
+  // 'replace' → payload is an array of normalised member objects (full resync)
+  // 'clear'   → no payload (session ended)
+  const updateMemberMap = React.useCallback((op, payload) => {
+    const map = memberMapRef.current;
+    if (op === 'add') {
+      map.set(payload.id, payload);
+    } else if (op === 'remove') {
+      map.delete(payload);
+    } else if (op === 'replace') {
+      map.clear();
+      payload.forEach(m => map.set(m.id, m));
+      setIsMembersInitialized(true);
+    } else if (op === 'clear') {
+      map.clear();
+    }
+    setRoomMembers(Array.from(map.values()));
+  }, [setIsMembersInitialized, setRoomMembers]);
   const [roomData, setRoomData] = useState(null); // Store room data including is_public
   
   // Breaking News Banner state (DOM-based)
@@ -713,90 +752,85 @@ export default function VideoWatch() {
     setCurrentBannerLineIndex(0); // Reset to first line
   }, [bannerState?.text, bannerState?.podcastLogoSize, sessionStatus?.id, screenSize]); // Re-measure on screen size change
   
-  // ✅ Fetch session members from API (active watch session participants)
+  // ✅ WS-first member initialisation: wait for session_status unicast (which arrives on WS join).
+  // Only fall back to REST after 4s if WS hasn't delivered members yet — handles WS failures and
+  // Railway cold-starts without the stale-overwrite risk of a blind 10s timer.
   useEffect(() => {
-    // console.log('🔄 [fetchSessionMembers useEffect] TRIGGERED with roomId:', roomId);
-    
-    const fetchSessionMembers = async () => {
-      // console.log('🚀 [fetchSessionMembers] Function starting...');
-      // console.log('🔍 [fetchSessionMembers] roomId value:', roomId, 'type:', typeof roomId);
-      
-      if (!roomId) {
-        console.warn('⚠️ [fetchSessionMembers] No roomId, ABORTING fetch');
-        return;
-      }
-      
+    if (!isConnected || !roomId || isMembersInitialized) return;
+    const fallback = setTimeout(async () => {
+      if (isMembersInitialized) return;
       try {
-        // console.log('📡 [fetchSessionMembers] ✅ About to call getActiveSession API for room:', roomId);
         const response = await getActiveSession(roomId);
-        // console.log('📥 [fetchSessionMembers] ✅ API call completed successfully');
-        // console.log('📥 [fetchSessionMembers] Full response object:', response);
-        // console.log('📥 [fetchSessionMembers] response.data:', response.data);
-        // console.log('📥 [fetchSessionMembers] response.data type:', typeof response.data);
-        // console.log('📥 [fetchSessionMembers] response.data.members:', response.data?.members);
-        
-        const sessionMembers = response.data?.members || [];
-        // console.log('👥 [fetchSessionMembers] Extracted sessionMembers array:', sessionMembers);
-        // console.log('👥 [fetchSessionMembers] sessionMembers.length:', sessionMembers.length);
-        // console.log('👥 [fetchSessionMembers] Is array?:', Array.isArray(sessionMembers));
-        
-        if (sessionMembers.length > 0) {
-          // console.log('✅ [fetchSessionMembers] Found', sessionMembers.length, 'members:');
-          // sessionMembers.forEach((m, idx) => {
-          //   console.log(`  Member ${idx + 1}:`, {
-          //     user_id: m.user_id,
-          //     username: m.username,
-          //     user_role: m.user_role,
-          //     raw: m
-          //   });
-          // });
-        } else {
-          console.warn('⚠️ [fetchSessionMembers] sessionMembers array is EMPTY');
-        }
-        
-        // Transform to match component format
-        // console.log('🔄 [fetchSessionMembers] Transforming members to component format...');
-        const formattedMembers = sessionMembers.map(member => {
-          const formatted = {
-            id: member.user_id,
-            Username: member.username || `User ${member.user_id}`,
-            username: member.username || `User ${member.user_id}`,
-            avatar_url: member.avatar_url || null,
-            user_role: member.user_role || 'viewer',
-          };
-          // console.log('  Formatted member:', formatted);
-          return formatted;
-        });
-        
-        // console.log('📤 [fetchSessionMembers] About to call setRoomMembers with', formattedMembers.length, 'members');
-        // console.log('📤 [fetchSessionMembers] formattedMembers:', formattedMembers);
-        setRoomMembers(formattedMembers);
-        // console.log('✅ [fetchSessionMembers] setRoomMembers called successfully');
-        setIsMembersInitialized(true);
+        const raw = response.data?.members || [];
+        const normalized = raw.map(m => ({
+          id: m.user_id,
+          username: m.username || `User ${m.user_id}`,
+          avatar_url: m.avatar_url || null,
+          user_role: m.user_role || 'viewer',
+        }));
+        updateMemberMap('replace', normalized);
+        setMemberCount(normalized.length);
+        console.log(`[VideoWatch] WS fallback: loaded ${normalized.length} members from REST`);
+      } catch {
+        setIsMembersInitialized(true); // unblock spinner even on failure
+      }
+    }, 4000);
+    return () => clearTimeout(fallback);
+  }, [isConnected, roomId, isMembersInitialized, updateMemberMap]);
 
-      } catch (error) {
-        console.error('❌ [fetchSessionMembers] API call FAILED');
-        console.error('❌ [fetchSessionMembers] Error object:', error);
-        console.error('❌ [fetchSessionMembers] Error message:', error?.message);
-        console.error('❌ [fetchSessionMembers] Error response:', error?.response);
-        console.error('❌ [fetchSessionMembers] Error response data:', error?.response?.data);
-        console.error('❌ [fetchSessionMembers] Error response status:', error?.response?.status);
-        // Don't show error to user - member list will populate from WebSocket events
-        setIsMembersInitialized(true);
+  // Passive drift detector: if the authoritative count disagrees with the local map,
+  // a WS event was silently dropped. Debounce 3 s to let in-flight events settle,
+  // then fetch the fresh member list. Cooldown 15 s after each reconciliation so we
+  // don't spam the API if the counts stay mismatched for multiple render cycles.
+  useEffect(() => {
+    if (!isMembersInitialized || memberCount === 0) return;
+    if (roomMembers.length === memberCount) return; // counts agree — nothing to do
+
+    if (driftCheckCooldownRef.current) return; // recently reconciled, skip
+
+    // Clear any pending timer so rapid join/leave bursts don't pile up requests.
+    if (driftCheckTimerRef.current) clearTimeout(driftCheckTimerRef.current);
+
+    driftCheckTimerRef.current = setTimeout(async () => {
+      driftCheckTimerRef.current = null;
+      // Re-check after the debounce — events may have settled.
+      if (memberMapRef.current.size === memberCount) return;
+
+      console.warn(
+        `[VideoWatch] Drift detected: map=${memberMapRef.current.size} authoritative=${memberCount} — reconciling from REST`
+      );
+      try {
+        const res = await getActiveSession(roomId);
+        const raw = res?.data?.members || [];
+        const normalized = raw.map(m => ({
+          id: m.user_id,
+          username: m.username || `User ${m.user_id}`,
+          avatar_url: m.avatar_url || null,
+          user_role: m.user_role || 'viewer',
+        }));
+        updateMemberMap('replace', normalized);
+        // Trust the REST response length as the new authoritative count.
+        setMemberCount(normalized.length);
+        console.log(`[VideoWatch] Drift reconciled — ${normalized.length} members restored from REST`);
+      } catch (err) {
+        console.error('[VideoWatch] Drift reconciliation fetch failed:', err);
+      } finally {
+        // Suppress further checks for 15 s regardless of outcome.
+        driftCheckCooldownRef.current = true;
+        setTimeout(() => { driftCheckCooldownRef.current = false; }, 15000);
+      }
+    }, 3000);
+
+    return () => {
+      if (driftCheckTimerRef.current) {
+        clearTimeout(driftCheckTimerRef.current);
+        driftCheckTimerRef.current = null;
       }
     };
-    
-    fetchSessionMembers();
-    // Retry after 10s — catches Railway cold-start delay where the first fetch
-    // returns empty before the container has fully woken up.
-    const retryTimer = setTimeout(fetchSessionMembers, 10000);
-    return () => clearTimeout(retryTimer);
-  }, [roomId]);
+  }, [roomMembers.length, memberCount, isMembersInitialized, roomId, updateMemberMap]);
 
   const [loadingMembers, setLoadingMembers] = useState(false);
-  const [isMembersInitialized, setIsMembersInitialized] = useState(false);
-  const [authorativeMemberCount, setAuthoritativeMemberCount] = useState(0);
-  // Viewer-side break overlay state (static source only — other sources use GraphicsRenderer canvas)
+  // Viewer-side break overlay state — declared before the useEffect that reads them
   const [isBreakActive, setIsBreakActive] = useState(false);
   const [viewerBreakEndTime, setViewerBreakEndTime] = useState(null);
   const [viewerBreakSeconds, setViewerBreakSeconds] = useState(0);
@@ -819,9 +853,6 @@ export default function VideoWatch() {
   const videoPlayerRef = useRef(null); // 🎬 Direct access to video element
   const [localScreenTrack, setLocalScreenTrack] = useState(null);
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // ⏱️ State-based seek (triggers re-renders)
-  const wsArrivalTimeRef = useRef(null); // ⏱️ Tracks WS message arrival time for post-play correction
-  const syncRefRef = useRef(null);       // 💓 Last heartbeat reference: { hostTime, receivedAt }
-  const memberJoinBroadcastRef = useRef(null); // debounce timer for host re-broadcast on session_member_joined
   
   // 📹 LiveShare state (screen + camera)
   const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both' - the share type
@@ -934,18 +965,22 @@ export default function VideoWatch() {
     return me?.user_role === 'admin';
   }, [roomMembers, currentUser?.id]);
 
-  // 🔄 Layer 2: Self-healing retry — if still no media after 4s, keep requesting.
-  // Stops automatically when currentMedia is set (dep change clears the interval).
-  // Covers flaky mobile networks where the Layer 1 session_status trigger was missed.
+  // 🔄 MEMBER: Request current playback state on connect/reconnect
   useEffect(() => {
-    if (!isConnected || currentMedia || !currentUser?.id) return;
-    if (isHost && currentMedia) return;
-    const interval = setInterval(() => {
-      console.log('🔄 [VideoWatch] Layer 2 retry: requesting playback state');
-      sendMessage({ type: 'request_playback_state', requester_id: currentUser.id, timestamp: Date.now() });
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [isConnected, currentMedia, isHost, currentUser?.id, sendMessage]);
+    if (!isConnected || !currentUser?.id || isHost) return;
+    
+    // Wait a moment for host to be established
+    const timer = setTimeout(() => {
+      console.log('🔄 [VideoWatch] MEMBER requesting current state from host');
+      sendMessage({
+        type: 'request_playback_state',
+        requester_id: currentUser.id,
+        timestamp: Date.now()
+      });
+    }, 500); // Small delay to ensure host is ready
+    
+    return () => clearTimeout(timer);
+  }, [isConnected, currentUser?.id, isHost, sendMessage]);
 
   // ✅ Connect to LiveKit when room and user are ready
   const hasAttemptedLiveKitConnection = useRef(false);
@@ -2331,56 +2366,26 @@ export default function VideoWatch() {
     if (!video || !currentMedia || liveShareMode || liveShareContentMode) return;
 
     const handleLoadedData = () => {
-      const t0 = Date.now();
-      console.log(`⏱️ [MEMBER] loadeddata fired`, {
+      console.log('✅ [VideoWatch] Video data loaded', {
         readyState: video.readyState,
         currentTime: video.currentTime,
         isPlaying,
-        pendingSeekTime,
-        t: t0,
+        hasPendingSeek: pendingSeekTime !== null,
+        pendingSeekTime
       });
-
-      // Option 3: after the full load+seek pipeline, jump ahead by the total elapsed time
-      // so the member's position matches the host instead of being pipeline-delay behind.
-      const doPlay = () => {
-        if (!isPlaying) {
-          console.log(`⏸️ [MEMBER] isPlaying=false — skipping play()`);
-          return;
-        }
-        if (wsArrivalTimeRef.current) {
-          const wsElapsed = (Date.now() - wsArrivalTimeRef.current) / 1000;
-          const correctedTime = video.currentTime + wsElapsed;
-          wsArrivalTimeRef.current = null;
-          console.log(`▶️ [MEMBER] Post-play correction +${(wsElapsed * 1000).toFixed(0)}ms → ${correctedTime.toFixed(3)}s`);
-          video.currentTime = correctedTime;
-          // Wait for this tiny correction seek before calling play()
-          const onCorrectionSeeked = () => {
-            video.removeEventListener('seeked', onCorrectionSeeked);
-            video.play().catch(err => console.error(`❌ [MEMBER] play() failed (${err.name})`));
-          };
-          video.addEventListener('seeked', onCorrectionSeeked);
-        } else {
-          console.log(`▶️ [MEMBER] play() — T+${Date.now() - t0}ms since loadeddata`);
-          video.play().catch(err => console.error(`❌ [MEMBER] play() failed (${err.name}): ${err.message}`));
-        }
-      };
-
+      
+      // 🎯 Apply pending seek time if available (for mid-playback sync)
       if (pendingSeekTime !== null && pendingSeekTime > 0) {
-        // Seek is async: currentTime assignment fires `seeking`, completes at `seeked`.
-        // Calling play() before `seeked` causes AbortError and leaves video on first frame.
-        // Wait for `seeked` before starting playback.
-        console.log(`🔍 [MEMBER] Seeking to ${pendingSeekTime.toFixed(3)}s — deferring play() until seeked`);
+        console.log(`🎯 [VideoWatch] Applying pending seek time: ${pendingSeekTime}s`);
         video.currentTime = pendingSeekTime;
-        setPendingSeekTime(null);
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked);
-          console.log(`✅ [MEMBER] seeked fired — T+${Date.now() - t0}ms since loadeddata`);
-          doPlay();
-        };
-        video.addEventListener('seeked', onSeeked);
+        setPendingSeekTime(null); // Clear after applying
+      }
+      
+      if (isPlaying) {
+        console.log('▶️ [VideoWatch] Starting playback after load...');
+        video.play().catch(err => console.error('❌ [VideoWatch] Failed to play:', err));
       } else {
-        console.log(`🎯 [MEMBER] No seek needed (pendingSeekTime=${pendingSeekTime}) — calling play() directly`);
-        doPlay();
+        console.log('⏸️ [VideoWatch] Video loaded but isPlaying=false, not starting playback');
       }
     };
 
@@ -2621,58 +2626,54 @@ export default function VideoWatch() {
       alert("❌ This media item is missing its file path and cannot be played.");
       return;
     }
-    // Use toAbsUrl so that relative DB paths ("uploads/temp/x.mp4") and
-    // absolute CDN paths are both handled — avoids the localhost fallback
-    // that was making the URL unreachable on member devices.
-    const mediaUrl = toAbsUrl(mediaItem.file_url || filePath) || filePath;
-
-    const isEmbed = !!(mediaItem.is_embed || mediaItem.isEmbed);
+    // ✅ Construct full URL for uploaded media
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    const fileUrl = mediaItem.file_url || filePath;
+    const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+    
     const normalizedMediaItem = {
       ...mediaItem,
       ID: id,
-      type: isEmbed ? 'embed' : 'upload',
+      type: 'upload',
       file_path: filePath,
-      mediaUrl: isEmbed ? filePath : mediaUrl, // embed uses file_path directly (already the iframe URL)
+      mediaUrl: mediaUrl,
       original_name: mediaItem.original_name || mediaItem.OriginalName || 'Unknown Media',
-      embed_platform: mediaItem.embed_platform || mediaItem.EmbedPlatform || null,
     };
     setCurrentMedia(normalizedMediaItem);
-    setIsPlaying(!isEmbed); // embeds control their own playback
+    setIsPlaying(true);
     playbackPositionRef.current = 0;
-
-    console.log('🎬 [DEBUG handlePlayMedia] Resolved URLs:', {
-      raw_file_path: mediaItem.file_path,
-      raw_file_url: mediaItem.file_url,
-      computed_filePath: filePath,
-      computed_mediaUrl: mediaUrl,
+    
+    console.log('🎬 [VideoWatch] Host about to send playback_control:', {
       isHost,
       isConnected,
-      userId: currentUser?.id,
+      mediaUrl: normalizedMediaItem.mediaUrl,
+      currentUserId: currentUser?.id
     });
-
+    
     if (isHost && isConnected) {
       const playbackMsg = {
         type: "playback_control",
         command: "play",
         media_item_id: id,
         file_path: filePath,
-        file_url: isEmbed ? filePath : mediaUrl,
+        // TODO: normalizedMediaItem.mediaUrl may be undefined — playlist normalization
+        // (lines ~3318) only adds ID and poster_url, not mediaUrl. Members currently
+        // fall back to file_path above which works, but file_url is dead weight here.
+        // Fix: replace with `fileUrl` (computed at line ~2555) so field is always populated.
+        file_url: normalizedMediaItem.mediaUrl,
         original_name: normalizedMediaItem.original_name,
         seek_time: 0,
         timestamp: Date.now(),
         sender_id: currentUser.id,
-        is_embed: isEmbed,
-        embed_platform: normalizedMediaItem.embed_platform || null,
       };
-      console.log('📤 [DEBUG handlePlayMedia] Sending playback_control via WS:', {
-        file_path: playbackMsg.file_path,
-        file_url: playbackMsg.file_url,
-        media_item_id: playbackMsg.media_item_id,
-        sender_id: playbackMsg.sender_id,
-      });
+      console.log('📤 [VideoWatch] HOST SENDING playback_control:', playbackMsg);
       sendMessage(playbackMsg);
     } else {
-      console.warn('⚠️ [DEBUG handlePlayMedia] NOT sending playback_control — reason:', !isHost ? 'isHost=false' : 'isConnected=false', { isHost, isConnected });
+      console.warn('⚠️ [VideoWatch] NOT sending playback_control:', {
+        isHost,
+        isConnected,
+        reason: !isHost ? 'Not host' : 'Not connected'
+      });
     }
     
     if (isHost && isConnected) {
@@ -2706,7 +2707,7 @@ export default function VideoWatch() {
     }
 
     const updateInterval = setInterval(() => {
-      const currentSeekTime = playbackPositionRef.current;
+      const currentSeekTime = Math.floor(playbackPositionRef.current);
       // console.log(`⏰ [VideoWatch] Periodic seek time update: ${currentSeekTime}s`);
       
       sendMessage({
@@ -3398,8 +3399,8 @@ export default function VideoWatch() {
         ...item,
         ID: item.ID || item.id || Date.now() + Math.random(),
         _isTemporary: true,
-        poster_url: toAbsUrl(item.poster_url) || '/icons/placeholder-poster.jpg',
-        file_path: toAbsUrl(item.file_path) || item.file_path,
+        // Use backend-generated poster or fallback to placeholder
+        poster_url: item.poster_url || '/icons/placeholder-poster.jpg'
       }));
       
       setPlaylist(normalizedItems);
@@ -3438,65 +3439,29 @@ export default function VideoWatch() {
         case "playlist_poster_updated": {
           // Backend sends a flat message {type, item_id, poster_url} — not nested under data.
           const _ppu = message.data || message;
-          const normalizedPosterUrl = toAbsUrl(_ppu.poster_url) || _ppu.poster_url;
-          console.log('🖼️ [VideoWatch] playlist_poster_updated:', _ppu.item_id, normalizedPosterUrl);
+          console.log('🖼️ [VideoWatch] playlist_poster_updated:', _ppu.item_id, _ppu.poster_url);
           setPlaylist(prev => prev.map(item =>
             (item.ID || item.id) === _ppu.item_id
-              ? { ...item, poster_url: normalizedPosterUrl }
+              ? { ...item, poster_url: _ppu.poster_url }
               : item
           ));
-          break;
-        }
-
-        case 'temporary_media_item_added': {
-          const newItem = message.data;
-          if (!newItem) break;
-          const normalized = {
-            ...newItem,
-            ID: newItem.ID || newItem.id,
-            _isTemporary: true,
-            poster_url: toAbsUrl(newItem.poster_url) || '/icons/placeholder-poster.jpg',
-            file_path: toAbsUrl(newItem.file_path) || newItem.file_path,
-          };
-          console.log('📋 [VideoWatch] temporary_media_item_added:', normalized.ID, normalized.original_name);
-          setPlaylist(prev => {
-            if (prev.some(p => (p.ID || p.id) === normalized.ID)) return prev;
-            return [...prev, normalized];
-          });
-          break;
-        }
-
-        case 'playlist_file_updated': {
-          // Goroutine finished uploading to CDN — replace the temporary Railway path
-          // with the permanent CDN URL everywhere it appears.
-          const _pfu = message.data || message;
-          const cdnUrl = _pfu.file_path;
-          if (!cdnUrl || !_pfu.item_id) break;
-          console.log('🔄 [VideoWatch] playlist_file_updated → CDN URL for item', _pfu.item_id, cdnUrl);
-          setPlaylist(prev => prev.map(item =>
-            (item.ID || item.id) === _pfu.item_id
-              ? { ...item, file_path: cdnUrl, mediaUrl: cdnUrl }
-              : item
-          ));
-          setCurrentMedia(prev => {
-            if (!prev || (prev.ID || prev.id) !== _pfu.item_id) return prev;
-            return { ...prev, file_path: cdnUrl, mediaUrl: cdnUrl };
-          });
           break;
         }
 
         case "sync_heartbeat": {
+          // Periodic position sync broadcast from host. Correct drift > 0.5s.
+          // Ignore if we are the host, if paused, or if drift is too large (likely intentional).
           if (isHost) break;
-          // Store the host's position + when we received it.
-          // The member's drift-check effect uses this reference to detect drift locally
-          // every 2s without needing more WS messages.
-          // Use host browser clock (message.timestamp) — not server_ts which has WSL skew.
-          const _hbLatency = Math.max(0, Date.now() - message.timestamp);
-          syncRefRef.current = {
-            hostTime: message.current_time + (_hbLatency / 1000),
-            receivedAt: Date.now(),
-          };
-          console.log(`💓 [HB] Reference updated → host=${syncRefRef.current.hostTime.toFixed(3)}s (transit=${_hbLatency}ms)`);
+          const _hb = message;
+          const _videoEl = videoPlayerRef.current || document.querySelector('video');
+          if (!_videoEl || _videoEl.paused) break;
+          const _latency = Date.now() - (_hb.server_ts || _hb.timestamp);
+          const _expected = _hb.current_time + (_latency / 1000);
+          const _drift = Math.abs(_videoEl.currentTime - _expected);
+          if (_drift > 0.5 && _drift < 30) {
+            console.log(`🔄 [Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
+            _videoEl.currentTime = _expected;
+          }
           break;
         }
 
@@ -3506,51 +3471,27 @@ export default function VideoWatch() {
       console.log('📊 [VideoWatch] ✨ is_private flag:', data.is_private ? 'TRUE (Ghost Mode should be enforced) ✅' : 'FALSE (Ghost Mode is optional) ❌');
           console.log('📊 [VideoWatch] session_status members type:', typeof data.members, 'isArray:', Array.isArray(data.members));
 
-          // ✅ SESSION MEMBERS from WebSocket (active watch participants)
-          // This is the SOURCE OF TRUTH for who's in the session
+          // ✅ SESSION MEMBERS from WebSocket unicast — initialise our local map.
           if (Array.isArray(data.members)) {
-            console.log('📊 [VideoWatch] Processing session members, length:', data.members.length);
-            const memberMap = new Map();
-            
-            data.members.forEach((member, index) => {
-              console.log(`📊 [VideoWatch] Processing session member ${index}:`, member);
-              const id = member.user_id || member.id;
-              if (!id) {
-                console.warn('⚠️ [VideoWatch] Skipping member with no ID:', member);
-                return;
-              }
+            const normalized = data.members
+              .map(m => {
+                const id = m.user_id || m.id;
+                if (!id) return null;
+                return {
+                  id,
+                  username: m.username || m.Username || 'Anonymous',
+                  avatar_url: m.avatar_url || null,
+                  user_role: m.user_role || 'viewer',
+                };
+              })
+              .filter(Boolean);
+            updateMemberMap('replace', normalized);
+            // Seed the authoritative count from session_status (backend includes member_count here).
+            const statusCount = data.member_count ?? normalized.length;
+            setMemberCount(statusCount);
+            console.log(`✅ [VideoWatch] session_status: initialised ${normalized.length} members into map (authoritative count: ${statusCount})`);
 
-              const normalizedMember = {
-                id,
-                Username: member.Username || member.username || 'Anonymous',
-                username: member.Username || member.username || 'Anonymous',
-                avatar_url: member.avatar_url || null,
-                user_role: member.user_role || 'viewer',
-              };
-              console.log(`📊 [VideoWatch] Normalized session member ${id}:`, normalizedMember);
-              console.log(`📊 [VideoWatch] Member ${id} avatar_url:`, member.avatar_url);
-              memberMap.set(id, normalizedMember);
-            });
-            
-            const membersArray = Array.from(memberMap.values());
-            console.log(`✅ [VideoWatch] Reconciling ${membersArray.length} session members from WS`);
-
-            // Reconcile: retain existing array, remove departed, add arrivals.
-            // Never replace outright — avoids a flash-to-zero on reconnect.
-            setRoomMembers(prev => {
-              if (prev.length === 0) return membersArray;
-              const incomingIds = new Set(membersArray.map(m => m.id));
-              const kept = prev.filter(m => incomingIds.has(m.id));
-              const keptIds = new Set(kept.map(m => m.id));
-              const added = membersArray.filter(m => !keptIds.has(m.id));
-              return [...kept, ...added];
-            });
-
-            // Always mark initialized — empty is a valid resolved state, not a loading state
-            setIsMembersInitialized(true);
-            
             // ✅ Request current audio states from all members in the room
-            console.log('🎤 [VideoWatch] Requesting audio states from all members');
             sendMessage({
               type: "request_audio_states",
               userId: currentUser?.id,
@@ -3675,20 +3616,6 @@ export default function VideoWatch() {
             setIsScreenSharingActive(false);
             setScreenSharerUserId(null);
           }
-
-          // ✅ Authoritative member count directly from server payload
-          if (typeof data.member_count === 'number') {
-            setAuthoritativeMemberCount(data.member_count);
-          }
-
-          // ✅ Layer 1: fire request_playback_state immediately on confirmed handshake.
-          // session_status arrival = server has processed client_ready = WS is stable.
-          // Replaces the old 500ms blind timer which fired before mobile WS was ready.
-          if (!isHost || (isHost && !currentMedia)) {
-            console.log('🔄 [VideoWatch] Layer 1: requesting playback state on session_status handshake');
-            sendMessage({ type: 'request_playback_state', requester_id: currentUser?.id, timestamp: Date.now() });
-          }
-
           break;
         case "update_room_status":
           // ✅ OPTIMIZE: Don't update currentMedia if we're already in LiveShare mode with same title
@@ -3820,7 +3747,6 @@ export default function VideoWatch() {
         case 'session_member_joined':
           // Real-time member join from backend
           console.log('📨 [VideoWatch] session_member_joined RAW:', message);
-          try { new Audio('/sounds/userjoin.mp3').play(); } catch (_) {}
           if (message.data?.user_id && message.data?.username) {
             const userId = message.data.user_id;
             const username = message.data.username;
@@ -3828,69 +3754,62 @@ export default function VideoWatch() {
             
             console.log(`👥 [VideoWatch] ${username} (ID:${userId}, role:${userRole}) joined session`);
             
-            // 🎬 HOST: Broadcast current playback state to new member (debounced for burst joins)
+            // 🎬 HOST: Broadcast current playback state to new member
             if (isHost && currentMedia && currentMedia.type === 'upload' && isConnected) {
-              clearTimeout(memberJoinBroadcastRef.current);
-              memberJoinBroadcastRef.current = setTimeout(() => {
-                const videoEl = videoPlayerRef.current || document.querySelector('video');
-                const currentTime = videoEl?.currentTime || 0;
-                console.log('🎯 [VideoWatch] HOST re-broadcasting state for new member:', { username, currentTime, isPlaying });
-                sendMessage({
-                  type: 'playback_control',
-                  command: isPlaying ? 'play' : 'pause',
-                  media_item_id: currentMedia.ID || currentMedia.id,
-                  file_path: currentMedia.file_path,
-                  file_url: currentMedia.mediaUrl,
-                  original_name: currentMedia.original_name,
-                  seek_time: currentTime,
-                  timestamp: Date.now(),
-                  sender_id: currentUser.id,
-                });
-              }, 300);
+              const videoEl = document.querySelector('video');
+              const currentTime = videoEl?.currentTime || 0;
+              
+              console.log('🎯 [VideoWatch] HOST sending current state to new member:', {
+                newMember: username,
+                currentTime,
+                mediaUrl: currentMedia.mediaUrl,
+                isPlaying
+              });
+              
+              sendMessage({
+                type: 'playback_control',
+                command: isPlaying ? 'play' : 'pause',
+                media_item_id: currentMedia.ID || currentMedia.id,
+                file_path: currentMedia.file_path,
+                file_url: currentMedia.mediaUrl,
+                original_name: currentMedia.original_name,
+                seek_time: currentTime,
+                timestamp: Date.now(),
+                sender_id: currentUser.id,
+              });
             }
             
-            setRoomMembers(prev => {
-              const exists = prev.some(m => m.id === userId);
-              if (exists) {
-                console.log(`⚠️ [VideoWatch] ${username} already in session, skipping duplicate`);
-                return prev;
-              }
-              const newMembers = [...prev, {
+            if (!memberMapRef.current.has(userId)) {
+              updateMemberMap('add', {
                 id: userId,
-                Username: username,
-                username: username,
-                user_role: userRole
-              }];
-              console.log(`✅ [VideoWatch] ${username} added → Session now has ${newMembers.length} members:`, newMembers);
-              return newMembers;
-            });
-            // Use authoritative count from backend if available
-            if (typeof message.data.member_count === 'number') {
-              setAuthoritativeMemberCount(message.data.member_count);
+                username,
+                avatar_url: message.data.avatar_url || null,
+                user_role: userRole,
+              });
+              console.log(`✅ [VideoWatch] ${username} added → map size: ${memberMapRef.current.size}`);
+            } else {
+              console.log(`⚠️ [VideoWatch] ${username} already in map, skipping duplicate`);
+            }
+            // Update authoritative count whenever backend sends it.
+            if (message.data.member_count != null) {
+              setMemberCount(message.data.member_count);
             }
           } else {
             console.error('❌ [VideoWatch] session_member_joined missing user_id or username:', message.data);
           }
           break;
-
+        
         case 'session_member_left':
-          // Real-time member leave from backend
           if (message.data?.user_id) {
             const userId = message.data.user_id;
-            const username = message.data.username;
-
-            console.log(`👋 [VideoWatch] ${username} (ID:${userId}) left session`);
-            setRoomMembers(prev => {
-              const updated = prev.filter(m => m.id !== userId);
-              console.log(`👋 [VideoWatch] Session now has ${updated.length} members`);
-              return updated;
-            });
-            if (typeof message.data.member_count === 'number') {
-              setAuthoritativeMemberCount(message.data.member_count);
+            console.log(`👋 [VideoWatch] ${message.data.username} (ID:${userId}) left session`);
+            updateMemberMap('remove', userId);
+            if (message.data.member_count != null) {
+              setMemberCount(message.data.member_count);
             }
           }
           break;
-        
+
         case "request_playback_state":
           console.log('📨 [VideoWatch] Received playback state request:', {
             requester_id: message.requester_id,
@@ -3946,110 +3865,77 @@ export default function VideoWatch() {
             stream: null
           }]);
           break;
-        case "playback_control": {
-          const pcArrivalTime = Date.now();
-          console.log(`📥 [MEMBER] playback_control arrived t=${pcArrivalTime}`, {
+        case "playback_control":
+          console.log('📥 [VideoWatch] RECEIVED playback_control:', {
             sender_id: message.sender_id,
-            command: message.command,
-            seek_time: message.seek_time,
-            server_ts: message.server_ts,
-            file_path: message.file_path,
-            isHost,
             currentUserId: currentUser?.id,
+            command: message.command,
+            file_path: message.file_path,
+            file_url: message.file_url,
+            timestamp: message.timestamp
           });
-
-          // Skip only if this host tab already has this exact media loaded.
-          // Allows host's 2nd device (isHost=true but no currentMedia) to receive and apply state.
-          if (isHost && currentMedia?.file_path === message.file_path) {
-            console.log('⏭️ [MEMBER] Skipping — host tab already at this media');
+          
+          if (message.sender_id && message.sender_id === currentUser?.id) {
+            console.log('⏭️ [VideoWatch] Ignoring own playback_control message');
             break;
           }
-
-          if (!message.file_path) {
-            console.warn('⚠️ [MEMBER] playback_control has no file_path');
-            break;
-          }
-
-          // Embed media (Google Drive, YouTube, Twitch) — just load the iframe URL, no seek logic
-          if (message.is_embed) {
-            if (!currentMedia || currentMedia.file_path !== message.file_path) {
-              setCurrentMedia({
-                type: 'embed',
-                file_path: message.file_path,
-                mediaUrl: message.file_path,
-                original_name: message.original_name || 'Embedded Content',
-                embed_platform: message.embed_platform || null,
+          
+          if (message.file_path) {
+            const isSameMedia = currentMedia && currentMedia.file_path === message.file_path;
+            console.log('🔍 [VideoWatch] Playback control check:', {
+              isSameMedia,
+              currentMediaPath: currentMedia?.file_path,
+              newMediaPath: message.file_path,
+              isPlaying,
+              newCommand: message.command
+            });
+            
+            if (!isSameMedia || isPlaying !== (message.command === "play")) {
+              // ✅ Construct full URL for uploaded media
+              const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+              const fileUrl = message.file_url || message.file_path;
+              const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+              
+              console.log('✅ [VideoWatch] MEMBER loading media:', {
+                mediaUrl,
+                original_name: message.original_name
               });
-            }
-            break;
-          }
-
-          const isSameMedia = currentMedia && currentMedia.file_path === message.file_path;
-          // Option 1: use host browser clock (message.timestamp), not server_ts.
-          // Both host and member tabs share the same Windows clock — no WSL/browser drift.
-          // server_ts comes from WSL which can be 600ms+ ahead of Windows Date.now().
-          const transitLatency = Math.max(0, pcArrivalTime - message.timestamp);
-          const adjustedTime = message.seek_time + (transitLatency / 1000);
-          console.log(`⏱️ [MEMBER] transit=${transitLatency}ms seek_time=${message.seek_time} adjusted=${adjustedTime.toFixed(3)}s`);
-
-          if (isSameMedia) {
-            // Option 2: same media already loaded — operate directly on the video element.
-            // Reloading video.src for a seek adds ~275ms load + ~318ms seek = ~593ms wasted.
-            const videoEl = videoPlayerRef.current || document.querySelector('video');
-
-            if (message.command === "seek" || (message.command === "play" && isPlaying)) {
-              // Already playing — just reposition, video continues
-              if (videoEl && adjustedTime >= 0) {
-                console.log(`🔍 [MEMBER] Same-media reposition → ${adjustedTime.toFixed(3)}s`);
-                videoEl.currentTime = adjustedTime;
+              
+              setCurrentMedia({
+                ID: message.media_item_id,
+                type: 'upload',
+                file_path: message.file_path,
+                mediaUrl: mediaUrl,
+                original_name: message.original_name || 'Unknown Media',
+              });
+              const now = Date.now();
+              // Prefer server_ts (injected by backend relay) over host timestamp to
+              // eliminate clock drift between two different devices.
+              const latency = now - (message.server_ts || message.timestamp);
+              const adjustedTime = message.seek_time + (latency / 1000);
+              console.log('⏱️ [VideoWatch] Latency compensation:', {
+                latency_ms: latency,
+                seek_time: message.seek_time,
+                adjusted_time: adjustedTime,
+                command: message.command,
+                current_isPlaying: isPlaying,
+                will_change_playState: message.command === "play" || message.command === "pause"
+              });
+              setPendingSeekTime(adjustedTime); // ✅ Use state instead of ref
+              
+              // 🎯 FIX: Only update play/pause for explicit play/pause commands, not seek-only
+              if (message.command === "play" || message.command === "pause") {
+                setIsPlaying(message.command === "play");
+                console.log(`🎬 [VideoWatch] ${message.command === "play" ? "Playing" : "Pausing"} video from playback_control`);
               }
-            } else if (message.command === "play" && !isPlaying) {
-              // Was paused — seek to position then resume
-              if (videoEl) {
-                console.log(`▶️ [MEMBER] Same-media resume → ${adjustedTime.toFixed(3)}s`);
-                wsArrivalTimeRef.current = pcArrivalTime;
-                if (adjustedTime > 0) videoEl.currentTime = adjustedTime;
-                const onSeekedResume = () => {
-                  videoEl.removeEventListener('seeked', onSeekedResume);
-                  const elapsed = wsArrivalTimeRef.current
-                    ? (Date.now() - wsArrivalTimeRef.current) / 1000 : 0;
-                  wsArrivalTimeRef.current = null;
-                  if (elapsed > 0) videoEl.currentTime = videoEl.currentTime + elapsed;
-                  videoEl.play().catch(err =>
-                    console.error(`❌ [MEMBER] resume play failed: ${err.name}`)
-                  );
-                };
-                videoEl.addEventListener('seeked', onSeekedResume);
-              }
-              setIsPlaying(true);
-            } else if (message.command === "pause") {
-              console.log(`⏸️ [MEMBER] Same-media pause`);
-              videoEl?.pause();
-              setIsPlaying(false);
+              // For "seek" commands, maintain current play state
+            } else {
+              console.log('⏭️ [VideoWatch] Skipping - same media and state');
             }
           } else {
-            // Different media — full load path; handleLoadedData will apply seek + play
-            const mediaUrl = toAbsUrl(message.file_url || message.file_path) || message.file_url || message.file_path;
-            console.log(`✅ [MEMBER] New media load: ${message.original_name || 'unknown'}`);
-            wsArrivalTimeRef.current = pcArrivalTime;
-            // Seed syncRef so the drift-check loop has a reference immediately,
-            // without waiting up to 10s for the first heartbeat.
-            syncRefRef.current = { hostTime: adjustedTime, receivedAt: pcArrivalTime };
-            setCurrentMedia({
-              ID: message.media_item_id,
-              type: 'upload',
-              file_path: message.file_path,
-              mediaUrl,
-              original_name: message.original_name || 'Unknown Media',
-            });
-            setPendingSeekTime(adjustedTime);
-            if (message.command === "play" || message.command === "pause") {
-              setIsPlaying(message.command === "play");
-              console.log(`🎬 [MEMBER] setIsPlaying(${message.command === "play"})`);
-            }
+            console.warn('⚠️ [VideoWatch] playback_control missing file_path!');
           }
           break;
-        }
         case "camera_toggle":
           const { user_id, is_camera_on } = message.data;
           setParticipants(prev => {
@@ -4104,15 +3990,15 @@ export default function VideoWatch() {
           setParticipants(prev => prev.filter(p => p.id !== message.userId));
           break;
         case 'user_left':
-          // ✅ Handle WebSocket disconnect cleanup - remove from member list
+          // Crash / WS-disconnect cleanup — mirrors the clean-leave path
           if (message.data?.userId || message.data?.user_id) {
             const leftUserId = message.data.userId || message.data.user_id;
             console.log('👋 [VideoWatch] User left (disconnect):', leftUserId);
-            setRoomMembers(prev => {
-              const updated = prev.filter(m => m.id !== leftUserId);
-              console.log('👋 [VideoWatch] Updated member count:', prev.length, '→', updated.length);
-              return updated;
-            });
+            updateMemberMap('remove', leftUserId);
+            // Disconnect path now also carries member_count — use it when present.
+            if (message.data.member_count != null) {
+              setMemberCount(message.data.member_count);
+            }
           }
           break;
         case 'seat_update':
@@ -4295,11 +4181,13 @@ export default function VideoWatch() {
           break;
         
         case "session_ended":
+          // Clear member map and derived state
+          updateMemberMap('clear');
+          setMemberCount(0);
+          setIsMembersInitialized(false);
           // Clear private messages and unread counts
           setPrivateMessages({});
           setUnreadMessages({});
-          // Reset sidebar tab so next session starts on Upload, not LiveShare
-          sessionStorage.removeItem('wewatch_active_sidebar_tab');
           
           // Clear compression state from LeftSidebar
           if (leftSidebarCleanupRef.current) {
@@ -4348,10 +4236,6 @@ export default function VideoWatch() {
           
           performCleanupAndExit(message.data?.is_temporary);
           break;
-        case 'heart_animation':
-          setShowHeartAnimation(true);
-          break;
-
         case 'kicked_from_room': {
           const kickReason = message.data?.reason;
           if (kickReason === 'banned') {
@@ -4831,38 +4715,21 @@ export default function VideoWatch() {
     clearMessages();
   }, [messages, sessionStatus.id, currentUser?.id, currentMedia, localParticipant, clearMessages]);
 
-  // Host → members reference heartbeat every 10s.
-  // Just refreshes the member's syncRefRef — the member does its own drift checks locally.
+  // Periodic sync heartbeat: host → members every 2.5s while playing.
+  // Lets members self-correct drift without a host action.
   useEffect(() => {
     if (!isHost || !isPlaying || !isConnected) return;
     const id = setInterval(() => {
       const videoEl = videoPlayerRef.current || document.querySelector('video');
       if (!videoEl || videoEl.paused) return;
-      sendMessage({ type: 'sync_heartbeat', current_time: videoEl.currentTime, timestamp: Date.now() });
-    }, 10000);
+      sendMessage({
+        type: 'sync_heartbeat',
+        current_time: videoEl.currentTime,
+        timestamp: Date.now(),
+      });
+    }, 2500);
     return () => clearInterval(id);
   }, [isHost, isPlaying, isConnected, sendMessage]);
-
-  // Member autonomous drift check every 2s.
-  // Computes expected = lastKnownHostTime + elapsed and corrects only when drift > 1s.
-  // No WS traffic — purely local arithmetic against the stored syncRefRef reference.
-  useEffect(() => {
-    if (isHost || !isPlaying) return;
-    const id = setInterval(() => {
-      if (!syncRefRef.current) return;
-      const videoEl = videoPlayerRef.current || document.querySelector('video');
-      if (!videoEl || videoEl.paused) return;
-      const elapsed = (Date.now() - syncRefRef.current.receivedAt) / 1000;
-      const expected = syncRefRef.current.hostTime + elapsed;
-      const drift = videoEl.currentTime - expected; // positive = member ahead
-      const absDrift = Math.abs(drift);
-      if (absDrift > 1.0 && absDrift < 30) {
-        console.log(`🔄 [Drift] Auto-correct ${drift > 0 ? 'ahead' : 'behind'} ${absDrift.toFixed(2)}s → ${expected.toFixed(2)}s`);
-        videoEl.currentTime = expected;
-      }
-    }, 2000);
-    return () => clearInterval(id);
-  }, [isHost, isPlaying]);
 
   // Handle Chat
   const handleSendSessionMessage = async () => {
@@ -4958,11 +4825,9 @@ export default function VideoWatch() {
   const handleLeaveRoom = async () => {
     const finalSessionId = sessionStatus?.id || urlSessionId || activeSessionId;
 
-    // Determine if this is a temporary room BEFORE any cleanup changes the URL.
-    // Check the URL param first (standard instant watch), then fall back to roomData
-    // (covers private watchout sessions which use /rooms/:id without ?instant=true).
+    // Determine if this is an instant watch BEFORE any cleanup changes the URL
     const urlParams = new URLSearchParams(window.location.search);
-    const isInstantWatch = urlParams.get('instant') === 'true' || roomData?.is_temporary === true;
+    const isInstantWatch = urlParams.get('instant') === 'true';
 
     if (isHost) {
       const confirmed = window.confirm(
@@ -4973,35 +4838,37 @@ export default function VideoWatch() {
         return;
       }
 
-      // Mark ended immediately so re-fetch on RoomPage doesn't resurrect the session
-      sessionStorage.setItem(`session_ended_${roomId}`, 'true');
-
-      // Fire the end-session API call in the background — do NOT await it.
-      // Backend writes DB + broadcasts session_ended to all participants immediately.
-      // Awaiting the round-trip (Vercel → Railway) was blocking navigation for 500ms-2s.
-      if (finalSessionId) {
-        apiClient.post(`/api/rooms/${roomId}/sessions/${finalSessionId}/end`)
-          .catch(err => console.error('[handleLeaveRoom] background end-session failed:', err));
+      try {
+        if (finalSessionId) {
+          await apiClient.post(`/api/rooms/${roomId}/sessions/${finalSessionId}/end`);
+          sessionStorage.setItem(`session_ended_${roomId}`, 'true');
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+      } catch (error) {
+        console.error('Failed to end session:', error);
+      }
+    } else {
+      // Non-host: tell the backend explicitly before the WS closes so the host's
+      // count updates instantly.  80ms gives the TCP stack time to flush the frame
+      // before the useWebSocket 200ms cleanup fires.
+      if (finalSessionId && isConnected) {
+        sendMessage({ type: 'leave_session', user_id: currentUser?.id });
+        await new Promise(resolve => setTimeout(resolve, 80));
       }
     }
 
-    // Navigate immediately — cleanup is non-blocking
     await performCleanupAndExit(isInstantWatch);
   };
 
   // Cleanup and navigate helper
   const performCleanupAndExit = async (isTemporaryRoom = null) => {
-    // Guard: session_ended WS and manual Leave Call can race — only exit once
-    if (isExitingRef.current) return;
-    isExitingRef.current = true;
-
-    // 1. Fire LiveKit disconnect in the background — don't block navigation on WebRTC teardown.
-    // disconnectLiveKit() may return undefined if LiveKit is already disconnected — guard the .catch().
+    // 1. Fire-and-forget LiveKit disconnect — don't block navigation on teardown.
+    //    Wrapped in Promise.resolve().then() so both sync throws (non-Promise return)
+    //    and async rejections are swallowed without propagating to the caller.
     if (disconnectLiveKit) {
-      try {
-        const p = disconnectLiveKit();
-        if (p && typeof p.catch === 'function') p.catch(() => {});
-      } catch (_) {}
+      Promise.resolve().then(() => disconnectLiveKit()).catch(err =>
+        console.error('[performCleanupAndExit] LiveKit disconnect error:', err)
+      );
     }
 
     // 2. Stop camera stream
@@ -5059,7 +4926,7 @@ export default function VideoWatch() {
       }
     } catch (err) {
       console.error('Navigation error:', err);
-      navigate(roomData?.is_temporary ? '/lobby' : `/rooms/${roomId}`, { replace: true });
+      navigate(`/rooms/${roomId}`, { replace: true });
     }
   };
 
@@ -5126,8 +4993,7 @@ export default function VideoWatch() {
       }
     } catch (err) {
       console.error("Failed to fetch room members:", err);
-      // Keep existing members on error — a failed refresh is less harmful than a blank list
-      setIsMembersInitialized(true);
+      setRoomMembers([]);
     } finally {
       setLoadingMembers(false);
     }
@@ -5965,7 +5831,7 @@ export default function VideoWatch() {
                     height: `${bannerHeight}px`,
                     backgroundColor: bgColor,
                     zIndex: 5, // Behind logo (logo is 10)
-                    overflow: 'visible' // Allow BN.webp to extend beyond banner
+                    overflow: 'visible' // Allow BN.png to extend beyond banner
                   }}
                 >
                   {/* Layout: BN icon on right */}
@@ -6042,7 +5908,7 @@ export default function VideoWatch() {
                         height: `${bannerHeight * 3 * (screenSize === 'mobile' ? 0.80 : 1)}px` // 20% smaller on mobile only
                       }}>
                         <img 
-                          src="/icons/BN.webp" 
+                          src="/icons/BN.png" 
                           alt="Breaking News"
                           className="object-contain"
                           style={{ 
@@ -6129,7 +5995,7 @@ export default function VideoWatch() {
                         height: `${bannerHeight * 3.15}px` // Another 50% larger (2.1 * 1.5)
                       }}>
                         <img 
-                          src="/icons/Breakin.webp" 
+                          src="/icons/Breakin.png" 
                           alt="Breaking"
                           className="object-contain"
                           style={{ 
@@ -6252,8 +6118,6 @@ export default function VideoWatch() {
           isVisible={isVisible}
           isGlowing={isGlowing}
           onShareRoom={handleShareRoom}
-          isPrivateSession={sessionStatus?.is_private || false}
-          onInviteFriend={() => setShowMembersModal(true)}
           setIsGlowing={setIsGlowing}
           onLeaveCall={handleLeaveRoom}
           openVideoSidebar={() => setIsVideoSidebarOpen(prev => !prev)}
@@ -6268,7 +6132,7 @@ export default function VideoWatch() {
           userSeats={userSeats}
           currentUser={currentUser}
           watchSessionMembers={roomMembers}
-          memberCount={authorativeMemberCount || roomMembers?.length || 0}
+          authoritativeMemberCount={memberCount}
           isMembersLoading={!isMembersInitialized}
           onMembersClick={() => {
             // ✅ Don't fetch room members - use session members already in state from session_status WebSocket message
@@ -6609,15 +6473,12 @@ export default function VideoWatch() {
         onRequestBroadcast={null}
         broadcastRequests={[]}
         watchType="video_watch"
-        contentRating={contentRating}
         onMuteAll={handleMuteAll}
         isMuteAllActive={isMuteAllActive}
         onUnmuteMember={handleUnmuteMember}
         raisedHands={raisedHands}
         liveShareGuestId={liveShareGuestId}
         memberEmotes={memberEmotes}
-        isPrivateSession={sessionStatus?.is_private || false}
-        activeSessionId={sessionStatus?.session_id || null}
       />
       {/* Chat Entry Modals */}
       {showChatHome && (

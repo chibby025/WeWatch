@@ -2647,12 +2647,6 @@ func GetActiveSessionHandler(c *gin.Context) {
 		return
 	}
 
-	// ✅ Count active members
-	var memberCount int64
-	DB.Model(&models.WatchSessionMember{}).
-		Where("watch_session_id = ? AND is_active = ?", session.ID, true).
-		Count(&memberCount)
-
 	// ✅ Fetch active members with user details
 	type MemberResponse struct {
 		UserID    uint   `json:"user_id"`
@@ -2661,17 +2655,46 @@ func GetActiveSessionHandler(c *gin.Context) {
 		IsActive  bool   `json:"is_active"`
 		UserRole  string `json:"user_role"`
 	}
-	
+
 	var members []MemberResponse
 	DB.Table("watch_session_members").
 		Select("watch_session_members.user_id, users.username, users.avatar_url, watch_session_members.is_active, user_rooms.user_role").
 		Joins("JOIN users ON users.id = watch_session_members.user_id").
-		Joins("JOIN user_rooms ON user_rooms.user_id = watch_session_members.user_id AND user_rooms.room_id = ?", roomID).
+		Joins("LEFT JOIN user_rooms ON user_rooms.user_id = watch_session_members.user_id AND user_rooms.room_id = ?", roomID).
 		Where("watch_session_members.watch_session_id = ? AND watch_session_members.is_active = ?", session.ID, true).
 		Scan(&members)
-	
-	// Reduced logging - content_rating: %s (found %d members)
-	
+
+	// ✅ Ghost cleanup: mark DB members inactive if they have no live WS connection.
+	// Runs on every heartbeat poll so stale entries self-correct without waiting for
+	// the hourly CleanupStaleSessions goroutine.
+	wsActiveUserIDs := hub.GetRoomActiveUserIDs(uint(roomID))
+	if len(wsActiveUserIDs) > 0 {
+		ghostCleaned := 0
+		now := time.Now()
+		for _, m := range members {
+			if !wsActiveUserIDs[m.UserID] {
+				DB.Model(&models.WatchSessionMember{}).
+					Where("watch_session_id = ? AND user_id = ? AND is_active = ?", session.ID, m.UserID, true).
+					Updates(map[string]interface{}{"is_active": false, "left_at": now})
+				ghostCleaned++
+			}
+		}
+		if ghostCleaned > 0 {
+			log.Printf("[GetActiveSession] Ghost cleanup: marked %d stale members inactive in session %s", ghostCleaned, session.SessionID)
+			// Re-fetch the cleaned member list so the response is accurate
+			members = nil
+			DB.Table("watch_session_members").
+				Select("watch_session_members.user_id, users.username, users.avatar_url, watch_session_members.is_active, user_rooms.user_role").
+				Joins("JOIN users ON users.id = watch_session_members.user_id").
+				Joins("LEFT JOIN user_rooms ON user_rooms.user_id = watch_session_members.user_id AND user_rooms.room_id = ?", roomID).
+				Where("watch_session_members.watch_session_id = ? AND watch_session_members.is_active = ?", session.ID, true).
+				Scan(&members)
+		}
+	}
+
+	memberCount := int64(len(members))
+	wsConnectionCount := hub.GetRoomConnectionCount(uint(roomID))
+
 	// ✅ Fetch host username for ticket purchase modal
 	var hostUser models.User
 	hostName := "Unknown Host"
@@ -2693,6 +2716,7 @@ func GetActiveSessionHandler(c *gin.Context) {
 		"is_existing":           true,
 		"started_at":            session.StartedAt,
 		"member_count":          memberCount,
+		"ws_connection_count":   wsConnectionCount,
 		"members":               members,
 		// ✅ TICKET ENFORCEMENT: Include ticketing fields for frontend validation
 		"ticketing_enabled":      session.TicketingEnabled,

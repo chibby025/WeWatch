@@ -2,7 +2,8 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import ScheduledEventPreviewCard from './ScheduledEventPreviewCard';
 import CommunityRequestCard from './CommunityRequestCard';
 import MakeRequestSheet from './MakeRequestSheet';
-import { PlusCircleIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { PlusCircleIcon } from '@heroicons/react/24/outline';
+import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
 
 /**
  * CommunityEventsCard — flat fan carousel.
@@ -270,7 +271,7 @@ const CommunityEventsCard = ({
 
   // ── Carousel ───────────────────────────────────────────────────────────────
   return (
-    <div ref={containerRef} className="relative h-full w-full overflow-hidden">
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-gradient-to-br from-gray-900 via-slate-900 to-black">
 
       {/* ── Top pill + tagline (always visible) ── */}
       <div className="absolute top-0 left-0 right-0 z-30 flex flex-col items-center pt-3 gap-1.5 pointer-events-none">
@@ -321,8 +322,8 @@ const CommunityEventsCard = ({
                 overflow:     'hidden',
                 transition:   trans,
                 boxShadow: isCenter
-                  ? '0 24px 60px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.08)'
-                  : '0 8px 24px rgba(0,0,0,0.55)',
+                  ? '0 24px 60px rgba(0,0,0,0.85), 0 0 0 1.5px rgba(255,255,255,0.35)'
+                  : '0 8px 24px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.15)',
                 cursor:    isCenter ? 'default' : 'pointer',
                 willChange: 'transform, opacity',
               }}
@@ -389,11 +390,11 @@ const CommunityEventsCard = ({
         <button
           onClick={() => goTo(currentIndex - 1)}
           disabled={currentIndex === 0}
-          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full
-            bg-white/10 hover:bg-white/20 disabled:opacity-25 disabled:cursor-not-allowed
-            text-white transition-colors active:scale-90"
+          className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full
+            bg-white/25 hover:bg-white/40 disabled:opacity-20 disabled:cursor-not-allowed
+            text-white transition-colors active:scale-90 shadow-lg border border-white/20"
         >
-          <ChevronLeftIcon className="w-4 h-4" />
+          <ChevronLeftIcon className="w-5 h-5" />
         </button>
 
         {/* Middle: two rows of info */}
@@ -477,11 +478,11 @@ const CommunityEventsCard = ({
         <button
           onClick={() => goTo(currentIndex + 1)}
           disabled={currentIndex === cards.length - 1}
-          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full
-            bg-white/10 hover:bg-white/20 disabled:opacity-25 disabled:cursor-not-allowed
-            text-white transition-colors active:scale-90"
+          className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full
+            bg-white/25 hover:bg-white/40 disabled:opacity-20 disabled:cursor-not-allowed
+            text-white transition-colors active:scale-90 shadow-lg border border-white/20"
         >
-          <ChevronRightIcon className="w-4 h-4" />
+          <ChevronRightIcon className="w-5 h-5" />
         </button>
       </div>
 

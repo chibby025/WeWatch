@@ -1,5 +1,5 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup, toggleRoomFavourite, joinRoom, clearAllNotifications, startCircleWatchout } from '../services/api';
 import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon, EyeIcon, ChatBubbleOvalLeftEllipsisIcon, BookmarkIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/solid';
@@ -80,15 +80,24 @@ const pulseAnimationStyles = `
     80%  { opacity: 0.6; }
     100% { opacity: 0;   transform: translateY(-60px) scale(1.2); }
   }
+  @keyframes communityPeek {
+    0%, 60%, 100% { transform: translateY(100%); opacity: 0; }
+    70%, 90%      { transform: translateY(0);    opacity: 1; }
+  }
   .pulse-red-cross { animation: pulseRed 1.5s ease-in-out infinite; }
   .scale-square    { animation: scaleSquare 1.5s ease-in-out infinite; }
   .zzz-1 { animation: floatZzz 2.4s ease-in-out infinite; animation-delay: 0s; }
   .zzz-2 { animation: floatZzz 2.4s ease-in-out infinite; animation-delay: 0.8s; }
   .zzz-3 { animation: floatZzz 2.4s ease-in-out infinite; animation-delay: 1.6s; }
+  .community-peek { animation: communityPeek 4s ease-in-out infinite; animation-delay: 2s; }
 `;
 
 // Module-level stale-while-revalidate cache (survives tab switches, cleared on unmount)
-const _lobbyCache = { rooms: null, roomsTs: 0, sessions: null, sessionsTs: 0 };
+const _lobbyCache = {
+  rooms: null, roomsTs: 0,
+  sessions: null, sessionsTs: 0,
+  friends: null, friendsTs: 0,   // for instant chat-tab loads
+};
 const CACHE_TTL = 60_000; // 60 s
 
 const LobbyPage = () => {
@@ -106,17 +115,16 @@ const LobbyPage = () => {
     localStorage.getItem('dataSaverMode') === 'true'
   );
   
-  // Listen for localStorage changes (when toggled in sidebar)
+  // Listen for localStorage changes (when toggled in sidebar or another tab)
   React.useEffect(() => {
     const checkDataSaver = () => {
       setDataSaverEnabled(localStorage.getItem('dataSaverMode') === 'true');
     };
     window.addEventListener('storage', checkDataSaver);
-    // Also check periodically since localStorage events don't fire in same tab
-    const interval = setInterval(checkDataSaver, 500);
+    window.addEventListener('dataSaverModeChange', checkDataSaver);
     return () => {
       window.removeEventListener('storage', checkDataSaver);
-      clearInterval(interval);
+      window.removeEventListener('dataSaverModeChange', checkDataSaver);
     };
   }, []);
   
@@ -136,7 +144,8 @@ const LobbyPage = () => {
   const [loading, setLoading] = useState(true);
   const [sessionsLoading, setSessionsLoading] = useState(true); // ✅ Separate loading for sessions
   const [error, setError] = useState(null);
-  // filteredRooms and filteredSessions are derived — computed via useMemo below sortRooms
+  const [filteredRooms, setFilteredRooms] = useState([]);
+  const [filteredSessions, setFilteredSessions] = useState([]); // ✅ Filtered sessions
   
   // ✅ Infinite Scroll State
   const [roomsPage, setRoomsPage] = useState(0);
@@ -302,6 +311,11 @@ const LobbyPage = () => {
   const wsRef = React.useRef(null);
   const [wsConnected, setWsConnected] = React.useState(false);
   const fetchAbortRef = React.useRef({}); // keyed abort controllers for cancellable fetches
+  const sessionsFetchDebounceRef = React.useRef(null); // debounce rapid session_started bursts
+  // Refs that shadow volatile state so onmessage never reads stale closures
+  const outgoingCallRef      = React.useRef(null);
+  const activeGroupCallRef   = React.useRef(null);
+  const activeChatSessionRef = React.useRef(null);
   
   // Session preview state
   const [sessionPreviews, setSessionPreviews] = useState({}); // { sessionId: { posterUrl, previewUrl, isGenerating } }
@@ -323,7 +337,7 @@ const LobbyPage = () => {
   // 💬 Interactive Session Chat State (70-30 Split Mode)
   const [activeChatSession, setActiveChatSession] = useState(null); // Session object with chat open
   const [sessionChatMessages, setSessionChatMessages] = useState([]); // Real-time session chat messages
-  const [chatWsRef, setChatWsRef] = useState(null); // WebSocket connection for chat
+  const chatIntervalRef = React.useRef(null); // interval id for session chat polling (not state — avoids re-renders)
   const [isChatConnecting, setIsChatConnecting] = useState(false);
   
   // ❤️ Like Animation State
@@ -397,9 +411,6 @@ const LobbyPage = () => {
     return saved === null ? false : saved === 'true'; // Default unmuted
   });
   
-  // Tracks whether the initial rooms network fetch has been dispatched
-  const roomsFetchedRef = React.useRef(false);
-
   // ✅ Infinite scroll refs
   const watchingNowScrollRef = React.useRef(null);
   const loadMoreTriggerRef = React.useRef(null);
@@ -542,19 +553,14 @@ const LobbyPage = () => {
     
     // Poll every 2 seconds while chat is open
     const interval = setInterval(fetchMessages, 2000);
-    
-    // Store interval reference with close method for cleanup compatibility
-    setChatWsRef({ 
-      close: () => clearInterval(interval),
-      interval: interval
-    });
+    chatIntervalRef.current = interval;
   };
   
   // 🚪 Close interactive chat
   const handleCloseChatPreview = () => {
-    if (chatWsRef) {
-      chatWsRef.close();
-      setChatWsRef(null);
+    if (chatIntervalRef.current) {
+      clearInterval(chatIntervalRef.current);
+      chatIntervalRef.current = null;
     }
     setActiveChatSession(null);
     setSessionChatMessages([]);
@@ -586,15 +592,12 @@ const LobbyPage = () => {
     setTouchEndY(null);
   };
   
-  // 🧹 Cleanup WebSocket on unmount or when leaving fullscreen
+  // 🧹 Cleanup session chat polling interval on unmount
   useEffect(() => {
     return () => {
-      if (chatWsRef) {
-        chatWsRef.close();
-        setChatWsRef(null);
-      }
+      if (chatIntervalRef.current) clearInterval(chatIntervalRef.current);
     };
-  }, [chatWsRef]);
+  }, []);
   
   // 📐 Measure tab bar bottom so the watching view fills exactly the remaining height.
   // useEffect (not useLayoutEffect) so measurement is async and doesn't block tab-switch paint.
@@ -877,24 +880,27 @@ const LobbyPage = () => {
     return [...owned, ...member];
   };
 
-  // Derived — no state, no effect, no double-render
-  const filteredRooms = useMemo(() => {
-    if (!searchTerm) return sortRooms(rooms);
-    const t = searchTerm.toLowerCase().trim();
-    return sortRooms(rooms.filter(r =>
-      (r.name && r.name.toLowerCase().includes(t)) ||
-      (r.description && r.description.toLowerCase().includes(t))
-    ));
-  }, [rooms, searchTerm]);
+  // Filter rooms and sessions effect
+  useEffect(() => {
+    if (searchTerm === '') {
+      setFilteredRooms(sortRooms(rooms));
+      setFilteredSessions(sessions);
+    } else {
+      const termLower = searchTerm.toLowerCase().trim();
+      const filtered = rooms.filter(room =>
+        (room.name && room.name.toLowerCase().includes(termLower)) ||
+        (room.description && room.description.toLowerCase().includes(termLower))
+      );
+      setFilteredRooms(sortRooms(filtered));
 
-  const filteredSessions = useMemo(() => {
-    if (!searchTerm) return sessions;
-    const t = searchTerm.toLowerCase().trim();
-    return sessions.filter(s =>
-      (s.room_name && s.room_name.toLowerCase().includes(t)) ||
-      (s.host_username && s.host_username.toLowerCase().includes(t))
-    );
-  }, [sessions, searchTerm]);
+      // ✅ Filter sessions by room name or host username
+      const filteredSess = sessions.filter(session =>
+        (session.room_name && session.room_name.toLowerCase().includes(termLower)) ||
+        (session.host_username && session.host_username.toLowerCase().includes(termLower))
+      );
+      setFilteredSessions(filteredSess);
+    }
+  }, [rooms, sessions, searchTerm]);
 
   // ✅ Infinite scroll observer for rooms
   useEffect(() => {
@@ -985,6 +991,7 @@ const LobbyPage = () => {
       setError('Failed to load rooms. Please try again later.');
       if (!append) {
         setRooms([]);
+        setFilteredRooms([]);
       }
     } finally {
       setLoading(false);
@@ -1013,10 +1020,14 @@ const LobbyPage = () => {
       // 3. Show private sessions only if current user is a member
       const rawSessions = data.sessions || [];
       
+      const now = Date.now();
       const filtered = rawSessions.filter(s => {
-        // If temporary (instant watch) and zero members, skip it
+        // Drop orphaned instant sessions: temporary + 0 members + started > 30s ago.
+        // The 30s grace window prevents a race where the host member record hasn't
+        // been written yet at the time we query right after session_started fires.
         if (s.is_temporary && (s.member_count === 0 || s.member_count === undefined)) {
-          return false;
+          const startedAt = s.started_at ? new Date(s.started_at).getTime() : 0;
+          if (now - startedAt > 30_000) return false;
         }
         
         // Show all public sessions
@@ -1064,9 +1075,14 @@ const LobbyPage = () => {
     } catch {}
   };
 
-  // ✅ Fetch friends list for chat
+  // ✅ Fetch friends list for chat — stale-while-revalidate from _lobbyCache
   const fetchFriendsList = async () => {
-    setChatsLoading(true);
+    // Serve cache instantly so the chat tab feels immediate
+    if (_lobbyCache.friends && Date.now() - _lobbyCache.friendsTs < CACHE_TTL) {
+      setFriendsList(_lobbyCache.friends);
+    } else {
+      setChatsLoading(true);
+    }
     try {
       const response = await apiClient.get('/api/friendships/list');
       const normalizedFriends = (response.data.friends || []).map(friend => ({
@@ -1074,6 +1090,8 @@ const LobbyPage = () => {
         id: friend.id || friend.ID
       }));
       setFriendsList(normalizedFriends);
+      _lobbyCache.friends  = normalizedFriends;
+      _lobbyCache.friendsTs = Date.now();
 
       // Seed lastMessagePreviews from the last_message fields returned by the API
       // so previews appear in the friends list without opening each chat first.
@@ -1094,7 +1112,6 @@ const LobbyPage = () => {
       }
     } catch (err) {
       console.error('❌ [Lobby] Failed to fetch friends list:', err);
-      console.error('❌ [Lobby] Error details:', err.response?.data || err.message);
     } finally {
       setChatsLoading(false);
     }
@@ -1438,7 +1455,8 @@ const LobbyPage = () => {
     }
   };
 
-  // Immediate liveRooms fetch when entering chats tab
+  // Immediate liveRooms fetch when entering chats tab; 20s refresh is handled
+  // by the stable fallback poll below so this effect only fires once per tab entry.
   useEffect(() => {
     if (activeTab === 'chats') fetchLiveRooms();
   }, [activeTab]);
@@ -1478,38 +1496,58 @@ const LobbyPage = () => {
     return () => clearTimeout(timer);
   }, [addFriendQuery]);
 
-  // ✅ Send lobby chat message
+  // ✅ Send lobby chat message — optimistic UI: append immediately, confirm in background
   const handleSendChatMessage = async (e) => {
     e.preventDefault();
     if (!newChatMessage.trim() || !selectedChatUser) return;
 
-    const payload = { recipient_id: selectedChatUser.id, message: newChatMessage };
-    if (replyingTo) payload.reply_to_id = replyingTo.id;
+    const optimisticId = `opt-${Date.now()}`;
+    const optimisticMsg = {
+      id: optimisticId,
+      message: newChatMessage,
+      sender_id: currentUser.id,
+      recipient_id: selectedChatUser.id,
+      created_at: new Date().toISOString(),
+      reply_to_id: replyingTo?.id || null,
+      message_type: 'text',
+      _pending: true,
+    };
+
+    // Show immediately — user sees message without waiting for network
+    setChatMessages(prev => ({
+      ...prev,
+      [selectedChatUser.id]: [...(prev[selectedChatUser.id] || []), optimisticMsg],
+    }));
+    setLastMessagePreviews(prev => ({
+      ...prev,
+      [selectedChatUser.id]: { text: newChatMessage, timestamp: optimisticMsg.created_at, isOwn: true },
+    }));
+    setNewChatMessage('');
+    setReplyingTo(null);
+    scrollToBottomChat();
+
+    const payload = { recipient_id: selectedChatUser.id, message: optimisticMsg.message };
+    if (optimisticMsg.reply_to_id) payload.reply_to_id = optimisticMsg.reply_to_id;
 
     try {
       const response = await apiClient.post('/api/lobby-chats/send', payload);
-
+      // Replace optimistic entry with confirmed server response
       setChatMessages(prev => ({
         ...prev,
-        [selectedChatUser.id]: [...(prev[selectedChatUser.id] || []), response.data]
+        [selectedChatUser.id]: (prev[selectedChatUser.id] || []).map(m =>
+          m.id === optimisticId ? response.data : m
+        ),
       }));
-
-      // Update preview immediately — don't wait for WS echo
-      setLastMessagePreviews(prev => ({
-        ...prev,
-        [selectedChatUser.id]: {
-          text: payload.message,
-          timestamp: response.data?.created_at || new Date().toISOString(),
-          isOwn: true,
-        },
-      }));
-
-      setNewChatMessage('');
-      setReplyingTo(null);
-      scrollToBottomChat();
     } catch (err) {
       console.error('Failed to send message:', err);
-      toast.error('Failed to send message');
+      // Mark as failed so user can see it didn't go through
+      setChatMessages(prev => ({
+        ...prev,
+        [selectedChatUser.id]: (prev[selectedChatUser.id] || []).map(m =>
+          m.id === optimisticId ? { ...m, _failed: true } : m
+        ),
+      }));
+      toast.error('Message failed to send — tap to retry');
     }
   };
   
@@ -2318,38 +2356,42 @@ const LobbyPage = () => {
     }
   };
 
-  // Initial fetch on mount
+  // Initial fetch on mount — tiered by priority so critical data loads first.
+  // Tier 1 (immediate): what the user sees first + what WS routing needs
+  // Tier 2 (300ms): secondary UI data
+  // Tier 3 (700ms): background / decorative data
   useEffect(() => {
-    // Rooms: serve warm cache instantly; only hit network if cache is stale AND starting on rooms tab.
-    // Users starting on 'watching' get rooms lazily on first rooms-tab visit (see effect below).
-    if (_lobbyCache.rooms && Date.now() - _lobbyCache.roomsTs < CACHE_TTL) {
-      setRooms(_lobbyCache.rooms);
-      roomsFetchedRef.current = true;
-    } else if (activeTab === 'rooms') {
-      fetchRoomsData();
-      roomsFetchedRef.current = true;
-    }
-    fetchCommunityEvents(); // fetch for all users (guests see G/PG ratings)
-    if (currentUser) {
-      fetchSessionsData(); // auth-required endpoint; guests use the separate guest useEffect
-      fetchFriendsList();
-      fetchStatusFeed();
+    if (!currentUser) return;
+
+    // Tier 1 — critical path
+    fetchSessionsData();
+    fetchFriendsList();
+
+    // Tier 2 — important but not blocking
+    const t2 = setTimeout(() => {
       fetchPendingRequests();
       fetchSentRequests();
       fetchNotifications();
-      fetchUpcomingEventsCount();
       fetchGroupsList();
+    }, 300);
+
+    // Tier 3 — background / low priority
+    const t3 = setTimeout(() => {
+      fetchRoomsData();
+      fetchStatusFeed();
+      fetchCommunityEvents();
+      fetchUpcomingEventsCount();
       prefetchWatchingNowContent();
-    }
+    }, 700);
+
+    return () => { clearTimeout(t2); clearTimeout(t3); };
   }, [currentUser]);
 
-  // Lazy rooms fetch: fires when user first visits rooms tab if not already fetched on mount
+  // Guests: fetch community events only (sessions handled by guest effect below)
   useEffect(() => {
-    if (activeTab === 'rooms' && !roomsFetchedRef.current) {
-      roomsFetchedRef.current = true;
-      fetchRoomsData();
-    }
-  }, [activeTab]);
+    if (currentUser) return;
+    fetchCommunityEvents();
+  }, []);
 
   // Onboarding: open UserProfileModal once for any user who hasn't completed it
   // Gate on authLoading so we never fire during the brief null-user window on page load
@@ -2489,6 +2531,9 @@ const LobbyPage = () => {
           setWsConnected(true);
           reconnectAttempts = 0;
           console.log('✅ [LobbyPage WS] Connected');
+          // Re-fetch sessions on every connect/reconnect so any session_started
+          // events missed during a WS gap are picked up immediately.
+          fetchSessionsData();
         };
         
         ws.onmessage = (event) => {
@@ -2509,30 +2554,15 @@ const LobbyPage = () => {
                 break;
                 
               case 'session_started':
-                fetchSessionsData();
-                // Prepend the new session card immediately without waiting for fetchSessionsData
-                getActiveSessions(10, 0).then(data => {
-                  setSessionsPage(prev => {
-                    const existingIds = new Set(prev.data.map(s => s.session_id));
-                    const newSessions = (data.sessions || []).filter(s => !existingIds.has(s.session_id));
-                    if (newSessions.length === 0) return prev;
-                    return { ...prev, data: [...newSessions, ...prev.data] };
-                  });
-                }).catch(() => {});
+                // Debounced — collapses bursts (e.g. multiple sessions starting at reconnect)
+                if (sessionsFetchDebounceRef.current) clearTimeout(sessionsFetchDebounceRef.current);
+                sessionsFetchDebounceRef.current = setTimeout(fetchSessionsData, 300);
                 break;
 
               case 'room_session_started':
-                // Targeted alert: a room you're a member of just went live
-                fetchSessionsData();
-                // Prepend the new session card immediately
-                getActiveSessions(10, 0).then(data => {
-                  setSessionsPage(prev => {
-                    const existingIds = new Set(prev.data.map(s => s.session_id));
-                    const newSessions = (data.sessions || []).filter(s => !existingIds.has(s.session_id));
-                    if (newSessions.length === 0) return prev;
-                    return { ...prev, data: [...newSessions, ...prev.data] };
-                  });
-                }).catch(() => {});
+                // Targeted alert: a room you're a member of just went live — share the debounce
+                if (sessionsFetchDebounceRef.current) clearTimeout(sessionsFetchDebounceRef.current);
+                sessionsFetchDebounceRef.current = setTimeout(fetchSessionsData, 300);
                 if (message.room_name && message.host_username) {
                   toast(`🔴 ${message.room_name} is now live!`, {
                     duration: 6000,
@@ -2624,7 +2654,7 @@ const LobbyPage = () => {
               case 'call_declined':
                 // Call was declined
                 console.log('📞 [Call] Call declined');
-                if (outgoingCall) {
+                if (outgoingCallRef.current) {
                   setOutgoingCall(prev => ({ ...prev, status: 'declined' }));
                   if (callTimeoutRef.current) {
                     clearTimeout(callTimeoutRef.current);
@@ -2634,11 +2664,11 @@ const LobbyPage = () => {
                   }, 2000);
                 }
                 break;
-                
+
               case 'call_busy':
                 // User is already in a call
                 console.log('📞 [Call] User is busy');
-                if (outgoingCall) {
+                if (outgoingCallRef.current) {
                   setOutgoingCall(prev => ({ ...prev, status: 'busy' }));
                   if (callTimeoutRef.current) {
                     clearTimeout(callTimeoutRef.current);
@@ -2806,7 +2836,7 @@ const LobbyPage = () => {
                 
               case 'session_chat_sent':
                 // Only update if chat is NOT open (open chat updates from polling)
-                if (activeChatSession?.session_id !== message.session_id) {
+                if (activeChatSessionRef.current?.session_id !== message.session_id) {
                   setSessionChatCounts(prev => ({
                     ...prev,
                     [message.session_id]: message.chat_count
@@ -2885,7 +2915,7 @@ const LobbyPage = () => {
                 break;
 
               case 'group_call_ended':
-                if (activeGroupCall && activeGroupCall.groupId === (message.data || message).group_id) {
+                if (activeGroupCallRef.current && activeGroupCallRef.current.groupId === (message.data || message).group_id) {
                   handleEndGroupCall();
                 }
                 setIncomingGroupCall(null);
@@ -2942,23 +2972,34 @@ const LobbyPage = () => {
     };
   }, [wsToken]); // Re-run when wsToken becomes available
 
-  // Unified 30s poll — one interval for the component lifetime.
-  // Reads current state via refs so the interval never needs to restart.
-  const wsConnectedPollRef = React.useRef(wsConnected);
-  const activeTabPollRef   = React.useRef(activeTab);
-  useEffect(() => { wsConnectedPollRef.current = wsConnected; }, [wsConnected]);
-  useEffect(() => { activeTabPollRef.current   = activeTab;   }, [activeTab]);
+  // Stable fallback poll — single interval for the component lifetime.
+  // Reads wsConnected + activeTab via refs so the interval never restarts on
+  // state changes, closing the gap that existed with [wsConnected] deps.
+  const wsConnectedRef = React.useRef(wsConnected);
+  const activeTabRef   = React.useRef(activeTab);
+  useEffect(() => { wsConnectedRef.current = wsConnected; }, [wsConnected]);
+  useEffect(() => { activeTabRef.current   = activeTab;   }, [activeTab]);
+  // Keep stale-closure refs in sync so onmessage always reads current values
+  useEffect(() => { outgoingCallRef.current      = outgoingCall;      }, [outgoingCall]);
+  useEffect(() => { activeGroupCallRef.current   = activeGroupCall;   }, [activeGroupCall]);
+  useEffect(() => { activeChatSessionRef.current = activeChatSession; }, [activeChatSession]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!wsConnectedPollRef.current) {
-        fetchRoomsData();
+      if (!wsConnectedRef.current) {
+        // WS is down — poll at 20s so newly started sessions, notifications,
+        // and DMs appear quickly even without a live connection
         fetchSessionsData();
+        fetchRoomsData();
+        fetchNotifications();
+        fetchFriendsList();
       }
-      if (activeTabPollRef.current === 'chats') fetchLiveRooms();
-    }, 30000);
+      if (activeTabRef.current === 'chats') {
+        fetchLiveRooms();
+      }
+    }, 20000);
     return () => clearInterval(interval);
-  }, []); // stable for component lifetime
+  }, []); // stable for component lifetime — never restarts
 
   // Handle search change
   const handleSearchChange = (event) => {
@@ -4284,7 +4325,7 @@ const LobbyPage = () => {
 
           {/* Empty state */}
           {!sessionsPage.loading && sessionsPage.data.length === 0 && trailersPage.data.length === 0 && (
-            <div className="h-full w-full snap-start flex flex-col items-center justify-center bg-gradient-to-br from-purple-900 via-gray-900 to-black text-white text-center px-8">
+            <div className="relative h-full w-full snap-start flex flex-col items-center justify-center bg-gradient-to-br from-purple-900 via-gray-900 to-black text-white text-center px-8 overflow-hidden">
               <style>{pulseAnimationStyles}</style>
               {/* Sleeping icon with floating Zzz */}
               <div className="relative mb-8 flex items-center justify-center w-28 h-28">
@@ -4299,6 +4340,13 @@ const LobbyPage = () => {
               </div>
               <p className="text-xl font-semibold mb-2">No WatchOuts right now</p>
               <p className="text-gray-400 text-sm">Start a WatchOut — go live and invite friends to watch with you!</p>
+              {/* Peekaboo strip — hints community events below when there's content */}
+              {(communityEventsData.scheduledEvents.length > 0 || communityEventsData.requests.length > 0) && (
+                <div className="community-peek absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-purple-800 via-indigo-900/90 to-transparent flex items-end justify-center pb-3 gap-2 pointer-events-none select-none">
+                  <ArrowUpIcon className="w-4 h-4 text-white/80" />
+                  <span className="text-white/80 text-sm font-medium">📅 Community Events</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -4523,32 +4571,38 @@ const LobbyPage = () => {
               );
             });
 
-            // Interleave CommunityEventsCard every 5 live session cards
+            // Interleave CommunityEventsCard every 5 live session cards.
+            // If there are 0 live sessions but community content exists, show it first.
             if (!hasCommunityContent) return sessionCards;
+
+            const communitySlot = (key) => (
+              <div key={key} className="relative h-full w-full snap-start snap-always overflow-hidden">
+                <CommunityEventsCard
+                  scheduledEvents={communityEventsData.scheduledEvents}
+                  requests={communityEventsData.requests}
+                  currentUser={currentUser}
+                  apiBaseUrl={API_BASE_URL}
+                  onRSVP={(event) => {
+                    setSelectedEventForCalendar(event);
+                    setIsCalendarModalOpen(true);
+                  }}
+                  onNewRequest={(newReq) => {
+                    setCommunityEventsData(prev => ({
+                      ...prev,
+                      requests: [newReq, ...prev.requests],
+                    }));
+                  }}
+                />
+              </div>
+            );
+
+            if (sessionCards.length === 0) return [communitySlot('community-events-empty')];
+
             const result = [];
             sessionCards.forEach((card, idx) => {
               result.push(card);
               if ((idx + 1) % 5 === 0) {
-                result.push(
-                  <div key={`community-events-${idx}`} className="relative h-full w-full snap-start snap-always overflow-hidden">
-                    <CommunityEventsCard
-                      scheduledEvents={communityEventsData.scheduledEvents}
-                      requests={communityEventsData.requests}
-                      currentUser={currentUser}
-                      apiBaseUrl={API_BASE_URL}
-                      onRSVP={(event) => {
-                        setSelectedEventForCalendar(event);
-                        setIsCalendarModalOpen(true);
-                      }}
-                      onNewRequest={(newReq) => {
-                        setCommunityEventsData(prev => ({
-                          ...prev,
-                          requests: [newReq, ...prev.requests],
-                        }));
-                      }}
-                    />
-                  </div>
-                );
+                result.push(communitySlot(`community-events-${idx}`));
               }
             });
             return result;
@@ -5240,9 +5294,9 @@ const LobbyPage = () => {
                     }`}
                   >
                     Requests
-                    {pendingRequests.length > 0 && (
+                    {(pendingRequests.length + sentRequests.length) > 0 && (
                       <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-red-600 text-white rounded-full">
-                        {pendingRequests.length}
+                        {pendingRequests.length + sentRequests.length}
                       </span>
                     )}
                     {activeRequestsTab === 'requests' && (

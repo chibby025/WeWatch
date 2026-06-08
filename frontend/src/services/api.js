@@ -1991,6 +1991,15 @@ export const getCommunityEvents = async (since) => {
   return response.data;
 };
 
+export const uploadCommunityRequestImage = async (file) => {
+  const formData = new FormData();
+  formData.append('image', file);
+  const response = await apiClient.post('/api/community-requests/upload-image', formData, {
+    headers: { 'Content-Type': undefined },
+  });
+  return response.data;
+};
+
 export const createCommunityRequest = async (data) => {
   const response = await apiClient.post('/api/community-requests', data);
   return response.data;

@@ -101,10 +101,32 @@
       "PowerShell(wsl -d Ubuntu-22.04 -e sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\")",
       "PowerShell(wsl -d Ubuntu-22.04 -e grep -rn \"readPump\\\\|writePump\\\\|SetReadDeadline\\\\|SetPongHandler\\\\|ReadMessage\" /home/chibuzor_dev/WeWatch/backend/ 2>/dev/null | head -30)",
       "PowerShell(wsl -d Ubuntu-22.04 -e sh -c \"grep -rn 'readPump\\\\|writePump\\\\|SetReadDeadline\\\\|SetPongHandler\\\\|ReadMessage' /home/chibuzor_dev/WeWatch/backend/ 2>&1 | head -30\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -e sh -c \"grep -rn 'session_ended\\\\|heartbeat\\\\|visibilitychange\\\\|document.hidden\\\\|performCleanup\\\\|active-session' /home/chibuzor_dev/WeWatch/frontend/src/ 2>&1 | head -50\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -e sh -c \"grep -rn 'session_ended\\\\|heartbeat\\\\|visibilitychange\\\\|document.hidden\\\\|performCleanup\\\\|active-session' /home/chibuzor_dev/WeWatch/frontend/src/ 2>&1 | head -50\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"which go || ls /home/chibuzor_dev/go/bin/go || ls /snap/bin/go\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /snap/bin/go build ./cmd/server/... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -30\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -10\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | grep -E 'error|Error|TDZ|Cannot access|before init' | head -20\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -5\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -15\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /usr/local/go/bin/go build ./... 2>&1')",
+      "PowerShell(wsl -d Ubuntu-22.04 -e sh -c 'which go || find /usr /home -name \"go\" -type f 2>/dev/null | head -5')",
+      "PowerShell(wsl -d Ubuntu-22.04 -e grep -r \"remainingCount\" /home/chibuzor_dev/WeWatch/backend/internal/handlers/websocket.go 2>&1)",
+      "PowerShell(head -20)",
+      "PowerShell(wsl -d Ubuntu-22.04 -e sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1')",
+      "PowerShell(wsl -d Ubuntu-22.04 -e sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... 2>&1')",
+      "PowerShell(wsl -d Ubuntu-22.04 bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... 2>&1 && echo 'BUILD OK'\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./cmd/server/... 2>&1; go build ./internal/... 2>&1\")"
     ],
     "additionalDirectories": [
-      "\\dev"
+      "\\dev",
+      "\\home\\chibuzor_dev\\WeWatch\\backend\\internal\\handlers",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\backend\\internal\\handlers",
+      "\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\components\\cinema",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\components\\cinema",
+      "\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\components",
+      "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\WeWatch\\frontend\\src\\components"
     ]
   }
 }

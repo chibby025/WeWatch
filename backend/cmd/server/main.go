@@ -735,9 +735,10 @@ func main() {
 		
 		// --- COMMUNITY EVENTS ROUTES ---
 		// GET is public (handled separately below); POST routes require auth
-		protected.POST("/community-requests", handlers.CreateCommunityRequestHandler)                  // POST /api/community-requests
-		protected.POST("/community-requests/:id/upvote", handlers.ToggleCommunityRequestUpvoteHandler) // POST /api/community-requests/:id/upvote
-		protected.POST("/community-requests/:id/claim", handlers.ClaimCommunityRequestHandler)         // POST /api/community-requests/:id/claim
+		protected.POST("/community-requests", handlers.CreateCommunityRequestHandler)                          // POST /api/community-requests
+		protected.POST("/community-requests/upload-image", handlers.UploadCommunityRequestImageHandler)        // POST /api/community-requests/upload-image
+		protected.POST("/community-requests/:id/upvote", handlers.ToggleCommunityRequestUpvoteHandler)         // POST /api/community-requests/:id/upvote
+		protected.POST("/community-requests/:id/claim", handlers.ClaimCommunityRequestHandler)                 // POST /api/community-requests/:id/claim
 
 		// --- SUPPORT ROUTES ---
 		protected.POST("/support/send", handlers.SendSupportEmail) // POST /api/support/send (Send help/support email)

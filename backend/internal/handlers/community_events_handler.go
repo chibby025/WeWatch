@@ -4,11 +4,13 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 )
 
 // GET /api/community-events
@@ -135,22 +137,24 @@ func GetCommunityEventsHandler(c *gin.Context) {
 		HostAvatarURL string `json:"host_avatar_url"`
 		RoomID        uint   `json:"room_id"`
 		RoomName      string `json:"room_name"`
-		RoomRating    string `json:"room_rating"`
+		RoomImageURL  string `json:"room_image_url"`
 	}
 
 	type RequestItem struct {
-		ID            uint        `json:"id"`
-		UserID        uint        `json:"user_id"`
-		RequesterName string      `json:"requester_username"`
-		Title         string      `json:"title"`
-		ContentRating string      `json:"content_rating"`
-		Description   string      `json:"description"`
-		PreferredDate *time.Time  `json:"preferred_date,omitempty"`
-		Status        string      `json:"status"`
-		UpvoteCount   int         `json:"upvote_count"`
-		HasUpvoted    bool        `json:"has_upvoted"`
-		Claims        []ClaimItem `json:"claims"`
-		CreatedAt     time.Time   `json:"created_at"`
+		ID                  uint        `json:"id"`
+		UserID              uint        `json:"user_id"`
+		RequesterName       string      `json:"requester_username"`
+		RequesterAvatarURL  string      `json:"requester_avatar_url"`
+		Title               string      `json:"title"`
+		ContentRating       string      `json:"content_rating"`
+		Description         string      `json:"description"`
+		PreferredDate       *time.Time  `json:"preferred_date,omitempty"`
+		Status              string      `json:"status"`
+		UpvoteCount         int         `json:"upvote_count"`
+		HasUpvoted          bool        `json:"has_upvoted"`
+		ImageURL            string      `json:"image_url,omitempty"`
+		Claims              []ClaimItem `json:"claims"`
+		CreatedAt           time.Time   `json:"created_at"`
 	}
 
 	var rawRequests []models.CommunityRequest
@@ -165,7 +169,7 @@ func GetCommunityEventsHandler(c *gin.Context) {
 			return db.Select("id, username, avatar_url")
 		}).
 		Preload("Claims.Room", func(db *gorm.DB) *gorm.DB {
-			return db.Select("id, name, content_rating")
+			return db.Select("id, name, content_rating, image_url")
 		}).
 		Where("status IN ? AND content_rating IN ?", []string{"open", "claimed"}, allowedRatings).
 		Order(gorm.Expr("CASE WHEN content_rating = ? THEN 0 ELSE 1 END, upvote_count DESC, created_at DESC", primaryRating)).
@@ -206,11 +210,13 @@ func GetCommunityEventsHandler(c *gin.Context) {
 			Status:        r.Status,
 			UpvoteCount:   r.UpvoteCount,
 			HasUpvoted:    upvotedSet[r.ID],
+			ImageURL:      r.ImageURL,
 			Claims:        []ClaimItem{},
 			CreatedAt:     r.CreatedAt,
 		}
 		if r.User != nil {
 			item.RequesterName = r.User.Username
+			item.RequesterAvatarURL = r.User.AvatarURL
 		}
 		for _, cl := range r.Claims {
 			ci := ClaimItem{HostUserID: cl.HostUserID}
@@ -221,7 +227,7 @@ func GetCommunityEventsHandler(c *gin.Context) {
 			if cl.Room != nil {
 				ci.RoomID = cl.Room.ID
 				ci.RoomName = cl.Room.Name
-				ci.RoomRating = cl.Room.ContentRating
+				ci.RoomImageURL = cl.Room.ImageURL
 			}
 			item.Claims = append(item.Claims, ci)
 		}
@@ -262,6 +268,7 @@ type CreateCommunityRequestBody struct {
 	ContentRating string  `json:"content_rating" binding:"required"`
 	Description   string  `json:"description"`
 	PreferredDate *string `json:"preferred_date"` // ISO date string YYYY-MM-DD
+	ImageURL      string  `json:"image_url"`
 }
 
 func CreateCommunityRequestHandler(c *gin.Context) {
@@ -297,6 +304,7 @@ func CreateCommunityRequestHandler(c *gin.Context) {
 		ContentRating: body.ContentRating,
 		Description:   body.Description,
 		Status:        "open",
+		ImageURL:      body.ImageURL,
 	}
 
 	if body.PreferredDate != nil && *body.PreferredDate != "" {
@@ -468,6 +476,43 @@ func ClaimCommunityRequestHandler(c *gin.Context) {
 		"claim":   claim,
 		"prefill": prefill,
 	})
+}
+
+// POST /api/community-requests/upload-image
+// Eager image upload for MakeRequestSheet. Accepts image/* up to 5 MB.
+// Returns { "image_url": "..." }.
+func UploadCommunityRequestImageHandler(c *gin.Context) {
+	if err := c.Request.ParseMultipartForm(5 << 20); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File too large or invalid form"})
+		return
+	}
+
+	file, header, err := c.Request.FormFile("image")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Image file required"})
+		return
+	}
+	defer file.Close()
+
+	if header.Size > 5<<20 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Image must be under 5 MB"})
+		return
+	}
+
+	contentType := header.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "image/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only image files are accepted"})
+		return
+	}
+
+	imageURL, err := utils.UploadMultipartFileToBunnyCDN(file, header)
+	if err != nil {
+		log.Printf("UploadCommunityRequestImageHandler: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Upload failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"image_url": imageURL})
 }
 
 // GET /api/admin/community-analytics — super-admin community request stats

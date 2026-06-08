@@ -1,11 +1,11 @@
 // frontend/src/components/Taskbar.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
-import SettingsModal from './cinema/ui/SettingsModal';
 import EmotePicker from './cinema/ui/EmotePicker';
 import EmojiImage from './cinema/ui/EmojiImage';
 import AudioSettingsDropdown from './AudioSettingsDropdown';
 import { playMicOnSound, playMicOffSound } from '../utils/audio';
+import { TaskbarAudioWaveform } from './AudioWaveform';
 
 // Import SVG icons
 const LeaveCallIcon = '/icons/LeaveCallIcon.svg';
@@ -15,7 +15,6 @@ const AudioIcon = '/icons/AudioIcon.svg';
 const SilenceIcon = '/icons/silenceIcon.svg';
 const VideoIcon = '/icons/VideoIcon.svg';
 const MembersIcon = '/icons/MembersIcon.svg';
-const SettingsIcon = '/icons/settingsIcon.svg';
 const EmotesIcon = '😊';
 const ProgramMenuIcon = '/icons/mediaScheduleIcon.svg';
 const SpeakerIcon = '/icons/speaker.svg';
@@ -70,14 +69,9 @@ const TaskbarButton = React.memo(({
           ) : (
             <img src={icon} alt={label} className="h-8 w-8" />
           )}
-          {/* Green ring: static when mic is on, pulsing when speaking */}
-          {!isLoading && label === 'Audio' && shouldPulse && (
-            <>
-              <div className="absolute inset-0 rounded-full border-2 border-green-400 opacity-50 pointer-events-none" />
-              {localAudioLevel > 20 && (
-                <div className="absolute inset-0 rounded-full border-2 border-green-400 animate-ping pointer-events-none" />
-              )}
-            </>
+          {/* ✅ Show animated waveform overlay when speaking (replaces simple pulse) */}
+          {!isLoading && label === 'Audio' && shouldPulse && localAudioLevel > 0 && (
+            <TaskbarAudioWaveform audioLevel={localAudioLevel} />
           )}
           {showCancelIndicator && (
             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center">
@@ -116,8 +110,6 @@ const Taskbar = ({
   showPositionDebug,
   onTogglePositionDebug,
   onShareRoom,
-  isPrivateSession = false,
-  onInviteFriend = null,
   onOpenUserProfile, // ✅ NEW: Handler for opening user's own profile
   onSeatsClick,
   onTheaterOverviewClick, // ✅ Right-click on Seats icon to open theater overview
@@ -200,7 +192,7 @@ const Taskbar = ({
   // Chat Bubble Visibility
   showChatBubbles = true,
   onToggleChatBubbles,
-  memberCount = 0, // ✅ Authoritative count from backend (overrides watchSessionMembers.length)
+  authoritativeMemberCount = null, // Authoritative count from backend events; overrides array length when set
   isMembersLoading = false, // ✅ Show spinner on members button until first fetch resolves
   // Unread Messages
   unreadMessages = {}, // {userId: unreadCount}
@@ -222,14 +214,13 @@ const Taskbar = ({
 
   const [isVisible, setIsVisible] = useState(true);
   const [showMicDropdown, setShowMicDropdown] = useState(false);
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showEmotePicker, setShowEmotePicker] = useState(false);
   const [showAudioSettings, setShowAudioSettings] = useState(false);
   const [showRaisedHandsPopup, setShowRaisedHandsPopup] = useState(false);
   const audioButtonRef = useRef(null);
   const membersButtonRef = useRef(null);
-  // Use authoritative backend count when available, fall back to local array length
-  const displayMemberCount = memberCount || watchSessionMembers?.length || 0;
+  // Prefer the backend-supplied authoritative count; fall back to local array length.
+  const memberCount = authoritativeMemberCount ?? watchSessionMembers?.length ?? 0;
   const hideTimerRef = useRef(null);
   const lastEventTimeRef = useRef(0);
 
@@ -239,13 +230,6 @@ const Taskbar = ({
     setIsVisible(true);
     const timer = setTimeout(() => setIsVisible(false), 3000);
     return () => clearTimeout(timer);
-  }, []);
-
-  // Allow LeftSidebar to open Settings via custom event
-  useEffect(() => {
-    const handler = () => setShowSettingsMenu(true);
-    window.addEventListener('wewatch:open-settings', handler);
-    return () => window.removeEventListener('wewatch:open-settings', handler);
   }, []);
 
   // Mouse visibility logic — stable during media playback
@@ -311,25 +295,6 @@ const Taskbar = ({
     return () => document.removeEventListener('click', handleClickOutside);
   }, [showMicDropdown]);
 
-  // Close settings menu
-  useEffect(() => {
-    if (!showSettingsMenu) return;
-    const handleClickOutside = (e) => {
-      if (
-        !e.target.closest('.settings-menu-container') &&
-        !e.target.closest('.settings-modal-content')
-      ) {
-        setShowSettingsMenu(false);
-      }
-    };
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('click', handleClickOutside);
-    }, 10);
-    return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('click', handleClickOutside);
-    };
-  }, [showSettingsMenu]);
 
   // Touch handling for swipe-up gesture (mobile landscape)
   const [touchStart, setTouchStart] = useState(null);
@@ -407,7 +372,6 @@ const Taskbar = ({
     color: 'white',
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
     padding: '0 20px',
     transition: 'height 0.3s ease-in-out',
     zIndex: 1000,
@@ -436,9 +400,9 @@ const Taskbar = ({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className="taskbar-container"
+        className="taskbar-container justify-evenly sm:justify-start"
       >
-        <div className="flex items-center space-x-2 flex-shrink-0">
+        <div className="contents sm:flex-1 sm:flex sm:items-center sm:justify-start">
           <TaskbarButton
             icon={LeaveCallIcon}
             label="Leave Call"
@@ -459,7 +423,7 @@ const Taskbar = ({
           />
         </div>
 
-        <div className="flex items-center gap-4 portrait:flex-1 portrait:justify-evenly portrait:gap-0 flex-nowrap overflow-hidden">
+        <div className="contents sm:flex sm:items-center sm:justify-center sm:gap-6 sm:flex-nowrap">
           <TaskbarButton 
             icon={ChatIcon} 
             label="Chat" 
@@ -556,7 +520,7 @@ const Taskbar = ({
                     
                     // Show row number for row-based audio
                     const userSeatId = userSeats?.[authenticatedUserID];
-                    if (!userSeatId) return null;
+                    if (!userSeatId) return '?';
                     
                     // Detect seat format: Cinema uses "row-col", Lecture Hall uses integers
                     const seatIdStr = String(userSeatId);
@@ -618,7 +582,7 @@ const Taskbar = ({
           <TaskbarButton
             buttonRef={membersButtonRef}
             icon={MembersIcon}
-            label={isMembersLoading ? '' : `${displayMemberCount}`}
+            label={isMembersLoading ? '' : `${memberCount}`}
             isLoading={isMembersLoading}
             onClick={() => {
               // If host has raised hands, show quick popup first
@@ -663,7 +627,7 @@ const Taskbar = ({
           )}
         </div>
 
-        <div className="flex items-center space-x-2 settings-menu-container">
+        <div className="contents sm:flex-1 sm:flex sm:items-center sm:justify-end">
           {showProgram && (
             <TaskbarButton
               icon={isClassroom ? BoardIcon : ProgramMenuIcon}
@@ -680,61 +644,6 @@ const Taskbar = ({
         </div>
       </div>
 
-      <SettingsModal
-        watchType={watchType}
-        showPositionDebug={showPositionDebug}
-        onTogglePositionDebug={onTogglePositionDebug}
-        isOpen={showSettingsMenu}
-        onClose={() => setShowSettingsMenu(false)}
-        onShareRoom={onShareRoom}
-        isPrivateSession={isPrivateSession}
-        onInviteFriend={onInviteFriend}
-        onOpenUserProfile={onOpenUserProfile} // ✅ NEW: Pass profile handler
-        audioDevices={audioDevices}
-        selectedAudioDeviceId={selectedAudioDeviceId}
-        onAudioDeviceChange={onAudioDeviceChange}
-        availableCameras={availableCameras}
-        selectedCameraId={selectedCameraId}
-        onCameraSwitch={onCameraSwitch}
-        showSeatMarkers={showSeatMarkers}
-        onToggleSeatMarkers={onToggleSeatMarkers}
-        currentUser={currentUser}
-        userSeats={userSeats}
-        watchSessionMembers={watchSessionMembers}
-        handleSeatSelect={handleSeatSelect}
-        isViewLocked={isViewLocked}
-        setIsViewLocked={setIsViewLocked}
-        lightsOn={lightsOn}
-        setLightsOn={setLightsOn}
-        showDebugPanels={showDebugPanels}
-        onToggleDebugPanels={onToggleDebugPanels}
-        freeRoamMode={freeRoamMode}
-        setFreeRoamMode={setFreeRoamMode}
-        lockMovement={lockMovement}
-        setLockMovement={setLockMovement}
-        lockOrbit={lockOrbit}
-        setLockOrbit={setLockOrbit}
-        showPreview={showPreview}
-        setShowPreview={setShowPreview}
-        showAvatars={showAvatars}
-        setShowAvatars={setShowAvatars}
-        showCameraMarkers={showCameraMarkers}
-        setShowCameraMarkers={setShowCameraMarkers}
-        showPositionDebugLectureHall={showPositionDebugLectureHall}
-        onTogglePositionDebugLectureHall={onTogglePositionDebugLectureHall}
-        showAudioDebugPanel={showAudioDebugPanel}
-        onToggleAudioDebugPanel={onToggleAudioDebugPanel}
-        showViewDirectionModal={showViewDirectionModal}
-        onToggleViewDirectionModal={onToggleViewDirectionModal}
-        onExportCameraPositions={onExportCameraPositions}
-        savedCameraPositionsCount={savedCameraPositionsCount}
-        freeCameraMovement={freeCameraMovement}
-        setFreeCameraMovement={setFreeCameraMovement}
-        demoMode={demoMode}
-        setDemoMode={setDemoMode}
-        showChatBubbles={showChatBubbles}
-        onToggleChatBubbles={onToggleChatBubbles}
-      />
 
       {showEmotes && (
         <EmotePicker
@@ -850,31 +759,7 @@ const Taskbar = ({
         /* Portrait mode adjustments */
         @media (orientation: portrait) {
           .taskbar-container {
-            padding: 0 6px !important;
-          }
-        }
-
-        /* Portrait phone icon sizing — bigger now that Settings is removed */
-        @media (orientation: portrait) and (max-width: 640px) {
-          .taskbar-container button {
-            padding: 6px 5px !important;
-          }
-          .taskbar-container button > .relative {
-            height: 36px !important;
-            width: 36px !important;
-          }
-          .taskbar-container button img {
-            height: 36px !important;
-            width: 36px !important;
-          }
-          .taskbar-container button > span {
-            font-size: 10px !important;
-            margin-top: 2px !important;
-            line-height: 1.2 !important;
-          }
-          /* Hide subtitles (mic status, row number) to keep height tidy */
-          .taskbar-container button + span {
-            display: none !important;
+            padding: 0 8px !important;
           }
         }
       `}</style>

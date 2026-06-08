@@ -59,6 +59,7 @@ const LobbyLeftSidebar = ({
     const newValue = !dataSaverEnabled;
     setDataSaverEnabled(newValue);
     localStorage.setItem('dataSaverMode', newValue ? 'true' : 'false');
+    window.dispatchEvent(new CustomEvent('dataSaverModeChange'));
     console.log('💾 [Data Saver]', newValue ? 'Enabled' : 'Disabled');
   };
 

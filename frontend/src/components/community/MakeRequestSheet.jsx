@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { XMarkIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
-import { createCommunityRequest } from '../../services/api';
+import React, { useState, useRef, useMemo } from 'react';
+import { XMarkIcon, ChevronLeftIcon, ChevronRightIcon, PhotoIcon } from '@heroicons/react/24/outline';
+import { createCommunityRequest, uploadCommunityRequestImage } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
@@ -21,7 +21,11 @@ const MakeRequestSheet = ({ isOpen, onClose, onCreated }) => {
   const [scrollIndex, setScrollIndex] = useState(0);
   const [description, setDescription] = useState('');
   const [preferredDate, setPreferredDate] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+  const [imagePreview, setImagePreview] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Age-gate ratings the same way PricingModal does
   const userAge = useMemo(() => {
@@ -44,6 +48,30 @@ const MakeRequestSheet = ({ isOpen, onClose, onCreated }) => {
   const contentRating = availableRatings[safeIndex].id;
   const scrollToCard = (idx) => setScrollIndex(Math.max(0, Math.min(idx, availableRatings.length - 1)));
 
+  const handleImagePick = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please pick an image file');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be under 5 MB');
+      return;
+    }
+    setImagePreview(URL.createObjectURL(file));
+    setImageUploading(true);
+    try {
+      const result = await uploadCommunityRequestImage(file);
+      setImageUrl(result.image_url);
+    } catch {
+      toast.error('Image upload failed — try again');
+      setImagePreview('');
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!title.trim()) {
@@ -57,11 +85,14 @@ const MakeRequestSheet = ({ isOpen, onClose, onCreated }) => {
         content_rating: contentRating,
         description: description.trim(),
         preferred_date: preferredDate || undefined,
+        image_url: imageUrl || undefined,
       });
       toast.success('Request submitted!');
       setTitle('');
       setDescription('');
       setPreferredDate('');
+      setImageUrl('');
+      setImagePreview('');
       setScrollIndex(0);
       onCreated?.(data.request);
       onClose();
@@ -248,16 +279,64 @@ const MakeRequestSheet = ({ isOpen, onClose, onCreated }) => {
               />
             </div>
 
+            {/* Reference image — eager upload */}
+            <div>
+              <label className="text-white/70 text-sm font-medium block mb-1.5">
+                Reference image <span className="text-white/40">(optional)</span>
+              </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleImagePick}
+              />
+              {imagePreview ? (
+                <div className="relative w-full h-36 rounded-xl overflow-hidden border border-white/20">
+                  <img
+                    src={imagePreview}
+                    alt="preview"
+                    className="w-full h-full object-cover"
+                  />
+                  {imageUploading && (
+                    <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                      <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    </div>
+                  )}
+                  {!imageUploading && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-lg border border-white/20"
+                    >
+                      Change
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full h-20 rounded-xl border border-dashed border-white/25 hover:border-purple-400
+                    bg-white/5 hover:bg-white/10 transition-colors
+                    flex flex-col items-center justify-center gap-1.5 text-white/50 hover:text-white/80"
+                >
+                  <PhotoIcon className="w-6 h-6" />
+                  <span className="text-xs">Tap to add a reference image</span>
+                </button>
+              )}
+            </div>
+
             {/* Submit */}
             <button
               type="submit"
-              disabled={submitting || !title.trim()}
+              disabled={submitting || imageUploading || !title.trim()}
               className="w-full py-3.5 rounded-xl font-bold text-white text-base
                 bg-gradient-to-r from-purple-600 to-indigo-600
                 active:scale-95 transition-transform
                 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {submitting ? 'Submitting...' : 'Submit Request'}
+              {submitting ? 'Submitting...' : imageUploading ? 'Uploading image...' : 'Submit Request'}
             </button>
           </form>
         </div>

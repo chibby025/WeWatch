@@ -29,7 +29,7 @@ const ScheduledEventPreviewCard = ({ event, onRSVP, apiBaseUrl }) => {
           <img
             src="/icons/lwoIcon.png"
             alt=""
-            className="absolute inset-0 m-auto w-16 h-16 object-contain opacity-20"
+            className="absolute inset-0 m-auto w-12 h-12 sm:w-16 sm:h-16 object-contain opacity-20"
           />
         </div>
       )}
@@ -38,13 +38,13 @@ const ScheduledEventPreviewCard = ({ event, onRSVP, apiBaseUrl }) => {
       <div className="absolute inset-0 bg-gradient-to-t from-black/92 via-black/20 to-transparent pointer-events-none" />
 
       {/* Bottom: title + RSVP */}
-      <div className="relative z-10 mt-auto p-5 pb-6">
-        <h2 className="text-white text-2xl font-bold leading-tight mb-4 line-clamp-2">
+      <div className="relative z-10 mt-auto p-4 sm:p-5 pb-5 sm:pb-6">
+        <h2 className="text-white text-xl sm:text-2xl font-bold leading-tight mb-3 sm:mb-4 line-clamp-2">
           {event.title}
         </h2>
         <button
           onClick={() => onRSVP(event)}
-          className="w-full py-3 rounded-xl font-bold text-white text-sm
+          className="w-full py-2.5 sm:py-3 rounded-xl font-bold text-white text-sm
             bg-gradient-to-r from-purple-600 to-indigo-600
             active:scale-95 transition-transform flex items-center justify-center gap-2"
         >
