@@ -1344,7 +1344,7 @@ const RoomPageNew = () => {
   }, [showChatPicker]);
 
   const handleSendSticker = async (gif) => {
-    setShowStickerPicker(false);
+    setShowChatPicker(false);
     if (!gif?.url) return;
     try {
       const msg = await sendRoomChatSticker(roomId, gif.url, gif.provider || 'giphy', gif.id || '');
@@ -2534,7 +2534,7 @@ const RoomPageNew = () => {
           className={`flex-1 overflow-y-auto bg-gray-900 px-4 space-y-1.5 scrollbar-hide relative ${
             isMobile ? '' : 'py-2'
           }`}
-          style={isMobile ? { paddingTop: `${mobileHeaderHeight + 8}px`, paddingBottom: '90px' } : undefined}
+          style={isMobile ? { paddingTop: `${mobileHeaderHeight + 8}px`, paddingBottom: '110px' } : undefined}
         >
         {messages.length === 0 ? (
           <div className="text-center text-gray-400 py-8">
@@ -2847,19 +2847,15 @@ const RoomPageNew = () => {
         <>
           {/* Chat Locked Banner (for non-host members) */}
           {room?.host_only_chat && !isHost && (
-            <div className={`bg-yellow-500/10 border-t border-yellow-500/30 ${
-              isMobile ? `fixed bottom-[52px] ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24 lg:left-28' : 'left-0'} right-0 z-[39]` : 'flex-none'
-            } px-3 py-2`}>
+            <div className={`border-t border-yellow-500/30 fixed bottom-[52px] right-0 z-[39] bg-gray-900 lg:static lg:bg-yellow-500/10 lg:z-auto ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24' : 'left-0'} px-3 py-2`}>
               <div className="flex items-center gap-2 text-xs text-yellow-300">
                 <span className="text-base">🔒</span>
                 <span>Chat is locked by the host. Only the host can send messages.</span>
               </div>
             </div>
           )}
-          
-          <form onSubmit={handleSendMessage} className={`bg-transparent ${
-            isMobile ? `fixed bottom-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24 lg:left-28' : 'left-0'} right-0 z-40` : 'flex-none'
-          } px-4 pb-2 pt-1 sm:pb-3 sm:pt-1 relative`}>
+
+          <form onSubmit={handleSendMessage} className={`fixed bottom-0 right-0 z-40 lg:relative lg:z-auto lg:left-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24' : 'left-0'} px-4 pb-2 pt-1 sm:pb-3 sm:pt-1`}>
 
             {/* @mention dropdown */}
             {mentionOpen && (

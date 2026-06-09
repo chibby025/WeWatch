@@ -5804,8 +5804,8 @@ const LobbyPage = () => {
               
               ) : (
                 /* ========== MESSAGES VIEW ========== */
-                <div 
-                  className="bg-white dark:bg-gray-800 shadow-lg overflow-hidden flex flex-col h-full"
+                <div
+                  className="bg-white dark:bg-gray-800 shadow-lg overflow-hidden flex flex-col h-full relative"
                   onTouchStart={handleChatTouchStart}
                   onTouchMove={handleChatTouchMove}
                   onTouchEnd={handleChatTouchEnd}
@@ -5879,11 +5879,12 @@ const LobbyPage = () => {
                       </div>
                     
                     {/* Messages */}
-                    <div 
+                    <div
                       className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 sm:space-y-3 bg-gray-50 dark:bg-gray-900 custom-sleek-scrollbar"
                       style={{
                         scrollbarWidth: 'thin',
                         scrollbarColor: '#10b981 #111827',
+                        paddingBottom: '110px',
                       }}
                     >
                       {chatMessages[selectedChatUser.id]?.length === 0 ? (

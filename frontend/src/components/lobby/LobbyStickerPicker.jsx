@@ -1,15 +1,18 @@
 // WeWatch/frontend/src/components/lobby/LobbyStickerPicker.jsx
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { XMarkIcon, MagnifyingGlassIcon } from '@heroicons/react/24/solid';
-import { StarIcon } from '@heroicons/react/24/outline';
+import { StarIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
 import toast from 'react-hot-toast';
+import { uploadCustomSticker } from '../../services/api';
 
 const FAVS_KEY = 'wewatch_fav_stickers';
-const loadFavs = () => {
-  try { return JSON.parse(localStorage.getItem(FAVS_KEY) || '[]'); }
+const CUSTOM_KEY = 'wewatch_custom_stickers';
+const loadLS = (key) => {
+  try { return JSON.parse(localStorage.getItem(key) || '[]'); }
   catch { return []; }
 };
+const loadFavs = () => loadLS(FAVS_KEY);
 
 // Replace with your own key from developers.giphy.com
 const GIPHY_KEY = import.meta.env.VITE_GIPHY_API_KEY || 'dc6zaTOxFJmzC';
@@ -59,6 +62,9 @@ const LobbyStickerPicker = ({ isOpen, onClose, onSend, recipientId }) => {
   const [gifLoading, setGifLoading] = useState(false);
   const gifDebounce = useRef(null);
   const [favs, setFavs] = useState(loadFavs);
+  const [customs, setCustoms] = useState(() => loadLS(CUSTOM_KEY));
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Load trending GIFs when tab first opens
   useEffect(() => {
@@ -120,11 +126,39 @@ const LobbyStickerPicker = ({ isOpen, onClose, onSend, recipientId }) => {
     const url = gif.images?.fixed_height?.url || gif.images?.downsized?.url || gif.url;
     if (!url) return;
     try {
-      await onSend(url, 'giphy', gif.id || gif.title, recipientId);
+      await onSend(url, gif.provider === 'custom' ? 'custom' : 'giphy', gif.id || gif.title, recipientId);
       onClose();
     } catch {
       toast.error('Failed to send sticker');
     }
+  };
+
+  const handleCustomFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+    if (!allowed.includes(file.type)) { toast.error('Use PNG, JPEG, GIF, or WebP'); return; }
+    if (file.size > 2 * 1024 * 1024) { toast.error('Image must be under 2 MB'); return; }
+    setUploading(true);
+    try {
+      const { url } = await uploadCustomSticker(file);
+      const entry = { url, id: `custom_${Date.now()}`, name: file.name.replace(/\.[^.]+$/, ''), provider: 'custom' };
+      setCustoms(prev => {
+        const next = [entry, ...prev];
+        localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
+        return next;
+      });
+    } catch { toast.error('Upload failed'); }
+    finally { setUploading(false); }
+  };
+
+  const deleteCustom = (id) => {
+    setCustoms(prev => {
+      const next = prev.filter(s => s.id !== id);
+      localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
+      return next;
+    });
   };
 
   const toggleFav = (gif) => {
@@ -150,9 +184,10 @@ const LobbyStickerPicker = ({ isOpen, onClose, onSend, recipientId }) => {
           {/* Mode tabs */}
           <div className="flex gap-1 overflow-x-auto hide-scrollbar">
             {[
-              { id: 'saved', label: '⭐ Saved' },
-              { id: 'emoji', label: '😊 Emoji' },
-              { id: 'gifs',  label: '✨ Stickers' },
+              { id: 'saved',  label: '⭐ Saved' },
+              { id: 'emoji',  label: '😊 Emoji' },
+              { id: 'gifs',   label: '✨ Stickers' },
+              { id: 'custom', label: '🖼 Mine' },
             ].map(t => (
               <button
                 key={t.id}
@@ -325,6 +360,64 @@ const LobbyStickerPicker = ({ isOpen, onClose, onSend, recipientId }) => {
             </div>
             <div className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-b-2xl text-center flex-shrink-0">
               <p className="text-xs text-gray-500 dark:text-gray-400">Powered by GIPHY · click to send</p>
+            </div>
+          </>
+        )}
+
+        {/* ── CUSTOM / MINE MODE ── */}
+        {mode === 'custom' && (
+          <>
+            <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                className="hidden"
+                onChange={handleCustomFileSelect}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-orange-500/10 border border-orange-500/40 text-orange-600 dark:text-orange-400 text-sm font-medium hover:bg-orange-500/20 transition-colors disabled:opacity-50"
+              >
+                {uploading
+                  ? <div className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                  : <PlusIcon className="w-4 h-4" />
+                }
+                {uploading ? 'Uploading…' : 'Add custom sticker'}
+              </button>
+            </div>
+            <div className="p-3 overflow-y-auto flex-1">
+              {customs.length === 0 && !uploading ? (
+                <div className="flex flex-col items-center justify-center h-32 gap-2">
+                  <p className="text-sm text-gray-400 text-center px-4">Upload PNG, GIF, or WebP images to use as your own stickers</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {customs.map(sticker => (
+                    <div key={sticker.id} className="relative group/card rounded-lg overflow-hidden aspect-square bg-gray-100 dark:bg-gray-700">
+                      <button
+                        onClick={() => handleGifSelect(sticker)}
+                        className="w-full h-full hover:ring-2 hover:ring-orange-400 transition-all"
+                      >
+                        <img src={sticker.url} alt={sticker.name || 'sticker'} className="w-full h-full object-cover" loading="lazy" />
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); deleteCustom(sticker.id); }}
+                        className="absolute top-1 right-1 p-0.5 rounded-full bg-red-500/80 text-white opacity-0 group-hover/card:opacity-100 transition-all"
+                        title="Remove"
+                      >
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-b-2xl text-center flex-shrink-0">
+              <p className="text-xs text-gray-500 dark:text-gray-400">{customs.length} custom sticker{customs.length !== 1 ? 's' : ''}</p>
             </div>
           </>
         )}
