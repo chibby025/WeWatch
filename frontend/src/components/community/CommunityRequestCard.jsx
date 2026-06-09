@@ -93,16 +93,6 @@ const CommunityRequestCard = ({ request: initialRequest, currentUser, onRequestU
       {/* Scrim — legibility over any background */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/50 to-black/40 pointer-events-none" />
 
-      {/* Community request label */}
-      <div className="relative z-10 p-4 pt-5 sm:pt-6">
-        <div className="inline-flex items-center gap-2 bg-gradient-to-r from-purple-600/40 to-blue-600/40 backdrop-blur-sm border border-purple-400/40 rounded-full px-3 py-1">
-          <span className="text-sm">💬</span>
-          <span className="bg-gradient-to-r from-purple-300 to-blue-300 bg-clip-text text-transparent text-xs font-bold uppercase tracking-wide">
-            Community Request
-          </span>
-        </div>
-      </div>
-
       {/* Main content */}
       <div className="relative z-10 flex-1 flex flex-col justify-center px-4 sm:px-5 py-3 sm:py-4">
         {/* Big title — no quotes */}
