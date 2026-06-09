@@ -1973,6 +1973,24 @@ export const updateStatusPrivacy = async (excludedIds) => {
 };
 
 // --- Room chat attachments ---
+export const sendRoomChatSticker = async (roomId, stickerUrl, provider, stickerId) => {
+  const response = await apiClient.post(`/api/rooms/${roomId}/messages/sticker`, {
+    sticker_url: stickerUrl,
+    provider,
+    sticker_id: stickerId || '',
+  });
+  return response.data;
+};
+
+export const uploadCustomSticker = async (file) => {
+  const fd = new FormData();
+  fd.append('image', file);
+  const response = await apiClient.post('/api/stickers/upload', fd, {
+    headers: { 'Content-Type': undefined },
+  });
+  return response.data;
+};
+
 export const uploadRoomChatAttachment = async (roomId, file, type, roomGroupId) => {
   const fd = new FormData();
   fd.append('file', file);

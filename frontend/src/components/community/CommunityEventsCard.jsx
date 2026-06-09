@@ -28,6 +28,7 @@ const marqueeStyle = `
 const BTN_AREA_H   = 56; // "Make a Community Request" bar at very bottom
 const NAV_H        = 96; // expanded info panel floating below card
 const CARD_NAV_GAP =  8; // gap between card bottom and nav bar
+const CARD_OFFSET_Y = 28; // shift card centre down so tagline has room above
 
 const TAGLINES = [
   "Request what you want to watch and have the community create it...",
@@ -197,9 +198,9 @@ const CommunityEventsCard = ({
   const cardH = Math.round(Math.min(maxCardH, cardW * 1.68));
   const step  = Math.round(cardW * 0.68);
 
-  // Vertical midpoint of carousel area → card centre
-  // Card bottom = carouselH/2 + cardH/2  (measured from container top)
-  const cardBottomPx = Math.round(carouselH / 2 + cardH / 2);
+  // Card centre sits CARD_OFFSET_Y below the geometric midpoint so the tagline
+  // text above has more visible space before the card starts.
+  const cardBottomPx = Math.round(carouselH / 2 + cardH / 2 + CARD_OFFSET_Y);
   const navTopPx     = cardBottomPx + CARD_NAV_GAP;
 
   const handleReqUpdate = (u) => setLocalRequests(p => p.map(r => r.id === u.id ? u : r));
@@ -322,7 +323,7 @@ const CommunityEventsCard = ({
                 height:    cardH,
                 left:      '50%',
                 top:       '50%',
-                transform: `translate(calc(-50% + ${translateX}px), -50%) scale(${scale})`,
+                transform: `translate(calc(-50% + ${translateX}px), calc(-50% + ${CARD_OFFSET_Y}px)) scale(${scale})`,
                 zIndex, opacity,
                 borderRadius: 16,
                 overflow:     'hidden',

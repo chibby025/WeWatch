@@ -121,7 +121,14 @@
       "PowerShell(wsl -d Ubuntu-22.04 -e /usr/local/go/bin/go build ./... 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /usr/local/go/bin/go build ./...' 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./...' 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/...' 2>&1; Write-Host \"Exit: $LASTEXITCODE\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/...' 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -8\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | grep -E 'error|Error|warning|built in|�'\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -20\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- /usr/local/go/bin/go build ./... 2>&1; $ExitCode = $LASTEXITCODE; Write-Output \"Exit: $ExitCode\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./... 2>&1 || echo BUILD_FAILED\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build wewatch-backend/cmd/server 2>&1 && echo OK\")"
     ],
     "additionalDirectories": [
       "\\dev",

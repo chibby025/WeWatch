@@ -505,6 +505,7 @@ func main() {
 		roomGroup.POST("/:id/messages/voice-note", handlers.UploadVoiceNote)        // POST /api/rooms/:id/messages/voice-note (Upload voice note)
 		roomGroup.POST("/:id/messages/attachment", handlers.UploadRoomChatAttachmentHandler) // POST /api/rooms/:id/messages/attachment (Upload image/doc to BunnyCDN)
 		roomGroup.POST("/:id/messages/poll", handlers.CreatePoll)                 // POST /api/rooms/:id/messages/poll (Create poll)
+		roomGroup.POST("/:id/messages/sticker", handlers.SendRoomChatStickerHandler) // POST /api/rooms/:id/messages/sticker (Send Tenor/Giphy GIF)
 		
 		// --- Poll routes ---
 		roomGroup.POST("/:id/polls/:pollId/vote", handlers.VotePoll)          // POST /api/rooms/:id/polls/:pollId/vote (Vote on poll)
@@ -711,6 +712,7 @@ func main() {
 		protected.GET("/scheduled-events/:id/ical", handlers.DownloadICalHandler)
 		protected.GET("/scheduled-events/with-trailers", handlers.GetScheduledEventsWithTrailersHandler) // ✅ Get events with trailers (paginated)
 		protected.POST("/scheduled-events/upload-trailer", handlers.UploadTrailerHandler)               // ✅ Upload trailer video for event
+		protected.POST("/stickers/upload", handlers.UploadCustomStickerHandler)                         // POST /api/stickers/upload (Upload custom sticker image)
 		protected.GET("/user/calendar", handlers.GetUserCalendarHandler)                                // GET /api/user/calendar?month=2026-05
 		protected.GET("/user/upcoming-events", handlers.GetUserUpcomingEventsHandler)                  // GET /api/user/upcoming-events (next 30 days)
 		

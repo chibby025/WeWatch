@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
-import EmojiPicker from './EmojiPicker';
+import StickerPicker from './StickerPicker';
+import MentionDropdown from './MentionDropdown';
 import logger from '../utils/logger';
 import { hasTicketCache } from '../utils/ticketCache';
 import {
@@ -21,7 +22,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
 import { useMobile } from '../hooks/useMobile';
-import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup, getAssetUrl, uploadRoomChatAttachment } from '../services/api';
+import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup, getAssetUrl, uploadRoomChatAttachment, sendRoomChatSticker } from '../services/api';
 import WatchTypeModal from './WatchTypeModal';
 import WatchTypeInfoModal from './WatchTypeInfoModal';
 import ClassTypeModal from './modals/ClassTypeModal';
@@ -45,8 +46,22 @@ import RoomGroupEditModal from './RoomGroupEditModal';
 import RoomJoinRequestsModal from './RoomJoinRequestsModal';
 import { checkDateOfBirth, updateDateOfBirth, getRoomJoinRequests } from '../services/api';
 import TwemojiText from './TwemojiText';
+import { parseTwemoji } from '../utils/twemoji';
 // TODO: Review MediaBanner integration later - currently commented out for future use
 // import MediaBanner from './MediaBanner';
+
+// Renders a chat message string — highlights @username tokens in purple, then parses emoji SVGs.
+// Safe: non-mention segments are HTML-escaped inside parseTwemoji; mention wrapper uses only /\w+/ chars.
+const ChatMessageText = ({ text, className }) => {
+  if (!text) return null;
+  const parts = text.split(/(@\w+)/g);
+  const html = parts.map(part =>
+    /^@\w+$/.test(part)
+      ? `<span class="text-purple-400 font-semibold">${part}</span>`
+      : parseTwemoji(part)
+  ).join('');
+  return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+};
 
 const RoomPageNew = () => {
   const { id: roomId } = useParams();
@@ -82,8 +97,12 @@ const RoomPageNew = () => {
   const [openMenuIndex, setOpenMenuIndex] = useState(null);
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editText, setEditText] = useState('');
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const emojiPickerRef = useRef(null);
+  const [showChatPicker, setShowChatPicker] = useState(false);
+  const chatPickerRef = useRef(null);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionStart, setMentionStart] = useState(-1);
+  const chatTextareaRef = useRef(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const lastVisibleMessageIndexRef = useRef(null); // Track last visible message when scrolling away
@@ -1267,7 +1286,7 @@ const RoomPageNew = () => {
     // Clear input immediately — snappy UX
     setNewMessage('');
     setReplyingTo(null);
-    setShowEmojiPicker(false);
+    setShowChatPicker(false);
 
     try {
       const response = await apiClient.post(`/api/rooms/${roomId}/messages`, {
@@ -1309,22 +1328,65 @@ const RoomPageNew = () => {
     setNewMessage(prev => prev + emoji);
   };
 
-  // Close emoji picker when clicking outside
+  // Close combined chat picker when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target)) {
-        setShowEmojiPicker(false);
+      if (chatPickerRef.current && !chatPickerRef.current.contains(event.target)) {
+        setShowChatPicker(false);
       }
     };
-
-    if (showEmojiPicker) {
+    if (showChatPicker) {
       document.addEventListener('mousedown', handleClickOutside);
     }
-
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [showEmojiPicker]);
+  }, [showChatPicker]);
+
+  const handleSendSticker = async (gif) => {
+    setShowStickerPicker(false);
+    if (!gif?.url) return;
+    try {
+      const msg = await sendRoomChatSticker(roomId, gif.url, gif.provider || 'giphy', gif.id || '');
+      setMessages(prev => {
+        const exists = prev.some(m => m.id === msg.id);
+        if (exists) return prev;
+        const next = [...prev, {
+          id: msg.id || Date.now(),
+          user_id: currentUser?.id,
+          username: currentUser?.username,
+          message: '',
+          message_type: 'sticker',
+          attachment_url: gif.url,
+          created_at: msg.created_at || new Date().toISOString(),
+        }];
+        return next.length > 200 ? next.slice(next.length - 200) : next;
+      });
+      scrollToBottom();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to send GIF');
+    }
+  };
+
+  const handleMentionSelect = (username) => {
+    if (mentionStart < 0) return;
+    const before = newMessage.slice(0, mentionStart);
+    const after = newMessage.slice(chatTextareaRef.current?.selectionStart ?? newMessage.length);
+    const inserted = `@${username} `;
+    const next = before + inserted + after;
+    setNewMessage(next);
+    setMentionOpen(false);
+    setMentionStart(-1);
+    // Restore focus and place cursor after the inserted mention
+    setTimeout(() => {
+      const el = chatTextareaRef.current;
+      if (el) {
+        const pos = before.length + inserted.length;
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      }
+    }, 0);
+  };
 
   const handleEditMessage = async (messageId, newText) => {
     try {
@@ -2685,10 +2747,18 @@ const RoomPageNew = () => {
                             </svg>
                             <span className="truncate max-w-[180px]">{msg.attachment_name || 'Document'}</span>
                           </a>
+                        ) : msg.message_type === 'sticker' && msg.attachment_url ? (
+                          <img
+                            src={msg.attachment_url}
+                            alt="GIF"
+                            className="max-w-[180px] rounded-lg"
+                            onLoad={() => scrollToBottom && scrollToBottom()}
+                          />
                         ) : (
-                          <TwemojiText className={msg.deleted_by_host ? 'italic opacity-75 text-sm' : 'text-sm'}>
-                            {msg.message}
-                          </TwemojiText>
+                          <ChatMessageText
+                            text={msg.message}
+                            className={msg.deleted_by_host ? 'italic opacity-75 text-sm' : 'text-sm'}
+                          />
                         )}
                       </>
                     )}
@@ -2789,7 +2859,17 @@ const RoomPageNew = () => {
           
           <form onSubmit={handleSendMessage} className={`bg-transparent ${
             isMobile ? `fixed bottom-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24 lg:left-28' : 'left-0'} right-0 z-40` : 'flex-none'
-          } px-2 pb-2 pt-1 sm:px-3 sm:pb-3 sm:pt-1`}>
+          } px-4 pb-2 pt-1 sm:pb-3 sm:pt-1 relative`}>
+
+            {/* @mention dropdown */}
+            {mentionOpen && (
+              <MentionDropdown
+                members={members}
+                query={mentionQuery}
+                onSelect={handleMentionSelect}
+                onClose={() => setMentionOpen(false)}
+              />
+            )}
 
             {/* Reply Banner */}
             {replyingTo && (
@@ -2830,10 +2910,34 @@ const RoomPageNew = () => {
                 </div>
               ) : (
                 <textarea
+                  ref={chatTextareaRef}
                   value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setNewMessage(val);
+                    // @mention detection: scan backwards from cursor for @word
+                    const cursor = e.target.selectionStart;
+                    const textBefore = val.slice(0, cursor);
+                    const match = textBefore.match(/@(\w*)$/);
+                    if (match) {
+                      setMentionQuery(match[1]);
+                      setMentionStart(cursor - match[0].length);
+                      setMentionOpen(true);
+                    } else {
+                      setMentionOpen(false);
+                      setMentionStart(-1);
+                    }
+                  }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                    if (mentionOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Tab')) {
+                      e.preventDefault();
+                      return;
+                    }
+                    if (e.key === 'Escape' && mentionOpen) {
+                      setMentionOpen(false);
+                      return;
+                    }
+                    if (e.key === 'Enter' && !e.shiftKey && !mentionOpen) {
                       e.preventDefault();
                       handleSendMessage(e);
                     }
@@ -2872,20 +2976,23 @@ const RoomPageNew = () => {
                     }
                   </button>
 
-                  {/* Emoji / sticker */}
-                  <div className="relative" ref={emojiPickerRef}>
+                  {/* Emoji / Stickers / GIFs — unified picker */}
+                  <div className="relative" ref={chatPickerRef}>
                     <button
                       type="button"
-                      onClick={() => isMember && !(room?.host_only_chat && !isHost) && setShowEmojiPicker(!showEmojiPicker)}
+                      onClick={() => isMember && !(room?.host_only_chat && !isHost) && setShowChatPicker(p => !p)}
                       disabled={!isMember || (room?.host_only_chat && !isHost)}
                       className="p-1.5 rounded-lg text-gray-400 hover:text-purple-400 hover:bg-purple-900/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      title="Emoji"
+                      title="Emoji / Stickers / GIFs"
                     >
                       <FaceSmileOutlineIcon className="h-5 w-5" />
                     </button>
-                    {showEmojiPicker && isMember && (
+                    {showChatPicker && isMember && (
                       <div className="absolute bottom-full left-0 mb-2 z-50">
-                        <EmojiPicker onEmojiSelect={handleEmojiClick} />
+                        <StickerPicker
+                          onEmojiSelect={(emoji) => { handleEmojiClick(emoji); setShowChatPicker(false); }}
+                          onStickerSelect={handleSendSticker}
+                        />
                       </div>
                     )}
                   </div>
