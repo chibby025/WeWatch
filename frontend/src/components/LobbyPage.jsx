@@ -1070,11 +1070,18 @@ const LobbyPage = () => {
       _lobbyCache.sessions = filtered;
       _lobbyCache.sessionsTs = Date.now();
 
-      // Sync sessionsPage.data so cards render immediately (badge and cards share same source)
+      // Sync sessionsPage.data so cards render immediately (badge and cards share same source).
+      // Never prune sessions the current user is hosting or is a member of — their session may
+      // score below the top-10 cutoff (e.g. solo session, no preview) and would otherwise
+      // disappear from the feed every time fetchSessionsData re-runs on WS reconnect.
       setSessionsPage(prev => {
         if (prev.data.length === 0) return { ...prev, data: filtered };
         const filteredIds = new Set(filtered.map(s => s.session_id));
-        const pruned = prev.data.filter(s => filteredIds.has(s.session_id));
+        const pruned = prev.data.filter(s =>
+          filteredIds.has(s.session_id) ||
+          s.host_id === authenticatedUserID ||
+          s.is_member === true
+        );
         const prunedIds = new Set(pruned.map(s => s.session_id));
         const newSessions = filtered.filter(s => !prunedIds.has(s.session_id));
         if (newSessions.length === 0 && pruned.length === prev.data.length) return prev;

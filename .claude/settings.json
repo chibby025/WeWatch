@@ -117,7 +117,11 @@
       "PowerShell(wsl -d Ubuntu-22.04 -e sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... 2>&1')",
       "PowerShell(wsl -d Ubuntu-22.04 bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... 2>&1 && echo 'BUILD OK'\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./... 2>&1\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./cmd/server/... 2>&1; go build ./internal/... 2>&1\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./cmd/server/... 2>&1; go build ./internal/... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e /usr/local/go/bin/go build ./... 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /usr/local/go/bin/go build ./...' 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./...' 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c 'cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/...' 2>&1; Write-Host \"Exit: $LASTEXITCODE\")"
     ],
     "additionalDirectories": [
       "\\dev",

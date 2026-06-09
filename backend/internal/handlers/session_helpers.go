@@ -1,4 +1,4 @@
-package handlers
+﻿package handlers
 
 import (
 	"fmt"
@@ -182,10 +182,10 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 
 		// If this is a temporary instant-watch room with no active members,
 		// it's stale/orphaned — try to clean it up and skip returning it in the lobby.
-		// ✅ GRACE PERIOD: Don't cleanup sessions created within last 10 seconds (give user time to join)
+		// ✅ GRACE PERIOD: 90s grace period — mobile browsers can take 30-60s to reconnect after a tab switch
 		if room.IsTemporary && activeMemberCount == 0 {
 			timeSinceCreation := time.Since(session.StartedAt)
-			if timeSinceCreation < 10*time.Second {
+			if timeSinceCreation < 90*time.Second {
 				continue // Grace period - don't add to response yet
 			}
 			
@@ -270,7 +270,73 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		response = append(response, sessionResp)
 	}
 
-	// Reduced logging - returning %d active sessions
+	// On page 0, guarantee the requesting user's own hosting session appears even if it
+	// scored below the top-N cutoff (e.g. solo session, no preview, decayed recency).
+	// This prevents the session card from disappearing on every WS-reconnect-triggered refresh.
+	if offset == 0 && userID > 0 {
+		// Collect session IDs already in the response to avoid duplicates.
+		inResponse := make(map[string]bool, len(response))
+		for _, sr := range response {
+			inResponse[sr.SessionID] = true
+		}
+
+		var ownSessions []models.WatchSession
+		DB.Select("watch_sessions.*").
+			Where("watch_sessions.ended_at IS NULL AND watch_sessions.host_id = ?", userID).
+			Preload("Members", "is_active = ?", true).
+			Joins("JOIN rooms r ON r.id = watch_sessions.room_id").
+			Find(&ownSessions)
+
+		for _, session := range ownSessions {
+			if inResponse[session.SessionID] {
+				continue // already in scored results
+			}
+			var room models.Room
+			if err := DB.First(&room, session.RoomID).Error; err != nil {
+				continue
+			}
+			activeMemberCount := len(session.Members)
+			var user models.User
+			hostUsername := "Unknown"
+			if err := DB.First(&user, room.HostID).Error; err == nil {
+				hostUsername = user.Username
+			}
+			// Prepend so the user's own session is always visible at top of feed.
+			ownResp := SessionResponse{
+				SessionID:             session.SessionID,
+				RoomID:                session.RoomID,
+				RoomName:              room.Name,
+				RoomAvatarURL:         room.ImageURL,
+				HostID:                room.HostID,
+				HostUsername:          hostUsername,
+				WatchType:             session.WatchType,
+				ClassType:             session.ClassType,
+				IsTemporary:           room.IsTemporary,
+				IsPublic:              room.IsPublic,
+				IsMember:              true,
+				MemberCount:           activeMemberCount,
+				CurrentlyPlaying:      room.CurrentlyPlaying,
+				SessionTitle:          session.SessionTitle,
+				StartedAt:             session.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
+				CurrentMediaURL:       session.CurrentMediaURL,
+				CurrentMediaType:      session.CurrentMediaType,
+				IsScreenSharingActive: session.IsScreenSharingActive,
+				SharingSource:         session.SharingSource,
+				ContentRating:         session.ContentRating,
+				AverageRating:         room.AverageRating,
+				TotalRatings:          room.TotalRatings,
+				PreviewURL:            session.PreviewURL,
+				PosterURL:             session.PosterURL,
+				LiveshareMode:         session.LiveshareMode,
+				PodcastTitle:          session.PodcastTitle,
+				PodcastLogoURL:        session.PodcastLogoURL,
+				LiveShareLowerThird:   session.LiveShareLowerThird,
+				LiveShareLogoBug:      session.LiveShareLogoBug,
+			}
+			response = append([]SessionResponse{ownResp}, response...)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"sessions": response,
 		"count":    len(response),

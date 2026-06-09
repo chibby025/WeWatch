@@ -2316,6 +2316,11 @@ func CleanupStaleSessions() {
 		log.Printf("✅ [CleanupStaleSessions] Cleanup complete - ended %d stale sessions", len(staleSessions))
 	}
 
+	// Delete CDN files and DB rows for TemporaryMediaItem records whose sessions have ended.
+	// Safety net: EndWatchSessionHandler already does this in its background goroutine, but
+	// if that goroutine failed the files would sit on BunnyCDN until this sweeper runs.
+	CleanupAllTemporaryMedia()
+
 	// Sweep for members still marked active in sessions that have already ended.
 	// Catches goroutine failures during EndWatchSessionHandler background cleanup.
 	recentCutoff := time.Now().Add(-7 * 24 * time.Hour)

@@ -159,6 +159,7 @@ export default function LeftSidebar({
   // Refs for same-session auto-retry — always current, no stale-closure risk.
   const uploadFileRef = useRef(null);        // the live File object for the current upload
   const uploadPausedRef = useRef(false);     // mirrors uploadPaused without closure staleness
+  const visibilityPauseRef = useRef(false);  // true when upload was paused by a tab switch (not user cancel)
   const uploadFileDirectRef = useRef(null);  // always points at the latest uploadFileDirect fn
   const posterPollTimerRef = useRef(null);   // cleanup handle for poster polling
   
@@ -361,14 +362,11 @@ export default function LeftSidebar({
   }, [uploading, uploadSW, roomId, sessionId]);
 
 
-  // Same-session auto-retry: when the device reconnects after a network drop,
-  // automatically continue the upload without any user action.
-  // Uses refs so the handler is registered once and never goes stale.
+  // Same-session auto-retry: resumes on network restore OR when the tab becomes visible again
+  // after a background pause. Both paths share the same resume() helper.
+  // Uses refs so handlers are registered once and never go stale.
   useEffect(() => {
-    const handleOnline = () => {
-      if (!uploadPausedRef.current || !uploadFileRef.current) return;
-
-      // Read the latest chunk state from localStorage.
+    const resume = () => {
       const bunnyId = localStorage.getItem('current_bunny_upload_id');
       let savedState = null;
       if (bunnyId) {
@@ -376,16 +374,37 @@ export default function LeftSidebar({
           savedState = JSON.parse(localStorage.getItem(`wewatch_bunny_upload_${bunnyId}`) || 'null');
         } catch (_) {}
       }
-
-      console.log('🔄 [AutoRetry] Connection restored — resuming upload automatically…');
-      toast('Connection restored — resuming upload…', { icon: '📶' });
-
-      // uploadFileDirectRef.current always points at the latest closure.
       uploadFileDirectRef.current?.(uploadFileRef.current, savedState);
     };
 
+    const handleOnline = () => {
+      if (!uploadPausedRef.current || !uploadFileRef.current) return;
+      console.log('🔄 [AutoRetry] Connection restored — resuming upload automatically…');
+      toast('Connection restored — resuming upload…', { icon: '📶' });
+      resume();
+    };
+
+    // Pause when the user switches tabs; resume instantly when they return.
+    // This mirrors Capacitor's appStateChange suspend lifecycle for browser PWA.
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        if (!uploadFileRef.current) return; // nothing uploading
+        visibilityPauseRef.current = true;
+        uploadAbortControllerRef.current?.abort(); // frees mobile network resources while hidden
+      } else {
+        if (!visibilityPauseRef.current || !uploadFileRef.current) return;
+        visibilityPauseRef.current = false;
+        console.log('🔄 [VisibilityResume] Tab visible again — resuming upload…');
+        resume();
+      }
+    };
+
     window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []); // empty deps — refs handle staleness
 
   // Cancel any in-flight poster poll when the sidebar unmounts.
@@ -860,14 +879,24 @@ export default function LeftSidebar({
       if (newItemId) pollForPoster(newItemId);
     } catch (err) {
       if (err.name === 'CanceledError' || err.message?.includes('cancel')) {
-        console.log('🚫 [DirectUpload] Cancelled');
-        // On cancel, clear saved state — user explicitly stopped.
-        if (activeBunnyUploadId) {
-          localStorage.removeItem(`wewatch_bunny_upload_${activeBunnyUploadId}`);
-          localStorage.removeItem('current_bunny_upload_id');
+        if (visibilityPauseRef.current) {
+          // Tab switched — preserve state so the visibilitychange handler can auto-resume.
+          console.log('⏸ [DirectUpload] Paused (tab hidden) — will resume on return');
+          shouldPause = true;
+          uploadPausedRef.current = true;
+          setUploadPaused(true);
+          setUploadSpeed(0);
+          setUploadETA('Resuming when you return…');
+        } else {
+          // User explicitly cancelled — clear everything.
+          console.log('🚫 [DirectUpload] Cancelled');
+          if (activeBunnyUploadId) {
+            localStorage.removeItem(`wewatch_bunny_upload_${activeBunnyUploadId}`);
+            localStorage.removeItem('current_bunny_upload_id');
+          }
+          uploadFileRef.current = null;
+          toast('Upload cancelled.');
         }
-        uploadFileRef.current = null;
-        toast('Upload cancelled.');
       } else {
         console.error('❌ [DirectUpload] Network error, entering paused state:', err);
         // Same-session: File object is still in memory. Pause and auto-retry on reconnect
