@@ -582,30 +582,32 @@ const RoomPageNew = () => {
       if (response.data.session_id) {
         console.log('✅ [RoomPageNew] Active session found:', response.data.session_id);
         
-        // ✅ Validate session age - reject sessions older than 4 hours
+        // Validate session age / zombie state
         const sessionStartTime = new Date(response.data.started_at);
-        const sessionAge = (Date.now() - sessionStartTime.getTime()) / (1000 * 60 * 60); // hours
-        
-        if (sessionAge > 4) {
-          console.warn(`⚠️ Session ${response.data.session_id} is ${sessionAge.toFixed(1)} hours old - clearing stale session`);
-          
-          // Try to end the stale session on the backend
+        const sessionAgeMins = (Date.now() - sessionStartTime.getTime()) / (1000 * 60); // minutes
+        const sessionAgeHours = sessionAgeMins / 60;
+        const isSessionHost = response.data.host_id === currentUser?.id;
+
+        // Zombie: host's session, nobody connected for ≥30 min (token expiry / abrupt leave)
+        const isZombie = isSessionHost &&
+                          response.data.ws_connection_count === 0 &&
+                          response.data.member_count === 0 &&
+                          sessionAgeMins >= 30;
+
+        if (sessionAgeHours > 4 || isZombie) {
+          const reason = sessionAgeHours > 4 ? `${sessionAgeHours.toFixed(1)}h old` : 'no active members';
+          console.warn(`⚠️ [RoomPageNew] Clearing stale session (${reason}):`, response.data.session_id);
           try {
             await apiClient.post(`/api/rooms/${roomId}/sessions/${response.data.session_id}/end`);
-            toast('Cleared stale session', { icon: '🧹' });
+            toast('Cleared interrupted session', { icon: '🧹' });
           } catch (endError) {
             console.error('Failed to end stale session:', endError);
           }
-          
-          console.log('🧹 [RoomPageNew] Setting activeSession to null (stale session)');
           setActiveSession(null);
           setMembersInSession([]);
         } else {
           console.log('📌 [RoomPageNew] Setting activeSession state with valid session data');
-          console.log('🔍 [DEBUG] response.data structure:', response.data);
-          console.log('🔍 [DEBUG] Calling setActiveSession with:', response.data);
           setActiveSession(response.data);
-          console.log('✅ [DEBUG] setActiveSession called successfully');
           setMembersInSession(response.data.members || []);
         }
       } else {

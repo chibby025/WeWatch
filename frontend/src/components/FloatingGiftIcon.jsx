@@ -1,8 +1,10 @@
-// frontend/src/components/FloatingGiftIcon.jsx
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { FaGift } from 'react-icons/fa';
 import toast from 'react-hot-toast';
+
+const POS_KEY = 'wewatch_gift_pos';
+const DRAG_THRESHOLD = 5; // px of movement before it counts as a drag
 
 const FloatingGiftIcon = ({
   hostId,
@@ -19,10 +21,21 @@ const FloatingGiftIcon = ({
   const [isSending, setIsSending] = useState(false);
   const [showAnimation, setShowAnimation] = useState(false);
   const [coinCount, setCoinCount] = useState(0);
-  const [lastActive, setLastActive] = useState(Date.now());
   const [isInactive, setIsInactive] = useState(false);
   const giftAudioRef = useRef(null);
   const inactivityTimerRef = useRef(null);
+
+  // Draggable position — null = use default CSS position
+  const [pos, setPos] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(POS_KEY) || 'null'); }
+    catch { return null; }
+  });
+  const posRef = useRef(pos);
+  const containerRef = useRef(null);
+  // drag state lives in a ref so event handlers never go stale
+  const drag = useRef({ active: false, moved: false, startPx: 0, startPy: 0, startElX: 0, startElY: 0 });
+
+  useEffect(() => { posRef.current = pos; }, [pos]);
 
   // Initialize audio
   useEffect(() => {
@@ -30,139 +43,134 @@ const FloatingGiftIcon = ({
     giftAudioRef.current.volume = 0.3;
   }, []);
 
-  // Track user activity for auto-hide
+  // Auto-hide after 30 s of inactivity
   useEffect(() => {
     const resetTimer = () => {
-      setLastActive(Date.now());
       setIsInactive(false);
-
-      // Clear existing timer
-      if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current);
-      }
-
-      // Set new timer for 30 seconds of inactivity
-      inactivityTimerRef.current = setTimeout(() => {
-        setIsInactive(true);
-      }, 30000);
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = setTimeout(() => setIsInactive(true), 30000);
     };
-
-    const handleActivity = () => {
-      resetTimer();
-    };
-
-    // Listen for mouse and keyboard activity
-    window.addEventListener('mousemove', handleActivity);
-    window.addEventListener('keypress', handleActivity);
-    window.addEventListener('click', handleActivity);
-
-    // Initial timer
+    window.addEventListener('mousemove', resetTimer);
+    window.addEventListener('keypress', resetTimer);
+    window.addEventListener('click', resetTimer);
     resetTimer();
-
     return () => {
-      window.removeEventListener('mousemove', handleActivity);
-      window.removeEventListener('keypress', handleActivity);
-      window.removeEventListener('click', handleActivity);
-      if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current);
-      }
+      window.removeEventListener('mousemove', resetTimer);
+      window.removeEventListener('keypress', resetTimer);
+      window.removeEventListener('click', resetTimer);
+      clearTimeout(inactivityTimerRef.current);
     };
   }, []);
 
-  // Handle gift click
   const handleGiftClick = async () => {
-    if (isSending || currentUserId === hostId) {
-      return;
-    }
+    if (isSending || currentUserId === hostId) return;
 
-    // Check if balance is sufficient for 1 token (100 cents)
     if (tokenBalance < 100) {
       toast.error('💰 Low Balance! Top up your wallet to send gifts to the host.', {
         duration: 4000,
         icon: '🪙',
-        style: {
-          background: '#1f2937',
-          color: '#fff',
-          border: '1px solid #fbbf24'
-        }
+        style: { background: '#1f2937', color: '#fff', border: '1px solid #fbbf24' },
       });
       return;
     }
 
     setIsSending(true);
-
     try {
-      // Send 1 token gift to host
       const response = await axios.post('/api/donations/gift', {
         recipient_id: hostId,
-        amount_tokens: 100 // 1 token = 100 cents
-      }, {
-        withCredentials: true
-      });
+        amount_tokens: 100,
+      }, { withCredentials: true });
 
-      // Play gift sound
       if (giftAudioRef.current) {
         giftAudioRef.current.currentTime = 0;
-        giftAudioRef.current.play().catch(e => console.log('Audio play failed:', e));
+        giftAudioRef.current.play().catch(() => {});
       }
 
-      // Show coin animation
       setShowAnimation(true);
       setCoinCount(prev => prev + 1);
+      setTimeout(() => setShowAnimation(false), 1000);
 
-      // Hide animation after 1 second
-      setTimeout(() => {
-        setShowAnimation(false);
-      }, 1000);
-
-      // Call callback with updated balance
       if (onGiftSent && response.data.donor_balance) {
         onGiftSent(response.data.donor_balance);
       }
-
     } catch (err) {
-      console.error('Error sending gift:', err);
-      
-      // Show user-friendly error message
       const errorMessage = err.response?.data?.error || 'Failed to send gift. Please try again.';
-      toast.error(errorMessage, {
-        duration: 4000,
-        icon: '❌'
-      });
+      toast.error(errorMessage, { duration: 4000, icon: '❌' });
     } finally {
       setIsSending(false);
     }
   };
 
-  // Don't render if conditions are not met
-  const shouldHide = 
-    !isVisible || 
-    isFullscreen || 
-    isLeftSidebarOpen || 
-    !hostId || // Don't show if hostId is not set
-    !currentUserId || // Don't show if currentUserId is not set
-    currentUserId === hostId || // Don't show if current user IS the host
-    isInactive;
+  // ── Drag handlers ─────────────────────────────────────────────────────────────
+  const onPointerDown = (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    drag.current.active = true;
+    drag.current.moved = false;
+    const rect = containerRef.current.getBoundingClientRect();
+    drag.current.startPx = e.clientX;
+    drag.current.startPy = e.clientY;
+    drag.current.startElX = rect.left;
+    drag.current.startElY = rect.top;
+    containerRef.current.setPointerCapture(e.pointerId);
+    e.preventDefault(); // prevents text selection and touch-scroll interference
+  };
 
-  if (shouldHide) {
+  const onPointerMove = (e) => {
+    if (!drag.current.active) return;
+    const dx = e.clientX - drag.current.startPx;
+    const dy = e.clientY - drag.current.startPy;
+    if (!drag.current.moved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+      drag.current.moved = true;
+    }
+    if (!drag.current.moved) return;
+    const btnSize = window.innerWidth < 640 ? 48 : 64; // matches w-12 / sm:w-16
+    const newPos = {
+      x: Math.max(0, Math.min(window.innerWidth - btnSize, drag.current.startElX + dx)),
+      y: Math.max(0, Math.min(window.innerHeight - btnSize, drag.current.startElY + dy)),
+    };
+    posRef.current = newPos;
+    setPos(newPos);
+  };
+
+  const onPointerUp = () => {
+    if (!drag.current.active) return;
+    drag.current.active = false;
+    if (drag.current.moved) {
+      localStorage.setItem(POS_KEY, JSON.stringify(posRef.current));
+    } else {
+      handleGiftClick();
+    }
+  };
+
+  // ── Visibility guard ──────────────────────────────────────────────────────────
+  if (!isVisible || isFullscreen || isLeftSidebarOpen || !hostId || !currentUserId || currentUserId === hostId || isInactive) {
     return null;
   }
 
+  // When the user has dragged to a custom position, use exact px coords (no float animation).
+  // At the default position, keep the floating animation.
+  const containerStyle = pos
+    ? { left: pos.x, top: pos.y }
+    : { left: '1.5rem', top: '33.333%', transform: 'translateY(-50%)', animation: 'float 3s ease-in-out infinite' };
+
   return (
     <>
-      {/* Floating Gift Icon */}
       <div
-        className="fixed left-6 top-1/3 transform -translate-y-1/2 z-40"
-        style={{ animation: 'float 3s ease-in-out infinite' }}
+        ref={containerRef}
+        className="fixed z-40 touch-none select-none cursor-grab active:cursor-grabbing"
+        style={containerStyle}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
       >
         <button
-          onClick={handleGiftClick}
-          onMouseEnter={() => setIsHovered(true)}
-          onMouseLeave={() => setIsHovered(false)}
+          type="button"
           disabled={isSending}
           className={`
-            relative w-16 h-16 rounded-full 
-            bg-gradient-to-br from-purple-500 to-pink-500 
+            relative w-12 h-12 sm:w-16 sm:h-16 rounded-full
+            bg-gradient-to-br from-purple-500 to-pink-500
             text-white shadow-lg
             flex items-center justify-center
             transition-all duration-300
@@ -171,9 +179,8 @@ const FloatingGiftIcon = ({
             ${isSending ? 'animate-pulse' : ''}
           `}
         >
-          <FaGift className="text-2xl" />
-          
-          {/* Badge showing gift count */}
+          <FaGift className="text-lg sm:text-2xl" />
+
           {coinCount > 0 && (
             <div className="absolute -top-2 -right-2 bg-yellow-400 text-purple-900 rounded-full w-7 h-7 flex items-center justify-center text-xs font-bold shadow-md">
               {coinCount}
@@ -181,24 +188,23 @@ const FloatingGiftIcon = ({
           )}
         </button>
 
-        {/* Tooltip on hover */}
+        {/* Tooltip */}
         {isHovered && !isSending && (
-          <div className="absolute left-20 top-1/2 transform -translate-y-1/2 bg-gray-900 text-white px-3 py-2 rounded-lg text-sm whitespace-nowrap shadow-xl">
+          <div className="absolute left-14 sm:left-20 top-1/2 -translate-y-1/2 bg-gray-900 text-white px-3 py-2 rounded-lg text-sm whitespace-nowrap shadow-xl pointer-events-none">
             <div className="font-semibold">{isReligious ? 'Give Offering' : 'Gift to Host'}</div>
-            <div className="text-xs text-gray-300">Click: 1 token {isReligious ? '🙏' : '🪙'}</div>
+            <div className="text-xs text-gray-300">Tap: 1 token {isReligious ? '🙏' : '🪙'}</div>
             <div className={`text-xs mt-1 ${tokenBalance < 100 ? 'text-yellow-400 font-semibold' : 'text-gray-400'}`}>
               Balance: {(tokenBalance / 100).toFixed(2)} tokens
             </div>
             {tokenBalance < 100 && (
-              <div className="text-xs text-red-400 mt-1">⚠️ Low balance - Top up!</div>
+              <div className="text-xs text-red-400 mt-1">⚠️ Low balance — Top up!</div>
             )}
-            {/* Arrow pointing left */}
-            <div className="absolute right-full top-1/2 transform -translate-y-1/2 w-0 h-0 border-t-8 border-t-transparent border-b-8 border-b-transparent border-r-8 border-r-gray-900"></div>
+            <div className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-t-8 border-t-transparent border-b-8 border-b-transparent border-r-8 border-r-gray-900" />
           </div>
         )}
       </div>
 
-      {/* Coin Animation Overlay */}
+      {/* Coin animation overlay */}
       {showAnimation && (
         <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
           {[...Array(10)].map((_, i) => (
@@ -209,62 +215,34 @@ const FloatingGiftIcon = ({
                 left: `${Math.random() * 100}%`,
                 top: '-50px',
                 animation: `coinFall ${1 + Math.random()}s ease-in forwards`,
-                animationDelay: `${i * 0.1}s`
+                animationDelay: `${i * 0.1}s`,
               }}
             >
               <div className="text-4xl">🪙</div>
             </div>
           ))}
-          
-          {/* +1 Token Text */}
           <div
-            className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2"
-            style={{
-              animation: 'fadeUp 1s ease-out forwards'
-            }}
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+            style={{ animation: 'fadeUp 1s ease-out forwards' }}
           >
-            <div className="text-6xl font-bold text-yellow-400 drop-shadow-lg">
-              +1 🪙
-            </div>
+            <div className="text-6xl font-bold text-yellow-400 drop-shadow-lg">+1 🪙</div>
           </div>
         </div>
       )}
 
-      {/* Inline Styles for Animations */}
-      <style jsx>{`
+      <style>{`
         @keyframes float {
-          0%, 100% {
-            transform: translateY(-50%) translateX(0);
-          }
-          50% {
-            transform: translateY(-50%) translateX(-10px);
-          }
+          0%, 100% { transform: translateY(-50%) translateX(0); }
+          50%       { transform: translateY(-50%) translateX(-10px); }
         }
-
         @keyframes coinFall {
-          0% {
-            transform: translateY(0) rotate(0deg);
-            opacity: 1;
-          }
-          100% {
-            transform: translateY(100vh) rotate(720deg);
-            opacity: 0;
-          }
+          0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
+          100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
         }
-
         @keyframes fadeUp {
-          0% {
-            transform: translate(-50%, -50%) scale(0.5);
-            opacity: 1;
-          }
-          50% {
-            transform: translate(-50%, -70%) scale(1.2);
-            opacity: 1;
-          }
-          100% {
-            transform: translate(-50%, -100%) scale(1);
-            opacity: 0;
-          }
+          0%   { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
+          50%  { transform: translate(-50%, -70%) scale(1.2); opacity: 1; }
+          100% { transform: translate(-50%, -100%) scale(1); opacity: 0; }
         }
       `}</style>
     </>

@@ -2668,7 +2668,10 @@ func GetActiveSessionHandler(c *gin.Context) {
 	// Runs on every heartbeat poll so stale entries self-correct without waiting for
 	// the hourly CleanupStaleSessions goroutine.
 	wsActiveUserIDs := hub.GetRoomActiveUserIDs(uint(roomID))
-	if len(wsActiveUserIDs) > 0 {
+	// Also clean up when *nobody* is connected and the session has been running > 5 min
+	// (zombie session: all clients disconnected abruptly, no one reconnected in time).
+	isLikelyZombie := len(wsActiveUserIDs) == 0 && len(members) > 0 && time.Since(session.StartedAt) > 5*time.Minute
+	if len(wsActiveUserIDs) > 0 || isLikelyZombie {
 		ghostCleaned := 0
 		now := time.Now()
 		for _, m := range members {

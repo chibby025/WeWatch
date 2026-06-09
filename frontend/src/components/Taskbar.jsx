@@ -5,7 +5,6 @@ import EmotePicker from './cinema/ui/EmotePicker';
 import EmojiImage from './cinema/ui/EmojiImage';
 import AudioSettingsDropdown from './AudioSettingsDropdown';
 import { playMicOnSound, playMicOffSound } from '../utils/audio';
-import { TaskbarAudioWaveform } from './AudioWaveform';
 
 // Import SVG icons
 const LeaveCallIcon = '/icons/LeaveCallIcon.svg';
@@ -69,9 +68,15 @@ const TaskbarButton = React.memo(({
           ) : (
             <img src={icon} alt={label} className="h-8 w-8" />
           )}
-          {/* ✅ Show animated waveform overlay when speaking (replaces simple pulse) */}
-          {!isLoading && label === 'Audio' && shouldPulse && localAudioLevel > 0 && (
-            <TaskbarAudioWaveform audioLevel={localAudioLevel} />
+          {/* Green ring: mic on. Brightens + pulses when actually speaking. */}
+          {!isLoading && label === 'Audio' && shouldPulse && (
+            <span
+              className={`absolute -inset-1 rounded-full border-2 pointer-events-none transition-colors duration-150 ${
+                localAudioLevel > 10
+                  ? 'border-green-400 animate-pulse'
+                  : 'border-green-500/30'
+              }`}
+            />
           )}
           {showCancelIndicator && (
             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center">
@@ -195,7 +200,8 @@ const Taskbar = ({
   authoritativeMemberCount = null, // Authoritative count from backend events; overrides array length when set
   isMembersLoading = false, // ✅ Show spinner on members button until first fetch resolves
   // Unread Messages
-  unreadMessages = {}, // {userId: unreadCount}
+  unreadMessages = {}, // {userId: unreadCount} — DMs / private room messages
+  roomChatUnreadCount = 0, // unread count for the shared room/session chat
   // 🎮 Game props (for cinema mode)
   currentGame,
   onGameClose,
@@ -204,8 +210,8 @@ const Taskbar = ({
   const isClassroom = watchType === 'classroom';
   const isLectureHall = isClassroom && classType === 'lecture_hall';
   
-  // ✅ Calculate total unread message count
-  const totalUnreadCount = Object.values(unreadMessages).reduce((sum, count) => sum + count, 0);
+  // ✅ Calculate total unread message count (DMs + shared room chat)
+  const totalUnreadCount = roomChatUnreadCount + Object.values(unreadMessages).reduce((sum, count) => sum + count, 0);
   
   // 🔍 Debug: Log isAudioActive prop changes
   useEffect(() => {

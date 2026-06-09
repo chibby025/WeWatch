@@ -19,6 +19,7 @@ import VideoSidebar from './ui/VideoSidebar';
 import SeatSwapNotification from './ui/SeatSwapNotification';
 import Taskbar from '../Taskbar';
 import CinemaVideoPlayer from './ui/CinemaVideoPlayer';
+import DVDBounce from './ui/DVDBounce';
 import CameraPreview from './ui/CameraPreview';
 import CameraSidebar from './ui/CameraSidebar';
 import VideoTiles from './ui/VideoTiles';
@@ -5669,6 +5670,10 @@ export default function VideoWatch() {
                 className="relative h-full transition-all duration-500 ease-in-out"
                 style={{ width: bannerAdData ? '80%' : '100%' }}
               >
+                {/* DVD screensaver — shown while nothing is playing (not in Religious sessions) */}
+                {!currentMedia && !liveShareMode && !liveShareContentMode && contentRating !== 'Religious' && (
+                  <DVDBounce />
+                )}
                 <CinemaVideoPlayer
                   ref={videoPlayerRef}
                   mediaItem={currentMedia}

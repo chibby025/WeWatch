@@ -1,6 +1,7 @@
 // frontend/src/components/UserProfileModal.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { XMarkIcon } from '@heroicons/react/24/solid';
 import { getFriendCount, getFollowersCount, getFollowingCount, getFollowingList, updateFollowingPrivacy, getUserAverageWatchers, followUser, unfollowUser, getFollowStatus } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import PostsGrid from './PostsGrid';
@@ -237,9 +238,9 @@ export default function UserProfileModal({
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-2 right-2 sm:top-4 sm:right-4 z-20 text-gray-400 hover:text-white hover:bg-white/10 rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center transition-all text-xl sm:text-2xl leading-none shadow-lg"
+          className="absolute top-2 right-2 sm:top-4 sm:right-4 z-20 bg-black/60 hover:bg-black/80 backdrop-blur-sm text-white rounded-full w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center transition-all shadow-lg ring-1 ring-white/20"
         >
-          ✕
+          <XMarkIcon className="w-4 h-4 sm:w-5 sm:h-5" />
         </button>
 
         {/* Single scrollable pane */}
