@@ -2325,6 +2325,13 @@ export default function VideoWatch() {
     setActiveGame(null);
   }, []);
 
+  const handleEndGame = useCallback(() => {
+    if (activeGame?.game_session_id) {
+      sendMessage({ type: 'end_game', data: { game_session_id: activeGame.game_session_id } });
+    }
+    setActiveGame(null);
+  }, [activeGame?.game_session_id, sendMessage]);
+
   // Define stable callbacks
   const handlePlay = useCallback(() => setIsPlaying(true), []);
   const handlePause = useCallback(() => setIsPlaying(false), []);
@@ -6784,6 +6791,7 @@ export default function VideoWatch() {
           currentUserId={currentUser?.id}
           onMove={handleGameMove}
           onClose={handleGameClose}
+          onEndGame={handleEndGame}
         />
       )}
 

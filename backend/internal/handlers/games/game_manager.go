@@ -51,7 +51,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		return nil, fmt.Errorf("room %d already has an active game (ID: %d)", roomID, existingGameID)
 	}
 
-	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" && gameType != "chess" {
+	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" && gameType != "chess" && gameType != "trivia" {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
 	}
 
@@ -95,7 +95,7 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		return fmt.Errorf("game session %d not found", gameSessionID)
 	}
 
-	if gameState.GameSession.GameType != "rock_paper_scissors" {
+	if gameState.GameSession.GameType != "rock_paper_scissors" && gameState.GameSession.GameType != "trivia" {
 		currentPlayer := gameState.Players[gameState.CurrentTurn]
 		if currentPlayer.UserID != playerID {
 			return fmt.Errorf("not your turn")
@@ -125,6 +125,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processRockPaperScissorsMove(gameState, playerID, moveData)
 	case "chess":
 		gameOver, winnerID, err = gm.processChessMove(gameState, playerID, moveData)
+	case "trivia":
+		gameOver, winnerID, err = gm.processTriviaMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -315,6 +317,12 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 		state["fen"] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 		state["turn"] = "w"
 		state["status"] = "active"
+
+	case "trivia":
+		state["round"] = 0
+		state["phase"] = "waiting"
+		state["scores"] = map[string]interface{}{}
+		state["answers"] = map[string]interface{}{}
 
 	case "ludo":
 		state["board"] = gm.initializeLudoBoard(playerCount)

@@ -33,6 +33,16 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
+  {
+    id: 'trivia',
+    name: 'Trivia',
+    description: 'Answer fast — points for speed and accuracy!',
+    minPlayers: 2,
+    maxPlayers: 10,
+    icon: '🧠',
+    disabled: false,
+    type: 'multiplayer'
+  },
 ];
 
 const playerColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A'];
@@ -146,7 +156,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
         {/* Game Selection */}
         <div className="p-6 border-b border-gray-700">
           <h3 className="text-lg font-semibold text-white mb-4">Select Game</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {games.map(game => (
               <button
                 key={game.id}

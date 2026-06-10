@@ -2,8 +2,9 @@
 import TicTacToeGame from './TicTacToeGame';
 import RockPaperScissorsGame from './RockPaperScissorsGame';
 import ChessGame from './ChessGame';
+import TriviaGame from './TriviaGame';
 
-export default function GameOverlay({ activeGame, currentUserId, onMove, onClose }) {
+export default function GameOverlay({ activeGame, currentUserId, onMove, onClose, onEndGame }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -44,6 +45,17 @@ export default function GameOverlay({ activeGame, currentUserId, onMove, onClose
           currentUserId={currentUserId}
           onMove={handleMove}
           onClose={onClose}
+        />
+      );
+
+    case 'trivia':
+      return (
+        <TriviaGame
+          gameState={activeGame}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
         />
       );
 
