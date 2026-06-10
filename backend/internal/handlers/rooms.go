@@ -638,16 +638,9 @@ func EndWatchSessionHandler(c *gin.Context) {
 	session.IsActive = false
 	log.Printf("✅ EndWatchSessionHandler: Session %s marked as ended in DB", sessionID)
 
-	// Fetch host info for the rating modal payload
-	var hostUser models.User
-	hostName := "Unknown Host"
-	if err := DB.First(&hostUser, room.HostID).Error; err == nil {
-		hostName = hostUser.Username
-	} else {
-		log.Printf("⚠️ [EndWatchSessionHandler] Failed to load host user: %v", err)
-	}
-
-	// Broadcast session_ended immediately — clients start navigating away now
+	// Broadcast session_ended immediately — clients start navigating away now.
+	// Host username lookup is intentionally omitted here (violates "no slow ops before broadcast").
+	// The frontend already has the host's username from auth context / room data.
 	log.Printf("📡 [EndWatchSessionHandler] Broadcasting session_ended to room %d", session.RoomID)
 	sessionEndedData := map[string]interface{}{
 		"type": "session_ended",
@@ -657,7 +650,6 @@ func EndWatchSessionHandler(c *gin.Context) {
 			"was_paid_session": session.TicketingEnabled,
 			"session_title":    session.SessionTitle,
 			"host_id":          room.HostID,
-			"host_name":        hostName,
 			"watch_type":       session.WatchType,
 			"is_temporary":     room.IsTemporary,
 		},
@@ -855,14 +847,11 @@ func EndWatchSessionHandler(c *gin.Context) {
 		log.Printf("✅ [EndWatchSession cleanup] Background cleanup complete for session %s", sessionID)
 	}()
 
-	// Give clients a moment to receive session_ended before disconnecting
-	log.Printf("⏳ [EndWatchSessionHandler] Waiting 500ms before disconnecting clients...")
-	time.Sleep(500 * time.Millisecond)
-	log.Printf("🔌 [EndWatchSessionHandler] Disconnecting all WebSocket clients in room %d", session.RoomID)
-	hub.DisconnectRoomClients(session.RoomID)
-
+	// Return the HTTP response immediately — do NOT block on WS disconnect.
+	// DisconnectRoomClients closes every open WS connection in the room; each close
+	// handshake involves a network round-trip that can take seconds on Railway.
+	// Holding the HTTP response until all clients disconnect caused 30s timeouts.
 	log.Printf("✅✅✅ [EndWatchSessionHandler] Session %s ended successfully by host %d", sessionID, userID)
-
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Session ended",
 		"session": gin.H{
@@ -872,6 +861,14 @@ func EndWatchSessionHandler(c *gin.Context) {
 			"total_ticket_revenue": session.TotalTicketRevenue,
 		},
 	})
+
+	// Disconnect WS clients in the background after giving them time to receive session_ended
+	go func() {
+		log.Printf("⏳ [EndWatchSessionHandler] Waiting 500ms before disconnecting clients...")
+		time.Sleep(500 * time.Millisecond)
+		log.Printf("🔌 [EndWatchSessionHandler] Disconnecting all WebSocket clients in room %d", session.RoomID)
+		hub.DisconnectRoomClients(session.RoomID)
+	}()
 }
 
 // ✅ AutoEndSession ends a session automatically (e.g., when host is gone > 10 minutes)

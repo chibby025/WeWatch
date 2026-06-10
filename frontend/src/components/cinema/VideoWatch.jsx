@@ -872,6 +872,8 @@ export default function VideoWatch() {
   const videoPlayerRef = useRef(null); // 🎬 Direct access to video element
   const [localScreenTrack, setLocalScreenTrack] = useState(null);
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // ⏱️ State-based seek (triggers re-renders)
+  const [videoStalled,   setVideoStalled]   = useState(false); // member-side: video loaded but never played
+  const stallTimerRef = useRef(null);
   
   // 📹 LiveShare state (screen + camera)
   const [liveShareMode, setLiveShareMode] = useState(null); // 'screen', 'camera', 'both' - the share type
@@ -2388,39 +2390,67 @@ export default function VideoWatch() {
     setShowChatHome(true);
   };
 
-  // 🎯 Apply pending seek time when video loads (for late joiner sync)
+  // Shadow refs — let the stable loadeddata listener read current state without stale closures
+  const isPlayingRef         = useRef(isPlaying);
+  const pendingSeekTimeRef   = useRef(pendingSeekTime);
+  const liveShareModeRef     = useRef(liveShareMode);
+  const liveShareContentRef  = useRef(liveShareContentMode);
+  useEffect(() => { isPlayingRef.current = isPlaying; },         [isPlaying]);
+  useEffect(() => { pendingSeekTimeRef.current = pendingSeekTime; }, [pendingSeekTime]);
+  useEffect(() => { liveShareModeRef.current = liveShareMode; },     [liveShareMode]);
+  useEffect(() => { liveShareContentRef.current = liveShareContentMode; }, [liveShareContentMode]);
+
+  // 🎯 Apply pending seek time when video loads — stable listener (no volatile deps).
+  // Re-registers only when currentMedia changes (i.e. a new file is loaded).
+  // Reads isPlaying / pendingSeekTime from refs so the event is never missed due to
+  // a dep-driven effect teardown racing with the browser's loadeddata fire.
   useEffect(() => {
     const video = videoPlayerRef.current;
-    // Skip for LiveShare streams (both host mode and member viewing)
-    if (!video || !currentMedia || liveShareMode || liveShareContentMode) return;
+    if (!video || !currentMedia) return;
 
-    const handleLoadedData = () => {
-      console.log('✅ [VideoWatch] Video data loaded', {
-        readyState: video.readyState,
-        currentTime: video.currentTime,
-        isPlaying,
-        hasPendingSeek: pendingSeekTime !== null,
-        pendingSeekTime
-      });
-      
-      // 🎯 Apply pending seek time if available (for mid-playback sync)
-      if (pendingSeekTime !== null && pendingSeekTime > 0) {
-        console.log(`🎯 [VideoWatch] Applying pending seek time: ${pendingSeekTime}s`);
-        video.currentTime = pendingSeekTime;
-        setPendingSeekTime(null); // Clear after applying
-      }
-      
-      if (isPlaying) {
-        console.log('▶️ [VideoWatch] Starting playback after load...');
-        video.play().catch(err => console.error('❌ [VideoWatch] Failed to play:', err));
-      } else {
-        console.log('⏸️ [VideoWatch] Video loaded but isPlaying=false, not starting playback');
+    const applyLoad = () => {
+      if (liveShareModeRef.current || liveShareContentRef.current) return;
+
+      const pt      = pendingSeekTimeRef.current;
+      const willPlay = isPlayingRef.current;
+
+      if (pt !== null && pt >= 0) {
+        video.currentTime = pt;
+        setPendingSeekTime(null);
+        // Wait for seeked before calling play() — play() before seeked = AbortError → frozen frame
+        video.addEventListener('seeked', function onSeeked() {
+          video.removeEventListener('seeked', onSeeked);
+          if (isPlayingRef.current) {
+            video.play().catch(err => console.error('❌ [VideoWatch] play() after seek failed:', err));
+          }
+        });
+      } else if (willPlay) {
+        video.play().catch(err => console.error('❌ [VideoWatch] play() on load failed:', err));
       }
     };
 
-    video.addEventListener('loadeddata', handleLoadedData);
-    return () => video.removeEventListener('loadeddata', handleLoadedData);
-  }, [currentMedia, liveShareMode, isPlaying, pendingSeekTime]);
+    video.addEventListener('loadeddata', applyLoad);
+
+    // 🔑 Race-condition guard: if loadeddata already fired before we attached
+    // (fast network / cached file), apply immediately.
+    if (video.readyState >= 2) {
+      applyLoad();
+    }
+
+    return () => video.removeEventListener('loadeddata', applyLoad);
+  }, [currentMedia]); // only re-register when the media source itself changes
+
+  // Clear stall indicator as soon as the video actually starts playing
+  useEffect(() => {
+    const video = videoPlayerRef.current;
+    if (!video) return;
+    const onPlaying = () => {
+      setVideoStalled(false);
+      clearTimeout(stallTimerRef.current);
+    };
+    video.addEventListener('playing', onPlaying);
+    return () => video.removeEventListener('playing', onPlaying);
+  }, []);
 
   // Monitor LiveKit local participant for screen share track
   useEffect(() => {
@@ -3941,10 +3971,21 @@ export default function VideoWatch() {
                 mediaUrl: mediaUrl,
                 original_name: message.original_name || 'Unknown Media',
               });
+
+              // Stall watchdog: if video hasn't fired 'playing' within 9s, surface the reconnect button
+              if (message.command === "play") {
+                setVideoStalled(false);
+                clearTimeout(stallTimerRef.current);
+                stallTimerRef.current = setTimeout(() => {
+                  const v = videoPlayerRef.current;
+                  if (v && v.paused) setVideoStalled(true);
+                }, 9000);
+              }
+
               const now = Date.now();
-              // Prefer server_ts (injected by backend relay) over host timestamp to
-              // eliminate clock drift between two different devices.
-              const latency = now - (message.server_ts || message.timestamp);
+              // Always use message.timestamp (host browser Date.now()) — server_ts has
+              // WSL clock skew of ~700ms which makes latency negative and breaks adjustedTime.
+              const latency = Math.max(0, now - message.timestamp);
               const adjustedTime = message.seek_time + (latency / 1000);
               console.log('⏱️ [VideoWatch] Latency compensation:', {
                 latency_ms: latency,
@@ -4879,11 +4920,21 @@ export default function VideoWatch() {
         }
       } catch (error) {
         console.error('Failed to end session:', error);
-        if (error?.response?.status !== 404) {
+
+        // ECONNABORTED / CanceledError = request timed out on the client side.
+        // The backend already wrote is_active=false and broadcast session_ended —
+        // the HTTP response was just lost (Railway proxy latency).
+        // Treat as success: proceed with navigation so the host isn't stuck.
+        const isTimeout = error?.code === 'ECONNABORTED' || error?.name === 'CanceledError';
+        if (isTimeout) {
+          console.warn('[VideoWatch] End-session request timed out — assuming server processed it, navigating home');
+          sessionStorage.setItem(`session_ended_${roomId}`, 'true');
+          // fall through to performCleanupAndExit below
+        } else if (error?.response?.status !== 404) {
           toast.error('Could not end session. Please try again.');
           return;
         }
-        // 404 = already ended — safe to proceed with navigation
+        // 404 = already ended — safe to proceed
       }
     } else {
       // Non-host: tell the backend explicitly before the WS closes so the host's
@@ -5727,6 +5778,30 @@ export default function VideoWatch() {
                   onPauseBroadcast={handlePauseBroadcast}
                   onTimeUpdate={handleTimeUpdate}
                 />
+
+                {/* Stall detector — shown to non-host members when video hasn't started 9s after play command */}
+                {videoStalled && !isHost && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-40 pointer-events-auto">
+                    <div className="bg-gray-900/90 border border-white/10 rounded-2xl px-6 py-5 flex flex-col items-center gap-3 max-w-xs text-center shadow-xl">
+                      <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center text-xl">⚠️</div>
+                      <p className="text-white font-semibold text-sm">Video not loading</p>
+                      <p className="text-white/50 text-xs leading-relaxed">The session is live but your stream didn't start. Try reloading.</p>
+                      <button
+                        onClick={() => {
+                          setVideoStalled(false);
+                          const v = videoPlayerRef.current;
+                          if (v) {
+                            v.load();
+                            v.play().catch(() => {});
+                          }
+                        }}
+                        className="w-full py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold transition-colors"
+                      >
+                        Reload video
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Banner Ad: slides in as right 20% panel, disappears when done */}
