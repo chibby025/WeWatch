@@ -623,6 +623,13 @@ func main() {
 	r.GET("/api/public/rooms", handlers.GetRoomsHandler)                  // Guest room browsing — returns only public rooms
 	r.GET("/api/community-events", handlers.OptionalAuthMiddleware(), handlers.GetCommunityEventsHandler) // Guest-accessible; user_id injected if token present
 
+	// --- GUEST VIEW ROUTES (no auth — public sessions only) ---
+	guestGroup := r.Group("/api/guest")
+	{
+		guestGroup.GET("/sessions/:id", handlers.GetGuestSessionViewHandler)      // GET /api/guest/sessions/:id
+		guestGroup.GET("/sessions/:id/chat", handlers.GetGuestSessionChatHandler) // GET /api/guest/sessions/:id/chat
+	}
+
 	// --- POSTS & USER-GENERATED CONTENT ROUTES (Phase 1: Post & Recording Feature) ---
 	// Public routes (discover feed, view single post, read comments)
 	postsPublic := r.Group("/api/posts")

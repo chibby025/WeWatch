@@ -43,7 +43,7 @@ import GameScreenRenderer from '../../Games/GameScreenRenderer'; // ✅ NEW
 import VolumeControl from '../../VolumeControl';
 // Graphics renderer for LiveShare overlays
 import { GraphicsRenderer } from '../../../utils/GraphicsRenderer';
-import TikTokHeartAnimation from '../../TikTokHeartAnimation';
+import TikTokHeartAnimation, { makeHeart } from '../../TikTokHeartAnimation';
 import { HeartIcon } from '@heroicons/react/24/solid';
 // LocalStorage cache utilities
 import {
@@ -265,37 +265,23 @@ export default function CinemaScene3DDemo() {
   const handleDoubleClickLike = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     if (!finalSessionId) return;
-    
-    // Debounce (prevent rapid double-clicks)
-    const now = Date.now();
-    if (now - lastLikeTimeRef.current < 1000) return;
-    lastLikeTimeRef.current = now;
-    
-    // Don't allow liking again if already liked
-    if (isSessionLiked) {
-      toast.error('You already liked this session!', { duration: 2000 });
-      return;
-    }
-    
-    // Show animation immediately
-    setShowHeartAnimation(true);
-    
-    // Optimistic UI update
+
+    // Always spawn a new floating heart — unlimited taps, each shows its own animation
+    setHeartAnimations(prev => [...prev, makeHeart()]);
+
+    // API + count increment only on the first tap; subsequent taps are animation-only
+    if (isSessionLiked) return;
     setIsSessionLiked(true);
     setSessionLikesCount(prev => prev + 1);
-    
-    // Call API
+
     try {
       await apiClient.post(`/api/sessions/${finalSessionId}/like`);
-      toast.success('Liked! ❤️', { duration: 2000 });
     } catch (err) {
       console.error('Failed to like session:', err);
-      // Revert on error
       setIsSessionLiked(false);
       setSessionLikesCount(prev => prev - 1);
-      toast.error(err.response?.data?.error || 'Failed to like session');
     }
   };
   
@@ -434,8 +420,7 @@ export default function CinemaScene3DDemo() {
   // ❤️ Session like state
   const [isSessionLiked, setIsSessionLiked] = useState(false);
   const [sessionLikesCount, setSessionLikesCount] = useState(0);
-  const [showHeartAnimation, setShowHeartAnimation] = useState(false);
-  const lastLikeTimeRef = useRef(0);
+  const [heartAnimations, setHeartAnimations] = useState([]);
   
   const [showSeatMarkers, setShowSeatMarkers] = useState(false);
   
@@ -5691,12 +5676,11 @@ export default function CinemaScene3DDemo() {
           <div className="w-full h-full bg-black" />
         )}
 
-        {/* ❤️ TikTok Heart Animation */}
-        {showHeartAnimation && (
-          <TikTokHeartAnimation
-            onComplete={() => setShowHeartAnimation(false)}
-          />
-        )}
+        {/* ❤️ Floating heart animations */}
+        <TikTokHeartAnimation
+          hearts={heartAnimations}
+          onRemove={(id) => setHeartAnimations(prev => prev.filter(h => h.id !== id))}
+        />
       </div>
 
       {/* WebGL unavailable banner — shown over the 2D video fallback */}

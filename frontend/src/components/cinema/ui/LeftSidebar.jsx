@@ -1778,6 +1778,17 @@ export default function LeftSidebar({
                   </button>
                 )}
                 
+                {/* TRIVIA BUTTON — available in all game-enabled rooms (non-Educational/Religious) */}
+                {showGameButton && onQuizClick && (
+                  <button
+                    onClick={onQuizClick}
+                    className="flex flex-col items-center gap-1.5 hover:opacity-70 transition-all group"
+                  >
+                    <img src="/icons/quiz.svg" alt="" className="w-7 h-7 sm:w-8 sm:h-8 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] text-gray-300 font-medium">Trivia</span>
+                  </button>
+                )}
+
                 {/* QUIZ BUTTON (Lecture Hall OR Educational Content - Host Only) */}
                 {showQuizButton && (
                   <button

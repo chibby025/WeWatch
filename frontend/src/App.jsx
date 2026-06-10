@@ -32,6 +32,7 @@ import KYCSubmissionForm from './components/payment/KYCSubmissionForm';
 import SVGComparison from './components/dev/SVGComparison';
 import ExplorePage from './pages/ExplorePage';
 import BackButtonGuard from './components/BackButtonGuard';
+import GuestViewPage from './pages/GuestViewPage';
 
 // ✅ ALL AVATAR DEMO IMPORTS COMMENTED/REMOVED
 /*
@@ -129,6 +130,9 @@ function App() {
           {/* Lobby — public browse mode for guests, full mode for authenticated users */}
           <Route path="/" element={<LobbyPage />} />
           <Route path="/lobby" element={<LobbyPage />} />
+
+          {/* Guest view — unauthenticated preview of a live session */}
+          <Route path="/guest/:sessionId" element={<GuestViewPage />} />
           
           {/* Post sharing route - redirects to lobby with post modal */}
           <Route path="/post/:id" element={

@@ -49,7 +49,7 @@ import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
 import BibleOverlay from '../liveshare/BibleOverlay';
 import HymnOverlay from '../liveshare/HymnOverlay';
 import SermonOverlay from '../liveshare/SermonOverlay';
-import TikTokHeartAnimation from '../TikTokHeartAnimation';
+import TikTokHeartAnimation, { makeHeart } from '../TikTokHeartAnimation';
 import { HeartIcon } from '@heroicons/react/24/solid';
 import useEmoteSounds from '../../hooks/useEmoteSounds';
 import useNetworkQuality from '../../hooks/useNetworkQuality';
@@ -269,38 +269,24 @@ export default function VideoWatch() {
   const handleDoubleClickLike = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     const activeSessionId = sessionStatus?.id || urlSessionId;
     if (!activeSessionId) return;
-    
-    // Debounce (prevent rapid double-clicks)
-    const now = Date.now();
-    if (now - lastLikeTimeRef.current < 1000) return;
-    lastLikeTimeRef.current = now;
-    
-    // Don't allow liking again if already liked
-    if (isSessionLiked) {
-      toast.error('You already liked this session!', { duration: 2000 });
-      return;
-    }
-    
-    // Show animation immediately
-    setShowHeartAnimation(true);
-    
-    // Optimistic UI update
+
+    // Always spawn a new floating heart — unlimited taps, each shows its own animation
+    setHeartAnimations(prev => [...prev, makeHeart()]);
+
+    // API + count increment only on the first tap; subsequent taps are animation-only
+    if (isSessionLiked) return;
     setIsSessionLiked(true);
     setSessionLikesCount(prev => prev + 1);
-    
-    // Call API
+
     try {
       await apiClient.post(`/api/sessions/${activeSessionId}/like`);
-      toast.success('Liked! ❤️', { duration: 2000 });
     } catch (err) {
       console.error('Failed to like session:', err);
-      // Revert on error
       setIsSessionLiked(false);
       setSessionLikesCount(prev => prev - 1);
-      toast.error(err.response?.data?.error || 'Failed to like session');
     }
   };
 
@@ -522,8 +508,7 @@ export default function VideoWatch() {
   // ❤️ Session like state
   const [isSessionLiked, setIsSessionLiked] = useState(false);
   const [sessionLikesCount, setSessionLikesCount] = useState(0);
-  const [showHeartAnimation, setShowHeartAnimation] = useState(false);
-  const lastLikeTimeRef = useRef(0);
+  const [heartAnimations, setHeartAnimations] = useState([]);
   
   // 📺 Ad pre-roll disabled — join experience should feel instant and classy
   const [showAdPreroll, setShowAdPreroll] = useState(false); // eslint-disable-line no-unused-vars
@@ -5773,12 +5758,11 @@ export default function VideoWatch() {
               </div>
             </div>
             
-            {/* ❤️ TikTok Heart Animation */}
-            {showHeartAnimation && (
-              <TikTokHeartAnimation 
-                onComplete={() => setShowHeartAnimation(false)}
-              />
-            )}
+            {/* ❤️ Floating heart animations */}
+            <TikTokHeartAnimation
+              hearts={heartAnimations}
+              onRemove={(id) => setHeartAnimations(prev => prev.filter(h => h.id !== id))}
+            />
             
             {/* 📖 Bible Verse Overlay (Church mode) */}
             {isBibleVerseActive && currentBibleVerse && (

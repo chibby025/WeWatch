@@ -46,7 +46,7 @@ import SessionChatPreviewModal from './SessionChatPreviewModal';
 import { formatCount } from '../utils/formatCount';
 import TwemojiText from './TwemojiText';
 import ReportModal from './ReportModal';
-import TikTokHeartAnimation from './TikTokHeartAnimation';
+import TikTokHeartAnimation, { makeHeart } from './TikTokHeartAnimation';
 import StatusRow from './StatusRow';
 import StatusViewer from './StatusViewer';
 import StatusCreator from './StatusCreator';
@@ -341,7 +341,7 @@ const LobbyPage = () => {
   const [isChatConnecting, setIsChatConnecting] = useState(false);
   
   // ❤️ Like Animation State
-  const [showHeartAnimation, setShowHeartAnimation] = useState(false);
+  const [heartAnimations, setHeartAnimations] = useState([]);
   const lastLikeTimeRef = React.useRef({});
   const roomLongPressRef = React.useRef(null);
   const roomLongPressActive = React.useRef(false);
@@ -475,8 +475,7 @@ const LobbyPage = () => {
       }
     } else {
       // Like
-      setShowHeartAnimation(true);
-      setTimeout(() => setShowHeartAnimation(false), 1000);
+      setHeartAnimations(prev => [...prev, makeHeart()]);
       
       // Optimistic update
       setSessionLikes(prev => ({
@@ -6771,12 +6770,11 @@ const LobbyPage = () => {
         isSubmitting={isDOBSubmitting}
       />
       
-      {/* ❤️ Heart Animation for likes */}
-      {showHeartAnimation && (
-        <TikTokHeartAnimation
-          onComplete={() => setShowHeartAnimation(false)}
-        />
-      )}
+      {/* ❤️ Floating heart animations */}
+      <TikTokHeartAnimation
+        hearts={heartAnimations}
+        onRemove={(id) => setHeartAnimations(prev => prev.filter(h => h.id !== id))}
+      />
 
       {/* 🔍 Avatar Lightbox — opens when a friend avatar is clicked in the chats tab */}
       {lightboxAvatarUser && (
