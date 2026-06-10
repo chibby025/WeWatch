@@ -575,8 +575,10 @@ const RoomPageNew = () => {
     
     try {
       setSessionLoading(true);
-      
-      const response = await apiClient.get(`/api/rooms/${roomId}/active-session`);
+
+      const response = await apiClient.get(`/api/rooms/${roomId}/active-session`, {
+        timeout: 8000,
+      });
       
       // Backend returns session data at root level
       if (response.data.session_id) {
@@ -616,10 +618,20 @@ const RoomPageNew = () => {
         setMembersInSession([]);
       }
     } catch (err) {
-      // No active session is not an error
-      console.log('ℹ️ [RoomPageNew] fetchActiveSession error (likely no session) - setting to null');
-      setActiveSession(null);
-      setMembersInSession([]);
+      const isTimeout = err?.code === 'ECONNABORTED' || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError';
+      const is404 = err?.response?.status === 404;
+      if (is404) {
+        // Definitive "no session" response
+        console.log('ℹ️ [RoomPageNew] No active session (404) - clearing state');
+        setActiveSession(null);
+        setMembersInSession([]);
+      } else if (isTimeout) {
+        // Railway timeout — preserve whatever we already know; don't null the session
+        console.warn('⚠️ [RoomPageNew] fetchActiveSession timed out — keeping current activeSession state');
+      } else {
+        // Other network error — also preserve state rather than falsely clearing
+        console.warn('⚠️ [RoomPageNew] fetchActiveSession error — keeping current state:', err?.message);
+      }
     } finally {
       setSessionLoading(false);
     }

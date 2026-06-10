@@ -2661,36 +2661,24 @@ func GetActiveSessionHandler(c *gin.Context) {
 		Where("watch_session_members.watch_session_id = ? AND watch_session_members.is_active = ?", session.ID, true).
 		Scan(&members)
 
-	// ✅ Ghost cleanup: mark DB members inactive if they have no live WS connection.
-	// Runs on every heartbeat poll so stale entries self-correct without waiting for
-	// the hourly CleanupStaleSessions goroutine.
+	// Ghost cleanup: fire-and-forget to avoid blocking the response.
+	// The hourly CleanupStaleSessions goroutine is the primary cleanup path;
+	// this just accelerates convergence without adding latency.
 	wsActiveUserIDs := hub.GetRoomActiveUserIDs(uint(roomID))
-	// Also clean up when *nobody* is connected and the session has been running > 5 min
-	// (zombie session: all clients disconnected abruptly, no one reconnected in time).
-	isLikelyZombie := len(wsActiveUserIDs) == 0 && len(members) > 0 && time.Since(session.StartedAt) > 5*time.Minute
-	if len(wsActiveUserIDs) > 0 || isLikelyZombie {
-		ghostCleaned := 0
+	go func(sessionID uint, snap []MemberResponse, activeIDs map[uint]bool) {
+		isLikelyZombie := len(activeIDs) == 0 && len(snap) > 0 && time.Since(session.StartedAt) > 5*time.Minute
+		if len(activeIDs) == 0 && !isLikelyZombie {
+			return
+		}
 		now := time.Now()
-		for _, m := range members {
-			if !wsActiveUserIDs[m.UserID] {
+		for _, m := range snap {
+			if !activeIDs[m.UserID] {
 				DB.Model(&models.WatchSessionMember{}).
-					Where("watch_session_id = ? AND user_id = ? AND is_active = ?", session.ID, m.UserID, true).
+					Where("watch_session_id = ? AND user_id = ? AND is_active = ?", sessionID, m.UserID, true).
 					Updates(map[string]interface{}{"is_active": false, "left_at": now})
-				ghostCleaned++
 			}
 		}
-		if ghostCleaned > 0 {
-			log.Printf("[GetActiveSession] Ghost cleanup: marked %d stale members inactive in session %s", ghostCleaned, session.SessionID)
-			// Re-fetch the cleaned member list so the response is accurate
-			members = nil
-			DB.Table("watch_session_members").
-				Select("watch_session_members.user_id, users.username, users.avatar_url, watch_session_members.is_active, user_rooms.user_role").
-				Joins("JOIN users ON users.id = watch_session_members.user_id").
-				Joins("LEFT JOIN user_rooms ON user_rooms.user_id = watch_session_members.user_id AND user_rooms.room_id = ?", roomID).
-				Where("watch_session_members.watch_session_id = ? AND watch_session_members.is_active = ?", session.ID, true).
-				Scan(&members)
-		}
-	}
+	}(session.ID, members, wsActiveUserIDs)
 
 	memberCount := int64(len(members))
 	wsConnectionCount := hub.GetRoomConnectionCount(uint(roomID))

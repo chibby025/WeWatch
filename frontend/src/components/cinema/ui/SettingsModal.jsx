@@ -85,7 +85,10 @@ const SettingsModal = ({
     if (!showInvite || friends.length > 0) return;
     setLoadingFriends(true);
     getFriendsList()
-      .then(data => setFriends(data.friends || data || []))
+      .then(data => {
+        const list = data?.friends ?? data;
+        setFriends(Array.isArray(list) ? list : []);
+      })
       .catch(() => toast.error('Could not load friends'))
       .finally(() => setLoadingFriends(false));
   }, [showInvite, friends.length]);

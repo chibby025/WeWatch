@@ -2099,18 +2099,30 @@ func WebSocketHandler(c *gin.Context) {
 			}
 			hub.seatingMutex.Unlock()
 
-			// Screen sharing is now handled by LiveKit
 			statusMsg := WebSocketMessage{
 				Type: "session_status",
 				Data: map[string]interface{}{
-					"session_id":     watchSession.SessionID,
-					"host_id":        watchSession.HostID,
-					"members":        trimmedMembers,
-					"started_at":     watchSession.StartedAt,
-					"seating":        seatingMap, // Include current seating assignments
-					"session_title":  watchSession.SessionTitle,
-					"is_private":     watchSession.IsPrivate,     // ✅ Session privacy flag
-					"content_rating": watchSession.ContentRating, // ✅ Gates LeftSidebar buttons (Bible/Hymn, Game, WatchFrom)
+					"session_id":                watchSession.SessionID,
+					"host_id":                   watchSession.HostID,
+					"members":                   trimmedMembers,
+					"member_count":              len(trimmedMembers),
+					"started_at":                watchSession.StartedAt,
+					"seating":                   seatingMap,
+					"session_title":             watchSession.SessionTitle,
+					"is_private":                watchSession.IsPrivate,
+					"content_rating":            watchSession.ContentRating,
+					// Late-joiner media restoration
+					"current_media_url":         watchSession.CurrentMediaURL,
+					"current_media_type":        watchSession.CurrentMediaType,
+					"liveshare_mode":            watchSession.LiveshareMode,
+					"podcast_title":             watchSession.PodcastTitle,
+					"podcast_logo_url":          watchSession.PodcastLogoURL,
+					"liveshare_banner_text":     watchSession.LiveShareBannerText,
+					"liveshare_ticker_items":    watchSession.LiveShareTickerItems,
+					"liveshare_lower_third":     watchSession.LiveShareLowerThird,
+					"liveshare_logo_bug":        watchSession.LiveShareLogoBug,
+					"liveshare_break_screen":    watchSession.LiveShareBreakScreen,
+					"liveshare_layout":          watchSession.LiveShareLayout,
 				},
 			}
 			if msgBytes, err := json.Marshal(statusMsg); err == nil {
@@ -5611,13 +5623,23 @@ func (client *Client) handleMessage(message []byte) {
             if err := DB.Where("room_id = ? AND ended_at IS NULL", client.roomID).First(&session).Error; err == nil {
                 sessionID := session.SessionID
                 
-                // ✅ UPDATE PLAYBACK TIME: Track seek position for all commands (play, pause, seek)
-                // This ensures 5-minute preview refresh uses accurate timestamp
+                // Track seek position for all commands (play, pause, seek)
                 if playbackData.SeekTime >= 0 {
+                    updates := map[string]interface{}{"current_playback_time": playbackData.SeekTime}
+                    // Persist media URL on play so late joiners can restore state on rejoin.
+                    // Only overwrite when we have a real URL (don't blank it on pause/seek).
+                    if playbackData.Command == "play" && (playbackData.FileURL != "" || playbackData.FilePath != "") {
+                        mediaURL := playbackData.FileURL
+                        if mediaURL == "" {
+                            mediaURL = playbackData.FilePath
+                        }
+                        updates["current_media_url"] = mediaURL
+                        updates["current_media_type"] = "upload"
+                    }
                     DB.Model(&models.WatchSession{}).
                         Where("session_id = ?", sessionID).
-                        Update("current_playback_time", playbackData.SeekTime)
-                    log.Printf("[playback_control] 📍 Updated session %s playback time to %d seconds", sessionID, playbackData.SeekTime)
+                        Updates(updates)
+                    log.Printf("[playback_control] 📍 Session %s: time=%ds, media=%s", sessionID, playbackData.SeekTime, playbackData.FileURL)
                 }
                 
                 // Only trigger preview generation on "play" command with valid media

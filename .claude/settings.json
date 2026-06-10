@@ -134,7 +134,13 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm install chess.js react-chessboard 2>&1 | tail -10\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"which go 2>/dev/null || ls /usr/local/go/bin/go 2>/dev/null || find /home/chibuzor_dev -name 'go' -type f 2>/dev/null | head -5\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go get github.com/notnil/chess@latest 2>&1\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- which go 2>&1; wsl -d Ubuntu-22.04 -- find /home /usr -name \"go\" -type f 2>/dev/null | head -5)",
+      "PowerShell(wsl -d Ubuntu-22.04 ls /usr/local/go/bin/)",
+      "PowerShell(wsl -d Ubuntu-22.04 find /usr /home/chibuzor_dev -maxdepth 5 -name \"go\" -type f)",
+      "PowerShell(wsl -d Ubuntu-22.04 /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/ 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 grep -i \"VITE_API_BASE_URL\\\\|RAILWAY\\\\|api_url\" /home/chibuzor_dev/WeWatch/frontend/.env)",
+      "PowerShell(wsl -d Ubuntu-22.04 cat /home/chibuzor_dev/WeWatch/frontend/.env.local)"
     ],
     "additionalDirectories": [
       "\\dev",

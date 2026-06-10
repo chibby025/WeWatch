@@ -3662,7 +3662,30 @@ export default function VideoWatch() {
             }
           }
 
-          // 👇 Rest of your screen share logic (unchanged)
+          // ✅ RESTORE REGULAR VIDEO for late joiners / rejoining host.
+          // Only applies when: (a) we have no media loaded, (b) not already in liveshare/screen-share,
+          // (c) backend sent a current_media_url.  Don't auto-play — wait for sync_heartbeat.
+          if (
+            data.current_media_url &&
+            !currentMedia &&
+            (!data.liveshare_mode || data.liveshare_mode === 'regular') &&
+            !data.is_screen_sharing
+          ) {
+            const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+            const rawUrl = data.current_media_url;
+            const fullUrl = rawUrl.startsWith('http') ? rawUrl : `${baseUrl}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
+            console.log('🔄 [VideoWatch LATE JOINER] Restoring current media from session_status:', fullUrl);
+            setCurrentMedia({
+              type: data.current_media_type || 'upload',
+              file_path: rawUrl,
+              mediaUrl: fullUrl,
+              original_name: 'Restoring…',
+            });
+            setIsPlaying(false);
+            setPendingSeekTime(null);
+          }
+
+          // Screen share restoration
           if (data.is_screen_sharing && data.screen_share_host_id) {
             const sharerId = data.screen_share_host_id;
             setCurrentMedia({ type: 'screen_share', userId: sharerId, title: 'Live Screen Share', original_name: 'Live Screen Share' });
