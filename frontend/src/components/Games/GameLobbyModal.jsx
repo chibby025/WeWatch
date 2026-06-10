@@ -22,7 +22,17 @@ const games = [
     icon: '🪨📄✂️',
     disabled: false,
     type: 'multiplayer'
-  }
+  },
+  {
+    id: 'chess',
+    name: 'Chess',
+    description: 'Classic strategy — checkmate your opponent',
+    minPlayers: 2,
+    maxPlayers: 2,
+    icon: '♟',
+    disabled: false,
+    type: 'multiplayer'
+  },
 ];
 
 const playerColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A'];

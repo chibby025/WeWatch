@@ -129,7 +129,12 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- /usr/local/go/bin/go build ./... 2>&1; $ExitCode = $LASTEXITCODE; Write-Output \"Exit: $ExitCode\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build ./... 2>&1 || echo BUILD_FAILED\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/backend && go build wewatch-backend/cmd/server 2>&1 && echo OK\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -12\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -lc \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -12\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && go get github.com/notnil/chess@latest 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm install chess.js react-chessboard 2>&1 | tail -10\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"which go 2>/dev/null || ls /usr/local/go/bin/go 2>/dev/null || find /home/chibuzor_dev -name 'go' -type f 2>/dev/null | head -5\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go get github.com/notnil/chess@latest 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\")"
     ],
     "additionalDirectories": [
       "\\dev",

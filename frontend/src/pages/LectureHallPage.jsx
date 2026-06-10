@@ -41,6 +41,7 @@ import FloatingGiftIcon from '../components/FloatingGiftIcon';
 import DonationNotification from '../components/DonationNotification';
 import TikTokHeartAnimation from '../components/TikTokHeartAnimation';
 import { HeartIcon } from '@heroicons/react/24/solid';
+import SettingsModal from '../components/cinema/ui/SettingsModal';
 
 
 // ✅ Constant empty array - prevents recreation on every render
@@ -1073,7 +1074,8 @@ const PositionCalculatorPage = () => {
   // Debug panels visibility
   const [showDebugPanels, setShowDebugPanels] = useState(false);
   const [showAudioDebugPanel, setShowAudioDebugPanel] = useState(false);
-  
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
   // ❤️ Double-click like states
   const [showHeartAnimation, setShowHeartAnimation] = useState(false);
   const [isSessionLiked, setIsSessionLiked] = useState(false);
@@ -1447,7 +1449,13 @@ const PositionCalculatorPage = () => {
       });
     }
   }, [actualRoomId, currentUser, sessionStatus?.hostId]);
-  
+
+  useEffect(() => {
+    const handler = () => setIsSettingsOpen(true);
+    window.addEventListener('wewatch:open-settings', handler);
+    return () => window.removeEventListener('wewatch:open-settings', handler);
+  }, []);
+
   // ✅ Multi-source host detection (priority order: sessionStatus > roomData > location.state)
   const isHostFromSession = currentUser?.id === sessionStatus?.hostId;
   const isHostFromRoomData = currentUser?.id === roomHostId;
@@ -7617,6 +7625,25 @@ const PositionCalculatorPage = () => {
         />
       )}
       
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          watchType="classroom"
+          isPrivateSession={false}
+          activeSessionId={actualSessionId}
+          roomId={actualRoomId}
+          currentUser={currentUser}
+          userSeats={userSeats}
+          watchSessionMembers={watchSessionMembers}
+          audioDevices={audioDevices}
+          selectedAudioDeviceId={selectedAudioDeviceId}
+          onAudioDeviceChange={changeAudioDevice}
+          availableCameras={[]}
+        />
+      )}
+
       {/* Members Modal */}
       {isMembersModalOpen && (
         <LectureHallMembersModal

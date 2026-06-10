@@ -1814,7 +1814,9 @@ const RoomPageNew = () => {
           });
         }
       } else {
-        navigate(`/watch/${roomId}?session_id=${session_id}`);
+        navigate(`/watch/${roomId}?session_id=${session_id}`, {
+          state: { hostId: currentUser.id }
+        });
       }
     } catch (err) {
       console.error('Failed to create session:', err);
@@ -1934,7 +1936,9 @@ const RoomPageNew = () => {
       });
     } else {
       // Default video watch
-      navigate(`/watch/${roomId}?session_id=${session_id}`);
+      navigate(`/watch/${roomId}?session_id=${session_id}`, {
+        state: { hostId: activeSession.host_id }
+      });
     }
   };
 
@@ -3157,7 +3161,9 @@ const RoomPageNew = () => {
               state: { sessionId: session_id, classType: class_type || 'lecture_hall' }
             });
           } else {
-            navigate(`/watch/${roomId}?session_id=${session_id}`);
+            navigate(`/watch/${roomId}?session_id=${session_id}`, {
+              state: { hostId: activeSession.host_id }
+            });
           }
         }}
       />

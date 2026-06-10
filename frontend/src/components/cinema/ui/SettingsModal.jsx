@@ -1,8 +1,9 @@
 // frontend/src/components/cinema/ui/SettingsModal.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { getFriendsList, sendWatchOut } from '../../../services/api';
+import toast from 'react-hot-toast';
 
 const ShareIcon = '/icons/ShareIcon.svg';
-const UserIcon = '/icons/user1avatar.svg';
 
 const SettingsModal = ({
   watchType = 'video',
@@ -11,6 +12,7 @@ const SettingsModal = ({
   onShareRoom,
   isPrivateSession = false,
   activeSessionId = null,
+  roomId = null,
   onInviteFriend = null,
   audioDevices = [],
   selectedAudioDeviceId,
@@ -72,6 +74,37 @@ const SettingsModal = ({
   const [seatInput, setSeatInput] = useState('1');
   const [seatViewExpanded, setSeatViewExpanded] = useState(false);
 
+  // ── Invite Friends state ─────────────────────────────────────────────────
+  const [showInvite, setShowInvite]         = useState(false);
+  const [friends, setFriends]               = useState([]);
+  const [loadingFriends, setLoadingFriends] = useState(false);
+  const [inviteSearch, setInviteSearch]     = useState('');
+  const [sentTo, setSentTo]                 = useState(new Set());
+
+  useEffect(() => {
+    if (!showInvite || friends.length > 0) return;
+    setLoadingFriends(true);
+    getFriendsList()
+      .then(data => setFriends(data.friends || data || []))
+      .catch(() => toast.error('Could not load friends'))
+      .finally(() => setLoadingFriends(false));
+  }, [showInvite, friends.length]);
+
+  const handleInvite = useCallback(async (friend) => {
+    if (!roomId || sentTo.has(friend.id)) return;
+    try {
+      await sendWatchOut(friend.id, roomId);
+      setSentTo(prev => new Set([...prev, friend.id]));
+      toast.success(`Invite sent to @${friend.username}`);
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not send invite');
+    }
+  }, [roomId, sentTo]);
+
+  const filteredFriends = friends.filter(f =>
+    !inviteSearch || f.username?.toLowerCase().includes(inviteSearch.toLowerCase())
+  );
+
   const handleSeatInputChange = (e) => {
     let val = e.target.value;
     if (val === '') {
@@ -122,26 +155,9 @@ const SettingsModal = ({
           <div className="px-6 py-4 bg-gray-800/30">
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Quick Actions</h3>
             <div className="space-y-2">
-              {isPrivateSession ? (
-                /* Private session: invite panel instead of a broken link */
-                <div className="w-full bg-gray-800/50 border border-purple-500/30 rounded-xl px-4 py-3">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-10 h-10 bg-purple-500/10 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <img src={ShareIcon} alt="Invite" className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <span className="text-sm font-semibold block text-white">Invite a Friend</span>
-                      <span className="text-xs text-purple-400">🔒 Private — link won't work; invite directly</span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => { onInviteFriend?.(); onClose(); }}
-                    className="w-full mt-1 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm font-semibold transition-colors"
-                  >
-                    + Invite Friend
-                  </button>
-                </div>
-              ) : (
+
+              {/* Share — public sessions only */}
+              {!isPrivateSession && (
                 <button
                   onClick={() => { onShareRoom(); onClose(); }}
                   className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-gray-700/50 text-gray-200 transition-all group bg-gray-800/50 border border-gray-700/30"
@@ -151,28 +167,83 @@ const SettingsModal = ({
                   </div>
                   <div className="flex-1 text-left">
                     <span className="text-sm font-semibold block">Share</span>
-                    <span className="text-xs text-gray-400">Invite others to join</span>
+                    <span className="text-xs text-gray-400">Copy room link</span>
                   </div>
                   <span className="text-gray-500 group-hover:text-gray-300 transition-colors">→</span>
                 </button>
               )}
 
-              <button
-                onClick={() => {
-                  onOpenUserProfile?.();
-                  onClose();
-                }}
-                className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-gray-700/50 text-gray-200 transition-all group bg-gray-800/50 border border-gray-700/30"
-              >
-                <div className="w-10 h-10 bg-purple-500/10 rounded-lg flex items-center justify-center group-hover:bg-purple-500/20 transition-colors">
-                  <img src={UserIcon} alt="Profile" className="w-5 h-5" />
-                </div>
-                <div className="flex-1 text-left">
-                  <span className="text-sm font-semibold block">User Profile</span>
-                  <span className="text-xs text-gray-400">View and edit profile</span>
-                </div>
-                <span className="text-gray-500 group-hover:text-gray-300 transition-colors">→</span>
-              </button>
+              {/* Invite Friends — WatchOut DM, works for both public and private */}
+              <div className="bg-gray-800/50 border border-gray-700/30 rounded-xl overflow-hidden">
+                <button
+                  onClick={() => setShowInvite(v => !v)}
+                  className="w-full flex items-center space-x-3 px-4 py-3 hover:bg-gray-700/50 text-gray-200 transition-all group"
+                >
+                  <div className="w-10 h-10 bg-purple-500/10 rounded-lg flex items-center justify-center group-hover:bg-purple-500/20 transition-colors flex-shrink-0">
+                    <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 text-left">
+                    <span className="text-sm font-semibold block">Invite Friends</span>
+                    <span className="text-xs text-gray-400">
+                      {isPrivateSession ? '🔒 Private · direct DM invite' : 'Send a Watch Out DM'}
+                    </span>
+                  </div>
+                  <svg
+                    className={`w-4 h-4 text-gray-400 transition-transform flex-shrink-0 ${showInvite ? 'rotate-180' : ''}`}
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {showInvite && (
+                  <div className="border-t border-gray-700/30 px-4 pb-4 pt-3">
+                    <input
+                      type="text"
+                      value={inviteSearch}
+                      onChange={e => setInviteSearch(e.target.value)}
+                      placeholder="Search friends…"
+                      className="w-full bg-gray-700/50 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-purple-500 placeholder-gray-500 mb-3"
+                    />
+                    <div className="max-h-44 overflow-y-auto space-y-1 pr-0.5">
+                      {loadingFriends ? (
+                        <p className="text-xs text-gray-400 text-center py-4">Loading…</p>
+                      ) : filteredFriends.length === 0 ? (
+                        <p className="text-xs text-gray-400 text-center py-4">
+                          {friends.length === 0 ? 'No friends yet' : 'No matches'}
+                        </p>
+                      ) : (
+                        filteredFriends.map(f => (
+                          <div key={f.id} className="flex items-center gap-2.5 py-1.5">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex-shrink-0 overflow-hidden">
+                              {f.avatar_url && (
+                                <img src={f.avatar_url} alt="" className="w-full h-full object-cover"
+                                  onError={e => { e.currentTarget.style.display = 'none'; }} />
+                              )}
+                            </div>
+                            <span className="flex-1 text-sm text-white font-medium truncate">@{f.username}</span>
+                            <button
+                              onClick={() => handleInvite(f)}
+                              disabled={sentTo.has(f.id)}
+                              className={`flex-shrink-0 text-xs font-semibold px-3 py-1 rounded-full transition-all active:scale-95 ${
+                                sentTo.has(f.id)
+                                  ? 'bg-green-600/20 text-green-400 border border-green-600/30 cursor-default'
+                                  : 'bg-purple-600 hover:bg-purple-500 text-white'
+                              }`}
+                            >
+                              {sentTo.has(f.id) ? '✓ Sent' : 'Invite'}
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
             </div>
           </div>
 

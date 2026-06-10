@@ -2588,6 +2588,30 @@ const LobbyPage = () => {
                 // Debounced — collapses bursts (e.g. multiple sessions starting at reconnect)
                 if (sessionsFetchDebounceRef.current) clearTimeout(sessionsFetchDebounceRef.current);
                 sessionsFetchDebounceRef.current = setTimeout(fetchSessionsData, 300);
+                // Light up the room card immediately without waiting for a full rooms refetch
+                if (message.room_id) {
+                  setRooms(prev => prev.map(r =>
+                    r.id === message.room_id ? { ...r, is_active_session: true } : r
+                  ));
+                  // Patch liveRooms inline so WatchOut tab updates without waiting for poll
+                  if (message.host_id) {
+                    setLiveRooms(prev => {
+                      const alreadyIn = prev.some(r => r.room_id === message.room_id);
+                      if (alreadyIn) return prev;
+                      return [...prev, {
+                        room_id:       message.room_id,
+                        room_name:     message.room_name  || '',
+                        room_type:     message.room_type  || '',
+                        watch_type:    message.watch_type || '',
+                        session_title: message.session_title || '',
+                        is_private:    message.is_private || false,
+                        session_id:    message.session_id || '',
+                        host_id:       message.host_id,
+                        watching_count: 0,
+                      }];
+                    });
+                  }
+                }
                 break;
 
               case 'room_session_started':
@@ -2648,6 +2672,10 @@ const LobbyPage = () => {
                 // Remove from liveRooms so WatchOut button hides and stale invite cards update
                 if (message.room_id) {
                   setLiveRooms(prev => prev.filter(r => r.room_id !== message.room_id));
+                  // Clear the red pulse ring on the room card immediately
+                  setRooms(prev => prev.map(r =>
+                    r.id === message.room_id ? { ...r, is_active_session: false } : r
+                  ));
                 }
                 // Track ended session_id so private WatchOut DM cards grey out immediately
                 if (message.session_id) {

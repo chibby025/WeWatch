@@ -20,6 +20,7 @@ import SeatSwapNotification from './ui/SeatSwapNotification';
 import Taskbar from '../Taskbar';
 import CinemaVideoPlayer from './ui/CinemaVideoPlayer';
 import DVDBounce from './ui/DVDBounce';
+import SettingsModal from './ui/SettingsModal';
 import CameraPreview from './ui/CameraPreview';
 import CameraSidebar from './ui/CameraSidebar';
 import VideoTiles from './ui/VideoTiles';
@@ -32,7 +33,7 @@ import RemoteAudioPlayer from './ui/RemoteAudioPlayer';
 import FloatingGiftIcon from '../FloatingGiftIcon';
 import DonationNotification from '../DonationNotification';
 // Import sounds
-import { playSeatSound, playMicOnSound, playMicOffSound } from '../../utils/audio';
+import { playSeatSound, playMicOnSound, playMicOffSound, playJoinSound } from '../../utils/audio';
 import ChatHomeModal from '../ChatHomeModal.jsx';
 import PrivateChatModal from '../PrivateChatModal.jsx';
 // Quiz system modals
@@ -186,6 +187,7 @@ export default function VideoWatch() {
   
   // Move these to top before any useEffect that uses them
   const location = useLocation();
+  const hostIdFromState = location.state?.hostId ? Number(location.state.hostId) : null;
   const [roomHostId, setRoomHostId] = useState(null);
   const { roomId } = useParams();
   const navigate = useNavigate();
@@ -561,6 +563,9 @@ export default function VideoWatch() {
   const [showCinemaSeatView, setShowCinemaSeatView] = useState(false);
   const [isHostBroadcasting, setIsHostBroadcasting] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [dvdVisible, setDvdVisible] = useState(false);
+  const dvdTimerRef = useRef(null);
   const [roomMembers, setRoomMembers] = useState([]);
   // Backing map for O(1) add/remove. roomMembers is always derived from this via setRoomMembers.
   const memberMapRef = useRef(new Map());
@@ -627,6 +632,34 @@ export default function VideoWatch() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
   
+  // ⚙️ Listen for LeftSidebar settings button (dispatches custom event)
+  useEffect(() => {
+    const handler = () => setIsSettingsOpen(true);
+    window.addEventListener('wewatch:open-settings', handler);
+    return () => window.removeEventListener('wewatch:open-settings', handler);
+  }, []);
+
+  // 📺 DVD screensaver — appears after 20 s of inactivity when no media is playing
+  useEffect(() => {
+    if (currentMedia) {
+      setDvdVisible(false);
+      clearTimeout(dvdTimerRef.current);
+      return;
+    }
+    const resetTimer = () => {
+      setDvdVisible(false);
+      clearTimeout(dvdTimerRef.current);
+      dvdTimerRef.current = setTimeout(() => setDvdVisible(true), 20000);
+    };
+    const evts = ['mousemove', 'keydown', 'click', 'touchstart'];
+    evts.forEach(ev => window.addEventListener(ev, resetTimer, { passive: true }));
+    resetTimer();
+    return () => {
+      clearTimeout(dvdTimerRef.current);
+      evts.forEach(ev => window.removeEventListener(ev, resetTimer));
+    };
+  }, [currentMedia]);
+
   // 🎯 Fetch banner ad after preroll completes
   useEffect(() => {
     const fetchBannerAd = async () => {
@@ -952,13 +985,13 @@ export default function VideoWatch() {
   const isHost = React.useMemo(() => {
     // ✅ Primary: Use sessionStatus.hostId from WebSocket
     // ✅ Fallback: Use roomHostId from session_status members
-    const hostId = sessionStatus?.hostId || roomHostId;
+    const hostId = hostIdFromState || sessionStatus?.hostId || roomHostId;
     // Normalize both sides to Number — JWT/localStorage may return a string
     // while WS/API may return a number, so === would silently fail.
     const result = !!hostId && Number(currentUser?.id) === Number(hostId);
 
     return result;
-  }, [currentUser?.id, sessionStatus?.hostId, roomHostId]);
+  }, [currentUser?.id, sessionStatus?.hostId, roomHostId, hostIdFromState]);
 
   // 🛡️ Determine if current user is a room admin
   const isAdmin = React.useMemo(() => {
@@ -1883,54 +1916,64 @@ export default function VideoWatch() {
         toast.error(messageData.data.message || 'Quiz error occurred');
       }
 
-      // 🎮 Handle game_started
-      if (messageData.type === 'game_started') {
-        console.log('🎮 [VideoWatch] Game started:', messageData.data);
-        setActiveGame(messageData.data);
-        toast.success(`${messageData.data.game_type.replace('_', ' ').toUpperCase()} started!`, {
-          duration: 3000,
-          icon: '🎮'
-        });
-      }
+      // 🎮 All game events arrive as { type: 'game', action: '...' }
+      if (messageData.type === 'game') {
+        const action = messageData.action;
 
-      // 🎮 Handle game_state_update
-      if (messageData.type === 'game_state_update') {
-        console.log('🎮 [VideoWatch] Game state updated:', messageData.data);
-        setActiveGame(messageData.data);
-      }
-
-      // 🎮 Handle game_ended
-      if (messageData.type === 'game_ended') {
-        console.log('🎮 [VideoWatch] Game ended:', messageData.data);
-        const winner = messageData.data.players?.find(p => p.score > 0);
-        if (winner) {
-          toast.success(`${winner.username} wins!`, {
-            duration: 4000,
-            icon: '🏆'
+        if (action === 'game_started') {
+          console.log('🎮 [VideoWatch] Game started:', messageData.data);
+          // Normalise to a consistent shape used by game components
+          setActiveGame({
+            game_session_id: messageData.data.game_session_id,
+            game_type:       messageData.data.game_type,
+            status:          'active',
+            current_turn:    0,
+            players:         messageData.data.players,
+            game_state:      messageData.data.game_state,
           });
-        } else {
-          toast.success("It's a draw!", {
+          toast.success(`${(messageData.data.game_type || '').replace(/_/g, ' ').toUpperCase()} started!`, {
             duration: 3000,
-            icon: '🤝'
+            icon: '🎮',
           });
         }
-        setActiveGame(null);
-      }
 
-      // 🎮 Handle game_forfeited
-      if (messageData.type === 'game_forfeited') {
-        console.log('🎮 [VideoWatch] Game forfeited:', messageData.data);
-        toast(`${messageData.data.username} forfeited. ${messageData.data.winner_username} wins!`, {
-          duration: 4000,
-          icon: '🏆'
-        });
-        setActiveGame(null);
-      }
+        if (action === 'game_state_update') {
+          setActiveGame({
+            game_session_id: messageData.game_session_id,
+            game_type:       messageData.game_type,
+            status:          messageData.status,
+            current_turn:    messageData.current_turn,
+            players:         messageData.players,
+            game_state:      messageData.game_state,
+          });
+        }
 
-      // 🎮 Handle game_error
-      if (messageData.type === 'game_error') {
-        console.error('❌ [VideoWatch] Game error:', messageData.data);
-        toast.error(messageData.data.message || 'Game error occurred');
+        if (action === 'game_ended') {
+          console.log('🎮 [VideoWatch] Game ended:', messageData.data);
+          const winnerId = messageData.data?.winner_id;
+          const players  = messageData.data?.players || [];
+          const winner   = winnerId ? players.find(p => p.user_id === winnerId) : null;
+          if (winner) {
+            toast.success(`${winner.username} wins! 🏆`, { duration: 4000, icon: '🏆' });
+          } else {
+            toast.success("It's a draw!", { duration: 3000, icon: '🤝' });
+          }
+          setActiveGame(null);
+        }
+
+        if (action === 'game_forfeited') {
+          console.log('🎮 [VideoWatch] Game forfeited:', messageData.data);
+          const winner = messageData.data?.winner_username;
+          toast(winner ? `${winner} wins! (opponent forfeited)` : 'Opponent forfeited', {
+            duration: 4000, icon: '🏆',
+          });
+          setActiveGame(null);
+        }
+
+        if (messageData.error) {
+          console.error('❌ [VideoWatch] Game error:', messageData.error);
+          toast.error(messageData.error);
+        }
       }
 
     } catch (error) {
@@ -3788,6 +3831,10 @@ export default function VideoWatch() {
                 user_role: userRole,
               });
               console.log(`✅ [VideoWatch] ${username} added → map size: ${memberMapRef.current.size}`);
+              // Play join sound for everyone already in the room (not for the joining user themselves)
+              if (userId !== currentUser?.id) {
+                playJoinSound();
+              }
             } else {
               console.log(`⚠️ [VideoWatch] ${username} already in map, skipping duplicate`);
             }
@@ -4847,6 +4894,11 @@ export default function VideoWatch() {
         }
       } catch (error) {
         console.error('Failed to end session:', error);
+        if (error?.response?.status !== 404) {
+          toast.error('Could not end session. Please try again.');
+          return;
+        }
+        // 404 = already ended — safe to proceed with navigation
       }
     } else {
       // Non-host: tell the backend explicitly before the WS closes so the host's
@@ -5670,8 +5722,8 @@ export default function VideoWatch() {
                 className="relative h-full transition-all duration-500 ease-in-out"
                 style={{ width: bannerAdData ? '80%' : '100%' }}
               >
-                {/* DVD screensaver — shown while nothing is playing (not in Religious sessions) */}
-                {!currentMedia && !liveShareMode && !liveShareContentMode && contentRating !== 'Religious' && (
+                {/* DVD screensaver — shown after 20 s inactivity when nothing is playing (not in Religious sessions) */}
+                {dvdVisible && !liveShareMode && !liveShareContentMode && contentRating !== 'Religious' && (
                   <DVDBounce />
                 )}
                 <CinemaVideoPlayer
@@ -6160,8 +6212,33 @@ export default function VideoWatch() {
           unreadMessages={unreadMessages}
         />
 
+      {/* ⚙️ Settings modal — opened via LeftSidebar Settings button */}
+      {isSettingsOpen && (
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          watchType={watchType}
+          isPrivateSession={sessionStatus?.is_private || false}
+          activeSessionId={sessionStatus?.id || null}
+          roomId={roomId}
+          onShareRoom={handleShareRoom}
+          currentUser={currentUser}
+          userSeats={userSeats}
+          watchSessionMembers={roomMembers}
+          audioDevices={audioDevices}
+          selectedAudioDeviceId={selectedAudioDeviceId}
+          onAudioDeviceChange={(deviceId) => {
+            setSelectedAudioDeviceId(deviceId);
+            if (isAudioActive) publishMicDevice(deviceId);
+          }}
+          availableCameras={availableCameras}
+          selectedCameraId={selectedCameraId}
+          onCameraSwitch={switchCamera}
+        />
+      )}
+
       {isSeatsModalOpen && (
-        <SeatsModal 
+        <SeatsModal
           userSeats={userSeats}
           currentUser={currentUser}
           roomMembers={roomMembers}
@@ -6625,7 +6702,6 @@ export default function VideoWatch() {
           currentUserId={currentUser?.id}
           onMove={handleGameMove}
           onClose={handleGameClose}
-          webSocketService={{ on: () => {}, off: () => {} }} // Handled via messages array
         />
       )}
 

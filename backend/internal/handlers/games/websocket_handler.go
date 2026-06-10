@@ -143,7 +143,8 @@ func (h *GameWebSocketHandler) handleGameMove(client interface{}, data map[strin
 	
 	gameSessionID := uint(gameSessionIDFloat)
 	moveType, _ := data["move_type"].(string)
-	moveData, _ := data["move_data"].(map[string]interface{})
+	// Move fields are sent at the top level of data (not nested under "move_data").
+	moveData := data
 
 	type ClientFields interface {
 		GetRoomID() uint
@@ -160,29 +161,9 @@ func (h *GameWebSocketHandler) handleGameMove(client interface{}, data map[strin
 	}
 
 	roomID := cf.GetRoomID()
-	
-	// Always broadcast state first (even if game ended)
+	// Broadcast updated state. If the game just ended, endGameLocked already sent
+	// game_state_update + game_ended, so BroadcastGameState is a no-op (game removed).
 	h.gameManager.BroadcastGameState(roomID)
-	
-	// Check if game ended and send game_ended message
-	gameState, exists := h.gameManager.GetActiveGame(roomID)
-	if exists && gameState.GameSession.Status == "completed" {
-		winnerMessage := map[string]interface{}{
-			"type":   "game",
-			"action": "game_ended",
-			"data": map[string]interface{}{
-				"game_session_id": gameSessionID,
-				"winner_id":       gameState.GameSession.WinnerID,
-				"reason":          "game_completed",
-			},
-		}
-		if hub, ok := h.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
-			hub.BroadcastJSON(roomID, winnerMessage)
-		}
-		
-		// Now remove from active games
-// 		h.gameManager.RemoveActiveGame(gameSessionID, roomID)
-	}
 }
 
 func (h *GameWebSocketHandler) handleGameEnd(client interface{}, data map[string]interface{}) {
@@ -212,19 +193,8 @@ func (h *GameWebSocketHandler) handleGameEnd(client interface{}, data map[string
         h.sendError(client, fmt.Sprintf("failed to end game: %v", err))
         return
     }
-
-    message := map[string]interface{}{
-        "type":   "game",
-        "action": "game_ended",
-        "data": map[string]interface{}{
-            "game_session_id": gameSessionID,
-            "reason":          "ended_by_host",
-        },
-    }
-
-    if hub, ok := h.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
-        hub.BroadcastJSON(roomID, message)
-    }
+    // endGameLocked already broadcasts game_state_update + game_ended to all clients.
+    log.Printf("🎮 [GameWebSocketHandler] Host ended game %d in room %d", gameSessionID, roomID)
 }
 
 func (h *GameWebSocketHandler) CleanupPlayerDisconnect(roomID uint, userID uint) {

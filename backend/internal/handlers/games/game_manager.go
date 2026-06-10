@@ -51,7 +51,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		return nil, fmt.Errorf("room %d already has an active game (ID: %d)", roomID, existingGameID)
 	}
 
-	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" {
+	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" && gameType != "chess" {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
 	}
 
@@ -123,6 +123,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processTicTacToeMove(gameState, playerID, moveData)
 	case "rock_paper_scissors":
 		gameOver, winnerID, err = gm.processRockPaperScissorsMove(gameState, playerID, moveData)
+	case "chess":
+		gameOver, winnerID, err = gm.processChessMove(gameState, playerID, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -141,7 +143,7 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 	}
 
 	if gameOver {
-		if err := gm.EndGame(gameSessionID, winnerID, "completed"); err != nil {
+		if err := gm.endGameLocked(gameSessionID, winnerID, "completed"); err != nil {
 			log.Printf("⚠️ [GameManager] Failed to end game: %v", err)
 		}
 	}
@@ -149,11 +151,15 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 	return nil
 }
 
-// EndGame marks a game as completed or forfeited
+// EndGame marks a game as completed or forfeited (acquires lock — call from outside the manager).
 func (gm *GameManager) EndGame(gameSessionID uint, winnerID *uint, status string) error {
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
+	return gm.endGameLocked(gameSessionID, winnerID, status)
+}
 
+// endGameLocked does the actual work; caller must already hold gm.mu.
+func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status string) error {
 	gameState, exists := gm.activeGames[gameSessionID]
 	if !exists {
 		return fmt.Errorf("game session %d not found", gameSessionID)
@@ -173,11 +179,36 @@ func (gm *GameManager) EndGame(gameSessionID uint, winnerID *uint, status string
 	}
 
 	roomID := gameState.GameSession.RoomID
+
+	// Broadcast the final board state then game_ended before removing from active maps,
+	// so all clients see the winning position and can display the result.
+	if hub, ok := gm.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+		hub.BroadcastJSON(roomID, map[string]interface{}{
+			"type":            "game",
+			"action":          "game_state_update",
+			"game_session_id": gameState.GameSession.ID,
+			"game_type":       gameState.GameSession.GameType,
+			"status":          status,
+			"current_turn":    gameState.CurrentTurn,
+			"players":         gameState.Players,
+			"game_state":      gameState.GameData,
+		})
+		hub.BroadcastJSON(roomID, map[string]interface{}{
+			"type":   "game",
+			"action": "game_ended",
+			"data": map[string]interface{}{
+				"game_session_id": gameSessionID,
+				"winner_id":       winnerID,
+				"reason":          status,
+				"players":         gameState.Players,
+			},
+		})
+	}
+
 	delete(gm.activeGames, gameSessionID)
 	delete(gm.roomActiveGames, roomID)
 
 	log.Printf("🎮 [GameManager] Ended game %d (status: %s, winner: %v)", gameSessionID, status, winnerID)
-
 	return nil
 }
 
@@ -234,7 +265,7 @@ func (gm *GameManager) HandlePlayerDisconnect(roomID uint, userID uint) error {
 
 	log.Printf("🎮 [GameManager] Player %d disconnected from game %d - forfeiting", userID, gameSessionID)
 
-	return gm.EndGame(gameSessionID, winnerID, "forfeited")
+	return gm.endGameLocked(gameSessionID, winnerID, "forfeited")
 }
 
 // BroadcastGameState sends the current game state to all room members
@@ -279,6 +310,11 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 	case "rock_paper_scissors":
 		state["picks"] = make(map[string]string)
 		state["picks_made"] = 0
+
+	case "chess":
+		state["fen"] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+		state["turn"] = "w"
+		state["status"] = "active"
 
 	case "ludo":
 		state["board"] = gm.initializeLudoBoard(playerCount)

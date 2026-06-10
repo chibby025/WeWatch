@@ -56,6 +56,7 @@ import {
 import usePlaybackSync from '../../../hooks/usePlaybackSync';
 import useMobileOrientation from '../../../hooks/useMobileOrientation';
 import useViewGuidanceTimer from '../../../hooks/useViewGuidanceTimer';
+import SettingsModal from '../ui/SettingsModal';
 
 // Pure function — no component dependencies, safe at module level
 function applyTextCase(text, caseType) {
@@ -496,6 +497,7 @@ export default function CinemaScene3DDemo() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
   const [isLiveShareWizardOpen, setIsLiveShareWizardOpen] = useState(false); // ✅ Track wizard modal state for taskbar
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   const [isTheaterOverviewOpen, setIsTheaterOverviewOpen] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
@@ -971,7 +973,13 @@ export default function CinemaScene3DDemo() {
       }
     }
   }, [messages.length]);
-  
+
+  useEffect(() => {
+    const handler = () => setIsSettingsOpen(true);
+    window.addEventListener('wewatch:open-settings', handler);
+    return () => window.removeEventListener('wewatch:open-settings', handler);
+  }, []);
+
   // 🐛 DEBUG: Log ALL WebSocket messages with detailed information
   // ⚠️ PERFORMANCE: Commented out to reduce logging overhead (runs on EVERY message)
   // Uncomment for debugging specific issues
@@ -4680,11 +4688,18 @@ export default function CinemaScene3DDemo() {
         }
       } catch (error) {
         console.error('❌ [CinemaScene3D] Failed to end session:', error);
-        // Continue with cleanup even if API call fails
+        if (error?.response?.status !== 404) {
+          toast.error('Could not end session. Please try again.');
+          return;
+        }
+        // 404 = already ended — safe to proceed
       }
     } else {
-      // ✅ Non-host: Just leaving (not ending session)
-      console.log('👋 [CinemaScene3D] Non-host leaving session (session continues)');
+      // Non-host: notify backend before WS closes so member count updates instantly
+      if (isConnected && currentUser) {
+        sendMessage({ type: 'leave_session', user_id: currentUser.id });
+        await new Promise(resolve => setTimeout(resolve, 80));
+      }
     }
     
     try {
@@ -6111,6 +6126,25 @@ export default function CinemaScene3DDemo() {
           onRequestBroadcast={handleRequestBroadcast}
           broadcastRequests={broadcastRequests}
           watchType="3d_cinema"
+        />
+      )}
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          watchType="3d_cinema"
+          isPrivateSession={sessionStatus?.is_private || false}
+          activeSessionId={finalSessionId}
+          roomId={roomId}
+          currentUser={currentUser}
+          userSeats={userSeats}
+          watchSessionMembers={roomMembers}
+          audioDevices={audioDevices}
+          selectedAudioDeviceId={selectedAudioDeviceId}
+          onAudioDeviceChange={handleAudioDeviceChange}
+          availableCameras={[]}
         />
       )}
 

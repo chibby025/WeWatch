@@ -1,14 +1,22 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const SPEED = 60; // px/s — slow and meditative
 const SIZE = 80;  // px logo size
+
+// Try public folder first; fall back to BunnyCDN if the file isn't in the build
+const LOGO_SRCS = [
+  '/icons/lwoIcon.webp',
+  'https://LetsWatchOut.b-cdn.net/icons/lwoIcon.webp',
+  '/icons/lwoIcon.png',
+];
 
 // Hue offsets to cycle through on each wall bounce
 const HUE_ROTATIONS = [0, 60, 130, 200, 270, 330];
 
 export default function DVDBounce() {
-  const wrapRef = useRef(null);
-  const imgRef  = useRef(null);
+  const wrapRef  = useRef(null);
+  const imgRef   = useRef(null);
+  const [srcIdx, setSrcIdx] = useState(0);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -71,9 +79,10 @@ export default function DVDBounce() {
       `}</style>
       <img
         ref={imgRef}
-        src="/icons/lwoIcon.png"
+        src={LOGO_SRCS[srcIdx]}
         alt=""
         draggable={false}
+        onError={() => setSrcIdx(i => Math.min(i + 1, LOGO_SRCS.length - 1))}
         style={{
           position:  'absolute',
           left:      0,

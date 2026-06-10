@@ -34,3 +34,10 @@ export const playSilenceOffSound = () => {
   audio.volume = 0.2;
   audio.play().catch(e => console.warn("Silence off sound failed:", e));
 };
+
+// User joined session sound
+export const playJoinSound = () => {
+  const audio = new Audio('/sounds/userjoin.mp3');
+  audio.volume = 0.5;
+  audio.play().catch(e => console.warn("Join sound failed:", e));
+};

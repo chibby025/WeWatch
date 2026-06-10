@@ -2901,7 +2901,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	}
 
 	// Broadcast session_started to lobby (updates session list) + targeted alert to room members
-	go func(sid string, rid uint, wt string, hostID uint, roomName string) {
+	go func(sid string, rid uint, wt string, hostID uint, roomName string, roomType string, isPrivate bool, sessionTitle string) {
 		hub := GetHub()
 		if hub == nil {
 			return
@@ -2916,7 +2916,11 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 			"room_id":       rid,
 			"room_name":     roomName,
 			"host_username": host.Username,
+			"host_id":       hostID,
 			"watch_type":    wt,
+			"room_type":     roomType,
+			"is_private":    isPrivate,
+			"session_title": sessionTitle,
 		})
 		hub.BroadcastToLobby(OutgoingMessage{Data: lobbyMsg, IsBinary: false})
 
@@ -2953,7 +2957,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 			}
 		}
 		log.Printf("📢 [CreateWatchSession] Broadcasted session_started for room %d (%s) to lobby + %d members", rid, roomName, len(memberIDs))
-	}(sessionID, uint(roomID), input.WatchType, userID, room.Name)
+	}(sessionID, uint(roomID), input.WatchType, userID, room.Name, room.RoomType, session.IsPrivate, session.SessionTitle)
 
 	log.Printf("✅✅✅ [CreateWatchSession] Session SAVED to database!")
 	log.Printf("  ├─ session_id: %s", sessionID)
