@@ -504,7 +504,7 @@ const CommunityEventsCard = ({
                     ? 'bg-green-500/20 text-green-300 border border-green-500/30'
                     : 'bg-white/10 text-white/50'
                 }`}>
-                  {cur.data.status === 'claimed' ? '✓ Host found' : 'Open'}
+                  {cur.data.status === 'claimed' ? '✓ Hosted' : 'Open'}
                 </span>
               </>
             ) : null}
