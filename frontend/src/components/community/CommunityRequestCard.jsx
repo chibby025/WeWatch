@@ -95,7 +95,16 @@ const CommunityRequestCard = ({ request: initialRequest, currentUser, onRequestU
       <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/40 pointer-events-none" />
 
       {/* ── Content ──────────────────────────────────────────────────────────── */}
-      <div className="relative z-10 flex-1 flex flex-col justify-end px-4 pt-3 pb-8 min-h-0 overflow-hidden">
+      <div className="relative z-10 flex-1 flex flex-col justify-end px-4 pt-3 pb-12 min-h-0 overflow-hidden">
+
+        {/* Status badge — sits just above title */}
+        <span className={`self-start text-xs font-semibold px-2.5 py-1 rounded-full mb-2 ${
+          request.status === 'claimed'
+            ? 'bg-green-500/20 text-green-300 border border-green-500/40'
+            : 'bg-white/10 text-white/50 border border-white/20'
+        }`}>
+          {request.status === 'claimed' ? '✓ Hosted' : 'Open'}
+        </span>
 
         <h2 className="text-white text-xl sm:text-2xl font-black leading-tight mb-1.5 line-clamp-3">
           {request.title}
@@ -161,16 +170,6 @@ const CommunityRequestCard = ({ request: initialRequest, currentUser, onRequestU
             <span className="font-bold text-sm tabular-nums text-white/70">{totalComments}</span>
           </button>
 
-          <div className="flex-1" />
-
-          {/* Status badge */}
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0 ${
-            request.status === 'claimed'
-              ? 'bg-green-500/20 text-green-300 border border-green-500/40'
-              : 'bg-white/10 text-white/50 border border-white/20'
-          }`}>
-            {request.status === 'claimed' ? '✓ Hosted' : 'Open'}
-          </span>
         </div>
 
         {/* Claim / hosting */}
