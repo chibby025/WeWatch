@@ -51,13 +51,27 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
     if (isVisible && !hasBeenVisible) setHasBeenVisible(true);
   }, [isVisible, hasBeenVisible]);
 
+  // Sync the muted prop directly to the DOM property — React's JSX attribute
+  // doesn't reliably update the live .muted property on a playing video element.
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.muted = muted;
+  }, [muted]);
+
   // Play/pause based on visibility — avoids simultaneous decode of off-screen videos.
   // previewVersion in deps: when key={previewVersion} remounts the element, we need
   // to re-call play() because the new element has no pending play request.
   useEffect(() => {
     if (!videoRef.current || loadState !== 'video') return;
     if (isVisible) {
-      videoRef.current.play().catch(() => {});
+      // Always start playing. If browser blocks audio autoplay, mute and retry.
+      videoRef.current.muted = muted;
+      const p = videoRef.current.play();
+      if (p !== undefined) {
+        p.catch(() => {
+          videoRef.current.muted = true;
+          videoRef.current.play().catch(() => {});
+        });
+      }
     } else {
       videoRef.current.pause();
     }

@@ -56,6 +56,7 @@ import FeedAdCard from './ads/FeedAdCard';
 import { calculateAge } from '../utils/ageUtils';
 import CommunityEventsCard from './community/CommunityEventsCard';
 import { getCommunityEvents, getPublicLiveSessions, getPublicRooms } from '../services/api';
+import SessionShareModal from './SessionShareModal';
 
 // Resolve a backend-relative preview URL to a full absolute URL
 const resolvePreviewUrl = (url) => {
@@ -329,6 +330,7 @@ const LobbyPage = () => {
   // ✅ Room Favourite + Join State (from session preview cards)
   const [savedRooms, setSavedRooms] = useState({});   // { roomId: bool }
   const [joinedRooms, setJoinedRooms] = useState({}); // { roomId: 'active' | 'pending' }
+  const [shareModalSession, setShareModalSession] = useState(null);
   
   // ✅ Chat Preview Modal State (OLD - kept for backward compatibility)
   const [isChatPreviewOpen, setIsChatPreviewOpen] = useState(false);
@@ -4570,16 +4572,14 @@ const LobbyPage = () => {
                       <img src="/icons/view.png" alt="viewers" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
                       <span className="text-white text-xs font-bold" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.9)' }}>{formatCount(session.member_count || 0)}</span>
                     </div>
-                    {!session.is_temporary && session.host_id !== currentUser?.id && (
-                      <button onClick={(e) => handleToggleFavourite(session.room_id, e)} className="flex flex-col items-center gap-1 transition-transform active:scale-90">
-                        {savedRooms[session.room_id]
-                          ? <BookmarkIcon className="w-9 h-9 text-purple-400" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }} />
-                          : <svg viewBox="0 0 24 24" fill="white" className="w-9 h-9" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }}>
-                              <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93z M11 7L13 7L13 9L15 9L15 11L13 11L13 13L11 13L11 11L9 11L9 9L11 9Z" />
-                            </svg>
-                        }
-                      </button>
-                    )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setShareModalSession(session); }}
+                      className="flex flex-col items-center gap-1 transition-transform active:scale-90"
+                    >
+                      <svg viewBox="0 0 24 24" fill="white" className="w-9 h-9" style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.8))' }}>
+                        <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
+                      </svg>
+                    </button>
                   </div>
 
                   {/* Bottom info */}
@@ -4596,17 +4596,18 @@ const LobbyPage = () => {
                             ? <img src={cdnThumb(session.room_avatar_url, 72)} alt={session.room_name} className="w-full h-full object-cover" />
                             : session.room_name?.[0]?.toUpperCase() || 'R'}
                         </div>
-                        {/* design preview — restore conditions after sign-off */}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleJoinRoomFromCard(session.room_id, e); }}
-                          className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 bg-purple-600 rounded-full flex items-center justify-center z-10 shadow-md transition-transform active:scale-90"
-                          style={{ width: '14px', height: '14px', minWidth: '14px', minHeight: '14px' }}
-                        >
-                          <svg viewBox="0 0 10 10" fill="white" style={{ width: '9px', height: '9px', flexShrink: 0 }}>
-                            <rect x="4.2" y="1" width="1.6" height="8" rx="0.8"/>
-                            <rect x="1" y="4.2" width="8" height="1.6" rx="0.8"/>
-                          </svg>
-                        </button>
+                        {!session.is_member && !joinedRooms[session.room_id] && session.host_id !== currentUser?.id && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleJoinRoomFromCard(session.room_id, e); }}
+                            className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 bg-purple-600 rounded-full flex items-center justify-center z-10 shadow-md transition-transform active:scale-90"
+                            style={{ width: '14px', height: '14px', minWidth: '14px', minHeight: '14px' }}
+                          >
+                            <svg viewBox="0 0 10 10" fill="white" style={{ width: '9px', height: '9px', flexShrink: 0 }}>
+                              <rect x="4.2" y="1" width="1.6" height="8" rx="0.8"/>
+                              <rect x="1" y="4.2" width="8" height="1.6" rx="0.8"/>
+                            </svg>
+                          </button>
+                        )}
                       </div>
                       <span className="font-bold text-white text-base truncate" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>{session.room_name}</span>
                       {session.average_rating > 0 && (
@@ -7024,6 +7025,16 @@ const LobbyPage = () => {
           targetId={reportTarget.targetId}
           targetName={reportTarget.targetName}
           onClose={() => setReportTarget(null)}
+        />
+      )}
+
+      {/* Session Share Modal */}
+      {shareModalSession && (
+        <SessionShareModal
+          session={shareModalSession}
+          friends={friendsList}
+          currentUser={currentUser}
+          onClose={() => setShareModalSession(null)}
         />
       )}
 

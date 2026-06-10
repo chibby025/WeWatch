@@ -1777,6 +1777,11 @@ export const sendWatchOut = async (recipientId, roomId) => {
   }
 };
 
+export const blockUser = async (userId) => {
+  const response = await apiClient.post(`/api/lobby-chats/block/${userId}`);
+  return response.data;
+};
+
 export const startPrivateWatchout = async (recipientId, watchType = 'video', contentRating = 'G', price = 0) => {
   try {
     const response = await apiClient.post('/api/lobby-chats/private-watchout', {
