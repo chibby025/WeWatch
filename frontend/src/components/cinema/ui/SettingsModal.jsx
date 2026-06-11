@@ -86,7 +86,7 @@ const SettingsModal = ({
     setLoadingFriends(true);
     getFriendsList()
       .then(data => {
-        const list = data?.friends ?? data;
+        const list = data?.data?.friends ?? data?.data ?? data?.friends ?? data;
         setFriends(Array.isArray(list) ? list : []);
       })
       .catch(() => toast.error('Could not load friends'))

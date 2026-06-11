@@ -917,6 +917,21 @@ export default function VideoWatch() {
   const [isTakeQuizOpen, setIsTakeQuizOpen] = useState(false);
   const [isQuizResultsOpen, setIsQuizResultsOpen] = useState(false);
   
+  // 🎓 Swipe-up tutorial: shown up to 5 times total across sessions
+  const [showSwipeTutorial, setShowSwipeTutorial] = useState(() => {
+    const count = parseInt(localStorage.getItem('swipe_tutorial_count') || '0', 10);
+    return count < 5;
+  });
+  useEffect(() => {
+    if (!showSwipeTutorial) return;
+    const t = setTimeout(() => {
+      setShowSwipeTutorial(false);
+      const count = parseInt(localStorage.getItem('swipe_tutorial_count') || '0', 10);
+      localStorage.setItem('swipe_tutorial_count', String(count + 1));
+    }, 3500);
+    return () => clearTimeout(t);
+  }, [showSwipeTutorial]);
+
   // 🎮 GAME SYSTEM: State
   const [isGameLobbyOpen, setIsGameLobbyOpen] = useState(false);
   const [activeGame, setActiveGame] = useState(null); // Currently active game session
@@ -6793,6 +6808,38 @@ export default function VideoWatch() {
           onClose={handleGameClose}
           onEndGame={handleEndGame}
         />
+      )}
+
+      {/* Swipe-up tutorial — shown max 5 sessions, auto-dismisses after 3.5s */}
+      {showSwipeTutorial && (
+        <div
+          className="pointer-events-none fixed bottom-24 left-0 right-0 flex flex-col items-center z-[200]"
+          style={{ animation: 'fadeInOut 3.5s ease forwards' }}
+        >
+          {/* Finger icon animated upward */}
+          <div style={{ animation: 'swipeUp 1.4s ease-in-out infinite' }}>
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+              <rect x="14" y="8" width="8" height="16" rx="4" fill="white" opacity="0.9"/>
+              <path d="M10 20 Q10 28 18 30 Q26 28 26 20" fill="white" opacity="0.9"/>
+              <path d="M18 6 L14 11 M18 6 L22 11" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.7"/>
+            </svg>
+          </div>
+          <p className="mt-2 text-white text-sm font-semibold" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
+            Swipe up to see the taskbar
+          </p>
+          <style>{`
+            @keyframes swipeUp {
+              0%, 100% { transform: translateY(0); opacity: 0.9; }
+              50% { transform: translateY(-14px); opacity: 1; }
+            }
+            @keyframes fadeInOut {
+              0% { opacity: 0; }
+              15% { opacity: 1; }
+              75% { opacity: 1; }
+              100% { opacity: 0; }
+            }
+          `}</style>
+        </div>
       )}
 
     </div>

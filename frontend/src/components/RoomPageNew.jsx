@@ -2310,14 +2310,23 @@ const RoomPageNew = () => {
                     {/* Schedule Watch Icon */}
                     {!activeSession && (isHost || scheduledEventsCount > 0) && (
                       <div className="relative flex-shrink-0">
-                        <img 
-                          src="/icons/scheduleWatchIcon.svg" 
-                          alt="Schedule" 
+                        <img
+                          src="/icons/scheduleWatchIcon1.svg"
+                          alt="Schedule"
                           onClick={() => {
                             setScheduleModalTab(isHost ? 'create' : 'upcoming');
                             setIsScheduleModalOpen(true);
                           }}
-                          className="h-[34px] w-[34px] cursor-pointer hover:opacity-80 transition-opacity"
+                          className="h-[34px] w-[34px] cursor-pointer hover:opacity-80 transition-opacity block dark:hidden"
+                        />
+                        <img
+                          src="/icons/scheduleWatchIcon.svg"
+                          alt="Schedule"
+                          onClick={() => {
+                            setScheduleModalTab(isHost ? 'create' : 'upcoming');
+                            setIsScheduleModalOpen(true);
+                          }}
+                          className="h-[34px] w-[34px] cursor-pointer hover:opacity-80 transition-opacity hidden dark:block"
                         />
                         {scheduledEventsCount > 0 && (
                           <div className={`absolute -top-1 -right-1 min-w-[18px] h-5 flex items-center justify-center rounded-full text-white text-[10px] font-bold px-1 shadow-lg ${
@@ -2460,14 +2469,23 @@ const RoomPageNew = () => {
                       {(isHost || scheduledEventsCount > 0) && (
                         <div className="relative">
                           <img
-                            src="/icons/scheduleWatchIcon.svg"
+                            src="/icons/scheduleWatchIcon1.svg"
                             alt="Schedule Watch"
                             onClick={() => {
-                              // Host opens to 'create' tab, members open to 'upcoming' tab
                               setScheduleModalTab(isHost ? 'create' : 'upcoming');
                               setIsScheduleModalOpen(true);
                             }}
-                            className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity"
+                            className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity block dark:hidden"
+                            title={isHost ? "Schedule Watch" : "View Scheduled Events"}
+                          />
+                          <img
+                            src="/icons/scheduleWatchIcon.svg"
+                            alt="Schedule Watch"
+                            onClick={() => {
+                              setScheduleModalTab(isHost ? 'create' : 'upcoming');
+                              setIsScheduleModalOpen(true);
+                            }}
+                            className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity hidden dark:block"
                             title={isHost ? "Schedule Watch" : "View Scheduled Events"}
                           />
                           {/* Badge with event count */}

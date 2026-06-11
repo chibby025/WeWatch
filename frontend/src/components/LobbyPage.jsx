@@ -7034,6 +7034,8 @@ const LobbyPage = () => {
           session={shareModalSession}
           friends={friendsList}
           currentUser={currentUser}
+          isFavourited={!!savedRooms[shareModalSession.room_id]}
+          onToggleFavourite={handleToggleFavourite}
           onClose={() => setShareModalSession(null)}
         />
       )}
