@@ -160,7 +160,8 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch && git commit -m 'fix member count always >=1 on join; fix finger icon for swipe tutorial'\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go get github.com/dhowden/tag@latest 2>&1\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -50\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch && git add -A && git status --short 2>&1\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch && git add -A && git status --short 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch && git push 2>&1\")"
     ],
     "additionalDirectories": [
       "\\dev",

@@ -5199,7 +5199,8 @@ export default function VideoWatch() {
     // Toggle enabled state
     audioTrack.enabled = newAudioState;
     setIsAudioActive(newAudioState);
-    
+    if (newAudioState) { new Audio('/sounds/audio.mp3').play().catch(() => {}); }
+
     console.log('✅ [toggleAudio] AFTER toggle - Track state:', {
       trackEnabled: audioTrack.enabled,
       trackIsMuted: audioTrack.isMuted,

@@ -22,6 +22,8 @@ import { useUploadServiceWorker } from '../../../hooks/useUploadServiceWorker';
 import LiveShareManager from './LiveShareManager';
 import ReportModal from '../../ReportModal';
 
+const playSuccess = () => new Audio('/sounds/success.mp3').play().catch(() => {});
+
 export default function LeftSidebar({
   roomId,
   currentMedia,
@@ -434,7 +436,7 @@ export default function LeftSidebar({
         if (target?.poster_url && !target.poster_url.includes('placeholder-poster')) {
           // Real poster is ready — refresh the playlist once more.
           console.log(`🖼️ [PosterPoll] Poster ready for item ${itemId}: ${target.poster_url}`);
-          if (onUploadComplete) onUploadComplete();
+          if (onUploadComplete) { playSuccess(); onUploadComplete(); }
         } else {
           // Not ready yet — schedule next poll.
           pollForPoster(itemId, attempt + 1);
@@ -707,6 +709,7 @@ export default function LeftSidebar({
             
             // Trigger parent to refresh playlist with updated posters
             if (onUploadComplete) {
+              playSuccess();
               onUploadComplete();
             }
           }
@@ -716,6 +719,7 @@ export default function LeftSidebar({
       }, 5000); // Wait 5s for async poster generation + CDN upload
 
       if (onUploadComplete) {
+        playSuccess();
         onUploadComplete();
       }
     } catch (err) {
@@ -869,7 +873,7 @@ export default function LeftSidebar({
       }
 
       console.log('✅ [DirectUpload] DB record created');
-      if (onUploadComplete) onUploadComplete();
+      if (onUploadComplete) { playSuccess(); onUploadComplete(); }
 
       // Poster is generated async on Railway after assembly.
       // The WS `playlist_poster_updated` message updates the UI instantly when the
@@ -1120,9 +1124,10 @@ export default function LeftSidebar({
       
       // Refresh playlist
       if (onUploadComplete) {
+        playSuccess();
         onUploadComplete();
       }
-      
+
       toast.success('Stream URL added to playlist!');
     } catch (err) {
       console.error('❌ [LeftSidebar] Stream URL failed:', err);
@@ -1985,6 +1990,7 @@ export default function LeftSidebar({
                             watchType,
                             classType,
                           });
+                          playSuccess();
                           onMediaSelect({ ...item, type: item.is_embed ? 'embed' : 'upload' });
 
                           // Send WebSocket message for lecture hall/classroom blackboard display
@@ -2379,7 +2385,7 @@ export default function LeftSidebar({
             localStorage.removeItem(`wewatch_bunny_upload_${state.uploadId}`);
             localStorage.removeItem('current_bunny_upload_id');
             toast.success('Upload finalised!');
-            if (onUploadComplete) onUploadComplete();
+            if (onUploadComplete) { playSuccess(); onUploadComplete(); }
             const resumedItemId = finalResp?.data?.media_item_id;
             if (resumedItemId) pollForPoster(resumedItemId);
           } catch (err) {
