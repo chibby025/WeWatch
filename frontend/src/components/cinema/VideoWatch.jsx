@@ -6816,26 +6816,34 @@ export default function VideoWatch() {
           className="pointer-events-none fixed bottom-24 left-0 right-0 flex flex-col items-center z-[200]"
           style={{ animation: 'fadeInOut 3.5s ease forwards' }}
         >
-          {/* Finger icon animated upward */}
-          <div style={{ animation: 'swipeUp 1.4s ease-in-out infinite' }}>
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <rect x="14" y="8" width="8" height="16" rx="4" fill="white" opacity="0.9"/>
-              <path d="M10 20 Q10 28 18 30 Q26 28 26 20" fill="white" opacity="0.9"/>
-              <path d="M18 6 L14 11 M18 6 L22 11" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.7"/>
+          {/* Hand pointer icon — outline style, bounces upward */}
+          <div style={{ animation: 'swipeUp 1.2s ease-in-out infinite' }}>
+            <svg width="46" height="56" viewBox="0 0 46 56" fill="none" stroke="white" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              {/* Index finger — tall, pointing up */}
+              <rect x="18" y="2" width="10" height="26" rx="5"/>
+              {/* Middle finger */}
+              <rect x="30" y="10" width="9" height="20" rx="4.5"/>
+              {/* Ring finger */}
+              <rect x="7" y="14" width="9" height="18" rx="4.5"/>
+              {/* Pinky */}
+              <rect x="1.5" y="19" width="7.5" height="15" rx="3.75"/>
+              {/* Thumb */}
+              {/* Palm connecting bottom */}
+              <path d="M1.5 31 Q1.5 48 23 52 Q44.5 48 44.5 28"/>
             </svg>
           </div>
-          <p className="mt-2 text-white text-sm font-semibold" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
+          <p className="mt-3 text-white text-sm font-semibold" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
             Swipe up to see the taskbar
           </p>
           <style>{`
             @keyframes swipeUp {
-              0%, 100% { transform: translateY(0); opacity: 0.9; }
-              50% { transform: translateY(-14px); opacity: 1; }
+              0%, 100% { transform: translateY(0); opacity: 0.85; }
+              50% { transform: translateY(-16px); opacity: 1; }
             }
             @keyframes fadeInOut {
               0% { opacity: 0; }
-              15% { opacity: 1; }
-              75% { opacity: 1; }
+              12% { opacity: 1; }
+              78% { opacity: 1; }
               100% { opacity: 0; }
             }
           `}</style>

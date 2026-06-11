@@ -602,10 +602,14 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     
     // ✅ EVENT-DRIVEN: Broadcast session_member_joined to all clients in room
     // Query authoritative count BEFORE broadcasting so every receiver gets ground truth.
+    // Floor to 1: the joining user is always at least 1 active member regardless of DB timing.
     var joinedMemberCount int64
     DB.Model(&models.WatchSessionMember{}).
         Where("watch_session_id = ? AND is_active = ?", session.ID, true).
         Count(&joinedMemberCount)
+    if joinedMemberCount < 1 {
+        joinedMemberCount = 1
+    }
 
     var joiningUser models.User
     if err := DB.First(&joiningUser, client.userID).Error; err == nil {
@@ -627,9 +631,33 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     }
 
     // ✅ EVENT-DRIVEN: Broadcast updated session status with current member list
-    // Query active members from database (source of truth)
+    // Query active members from database (source of truth).
+    // If the DB query fails or returns empty, seed with the joining user so the frontend
+    // always gets at least a count of 1 instead of silently receiving nothing.
     var activeMembers []models.WatchSessionMember
-    if err := DB.Where("watch_session_id = ? AND is_active = ?", session.ID, true).Find(&activeMembers).Error; err == nil {
+    dbErr := DB.Where("watch_session_id = ? AND is_active = ?", session.ID, true).Find(&activeMembers).Error
+    if dbErr != nil {
+        log.Printf("⚠️ [JoinWatchSession] DB query for active members failed: %v — using minimal fallback", dbErr)
+        activeMembers = nil
+    }
+    // Ensure the joining user is always present in the list.
+    joiningUserFound := false
+    for _, m := range activeMembers {
+        if m.UserID == client.userID {
+            joiningUserFound = true
+            break
+        }
+    }
+    if !joiningUserFound {
+        activeMembers = append(activeMembers, models.WatchSessionMember{
+            Model:          gorm.Model{},
+            UserID:         client.userID,
+            WatchSessionID: session.ID,
+            UserRole:       userRole,
+            IsActive:       true,
+        })
+    }
+    {
         
         // Get user IDs to query usernames
         userIDs := make([]uint, 0, len(activeMembers))
