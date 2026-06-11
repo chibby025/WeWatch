@@ -144,7 +144,20 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"which go 2>/dev/null || find /usr /home -name go -type f 2>/dev/null | head -5\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1; echo \"EXIT:$LASTEXITCODE\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1; echo EXIT:$?\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1; echo EXIT:$?\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1; echo EXIT:$?\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch && git status --short 2>&1 | head -30\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch && git log --oneline -8 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch && git status --short 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch && git show --stat 8e7aadf 2>&1 | head -30\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch && git show --stat 6c36a89 2>&1 | head -25\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch && git log --oneline origin/main..HEAD 2>&1; git remote -v 2>&1 | head -2\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- sh -c \"cd /home/chibuzor_dev/WeWatch && git add frontend/src/components/LobbyPage.jsx frontend/src/components/SessionPreview.jsx frontend/src/services/api.js frontend/src/components/cinema/ui/LeftSidebar.jsx frontend/src/components/SessionShareModal.jsx && git commit -m 'share modal, join condition, audio fix, remove trivia from sidebar' && git push 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch && git add frontend/src/components/SessionShareModal.jsx frontend/src/components/LobbyPage.jsx frontend/src/components/cinema/ui/SettingsModal.jsx frontend/src/components/cinema/VideoWatch.jsx frontend/src/components/RoomPageNew.jsx && git diff --cached --stat\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch && git commit -m 'share modal redesign + icons, fix friends loading, swipe tutorial, scheduleWatchIcon light mode'\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch && git push\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./internal/... ./cmd/server/... 2>&1 | head -20\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch && git add backend/internal/handlers/websocket.go frontend/src/components/cinema/VideoWatch.jsx && git diff --cached --stat\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch && git commit -m 'fix member count always >=1 on join; fix finger icon for swipe tutorial'\")"
     ],
     "additionalDirectories": [
       "\\dev",
