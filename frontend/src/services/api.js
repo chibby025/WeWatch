@@ -646,6 +646,12 @@ export const getFavouriteRooms = async () => {
   return response.data;
 };
 
+// Get top 10 rooms by Bayesian average rating
+export const getRoomsLeaderboard = async () => {
+  const response = await apiClient.get('/api/rooms/leaderboard');
+  return response.data;
+};
+
 // Delete a scheduled event
 export const deleteScheduledEvent = async (eventId) => {
   try {

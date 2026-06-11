@@ -58,6 +58,9 @@ import NetworkQualityBanner from '../NetworkQualityBanner';
 import AdVideoPreroll from '../AdVideoPreroll';
 import InSessionAdPanel from '../ads/InSessionAdPanel';
 import { calculateAge } from '../../utils/ageUtils';
+import VinylPlayer from '../VinylPlayer';
+
+const AUDIO_URL_RE = /\.(mp3|m4a|wav|ogg|flac|aac)(\?|$)/i;
 
 function SessionEndedOverlay({ reason, onReturn }) {
   const [countdown, setCountdown] = React.useState(8);
@@ -5823,6 +5826,18 @@ export default function VideoWatch() {
                   onPauseBroadcast={handlePauseBroadcast}
                   onTimeUpdate={handleTimeUpdate}
                 />
+
+                {/* Vinyl overlay for audio media (MP3/M4A/WAV etc.) */}
+                {currentMedia && AUDIO_URL_RE.test(currentMedia.mediaUrl || '') && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-gray-900 via-gray-950 to-black z-10 pointer-events-none">
+                    <VinylPlayer
+                      artworkUrl={currentMedia.poster_url || currentMedia.thumbnail_url || null}
+                      title={currentMedia.original_name ? currentMedia.original_name.replace(/\.[^.]+$/, '') : undefined}
+                      isPlaying={isPlaying}
+                      size={200}
+                    />
+                  </div>
+                )}
 
                 {/* Stall detector — shown to non-host members when video hasn't started 9s after play command */}
                 {videoStalled && !isHost && (

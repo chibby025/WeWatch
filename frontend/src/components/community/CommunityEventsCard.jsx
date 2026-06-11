@@ -1,8 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import ScheduledEventPreviewCard from './ScheduledEventPreviewCard';
 import CommunityRequestCard from './CommunityRequestCard';
+import LeaderboardCard from './LeaderboardCard';
 import MakeRequestSheet from './MakeRequestSheet';
-import { PlusCircleIcon, CalendarDaysIcon, MegaphoneIcon } from '@heroicons/react/24/outline';
+import { PlusCircleIcon, CalendarDaysIcon, MegaphoneIcon, TrophyIcon } from '@heroicons/react/24/outline';
 import { PlayIcon } from '@heroicons/react/24/solid';
 
 const marqueeStyle = `
@@ -66,12 +67,16 @@ const RATING_COLOR = {
   'Mature':      'bg-red-900',
 };
 
-function buildInterleavedCards(events, requests) {
+function buildInterleavedCards(events, requests, leaderboard) {
   const cards = [];
   const max = Math.max(events.length, requests.length);
   for (let i = 0; i < max; i++) {
     if (i < events.length)   cards.push({ type: 'event',   data: events[i] });
     if (i < requests.length) cards.push({ type: 'request', data: requests[i] });
+  }
+  // Add one leaderboard card at the end when there are rooms with enough ratings
+  if (leaderboard && leaderboard.length > 0 && cards.length > 0) {
+    cards.push({ type: 'leaderboard', data: leaderboard });
   }
   return cards;
 }
@@ -93,13 +98,15 @@ function fmtDate(dateStr) {
 const CommunityEventsCard = ({
   scheduledEvents = [],
   requests        = [],
+  leaderboard     = [],
   currentUser,
   apiBaseUrl,
   onRSVP,
   onNewRequest,
   fixedBottom,
 }) => {
-  const cards = buildInterleavedCards(scheduledEvents, requests);
+  const cards = buildInterleavedCards(scheduledEvents, requests, leaderboard);
+  const [showLeaderboardPanel, setShowLeaderboardPanel] = useState(false);
 
   const [currentIndex,     setCurrentIndex]     = useState(0);
   const [showRequestSheet, setShowRequestSheet] = useState(false);
@@ -254,7 +261,7 @@ const CommunityEventsCard = ({
 
         {/* Same pinned bottom button as the carousel view */}
         <div
-          className="absolute left-0 right-0 bottom-0 flex items-center justify-center px-4"
+          className="absolute left-0 right-0 bottom-0 flex items-center justify-center gap-2 px-4"
           style={fixedBottom !== undefined
             ? { position: 'fixed', bottom: fixedBottom, left: 0, right: 0, height: BTN_AREA_H, zIndex: 30 }
             : { height: BTN_AREA_H, zIndex: 10 }}
@@ -269,7 +276,34 @@ const CommunityEventsCard = ({
             <PlusCircleIcon className="w-5 h-5 flex-shrink-0" />
             Make a Community Request
           </button>
+          {leaderboard.length > 0 && (
+            <button
+              onClick={() => setShowLeaderboardPanel(true)}
+              className="flex items-center justify-center w-10 h-10 rounded-full
+                bg-amber-500/20 hover:bg-amber-500/30 active:scale-90
+                border border-amber-500/40 transition-colors flex-shrink-0"
+              title="Room Leaderboard"
+            >
+              <TrophyIcon className="w-5 h-5 text-amber-400" />
+            </button>
+          )}
         </div>
+
+        {/* Leaderboard panel overlay (empty-state access) */}
+        {showLeaderboardPanel && (
+          <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-sm flex flex-col">
+            <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
+              <span className="text-white font-bold text-sm">🏆 Room Leaderboard</span>
+              <button
+                onClick={() => setShowLeaderboardPanel(false)}
+                className="text-white/60 hover:text-white text-lg font-bold leading-none"
+              >×</button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <LeaderboardCard rooms={leaderboard} />
+            </div>
+          </div>
+        )}
 
         <MakeRequestSheet isOpen={showRequestSheet} onClose={() => setShowRequestSheet(false)} onCreated={handleNewReq} />
       </div>
@@ -348,6 +382,21 @@ const CommunityEventsCard = ({
                   }}>
                     <CalendarDaysIcon style={{ width: 12, height: 12, color: '#fff', flexShrink: 0 }} />
                     <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>Scheduled Event</span>
+                  </div>
+                </>
+              ) : card.type === 'leaderboard' ? (
+                <>
+                  <LeaderboardCard rooms={card.data} />
+                  <div style={{
+                    position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+                    zIndex: 46, display: 'flex', alignItems: 'center', gap: 4,
+                    whiteSpace: 'nowrap', pointerEvents: 'none',
+                    background: 'linear-gradient(135deg, #92400e, #d97706)',
+                    borderRadius: '0 0 10px 10px', padding: '3px 10px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+                  }}>
+                    <TrophyIcon style={{ width: 12, height: 12, color: '#fff', flexShrink: 0 }} />
+                    <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>Room Leaderboard</span>
                   </div>
                 </>
               ) : (
@@ -435,21 +484,31 @@ const CommunityEventsCard = ({
 
           {/* Row 1: rating badge + scrolling title */}
           <div className="flex items-center gap-2 overflow-hidden">
-            <span
-              className={`flex-shrink-0 text-white text-xs font-black px-2 py-0.5 rounded-lg ${
-                RATING_COLOR[cur?.data?.content_rating] || 'bg-gray-600'
-              }`}
-            >
-              {cur?.data?.content_rating || '—'}
-            </span>
-            {cur?.type === 'event' && cur.data.is_paid && (
-              <span className="flex-shrink-0 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/90">
-                Ticketed
+            {cur?.type === 'leaderboard' ? (
+              <span className="flex-shrink-0 text-white text-xs font-black px-2 py-0.5 rounded-lg bg-amber-600">
+                🏆 Top Rooms
               </span>
+            ) : (
+              <>
+                <span
+                  className={`flex-shrink-0 text-white text-xs font-black px-2 py-0.5 rounded-lg ${
+                    RATING_COLOR[cur?.data?.content_rating] || 'bg-gray-600'
+                  }`}
+                >
+                  {cur?.data?.content_rating || '—'}
+                </span>
+                {cur?.type === 'event' && cur.data.is_paid && (
+                  <span className="flex-shrink-0 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/90">
+                    Ticketed
+                  </span>
+                )}
+              </>
             )}
             <div className="flex-1 min-w-0 overflow-hidden">
               <p className="marquee-text text-white text-sm font-bold" style={{ '--mx': '-60%' }}>
-                {cur?.data?.title}
+                {cur?.type === 'leaderboard'
+                  ? `${cur.data.length} rooms ranked by community`
+                  : cur?.data?.title}
               </p>
             </div>
           </div>
@@ -490,6 +549,18 @@ const CommunityEventsCard = ({
                   </p>
                 </div>
               </>
+            ) : cur?.type === 'leaderboard' ? (
+              <div className="flex-1 min-w-0 overflow-hidden">
+                <p className="marquee-text text-white/70 text-xs" style={{ '--mx': '-50%' }}>
+                  {cur.data.slice(0, 3).map((r, i) => (
+                    <span key={r.room_id}>
+                      {i > 0 && <span className="text-white/30"> · </span>}
+                      <span className="text-amber-300 font-semibold">#{i + 1}</span>
+                      {' '}<span className="text-white/80">{r.name}</span>
+                    </span>
+                  ))}
+                </p>
+              </div>
             ) : cur?.type === 'request' ? (
               <>
                 <div className="flex-1 min-w-0 overflow-hidden">

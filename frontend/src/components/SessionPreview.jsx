@@ -1,5 +1,9 @@
 // SessionPreview.jsx — lobby session card preview: emoji → poster → video
 import React, { useState, useEffect, useRef } from 'react';
+import VinylPlayer from './VinylPlayer';
+
+const AUDIO_EXTS = /\.(mp3|m4a|wav|ogg|flac|aac)(\?|$)/i;
+const isAudioUrl = (url) => AUDIO_EXTS.test(url || '');
 
 // Detect slow network via navigator.connection (not available in all browsers)
 function useAutoDataSaver() {
@@ -158,11 +162,25 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
 
   const modeInfo = getLiveShareModeInfo();
 
+  const isAudio = isAudioUrl(session?.current_media_url);
+
   return (
     <div ref={containerRef} className="w-full h-full bg-black overflow-hidden relative">
 
+      {/* Audio session: spinning vinyl disc instead of regular preview */}
+      {isAudio && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-gray-900 to-black z-10">
+          <VinylPlayer
+            artworkUrl={session?.poster_url || null}
+            isPlaying={isVisible}
+            size={150}
+          />
+          <p className="text-white/50 text-xs mt-3">Audio Playing</p>
+        </div>
+      )}
+
       {/* Emoji / gradient fallback — W icon with float animation */}
-      {loadState === 'emoji' && (
+      {!isAudio && loadState === 'emoji' && (
         <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-purple-500 to-blue-600">
           <div className="flex items-center justify-center mb-5">
             <img
@@ -177,7 +195,7 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
       )}
 
       {/* Generating spinner */}
-      {loadState === 'loading' && (
+      {!isAudio && loadState === 'loading' && (
         <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-700 to-gray-800">
           <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-white mb-4" />
           <div className="text-white text-base">Generating preview...</div>
@@ -185,7 +203,7 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
       )}
 
       {/* Static poster image */}
-      {loadState === 'poster' && posterUrl && (
+      {!isAudio && loadState === 'poster' && posterUrl && (
         <img
           src={posterUrl}
           alt="Session poster"
@@ -199,7 +217,7 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
       )}
 
       {/* Video preview — only sets src after first becoming visible (lazy load) */}
-      {loadState === 'video' && previewUrl && (
+      {!isAudio && loadState === 'video' && previewUrl && (
         <video
           key={previewVersion}
           ref={videoRef}

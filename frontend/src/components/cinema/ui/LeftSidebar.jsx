@@ -927,9 +927,17 @@ export default function LeftSidebar({
     const file = files[0];
 
     // ✅ CLIENT-SIDE VALIDATION
-    const allowedTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska', 'video/avi', 'video/x-msvideo'];
+    const allowedTypes = [
+      // Video
+      'video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska',
+      'video/avi', 'video/x-msvideo', 'video/x-m4v', 'video/x-wmv',
+      'video/3gpp', 'video/mp2t',
+      // Audio
+      'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg',
+      'audio/flac', 'audio/aac', 'audio/x-m4a',
+    ];
     if (!allowedTypes.includes(file.type)) {
-      toast.error(`Invalid file type: ${file.type}. Allowed: MP4, WebM, MOV, MKV, AVI`);
+      toast.error(`Invalid file type: ${file.type}. Allowed: MP4, WebM, MOV, MKV, AVI, MP3, M4A, WAV, AAC, FLAC`);
       return;
     }
 
@@ -940,7 +948,7 @@ export default function LeftSidebar({
     }
 
     if (file.size < 1024) {
-      toast.error('File too small. Please select a valid video file.');
+      toast.error('File too small. Please select a valid media file.');
       return;
     }
 
@@ -1722,7 +1730,7 @@ export default function LeftSidebar({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="video/*"
+                  accept="video/*,audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/flac,audio/aac,audio/x-m4a"
                   className="hidden"
                   onChange={(e) => {
                     handleFileUpload(e.target.files);

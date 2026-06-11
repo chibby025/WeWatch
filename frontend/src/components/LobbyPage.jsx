@@ -55,7 +55,7 @@ import { getStatusFeed } from '../services/api';
 import FeedAdCard from './ads/FeedAdCard';
 import { calculateAge } from '../utils/ageUtils';
 import CommunityEventsCard from './community/CommunityEventsCard';
-import { getCommunityEvents, getPublicLiveSessions, getPublicRooms } from '../services/api';
+import { getCommunityEvents, getPublicLiveSessions, getPublicRooms, getRoomsLeaderboard } from '../services/api';
 import SessionShareModal from './SessionShareModal';
 
 // Resolve a backend-relative preview URL to a full absolute URL
@@ -389,6 +389,7 @@ const LobbyPage = () => {
 
   // Community Events carousel data
   const [communityEventsData, setCommunityEventsData] = useState({ scheduledEvents: [], requests: [] });
+  const [leaderboardData, setLeaderboardData] = useState([]);
   const [showCommunityEventsView, setShowCommunityEventsView] = useState(false);
   const communityEventsTuneRef = React.useRef(null);
   const [communityCardVisible, setCommunityCardVisible] = React.useState(false);
@@ -1172,6 +1173,15 @@ const LobbyPage = () => {
       if (force || data.has_new || !since) {
         localStorage.setItem('communityEventsLastSeen', new Date().toISOString());
       }
+    } catch (err) {
+      // Non-critical — fail silently
+    }
+  };
+
+  const fetchLeaderboard = async () => {
+    try {
+      const data = await getRoomsLeaderboard();
+      setLeaderboardData(data.rooms || []);
     } catch (err) {
       // Non-critical — fail silently
     }
@@ -2412,6 +2422,7 @@ const LobbyPage = () => {
       fetchRoomsData();
       fetchStatusFeed();
       fetchCommunityEvents();
+      fetchLeaderboard();
       fetchUpcomingEventsCount();
       prefetchWatchingNowContent();
     }, 700);
@@ -4648,6 +4659,7 @@ const LobbyPage = () => {
                 <CommunityEventsCard
                   scheduledEvents={communityEventsData.scheduledEvents}
                   requests={communityEventsData.requests}
+                  leaderboard={leaderboardData}
                   currentUser={currentUser}
                   apiBaseUrl={API_BASE_URL}
                   onRSVP={(event) => { setSelectedEventForCalendar(event); setIsCalendarModalOpen(true); }}
@@ -6965,6 +6977,7 @@ const LobbyPage = () => {
             <CommunityEventsCard
               scheduledEvents={communityEventsData.scheduledEvents}
               requests={communityEventsData.requests}
+              leaderboard={leaderboardData}
               currentUser={currentUser}
               apiBaseUrl={API_BASE_URL}
               onRSVP={(event) => { setShowCommunityEventsView(false); setSelectedEventForCalendar(event); setIsCalendarModalOpen(true); }}

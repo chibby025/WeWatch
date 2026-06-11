@@ -52,6 +52,7 @@ const (
 	MediaTypeVideo = "video"
 	MediaTypeImage = "image"
 	MediaTypeGIF   = "gif"
+	MediaTypeAudio = "audio"
 )
 
 // Post type constants

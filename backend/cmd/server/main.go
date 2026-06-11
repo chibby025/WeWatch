@@ -484,6 +484,7 @@ func main() {
 		roomGroup.POST("/:id/invite-user", handlers.InviteUserToRoomHandler)        // POST /api/rooms/:id/invite-user
 		roomGroup.POST("/:id/favourite", handlers.ToggleRoomFavouriteHandler)       // POST /api/rooms/:id/favourite (Toggle room favourite)
 		roomGroup.GET("/favourites", handlers.GetFavouriteRoomsHandler)             // GET /api/rooms/favourites (List user's favourite rooms)
+		roomGroup.GET("/leaderboard", handlers.GetRoomsLeaderboardHandler)          // GET /api/rooms/leaderboard (Top 10 rooms by Bayesian rating)
 		roomGroup.DELETE("/:id", handlers.DeleteRoomHandler)
 		roomGroup.PUT("/:id", handlers.UpdateRoomHandler)
 		roomGroup.PUT("/:id/image", handlers.UpdateRoomImageHandler)      // PUT /api/rooms/:id/image (Upload room image)

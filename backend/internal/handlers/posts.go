@@ -40,7 +40,7 @@ type CreatePostRequest struct {
 	Description    string   `json:"description"`
 	TextContent    *string  `json:"text_content"`
 	RoomID         *uint    `json:"room_id"`
-	MediaType      string   `json:"media_type" binding:"omitempty,oneof=video image gif"`
+	MediaType      string   `json:"media_type" binding:"omitempty,oneof=video image gif audio"`
 	PostType       string   `json:"post_type" binding:"required,oneof=recording upload text"`
 	Duration       *int     `json:"duration"`
 	Resolution     string   `json:"resolution"`
@@ -268,6 +268,17 @@ func UploadPostMedia(c *gin.Context) {
 		return
 	}
 
+	// For audio: extract ID3/FLAC artwork before the upload reads the file.
+	// ExtractAudioMetadata seeks r back to 0 afterwards so the upload still works.
+	var audioArtworkData []byte
+	var audioArtworkMIME string
+	if post.MediaType == models.MediaTypeAudio {
+		if meta, metaErr := utils.ExtractAudioMetadata(file); metaErr == nil && len(meta.ArtworkData) > 0 {
+			audioArtworkData = meta.ArtworkData
+			audioArtworkMIME = meta.ArtworkMIME
+		}
+	}
+
 	// Upload to BunnyCDN
 	cdnURL, err := utils.UploadMultipartFileToBunnyCDN(file, header)
 	if err != nil {
@@ -276,8 +287,22 @@ func UploadPostMedia(c *gin.Context) {
 		return
 	}
 
-	// Generate thumbnail URL (for videos and images)
-	thumbnailURL := utils.GenerateThumbnailURL(cdnURL, 320, 240)
+	// Generate thumbnail URL — audio uses extracted artwork; everything else uses CDN thumbnail.
+	var thumbnailURL string
+	if post.MediaType == models.MediaTypeAudio && len(audioArtworkData) > 0 {
+		ext := ".jpg"
+		if len(audioArtworkMIME) > 0 && audioArtworkMIME[len(audioArtworkMIME)-3:] == "png" {
+			ext = ".png"
+		}
+		artFilename := fmt.Sprintf("audio_artwork_%d%s", post.ID, ext)
+		if artURL, artErr := utils.UploadToBunnyCDN(audioArtworkData, artFilename, audioArtworkMIME); artErr == nil {
+			thumbnailURL = artURL
+		} else {
+			log.Printf("⚠️ [UploadPostMedia] Audio artwork upload failed: %v", artErr)
+		}
+	} else {
+		thumbnailURL = utils.GenerateThumbnailURL(cdnURL, 320, 240)
+	}
 
 	// Update post with media URLs
 	post.VideoURL = cdnURL
@@ -842,14 +867,20 @@ func TrackPostView(c *gin.Context) {
 // Helper: Validate content type matches media type
 func isValidMediaType(contentType string, mediaType string) bool {
 	contentType = strings.ToLower(contentType)
-	
+
 	switch mediaType {
 	case models.MediaTypeVideo:
-		return strings.HasPrefix(contentType, "video/")
+		// Accept all common video MIME types including containers FFmpeg can transcode
+		return strings.HasPrefix(contentType, "video/") ||
+			contentType == "application/x-matroska" ||
+			contentType == "application/octet-stream" // some browsers send this for mkv/avi
 	case models.MediaTypeImage:
 		return strings.HasPrefix(contentType, "image/")
 	case models.MediaTypeGIF:
 		return strings.HasPrefix(contentType, "image/gif")
+	case models.MediaTypeAudio:
+		return strings.HasPrefix(contentType, "audio/") ||
+			contentType == "application/octet-stream" // fallback for some MP3 uploads
 	default:
 		return false
 	}
