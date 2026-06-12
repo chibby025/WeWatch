@@ -6832,21 +6832,8 @@ export default function VideoWatch() {
           className="pointer-events-none fixed bottom-24 left-0 right-0 flex flex-col items-center z-[200]"
           style={{ animation: 'fadeInOut 3.5s ease forwards' }}
         >
-          {/* Hand pointer icon — outline style, bounces upward */}
           <div style={{ animation: 'swipeUp 1.2s ease-in-out infinite' }}>
-            <svg width="46" height="56" viewBox="0 0 46 56" fill="none" stroke="white" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              {/* Index finger — tall, pointing up */}
-              <rect x="18" y="2" width="10" height="26" rx="5"/>
-              {/* Middle finger */}
-              <rect x="30" y="10" width="9" height="20" rx="4.5"/>
-              {/* Ring finger */}
-              <rect x="7" y="14" width="9" height="18" rx="4.5"/>
-              {/* Pinky */}
-              <rect x="1.5" y="19" width="7.5" height="15" rx="3.75"/>
-              {/* Thumb */}
-              {/* Palm connecting bottom */}
-              <path d="M1.5 31 Q1.5 48 23 52 Q44.5 48 44.5 28"/>
-            </svg>
+            <img src="/icons/finger.webp" alt="" style={{ width: 52, height: 52, filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.6))' }} />
           </div>
           <p className="mt-3 text-white text-sm font-semibold" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
             Swipe up to see the taskbar
@@ -6854,7 +6841,7 @@ export default function VideoWatch() {
           <style>{`
             @keyframes swipeUp {
               0%, 100% { transform: translateY(0); opacity: 0.85; }
-              50% { transform: translateY(-16px); opacity: 1; }
+              50% { transform: translateY(-18px); opacity: 1; }
             }
             @keyframes fadeInOut {
               0% { opacity: 0; }

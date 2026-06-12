@@ -613,13 +613,18 @@ func EndWatchSessionHandler(c *gin.Context) {
 		return
 	}
 
+	// Allow room host OR super_admin to end the session
 	if room.HostID != userID {
-		log.Printf("EndWatchSessionHandler: User %d is not the room host (host is %d)", userID, room.HostID)
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can end this session"})
-		return
+		var requestingUser models.User
+		if err := DB.First(&requestingUser, userID).Error; err != nil || !requestingUser.IsSuperAdmin() {
+			log.Printf("EndWatchSessionHandler: User %d is not the room host (host is %d) and not super_admin", userID, room.HostID)
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can end this session"})
+			return
+		}
+		log.Printf("🛡️ EndWatchSessionHandler: super_admin %d ending session %s for room %d", userID, sessionID, session.RoomID)
 	}
 
-	log.Printf("✅ EndWatchSessionHandler: User %d (room host) ending session %s", userID, sessionID)
+	log.Printf("✅ EndWatchSessionHandler: User %d ending session %s", userID, sessionID)
 
 	isInstantWatch := room.IsTemporary
 	now := time.Now()

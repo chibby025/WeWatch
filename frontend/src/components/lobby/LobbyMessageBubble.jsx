@@ -4,8 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import {
   PencilIcon, TrashIcon, PlayIcon, PauseIcon, CheckIcon,
   PhoneXMarkIcon, PhoneIcon,
-  DocumentDuplicateIcon, UserCircleIcon, BookmarkIcon,
+  DocumentDuplicateIcon, BookmarkIcon,
 } from '@heroicons/react/24/solid';
+import { ArrowUturnLeftIcon } from '@heroicons/react/24/outline';
 import { toggleRoomFavourite, joinRoom } from '../../services/api';
 import TwemojiText from '../TwemojiText';
 
@@ -153,7 +154,10 @@ const LobbyMessageBubble = ({
   const formatMessageTime = (ts) =>
     new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  // Context menu — floating bar above or below the bubble
+  const canEditMsg = isOwn && messageType === 'text' &&
+    (Date.now() - new Date(message.created_at).getTime()) < 5 * 60 * 1000;
+
+  // Context menu — floating pill above or below the bubble
   const ContextMenu = () => (
     <div
       className={`absolute z-50 flex items-center gap-0.5 bg-gray-900 dark:bg-gray-700 rounded-full px-1.5 py-1 shadow-2xl
@@ -174,8 +178,8 @@ const LobbyMessageBubble = ({
             : <DocumentDuplicateIcon className="w-4 h-4" />}
         </button>
       )}
-      {/* Edit — own text only */}
-      {isOwn && messageType === 'text' && (
+      {/* Edit — own text only, within 5 minutes */}
+      {canEditMsg && (
         <button
           onClick={() => { setIsEditing(true); setIsSelected(false); }}
           title="Edit"
@@ -194,14 +198,16 @@ const LobbyMessageBubble = ({
           <TrashIcon className="w-4 h-4" />
         </button>
       )}
-      {/* View User */}
-      <button
-        onClick={() => { onViewUser?.(); setIsSelected(false); }}
-        title="View profile"
-        className="p-1.5 text-white hover:text-purple-300 active:scale-90 transition-all"
-      >
-        <UserCircleIcon className="w-4 h-4" />
-      </button>
+      {/* Reply */}
+      {onReply && (
+        <button
+          onClick={() => { onReply(message); setIsSelected(false); }}
+          title="Reply"
+          className="p-1.5 text-white hover:text-purple-300 active:scale-90 transition-all"
+        >
+          <ArrowUturnLeftIcon className="w-4 h-4" />
+        </button>
+      )}
     </div>
   );
 

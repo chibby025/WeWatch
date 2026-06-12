@@ -95,6 +95,8 @@ const RoomPageNew = () => {
   const headerRef = useRef(null);
   const [mobileHeaderHeight, setMobileHeaderHeight] = useState(80);
   const [openMenuIndex, setOpenMenuIndex] = useState(null);
+  const [openMenuPos, setOpenMenuPos] = useState(null);
+  const [pillCopied, setPillCopied] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editText, setEditText] = useState('');
   const [showChatPicker, setShowChatPicker] = useState(false);
@@ -1357,6 +1359,14 @@ const RoomPageNew = () => {
     };
   }, [showChatPicker]);
 
+  // Close chat message icon pill on outside click
+  useEffect(() => {
+    if (openMenuIndex === null) return;
+    const close = () => { setOpenMenuIndex(null); setOpenMenuPos(null); setPillCopied(false); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [openMenuIndex]);
+
   const handleSendSticker = async (gif) => {
     setShowChatPicker(false);
     if (!gif?.url) return;
@@ -2542,6 +2552,7 @@ const RoomPageNew = () => {
           onJoinSession={handleJoinSession}
           onEndSession={handleEndSession}
           isHost={isHost}
+          isSuperAdmin={currentUser?.role === 'super_admin'}
           onDismissContent={handleDismissContent}
           refetchTrigger={roomTVRefetchTrigger}
         />
@@ -2583,7 +2594,7 @@ const RoomPageNew = () => {
             const isOwnMessage = msg.user_id === currentUser?.id;
             const isEditing = editingMessageId === msg.id;
             const messageAge = Date.now() - new Date(msg.created_at).getTime();
-            const canEdit = isOwnMessage && messageAge < 2 * 60 * 1000; // 2 minutes
+            const canEdit = isOwnMessage && !msg.deleted_by_host && messageAge < 5 * 60 * 1000; // 5 minutes
             const canDelete = isOwnMessage || isHost;
             const isPoll = msg.message_type === 'poll';
 
@@ -2699,14 +2710,32 @@ const RoomPageNew = () => {
                     </div>
                   )}
 
-                  {/* Main message bubble */}
+                  {/* Main message bubble — tap to reveal icon pill */}
                   <div
-                    className={`px-3 py-1.5 rounded-lg shadow-sm ${
+                    className={`relative px-3 py-1.5 rounded-lg shadow-sm cursor-pointer select-none ${
                       isOwnMessage
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-800 text-gray-100'
-                    }`}
+                    } ${openMenuIndex === index ? 'opacity-90 scale-[0.98]' : ''} transition-all duration-100`}
+                    onClick={(e) => {
+                      if (isEditing) return;
+                      e.stopPropagation();
+                      if (openMenuIndex === index) {
+                        setOpenMenuIndex(null);
+                        setOpenMenuPos(null);
+                        return;
+                      }
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const showBelow = rect.top < 80;
+                      setOpenMenuIndex(index);
+                      setOpenMenuPos({
+                        top: showBelow ? rect.bottom + 6 : rect.top - 50,
+                        left: rect.left + rect.width / 2,
+                        isOwn: isOwnMessage,
+                      });
+                    }}
                   >
+                    {/* Icon pill floats above/below this bubble — rendered at fixed level */}
                     {/* Username and Time — only for text messages */}
                     {!msg.audio_url && (
                       <div className="flex items-center justify-between gap-3 text-xs opacity-75 mb-1">
@@ -2815,35 +2844,6 @@ const RoomPageNew = () => {
                     </div>
                   )}
 
-                  {/* 3-dot menu — hover, own/host only */}
-                  {!isEditing && !msg.deleted_by_host && (canEdit || canDelete) && (
-                    <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => setOpenMenuIndex(openMenuIndex === index ? null : index)}
-                        className="p-1 hover:bg-gray-700 rounded-full bg-gray-800 bg-opacity-50"
-                      >
-                        <EllipsisVerticalIcon className="w-5 h-5 text-gray-300" />
-                      </button>
-
-                      {openMenuIndex === index && (
-                        <div className="absolute right-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg py-1 min-w-[120px] z-10">
-                          <button onClick={() => startReply(msg)} className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700">
-                            Reply
-                          </button>
-                          {canEdit && (
-                            <button onClick={() => startEditing(msg)} className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700">
-                              Edit
-                            </button>
-                          )}
-                          {canDelete && (
-                            <button onClick={() => { handleDeleteMessage(msg.id); setOpenMenuIndex(null); }} className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-gray-700">
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             );
@@ -3411,6 +3411,75 @@ const RoomPageNew = () => {
         onSubmit={handleDOBSubmit}
         isSubmitting={dobSubmitting}
       />
+
+      {/* ✅ Chat message icon pill — fixed so it escapes overflow-y-auto clipping */}
+      {openMenuIndex !== null && openMenuPos && (() => {
+        const msg = messages[openMenuIndex];
+        if (!msg) return null;
+        const isOwnMsg = msg.user_id === currentUser?.id;
+        const msgAge = Date.now() - new Date(msg.created_at).getTime();
+        const canEditMsg = isOwnMsg && !msg.deleted_by_host && msgAge < 5 * 60 * 1000;
+        const canDeleteMsg = isOwnMsg || isHost;
+        return (
+          <div
+            className="fixed z-[500] flex items-center gap-0.5 bg-gray-900 rounded-full px-1.5 py-1 shadow-2xl border border-gray-700/60 animate-[fadeScaleIn_0.15s_ease-out]"
+            style={{ top: openMenuPos.top, left: openMenuPos.left, transform: 'translateX(-50%)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Copy */}
+            {!msg.audio_url && (
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(msg.content || msg.message || '');
+                  setPillCopied(true);
+                  setTimeout(() => { setPillCopied(false); setOpenMenuIndex(null); setOpenMenuPos(null); }, 1200);
+                }}
+                title="Copy"
+                className="p-1.5 text-white hover:text-green-300 active:scale-90 transition-all"
+              >
+                {pillCopied
+                  ? <svg className="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 24 24"><path fillRule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clipRule="evenodd"/></svg>
+                  : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                }
+              </button>
+            )}
+            {/* Edit — own + within 5 min */}
+            {canEditMsg && (
+              <button
+                onClick={() => { startEditing(msg); setOpenMenuIndex(null); setOpenMenuPos(null); }}
+                title="Edit"
+                className="p-1.5 text-white hover:text-blue-300 active:scale-90 transition-all"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+              </button>
+            )}
+            {/* Delete */}
+            {canDeleteMsg && (
+              <button
+                onClick={() => { handleDeleteMessage(msg.id); setOpenMenuIndex(null); setOpenMenuPos(null); }}
+                title="Delete"
+                className="p-1.5 text-white hover:text-red-400 active:scale-90 transition-all"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+              </button>
+            )}
+            {/* Reply */}
+            <button
+              onClick={() => { startReply(msg); setOpenMenuIndex(null); setOpenMenuPos(null); }}
+              title="Reply"
+              className="p-1.5 text-white hover:text-purple-300 active:scale-90 transition-all"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
+              </svg>
+            </button>
+          </div>
+        );
+      })()}
     </div>
   );
 };

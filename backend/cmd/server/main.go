@@ -676,7 +676,8 @@ func main() {
 		statusGroup.POST("", handlers.CreateStatusHandler)              // POST /api/statuses
 		statusGroup.GET("/feed", handlers.GetStatusFeedHandler)         // GET /api/statuses/feed
 		statusGroup.DELETE("/:id", handlers.DeleteStatusHandler)        // DELETE /api/statuses/:id
-		statusGroup.POST("/:id/view", handlers.MarkStatusViewedHandler) // POST /api/statuses/:id/view
+		statusGroup.POST("/:id/view", handlers.MarkStatusViewedHandler)  // POST /api/statuses/:id/view
+		statusGroup.POST("/:id/like", handlers.LikeStatusHandler)       // POST /api/statuses/:id/like (toggle)
 		statusGroup.GET("/privacy", handlers.GetStatusPrivacyHandler)   // GET /api/statuses/privacy
 		statusGroup.PUT("/privacy", handlers.UpdateStatusPrivacyHandler) // PUT /api/statuses/privacy
 	}

@@ -43,20 +43,23 @@ type StatusFeedItem struct {
 	SessionTitle string    `json:"session_title,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	ViewCount    int       `json:"view_count"`
+	LikeCount    int       `json:"like_count"`
 	HasViewed    bool      `json:"has_viewed"`
+	HasLiked     bool      `json:"has_liked"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-func buildStatusFeedItem(s models.UserStatus, hasViewed bool) StatusFeedItem {
+func buildStatusFeedItem(s models.UserStatus, hasViewed bool, likeCount int, hasLiked bool) StatusFeedItem {
 	return StatusFeedItem{
 		ID: s.ID, StatusType: s.StatusType, TextContent: s.TextContent,
 		MediaURL: s.MediaURL, BgColor: s.BgColor, Visibility: s.Visibility,
 		RoomID: s.RoomID, RoomName: s.RoomName,
 		SessionID: s.SessionID, SessionTitle: s.SessionTitle,
 		ExpiresAt: s.ExpiresAt, ViewCount: s.ViewCount,
-		HasViewed: hasViewed, CreatedAt: s.CreatedAt,
+		LikeCount: likeCount, HasViewed: hasViewed, HasLiked: hasLiked,
+		CreatedAt: s.CreatedAt,
 	}
 }
 
@@ -244,7 +247,7 @@ func CreateStatusHandler(c *gin.Context) {
 		scheduleStatusCleanup(status.ID, status.MediaURL, status.ExpiresAt)
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"status": buildStatusFeedItem(status, false)})
+	c.JSON(http.StatusCreated, gin.H{"status": buildStatusFeedItem(status, false, 0, false)})
 }
 
 // GET /api/statuses/feed
@@ -299,6 +302,30 @@ func GetStatusFeedHandler(c *gin.Context) {
 		viewedSet[id] = true
 	}
 
+	// Batch-load like counts and whether current user liked each status
+	type likeRow struct {
+		StatusID uint
+		Cnt      int
+	}
+	var likeCounts []likeRow
+	DB.Model(&models.UserStatusLike{}).
+		Select("status_id, COUNT(*) as cnt").
+		Where("status_id IN ?", statusIDs).
+		Group("status_id").
+		Scan(&likeCounts)
+	likeCountMap := make(map[uint]int, len(likeCounts))
+	for _, r := range likeCounts {
+		likeCountMap[r.StatusID] = r.Cnt
+	}
+	var myLikedIDs []uint
+	DB.Model(&models.UserStatusLike{}).
+		Where("user_id = ? AND status_id IN ?", userID, statusIDs).
+		Pluck("status_id", &myLikedIDs)
+	myLikedSet := make(map[uint]bool, len(myLikedIDs))
+	for _, id := range myLikedIDs {
+		myLikedSet[id] = true
+	}
+
 	authorIDSet := make(map[uint]bool)
 	for _, s := range statuses {
 		authorIDSet[s.UserID] = true
@@ -326,7 +353,7 @@ func GetStatusFeedHandler(c *gin.Context) {
 			}
 			byUser[s.UserID] = entry
 		}
-		item := buildStatusFeedItem(s, viewedSet[s.ID])
+		item := buildStatusFeedItem(s, viewedSet[s.ID], likeCountMap[s.ID], myLikedSet[s.ID])
 		entry.Statuses = append(entry.Statuses, item)
 		if !viewedSet[s.ID] {
 			entry.HasUnseen = true
@@ -477,4 +504,43 @@ func UpdateStatusPrivacyHandler(c *gin.Context) {
 	}
 	tx.Commit()
 	c.JSON(http.StatusOK, gin.H{"excluded_ids": body.ExcludedIDs})
+}
+
+// POST /api/statuses/:id/like — toggle like, returns {has_liked, like_count}
+func LikeStatusHandler(c *gin.Context) {
+	userIDVal, _ := c.Get("user_id")
+	userID, ok := userIDVal.(uint)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	statusID := uint(id)
+
+	// Verify the status exists and is not expired
+	var s models.UserStatus
+	if err := DB.Where("id = ? AND expires_at > ?", statusID, time.Now()).First(&s).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "status not found"})
+		return
+	}
+
+	var existing models.UserStatusLike
+	err = DB.Where("status_id = ? AND user_id = ?", statusID, userID).First(&existing).Error
+	hasLiked := false
+	if err == nil {
+		// Already liked — remove it
+		DB.Delete(&existing)
+	} else {
+		// Not liked yet — add it
+		DB.Create(&models.UserStatusLike{StatusID: statusID, UserID: userID})
+		hasLiked = true
+	}
+
+	var likeCount int64
+	DB.Model(&models.UserStatusLike{}).Where("status_id = ?", statusID).Count(&likeCount)
+	c.JSON(http.StatusOK, gin.H{"has_liked": hasLiked, "like_count": int(likeCount)})
 }

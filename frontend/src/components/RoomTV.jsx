@@ -92,30 +92,30 @@ const animations = `
   }
 
   /* Animation classes with speed variants */
-  .animate-scroll-left { animation: scrollLeft 15s linear infinite; }
-  .animate-scroll-left-slow { animation: scrollLeftSlow 25s linear infinite; }
-  .animate-scroll-left-medium { animation: scrollLeft 15s linear infinite; }
-  .animate-scroll-left-fast { animation: scrollLeftFast 8s linear infinite; }
-  
-  .animate-fade-pulse { animation: fadePulse 2s ease-in-out infinite; }
-  .animate-fade-pulse-slow { animation: fadePulseSlow 4s ease-in-out infinite; }
-  .animate-fade-pulse-medium { animation: fadePulse 2s ease-in-out infinite; }
-  .animate-fade-pulse-fast { animation: fadePulseFast 1s ease-in-out infinite; }
-  
-  .animate-slide-up { animation: slideUp 0.8s ease-out forwards; }
-  .animate-slide-up-slow { animation: slideUpSlow 1.5s ease-out forwards; }
-  .animate-slide-up-medium { animation: slideUp 0.8s ease-out forwards; }
-  .animate-slide-up-fast { animation: slideUpFast 0.4s ease-out forwards; }
-  
-  .animate-bounce-in { animation: bounceIn 1s ease-out forwards; }
-  .animate-bounce-in-slow { animation: bounceInSlow 2s ease-out forwards; }
-  .animate-bounce-in-medium { animation: bounceIn 1s ease-out forwards; }
-  .animate-bounce-in-fast { animation: bounceInFast 0.5s ease-out forwards; }
-  
-  .animate-zoom-flash { animation: zoomFlash 1.5s ease-in-out infinite; }
-  .animate-zoom-flash-slow { animation: zoomFlashSlow 3s ease-in-out infinite; }
-  .animate-zoom-flash-medium { animation: zoomFlash 1.5s ease-in-out infinite; }
-  .animate-zoom-flash-fast { animation: zoomFlashFast 0.8s ease-in-out infinite; }
+  .animate-scroll-left { animation: scrollLeft 10s linear infinite; }
+  .animate-scroll-left-slow { animation: scrollLeftSlow 15s linear infinite; }
+  .animate-scroll-left-medium { animation: scrollLeft 10s linear infinite; }
+  .animate-scroll-left-fast { animation: scrollLeftFast 5s linear infinite; }
+
+  .animate-fade-pulse { animation: fadePulse 1.4s ease-in-out infinite; }
+  .animate-fade-pulse-slow { animation: fadePulseSlow 2s ease-in-out infinite; }
+  .animate-fade-pulse-medium { animation: fadePulse 1.4s ease-in-out infinite; }
+  .animate-fade-pulse-fast { animation: fadePulseFast 0.7s ease-in-out infinite; }
+
+  .animate-slide-up { animation: slideUp 0.5s ease-out forwards; }
+  .animate-slide-up-slow { animation: slideUpSlow 0.8s ease-out forwards; }
+  .animate-slide-up-medium { animation: slideUp 0.5s ease-out forwards; }
+  .animate-slide-up-fast { animation: slideUpFast 0.25s ease-out forwards; }
+
+  .animate-bounce-in { animation: bounceIn 0.7s ease-out forwards; }
+  .animate-bounce-in-slow { animation: bounceInSlow 1s ease-out forwards; }
+  .animate-bounce-in-medium { animation: bounceIn 0.7s ease-out forwards; }
+  .animate-bounce-in-fast { animation: bounceInFast 0.35s ease-out forwards; }
+
+  .animate-zoom-flash { animation: zoomFlash 1s ease-in-out infinite; }
+  .animate-zoom-flash-slow { animation: zoomFlashSlow 1.5s ease-in-out infinite; }
+  .animate-zoom-flash-medium { animation: zoomFlash 1s ease-in-out infinite; }
+  .animate-zoom-flash-fast { animation: zoomFlashFast 0.5s ease-in-out infinite; }
   
   .animate-typewriter { 
     overflow: hidden;
@@ -139,14 +139,15 @@ const animations = `
   }
 `;
 
-const RoomTV = ({ 
-  roomId, 
-  activeSession, 
+const RoomTV = ({
+  roomId,
+  activeSession,
   upcomingEvents = [],
   hostContent = null,
   onJoinSession,
   onEndSession,
   isHost = false,
+  isSuperAdmin = false,
   onCreateContent,
   onDismissContent,
   refetchTrigger = 0 // Add this to allow parent to trigger refetch
@@ -156,6 +157,7 @@ const RoomTV = ({
   const [content, setContent] = useState(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedVideoUrl, setExpandedVideoUrl] = useState(null);
+  const [expandedImageUrl, setExpandedImageUrl] = useState(null);
   const [roomPosts, setRoomPosts] = useState([]);
   const [currentPostIndex, setCurrentPostIndex] = useState(0);
   const [adContent, setAdContent] = useState(null);
@@ -429,305 +431,155 @@ const RoomTV = ({
 
   return (
     <>
-      {/* Inject CSS animations */}
       <style>{animations}</style>
-      
-      <div 
-        className={`transition-all duration-300 ease-in-out overflow-y-auto custom-sleek-scrollbar border-b ${
-          content?.type === 'session' 
-            ? 'bg-gradient-to-r from-blue-900/90 via-purple-900/90 to-blue-900/90 border-blue-700 shadow-lg shadow-blue-900/50' 
-            : 'bg-gray-800 border-gray-700'
-        } ${
-          isExpanded ? 'max-h-48 md:max-h-48 max-[768px]:max-h-[120px]' : 'max-h-0'
-        }`}
-      >
-      <div className="px-2 py-2 sm:px-4 sm:py-3">
-        {/* Session Content */}
-        {content.type === 'session' && (
-          <div className="space-y-2">
-            {/* Mobile: Compact single-line layout */}
-            <div className="md:hidden flex items-center justify-between gap-2">
-              {/* Left: Play icon + Title + Info */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <div className="w-5 h-5 bg-red-600 rounded-full flex items-center justify-center animate-pulse flex-shrink-0">
-                    <PlayIcon className="w-2.5 h-2.5 text-white" />
-                  </div>
-                  <div className="text-white font-semibold text-xs truncate">
-                    Watch Session Active
-                  </div>
-                </div>
-                <div className="text-[9px] text-gray-300 flex items-center gap-1 ml-6">
-                  <UsersIcon className="w-2.5 h-2.5" />
-                  {content.data.members?.length || 0} watching • {content.data.watch_type === '3d_cinema' ? '3D Cinema' : 'Video'}
-                </div>
-              </div>
-              
-              {/* Right: Buttons with icon above text */}
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                <button
-                  onClick={onJoinSession}
-                  className="px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex flex-col items-center gap-0.5"
-                >
-                  <PlayIcon className="w-4 h-4" />
-                  <span className="text-[9px] font-medium">Join</span>
-                </button>
-                {isHost && onEndSession && (
-                  <button
-                    onClick={() => {
-                      if (window.confirm('End this watch session for everyone? All participants will be returned to the room lobby.')) {
-                        onEndSession();
-                      }
-                    }}
-                    className="px-2 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors flex flex-col items-center gap-0.5"
-                    title="End Watch Session"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-9a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 004.5 21h9a2.25 2.25 0 002.25-2.25V15M18 12H6m12 0l-3-3m3 3l-3 3" />
-                    </svg>
-                    <span className="text-[9px] font-medium">End</span>
-                  </button>
-                )}
-              </div>
-            </div>
-            
-            {/* Desktop: Single-line layout with icon above text buttons */}
-            <div className="hidden md:flex items-center justify-between">
-              {/* Left: Play icon + Title + Info */}
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-red-600 rounded-full flex items-center justify-center animate-pulse">
-                  <PlayIcon className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <div className="text-white font-semibold">
-                    Watch Session Active
-                  </div>
-                  <div className="text-sm text-gray-300 flex items-center gap-2">
-                    <UsersIcon className="w-4 h-4" />
-                    {content.data.members?.length || 0} watching • {content.data.watch_type === '3d_cinema' ? '3D Cinema' : 'Video'}
-                  </div>
-                </div>
-              </div>
-              
-              {/* Right: Buttons with icon above text (vertically stacked) */}
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={onJoinSession}
-                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex flex-col items-center gap-1"
-                >
-                  <PlayIcon className="w-6 h-6" />
-                  <span className="text-xs font-medium whitespace-nowrap">Join Now{content.data.ticketing_enabled && ' 🪙'}</span>
-                </button>
-                {isHost && onEndSession && (
-                  <button
-                    onClick={() => {
-                      if (window.confirm('End this watch session for everyone? All participants will be returned to the room lobby.')) {
-                        onEndSession();
-                      }
-                    }}
-                    className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors flex flex-col items-center gap-1"
-                    title="End Watch Session"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-6 h-6">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-9a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 004.5 21h9a2.25 2.25 0 002.25-2.25V15M18 12H6m12 0l-3-3m3 3l-3 3" />
-                    </svg>
-                    <span className="text-xs font-medium whitespace-nowrap">End Session</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Host Content (Announcement/Media) - with animations & VIDEO SUPPORT */}
-        {content.type === 'host_content' && (
-          <div 
-            className="flex items-start justify-between rounded-lg overflow-hidden"
-            style={{
-              background: content.data.bg_gradient || 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
-              padding: window.innerWidth < 768 ? '8px' : '12px',
-            }}
-          >
-            <div className="flex-1">
-              {/* ✅ VIDEO PLAYER for uploaded content */}
-              {content.data.is_uploaded && content.data.content_url ? (
-                <div className="relative">
-                  <video
-                    src={content.data.content_url}
-                    autoPlay
-                    muted
-                    loop={true}
-                    className="w-full h-20 sm:h-32 object-cover rounded-lg"
-                  />
-                  
-                  {/* Expand button overlay */}
-                  <button
-                    onClick={() => setExpandedVideoUrl(content.data.content_url)}
-                    className="absolute top-1 right-1 sm:top-2 sm:right-2 bg-black/60 hover:bg-black/80 text-white px-2 py-0.5 sm:px-3 sm:py-1 rounded-lg text-xs sm:text-sm font-medium transition-colors flex items-center gap-1"
-                  >
-                    <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                    </svg>
-                    <span className="hidden sm:inline">Expand</span>
-                  </button>
-                </div>
-              ) : content.data.thumbnail_url ? (
-                <img 
-                  src={content.data.thumbnail_url} 
-                  alt={content.data.title}
-                  className="w-full h-20 sm:h-32 object-cover rounded-lg mb-2"
-                />
-              ) : null}
-              
-              <div 
-                className={`font-bold mb-1 text-sm sm:text-lg ${
-                  getAnimationClass(content.data.animation_type, content.data.animation_speed)
-                }`}
-                style={{ color: content.data.text_color || '#FFFFFF' }}
-              >
-                {content.data.title || 'Host Announcement'}
-              </div>
-              <div 
-                className="text-xs sm:text-sm line-clamp-2"
-                style={{ color: content.data.text_color ? `${content.data.text_color}CC` : '#FFFFFFCC' }}
-              >
-                {content.data.description}
-              </div>
-              {content.data.content_url && !content.data.is_uploaded && (
-                <a 
-                  href={content.data.content_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs sm:text-sm mt-1 sm:mt-2 inline-block font-medium hover:underline"
-                  style={{ color: content.data.text_color || '#FFFFFF' }}
-                >
-                  View Content →
-                </a>
-              )}
-            </div>
-            {isHost && (
+      {/* ── Single-line inline strip ── */}
+      <div
+        className={`flex items-center gap-2 px-2 sm:px-3 h-10 border-t overflow-hidden ${
+          content?.type === 'session' ? 'border-blue-800/60' : 'border-gray-700/60'
+        }`}
+        style={
+          content?.type === 'session'
+            ? { background: 'linear-gradient(to right, #0f172a, #3b1d6e, #0f172a)' }
+            : content?.type === 'host_content' && content.data?.bg_gradient
+              ? { background: content.data.bg_gradient }
+              : { background: 'rgba(31,41,55,0.85)' }
+        }
+      >
+      <div className="flex items-center gap-2 w-full min-w-0">
+        {/* Session */}
+        {content.type === 'session' && (
+          <>
+            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
+            <span className="text-white text-xs font-semibold whitespace-nowrap">Live</span>
+            <span className="text-gray-400 text-xs whitespace-nowrap hidden sm:inline">
+              {content.data.watch_type === '3d_cinema' ? '3D Cinema' :
+               content.data.watch_type === 'classroom' ? 'Lecture Hall' : 'Video Watch'}
+            </span>
+            <span className="text-gray-400 text-xs flex items-center gap-0.5 whitespace-nowrap">
+              <UsersIcon className="w-3 h-3 flex-shrink-0" />{content.data.members?.length || 0}
+            </span>
+            <div className="flex-1" />
+            <button onClick={onJoinSession}
+              className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-md font-medium flex-shrink-0 transition-colors">
+              Join{content.data.ticketing_enabled ? ' 🪙' : ''}
+            </button>
+            {(isHost || isSuperAdmin) && onEndSession && (
               <button
-                onClick={() => onDismissContent?.(content.data.id)}
-                className="ml-2 sm:ml-4 hover:opacity-80 transition-opacity flex-shrink-0"
-                style={{ color: content.data.text_color || '#FFFFFF' }}
-                title="Dismiss"
-              >
-                <XMarkIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+                onClick={() => window.confirm('End this watch session for everyone?') && onEndSession()}
+                className="px-2.5 py-1 bg-red-700 hover:bg-red-600 text-white text-xs rounded-md font-medium flex-shrink-0 transition-colors">
+                End
               </button>
             )}
-          </div>
+          </>
         )}
 
-        {/* Upcoming Event */}
+        {/* Host content */}
+        {content.type === 'host_content' && (
+          <>
+            {content.data.is_uploaded && content.data.content_url ? (
+              <button onClick={() => setExpandedVideoUrl(content.data.content_url)}
+                className="w-8 h-8 flex-shrink-0 relative rounded overflow-hidden">
+                <video src={content.data.content_url} className="w-full h-full object-cover" muted />
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                  <PlayIcon className="w-3 h-3 text-white" />
+                </div>
+              </button>
+            ) : content.data.thumbnail_url ? (
+              <button onClick={() => setExpandedImageUrl(content.data.thumbnail_url)}
+                className="w-8 h-8 flex-shrink-0 rounded overflow-hidden">
+                <img src={content.data.thumbnail_url} className="w-full h-full object-cover" alt="" />
+              </button>
+            ) : (
+              <span className="text-sm flex-shrink-0">📢</span>
+            )}
+            <span className={`text-white text-xs font-semibold truncate flex-shrink min-w-0 ${getAnimationClass(content.data.animation_type, content.data.animation_speed)}`}
+              style={{ color: content.data.text_color || undefined }}>
+              {content.data.title || 'Announcement'}
+            </span>
+            {content.data.description && (
+              <span className="text-gray-400 text-xs truncate flex-shrink min-w-0 hidden sm:block"
+                style={{ color: content.data.text_color ? `${content.data.text_color}99` : undefined }}>
+                · {content.data.description}
+              </span>
+            )}
+            <div className="flex-1" />
+            {content.data.content_url && !content.data.is_uploaded && (
+              <a href={content.data.content_url} target="_blank" rel="noopener noreferrer"
+                className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded-md flex-shrink-0 transition-colors">
+                View →
+              </a>
+            )}
+            {isHost && (
+              <button onClick={() => onDismissContent?.(content.data.id)}
+                className="p-1 mr-1 text-gray-400 hover:text-white flex-shrink-0 transition-colors">
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            )}
+          </>
+        )}
+
+        {/* Upcoming event */}
         {content.type === 'event' && (
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-              <div className="w-8 h-8 sm:w-12 sm:h-12 bg-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
-                <ClockIcon className="w-4 h-4 sm:w-6 sm:h-6 text-white" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-white font-semibold text-sm sm:text-base truncate">
-                  {content.data.title || 'Upcoming Event'}
-                </div>
-                <div className="text-xs sm:text-sm text-gray-300 truncate">
-                  {new Date(content.data.scheduled_for).toLocaleTimeString('en-US', { 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })} • {content.data.watch_type === '3d_cinema' ? '3D Cinema' : 'Video'}
-                </div>
-              </div>
-            </div>
-            <div className="text-right flex-shrink-0">
-              <div className="text-white font-mono text-sm sm:text-lg">
-                {getCountdown(content.data.scheduled_for)}
-              </div>
-              <div className="text-[10px] sm:text-xs text-gray-400">until start</div>
-            </div>
-          </div>
+          <>
+            <span className="text-sm flex-shrink-0">🔔</span>
+            <span className="text-white text-xs font-semibold truncate min-w-0 flex-shrink">
+              {content.data.title || 'Upcoming Event'}
+            </span>
+            <span className="text-gray-400 text-xs whitespace-nowrap flex-shrink-0">
+              · {getCountdown(content.data.scheduled_for)}
+            </span>
+          </>
         )}
 
-        {/* Room Posts Content - Jumbotron Style */}
+        {/* Room posts */}
         {content.type === 'room_posts' && content.data && (
-          <div 
-            className="cursor-pointer hover:opacity-90 transition-opacity rounded-lg overflow-hidden"
-            style={{
-              background: getRandomGradient(),
-              padding: window.innerWidth < 768 ? '8px 12px' : '10px 16px',
-            }}
-            onClick={() => {
-              // Navigate to Lobby page with post
-              navigate('/lobby', { 
-                state: { 
-                  openPost: content.data.id, 
-                  autoPlay: true 
-                } 
-              });
-            }}
-          >
-            <div 
-              className="font-semibold text-sm sm:text-base animate-fade-pulse truncate"
-              style={{ color: '#FFFFFF' }}
-            >
-              🎬 New Post Available: {content.data.title}
-            </div>
-          </div>
+          <button className="flex items-center gap-2 min-w-0 flex-1 text-left"
+            onClick={() => navigate('/lobby', { state: { openPost: content.data.id, autoPlay: true } })}>
+            <span className="text-sm flex-shrink-0">🎬</span>
+            <span className="text-white text-xs font-semibold truncate animate-fade-pulse">
+              New post: {content.data.title || content.data.description}
+            </span>
+          </button>
         )}
 
-        {/* Ad Content - BILLBOARD JUMBOTRON STYLE */}
+        {/* Ad */}
         {content.type === 'ad' && content.data && (
-          <a
-            href={content.data.click_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block relative rounded-lg overflow-hidden py-3 sm:py-4 cursor-pointer hover:opacity-90 transition-opacity"
-            style={{
-              background: getRandomGradient(),
-              minHeight: window.innerWidth < 768 ? '60px' : '70px',
-            }}
-            onClick={(e) => {
-              // Track click before opening URL
-              if (content.data.id) {
-                trackAdEvent(content.data.id, true);
-              }
-            }}
-          >
-            {/* Sponsored label - bottom right */}
-            <div className="absolute bottom-2 right-2 bg-black/30 backdrop-blur-sm px-2 py-1 rounded text-[10px] text-white/80 font-medium">
-              SPONSORED
-            </div>
-            
-            {/* Centered content */}
-            <div className="flex items-center justify-center text-center px-4 h-full">
-              {/* Title with pulse animation */}
-              <div className="text-white font-bold animate-fade-pulse max-w-full text-sm sm:text-base md:text-lg leading-tight">
-                {content.data.title}
-              </div>
-            </div>
-          </a>
+          <>
+            <span className="text-[9px] bg-gray-600 text-gray-300 px-1.5 py-0.5 rounded flex-shrink-0 font-medium">AD</span>
+            <a href={content.data.click_url} target="_blank" rel="noopener noreferrer"
+              className="text-white text-xs font-semibold truncate hover:underline animate-fade-pulse"
+              onClick={() => content.data.id && trackAdEvent(content.data.id, true)}>
+              {content.data.title}
+            </a>
+          </>
         )}
       </div>
     </div>
 
-    {/* ✅ FULL-SCREEN VIDEO MODAL */}
-    {expandedVideoUrl && (
-      <div 
-        className="fixed inset-0 bg-black/95 z-[100] flex items-center justify-center"
-        onClick={() => setExpandedVideoUrl(null)}
-      >
-        <button
-          onClick={() => setExpandedVideoUrl(null)}
-          className="absolute top-4 right-4 text-white hover:text-gray-300 transition-colors z-10"
-        >
+    {/* Fullscreen image lightbox */}
+    {expandedImageUrl && (
+      <div className="fixed inset-0 bg-black/95 z-[100] flex items-center justify-center"
+        onClick={() => setExpandedImageUrl(null)}>
+        <button onClick={() => setExpandedImageUrl(null)}
+          className="absolute top-4 right-4 text-white hover:text-gray-300 transition-colors z-10">
           <XMarkIcon className="w-8 h-8" />
         </button>
-        
-        <video
-          src={expandedVideoUrl}
-          controls
-          autoPlay
-          className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl"
-          onClick={(e) => e.stopPropagation()} // Prevent closing when clicking video
-        />
+        <img src={expandedImageUrl} alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl"
+          onClick={e => e.stopPropagation()} />
+      </div>
+    )}
+
+    {/* Fullscreen video modal */}
+    {expandedVideoUrl && (
+      <div className="fixed inset-0 bg-black/95 z-[100] flex items-center justify-center"
+        onClick={() => setExpandedVideoUrl(null)}>
+        <button onClick={() => setExpandedVideoUrl(null)}
+          className="absolute top-4 right-4 text-white hover:text-gray-300 transition-colors z-10">
+          <XMarkIcon className="w-8 h-8" />
+        </button>
+        <video src={expandedVideoUrl} controls autoPlay className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl"
+          onClick={e => e.stopPropagation()} />
       </div>
     )}
     </>

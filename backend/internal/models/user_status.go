@@ -27,3 +27,10 @@ type UserStatusView struct {
 	ViewerID uint      `gorm:"not null;uniqueIndex:idx_status_viewer" json:"viewer_id"`
 	ViewedAt time.Time `gorm:"autoCreateTime" json:"viewed_at"`
 }
+
+type UserStatusLike struct {
+	ID        uint      `gorm:"primaryKey"`
+	StatusID  uint      `gorm:"not null;uniqueIndex:idx_status_liker" json:"status_id"`
+	UserID    uint      `gorm:"not null;uniqueIndex:idx_status_liker" json:"user_id"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+}

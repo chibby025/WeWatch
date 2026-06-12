@@ -917,14 +917,15 @@ func UploadTrailerHandler(c *gin.Context) {
 		return
 	}
 
-	// 5. Validate file type (video only)
+	// 5. Validate file type (video or image poster)
 	allowedExtensions := map[string]bool{
 		".mp4": true, ".webm": true, ".mov": true, ".mkv": true,
+		".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
 	}
 	ext := strings.ToLower(filepath.Ext(formFile.Filename))
 	if !allowedExtensions[ext] {
 		log.Printf("❌ [UploadTrailer] Invalid file type: %s", ext)
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid file type '%s'. Allowed types: mp4, webm, mov, mkv", ext)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid file type '%s'. Allowed: mp4, webm, mov, mkv, jpg, png, webp", ext)})
 		return
 	}
 
@@ -952,36 +953,34 @@ func UploadTrailerHandler(c *gin.Context) {
 
 	log.Printf("✅ [UploadTrailer] File saved successfully to '%s'", filePath)
 
-	// 9. Get video duration
-	log.Printf("⏱️ [UploadTrailer] Extracting duration for '%s'", filePath)
-	durationStr, err := utils.GetVideoDuration(filePath)
-	if err != nil {
-		log.Printf("⚠️ [UploadTrailer] Could not extract duration: %v (defaulting to 60s)", err)
-		durationStr = "00:01:00" // Default to 60 seconds if extraction fails
+	// 9. Get video duration (skip for image posters)
+	imageExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true}
+	durationSeconds := 0
+	if !imageExts[ext] {
+		log.Printf("⏱️ [UploadTrailer] Extracting duration for '%s'", filePath)
+		durationStr, durErr := utils.GetVideoDuration(filePath)
+		if durErr != nil {
+			log.Printf("⚠️ [UploadTrailer] Could not extract duration: %v (defaulting to 60s)", durErr)
+			durationStr = "00:01:00"
+		}
+		parts := strings.Split(durationStr, ":")
+		if len(parts) == 3 {
+			hours, _ := strconv.Atoi(parts[0])
+			minutes, _ := strconv.Atoi(parts[1])
+			seconds, _ := strconv.Atoi(parts[2])
+			durationSeconds = hours*3600 + minutes*60 + seconds
+		} else {
+			durationSeconds = 60
+		}
+		// 10. Validate duration (max 60 seconds for video)
+		if durationSeconds > 60 {
+			log.Printf("❌ [UploadTrailer] Trailer too long: %ds (max 60s)", durationSeconds)
+			os.Remove(filePath)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Trailer must be 60 seconds or less"})
+			return
+		}
+		log.Printf("✅ [UploadTrailer] Duration: %ds", durationSeconds)
 	}
-
-	// Parse duration from HH:MM:SS format to seconds
-	var durationSeconds int
-	parts := strings.Split(durationStr, ":")
-	if len(parts) == 3 {
-		hours, _ := strconv.Atoi(parts[0])
-		minutes, _ := strconv.Atoi(parts[1])
-		seconds, _ := strconv.Atoi(parts[2])
-		durationSeconds = hours*3600 + minutes*60 + seconds
-	} else {
-		durationSeconds = 60 // Default if parsing fails
-	}
-
-	// 10. Validate duration (max 60 seconds)
-	if durationSeconds > 60 {
-		log.Printf("❌ [UploadTrailer] Trailer too long: %ds (max 60s)", durationSeconds)
-		// Delete the file
-		os.Remove(filePath)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Trailer must be 60 seconds or less"})
-		return
-	}
-
-	log.Printf("✅ [UploadTrailer] Duration: %ds", durationSeconds)
 
 	// 11. Upload to BunnyCDN (falls back to local if not configured)
 	fileBytes, err := os.ReadFile(filePath)

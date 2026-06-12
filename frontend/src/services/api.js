@@ -1973,6 +1973,16 @@ export const markStatusViewed = async (id) => {
   return response.data;
 };
 
+export const toggleStatusLike = async (id) => {
+  const response = await apiClient.post(`/api/statuses/${id}/like`);
+  return response.data;
+};
+
+export const sendLobbyChatMessage = async (recipientId, content) => {
+  const response = await apiClient.post('/api/lobby-chats/send', { recipient_id: recipientId, content });
+  return response.data;
+};
+
 export const getStatusPrivacy = async () => {
   const response = await apiClient.get('/api/statuses/privacy');
   return response.data;

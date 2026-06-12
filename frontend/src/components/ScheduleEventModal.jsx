@@ -290,9 +290,7 @@ const ScheduleEventModal = ({
         formData.append('trailerFile', trailerFile);
 
         const uploadResponse = await apiClient.post('/api/scheduled-events/upload-trailer', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
+          headers: { 'Content-Type': undefined },
         });
 
         trailerUploadedUrl = uploadResponse.data.file_path;

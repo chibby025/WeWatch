@@ -3163,45 +3163,30 @@ const LobbyPage = () => {
     setSelectedSessionForTicket(null);
   };
 
-  // ✅ Handle session card click with verification
+  // ✅ Handle session card click — navigates directly into the session for all types
   const handleSessionCardClick = async (session) => {
-    // For regular rooms, just navigate to room page
-    if (!session.is_temporary) {
-      navigate(`/rooms/${session.room_id}`);
-      return;
-    }
-
-    // For instant watch (temporary rooms), verify session still exists
     const { exists } = await verifySessionExists(session.session_id);
-    
+
     if (!exists) {
-      // Session has ended or been deleted
-      toast.error('This watch session has ended', {
-        duration: 3000,
-        icon: '⏹️',
-      });
-      
-      // Refresh sessions list to remove stale session
+      toast.error('This watch session has ended', { duration: 3000, icon: '⏹️' });
       await fetchSessionsData();
       return;
     }
 
-    // Session exists, navigate to it
-    if (session.watch_type === '3d_cinema') {
-      navigate(`/cinema-3d-demo/${session.room_id}?session_id=${session.session_id}`, {
-        state: {
-          sessionId: session.session_id,
-          currentUser,
-          showLoadingOverlay: true
-        }
+    const { room_id, session_id, watch_type, class_type } = session;
+
+    if (watch_type === '3d_cinema') {
+      navigate(`/cinema-3d-demo/${room_id}?session_id=${session_id}`, {
+        state: { sessionId: session_id, currentUser, showLoadingOverlay: true }
+      });
+    } else if (watch_type === 'classroom') {
+      const route = class_type === 'lecture_hall' ? 'lecture-hall' : 'classroom';
+      navigate(`/classroom/${route}/${room_id}?session_id=${session_id}`, {
+        state: { sessionId: session_id, currentUser, showLoadingOverlay: true, classType: class_type }
       });
     } else {
-      navigate(`/watch/${session.room_id}?session_id=${session.session_id}`, {
-        state: {
-          sessionId: session.session_id,
-          currentUser,
-          showLoadingOverlay: true
-        }
+      navigate(`/watch/${room_id}?session_id=${session_id}`, {
+        state: { sessionId: session_id, currentUser, showLoadingOverlay: true }
       });
     }
   };
