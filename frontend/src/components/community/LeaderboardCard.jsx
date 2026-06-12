@@ -38,36 +38,20 @@ const LeaderboardCard = ({ rooms = [] }) => {
 
   return (
     <div className="w-full h-full flex flex-col bg-gradient-to-br from-gray-900 via-slate-900 to-black overflow-hidden">
-      {/* Header */}
-      <div className="flex-shrink-0 px-4 pt-4 pb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">🏆</span>
-          <div>
-            <p className="text-white font-bold text-sm">Room Leaderboard</p>
-            <p className="text-white/45 text-[10px]">Top rooms by community rating</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Room list */}
-      <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1.5">
+      {/* Room list — flat rows, no container box */}
+      <div className="flex-1 overflow-y-auto px-3 pt-8 pb-3">
         {rooms.map((room, idx) => {
-          const rank = idx + 1;
+          const rank      = idx + 1;
           const rankColor = RANK_COLORS[idx] || 'rgba(255,255,255,0.4)';
           const glow      = RANK_GLOW[idx]   || 'none';
           return (
             <div
               key={room.room_id}
-              className="flex items-center gap-2.5 rounded-xl px-3 py-2.5"
-              style={{
-                background: idx < 3 ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)',
-                boxShadow:  idx < 3 ? glow : 'none',
-                border: idx < 3 ? `1px solid ${rankColor}22` : '1px solid rgba(255,255,255,0.06)',
-              }}
+              className="flex items-center gap-2 pl-0 pr-2 py-3 border-b border-white/5 last:border-0"
             >
               {/* Rank badge */}
               <div
-                className="flex-shrink-0 font-black text-sm w-6 text-center"
+                className="flex-shrink-0 font-black text-sm w-5 text-center"
                 style={{ color: rankColor, textShadow: idx < 3 ? glow : 'none' }}
               >
                 {rank <= 3 ? ['🥇','🥈','🥉'][rank - 1] : `#${rank}`}
@@ -90,8 +74,6 @@ const LeaderboardCard = ({ rooms = [] }) => {
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <Stars rating={room.avg_rating} />
                   <span className="text-white/45 text-[10px]">{room.avg_rating?.toFixed(1)}</span>
-                  <span className="text-white/25 text-[10px]">·</span>
-                  <span className="text-white/45 text-[10px]">{room.total_ratings} rating{room.total_ratings !== 1 ? 's' : ''}</span>
                 </div>
               </div>
 

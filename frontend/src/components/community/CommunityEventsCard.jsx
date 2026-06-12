@@ -26,8 +26,8 @@ const marqueeStyle = `
  *   [top pill        ] counter + tagline overlay
  */
 
-const BTN_AREA_H   = 56; // "Make a Community Request" bar at very bottom
-const NAV_H        = 96; // expanded info panel floating below card
+const BTN_AREA_H   = 44; // "Make a Community Request" bar at very bottom
+const NAV_H        = 80; // expanded info panel floating below card
 const CARD_NAV_GAP =  8; // gap between card bottom and nav bar
 const CARD_OFFSET_Y = 28; // shift card centre down so tagline has room above
 
@@ -111,6 +111,8 @@ const CommunityEventsCard = ({
   const [currentIndex,     setCurrentIndex]     = useState(0);
   const [showRequestSheet, setShowRequestSheet] = useState(false);
   const [localRequests,    setLocalRequests]    = useState(requests);
+  // Fullscreen overlay
+  const [fullscreenCard,   setFullscreenCard]   = useState(null); // { type, data }
 
   // Tagline rotation
   const [taglineIdx,     setTaglineIdx]     = useState(0);
@@ -197,18 +199,34 @@ const CommunityEventsCard = ({
   // Carousel area = full container minus the pinned button at bottom.
   // Cards are vertically centred in carousel area.
   // Nav bar + context line float at calculated position below card bottom edge.
-  const carouselH = Math.max(cH - BTN_AREA_H, 300);
+  const isFixedMode = fixedBottom !== undefined;
 
-  const cardW = Math.round(cW * 0.62);
-  // Cap height so it never spills into the nav/context zone
-  const maxCardH = Math.max(carouselH - NAV_H - CARD_NAV_GAP - 16, 200);
-  const cardH = Math.round(Math.min(maxCardH, cardW * 1.68));
-  const step  = Math.round(cardW * 0.68);
+  // Fixed mode: carousel uses position:absolute (keeps snap container scrollable),
+  // nav bar and button stay fixed. Nav bar is flush with carousel bottom — no CARD_NAV_GAP
+  // between them so the background doesn't bleed through.
+  // Normal mode: carousel area = container minus the in-flow button row.
+  const carouselH = Math.max(
+    isFixedMode
+      ? window.innerHeight - fixedBottom - BTN_AREA_H - NAV_H
+      : cH - BTN_AREA_H,
+    300,
+  );
 
-  // Card centre sits CARD_OFFSET_Y below the geometric midpoint so the tagline
-  // text above has more visible space before the card starts.
-  const cardBottomPx = Math.round(carouselH / 2 + cardH / 2 + CARD_OFFSET_Y);
-  const navTopPx     = cardBottomPx + CARD_NAV_GAP;
+  const cardW = Math.round(cW * 0.65);
+
+  // In fixed mode the nav is NOT inside the carousel, so cards can fill the full area.
+  // In normal mode the nav sits inside the carousel at the bottom.
+  const navTopPx = isFixedMode
+    ? carouselH - 4
+    : carouselH - NAV_H - 4;
+
+  // Cards fill the space from near the top down to just above the nav
+  const maxCardH      = Math.max(navTopPx - CARD_NAV_GAP - 28, 200);
+  const cardH         = Math.round(Math.min(maxCardH, cardW * 1.68));
+  const step          = Math.round(cardW * 0.68);
+
+  // Shift card centre down so its bottom edge sits just above the nav
+  const dynCardOffset = Math.round(navTopPx - CARD_NAV_GAP - carouselH / 2 - cardH / 2);
 
   const handleReqUpdate = (u) => setLocalRequests(p => p.map(r => r.id === u.id ? u : r));
   const handleNewReq    = (r) => { setLocalRequests(p => [r, ...p]); onNewRequest?.(r); };
@@ -293,7 +311,13 @@ const CommunityEventsCard = ({
         {showLeaderboardPanel && (
           <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-sm flex flex-col">
             <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
-              <span className="text-white font-bold text-sm">🏆 Room Leaderboard</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🏆</span>
+                <div>
+                  <p className="text-white font-bold text-sm">Room Leaderboard</p>
+                  <p className="text-white/45 text-[10px]">Top rated rooms by community</p>
+                </div>
+              </div>
               <button
                 onClick={() => setShowLeaderboardPanel(false)}
                 className="text-white/60 hover:text-white text-lg font-bold leading-none"
@@ -312,27 +336,32 @@ const CommunityEventsCard = ({
 
   // ── Carousel ───────────────────────────────────────────────────────────────
   return (
-    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-gradient-to-br from-gray-900 via-slate-900 to-black">
+    <div ref={containerRef} className="relative h-full w-full bg-gradient-to-br from-gray-900 via-slate-900 to-black">
 
-      {/* ── Top pill + tagline (always visible) ── */}
-      <div className="absolute top-0 left-0 right-0 z-30 flex flex-col items-center pt-3 gap-1.5 pointer-events-none">
-        <div className="bg-black/50 backdrop-blur-sm border border-white/20 rounded-full px-4 py-1">
-          <span className="text-white/80 text-xs font-semibold tracking-wide">
+      {/* ── Top pill + tagline ── */}
+      <div className="absolute top-0 left-0 right-0 z-30 flex flex-col items-center pt-1 gap-1 pointer-events-none">
+        <div className="bg-black/50 backdrop-blur-sm border border-white/20 rounded-full px-3 py-0.5">
+          <span className="text-white/80 text-[11px] font-semibold tracking-wide">
             📅 Community Events · {currentIndex + 1}/{cards.length}
           </span>
         </div>
         <p
-          className="text-purple-300/80 text-[11px] font-medium text-center max-w-[260px] leading-snug transition-opacity duration-500 px-4"
+          className="text-purple-200 text-xs font-medium text-center max-w-[280px] leading-snug transition-opacity duration-500 px-4"
           style={{ opacity: taglineVisible ? 1 : 0 }}
         >
           {TAGLINES[taglineIdx]}
         </p>
       </div>
 
-      {/* ── Card fan — lives in carousel area (top 0 to carouselH) ── */}
+      {/* ── Card fan — lives in carousel area ── */}
       <div
         className="absolute left-0 right-0 overflow-hidden"
-        style={{ top: 0, height: carouselH }}
+        style={{
+          top:    0,
+          height: isFixedMode
+            ? `calc(100dvh - ${fixedBottom + BTN_AREA_H + NAV_H}px)`
+            : carouselH,
+        }}
       >
         {cards.map((card, i) => {
           const offset    = i - currentIndex;
@@ -348,16 +377,22 @@ const CommunityEventsCard = ({
             ? 'opacity 0.1s ease'
             : 'transform 0.35s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.35s ease';
 
+          const openFullscreen = (e) => {
+            if (e.target.closest('button, a, input, textarea, select')) return;
+            setFullscreenCard({ type: card.type, data: card.data });
+          };
+
           return (
             <div
               key={i}
+              onClick={openFullscreen}
               style={{
                 position:  'absolute',
                 width:     cardW,
                 height:    cardH,
                 left:      '50%',
                 top:       '50%',
-                transform: `translate(calc(-50% + ${translateX}px), calc(-50% + ${CARD_OFFSET_Y}px)) scale(${scale})`,
+                transform: `translate(calc(-50% + ${translateX}px), calc(-50% + ${dynCardOffset}px)) scale(${scale})`,
                 zIndex, opacity,
                 borderRadius: 16,
                 overflow:     'hidden',
@@ -365,13 +400,13 @@ const CommunityEventsCard = ({
                 boxShadow: isCenter
                   ? '0 24px 60px rgba(0,0,0,0.85), 0 0 0 1.5px rgba(255,255,255,0.35)'
                   : '0 8px 24px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.15)',
-                cursor:    isCenter ? 'default' : 'pointer',
+                cursor:    'pointer',
                 willChange: 'transform, opacity',
               }}
             >
               {card.type === 'event' ? (
                 <>
-                  <ScheduledEventPreviewCard event={card.data} onRSVP={onRSVP} apiBaseUrl={apiBaseUrl} />
+                  <ScheduledEventPreviewCard event={card.data} onRSVP={onRSVP} apiBaseUrl={apiBaseUrl} currentUser={currentUser} />
                   <div style={{
                     position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
                     zIndex: 46, display: 'flex', alignItems: 'center', gap: 4,
@@ -419,12 +454,9 @@ const CommunityEventsCard = ({
                   </div>
                 </>
               )}
+              {/* Non-center: full transparent overlay so clicks always open fullscreen (no interactive buttons visible) */}
               {!isCenter && (
-                <div
-                  className="absolute inset-0"
-                  style={{ zIndex: 50, cursor: 'pointer' }}
-                  onClick={() => goTo(i)}
-                />
+                <div className="absolute inset-0" style={{ zIndex: 50 }} />
               )}
             </div>
           );
@@ -460,8 +492,18 @@ const CommunityEventsCard = ({
       {/* Outer row: arrows span full height, info in the middle */}
       <style>{marqueeStyle}</style>
       <div
-        className="absolute left-0 right-0 flex items-center gap-1 px-2"
-        style={{
+        className="left-0 right-0 flex items-center gap-1 px-2"
+        style={isFixedMode ? {
+          position:       'fixed',
+          bottom:         fixedBottom + BTN_AREA_H,
+          left:           0,
+          right:          0,
+          height:         NAV_H,
+          zIndex:         28,
+          background:     'linear-gradient(to bottom, rgba(0,0,0,0.60), rgba(0,0,0,0.88))',
+          backdropFilter: 'blur(12px)',
+        } : {
+          position:       'absolute',
           top:            navTopPx,
           height:         NAV_H,
           zIndex:         28,
@@ -617,6 +659,52 @@ const CommunityEventsCard = ({
         onClose={() => setShowRequestSheet(false)}
         onCreated={handleNewReq}
       />
+
+      {/* ── Fullscreen card overlay ── */}
+      {fullscreenCard && (
+        <div className="fixed inset-0 z-[1000] bg-black flex flex-col" onClick={() => setFullscreenCard(null)}>
+          {/* Close strip */}
+          <div className="flex-shrink-0 flex items-center justify-between px-4 pt-4 pb-2 pointer-events-none">
+            {fullscreenCard.type === 'leaderboard' ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🏆</span>
+                <div>
+                  <p className="text-white font-bold text-sm">Room Leaderboard</p>
+                  <p className="text-white/45 text-[10px]">Top rooms by community rating</p>
+                </div>
+              </div>
+            ) : (
+              <span className="text-white/70 text-xs font-semibold tracking-wide">
+                {fullscreenCard.type === 'event' ? '📅 Scheduled Event' : '📣 Community Request'}
+              </span>
+            )}
+            <button
+              className="pointer-events-auto w-8 h-8 flex items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 active:scale-90 transition-all"
+              onClick={e => { e.stopPropagation(); setFullscreenCard(null); }}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          {/* Full-height card content */}
+          <div className="flex-1 min-h-0 overflow-hidden" onClick={e => e.stopPropagation()}>
+            {fullscreenCard.type === 'event' && (
+              <ScheduledEventPreviewCard event={fullscreenCard.data} onRSVP={onRSVP} apiBaseUrl={apiBaseUrl} currentUser={currentUser} />
+            )}
+            {fullscreenCard.type === 'leaderboard' && (
+              <LeaderboardCard rooms={fullscreenCard.data} />
+            )}
+            {fullscreenCard.type === 'request' && (
+              <CommunityRequestCard
+                request={localRequests.find(r => r.id === fullscreenCard.data.id) || fullscreenCard.data}
+                currentUser={currentUser}
+                onRequestUpdate={handleReqUpdate}
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

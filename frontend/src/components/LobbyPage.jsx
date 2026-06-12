@@ -65,6 +65,8 @@ const resolvePreviewUrl = (url) => {
   return `${API_BASE_URL}${url}`;
 };
 
+const isImageUrl = (url) => /\.(png|jpe?g|gif|webp|avif)(\?|$)/i.test(url || '');
+
 // CSS for custom pulsing animations
 const pulseAnimationStyles = `
   @keyframes pulseRed {
@@ -4423,36 +4425,65 @@ const LobbyPage = () => {
           )}
 
           {/* ── Trailers ── */}
-          {trailersPage.data.map((trailer) => (
-            <div key={`t-${trailer.ID}`} className="relative h-full w-full snap-start snap-always overflow-hidden">
-              <video
-                src={`${import.meta.env.VITE_API_BASE_URL}/${trailer.trailer_url}`}
-                autoPlay loop muted={videoMuted} playsInline
-                className="absolute inset-0 w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/90 pointer-events-none" />
-              <div className="absolute top-16 left-6 z-10">
-                <div className="bg-red-600/30 backdrop-blur-sm border-4 border-red-500/50 text-red-100 px-5 py-2 -rotate-12 shadow-2xl mb-3 inline-block">
-                  <span className="text-xl font-black tracking-wider" style={{ fontFamily: 'Impact, Arial Black, sans-serif' }}>COMING SOON</span>
+          {trailersPage.data.map((trailer) => {
+            const trailerHostId = trailer.host_user_id || trailer.HostUserID;
+            const isTrailerHost = currentUser && (currentUser.id === trailerHostId || currentUser.ID === trailerHostId);
+            return (
+              <div key={`t-${trailer.ID}`} className="relative h-full w-full snap-start snap-always overflow-hidden">
+                {isImageUrl(trailer.trailer_url) ? (
+                  <img
+                    src={resolvePreviewUrl(trailer.trailer_url)}
+                    alt=""
+                    className="absolute inset-0 w-full h-full object-cover"
+                  />
+                ) : (
+                  <video
+                    src={resolvePreviewUrl(trailer.trailer_url)}
+                    autoPlay loop muted={videoMuted} playsInline
+                    className="absolute inset-0 w-full h-full object-cover"
+                  />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/90 pointer-events-none" />
+
+                {/* COMING SOON badge — top-left */}
+                <img
+                  src="/icons/coming soon.png"
+                  alt="Coming Soon"
+                  className="absolute top-4 left-4 z-10 h-8 w-auto drop-shadow-lg"
+                />
+
+                {/* Bottom info */}
+                <div className="absolute bottom-0 left-0 right-0 p-5 text-white">
+                  <h4 className="text-2xl font-bold mb-0.5 drop-shadow-lg leading-tight">
+                    {trailer.trailer_title || trailer.title}
+                  </h4>
+                  <p className="text-sm font-semibold mb-1 drop-shadow-md" style={{ color: '#a78bfa' }}>
+                    {trailer.Room?.name || 'Event Room'}
+                  </p>
+                  {trailer.description && (
+                    <p className="text-xs text-gray-300 mb-3 drop-shadow-md line-clamp-2">{trailer.description}</p>
+                  )}
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-gray-300">
+                      <span className="text-gray-400">Starts</span>{' '}
+                      <span className="font-semibold text-white">{new Date(trailer.start_time).toLocaleString()}</span>
+                    </p>
+                    {!isTrailerHost && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSelectedEventForCalendar(trailer); setIsCalendarModalOpen(true); }}
+                        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded-lg font-semibold transition-colors shadow-lg"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        Add to Calendar
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <h3 className="text-2xl font-bold text-white drop-shadow-lg">{trailer.Room?.name || 'Event Room'}</h3>
               </div>
-              <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
-                <h4 className="text-2xl font-bold mb-1 drop-shadow-lg">{trailer.trailer_title || trailer.title}</h4>
-                <p className="text-sm text-gray-200 mb-3 drop-shadow-md line-clamp-2">{trailer.description}</p>
-                <div className="flex items-center justify-between">
-                  <p className="text-sm"><span className="text-gray-300">Starts:</span> <span className="font-semibold">{new Date(trailer.start_time).toLocaleString()}</span></p>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setSelectedEventForCalendar(trailer); setIsCalendarModalOpen(true); }}
-                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg font-medium transition-colors shadow-lg"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                    Add to Calendar
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* ── Live session cards ── */}
           {(() => {
@@ -4640,7 +4671,7 @@ const LobbyPage = () => {
             if (!hasCommunityContent) return sessionCards;
 
             const communitySlot = (key) => (
-              <div key={key} data-community-card className="relative h-full w-full flex-shrink-0 snap-start snap-always overflow-hidden bg-black">
+              <div key={key} data-community-card className="relative h-full w-full flex-shrink-0 snap-start snap-always bg-black">
                 <CommunityEventsCard
                   scheduledEvents={communityEventsData.scheduledEvents}
                   requests={communityEventsData.requests}
@@ -4694,15 +4725,20 @@ const LobbyPage = () => {
                     className="relative w-full max-w-4xl mx-auto rounded-2xl overflow-hidden shadow-2xl hover:shadow-3xl transition-all duration-300 cursor-pointer"
                     style={{ minHeight: '400px' }}
                   >
-                    {/* Trailer Video */}
-                    <video 
-                      src={`${import.meta.env.VITE_API_BASE_URL}/${trailer.trailer_url}`}
-                      autoPlay 
-                      loop 
-                      muted={videoMuted}
-                      playsInline
-                      className="w-full h-full object-cover"
-                    />
+                    {/* Trailer media */}
+                    {isImageUrl(trailer.trailer_url) ? (
+                      <img
+                        src={resolvePreviewUrl(trailer.trailer_url)}
+                        alt=""
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <video
+                        src={resolvePreviewUrl(trailer.trailer_url)}
+                        autoPlay loop muted={videoMuted} playsInline
+                        className="w-full h-full object-cover"
+                      />
+                    )}
                     
                     {/* Mute/Unmute Button - Top Left Overlay */}
                     <button
@@ -6364,15 +6400,20 @@ const LobbyPage = () => {
                 scrollSnapStop: 'always'
               }}
             >
-              {/* Trailer Video */}
-              <video 
-                src={`${import.meta.env.VITE_API_BASE_URL}/${trailer.trailer_url}`}
-                autoPlay 
-                loop 
-                muted 
-                playsInline
-                className="w-full h-full object-cover"
-              />
+              {/* Trailer media */}
+              {isImageUrl(trailer.trailer_url) ? (
+                <img
+                  src={resolvePreviewUrl(trailer.trailer_url)}
+                  alt=""
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <video
+                  src={resolvePreviewUrl(trailer.trailer_url)}
+                  autoPlay loop muted playsInline
+                  className="w-full h-full object-cover"
+                />
+              )}
               
               {/* Gradient overlays */}
               <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/90 pointer-events-none"></div>
