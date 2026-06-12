@@ -2953,7 +2953,17 @@ const LobbyPage = () => {
                   setChatMessages(prev => {
                     const otherUserId = dmSenderId === currentUser?.id ? dmRecipientId : dmSenderId;
                     const existing = prev[otherUserId] || [];
+                    // Already confirmed (API response arrived first)
                     if (existing.some(m => m.id === chatData.id)) return prev;
+                    // WS arrived before API response — replace the pending optimistic placeholder
+                    const pendingIdx = existing.findIndex(m =>
+                      m._pending && m.sender_id === chatData.sender_id && m.message === chatData.message
+                    );
+                    if (pendingIdx !== -1) {
+                      const updated = [...existing];
+                      updated[pendingIdx] = chatData;
+                      return { ...prev, [otherUserId]: updated };
+                    }
                     return { ...prev, [otherUserId]: [...existing, chatData] };
                   });
                   // Badge increment for closed chats
@@ -5945,7 +5955,6 @@ const LobbyPage = () => {
                       style={{
                         scrollbarWidth: 'thin',
                         scrollbarColor: '#10b981 #111827',
-                        paddingBottom: '110px',
                       }}
                     >
                       {chatMessages[selectedChatUser.id]?.length === 0 ? (
@@ -5976,7 +5985,7 @@ const LobbyPage = () => {
                     {/* Message Input - Enhanced with Voice, Attachments, Stickers, Polls */}
                     {isRecording ? (
                       /* Voice Recording Mode */
-                      <div className="absolute bottom-0 left-0 right-0">
+                      <div className="flex-shrink-0">
                         <div className="m-4 p-4 bg-red-50 dark:bg-red-900/30 border-2 border-red-500 rounded-2xl shadow-lg flex items-center gap-3">
                           <div className="flex-1 flex items-center gap-3">
                             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
@@ -6008,7 +6017,7 @@ const LobbyPage = () => {
                       </div>
                     ) : (
                       /* Redesigned Message Input - Modern Chat UI */
-                      <form onSubmit={handleSendChatMessage} className="absolute bottom-0 left-0 right-0">
+                      <form onSubmit={handleSendChatMessage} className="flex-shrink-0">
                         <div className="mb-2 mx-3 relative bg-white dark:bg-gray-900 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-2">
                           {/* Reply strip */}
                           {replyingTo && (
