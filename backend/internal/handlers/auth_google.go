@@ -210,17 +210,16 @@ func GoogleCallbackHandler(c *gin.Context) {
 		return
 	}
 	
-	// Set HTTP-only cookie (same as traditional login)
-	cookie := &http.Cookie{
+	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "wewatch_token",
 		Value:    jwtToken,
 		Path:     "/",
-		MaxAge:   7 * 24 * 60 * 60, // 7 days
+		MaxAge:   3600, // 1h — matches access JWT TTL
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteNoneMode,
-	}
-	http.SetCookie(c.Writer, cookie)
+	})
+	issueRefreshToken(c, user.ID)
 	log.Printf("✅ [GoogleCallback] JWT cookie set for user ID: %d", user.ID)
 	
 	// Redirect to frontend success page, passing token in URL hash so it can be stored in localStorage

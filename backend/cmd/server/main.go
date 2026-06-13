@@ -414,6 +414,7 @@ func main() {
 	r.POST("/api/auth/register", authLimiter, handlers.RegisterHandler)
 	r.POST("/api/auth/login", authLimiter, handlers.LoginHandler)
 	r.POST("/api/auth/logout", handlers.LogoutHandler)
+	r.POST("/api/auth/refresh", handlers.RefreshTokenHandler)
 	
 	// ✅ 2FA Management Routes (protected - require authentication)
 	twoFactorGroup := r.Group("/api/auth")
@@ -545,6 +546,7 @@ func main() {
 		// roomGroup.POST("/:id/watch-session", handlers.CreateWatchSessionForRoomHandler)
 		
 		roomGroup.GET("/:id/active-session", handlers.GetActiveSessionHandler)
+		roomGroup.POST("/:id/session/heartbeat", handlers.SessionHeartbeatHandler)
 		roomGroup.PUT("/:id/status", handlers.UpdateRoomStatusHandler)
 		roomGroup.DELETE("/:id/temporary-media/:item_id", handlers.DeleteSingleTemporaryMediaItemHandler)
 		roomGroup.GET("/with-active-sessions", handlers.GetRoomsWithActiveSessionsHandler) // GET /api/rooms/with-active-sessions
@@ -722,6 +724,7 @@ func main() {
 		protected.GET("/scheduled-events/with-trailers", handlers.GetScheduledEventsWithTrailersHandler) // ✅ Get events with trailers (paginated)
 		protected.POST("/scheduled-events/upload-trailer", handlers.UploadTrailerHandler)               // ✅ Upload trailer video for event
 		protected.POST("/stickers/upload", handlers.UploadCustomStickerHandler)                         // POST /api/stickers/upload (Upload custom sticker image)
+		protected.POST("/upload/custom-background", handlers.UploadCustomBackgroundHandler)             // POST /api/upload/custom-background (Custom watch type background image)
 		protected.GET("/user/calendar", handlers.GetUserCalendarHandler)                                // GET /api/user/calendar?month=2026-05
 		protected.GET("/user/upcoming-events", handlers.GetUserUpcomingEventsHandler)                  // GET /api/user/upcoming-events (next 30 days)
 		

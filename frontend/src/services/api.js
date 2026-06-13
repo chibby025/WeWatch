@@ -171,21 +171,42 @@ apiClient.interceptors.request.use((config) => {
 });
 
 // --- Response Interceptor ---
-// Runs after each response is received success/error
+// On 401, silently attempt a token refresh then retry the original request once.
+// If refresh also fails, clear local token and redirect to login.
 apiClient.interceptors.response.use(
-    (response) => {
-        return response;
-    },
-    (error) => {
+    (response) => response,
+    async (error) => {
         if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError') {
             return Promise.reject(error);
         }
-        if (error.response?.status === 401) {
-            localStorage.removeItem('wewatch_token');
-        } else if (error.response?.status !== 404 && error.response?.status !== 400) {
+
+        const originalRequest = error.config;
+        const isRefreshEndpoint = originalRequest?.url?.includes('/api/auth/refresh');
+
+        if (error.response?.status === 401 && !originalRequest?._retry && !isRefreshEndpoint) {
+            originalRequest._retry = true;
+            try {
+                // Use plain axios (not apiClient) so this call doesn't re-trigger the interceptor
+                const { data } = await axios.post(
+                    `${API_BASE_URL}/api/auth/refresh`,
+                    {},
+                    { withCredentials: true }
+                );
+                localStorage.setItem('wewatch_token', data.token);
+                originalRequest.headers = originalRequest.headers || {};
+                originalRequest.headers.Authorization = `Bearer ${data.token}`;
+                return apiClient(originalRequest);
+            } catch (_refreshError) {
+                localStorage.removeItem('wewatch_token');
+                window.location.href = '/login';
+                return Promise.reject(_refreshError);
+            }
+        }
+
+        if (error.response?.status !== 401 && error.response?.status !== 404 && error.response?.status !== 400) {
             console.error('API Error:', error.response?.data?.error || error.message);
         }
-        return Promise.reject(error)
+        return Promise.reject(error);
     }
 );
 
@@ -916,6 +937,9 @@ export const createWatchSessionForRoom = (roomId, watchTypeOrConfig = 'video') =
 export const getActiveSession = (roomId) => {
   return apiClient.get(`/api/rooms/${roomId}/active-session`);
 };
+
+export const postSessionHeartbeat = (roomId) =>
+  apiClient.post(`/api/rooms/${roomId}/session/heartbeat`);
 
 /**
  * End a watch session (host only)
@@ -2021,6 +2045,16 @@ export const uploadRoomChatAttachment = async (roomId, file, type, roomGroupId) 
     headers: { 'Content-Type': undefined },
   });
   return response.data;
+};
+
+// --- Custom Watch Background ---
+export const uploadCustomBackground = async (file) => {
+  const formData = new FormData();
+  formData.append('image', file);
+  const response = await apiClient.post('/api/upload/custom-background', formData, {
+    headers: { 'Content-Type': undefined },
+  });
+  return response.data; // { url: '/uploads/custom_backgrounds/bg_xxx.jpg' }
 };
 
 // --- Community Events ---

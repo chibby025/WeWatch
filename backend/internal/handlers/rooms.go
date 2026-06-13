@@ -2630,10 +2630,11 @@ func GetActiveSessionHandler(c *gin.Context) {
 	}
 
 	var session models.WatchSession
-	// Find active (not ended) session for this room
-	err = DB.Where("room_id = ? AND ended_at IS NULL AND is_active = ?", roomID, true).
-		Order("started_at DESC").
-		First(&session).Error
+	heartbeatCutoff := time.Now().Add(-5 * time.Minute)
+	err = DB.Where(
+		"room_id = ? AND ended_at IS NULL AND is_active = ? AND (last_heartbeat_at IS NULL OR last_heartbeat_at > ?)",
+		roomID, true, heartbeatCutoff,
+	).Order("started_at DESC").First(&session).Error
 
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -2736,6 +2737,33 @@ func GetActiveSessionHandler(c *gin.Context) {
 	})
 }
 
+// SessionHeartbeatHandler is called by the host every 60s to signal the session is still live.
+// POST /api/rooms/:id/session/heartbeat (protected)
+func SessionHeartbeatHandler(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	roomID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid room id"})
+		return
+	}
+
+	now := time.Now()
+	result := DB.Model(&models.WatchSession{}).
+		Where("room_id = ? AND host_id = ? AND ended_at IS NULL", roomID, userID).
+		Update("last_heartbeat_at", &now)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update heartbeat"})
+		return
+	}
+	if result.RowsAffected == 0 {
+		// No active session found for this host — not an error, just a no-op
+		c.JSON(http.StatusOK, gin.H{"ok": false})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // CreateWatchSessionForRoomHandler creates a WatchSession for a persistent room
 func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	log.Println("\n🎬🎬🎬 ===== CREATE WATCH SESSION API CALLED =====")
@@ -2745,7 +2773,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 
 	// Parse watch_type, class_type, ticketing, and content_rating from request body
 	var input struct {
-		WatchType            string  `json:"watch_type"`              // "video", "3d_cinema", or "classroom"
+		WatchType            string  `json:"watch_type"`              // "video", "3d_cinema", "classroom", or "custom"
 		ClassType            *string `json:"class_type"`              // "classroom" or "lecture_hall" (for classroom watch_type)
 		ContentRating        string  `json:"content_rating"`          // "G", "PG", "13+", "16+", "18+", "Mature"
 		TicketingEnabled     bool    `json:"ticketing_enabled"`       // Whether entry requires ticket purchase
@@ -2755,6 +2783,8 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		EarlyBirdEnabled     bool    `json:"early_bird_enabled"`      // Early bird pricing active
 		EarlyBirdPriceTokens int     `json:"early_bird_price_tokens"` // Early bird price in tokens
 		EarlyBirdPriceAmount float64 `json:"early_bird_price_amount"` // Early bird price in local currency
+		CustomBackgroundURL  string  `json:"custom_background_url"`   // For custom watch type: uploaded background image URL
+		ScreenRegion         string  `json:"screen_region"`           // For custom watch type: JSON {"x":0.25,"y":0.25,"w":0.5,"h":0.4}
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Printf("⚠️ [CreateWatchSession] JSON bind error: %v - using defaults", err)
@@ -2771,10 +2801,10 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	log.Printf("🎬 [CreateWatchSession] Received watch_type: '%s', class_type: %v", input.WatchType, input.ClassType)
 	
 	// Validate watch_type
-	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" {
+	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" && input.WatchType != "custom" {
 		input.WatchType = "video"
 	}
-	
+
 	// Handle class_type for classroom watch_type
 	var classType string
 	if input.WatchType == "classroom" {
@@ -2857,15 +2887,17 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	log.Printf("  ├─ class_type: '%s'", classType)
 	log.Printf("  └─ is_active: true")
 	session := models.WatchSession{
-		SessionID:         sessionID,
-		RoomID:            uint(roomID),
-		HostID:            userID,
-		WatchType:         input.WatchType,
-		ClassType:         classType,
-		ContentRating:     contentRating,
-		StartedAt:         time.Now(),
-		IsActive:          true,
-		PreviewEnabled:    true,
+		SessionID:           sessionID,
+		RoomID:              uint(roomID),
+		HostID:              userID,
+		WatchType:           input.WatchType,
+		ClassType:           classType,
+		ContentRating:       contentRating,
+		StartedAt:           time.Now(),
+		IsActive:            true,
+		PreviewEnabled:      true,
+		CustomBackgroundURL: input.CustomBackgroundURL,
+		ScreenRegion:        input.ScreenRegion,
 	}
 	
 	// Only populate ticketing fields if ticketing is enabled

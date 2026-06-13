@@ -157,8 +157,17 @@ func RegisterHandler(c *gin.Context) {
         return
     }
 
-    // Respond with success, user info (without password hash), and the token.
-    // Sending the token immediately is common practice.
+    http.SetCookie(c.Writer, &http.Cookie{
+        Name:     "wewatch_token",
+        Value:    tokenString,
+        Path:     "/",
+        MaxAge:   3600,
+        HttpOnly: true,
+        Secure:   true,
+        SameSite: http.SameSiteNoneMode,
+    })
+    issueRefreshToken(c, newUser.ID)
+
     c.JSON(http.StatusCreated, gin.H{
         "message": "User registered successfully",
         "user": gin.H{ // Return a simplified user object
@@ -220,17 +229,16 @@ func LoginHandler(c *gin.Context) {
         return
     }
 
-    // ✅ SET HTTP-ONLY COOKIE (instead of sending token in response)
-    cookie := &http.Cookie{
+    http.SetCookie(c.Writer, &http.Cookie{
         Name:     "wewatch_token",
         Value:    tokenString,
         Path:     "/",
-        MaxAge:   7 * 24 * 60 * 60, // 7 days
+        MaxAge:   3600, // 1h — matches access JWT TTL
         HttpOnly: true,
-        Secure:   true, // Required for SameSite=None (works with HTTPS/tunnels)
-        SameSite: http.SameSiteNoneMode, // Allow cross-origin cookies for tunnels
-    }
-    http.SetCookie(c.Writer, cookie)
+        Secure:   true,
+        SameSite: http.SameSiteNoneMode,
+    })
+    issueRefreshToken(c, user.ID)
 
     log.Printf("User logged in successfully: ID=%d, Username=%s", user.ID, user.Username)
 
@@ -273,19 +281,97 @@ func LogoutHandler(c *gin.Context) {
         }
     }
     
-    // Clear the cookie
-    cookie := &http.Cookie{
+    // Revoke refresh token if present
+    if refreshPlain, cookieErr := c.Cookie("wewatch_refresh"); cookieErr == nil && refreshPlain != "" {
+        models.RevokeRefreshToken(DB, utils.HashRefreshToken(refreshPlain))
+    }
+
+    http.SetCookie(c.Writer, &http.Cookie{
         Name:     "wewatch_token",
         Value:    "",
         Path:     "/",
-        MaxAge:   -1, // Expire immediately
+        MaxAge:   -1,
         HttpOnly: true,
         Secure:   true,
         SameSite: http.SameSiteNoneMode,
-    }
-    http.SetCookie(c.Writer, cookie)
+    })
+    http.SetCookie(c.Writer, &http.Cookie{
+        Name:     "wewatch_refresh",
+        Value:    "",
+        Path:     "/",
+        MaxAge:   -1,
+        HttpOnly: true,
+        Secure:   true,
+        SameSite: http.SameSiteNoneMode,
+    })
 
     c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
+}
+
+// issueRefreshToken generates a refresh token, persists its hash, and sets the httpOnly cookie.
+func issueRefreshToken(c *gin.Context, userID uint) {
+    plaintext, hash, err := utils.GenerateRefreshToken()
+    if err != nil {
+        log.Printf("⚠️ Failed to generate refresh token for user %d: %v", userID, err)
+        return
+    }
+    rt := models.RefreshToken{
+        UserID:    userID,
+        TokenHash: hash,
+        ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
+    }
+    if err := DB.Create(&rt).Error; err != nil {
+        log.Printf("⚠️ Failed to save refresh token for user %d: %v", userID, err)
+        return
+    }
+    http.SetCookie(c.Writer, &http.Cookie{
+        Name:     "wewatch_refresh",
+        Value:    plaintext,
+        Path:     "/",
+        MaxAge:   30 * 24 * 60 * 60,
+        HttpOnly: true,
+        Secure:   true,
+        SameSite: http.SameSiteNoneMode,
+    })
+}
+
+// RefreshTokenHandler issues a new access JWT using a valid httpOnly refresh token cookie.
+// POST /api/auth/refresh — no auth middleware, reads wewatch_refresh cookie.
+func RefreshTokenHandler(c *gin.Context) {
+    refreshPlain, err := c.Cookie("wewatch_refresh")
+    if err != nil || refreshPlain == "" {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "no refresh token"})
+        return
+    }
+
+    tokenHash := utils.HashRefreshToken(refreshPlain)
+    var rt models.RefreshToken
+    if err := DB.Where(
+        "token_hash = ? AND expires_at > ? AND revoked_at IS NULL",
+        tokenHash, time.Now(),
+    ).First(&rt).Error; err != nil {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token invalid or expired"})
+        return
+    }
+
+    newToken, err := utils.GenerateJWT(rt.UserID)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+        return
+    }
+
+    // Refresh the access token cookie too (for cookie-based auth paths)
+    http.SetCookie(c.Writer, &http.Cookie{
+        Name:     "wewatch_token",
+        Value:    newToken,
+        Path:     "/",
+        MaxAge:   3600,
+        HttpOnly: true,
+        Secure:   true,
+        SameSite: http.SameSiteNoneMode,
+    })
+
+    c.JSON(http.StatusOK, gin.H{"token": newToken})
 }
 
 // ChangePasswordInput defines the structure for password change request

@@ -2311,10 +2311,14 @@ func CleanupStaleSessions() {
 	log.Println("🧹 [CleanupStaleSessions] Running stale session cleanup...")
 	
 	var staleSessions []models.WatchSession
-	cutoffTime := time.Now().Add(-24 * time.Hour)
-	
-	// Find sessions that started more than 24 hours ago and are still active
-	if err := DB.Where("started_at < ? AND ended_at IS NULL", cutoffTime).Find(&staleSessions).Error; err != nil {
+	ageCutoff := time.Now().Add(-24 * time.Hour)
+	heartbeatCutoff := time.Now().Add(-5 * time.Minute)
+
+	// Kill sessions: (a) >24h old, or (b) heartbeat stale >5min (host left without ending)
+	if err := DB.Where(
+		"ended_at IS NULL AND (started_at < ? OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?))",
+		ageCutoff, heartbeatCutoff,
+	).Find(&staleSessions).Error; err != nil {
 		log.Printf("❌ [CleanupStaleSessions] Error querying stale sessions: %v", err)
 		return
 	}
@@ -2330,7 +2334,10 @@ func CleanupStaleSessions() {
 				session.SessionID, sessionAge.Hours())
 
 			now := time.Now()
-			if err := DB.Model(&session).Update("ended_at", now).Error; err != nil {
+			if err := DB.Model(&session).Updates(map[string]interface{}{
+				"ended_at":  now,
+				"is_active": false,
+			}).Error; err != nil {
 				log.Printf("❌ [CleanupStaleSessions] Failed to end session %s: %v", session.SessionID, err)
 				continue
 			}

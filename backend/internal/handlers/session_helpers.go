@@ -56,6 +56,8 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 		PodcastLogoURL        string  `json:"podcast_logo_url,omitempty"`
 		LiveShareLowerThird   string  `json:"liveshare_lower_third,omitempty"`
 		LiveShareLogoBug      string  `json:"liveshare_logo_bug,omitempty"`
+		CustomBackgroundURL   string  `json:"custom_background_url,omitempty"`
+		ScreenRegion          string  `json:"screen_region,omitempty"`
 	}
 
 	// ✅ Get current user ID for privacy filtering
@@ -86,7 +88,10 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 	
 	// Get total count for pagination
 	var totalCount int64
-	if err := DB.Model(&models.WatchSession{}).Where("ended_at IS NULL").Count(&totalCount).Error; err != nil {
+	heartbeatCutoff := time.Now().Add(-5 * time.Minute)
+	if err := DB.Model(&models.WatchSession{}).Where(
+		"ended_at IS NULL AND (last_heartbeat_at IS NULL OR last_heartbeat_at > ?)", heartbeatCutoff,
+	).Count(&totalCount).Error; err != nil {
 		log.Printf("❌ Error counting active sessions: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count active sessions"})
 		return
@@ -117,9 +122,10 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 	) DESC`
 
 	// Query active sessions with pagination — scored by quality, audience, recency, preview.
+	// Exclude sessions with stale heartbeats (> 5 min since last heartbeat) to suppress ghost sessions.
 	var sessions []models.WatchSession
 	if err := DB.Select("watch_sessions.*").
-		Where("watch_sessions.ended_at IS NULL").
+		Where("watch_sessions.ended_at IS NULL AND (watch_sessions.last_heartbeat_at IS NULL OR watch_sessions.last_heartbeat_at > ?)", heartbeatCutoff).
 		Preload("Members", "is_active = ?", true).
 		Joins("JOIN rooms r ON r.id = watch_sessions.room_id").
 		Joins("LEFT JOIN (SELECT watch_session_id, COUNT(*) AS cnt FROM watch_session_members WHERE is_active = true GROUP BY watch_session_id) mc ON mc.watch_session_id = watch_sessions.id").
@@ -266,6 +272,8 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 			PodcastLogoURL:        session.PodcastLogoURL,
 			LiveShareLowerThird:   session.LiveShareLowerThird,
 			LiveShareLogoBug:      session.LiveShareLogoBug,
+			CustomBackgroundURL:   session.CustomBackgroundURL,
+			ScreenRegion:          session.ScreenRegion,
 		}
 		response = append(response, sessionResp)
 	}
@@ -332,6 +340,8 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 				PodcastLogoURL:        session.PodcastLogoURL,
 				LiveShareLowerThird:   session.LiveShareLowerThird,
 				LiveShareLogoBug:      session.LiveShareLogoBug,
+				CustomBackgroundURL:   session.CustomBackgroundURL,
+				ScreenRegion:          session.ScreenRegion,
 			}
 			response = append([]SessionResponse{ownResp}, response...)
 		}

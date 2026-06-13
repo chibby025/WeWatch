@@ -89,6 +89,13 @@ type WatchSession struct {
 	// Scheduled event integration
 	ScheduledEventID      *uint   `gorm:"index" json:"scheduled_event_id,omitempty"`                  // Link to scheduled event (if auto-created)
 	HostRequired          bool    `gorm:"default:true" json:"host_required"`                          // If false, session runs without host (for scheduled events)
+
+	// Host heartbeat — written every 60s by the active host. Used to detect ghost sessions.
+	LastHeartbeatAt       *time.Time `gorm:"index" json:"last_heartbeat_at,omitempty"`
+
+	// Custom watch type — background image + screen region (JSON: {"x":0.25,"y":0.25,"w":0.5,"h":0.4})
+	CustomBackgroundURL   string `gorm:"type:text" json:"custom_background_url,omitempty"`
+	ScreenRegion          string `gorm:"type:text" json:"screen_region,omitempty"`
 }
 
 // WatchSessionMember represents an active participant in a watch session

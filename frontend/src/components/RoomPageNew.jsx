@@ -154,6 +154,7 @@ const RoomPageNew = () => {
   // Ticketing flow state
   const [selectedWatchType, setSelectedWatchType] = useState(null);
   const [selectedClassType, setSelectedClassType] = useState(null);
+  const [customWatchConfig, setCustomWatchConfig] = useState(null); // { backgroundUrl, region } for 'custom' type
   const [ticketingConfig, setTicketingConfig] = useState({
     ticketing_enabled: false,
     ticket_price_tokens: 0,
@@ -1722,11 +1723,23 @@ const RoomPageNew = () => {
   };
 
   // Step 1: Watch Type Selection
-  const handleWatchTypeSelected = async (watchType) => {
+  const handleWatchTypeSelected = async (watchType, customConfig) => {
     console.log('✅ Watch type selected:', watchType);
     setSelectedWatchType(watchType);
     setIsWatchTypeModalOpen(false);
-    setIsWatchTypeInfoModalOpen(true);
+    if (watchType === 'custom' && customConfig) {
+      // Custom type already has all setup done in the modal — skip info/pricing flow and start directly
+      setCustomWatchConfig(customConfig);
+      await createWatchSession({
+        watch_type: 'custom',
+        ticketing_enabled: false,
+        content_rating: 'G',
+        custom_background_url: customConfig.backgroundUrl,
+        screen_region: JSON.stringify(customConfig.region),
+      });
+    } else {
+      setIsWatchTypeInfoModalOpen(true);
+    }
   };
 
   // Step 1.5: Continue from info modal
@@ -1805,7 +1818,7 @@ const RoomPageNew = () => {
       const response = await apiClient.post(`/api/rooms/${roomId}/sessions`, finalSessionData);
       const { session_id, watch_type: type } = response.data;
 
-      const sessionTypeLabel = type === '3d_cinema' ? '3D Cinema' : type === 'classroom' ? 'Classroom' : 'Video Watch';
+      const sessionTypeLabel = type === '3d_cinema' ? '3D Cinema' : type === 'classroom' ? 'Classroom' : type === 'custom' ? 'Custom Scene' : 'Video Watch';
       const pricingLabel = sessionData.ticketing_enabled 
         ? `(${sessionData.ticket_price_currency}${sessionData.ticket_price_amount})`
         : '(Free)';

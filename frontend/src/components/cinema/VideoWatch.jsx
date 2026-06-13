@@ -7,7 +7,7 @@ import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
 import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory } from '../../services/api';
 import apiClient from '../../services/api';
-import { getRoom, getRoomMembers, getActiveSession } from '../../services/api';
+import { getRoom, getRoomMembers, getActiveSession, postSessionHeartbeat } from '../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
 // ✅ Import LiveKit hook + events
 import useLiveKitRoom from '../../hooks/useLiveKitRoom';
@@ -309,6 +309,11 @@ export default function VideoWatch() {
   // Derived flags for feature detection
   const isClassroom = watchType === 'classroom';
   const isLectureHall = isClassroom && classType === 'lecture_hall';
+  const isCustomWatch = watchType === 'custom';
+  const customBackgroundUrl = sessionStatus?.custom_background_url || '';
+  const screenRegion = (() => {
+    try { return sessionStatus?.screen_region ? JSON.parse(sessionStatus.screen_region) : null; } catch { return null; }
+  })();
 
   // 🎫 Ticket enforcement - check on mount for paid sessions
   useEffect(() => {
@@ -4853,6 +4858,18 @@ export default function VideoWatch() {
     return () => clearInterval(id);
   }, [isHost, isPlaying, isConnected, sendMessage]);
 
+  // Host session keep-alive: write last_heartbeat_at to DB every 60s.
+  // Prevents ghost sessions after host closes tab without ending session.
+  useEffect(() => {
+    if (!isHost || !roomId) return;
+    const id = setInterval(() => {
+      postSessionHeartbeat(roomId).catch(() => {});
+    }, 60000);
+    // Fire once immediately so the session is marked live from the start
+    postSessionHeartbeat(roomId).catch(() => {});
+    return () => clearInterval(id);
+  }, [isHost, roomId]);
+
   // Handle Chat
   const handleSendSessionMessage = async () => {
     // ✅ Use sessionStatus.id or fallback to URL session_id
@@ -5807,26 +5824,49 @@ export default function VideoWatch() {
                 className="relative h-full transition-all duration-500 ease-in-out"
                 style={{ width: bannerAdData ? '80%' : '100%' }}
               >
+                {/* Custom watch type — full-area background photo */}
+                {isCustomWatch && customBackgroundUrl && (
+                  <img
+                    src={customBackgroundUrl}
+                    alt=""
+                    className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                    style={{ zIndex: 0 }}
+                  />
+                )}
+
                 {/* DVD screensaver — shown after 20 s inactivity when nothing is playing (not in Religious sessions) */}
                 {dvdVisible && !liveShareMode && !liveShareContentMode && contentRating !== 'Religious' && (
                   <DVDBounce />
                 )}
-                <CinemaVideoPlayer
-                  ref={videoPlayerRef}
-                  mediaItem={currentMedia}
-                  isPlaying={isPlaying}
-                  isHost={isHost}
-                  track={remoteScreenTrack}
-                  localScreenTrack={localScreenTrack}
-                  layout={selectedLiveShareLayout}
-                  playbackPositionRef={playbackPositionRef}
-                  onPlay={handlePlay}
-                  onPause={handlePause}
-                  onEnded={handleVideoEnd}
-                  onError={handleError}
-                  onPauseBroadcast={handlePauseBroadcast}
-                  onTimeUpdate={handleTimeUpdate}
-                />
+
+                {/* Video player — full area normally, region-positioned for custom watch */}
+                <div
+                  className={isCustomWatch && screenRegion ? 'absolute' : 'absolute inset-0'}
+                  style={isCustomWatch && screenRegion ? {
+                    left:   `${screenRegion.x * 100}%`,
+                    top:    `${screenRegion.y * 100}%`,
+                    width:  `${screenRegion.w * 100}%`,
+                    height: `${screenRegion.h * 100}%`,
+                    zIndex: 1,
+                  } : { zIndex: 1 }}
+                >
+                  <CinemaVideoPlayer
+                    ref={videoPlayerRef}
+                    mediaItem={currentMedia}
+                    isPlaying={isPlaying}
+                    isHost={isHost}
+                    track={remoteScreenTrack}
+                    localScreenTrack={localScreenTrack}
+                    layout={selectedLiveShareLayout}
+                    playbackPositionRef={playbackPositionRef}
+                    onPlay={handlePlay}
+                    onPause={handlePause}
+                    onEnded={handleVideoEnd}
+                    onError={handleError}
+                    onPauseBroadcast={handlePauseBroadcast}
+                    onTimeUpdate={handleTimeUpdate}
+                  />
+                </div>
 
                 {/* Vinyl overlay for audio media (MP3/M4A/WAV etc.) */}
                 {currentMedia && AUDIO_URL_RE.test(currentMedia.mediaUrl || '') && (

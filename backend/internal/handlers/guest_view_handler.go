@@ -53,6 +53,8 @@ func GetGuestSessionViewHandler(c *gin.Context) {
 		"content_rating": session.ContentRating,
 		"started_at":     session.StartedAt,
 		"is_paid":        isPaid,
+		"poster_url":     session.PosterURL,
+		"preview_url":    session.PreviewURL,
 	})
 }
 

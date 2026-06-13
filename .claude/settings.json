@@ -165,7 +165,9 @@
       "PowerShell(wsl -d Ubuntu-22.04 find /home/chibuzor_dev /usr /opt -name \"go\" -type f 2>$null)",
       "PowerShell(wsl -d Ubuntu-22.04 /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/... 2>&1; Write-Host \"Exit: $LASTEXITCODE\")",
       "PowerShell(wsl -d Ubuntu-22.04 sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1\"; Write-Host \"Exit: $LASTEXITCODE\")",
-      "PowerShell(wsl -d Ubuntu-22.04 sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\"; Write-Host \"Exit: $LASTEXITCODE\")"
+      "PowerShell(wsl -d Ubuntu-22.04 sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\"; Write-Host \"Exit: $LASTEXITCODE\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go/bin/go build ./cmd/server/... ./internal/... 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"grep -n 'tab\\\\|Tab\\\\|chats\\\\|rooms\\\\|watching\\\\|feed' /home/chibuzor_dev/WeWatch/frontend/src/pages/LobbyPage.jsx | head -40\")"
     ],
     "additionalDirectories": [
       "\\dev",

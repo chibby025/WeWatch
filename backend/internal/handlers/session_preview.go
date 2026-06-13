@@ -456,6 +456,62 @@ func UploadSessionFramesHandler(c *gin.Context) {
 	})
 }
 
+// UploadCustomBackgroundHandler saves a custom background image for the Custom watch type.
+// POST /api/upload/custom-background  (multipart field: "image")
+// Returns { "url": "/uploads/custom_backgrounds/filename.jpg" }
+func UploadCustomBackgroundHandler(c *gin.Context) {
+	file, header, err := c.Request.FormFile("image")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing image field"})
+		return
+	}
+	defer file.Close()
+
+	// Validate content-type (JPEG / PNG / WebP only)
+	ct := header.Header.Get("Content-Type")
+	var ext string
+	switch ct {
+	case "image/jpeg", "image/jpg":
+		ext = ".jpg"
+	case "image/png":
+		ext = ".png"
+	case "image/webp":
+		ext = ".webp"
+	default:
+		// Fallback: derive from filename
+		e := strings.ToLower(filepath.Ext(header.Filename))
+		if e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" {
+			ext = e
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported image type (jpeg/png/webp only)"})
+			return
+		}
+	}
+
+	dir := "./uploads/custom_backgrounds"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "storage error"})
+		return
+	}
+
+	filename := fmt.Sprintf("bg_%d%s", time.Now().UnixMilli(), ext)
+	destPath := filepath.Join(dir, filename)
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save image"})
+		return
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to write image"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"url": "/uploads/custom_backgrounds/" + filename})
+}
+
 // Helper function to copy files
 func copyFile(src, dst string) error {
 	sourceFile, err := os.Open(src)
