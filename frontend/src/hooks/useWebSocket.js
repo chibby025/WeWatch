@@ -191,9 +191,11 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
     setIsReconnecting(true);
     
     const queryParams = [];
-    // Read WS token fresh from sessionStorage so reconnects always use the latest value —
-    // the prop may be a stale closure if fetchUser() refreshed the token after initial mount.
-    const currentWsToken = sessionStorage.getItem('wewatch_ws_token') || wsToken;
+    // Read WS token fresh: sessionStorage (set by /api/auth/me response) →
+    // prop (from AuthContext) → localStorage JWT (cross-origin Vercel fallback).
+    const currentWsToken = sessionStorage.getItem('wewatch_ws_token')
+      || wsToken
+      || localStorage.getItem('wewatch_token');
     if (currentWsToken) {
       queryParams.push(`token=${encodeURIComponent(currentWsToken)}`);
     }

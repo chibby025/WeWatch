@@ -485,6 +485,12 @@ func CookieToAuthHeaderMiddleware() gin.HandlerFunc {
 		// Fallback 2: auth_token query param (Vercel proxy strips Authorization header)
 		if token := c.Query("auth_token"); token != "" {
 			c.Request.Header.Set("Authorization", "Bearer "+token)
+			c.Next()
+			return
+		}
+		// Fallback 3: token query param (used by useWebSocket hook for WS upgrades)
+		if token := c.Query("token"); token != "" {
+			c.Request.Header.Set("Authorization", "Bearer "+token)
 		}
 		c.Next()
 	}
@@ -532,8 +538,15 @@ func GetCurrentUserHandler(c *gin.Context) {
         Pluck("room_id", &roomMemberships)
     log.Printf("Fetched %d room memberships for user %d", len(roomMemberships), user.ID)
 
-    // ✅ DEV-ONLY: Include token for WebSocket (remove before production)
-    token, _ := c.Cookie("wewatch_token")
+    // Return the JWT as ws_token so the frontend can auth WebSocket connections.
+    // Priority: Authorization header (Vercel→Railway cross-origin) → wewatch_token cookie (same-origin).
+    token := ""
+    if authHeader := c.GetHeader("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+        token = strings.TrimPrefix(authHeader, "Bearer ")
+    }
+    if token == "" {
+        token, _ = c.Cookie("wewatch_token")
+    }
     response := gin.H{
         "user": gin.H{
             "id":         user.ID,

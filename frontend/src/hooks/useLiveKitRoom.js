@@ -47,11 +47,13 @@ export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true
       const fetchStartTime = Date.now();
       logger.debug('⏱️ [LiveKit DEBUG] Starting fetch at:', new Date().toISOString());
       
+      const jwt = localStorage.getItem('wewatch_token');
       const res = await fetch(tokenUrl, {
         method: 'GET',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
+          ...(jwt ? { 'Authorization': `Bearer ${jwt}` } : {}),
         },
       });
       
