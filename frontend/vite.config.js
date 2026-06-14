@@ -61,11 +61,24 @@ export default defineConfig({
               cacheableResponse: { statuses: [200] },
             },
           },
+          {
+            // Audio files: cache on first load, serve from cache after
+            urlPattern: /\/sounds\/.*\.(mp3|wav)$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'lwo-sounds-v1',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 7, // 7 days
+              },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
         ],
       },
       manifest: {
         name: 'LetsWatchOut',
-        short_name: 'WeWatch',
+        short_name: 'LWO',
         description: 'Watch together, anywhere',
         theme_color: '#7c3aed',
         background_color: '#000000',

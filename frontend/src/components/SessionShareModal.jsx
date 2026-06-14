@@ -20,7 +20,7 @@ export default function SessionShareModal({
   if (!session) return null;
 
   const shareUrl = `${window.location.origin}/rooms/${session.room_id}`;
-  const shareText = `Watch "${session.session_title || session.room_name}" live on WeWatch 👀 ${shareUrl}`;
+  const shareText = `Watch "${session.session_title || session.room_name}" live on LetsWatchOut 👀 ${shareUrl}`;
 
   const handleSendToFriend = async (friend) => {
     if (sentTo.has(friend.id) || sendingTo) return;

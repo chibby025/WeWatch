@@ -395,7 +395,7 @@ const SecurityModal = ({ isOpen, onClose, currentUser }) => {
                       </h3>
                       
                       <p className="text-gray-400 text-sm mb-4">
-                        Open Google Authenticator and enter the 6-digit code for WeWatch:
+                        Open Google Authenticator and enter the 6-digit code for LetsWatchOut:
                       </p>
 
                       <input

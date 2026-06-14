@@ -52,7 +52,7 @@ func DataExportHandler(db *gorm.DB) gin.HandlerFunc {
 
 		export := buildDataExport(db, userID)
 
-		filename := fmt.Sprintf("wewatch-data-export-%d-%s.json", userID, time.Now().Format("2006-01-02"))
+		filename := fmt.Sprintf("letswatchout-data-export-%d-%s.json", userID, time.Now().Format("2006-01-02"))
 		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusOK, export)

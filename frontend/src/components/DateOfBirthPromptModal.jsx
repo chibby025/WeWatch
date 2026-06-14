@@ -32,7 +32,7 @@ const DateOfBirthPromptModal = ({ isOpen, onSubmit, isSubmitting }) => {
     }
 
     if (age < 13) {
-      setError('You must be at least 13 years old to use WeWatch');
+      setError('You must be at least 13 years old to use LetsWatchOut');
       return;
     }
 
@@ -102,7 +102,7 @@ const DateOfBirthPromptModal = ({ isOpen, onSubmit, isSubmitting }) => {
               required
             />
             <p className="text-xs text-gray-300 mt-2">
-              ⚠️ Must be 13+ to use WeWatch
+              ⚠️ Must be 13+ to use LetsWatchOut
             </p>
           </div>
 
@@ -133,7 +133,7 @@ const DateOfBirthPromptModal = ({ isOpen, onSubmit, isSubmitting }) => {
                 Confirming...
               </span>
             ) : (
-              'Continue to WeWatch'
+              'Continue to LetsWatchOut'
             )}
           </button>
 

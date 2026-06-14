@@ -1,8 +1,8 @@
-// WeWatch Upload Service Worker
+// LetsWatchOut Upload Service Worker
 // Handles upload pause/resume notifications when tab is closed
 
-const CACHE_NAME = 'wewatch-upload-v1';
-const UPLOAD_QUEUE_KEY = 'wewatch_upload_queue';
+const CACHE_NAME = 'lwo-upload-v1';
+const UPLOAD_QUEUE_KEY = 'lwo_upload_queue';
 
 // Note: Service Workers can't access localStorage or handle file uploads directly
 // This SW provides:

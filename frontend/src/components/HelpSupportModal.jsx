@@ -62,7 +62,7 @@ const HelpSupportModal = ({ isOpen, onClose, currentUser }) => {
         },
         {
           question: 'What are tokens used for?',
-          answer: 'Tokens are WeWatch\'s virtual currency. Use them to: buy tickets for paid sessions, send gifts/donations to hosts, unlock premium content, and participate in paid features.'
+          answer: 'Tokens are LetsWatchOut\'s virtual currency. Use them to: buy tickets for paid sessions, send gifts/donations to hosts, unlock premium content, and participate in paid features.'
         },
         {
           question: 'How do ticket prices work?',
