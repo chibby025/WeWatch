@@ -2215,7 +2215,7 @@ const RoomPageNew = () => {
   const membersInSessionCount = membersInSession.length;
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900 overflow-hidden relative">
+    <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white overflow-hidden relative">
       <Toaster position="top-center" />
 
       {/* ✅ Recording Watermark - Bottom Right */}
@@ -2226,7 +2226,7 @@ const RoomPageNew = () => {
       )}
 
       {/* ✅ Sticky Header - Compact layout */}
-      <header ref={headerRef} className={`bg-gray-800 ${isMobile ? 'fixed top-0 left-0 right-0 z-50' : 'flex-none'}`}>
+      <header ref={headerRef} className={`bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700/50 ${isMobile ? 'fixed top-0 left-0 right-0 z-50' : 'flex-none'}`}>
         <div className="py-2 px-0 md:px-3 lg:px-4">
           {isMobile ? (
             /* Mobile Layout */
@@ -2279,7 +2279,7 @@ const RoomPageNew = () => {
                   
                   {/* Room/Group Name + Info Column */}
                   <div className="flex-1 min-w-0">
-                    <h1 className={`font-bold text-white truncate ${
+                    <h1 className={`font-bold text-gray-900 dark:text-white truncate ${
                       (() => {
                         const displayName = selectedGroupId ? (roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name) : room.name;
                         const length = displayName.length;
@@ -2294,7 +2294,7 @@ const RoomPageNew = () => {
                     {/* Host/Member Info below room name (only when no session, hidden on mobile) */}
                     {!activeSession && (
                       <div className="hidden lg:flex flex-col gap-0.5">
-                        <div className="flex items-center gap-1.5 text-[10px] text-gray-300">
+                        <div className="flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-300">
                           {room.show_host !== false && (
                             <span className="flex items-center gap-0.5">
                               <img src="/icons/hostIcon.svg" alt="" className="h-2.5 w-2.5" />
@@ -2428,7 +2428,7 @@ const RoomPageNew = () => {
                   {/* Room/Group Name + Info Column */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h1 className="text-2xl font-bold text-white">
+                      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
                         {selectedGroupId ? roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name : room.name}
                       </h1>
                       {wsConnected && (
@@ -2439,7 +2439,7 @@ const RoomPageNew = () => {
                     {/* Host/Member Info below name (only when no session) */}
                     {!activeSession && (
                       <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-4 text-sm text-gray-300">
+                        <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-300">
                           {!selectedGroupId && room.show_host !== false && (
                             <span className="flex items-center gap-1">
                               <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4" />
@@ -2548,7 +2548,7 @@ const RoomPageNew = () => {
 
               {/* Room Description - Desktop only */}
               {(room.show_description === true || room.ShowDescription === true) && room.description && room.description.trim() !== '' && (
-                <div className="mt-1 text-xs sm:text-sm text-gray-300 max-w-3xl">
+                <div className="mt-1 text-xs sm:text-sm text-gray-600 dark:text-gray-300 max-w-3xl">
                   {room.description}
                 </div>
               )}
@@ -2591,7 +2591,7 @@ const RoomPageNew = () => {
         {/* ✅ Chat Messages - Fills remaining space */}
         <div
           ref={messagesContainerRef}
-          className={`flex-1 overflow-y-auto bg-gray-900 px-4 space-y-1.5 scrollbar-hide relative ${
+          className={`flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900 px-4 space-y-1.5 scrollbar-hide relative ${
             isMobile ? '' : 'py-2'
           }`}
           style={isMobile ? { paddingTop: `${mobileHeaderHeight + 8}px`, paddingBottom: '110px' } : undefined}
@@ -2707,7 +2707,7 @@ const RoomPageNew = () => {
                       <div className={`flex items-stretch rounded-lg overflow-hidden border ${
                         isOwnMessage
                           ? 'bg-blue-900/50 border-blue-700/40'
-                          : 'bg-gray-700/60 border-gray-600/40'
+                          : 'bg-gray-200/60 dark:bg-gray-700/60 border-gray-300/40 dark:border-gray-600/40'
                       }`}>
                         {/* Colored left accent bar */}
                         <div className={`w-1 flex-shrink-0 ${isOwnMessage ? 'bg-blue-400' : 'bg-purple-400'}`} />
@@ -2715,7 +2715,7 @@ const RoomPageNew = () => {
                           <div className={`text-[11px] font-semibold mb-0.5 ${isOwnMessage ? 'text-blue-300' : 'text-purple-300'}`}>
                             {msg.reply_to.username}
                           </div>
-                          <div className="text-xs text-gray-300 truncate leading-snug">
+                          <div className="text-xs text-gray-500 dark:text-gray-300 truncate leading-snug">
                             {msg.reply_to.message}
                           </div>
                         </div>
@@ -2728,7 +2728,7 @@ const RoomPageNew = () => {
                     className={`relative px-3 py-1.5 rounded-lg shadow-sm cursor-pointer select-none ${
                       isOwnMessage
                         ? 'bg-blue-600 text-white'
-                        : 'bg-gray-800 text-gray-100'
+                        : 'bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-100'
                     } ${openMenuIndex === index ? 'opacity-90 scale-[0.98]' : ''} transition-all duration-100`}
                     onClick={(e) => {
                       if (isEditing) return;
@@ -2764,7 +2764,7 @@ const RoomPageNew = () => {
                         <textarea
                           value={editText}
                           onChange={(e) => setEditText(e.target.value)}
-                          className="w-full px-2 py-1 bg-gray-700 text-white rounded border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                          className="w-full px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white rounded border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                           rows={2}
                           autoFocus
                         />
@@ -2896,7 +2896,7 @@ const RoomPageNew = () => {
         <>
           {/* Chat Locked Banner (for non-host members) */}
           {room?.host_only_chat && !isHost && (
-            <div className={`border-t border-yellow-500/30 fixed bottom-[52px] right-0 z-[39] bg-gray-900 lg:static lg:bg-yellow-500/10 lg:z-auto ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24' : 'left-0'} px-3 py-2`}>
+            <div className={`border-t border-yellow-500/30 fixed bottom-[52px] right-0 z-[39] bg-white dark:bg-gray-900 lg:static lg:bg-yellow-500/10 dark:lg:bg-yellow-500/10 lg:z-auto ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24' : 'left-0'} px-3 py-2`}>
               <div className="flex items-center gap-2 text-xs text-yellow-300">
                 <span className="text-base">🔒</span>
                 <span>Chat is locked by the host. Only the host can send messages.</span>
@@ -2918,7 +2918,7 @@ const RoomPageNew = () => {
 
             {/* Reply Banner */}
             {replyingTo && (
-              <div className="flex items-stretch mb-1.5 rounded-lg overflow-hidden bg-gray-700/80 border border-purple-500/40">
+              <div className="flex items-stretch mb-1.5 rounded-lg overflow-hidden bg-gray-100/80 dark:bg-gray-700/80 border border-purple-400/40 dark:border-purple-500/40">
                 <div className="w-1 flex-shrink-0 bg-purple-500" />
                 <div className="flex items-center flex-1 min-w-0 px-3 py-2 gap-2">
                   <svg className="w-4 h-4 text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2926,7 +2926,7 @@ const RoomPageNew = () => {
                   </svg>
                   <div className="flex-1 min-w-0">
                     <div className="text-[11px] font-semibold text-purple-300">@{replyingTo.username}</div>
-                    <div className="text-xs text-gray-300 truncate leading-snug">{replyingTo.message}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-300 truncate leading-snug">{replyingTo.message}</div>
                   </div>
                   <button
                     type="button"
@@ -2942,7 +2942,7 @@ const RoomPageNew = () => {
             )}
 
             {/* Input Card */}
-            <div className="rounded-2xl bg-gray-700 border border-gray-600 shadow-lg overflow-visible">
+            <div className="rounded-2xl bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 shadow-lg overflow-visible">
 
               {/* Text area or recording indicator */}
               {isRecording ? (
@@ -2990,13 +2990,13 @@ const RoomPageNew = () => {
                   placeholder={room?.host_only_chat && !isHost ? "Chat is locked (host-only)" : "Message…"}
                   disabled={!isMember || (room?.host_only_chat && !isHost)}
                   rows={1}
-                  className="w-full bg-transparent border-none focus:outline-none focus:ring-0 resize-none text-white placeholder-gray-500 disabled:opacity-50 disabled:cursor-not-allowed px-3 pt-2.5 pb-1 text-sm"
+                  className="w-full bg-transparent border-none focus:outline-none focus:ring-0 resize-none text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 disabled:opacity-50 disabled:cursor-not-allowed px-3 pt-2.5 pb-1 text-sm"
                   style={{ minHeight: '36px', maxHeight: '96px' }}
                 />
               )}
 
               {/* Divider */}
-              <div className="border-t border-gray-600 mx-3" />
+              <div className="border-t border-gray-300 dark:border-gray-600 mx-3" />
 
               {/* Action row */}
               <div className="flex items-center justify-between px-2 py-1">
@@ -3082,7 +3082,7 @@ const RoomPageNew = () => {
 
       {/* ✅ Join Room Button - Replaces input area when not a member */}
       {!isMember && !isHost && currentUser && (
-        <div className={`bg-gray-800 ${
+        <div className={`bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700/50 ${
           isMobile ? `fixed bottom-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24 lg:left-28' : 'left-0'} right-0 z-40 px-2 py-2 shadow-lg` : 'flex-none px-4 py-3'
         }`}>
           <button

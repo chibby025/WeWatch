@@ -1,6 +1,6 @@
 // frontend/src/components/Login.jsx
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 // Import the API service functions
 import { loginUser, getCurrentUser } from '../services/api'; // Adjust path if needed
 import { cacheUserData } from '../utils/cinemaCache';
@@ -21,7 +21,8 @@ const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
-  const { refreshUser } = useAuth(); // ✅ Get refreshUser from context
+  const [searchParams] = useSearchParams();
+  const { refreshUser } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -48,8 +49,9 @@ const Login = () => {
         cacheUserData(user);
         console.log('💾 [Cache] User data cached on login');
         
-        // ✅ NOW NAVIGATE — auth state is fully synced
-        navigate('/lobby', { replace: true });
+        // Navigate to redirect target (e.g. a room shared via WhatsApp) or lobby
+        const redirectTo = searchParams.get('redirect');
+        navigate(redirectTo && redirectTo.startsWith('/') ? redirectTo : '/lobby', { replace: true });
       } else {
         throw new Error("Login successful, but missing user data.");
       }

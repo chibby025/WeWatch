@@ -74,6 +74,19 @@ export default defineConfig({
               cacheableResponse: { statuses: [200] },
             },
           },
+          {
+            // BunnyCDN user avatars, room images, post thumbnails — serve stale, refresh in background
+            urlPattern: /\.b-cdn\.net\//i,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'lwo-cdn-images-v1',
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24 * 7, // 7 days
+              },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
         ],
       },
       manifest: {

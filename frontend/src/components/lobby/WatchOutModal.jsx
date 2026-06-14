@@ -11,12 +11,14 @@ const WATCH_TYPE_EMOJI = {
   classroom: '📚',
   podcast: '🎙️',
   livestream: '📡',
+  custom: '🎨',
 };
 
 const WATCH_TYPES = [
-  { id: 'video',     label: 'Video Watch', img: '/icons/VWIcon.webp' },
-  { id: '3d_cinema', label: '3D Cinema',   img: '/icons/3dCineIcon.webp' },
+  { id: 'video',     label: 'Video Watch',  img: '/icons/VWIcon.webp' },
+  { id: '3d_cinema', label: '3D Cinema',    img: '/icons/3dCineIcon.webp' },
   { id: 'classroom', label: 'Lecture Hall', img: '/icons/LHIcon.webp' },
+  { id: 'custom',    label: 'Custom Scene', img: '/images/custom-backgrounds/Family Movie Night.webp' },
 ];
 
 const RATING_LABELS = {
@@ -155,7 +157,7 @@ const WatchOutModal = ({ recipientUser, onClose, onSent, groupMode = false, onSe
           {/* Step 1: Watch Type */}
           {swapStep === 1 && (
             <div className="p-5 pb-7">
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 {WATCH_TYPES.map(({ id, label, img }) => (
                   <button
                     key={id}

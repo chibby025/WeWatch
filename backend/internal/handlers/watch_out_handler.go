@@ -351,7 +351,7 @@ func StartPrivateWatchoutHandler(c *gin.Context) {
 	}
 
 	// Defaults and validation
-	validWatchTypes := map[string]bool{"video": true, "3d_cinema": true, "classroom": true, "podcast": true, "livestream": true}
+	validWatchTypes := map[string]bool{"video": true, "3d_cinema": true, "classroom": true, "podcast": true, "livestream": true, "custom": true}
 	if req.WatchType == "" || !validWatchTypes[req.WatchType] {
 		req.WatchType = "video"
 	}
@@ -679,7 +679,7 @@ func StartCircleWatchoutHandler(c *gin.Context) {
 		return
 	}
 
-	validWatchTypes := map[string]bool{"video": true, "3d_cinema": true, "classroom": true, "podcast": true, "livestream": true}
+	validWatchTypes := map[string]bool{"video": true, "3d_cinema": true, "classroom": true, "podcast": true, "livestream": true, "custom": true}
 	if req.WatchType == "" || !validWatchTypes[req.WatchType] {
 		req.WatchType = "video"
 	}
