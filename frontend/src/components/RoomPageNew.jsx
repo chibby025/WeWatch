@@ -2243,7 +2243,7 @@ const RoomPageNew = () => {
                     e.stopPropagation();
                     navigate('/lobby');
                   }}
-                  className="h-5 w-5 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 ml-3 invert dark:invert-0"
+                  className="h-7 w-7 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 ml-3 invert dark:invert-0"
                 />
 
                 {/* Middle section: Image + Name with info below */}

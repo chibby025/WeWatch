@@ -173,7 +173,21 @@
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npx vite build --mode development 2>&1 | grep -E '^\\(�|ERROR|error TS\\)' | head -10\")",
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -20\")",
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -12\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -10\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -10\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e psql -h localhost -p 5432 -U postgres -d wewatch_db -c \"\\\\d watch_sessions\" 2>&1)",
+      "PowerShell(wsl -d Ubuntu-22.04 -- psql -h localhost -p 5432 -U postgres -d wewatch_db -c \"\\\\d watch_sessions\")",
+      "PowerShell($env:PGPASSWORD = \"postgres\"; wsl -d Ubuntu-22.04 -e bash -c \"PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d wewatch_db -c '\\\\d watch_sessions' 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"PGPASSWORD=Chibby psql -h localhost -p 5432 -U postgres -d wewatch_db -c 'SELECT column_name, data_type, column_default, is_nullable FROM information_schema.columns WHERE table_name = ''watch_sessions'' ORDER BY ordinal_position;' 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"railway --version 2>&1; which railway 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"PGPASSWORD=Chibby psql -h localhost -p 5432 -U postgres -d wewatch_db -c \\\\\"SELECT column_name, data_type, column_default, is_nullable FROM information_schema.columns WHERE table_name = 'watch_sessions' ORDER BY ordinal_position)",
+      "PowerShell(\\\\\" 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c $script)",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"curl -fsSL https://railway.app/install.sh | sh 2>&1 | tail -5\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"which railway 2>/dev/null || echo 'not installed'; ls ~/.railway 2>/dev/null || echo 'no config'\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cat ~/.railway/config.json 2>&1\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"npm install -g @railway/cli 2>&1 | tail -3\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"sudo npm install -g @railway/cli 2>&1 | tail -5\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch && ~/.railway/bin/railway status 2>&1\")"
     ],
     "additionalDirectories": [
       "\\dev",

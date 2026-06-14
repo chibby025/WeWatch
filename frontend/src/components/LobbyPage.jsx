@@ -5213,11 +5213,9 @@ const LobbyPage = () => {
                   <div className="bg-gradient-to-r from-purple-600 to-green-600 p-3 sm:p-4 flex items-center gap-3">
                     <button
                       onClick={handleBackToFriends}
-                      className="text-white hover:bg-white/20 rounded-full p-2 transition-colors flex-shrink-0"
+                      className="hover:bg-white/20 rounded-full p-2 transition-colors flex-shrink-0"
                     >
-                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                      </svg>
+                      <img src="/icons/backIcon.svg" alt="Back" className="w-6 h-6" />
                     </button>
                     {/* Group icon */}
                     <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
@@ -5891,12 +5889,10 @@ const LobbyPage = () => {
                         {/* Back Button */}
                         <button
                           onClick={handleBackToFriends}
-                          className="text-white hover:bg-white/20 rounded-full p-2 transition-colors flex-shrink-0"
+                          className="hover:bg-white/20 rounded-full p-2 transition-colors flex-shrink-0"
                           title="Back to friends"
                         >
-                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                          </svg>
+                          <img src="/icons/backIcon.svg" alt="Back" className="w-6 h-6" />
                         </button>
                         
                         {/* Friend Avatar (clickable lightbox) */}
