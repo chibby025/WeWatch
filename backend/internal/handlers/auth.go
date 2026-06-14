@@ -143,6 +143,14 @@ func RegisterHandler(c *gin.Context) {
     // User created successfully!
     log.Printf("User registered successfully: ID=%d, Username=%s, Email=%s", newUser.ID, newUser.Username, newUser.Email)
 
+    // Send welcome email asynchronously
+    go func() {
+        emailService := services.NewEmailService()
+        if err := emailService.SendWelcomeEmail(newUser.Email, newUser.Username); err != nil {
+            log.Printf("⚠️ [Register] Failed to send welcome email to %s: %v", newUser.Email, err)
+        }
+    }()
+
     // Generate a JWT token for the newly registered user
     tokenString, err := utils.GenerateJWT(newUser.ID)
     if err != nil {
@@ -359,6 +367,11 @@ func RefreshTokenHandler(c *gin.Context) {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
         return
     }
+
+    // Rotate: revoke the used refresh token and issue a fresh 30-day one.
+    // Limits the blast radius if a refresh token is ever stolen.
+    models.RevokeRefreshToken(DB, tokenHash)
+    issueRefreshToken(c, rt.UserID)
 
     // Refresh the access token cookie too (for cookie-based auth paths)
     http.SetCookie(c.Writer, &http.Cookie{

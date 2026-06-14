@@ -414,7 +414,7 @@ func main() {
 	r.POST("/api/auth/register", authLimiter, handlers.RegisterHandler)
 	r.POST("/api/auth/login", authLimiter, handlers.LoginHandler)
 	r.POST("/api/auth/logout", handlers.LogoutHandler)
-	r.POST("/api/auth/refresh", handlers.RefreshTokenHandler)
+	r.POST("/api/auth/refresh", authLimiter, handlers.RefreshTokenHandler)
 	
 	// ✅ 2FA Management Routes (protected - require authentication)
 	twoFactorGroup := r.Group("/api/auth")

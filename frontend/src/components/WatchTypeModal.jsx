@@ -225,11 +225,12 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
 
   // Cycle: emoji → image (1 s) → emoji (2 s) on every petal change
   useEffect(() => {
+    if (!isOpen) return;
     setCirclePhase('emoji');
     const t1 = setTimeout(() => setCirclePhase('image'), 1000);
     const t2 = setTimeout(() => setCirclePhase('emoji'), 2000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [selectedTypeId]);
+  }, [selectedTypeId, isOpen]);
 
   if (!isOpen) return null;
 
@@ -456,9 +457,8 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
               <filter id="wt-circle-shadow" x="-25%" y="-25%" width="150%" height="150%">
                 <feDropShadow dx="1" dy="3" stdDeviation="5" floodColor="rgba(0,0,0,0.13)" />
               </filter>
-              <filter id="wt-petal-glow" x="-20%" y="-20%" width="140%" height="140%">
-                <feGaussianBlur stdDeviation="4" result="b"/>
-                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              <filter id="wt-petal-glow" x="-30%" y="-30%" width="160%" height="160%">
+                <feDropShadow dx="0" dy="0" stdDeviation="5" floodColor="rgba(255,255,255,0.75)" />
               </filter>
 
             </defs>
@@ -506,7 +506,7 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
             {/* Large white circle + image — scales 10% when showing image */}
             <g
               style={{
-                transform: circlePhase === 'image' ? 'scale(1.1)' : 'scale(1)',
+                transform: circlePhase === 'image' ? 'scale(1.2)' : 'scale(1)',
                 transformBox: 'fill-box',
                 transformOrigin: 'center',
                 transition: 'transform 0.4s cubic-bezier(0.34, 1.2, 0.64, 1)',

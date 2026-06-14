@@ -281,6 +281,32 @@ func (e *EmailService) SendPasswordResetEmail(to, username, resetToken string) e
 	return e.send(to, username, subject, emailWrap("#2563eb", "🔐", "Reset Your Password", body))
 }
 
+func (e *EmailService) SendWelcomeEmail(to, username string) error {
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "https://letswatchout.com"
+	}
+	subject := "Welcome to LetsWatchOut 🎬"
+	body := fmt.Sprintf(`
+<p>Hi <strong>%s</strong>,</p>
+<p>Welcome to <strong>LetsWatchOut</strong> — the place to co-watch movies, live streams, church services, classes, and more with people you actually want to watch with.</p>
+<div class="box">
+  <p><strong>Here's what you can do:</strong></p>
+  <p>🎬 &nbsp;Create or join a room and watch together in real time</p>
+  <p>💬 &nbsp;Chat, react, and vibe with your room during sessions</p>
+  <p>📅 &nbsp;Schedule events so your crew never misses a watch</p>
+  <p>🎙️ &nbsp;Host podcasts, classes, or church services in your own room</p>
+</div>
+<p>Your account is all set — jump in and start watching.</p>
+<p style="text-align:center">
+  <a href="%s/lobby" class="btn">Go to LetsWatchOut →</a>
+</p>
+<p style="color:#6b7280;font-size:13px">Questions? Reply to this email or reach us at <a href="mailto:support@letswatchout.com">support@letswatchout.com</a></p>`,
+		username, frontendURL,
+	)
+	return e.send(to, username, subject, emailWrap("#7c3aed", "🎬", "Welcome to LetsWatchOut", body))
+}
+
 func (e *EmailService) SendPasswordChangedEmail(to, username string) error {
 	subject := "Your LetsWatchOut password was changed"
 	body := fmt.Sprintf(`

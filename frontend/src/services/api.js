@@ -160,6 +160,12 @@ export const getReactions = async (roomId) => {
 
 
 
+// Shared refresh mutex — serialises concurrent 401s so only one refresh call fires.
+// Other in-flight requests queue up and retry with the new token when it arrives.
+let _isRefreshing = false;
+let _refreshQueue = [];
+const _drainQueue = (token) => { _refreshQueue.forEach(cb => cb(token)); _refreshQueue = []; };
+
 // --- Request Interceptor ---
 // Attach JWT token from localStorage to every request
 apiClient.interceptors.request.use((config) => {
@@ -171,8 +177,10 @@ apiClient.interceptors.request.use((config) => {
 });
 
 // --- Response Interceptor ---
-// On 401, silently attempt a token refresh then retry the original request once.
-// If refresh also fails, clear local token and redirect to login.
+// On 401: serialise through the refresh mutex so only one refresh call fires.
+// Queued requests retry automatically once the new token arrives.
+// IMPORTANT: only clears token and redirects on an explicit server rejection (401/403).
+// Network errors (mobile tab switch, brief offline) must NOT trigger logout.
 apiClient.interceptors.response.use(
     (response) => response,
     async (error) => {
@@ -182,31 +190,49 @@ apiClient.interceptors.response.use(
 
         const originalRequest = error.config;
         const isRefreshEndpoint = originalRequest?.url?.includes('/api/auth/refresh');
-
-        // Only attempt refresh if we have a stored token — if localStorage is empty the user
-        // is not logged in (or the token was just cleared after a failed refresh), and attempting
-        // refresh again would cause an infinite redirect loop on the login page.
         const storedToken = localStorage.getItem('wewatch_token');
-        if (error.response?.status === 401 && !originalRequest?._retry && !isRefreshEndpoint && storedToken) {
-            originalRequest._retry = true;
+
+        if (error.response?.status === 401 && !isRefreshEndpoint && storedToken) {
+            // Another refresh already in flight — queue this request until it completes
+            if (_isRefreshing) {
+                return new Promise((resolve, reject) => {
+                    _refreshQueue.push((newToken) => {
+                        if (!newToken) { reject(error); return; }
+                        originalRequest.headers = originalRequest.headers || {};
+                        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+                        resolve(apiClient(originalRequest));
+                    });
+                });
+            }
+
+            _isRefreshing = true;
             try {
-                // Use plain axios (not apiClient) so this call doesn't re-trigger the interceptor
+                // Use plain axios (not apiClient) to avoid re-triggering this interceptor
                 const { data } = await axios.post(
                     `${API_BASE_URL}/api/auth/refresh`,
                     {},
                     { withCredentials: true }
                 );
                 localStorage.setItem('wewatch_token', data.token);
+                _drainQueue(data.token);
                 originalRequest.headers = originalRequest.headers || {};
                 originalRequest.headers.Authorization = `Bearer ${data.token}`;
                 return apiClient(originalRequest);
             } catch (_refreshError) {
-                localStorage.removeItem('wewatch_token');
-                // Guard against infinite loop: only redirect if not already on an auth page
-                if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
-                    window.location.href = '/login';
+                _drainQueue(null);
+                // Only force logout when server explicitly rejects the refresh token.
+                // A network error here (no response) means the device is briefly offline —
+                // clearing the token would incorrectly log the user out on tab switch.
+                const serverRejected = _refreshError.response?.status === 401 || _refreshError.response?.status === 403;
+                if (serverRejected) {
+                    localStorage.removeItem('wewatch_token');
+                    if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
+                        window.location.href = '/login';
+                    }
                 }
                 return Promise.reject(_refreshError);
+            } finally {
+                _isRefreshing = false;
             }
         }
 

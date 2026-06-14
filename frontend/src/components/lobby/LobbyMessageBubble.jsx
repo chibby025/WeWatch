@@ -37,7 +37,9 @@ const LobbyMessageBubble = ({
   const [joinLoading, setJoinLoading] = useState(false);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const touchStartXRef = useRef(null);
+  const touchStartYRef = useRef(null);
   const isSwipingRef = useRef(false);
+  const swipeLockedRef = useRef(false);
   const audioRef = useRef(null);
   const bubbleRef = useRef(null);
   const longPressTimerRef = useRef(null);
@@ -60,22 +62,31 @@ const LobbyMessageBubble = ({
   const handleTouchStart = (e) => {
     if (messageType === 'poll' || messageType === 'watch_out') return;
     touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
     isSwipingRef.current = false;
+    swipeLockedRef.current = false;
     longPressTimerRef.current = setTimeout(() => setIsSelected(true), 500);
   };
   const handleTouchMove = (e) => {
     if (touchStartXRef.current === null) return;
     const deltaX = e.touches[0].clientX - touchStartXRef.current;
+    const deltaY = e.touches[0].clientY - touchStartYRef.current;
+    const isHorizontalDominant = Math.abs(deltaX) > Math.abs(deltaY) * 1.5;
     if (Math.abs(deltaX) > 10) {
       clearTimeout(longPressTimerRef.current);
       isSwipingRef.current = true;
     }
-    // Right swipe only, clamp to 70px
-    if (deltaX > 0) setSwipeOffset(Math.min(deltaX, 70));
+    // Only track as swipe-to-reply if the gesture is clearly horizontal
+    if (deltaX > 0 && isHorizontalDominant) {
+      swipeLockedRef.current = true;
+      setSwipeOffset(Math.min(deltaX, 70));
+    } else if (!swipeLockedRef.current) {
+      setSwipeOffset(0);
+    }
   };
   const handleTouchEnd = () => {
     clearTimeout(longPressTimerRef.current);
-    if (isSwipingRef.current && swipeOffset >= 52 && onReply) {
+    if (isSwipingRef.current && swipeLockedRef.current && swipeOffset >= 52 && onReply) {
       onReply(message);
     }
     setSwipeOffset(0);

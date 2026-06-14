@@ -191,8 +191,11 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
     setIsReconnecting(true);
     
     const queryParams = [];
-    if (wsToken) {
-      queryParams.push(`token=${encodeURIComponent(wsToken)}`);
+    // Read WS token fresh from sessionStorage so reconnects always use the latest value —
+    // the prop may be a stale closure if fetchUser() refreshed the token after initial mount.
+    const currentWsToken = sessionStorage.getItem('wewatch_ws_token') || wsToken;
+    if (currentWsToken) {
+      queryParams.push(`token=${encodeURIComponent(currentWsToken)}`);
     }
     if (sessionId) {
       queryParams.push(`session_id=${encodeURIComponent(sessionId)}`);

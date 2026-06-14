@@ -23,6 +23,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useMobile } from '../hooks/useMobile';
 import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup, getAssetUrl, uploadRoomChatAttachment, sendRoomChatSticker } from '../services/api';
+import { consumePrefetchedRoom } from '../utils/prefetchCache';
 import WatchTypeModal from './WatchTypeModal';
 import WatchTypeInfoModal from './WatchTypeInfoModal';
 import ClassTypeModal from './modals/ClassTypeModal';
@@ -497,8 +498,9 @@ const RoomPageNew = () => {
   const fetchRoomData = async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get(`/api/rooms/${roomId}`);
-      const roomData = response.data.room;
+      const prefetched = consumePrefetchedRoom(roomId);
+      const responseData = prefetched || (await apiClient.get(`/api/rooms/${roomId}`)).data;
+      const roomData = responseData.room;
       setRoom(roomData);
       const userIsHost = currentUser?.id === roomData.host_id;
       setIsHost(userIsHost);
@@ -2241,7 +2243,7 @@ const RoomPageNew = () => {
                     e.stopPropagation();
                     navigate('/lobby');
                   }}
-                  className="h-5 w-5 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 ml-3"
+                  className="h-5 w-5 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 ml-3 invert dark:invert-0"
                 />
 
                 {/* Middle section: Image + Name with info below */}
@@ -2334,22 +2336,13 @@ const RoomPageNew = () => {
                     {!activeSession && (isHost || scheduledEventsCount > 0) && (
                       <div className="relative flex-shrink-0">
                         <img
-                          src="/icons/scheduleWatchIcon1.svg"
-                          alt="Schedule"
-                          onClick={() => {
-                            setScheduleModalTab(isHost ? 'create' : 'upcoming');
-                            setIsScheduleModalOpen(true);
-                          }}
-                          className="h-[34px] w-[34px] cursor-pointer hover:opacity-80 transition-opacity block dark:hidden"
-                        />
-                        <img
                           src="/icons/scheduleWatchIcon.svg"
                           alt="Schedule"
                           onClick={() => {
                             setScheduleModalTab(isHost ? 'create' : 'upcoming');
                             setIsScheduleModalOpen(true);
                           }}
-                          className="h-[34px] w-[34px] cursor-pointer hover:opacity-80 transition-opacity hidden dark:block"
+                          className="h-[34px] w-[34px] cursor-pointer hover:opacity-80 transition-opacity invert dark:invert-0"
                         />
                         {scheduledEventsCount > 0 && (
                           <div className={`absolute -top-1 -right-1 min-w-[18px] h-5 flex items-center justify-center rounded-full text-white text-[10px] font-bold px-1 shadow-lg ${
@@ -2402,7 +2395,7 @@ const RoomPageNew = () => {
                     src="/icons/backIcon.svg" 
                     alt="Back" 
                     onClick={() => navigate('/lobby')}
-                    className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
+                    className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 invert dark:invert-0"
                   />
                   
                   <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-2 ring-gray-600 flex-shrink-0">
@@ -2492,23 +2485,13 @@ const RoomPageNew = () => {
                       {(isHost || scheduledEventsCount > 0) && (
                         <div className="relative">
                           <img
-                            src="/icons/scheduleWatchIcon1.svg"
-                            alt="Schedule Watch"
-                            onClick={() => {
-                              setScheduleModalTab(isHost ? 'create' : 'upcoming');
-                              setIsScheduleModalOpen(true);
-                            }}
-                            className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity block dark:hidden"
-                            title={isHost ? "Schedule Watch" : "View Scheduled Events"}
-                          />
-                          <img
                             src="/icons/scheduleWatchIcon.svg"
                             alt="Schedule Watch"
                             onClick={() => {
                               setScheduleModalTab(isHost ? 'create' : 'upcoming');
                               setIsScheduleModalOpen(true);
                             }}
-                            className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity hidden dark:block"
+                            className="h-11 w-11 cursor-pointer hover:opacity-80 transition-opacity invert dark:invert-0"
                             title={isHost ? "Schedule Watch" : "View Scheduled Events"}
                           />
                           {/* Badge with event count */}
@@ -2675,7 +2658,7 @@ const RoomPageNew = () => {
                 onTouchEnd={(e) => {
                   const startX = parseFloat(e.currentTarget.dataset.touchStartX);
                   const deltaX = e.changedTouches[0].clientX - startX;
-                  if (deltaX > 60) startReply(msg);
+                  if (deltaX > 60 && e.currentTarget.dataset.swipeLocked === 'true') startReply(msg);
                   setSwipingMsgIndex(null);
                   setSwipeX(0);
                 }}

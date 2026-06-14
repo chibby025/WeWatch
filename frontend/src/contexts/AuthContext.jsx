@@ -36,12 +36,23 @@ export const AuthProvider = ({ children }) => {
       
       localStorage.setItem('user', JSON.stringify(response.user));
     } catch (err) {
-      console.warn('Failed to fetch user:', err);
-      localStorage.removeItem('user');
-      sessionStorage.removeItem('wewatch_ws_token');
-      setCurrentUser(null);
-      setWsToken(null);
-      setRoomMemberships([]);
+      const isServerRejection = err?.response?.status === 401 || err?.response?.status === 403;
+      if (isServerRejection) {
+        // Server explicitly rejected the token — clear everything and force re-login
+        localStorage.removeItem('user');
+        sessionStorage.removeItem('wewatch_ws_token');
+        setCurrentUser(null);
+        setWsToken(null);
+        setRoomMemberships([]);
+      } else {
+        // Network error or transient failure (mobile tab switch, brief offline, 5xx).
+        // Token is likely still valid — restore from cache so the UI stays authenticated.
+        console.warn('fetchUser failed (network/transient):', err?.message);
+        const cached = localStorage.getItem('user');
+        if (cached) {
+          try { setCurrentUser(JSON.parse(cached)); } catch { setCurrentUser(null); }
+        }
+      }
     } finally {
       setLoading(false);
     }

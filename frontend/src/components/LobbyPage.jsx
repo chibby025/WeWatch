@@ -57,6 +57,7 @@ import { calculateAge } from '../utils/ageUtils';
 import CommunityEventsCard from './community/CommunityEventsCard';
 import { getCommunityEvents, getPublicLiveSessions, getPublicRooms, getRoomsLeaderboard } from '../services/api';
 import SessionShareModal from './SessionShareModal';
+import { prefetchRoom } from '../utils/prefetchCache';
 
 // Resolve a backend-relative preview URL to a full absolute URL
 const resolvePreviewUrl = (url) => {
@@ -3997,11 +3998,13 @@ const LobbyPage = () => {
                         ? 'ring-2 ring-blue-500 dark:ring-blue-400'
                         : 'border border-gray-200 dark:border-gray-700'
                     }`}
+                    onMouseEnter={() => prefetchRoom(room.id)}
                     onClick={() => {
                       if (roomLongPressActive.current) { roomLongPressActive.current = false; return; }
                       navigate(`/rooms/${room.id}`);
                     }}
                     onTouchStart={() => {
+                      prefetchRoom(room.id);
                       roomLongPressActive.current = false;
                       roomLongPressRef.current = setTimeout(() => {
                         roomLongPressActive.current = true;
