@@ -167,7 +167,13 @@
       "PowerShell(wsl -d Ubuntu-22.04 sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./... 2>&1\"; Write-Host \"Exit: $LASTEXITCODE\")",
       "PowerShell(wsl -d Ubuntu-22.04 sh -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go-v1.24.0/bin/go build ./cmd/server/... 2>&1\"; Write-Host \"Exit: $LASTEXITCODE\")",
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /home/chibuzor_dev/.local/opt/go/bin/go build ./cmd/server/... ./internal/... 2>&1\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"grep -n 'tab\\\\|Tab\\\\|chats\\\\|rooms\\\\|watching\\\\|feed' /home/chibuzor_dev/WeWatch/frontend/src/pages/LobbyPage.jsx | head -40\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"grep -n 'tab\\\\|Tab\\\\|chats\\\\|rooms\\\\|watching\\\\|feed' /home/chibuzor_dev/WeWatch/frontend/src/pages/LobbyPage.jsx | head -40\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npx vite build --mode development 2>&1 | grep -E 'error|warning|built in|�' | tail -15\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npx vite build --mode development 2>&1 | grep -E '^\\(�|?|ERROR|error|warning TS|SyntaxError\\)' | head -20\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npx vite build --mode development 2>&1 | grep -E '^\\(�|ERROR|error TS\\)' | head -10\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -20\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -12\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/frontend && npm run build 2>&1 | tail -10\")"
     ],
     "additionalDirectories": [
       "\\dev",

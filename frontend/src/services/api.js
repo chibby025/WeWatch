@@ -183,7 +183,11 @@ apiClient.interceptors.response.use(
         const originalRequest = error.config;
         const isRefreshEndpoint = originalRequest?.url?.includes('/api/auth/refresh');
 
-        if (error.response?.status === 401 && !originalRequest?._retry && !isRefreshEndpoint) {
+        // Only attempt refresh if we have a stored token — if localStorage is empty the user
+        // is not logged in (or the token was just cleared after a failed refresh), and attempting
+        // refresh again would cause an infinite redirect loop on the login page.
+        const storedToken = localStorage.getItem('wewatch_token');
+        if (error.response?.status === 401 && !originalRequest?._retry && !isRefreshEndpoint && storedToken) {
             originalRequest._retry = true;
             try {
                 // Use plain axios (not apiClient) so this call doesn't re-trigger the interceptor
@@ -198,7 +202,10 @@ apiClient.interceptors.response.use(
                 return apiClient(originalRequest);
             } catch (_refreshError) {
                 localStorage.removeItem('wewatch_token');
-                window.location.href = '/login';
+                // Guard against infinite loop: only redirect if not already on an auth page
+                if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
+                    window.location.href = '/login';
+                }
                 return Promise.reject(_refreshError);
             }
         }

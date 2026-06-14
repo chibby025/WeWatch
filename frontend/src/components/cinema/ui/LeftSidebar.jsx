@@ -21,6 +21,7 @@ import {
 import { useUploadServiceWorker } from '../../../hooks/useUploadServiceWorker';
 import LiveShareManager from './LiveShareManager';
 import ReportModal from '../../ReportModal';
+import { extractYouTubeVideoId } from '../YouTubePlayer';
 
 const playSuccess = () => new Audio('/sounds/success.mp3').play().catch(() => {});
 
@@ -82,6 +83,7 @@ export default function LeftSidebar({
   onCameraSwitch = null, // 📹 Callback to switch camera
   autoOpenGuestInvite = null, // Auto-trigger guest popup
   onGuestInviteConsumed = null, // Clear auto-trigger in parent
+  onPlayYouTube = null, // Play YouTube video via legal iframe API (host only)
 }) {
   // Host status is authoritative from the parent (derived from room.host_id === currentUser.id).
   // No need to re-verify via API on every sidebar open — host doesn't change during a session.
@@ -139,6 +141,8 @@ export default function LeftSidebar({
   
   // 🔗 URL Streaming State
   const [streamUrl, setStreamUrl] = useState('');
+  const [ytUrl, setYtUrl]         = useState('');  // YouTube URL input in Watch From tab
+  const [ytError, setYtError]     = useState('');
   const [isValidatingUrl, setIsValidatingUrl] = useState(false);
   const [urlError, setUrlError] = useState(null);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
@@ -1082,7 +1086,7 @@ export default function LeftSidebar({
 
     if (!hasVideoExtension) {
       console.log('❌ [validateStreamUrl] No video extension found in URL');
-      return { valid: false, error: 'Paste a Google Drive / YouTube / Twitch link, or a direct video URL (.mp4, .webm, .m3u8).' };
+      return { valid: false, error: 'Paste a Google Drive / Twitch link, or a direct video URL (.mp4, .webm, .m3u8). For YouTube, use the YouTube Co-Watch box in Watch From.' };
     }
     
     console.log('✅ [validateStreamUrl] Valid video URL');
@@ -1092,6 +1096,13 @@ export default function LeftSidebar({
   const handleStreamFromUrl = async () => {
     if (!streamUrl.trim()) {
       setUrlError('Please enter a video URL');
+      return;
+    }
+    // YouTube → legal iframe API path (not stream/embed)
+    const ytId = extractYouTubeVideoId(streamUrl.trim());
+    if (ytId) {
+      onPlayYouTube?.(ytId, streamUrl.trim());
+      setStreamUrl('');
       return;
     }
     
@@ -1151,96 +1162,105 @@ export default function LeftSidebar({
     }
   };
 
-  // 🎓 Educational platforms for Lecture Halls
+  // ticketSafe: true  = safe even when admission is charged (public domain, ministry streams, etc.)
+  // ticketSafe: false = medium/high legal risk in paid sessions (CC-NC content, licensed streams)
+
+  // 🎓 Educational platforms — screen-share safe, open/CC licensed
+  // YouTube handled separately via iframe API.
   const educationalPlatforms = [
-    { id: 'youtube', name: 'YouTube', url: 'https://www.youtube.com' },
-    { id: 'khanacademy', name: 'Khan Academy', url: 'https://www.khanacademy.org' },
-    { id: 'coursera', name: 'Coursera', url: 'https://www.coursera.org' },
-    { id: 'edx', name: 'edX', url: 'https://www.edx.org' },
-    { id: 'udemy', name: 'Udemy', url: 'https://www.udemy.com' },
-    { id: 'linkedin', name: 'LinkedIn Learning', url: 'https://www.linkedin.com/learning' },
-    { id: 'skillshare', name: 'Skillshare', url: 'https://www.skillshare.com' },
-    { id: 'ted', name: 'TED', url: 'https://www.ted.com' },
-    { id: 'vimeo', name: 'Vimeo', url: 'https://www.vimeo.com' },
-    { id: 'dailymotion', name: 'Dailymotion', url: 'https://www.dailymotion.com' },
-    { id: 'mitocw', name: 'MIT OpenCourseWare', url: 'https://ocw.mit.edu' },
-    { id: 'stanford', name: 'Stanford Online', url: 'https://online.stanford.edu' },
-    { id: 'futurelearn', name: 'FutureLearn', url: 'https://www.futurelearn.com' },
-    { id: 'udacity', name: 'Udacity', url: 'https://www.udacity.com' },
-    { id: 'pluralsight', name: 'Pluralsight', url: 'https://www.pluralsight.com' },
+    { id: 'archive',     name: 'Internet Archive',   url: 'https://archive.org',            ticketSafe: true  }, // public domain / open access
+    { id: 'gutenberg',   name: 'Project Gutenberg',  url: 'https://www.gutenberg.org',      ticketSafe: true  }, // public domain — zero risk
+    { id: 'mitocw',      name: 'MIT OpenCourseWare', url: 'https://ocw.mit.edu',            ticketSafe: false }, // CC BY-NC — non-commercial clause
+    { id: 'openYale',    name: 'Open Yale Courses',  url: 'https://oyc.yale.edu',           ticketSafe: false }, // CC BY-NC
+    { id: 'pbslearn',    name: 'PBS LearningMedia',  url: 'https://pbslearningmedia.org',   ticketSafe: false }, // CC BY-NC
+    { id: 'ted',         name: 'TED Talks',          url: 'https://www.ted.com',            ticketSafe: false }, // CC BY-NC-SA
+    { id: 'khanacademy', name: 'Khan Academy',       url: 'https://www.khanacademy.org',    ticketSafe: false }, // CC BY-NC-SA
+    { id: 'vimeo',       name: 'Vimeo',              url: 'https://www.vimeo.com',          ticketSafe: false }, // creator holds copyright
+    { id: 'dailymotion', name: 'Dailymotion',        url: 'https://www.dailymotion.com',    ticketSafe: false },
+    { id: 'wattpad',     name: 'Wattpad',            url: 'https://www.wattpad.com',        ticketSafe: false }, // author holds copyright
   ];
 
-  // 🙏 Religious platforms for Church/Religious content
+  // 🙏 Religious platforms — ministry streams want reach, all ticketSafe
+  // YouTube church streams: paste YouTube URL in the Watch From YouTube box above.
   const religiousPlatforms = [
-    // Video Streaming (Primary)
-    { id: 'youtube', name: 'YouTube', url: 'https://www.youtube.com' },
-    
-    // Nigerian Churches (Free Live Streaming)
-    { id: 'christembassy', name: 'Christ Embassy', url: 'https://christembassy.org/live' },
-    { id: 'rccg', name: 'RCCG', url: 'https://rccg.org' },
-    { id: 'winnerschapel', name: 'Winners Chapel', url: 'https://www.davidoyedepoministries.org' },
-    { id: 'deeperlife', name: 'Deeper Life Bible Church', url: 'https://www.deeperlife.org' },
-    { id: 'mfm', name: 'Mountain of Fire', url: 'https://mountainoffire.org' },
-    { id: 'dunamis', name: 'Dunamis International', url: 'https://dunamisgospel.org' },
-    { id: 'hotr', name: 'House on the Rock', url: 'https://www.hotr.org.ng' },
-    { id: 'daystarng', name: 'Daystar Christian Centre', url: 'https://daystarng.org' },
-    { id: 'covenantnation', name: 'Covenant Nation', url: 'https://thecovenantnation.com' },
-    { id: 'elevationng', name: 'Elevation Church', url: 'https://elevationchurch.tv' },
-    
-    // International Christian Broadcasting Networks
-    { id: 'tbn', name: 'TBN', url: 'https://watch.tbn.org' },
-    { id: 'daystar', name: 'Daystar', url: 'https://www.daystar.com/live' },
-    { id: 'godtv', name: 'GOD TV', url: 'https://god.tv' },
-    { id: 'cbn', name: 'CBN', url: 'https://www1.cbn.com/cbnnews/live' },
-    { id: 'ewtn', name: 'EWTN', url: 'https://www.ewtn.com/live' },
-    { id: 'vatican', name: 'Vatican Media', url: 'https://www.vaticannews.va/en.html' },
-    { id: 'hillsong', name: 'Hillsong Channel', url: 'https://hillsong.com/channel' },
-    { id: 'lifechurch', name: 'Life.Church', url: 'https://live.life.church' },
-    
-    // Sermon & Teaching Platforms
-    { id: 'sermonaudio', name: 'SermonAudio', url: 'https://www.sermonaudio.com' },
-    { id: 'preachtheword', name: 'Preach the Word', url: 'https://www.preachtheword.com' },
+    // Nigerian Churches
+    { id: 'christembassy',  name: 'Christ Embassy',       url: 'https://christembassy.org/live',            ticketSafe: true },
+    { id: 'rccg',           name: 'RCCG',                 url: 'https://rccg.org',                          ticketSafe: true },
+    { id: 'winnerschapel',  name: 'Winners Chapel',       url: 'https://www.davidoyedepoministries.org',    ticketSafe: true },
+    { id: 'deeperlife',     name: 'Deeper Life',          url: 'https://www.deeperlife.org',                ticketSafe: true },
+    { id: 'mfm',            name: 'Mountain of Fire',     url: 'https://mountainoffire.org',                ticketSafe: true },
+    { id: 'dunamis',        name: 'Dunamis International',url: 'https://dunamisgospel.org',                 ticketSafe: true },
+    { id: 'hotr',           name: 'House on the Rock',    url: 'https://www.hotr.org.ng',                   ticketSafe: true },
+    { id: 'daystarng',      name: 'Daystar Christian',    url: 'https://daystarng.org',                     ticketSafe: true },
+    { id: 'covenantnation', name: 'Covenant Nation',      url: 'https://thecovenantnation.com',             ticketSafe: true },
+    { id: 'elevationng',    name: 'Elevation Church',     url: 'https://elevationchurch.tv',                ticketSafe: true },
+    // International Networks
+    { id: 'tbn',            name: 'TBN',                  url: 'https://watch.tbn.org',                     ticketSafe: true },
+    { id: 'daystar',        name: 'Daystar',              url: 'https://www.daystar.com/live',              ticketSafe: true },
+    { id: 'godtv',          name: 'GOD TV',               url: 'https://god.tv',                            ticketSafe: true },
+    { id: 'cbn',            name: 'CBN',                  url: 'https://www1.cbn.com/cbnnews/live',         ticketSafe: true },
+    { id: 'ewtn',           name: 'EWTN',                 url: 'https://www.ewtn.com/live',                 ticketSafe: true },
+    { id: 'vatican',        name: 'Vatican Media',        url: 'https://www.vaticannews.va/en.html',        ticketSafe: true },
+    { id: 'hillsong',       name: 'Hillsong Channel',     url: 'https://hillsong.com/channel',              ticketSafe: true },
+    { id: 'lifechurch',     name: 'Life.Church',          url: 'https://live.life.church',                  ticketSafe: true },
+    { id: 'sermonaudio',    name: 'SermonAudio',          url: 'https://www.sermonaudio.com',               ticketSafe: true },
+    { id: 'preachtheword',  name: 'Preach the Word',      url: 'https://www.preachtheword.com',             ticketSafe: true },
   ];
 
-  // 🎬 Entertainment platforms for Cinemas & Video Watch (Screen-share friendly, no DRM)
+  // 🎬 Entertainment platforms — screen-share safe, no DRM
+  // YouTube handled separately via iframe API.
   const entertainmentPlatforms = [
-    // Video Streaming (Legal, No DRM)
-    { id: 'youtube', name: 'YouTube', url: 'https://www.youtube.com' },
-    { id: 'twitch', name: 'Twitch', url: 'https://www.twitch.tv' },
-    { id: 'vimeo', name: 'Vimeo', url: 'https://vimeo.com' },
-    { id: 'dailymotion', name: 'Dailymotion', url: 'https://www.dailymotion.com' },
-    { id: 'kick', name: 'Kick', url: 'https://kick.com' },
-    { id: 'rumble', name: 'Rumble', url: 'https://rumble.com' },
-    
-    // Free Streaming Services (Legal, Ad-Supported, Screen-share friendly)
-    { id: 'tubi', name: 'Tubi', url: 'https://tubitv.com' },
-    { id: 'crackle', name: 'Crackle', url: 'https://www.crackle.com' },
-    { id: 'xumo', name: 'Xumo Play', url: 'https://www.xumo.com' },
-    
-    // Anime & Animation (Free tiers, screen-share friendly)
-    { id: 'retrocrush', name: 'RetroCrush', url: 'https://www.retrocrush.tv' },
-    
-    // Sports & Live Events (Free tiers)
-    { id: 'redbulltv', name: 'Red Bull TV', url: 'https://www.redbull.com/int-en/tv' },
-    { id: 'caffeine', name: 'Caffeine', url: 'https://www.caffeine.tv' },
-    
-    // Reading & Comics (Legal)
-    { id: 'webtoon', name: 'Webtoon', url: 'https://www.webtoons.com' },
-    { id: 'wattpad', name: 'Wattpad', url: 'https://www.wattpad.com' },
-    { id: 'mangaplus', name: 'MangaPlus', url: 'https://mangaplus.shueisha.co.jp' },
-    { id: 'comicbookplus', name: 'Comic Book Plus', url: 'https://comicbookplus.com' },
-    { id: 'projectgutenberg', name: 'Project Gutenberg', url: 'https://www.gutenberg.org' },
-    { id: 'archiveofourown', name: 'Archive of Our Own', url: 'https://archiveofourown.org' },
+    // 🎵 Music — CC/public broadcast (ticketSafe), licensed streaming (not)
+    { id: 'jamendo',         name: 'Jamendo',         url: 'https://www.jamendo.com',                    ticketSafe: true  }, // 100% Creative Commons music
+    { id: 'radiogarden',     name: 'Radio Garden',    url: 'https://radio.garden',                       ticketSafe: true  }, // live public radio from any city in the world
+    { id: 'ntsradio',        name: 'NTS Radio',       url: 'https://www.nts.live',                       ticketSafe: true  }, // independent culture radio, public broadcast
+    { id: 'audiomack',       name: 'Audiomack',       url: 'https://audiomack.com',                      ticketSafe: false }, // Nigerian/African music — free tier, licensed
+    { id: 'boomplay',        name: 'Boomplay',        url: 'https://www.boomplay.com',                   ticketSafe: false }, // pan-African music & video
+    // 📺 Live streaming (medium risk — licensed content)
+    { id: 'twitch',          name: 'Twitch',          url: 'https://www.twitch.tv',                      ticketSafe: false },
+    { id: 'kick',            name: 'Kick',            url: 'https://kick.com',                           ticketSafe: false },
+    { id: 'caffeine',        name: 'Caffeine',        url: 'https://www.caffeine.tv',                    ticketSafe: false },
+    { id: 'rumble',          name: 'Rumble',          url: 'https://rumble.com',                         ticketSafe: false },
+    // 🎞️ VOD / Free streaming (high risk — licensed studio content)
+    { id: 'vimeo',           name: 'Vimeo',           url: 'https://vimeo.com',                          ticketSafe: false },
+    { id: 'dailymotion',     name: 'Dailymotion',     url: 'https://www.dailymotion.com',                ticketSafe: false },
+    { id: 'tubi',            name: 'Tubi',            url: 'https://tubitv.com',                         ticketSafe: false },
+    { id: 'crackle',         name: 'Crackle',         url: 'https://www.crackle.com',                    ticketSafe: false },
+    { id: 'xumo',            name: 'Xumo Play',       url: 'https://www.xumo.com',                       ticketSafe: false },
+    { id: 'redbulltv',       name: 'Red Bull TV',     url: 'https://www.redbull.com/int-en/tv',          ticketSafe: false },
+    { id: 'retrocrush',      name: 'RetroCrush',      url: 'https://www.retrocrush.tv',                  ticketSafe: false },
+    // 🕹️ Retro & browser gaming (host plays, members watch — all ticketSafe where content is open)
+    { id: 'internetarchive', name: 'Archive Games',   url: 'https://archive.org/games',                  ticketSafe: true  }, // thousands of browser-playable public domain games
+    { id: 'newgrounds',      name: 'Newgrounds',      url: 'https://www.newgrounds.com',                 ticketSafe: true  }, // creator-owned Flash/browser games & animations
+    { id: 'itchio',          name: 'itch.io',         url: 'https://itch.io',                            ticketSafe: true  }, // indie games, many browser-playable, creator-owned
+    { id: 'javagames',       name: 'Java Games',      url: 'https://javagames.cc',                       ticketSafe: false }, // classic Java applets — copyright uncertain on some titles
+    { id: 'crazygames',      name: 'CrazyGames',      url: 'https://www.crazygames.com',                 ticketSafe: true  }, // browser games, original content
+    { id: 'gamejolt',        name: 'Game Jolt',       url: 'https://gamejolt.com',                       ticketSafe: true  }, // indie game community, creator-owned
+    { id: 'classicreload',   name: 'ClassicReload',   url: 'https://classicreload.com',                  ticketSafe: false }, // DOS/Windows games — abandonware gray zone
+    // 📖 Reading & Comics
+    { id: 'gutenberg',       name: 'Project Gutenberg', url: 'https://www.gutenberg.org',               ticketSafe: true  }, // public domain
+    { id: 'archive',         name: 'Internet Archive',  url: 'https://archive.org',                     ticketSafe: true  }, // public domain
+    { id: 'comicbookplus',   name: 'Comic Book Plus',   url: 'https://comicbookplus.com',               ticketSafe: true  }, // golden-age public domain comics
+    { id: 'wattpad',         name: 'Wattpad',           url: 'https://www.wattpad.com',                 ticketSafe: false },
+    { id: 'webtoon',         name: 'Webtoon',           url: 'https://www.webtoons.com',                ticketSafe: false },
+    { id: 'mangaplus',       name: 'MangaPlus',         url: 'https://mangaplus.shueisha.co.jp',        ticketSafe: false },
+    { id: 'archiveofourown', name: 'Archive of Our Own',url: 'https://archiveofourown.org',             ticketSafe: false },
   ];
+
+  // ── Ticketing gate ──────────────────────────────────────────────────────────
+  const isTicketedSession = !!(sessionStatus?.ticketing_enabled);
 
   // ✅ Choose platform list based on content rating and watch type
   const isLectureHallContext = watchType === 'classroom' && classType === 'lecture_hall';
   const contentRating = sessionStatus?.content_rating || 'G';
-  
-  const platforms = 
+
+  const allPlatforms =
     contentRating === 'Religious' ? religiousPlatforms :
     (isLectureHallContext || contentRating === 'Educational') ? educationalPlatforms :
     entertainmentPlatforms;
+
+  // Hide medium/high-risk platforms in paid sessions; always pass ticketSafe ones through
+  const platforms = isTicketedSession ? allPlatforms.filter(p => p.ticketSafe) : allPlatforms;
 
   const filteredPlatforms = platforms.filter(p =>
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -1654,7 +1674,7 @@ export default function LeftSidebar({
                     onFocus={() => setUrlInputFocused(true)}
                     onBlur={() => setTimeout(() => setUrlInputFocused(false), 200)}
                     onKeyPress={(e) => { if (e.key === 'Enter' && !isValidatingUrl) handleStreamFromUrl(); }}
-                    placeholder="Paste Google Drive, YouTube, Twitch, or direct video URL…"
+                    placeholder="Paste Google Drive, Twitch, or direct video URL (.mp4, .webm, .m3u8)…"
                     className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white text-xs placeholder-gray-400 focus:outline-none focus:border-purple-500 transition-colors"
                   />
                   {urlError && (
@@ -2138,12 +2158,21 @@ export default function LeftSidebar({
         <div className="p-3 sm:p-4 h-full flex flex-col">
           <h3 className="text-base sm:text-lg font-semibold text-white mb-3 sm:mb-4">Watch From Platform</h3>
           
-          {/* Legal Notice */}
-          <div className="mb-3 p-2 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-            <p className="text-blue-300 text-[10px] leading-relaxed">
-              📺 Screen share from legal platforms. You must have a valid account. LetsWatchOut doesn't host content.
-            </p>
-          </div>
+          {/* Legal Notice — changes wording for ticketed sessions */}
+          {isTicketedSession ? (
+            <div className="mb-3 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+              <p className="text-amber-300 text-[10px] leading-relaxed font-medium mb-1">🎫 Paid session — content restrictions apply</p>
+              <p className="text-amber-200/70 text-[9px] leading-relaxed">
+                Platforms with licensed content are hidden. For paid sessions, use the <strong>Upload tab</strong> with your own content, or screen-share public-domain / ministry sources shown below.
+              </p>
+            </div>
+          ) : (
+            <div className="mb-3 p-2 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+              <p className="text-blue-300 text-[10px] leading-relaxed">
+                📺 Screen share from legal platforms. You must have a valid account. LetsWatchOut doesn't host content.
+              </p>
+            </div>
+          )}
 
           {/* ✅ Show End Watch button if WatchFrom is active */}
           {isScreenSharingActive && sharingSource === 'watchfrom' && (
@@ -2231,7 +2260,52 @@ export default function LeftSidebar({
             </button>
           </form>
 
-          <div className="mt-3 sm:mt-4">
+          {/* YouTube — legal iframe API (no screen share needed) */}
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="#FF0000">
+                <path d="M23.5 6.19a3.02 3.02 0 00-2.12-2.14C19.52 3.6 12 3.6 12 3.6s-7.52 0-9.38.45A3.02 3.02 0 00.5 6.19C.06 8.07 0 12 0 12s.06 3.93.5 5.81a3.02 3.02 0 002.12 2.14C4.48 20.4 12 20.4 12 20.4s7.52 0 9.38-.45a3.02 3.02 0 002.12-2.14C23.94 15.93 24 12 24 12s-.06-3.93-.5-5.81zM9.6 15.6V8.4l6.4 3.6-6.4 3.6z"/>
+              </svg>
+              <span className="text-white text-xs font-semibold">YouTube Co-Watch</span>
+              <span className="ml-auto text-green-400 text-[9px] font-medium bg-green-400/10 px-1.5 py-0.5 rounded-full">✓ legal iframe</span>
+            </div>
+            <p className="text-gray-400 text-[10px] mb-2 leading-relaxed">
+              Everyone loads the same video in their own YouTube player — synced via WeWatch. No screen share needed.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={ytUrl}
+                onChange={(e) => { setYtUrl(e.target.value); setYtError(''); }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  const id = extractYouTubeVideoId(ytUrl.trim());
+                  if (!id) { setYtError('Paste a valid YouTube URL'); return; }
+                  onPlayYouTube?.(id, ytUrl.trim());
+                  setYtUrl('');
+                }}
+                placeholder="Paste YouTube URL…"
+                className="flex-1 px-2 py-1.5 bg-gray-800 border border-gray-600 rounded-lg text-white text-xs placeholder-gray-500 focus:outline-none focus:border-red-400"
+              />
+              <button
+                onClick={() => {
+                  const id = extractYouTubeVideoId(ytUrl.trim());
+                  if (!id) { setYtError('Paste a valid YouTube URL'); return; }
+                  onPlayYouTube?.(id, ytUrl.trim());
+                  setYtUrl('');
+                }}
+                disabled={!ytUrl.trim()}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors"
+              >
+                Play
+              </button>
+            </div>
+            {ytError && <p className="text-red-400 text-[10px] mt-1">{ytError}</p>}
+          </div>
+
+          <p className="text-gray-500 text-[10px] mb-2 font-medium uppercase tracking-wide">Screen-share platforms</p>
+
+          <div className="mt-1">
             <div className="grid grid-cols-2 gap-2 sm:gap-3 md:gap-4">
               {filteredPlatforms.map(platform => (
                 <button

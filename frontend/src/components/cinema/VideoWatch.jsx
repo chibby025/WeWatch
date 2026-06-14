@@ -19,6 +19,7 @@ import VideoSidebar from './ui/VideoSidebar';
 import SeatSwapNotification from './ui/SeatSwapNotification';
 import Taskbar from '../Taskbar';
 import CinemaVideoPlayer from './ui/CinemaVideoPlayer';
+import YouTubePlayer, { extractYouTubeVideoId } from './YouTubePlayer';
 import DVDBounce from './ui/DVDBounce';
 import SettingsModal from './ui/SettingsModal';
 import CameraPreview from './ui/CameraPreview';
@@ -501,6 +502,7 @@ export default function VideoWatch() {
   // 🎥 ALL STATE DECLARATIONS (must be before useEffects that use them)
   const [sessionEndedInfo, setSessionEndedInfo] = useState(null); // { reason: 'ended' | 'connection_lost' }
   const [currentMedia, setCurrentMedia] = useState(null);
+  const isYouTube = currentMedia?.type === 'youtube'; // derived after state; safe here
   const [playlist, setPlaylist] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const playbackPositionRef = useRef(0);
@@ -877,7 +879,9 @@ export default function VideoWatch() {
   const sidebarRef = useRef(null);
   const processedMessageCountRef = useRef(0);
   const chatEndRef = useRef(null);
-  const videoPlayerRef = useRef(null); // 🎬 Direct access to video element
+  const videoPlayerRef  = useRef(null); // 🎬 Direct access to video element
+  const ytPlayerRef     = useRef(null); // YouTube iframe API player instance
+  const pendingYTSeekRef = useRef(null); // seek target for new YouTube video loads
   const [localScreenTrack, setLocalScreenTrack] = useState(null);
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // ⏱️ State-based seek (triggers re-renders)
   const [videoStalled,   setVideoStalled]   = useState(false); // member-side: video loaded but never played
@@ -3439,6 +3443,57 @@ export default function VideoWatch() {
     }
   };
 
+  // ── YouTube iframe API integration ────────────────────────────────────────
+  // Host pastes a YouTube URL → LeftSidebar calls onPlayYouTube → this sets
+  // currentMedia and broadcasts playback_control so all members load the same
+  // video in their own YouTubePlayer (no screen share — fully legal iframe embed).
+  const handlePlayYouTube = useCallback((videoId, url) => {
+    setCurrentMedia({ type: 'youtube', videoId, url, original_name: 'YouTube' });
+    setIsPlaying(false); // player fires onReady → host presses play → broadcasts
+    if (isHost && isConnected) {
+      sendMessage({
+        type:       'playback_control',
+        media_type: 'youtube',
+        video_id:   videoId,
+        url,
+        command:    'load', // members load and pause; host decides when to play
+        seek_time:  0,
+        timestamp:  Date.now(),
+        sender_id:  currentUser?.id,
+      });
+    }
+  }, [isHost, isConnected, sendMessage, currentUser?.id]);
+
+  // Called when the YT.Player fires onReady — apply any pending seek.
+  const handleYouTubeReady = useCallback((player) => {
+    if (pendingYTSeekRef.current !== null) {
+      player.seekTo(pendingYTSeekRef.current, true);
+      pendingYTSeekRef.current = null;
+    }
+  }, []);
+
+  // Called when the host's YT.Player fires onStateChange — relay to members.
+  const handleYouTubeStateChange = useCallback((event) => {
+    if (!isHost || !isConnected || !currentMedia) return;
+    const YT = window.YT;
+    if (!YT) return;
+    const currentTime = ytPlayerRef.current?.getCurrentTime() ?? 0;
+    let command = null;
+    if (event.data === YT.PlayerState.PLAYING) { command = 'play';  setIsPlaying(true); }
+    if (event.data === YT.PlayerState.PAUSED)  { command = 'pause'; setIsPlaying(false); }
+    if (!command) return;
+    sendMessage({
+      type:       'playback_control',
+      media_type: 'youtube',
+      video_id:   currentMedia.videoId,
+      url:        currentMedia.url,
+      command,
+      seek_time:  currentTime,
+      timestamp:  Date.now(),
+      sender_id:  currentUser?.id,
+    });
+  }, [isHost, isConnected, currentMedia, sendMessage, currentUser?.id]);
+
   // ✅ HANDLE MEDIA SELECTION (FOR SIDEBAR)
   const handleMediaSelect = (media) => {
     if (!media) return;
@@ -3538,18 +3593,26 @@ export default function VideoWatch() {
         }
 
         case "sync_heartbeat": {
-          // Periodic position sync broadcast from host. Correct drift > 0.5s.
-          // Ignore if we are the host, if paused, or if drift is too large (likely intentional).
           if (isHost) break;
           const _hb = message;
-          const _videoEl = videoPlayerRef.current || document.querySelector('video');
-          if (!_videoEl || _videoEl.paused) break;
-          const _latency = Date.now() - (_hb.server_ts || _hb.timestamp);
-          const _expected = _hb.current_time + (_latency / 1000);
-          const _drift = Math.abs(_videoEl.currentTime - _expected);
-          if (_drift > 0.5 && _drift < 30) {
-            console.log(`🔄 [Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
-            _videoEl.currentTime = _expected;
+          const _latency = Math.max(0, Date.now() - (_hb.timestamp || Date.now()));
+          const _expected = (_hb.current_time || 0) + _latency / 1000;
+
+          if (currentMedia?.type === 'youtube' && ytPlayerRef.current) {
+            const _ytTime = ytPlayerRef.current.getCurrentTime() ?? 0;
+            const _drift  = Math.abs(_ytTime - _expected);
+            if (_drift > 1.0 && _drift < 30) {
+              console.log(`🔄 [YT Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
+              ytPlayerRef.current.seekTo(_expected);
+            }
+          } else {
+            const _videoEl = videoPlayerRef.current || document.querySelector('video');
+            if (!_videoEl || _videoEl.paused) break;
+            const _drift = Math.abs(_videoEl.currentTime - _expected);
+            if (_drift > 0.5 && _drift < 30) {
+              console.log(`🔄 [Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
+              _videoEl.currentTime = _expected;
+            }
           }
           break;
         }
@@ -3996,6 +4059,29 @@ export default function VideoWatch() {
             break;
           }
           
+          // ── YouTube iframe path ──────────────────────────────────────────────
+          if (message.media_type === 'youtube' && message.video_id) {
+            const isSameVideo = currentMedia?.type === 'youtube' && currentMedia?.videoId === message.video_id;
+            const now = Date.now();
+            const latency = Math.max(0, now - (message.timestamp || now));
+            const adjustedTime = (message.seek_time || 0) + latency / 1000;
+
+            if (!isSameVideo) {
+              // New video — set media (triggers YouTubePlayer mount), stash seek target
+              setCurrentMedia({ type: 'youtube', videoId: message.video_id, url: message.url, original_name: 'YouTube' });
+              pendingYTSeekRef.current = adjustedTime;
+            } else {
+              // Same video — operate directly on player (no reload)
+              ytPlayerRef.current?.seekTo(adjustedTime);
+              if (message.command === 'play')  ytPlayerRef.current?.play();
+              if (message.command === 'pause') ytPlayerRef.current?.pause();
+            }
+            if (message.command === 'play')  setIsPlaying(true);
+            if (message.command === 'pause') setIsPlaying(false);
+            break;
+          }
+
+          // ── Regular file path ────────────────────────────────────────────────
           if (message.file_path) {
             const isSameMedia = currentMedia && currentMedia.file_path === message.file_path;
             console.log('🔍 [VideoWatch] Playback control check:', {
@@ -4843,20 +4929,21 @@ export default function VideoWatch() {
   }, [messages, sessionStatus.id, currentUser?.id, currentMedia, localParticipant, clearMessages]);
 
   // Periodic sync heartbeat: host → members every 2.5s while playing.
-  // Lets members self-correct drift without a host action.
   useEffect(() => {
     if (!isHost || !isPlaying || !isConnected) return;
     const id = setInterval(() => {
-      const videoEl = videoPlayerRef.current || document.querySelector('video');
-      if (!videoEl || videoEl.paused) return;
-      sendMessage({
-        type: 'sync_heartbeat',
-        current_time: videoEl.currentTime,
-        timestamp: Date.now(),
-      });
+      let currentTime;
+      if (isYouTube) {
+        currentTime = ytPlayerRef.current?.getCurrentTime() ?? 0;
+      } else {
+        const videoEl = videoPlayerRef.current || document.querySelector('video');
+        if (!videoEl || videoEl.paused) return;
+        currentTime = videoEl.currentTime;
+      }
+      sendMessage({ type: 'sync_heartbeat', current_time: currentTime, timestamp: Date.now() });
     }, 2500);
     return () => clearInterval(id);
-  }, [isHost, isPlaying, isConnected, sendMessage]);
+  }, [isHost, isPlaying, isConnected, isYouTube, sendMessage]);
 
   // Host session keep-alive: write last_heartbeat_at to DB every 60s.
   // Prevents ghost sessions after host closes tab without ending session.
@@ -5850,22 +5937,33 @@ export default function VideoWatch() {
                     zIndex: 1,
                   } : { zIndex: 1 }}
                 >
-                  <CinemaVideoPlayer
-                    ref={videoPlayerRef}
-                    mediaItem={currentMedia}
-                    isPlaying={isPlaying}
-                    isHost={isHost}
-                    track={remoteScreenTrack}
-                    localScreenTrack={localScreenTrack}
-                    layout={selectedLiveShareLayout}
-                    playbackPositionRef={playbackPositionRef}
-                    onPlay={handlePlay}
-                    onPause={handlePause}
-                    onEnded={handleVideoEnd}
-                    onError={handleError}
-                    onPauseBroadcast={handlePauseBroadcast}
-                    onTimeUpdate={handleTimeUpdate}
-                  />
+                  {isYouTube ? (
+                    <YouTubePlayer
+                      ref={ytPlayerRef}
+                      videoId={currentMedia.videoId}
+                      isHost={isHost}
+                      onReady={handleYouTubeReady}
+                      onStateChange={handleYouTubeStateChange}
+                      className="w-full h-full"
+                    />
+                  ) : (
+                    <CinemaVideoPlayer
+                      ref={videoPlayerRef}
+                      mediaItem={currentMedia}
+                      isPlaying={isPlaying}
+                      isHost={isHost}
+                      track={remoteScreenTrack}
+                      localScreenTrack={localScreenTrack}
+                      layout={selectedLiveShareLayout}
+                      playbackPositionRef={playbackPositionRef}
+                      onPlay={handlePlay}
+                      onPause={handlePause}
+                      onEnded={handleVideoEnd}
+                      onError={handleError}
+                      onPauseBroadcast={handlePauseBroadcast}
+                      onTimeUpdate={handleTimeUpdate}
+                    />
+                  )}
                 </div>
 
                 {/* Vinyl overlay for audio media (MP3/M4A/WAV etc.) */}
@@ -6485,6 +6583,7 @@ export default function VideoWatch() {
             onStartScreenShare={handleStartLiveShare}
             onEndScreenShare={handleEndScreenShare}
             onStartPlatformScreenShare={handleStartPlatformScreenShare}
+            onPlayYouTube={handlePlayYouTube}
             isConnected={isConnected}
             playlist={playlist}
             currentMedia={currentMedia}
