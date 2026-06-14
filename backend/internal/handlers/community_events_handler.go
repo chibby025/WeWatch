@@ -465,11 +465,13 @@ func ClaimCommunityRequestHandler(c *gin.Context) {
 
 	// Return pre-fill data for ScheduleEventModal
 	prefill := gin.H{
-		"title":          communityReq.Title,
-		"description":    communityReq.Description,
-		"content_rating": communityReq.ContentRating,
-		"preferred_date": communityReq.PreferredDate,
-		"room_id":        hostRoom.ID,
+		"title":                communityReq.Title,
+		"description":          communityReq.Description,
+		"content_rating":       communityReq.ContentRating,
+		"preferred_date":       communityReq.PreferredDate,
+		"room_id":              hostRoom.ID,
+		"community_request_id": communityReq.ID,
+		"claim_id":             claim.ID,
 	}
 
 	c.JSON(http.StatusCreated, gin.H{

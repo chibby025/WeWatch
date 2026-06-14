@@ -46,6 +46,9 @@ type ScheduledEventInput struct {
 	RecurrenceEndDate string `json:"recurrence_end_date"` // ISO 8601 end date for recurrence
 
 	ContentRating string `json:"content_rating"` // G, PG, Educational, Religious, 13+, 16+, 18+, Mature
+
+	// Community request link — populated when event is created from a claim prefill
+	CommunityRequestID *uint `json:"community_request_id"`
 }
 
 // CreateScheduledEventHandler handles POST /api/rooms/:id/scheduled-events
@@ -260,6 +263,17 @@ func CreateScheduledEventHandler(c *gin.Context) {
 		log.Printf("Error creating scheduled event: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create scheduled event"})
 		return
+	}
+
+	// 9a. If created from a community request claim, link the scheduled event back to the claim.
+	if input.CommunityRequestID != nil && *input.CommunityRequestID > 0 {
+		go func(reqID, eventID uint, hostID uint) {
+			if err := DB.Model(&models.CommunityRequestClaim{}).
+				Where("request_id = ? AND host_user_id = ?", reqID, hostID).
+				Update("scheduled_event_id", eventID).Error; err != nil {
+				log.Printf("⚠️ [CreateScheduledEvent] Failed to link claim for request %d: %v", reqID, err)
+			}
+		}(*input.CommunityRequestID, event.ID, authenticatedUserID)
 	}
 
 	// 9b. Create recurring instances if applicable

@@ -12,6 +12,10 @@ import ReportModal from './ReportModal';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
+// Module-level cache so rapid tab-switch re-mounts skip unnecessary re-renders.
+const _feedCache = { postsFp: '' };
+const _postsFp = (arr) => arr.map(p => `${p.id}:${p.updated_at || ''}:${p.likes_count ?? ''}:${p.comments_count ?? ''}`).join('|');
+
 const LIKE_CSS = `
   @keyframes likePop {
     0%   { transform: scale(1);    filter: drop-shadow(0 0 0px rgba(239,68,68,0)); }
@@ -154,7 +158,11 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
       if (append) {
         setPosts(prev => [...prev, ...newPosts]);
       } else {
-        setPosts(newPosts);
+        const fp = _postsFp(newPosts);
+        if (fp !== _feedCache.postsFp) {
+          setPosts(newPosts);
+          _feedCache.postsFp = fp;
+        }
       }
 
       // Prefer the backend's explicit has_more flag (present when global-pool pagination

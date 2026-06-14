@@ -72,9 +72,11 @@ const RoomPageNew = () => {
   const { currentUser, roomMemberships, addRoomMembership, removeRoomMembership } = useAuth();
   const isMobile = useMobile();
 
-  // Room state
-  const [room, setRoom] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Room state — seed from navigation state if lobby passed the room object, so we render
+  // immediately without a loading spinner and revalidate from the API in the background.
+  const _navRoom = location.state?.roomData || null;
+  const [room, setRoom] = useState(_navRoom);
+  const [loading, setLoading] = useState(!_navRoom);
   const [error, setError] = useState(null);
   const [isHost, setIsHost] = useState(false);
 
@@ -108,6 +110,7 @@ const RoomPageNew = () => {
   const chatTextareaRef = useRef(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [hasMention, setHasMention] = useState(false);
   const lastVisibleMessageIndexRef = useRef(null); // Track last visible message when scrolling away
   const [replyingTo, setReplyingTo] = useState(null); // Track message being replied to
   const [swipingMsgIndex, setSwipingMsgIndex] = useState(null);
@@ -497,8 +500,10 @@ const RoomPageNew = () => {
 
   const fetchRoomData = async () => {
     try {
-      setLoading(true);
       const prefetched = consumePrefetchedRoom(roomId);
+      // Only block render with a spinner when we have no seed data at all.
+      // If the user navigated from lobby (room data in state) or prefetch hit, render immediately.
+      if (!prefetched && !room) setLoading(true);
       const responseData = prefetched || (await apiClient.get(`/api/rooms/${roomId}`)).data;
       const roomData = responseData.room;
       setRoom(roomData);
@@ -1077,16 +1082,17 @@ const RoomPageNew = () => {
             return next.length > 200 ? next.slice(next.length - 200) : next;
           });
           
-          // Check if user is scrolled up - if so, increment unread count
+          // Check if user is scrolled up — if so, track unread and @mentions
           if (messagesContainerRef.current) {
             const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
             const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
-            
             if (!isAtBottom) {
-              // User is scrolled up, increment unread count
               setUnreadCount(prev => prev + 1);
+              const msgText = message.data.message || '';
+              if (currentUser?.username && msgText.toLowerCase().includes(`@${currentUser.username.toLowerCase()}`)) {
+                setHasMention(true);
+              }
             } else {
-              // User is at bottom, auto-scroll
               scrollToBottom();
             }
           } else {
@@ -1215,7 +1221,8 @@ const RoomPageNew = () => {
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    setUnreadCount(0); // Reset unread count when scrolling to bottom
+    setUnreadCount(0);
+    setHasMention(false);
   };
 
   // Check if user is at bottom of messages
@@ -1704,8 +1711,12 @@ const RoomPageNew = () => {
 
   const handleCreateScheduledEvent = async (eventData) => {
     try {
-      console.log('📅 [RoomPageNew] Creating scheduled event with data:', eventData);
-      await apiClient.post(`/api/rooms/${roomId}/scheduled-events`, eventData);
+      const communityReqId = location.state?.schedulePrefill?.community_request_id;
+      const payload = communityReqId
+        ? { ...eventData, community_request_id: communityReqId }
+        : eventData;
+      console.log('📅 [RoomPageNew] Creating scheduled event with data:', payload);
+      await apiClient.post(`/api/rooms/${roomId}/scheduled-events`, payload);
       toast.success('Event scheduled successfully!');
       await fetchScheduledEvents(); // Refresh events list
     } catch (err) {
@@ -2847,27 +2858,32 @@ const RoomPageNew = () => {
         )}
         <div ref={messagesEndRef} />
 
-        {/* ✅ Scroll to Bottom Button with Unread Counter */}
-        {showScrollButton && (
+        {/* Scroll to Bottom Button — purple to contrast with blue message bubbles */}
+        {(showScrollButton || hasMention) && (
           <button
             onClick={scrollToBottom}
-            className="fixed bottom-24 right-8 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg transition-all duration-200 z-30 group"
-            title={unreadCount > 0 ? `${unreadCount} new message${unreadCount !== 1 ? 's' : ''}` : "Scroll to latest message"}
+            className="fixed bottom-24 right-8 bg-purple-600 hover:bg-purple-700 text-white rounded-full shadow-lg transition-all duration-200 z-30"
+            title={hasMention ? `You were mentioned` : unreadCount > 0 ? `${unreadCount} new message${unreadCount !== 1 ? 's' : ''}` : 'Scroll to latest message'}
           >
             <div className="relative flex items-center gap-2 px-4 py-3">
-              {/* Badge with unread count */}
-              {unreadCount > 0 && (
+              {/* @mention badge — amber, takes priority over unread count */}
+              {hasMention && (
+                <div className="absolute -top-2 -right-2 min-w-[22px] h-[22px] flex items-center justify-center bg-amber-400 rounded-full text-gray-900 text-xs font-bold px-1 shadow-lg">
+                  @
+                </div>
+              )}
+              {/* Unread count badge — only when no mention */}
+              {!hasMention && unreadCount > 0 && (
                 <div className="absolute -top-2 -right-2 min-w-[24px] h-6 flex items-center justify-center bg-red-500 rounded-full text-white text-xs font-bold px-2 shadow-lg animate-pulse">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </div>
               )}
-              
-              {/* Icon and Text */}
               <img src="/icons/bottomIcon.svg" alt="Scroll to bottom" className="h-6 w-6" />
-              {unreadCount > 0 && (
-                <span className="text-sm font-medium whitespace-nowrap">
-                  {unreadCount} new
-                </span>
+              {hasMention && (
+                <span className="text-sm font-medium whitespace-nowrap">mentioned you</span>
+              )}
+              {!hasMention && unreadCount > 0 && (
+                <span className="text-sm font-medium whitespace-nowrap">{unreadCount} new</span>
               )}
             </div>
           </button>
@@ -2887,7 +2903,7 @@ const RoomPageNew = () => {
             </div>
           )}
 
-          <form onSubmit={handleSendMessage} className={`fixed bottom-0 right-0 z-40 lg:relative lg:z-auto lg:left-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24' : 'left-0'} px-4 pb-2 pt-1 sm:pb-3 sm:pt-1`}>
+          <form onSubmit={handleSendMessage} className={`fixed bottom-0 right-0 z-40 lg:relative lg:z-auto lg:left-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24' : 'left-0'} px-4 pb-0 pt-0`}>
 
             {/* @mention dropdown */}
             {mentionOpen && (

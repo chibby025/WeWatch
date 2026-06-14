@@ -2277,6 +2277,7 @@ func InitializeHub() {
             defer ticker.Stop()
             for range ticker.C {
                 CleanupStaleSessions()
+                CleanupExpiredCommunityRequests()
             }
         }()
         log.Println("✅ Stale session cleanup started (runs hourly, ends sessions >24 hours old)")
@@ -2286,6 +2287,53 @@ func InitializeHub() {
 // GetHub returns the global hub instance for use by other packages
 func GetHub() *Hub {
 	return hub
+}
+
+// CleanupExpiredCommunityRequests closes community requests that have been fulfilled
+// (their linked scheduled event has already started) or whose preferred_date is
+// more than 30 days in the past with no claims.
+func CleanupExpiredCommunityRequests() {
+	now := time.Now()
+	staleCutoff := now.AddDate(0, 0, -30)
+
+	// Close requests that have at least one claim with a linked scheduled event
+	// whose start_time has passed — the session happened, request is fulfilled.
+	result := DB.Exec(`
+		UPDATE community_requests SET status = 'closed', updated_at = NOW()
+		WHERE status IN ('open', 'claimed')
+		  AND id IN (
+		    SELECT DISTINCT crc.request_id
+		    FROM community_request_claims crc
+		    JOIN scheduled_events se ON se.id = crc.scheduled_event_id AND se.deleted_at IS NULL
+		    WHERE se.start_time < ?
+		  )
+		  AND id NOT IN (
+		    -- Exclude if there's still a future claimed event (host rescheduled)
+		    SELECT DISTINCT crc2.request_id
+		    FROM community_request_claims crc2
+		    JOIN scheduled_events se2 ON se2.id = crc2.scheduled_event_id AND se2.deleted_at IS NULL
+		    WHERE se2.start_time > ?
+		  )
+	`, now, now)
+	if result.Error != nil {
+		log.Printf("❌ [CleanupExpiredCommunityRequests] fulfilled sweep: %v", result.Error)
+	} else if result.RowsAffected > 0 {
+		log.Printf("🧹 [CleanupExpiredCommunityRequests] Closed %d fulfilled requests", result.RowsAffected)
+	}
+
+	// Close stale open requests (no claims, preferred_date >30 days ago)
+	result2 := DB.Exec(`
+		UPDATE community_requests SET status = 'closed', updated_at = NOW()
+		WHERE status = 'open'
+		  AND preferred_date IS NOT NULL
+		  AND preferred_date < ?
+		  AND id NOT IN (SELECT DISTINCT request_id FROM community_request_claims)
+	`, staleCutoff)
+	if result2.Error != nil {
+		log.Printf("❌ [CleanupExpiredCommunityRequests] stale sweep: %v", result2.Error)
+	} else if result2.RowsAffected > 0 {
+		log.Printf("🧹 [CleanupExpiredCommunityRequests] Closed %d stale unclaimed requests", result2.RowsAffected)
+	}
 }
 
 // BroadcastJSON is a helper method to broadcast JSON data to a room

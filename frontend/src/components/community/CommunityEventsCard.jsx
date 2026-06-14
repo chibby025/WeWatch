@@ -281,8 +281,8 @@ const CommunityEventsCard = ({
         <div
           className="absolute left-0 right-0 bottom-0 flex items-center justify-center gap-2 px-4"
           style={fixedBottom !== undefined
-            ? { position: 'fixed', bottom: fixedBottom, left: 0, right: 0, height: BTN_AREA_H, zIndex: 30 }
-            : { height: BTN_AREA_H, zIndex: 10 }}
+            ? { position: 'fixed', bottom: fixedBottom, left: 0, right: 0, height: BTN_AREA_H, zIndex: 30, background: 'rgba(10,10,18,0.95)', backdropFilter: 'blur(12px)' }
+            : { height: BTN_AREA_H, zIndex: 10, background: 'rgba(10,10,18,0.95)', backdropFilter: 'blur(12px)' }}
         >
           <button
             onClick={() => setShowRequestSheet(true)}
@@ -639,8 +639,8 @@ const CommunityEventsCard = ({
       <div
         className="absolute left-0 right-0 bottom-0 flex items-center justify-center px-4"
         style={fixedBottom !== undefined
-          ? { position: 'fixed', bottom: fixedBottom, left: 0, right: 0, height: BTN_AREA_H, zIndex: 30 }
-          : { height: BTN_AREA_H, zIndex: 30 }}
+          ? { position: 'fixed', bottom: fixedBottom, left: 0, right: 0, height: BTN_AREA_H, zIndex: 30, background: 'rgba(10,10,18,0.95)', backdropFilter: 'blur(12px)' }
+          : { height: BTN_AREA_H, zIndex: 30, background: 'rgba(10,10,18,0.95)', backdropFilter: 'blur(12px)' }}
       >
         <button
           onClick={() => setShowRequestSheet(true)}

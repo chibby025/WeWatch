@@ -98,11 +98,15 @@ const pulseAnimationStyles = `
 
 // Module-level stale-while-revalidate cache (survives tab switches, cleared on unmount)
 const _lobbyCache = {
-  rooms: null, roomsTs: 0,
-  sessions: null, sessionsTs: 0,
-  friends: null, friendsTs: 0,   // for instant chat-tab loads
+  rooms: null, roomsTs: 0, roomsFp: '',
+  sessions: null, sessionsTs: 0, sessionsFp: '',
+  friends: null, friendsTs: 0, friendsFp: '',
 };
-const CACHE_TTL = 60_000; // 60 s
+// Cheap fingerprint: join id + a volatile field so we catch joins/renames/previews.
+const _roomsFp  = (arr) => arr.map(r => `${r.id}:${r.updated_at || ''}:${r.member_count ?? ''}`).join('|');
+const _sessionsFp = (arr) => arr.map(s => `${s.session_id}:${s.member_count ?? ''}:${s.preview_url || ''}`).join('|');
+const _friendsFp = (arr) => arr.map(f => `${f.id}:${f.username || ''}:${f.last_message?.content || ''}:${f.last_message?.created_at || ''}`).join('|');
+const CACHE_TTL = 300_000; // 5 min — WS + 30s poll keep data fresh; back-navigation should always be instant
 
 const LobbyPage = () => {
   // ✅ Tab State
@@ -1004,8 +1008,21 @@ const LobbyPage = () => {
       if (append) {
         setRooms(prevRooms => [...prevRooms, ...filteredForRooms]);
       } else {
-        setRooms(filteredForRooms);
-        if (page === 0) { _lobbyCache.rooms = filteredForRooms; _lobbyCache.roomsTs = Date.now(); }
+        if (page === 0) {
+          const fp = _roomsFp(filteredForRooms);
+          if (fp !== _lobbyCache.roomsFp) {
+            // Something changed — update state and cache
+            setRooms(filteredForRooms);
+            _lobbyCache.rooms = filteredForRooms;
+            _lobbyCache.roomsTs = Date.now();
+            _lobbyCache.roomsFp = fp;
+          } else {
+            // Identical to cache — just refresh the timestamp, skip re-render
+            _lobbyCache.roomsTs = Date.now();
+          }
+        } else {
+          setRooms(filteredForRooms);
+        }
       }
 
       // Update pagination state
@@ -1071,9 +1088,15 @@ const LobbyPage = () => {
         return false;
       });
       
-      setSessions(filtered);
-      _lobbyCache.sessions = filtered;
-      _lobbyCache.sessionsTs = Date.now();
+      const fp = _sessionsFp(filtered);
+      if (fp !== _lobbyCache.sessionsFp) {
+        setSessions(filtered);
+        _lobbyCache.sessions = filtered;
+        _lobbyCache.sessionsTs = Date.now();
+        _lobbyCache.sessionsFp = fp;
+      } else {
+        _lobbyCache.sessionsTs = Date.now();
+      }
 
       // Sync sessionsPage.data so cards render immediately (badge and cards share same source).
       // Never prune sessions the current user is hosting or is a member of — their session may
@@ -1123,8 +1146,12 @@ const LobbyPage = () => {
         ...friend,
         id: friend.id || friend.ID
       }));
-      setFriendsList(normalizedFriends);
-      _lobbyCache.friends  = normalizedFriends;
+      const fp = _friendsFp(normalizedFriends);
+      if (fp !== _lobbyCache.friendsFp) {
+        setFriendsList(normalizedFriends);
+        _lobbyCache.friends   = normalizedFriends;
+        _lobbyCache.friendsFp = fp;
+      }
       _lobbyCache.friendsTs = Date.now();
 
       // Seed lastMessagePreviews from the last_message fields returned by the API
@@ -4001,7 +4028,7 @@ const LobbyPage = () => {
                     onMouseEnter={() => prefetchRoom(room.id)}
                     onClick={() => {
                       if (roomLongPressActive.current) { roomLongPressActive.current = false; return; }
-                      navigate(`/rooms/${room.id}`);
+                      navigate(`/rooms/${room.id}`, { state: { roomData: room } });
                     }}
                     onTouchStart={() => {
                       prefetchRoom(room.id);
@@ -4139,7 +4166,7 @@ const LobbyPage = () => {
                     >
                       <button
                         className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2.5 transition-colors"
-                        onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); navigate(`/rooms/${room.id}`); }}
+                        onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); navigate(`/rooms/${room.id}`, { state: { roomData: room } }); }}
                       >
                         <ArrowUpIcon className="w-4 h-4 rotate-90" /> Enter Room
                       </button>
