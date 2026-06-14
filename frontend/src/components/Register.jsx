@@ -53,7 +53,13 @@ const Register = () => {
       const data = await registerUser(userData);
       console.log("Registration successful:", data);
 
-      const { user } = data;
+      const { user, token, refresh_token } = data;
+      if (token) {
+        localStorage.setItem('wewatch_token', token);
+      }
+      if (refresh_token) {
+        localStorage.setItem('wewatch_refresh', refresh_token);
+      }
       if (user) {
         localStorage.setItem('user', JSON.stringify(user));
         await refreshUser();

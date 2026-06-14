@@ -34,9 +34,12 @@ const Login = () => {
       const loginData = await loginUser(credentials);
       console.log("Login successful:", loginData);
 
-      const { user, token } = loginData;
+      const { user, token, refresh_token } = loginData;
       if (token) {
         localStorage.setItem('wewatch_token', token);
+      }
+      if (refresh_token) {
+        localStorage.setItem('wewatch_refresh', refresh_token);
       }
       if (user) {
         console.log('✅ [Login] Login successful, refreshing auth state...');

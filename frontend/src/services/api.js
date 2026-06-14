@@ -207,13 +207,18 @@ apiClient.interceptors.response.use(
 
             _isRefreshing = true;
             try {
-                // Use plain axios (not apiClient) to avoid re-triggering this interceptor
+                // Use plain axios (not apiClient) to avoid re-triggering this interceptor.
+                // Include the stored refresh token in the body — iOS Safari blocks cross-origin
+                // cookies, so the cookie path alone would always fail on mobile.
                 const { data } = await axios.post(
                     `${API_BASE_URL}/api/auth/refresh`,
-                    {},
+                    { refresh_token: localStorage.getItem('wewatch_refresh') || '' },
                     { withCredentials: true }
                 );
                 localStorage.setItem('wewatch_token', data.token);
+                if (data.refresh_token) {
+                    localStorage.setItem('wewatch_refresh', data.refresh_token);
+                }
                 _drainQueue(data.token);
                 originalRequest.headers = originalRequest.headers || {};
                 originalRequest.headers.Authorization = `Bearer ${data.token}`;

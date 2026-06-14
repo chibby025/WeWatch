@@ -174,7 +174,7 @@ func RegisterHandler(c *gin.Context) {
         Secure:   true,
         SameSite: http.SameSiteNoneMode,
     })
-    issueRefreshToken(c, newUser.ID)
+    refreshPlaintext := issueRefreshToken(c, newUser.ID)
 
     c.JSON(http.StatusCreated, gin.H{
         "message": "User registered successfully",
@@ -186,7 +186,8 @@ func RegisterHandler(c *gin.Context) {
             "has_date_of_birth": newUser.HasDateOfBirth(),
             // Don't include PasswordHash!
         },
-        "token": tokenString,
+        "token":         tokenString,
+        "refresh_token": refreshPlaintext,
     })
 }
 
@@ -246,13 +247,14 @@ func LoginHandler(c *gin.Context) {
         Secure:   true,
         SameSite: http.SameSiteNoneMode,
     })
-    issueRefreshToken(c, user.ID)
+    refreshPlaintext := issueRefreshToken(c, user.ID)
 
     log.Printf("User logged in successfully: ID=%d, Username=%s", user.ID, user.Username)
 
     c.JSON(http.StatusOK, gin.H{
-        "message": "Login successful",
-        "token":   tokenString,
+        "message":       "Login successful",
+        "token":         tokenString,
+        "refresh_token": refreshPlaintext,
         "user": gin.H{
             "id":       user.ID,
             "username": user.Username,
@@ -316,12 +318,14 @@ func LogoutHandler(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
-// issueRefreshToken generates a refresh token, persists its hash, and sets the httpOnly cookie.
-func issueRefreshToken(c *gin.Context, userID uint) {
+// issueRefreshToken generates a refresh token, persists its hash, sets the httpOnly cookie,
+// and returns the plaintext so callers can include it in the JSON response for mobile clients
+// that cannot receive cross-origin cookies (iOS Safari ITP).
+func issueRefreshToken(c *gin.Context, userID uint) string {
     plaintext, hash, err := utils.GenerateRefreshToken()
     if err != nil {
         log.Printf("⚠️ Failed to generate refresh token for user %d: %v", userID, err)
-        return
+        return ""
     }
     rt := models.RefreshToken{
         UserID:    userID,
@@ -330,7 +334,7 @@ func issueRefreshToken(c *gin.Context, userID uint) {
     }
     if err := DB.Create(&rt).Error; err != nil {
         log.Printf("⚠️ Failed to save refresh token for user %d: %v", userID, err)
-        return
+        return ""
     }
     http.SetCookie(c.Writer, &http.Cookie{
         Name:     "wewatch_refresh",
@@ -341,13 +345,25 @@ func issueRefreshToken(c *gin.Context, userID uint) {
         Secure:   true,
         SameSite: http.SameSiteNoneMode,
     })
+    return plaintext
 }
 
-// RefreshTokenHandler issues a new access JWT using a valid httpOnly refresh token cookie.
-// POST /api/auth/refresh — no auth middleware, reads wewatch_refresh cookie.
+// RefreshTokenHandler issues a new access JWT using a valid refresh token.
+// POST /api/auth/refresh — no auth middleware.
+// Reads wewatch_refresh cookie first; falls back to {"refresh_token":"..."} in the request body
+// for mobile clients where cross-origin cookies are blocked by the browser (iOS Safari ITP).
 func RefreshTokenHandler(c *gin.Context) {
-    refreshPlain, err := c.Cookie("wewatch_refresh")
-    if err != nil || refreshPlain == "" {
+    refreshPlain, cookieErr := c.Cookie("wewatch_refresh")
+    if cookieErr != nil || refreshPlain == "" {
+        // Fallback: body-supplied token for mobile (iOS Safari blocks third-party cookies)
+        var body struct {
+            RefreshToken string `json:"refresh_token"`
+        }
+        if bindErr := c.ShouldBindJSON(&body); bindErr == nil {
+            refreshPlain = body.RefreshToken
+        }
+    }
+    if refreshPlain == "" {
         c.JSON(http.StatusUnauthorized, gin.H{"error": "no refresh token"})
         return
     }
@@ -369,22 +385,21 @@ func RefreshTokenHandler(c *gin.Context) {
     }
 
     // Rotate: revoke the used refresh token and issue a fresh 30-day one.
-    // Limits the blast radius if a refresh token is ever stolen.
     models.RevokeRefreshToken(DB, tokenHash)
-    issueRefreshToken(c, rt.UserID)
+    newRefreshPlaintext := issueRefreshToken(c, rt.UserID)
 
     // Refresh the access token cookie too (for cookie-based auth paths)
     http.SetCookie(c.Writer, &http.Cookie{
         Name:     "wewatch_token",
         Value:    newToken,
         Path:     "/",
-        MaxAge:   3600,
+        MaxAge:   7 * 24 * 3600,
         HttpOnly: true,
         Secure:   true,
         SameSite: http.SameSiteNoneMode,
     })
 
-    c.JSON(http.StatusOK, gin.H{"token": newToken})
+    c.JSON(http.StatusOK, gin.H{"token": newToken, "refresh_token": newRefreshPlaintext})
 }
 
 // ChangePasswordInput defines the structure for password change request
