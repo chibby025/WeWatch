@@ -1583,7 +1583,7 @@ export default function LeftSidebar({
 
       {/* UPLOAD TAB — visible to all */}
       {activeTab === 'upload' && (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col">
           {/* Upload Section - Host Only */}
           {isHost && (
             <div className="p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-b-2xl rounded-t-none mb-3 sm:mb-4 flex flex-col">
@@ -1902,8 +1902,8 @@ export default function LeftSidebar({
             );
           })()}
 
-          <div className="flex-1 mt-3 sm:mt-4 min-h-0">
-            <div className="h-full flex flex-col p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl overflow-y-auto">
+          <div className="mt-3 sm:mt-4">
+            <div className="flex flex-col p-3 sm:p-4 bg-[#D9D9D9]/10 rounded-xl">
 
               {/* ACTIVE QUIZZES (Lecture Hall OR Educational content - Students) */}
               {!isHost && ((watchType === 'classroom' && classType === 'lecture_hall') || contentRating === 'Educational') && onTakeQuiz && (() => {
@@ -1993,7 +1993,7 @@ export default function LeftSidebar({
 
               <h4 className="text-sm sm:text-base font-semibold text-gray-400 mb-2">PLAYLIST</h4>
               {playlist.length > 0 ? (
-                <div className="space-y-2 max-h-64 overflow-y-auto hide-scrollbar">
+                <div className="space-y-2">
                   {playlist.map((item) => (
                     <div
                       key={item.ID}

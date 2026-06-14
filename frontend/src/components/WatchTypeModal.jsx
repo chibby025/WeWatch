@@ -437,7 +437,7 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
           <div>
-            <h2 className="text-sm font-extrabold bg-gradient-to-r from-purple-600 to-blue-500 bg-clip-text text-transparent">{title}</h2>
+            <h2 className="text-base font-extrabold bg-gradient-to-r from-purple-600 to-blue-500 bg-clip-text text-transparent">{title}</h2>
             <p className="text-xs text-gray-400 mt-0.5">Select your watch experience</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Close">

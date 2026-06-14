@@ -5050,20 +5050,10 @@ export default function VideoWatch() {
   // Handle Leave Room
   const handleLeaveRoom = async () => {
     const finalSessionId = sessionStatus?.id || urlSessionId || activeSessionId;
-
-    // Determine if this is an instant watch BEFORE any cleanup changes the URL
     const urlParams = new URLSearchParams(window.location.search);
     const isInstantWatch = urlParams.get('instant') === 'true';
 
     if (isHost) {
-      const confirmed = window.confirm(
-        "End watch session for everyone? All participants will be returned to the lobby."
-      );
-
-      if (!confirmed) {
-        return;
-      }
-
       try {
         if (finalSessionId) {
           await apiClient.post(`/api/rooms/${roomId}/sessions/${finalSessionId}/end`);
@@ -5072,19 +5062,13 @@ export default function VideoWatch() {
         }
       } catch (error) {
         console.error('Failed to end session:', error);
-
-        // ECONNABORTED / CanceledError = request timed out on the client side.
-        // The backend already wrote is_active=false and broadcast session_ended —
-        // the HTTP response was just lost (Railway proxy latency).
-        // Treat as success: proceed with navigation so the host isn't stuck.
         const isTimeout = error?.code === 'ECONNABORTED' || error?.name === 'CanceledError';
         if (isTimeout) {
           console.warn('[VideoWatch] End-session request timed out — assuming server processed it, navigating home');
           sessionStorage.setItem(`session_ended_${roomId}`, 'true');
-          // fall through to performCleanupAndExit below
         } else if (error?.response?.status !== 404) {
-          toast.error('Could not end session. Please try again.');
-          return;
+          toast.error('Could not end session.');
+          // Don't return — still navigate so host is never stuck on the watch page
         }
         // 404 = already ended — safe to proceed
       }
@@ -6991,6 +6975,7 @@ export default function VideoWatch() {
           `}</style>
         </div>
       )}
+
 
     </div>
   );
