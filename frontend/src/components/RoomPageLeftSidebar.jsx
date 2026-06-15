@@ -46,7 +46,7 @@ const RoomPageLeftSidebar = ({
   return (
     <div
       ref={sidebarRef}
-      className={`w-16 sm:w-20 md:w-24 lg:w-28 bg-gray-100/80 dark:bg-gray-900/50 border-r border-gray-200 dark:border-gray-700/50 flex flex-col items-center gap-2 overflow-y-auto overflow-x-hidden flex-shrink-0 min-h-0 h-full ${
+      className={`w-16 sm:w-20 md:w-24 lg:w-28 bg-violet-100/60 dark:bg-gray-900/50 border-r border-violet-200/80 dark:border-gray-700/50 flex flex-col items-center gap-2 overflow-y-auto overflow-x-hidden flex-shrink-0 min-h-0 h-full ${
         isMobile ? '' : 'pt-4 pb-4'
       }`}
       style={{
@@ -65,7 +65,7 @@ const RoomPageLeftSidebar = ({
           className={`relative w-11 h-11 sm:w-12 sm:h-12 md:w-14 md:h-14 rounded-2xl flex items-center justify-center transition-all group overflow-hidden ${
             selectedGroupId === null 
               ? 'bg-purple-600 shadow-lg shadow-purple-500/50' 
-              : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 hover:rounded-xl active:scale-95'
+              : 'bg-violet-200/70 dark:bg-gray-800 hover:bg-violet-300/70 dark:hover:bg-gray-700 hover:rounded-xl active:scale-95'
           }`}
           title="Main Chat"
         >
@@ -82,7 +82,7 @@ const RoomPageLeftSidebar = ({
       </div>
 
       {/* Divider */}
-      <div className="w-6 sm:w-8 h-px bg-gray-300/80 dark:bg-gray-700/50 my-1" />
+      <div className="w-6 sm:w-8 h-px bg-violet-300/60 dark:bg-gray-700/50 my-1" />
 
       {/* Room Groups */}
       {groups.map((group) => (
@@ -96,7 +96,7 @@ const RoomPageLeftSidebar = ({
             className={`relative w-11 h-11 sm:w-12 sm:h-12 md:w-14 md:h-14 rounded-2xl flex items-center justify-center transition-all overflow-hidden ${
               selectedGroupId === group.ID 
                 ? 'bg-purple-600 shadow-lg shadow-purple-500/50' 
-                : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 hover:rounded-xl active:scale-95'
+                : 'bg-violet-200/70 dark:bg-gray-800 hover:bg-violet-300/70 dark:hover:bg-gray-700 hover:rounded-xl active:scale-95'
             }`}
             title={group.name}
           >

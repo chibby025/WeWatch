@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { XMarkIcon, ArrowRightIcon, FilmIcon, AcademicCapIcon, PhotoIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, ArrowRightIcon } from '@heroicons/react/24/outline';
 import { useGLTF } from '@react-three/drei';
 import { uploadCustomBackground } from '../services/api';
+import WatchTypePicker from './WatchTypePicker';
 
 // ── Canvas compression — max 1280×720, JPEG 0.82 ─────────────────────────────
 function compressImage(source, maxW = 1280, maxH = 720, quality = 0.82) {
@@ -39,60 +40,6 @@ const SUGGESTIONS = [
   { name: 'Kid Watching TV',    file: 'Kid watching TV.webp',             emoji: '📺' },
 ];
 
-// ── Watch type definitions ────────────────────────────────────────────────────
-const WATCH_TYPES = [
-  { id: 'video',     name: 'Video Watch',  emoji: '🎬', color: '#38bdf8', description: 'Standard 2D video player with synchronized playback for everyone in the room.' },
-  { id: '3d_cinema', name: '3D Cinema',    emoji: '🎭', color: '#3b82f6', description: 'Immersive virtual cinema with 3D seats, spatial audio, and avatar presence.' },
-  { id: 'classroom', name: 'Lecture Hall', emoji: '🎓', color: '#4f46e5', description: '3D virtual lecture hall with whiteboard, quizzes, and interactive learning tools.' },
-  { id: 'custom',    name: 'Custom Scene', emoji: '🖼️', color: '#7c3aed', description: 'Upload any room photo and drag the box to position the screen where you want it.' },
-];
-
-// ── Petal icons
-// video: custom inline SVG (screen + play + scrubber — approved)
-// others: Heroicons outline rendered via foreignObject
-const PETAL_VIDEO_ICON = (
-  <>
-    <rect x="2" y="2" width="20" height="14" rx="1.5" />
-    <path d="M9.5 7.5L9.5 12.5L15 10Z" />
-    <line x1="2" y1="20" x2="22" y2="20" />
-    <circle cx="7" cy="20" r="1.5" fill="white" />
-  </>
-);
-const PETAL_HEROICONS = {
-  '3d_cinema': FilmIcon,       // film strip = cinema
-  classroom:   AcademicCapIcon, // graduation cap = lecture hall
-  custom:      PhotoIcon,       // photo frame = custom scene
-};
-
-// ── SVG semicircle petal geometry ─────────────────────────────────────────────
-// Circle centre: (80, 115). Inner r=56. Outer r=100 (edge), r=125 (centre).
-//
-// Petal widths reduced by 5% (38°→36°). Each gap-facing edge pulls inward ~1°.
-// Resulting gaps: all 12° (symmetric).
-//   P1: -90° → -54°   P2: -42° → -6°
-//   P3: +6°  → +42°   P4: +54° → +90°
-//
-// Inner pts (r=56):
-//   -90°=(80,59)    -54°=(113,70)   -42°=(122,78)   -6°=(136,109)
-//   +6°=(136,121)   +42°=(122,153)  +54°=(113,160)  +90°=(80,171)
-//
-// Outer pts P1/P4 (r=100): -90°=(80,15)   -54°=(139,34)   +54°=(139,196)  +90°=(80,215)
-// Outer pts P2/P3 (r=125): -42°=(173,31)  -6°=(204,102)   +6°=(204,128)   +42°=(173,199)
-//
-// Rounded outer corners: stroke={fill color} strokeWidth=22 strokeLinejoin="round"
-const PETAL_PATHS = [
-  'M 80,59 A 56,56 0 0,1 113,70 L 139,34 A 100,100 0 0,0 80,15 Z',            // P1 -90°→-54°  r=100
-  'M 122,78 A 56,56 0 0,1 136,109 L 204,102 A 125,125 0 0,0 173,31 Z',         // P2 -42°→-6°   r=125
-  'M 136,121 A 56,56 0 0,1 122,153 L 173,199 A 125,125 0 0,0 204,128 Z',       // P3 +6°→+42°   r=125
-  'M 113,160 A 56,56 0 0,1 80,171 L 80,215 A 100,100 0 0,0 139,196 Z',         // P4 +54°→+90°  r=100
-];
-// Emoji: r≈72 for edge petals, r≈92 for centre petals (bisectors: -72°, -24°, +24°, +72°)
-const PETAL_EMOJI_POS = [
-  { x: 102, y: 47  },
-  { x: 164, y: 78  },
-  { x: 164, y: 152 },
-  { x: 102, y: 184 },
-];
 
 
 // ── Region picker ─────────────────────────────────────────────────────────────
@@ -203,7 +150,6 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
   const [loadingSuggestion, setLoadingSuggestion] = useState(null); // suggestion filename being loaded
   const [box, setBox] = useState({ x: 0.20, y: 0.20, w: 0.55, h: 0.45 });
   const [selectedTypeId, setSelectedTypeId] = useState('video');
-  const [circlePhase, setCirclePhase]       = useState('emoji'); // 'emoji' | 'image'
 
   const uploadInputRef  = useRef(null); // regular file picker
   const cameraInputRef  = useRef(null); // camera capture
@@ -222,15 +168,6 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
   useEffect(() => {
     if (isOpen) { useGLTF.preload('/models/cinema.glb'); useGLTF.preload('/models/lecture_hall.glb'); }
   }, [isOpen]);
-
-  // Cycle: emoji → image (1 s) → emoji (2 s) on every petal change
-  useEffect(() => {
-    if (!isOpen) return;
-    setCirclePhase('emoji');
-    const t1 = setTimeout(() => setCirclePhase('image'), 1000);
-    const t2 = setTimeout(() => setCirclePhase('emoji'), 2000);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [selectedTypeId, isOpen]);
 
   if (!isOpen) return null;
 
@@ -282,8 +219,6 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
     if (!uploadedUrl) return;
     onSelectType('custom', { backgroundUrl: uploadedUrl, region: box });
   };
-
-  const selectedType = WATCH_TYPES.find(t => t.id === selectedTypeId) ?? WATCH_TYPES[0];
 
   // ── Step 2: Custom scene setup ─────────────────────────────────────────────
   if (step === 2) {
@@ -445,114 +380,12 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
           </button>
         </div>
 
-        {/* Fan SVG — centred, scales to modal width */}
-        <div className="flex justify-center pt-5 px-4">
-          <svg
-            viewBox="2 2 218 226"
-            className="w-full"
-            style={{ maxWidth: 300 }}
-            aria-label="Watch type selector"
-          >
-            <defs>
-              <filter id="wt-circle-shadow" x="-25%" y="-25%" width="150%" height="150%">
-                <feDropShadow dx="1" dy="3" stdDeviation="5" floodColor="rgba(0,0,0,0.13)" />
-              </filter>
-              <filter id="wt-petal-glow" x="-30%" y="-30%" width="160%" height="160%">
-                <feDropShadow dx="0" dy="0" stdDeviation="5" floodColor="rgba(255,255,255,0.75)" />
-              </filter>
-
-            </defs>
-
-            {/* 4 arc-sector petals fanning right */}
-            {WATCH_TYPES.map((type, i) => {
-              const isSelected = selectedTypeId === type.id;
-              return (
-                <g key={type.id} onClick={() => setSelectedTypeId(type.id)} style={{ cursor: 'pointer' }}>
-                  <path
-                    d={PETAL_PATHS[i]}
-                    fill={type.color}
-                    stroke={type.color}
-                    strokeWidth="22"
-                    strokeLinejoin="round"
-                    filter={isSelected ? 'url(#wt-petal-glow)' : undefined}
-                  />
-                  {/* Petal icon */}
-                  {type.id === 'video' ? (
-                    <g
-                      transform={`translate(${PETAL_EMOJI_POS[i].x - 9}, ${PETAL_EMOJI_POS[i].y - 9}) scale(0.75)`}
-                      fill="none" stroke="white" strokeWidth="1.5"
-                      strokeLinecap="round" strokeLinejoin="round"
-                      style={{ pointerEvents: 'none', userSelect: 'none' }}
-                    >
-                      {PETAL_VIDEO_ICON}
-                    </g>
-                  ) : (() => {
-                    const HIcon = PETAL_HEROICONS[type.id];
-                    return (
-                      <foreignObject
-                        x={PETAL_EMOJI_POS[i].x - 9}
-                        y={PETAL_EMOJI_POS[i].y - 9}
-                        width="18" height="18"
-                        style={{ pointerEvents: 'none', userSelect: 'none', overflow: 'visible' }}
-                      >
-                        <HIcon style={{ width: 18, height: 18, color: 'white', display: 'block' }} />
-                      </foreignObject>
-                    );
-                  })()}
-                </g>
-              );
-            })}
-
-            {/* Large white circle + image — scales 10% when showing image */}
-            <g
-              style={{
-                transform: circlePhase === 'image' ? 'scale(1.2)' : 'scale(1)',
-                transformBox: 'fill-box',
-                transformOrigin: 'center',
-                transition: 'transform 0.4s cubic-bezier(0.34, 1.2, 0.64, 1)',
-                pointerEvents: 'none',
-              }}
-            >
-              <circle cx="80" cy="115" r="56" fill="white" filter="url(#wt-circle-shadow)" />
-              {/* Type image — fades in during image phase, clipped to circle */}
-              <foreignObject x="24" y="59" width="112" height="112" style={{ overflow: 'hidden' }}>
-                <img
-                  src={
-                    selectedTypeId === 'video'      ? '/icons/Videowatch1.webp' :
-                    selectedTypeId === '3d_cinema'  ? '/icons/cinema1.webp' :
-                    selectedTypeId === 'classroom'  ? '/icons/lecture1.webp' :
-                    '/images/custom-backgrounds/Family Movie Night.webp'
-                  }
-                  alt=""
-                  style={{
-                    width: '100%', height: '100%',
-                    objectFit: 'cover',
-                    borderRadius: '50%',
-                    display: 'block',
-                    opacity: circlePhase === 'image' ? 1 : 0,
-                    transition: 'opacity 0.35s ease',
-                  }}
-                />
-              </foreignObject>
-            </g>
-            {/* Emoji + label — fade out when image phase is active */}
-            <text x="80" y="111" textAnchor="middle" dominantBaseline="central" fontSize="26"
-              style={{ pointerEvents: 'none', userSelect: 'none', opacity: circlePhase === 'emoji' ? 1 : 0, transition: 'opacity 0.3s ease' }}>
-              {selectedType.emoji}
-            </text>
-            <text x="80" y="131" textAnchor="middle" dominantBaseline="central" fontSize="9" fontWeight="600" fill="#6b7280"
-              style={{ pointerEvents: 'none', userSelect: 'none', opacity: circlePhase === 'emoji' ? 1 : 0, transition: 'opacity 0.3s ease' }}>
-              {selectedType.name}
-            </text>
-          </svg>
-        </div>
-
-        {/* Description for the active selection */}
-        <div className="px-5 pt-3 pb-2 text-center">
-          <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
-            {selectedType.description}
-          </p>
-        </div>
+        <WatchTypePicker
+          selectedTypeId={selectedTypeId}
+          onChange={setSelectedTypeId}
+          showDescription
+          maxWidth={300}
+        />
 
         {/* Continue */}
         <div className="px-5 py-4">

@@ -52,6 +52,10 @@ import { parseTwemoji } from '../utils/twemoji';
 // import MediaBanner from './MediaBanner';
 
 // Renders a chat message string — highlights @username tokens in purple, then parses emoji SVGs.
+// Module-level chat cache — survives tab switches and brief navigations away
+// Key: `${roomId}:${groupId||'main'}` → last 50 messages
+const _roomChatCache = new Map();
+
 // Safe: non-mention segments are HTML-escaped inside parseTwemoji; mention wrapper uses only /\w+/ chars.
 const ChatMessageText = ({ text, className }) => {
   if (!text) return null;
@@ -91,10 +95,12 @@ const RoomPageNew = () => {
   const [joiningRoom, setJoiningRoom] = useState(false); // ✅ Track join action
 
   // Chat state
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => _roomChatCache.get(`${roomId}:main`) || []);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  // Tracks current cache key (roomId:groupId) so WS handlers can update cache without stale closure
+  const chatCacheKeyRef = useRef(`${roomId}:main`);
   const headerRef = useRef(null);
   const [mobileHeaderHeight, setMobileHeaderHeight] = useState(80);
   const [openMenuIndex, setOpenMenuIndex] = useState(null);
@@ -195,6 +201,10 @@ const RoomPageNew = () => {
   const [roomGroups, setRoomGroups] = useState([]);
   const [selectedGroupId, setSelectedGroupId] = useState(null); // null = main chat
   const [loadingGroups, setLoadingGroups] = useState(false);
+  // Keep chatCacheKeyRef in sync so WS handlers always write to the right cache slot
+  useEffect(() => {
+    chatCacheKeyRef.current = `${roomId}:${selectedGroupId || 'main'}`;
+  }, [roomId, selectedGroupId]);
   const [isGroupEditModalOpen, setIsGroupEditModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [isUserGroupMember, setIsUserGroupMember] = useState(false);
@@ -672,6 +682,9 @@ const RoomPageNew = () => {
   };
 
   const fetchRoomMessages = async () => {
+    const cacheKey = `${roomId}:main`;
+    const cached = _roomChatCache.get(cacheKey);
+    if (cached?.length) setMessages(cached);
     try {
       const response = await apiClient.get(`/api/rooms/${roomId}/messages`);
       const msgs = response.data.messages || [];
@@ -680,6 +693,7 @@ const RoomPageNew = () => {
       const msgsWithReply = msgs.filter(m => m.reply_to);
       console.log('📨 [Reply Debug] Messages with reply_to:', msgsWithReply.length, msgsWithReply);
       const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
+      _roomChatCache.set(cacheKey, capped.slice(-50));
       setMessages(capped);
       scrollToBottom();
     } catch (err) {
@@ -767,8 +781,8 @@ const RoomPageNew = () => {
   // Handle group selection
   const handleGroupSelect = (groupId) => {
     setSelectedGroupId(groupId);
-    // Clear messages and refetch for selected group
-    setMessages([]);
+    // Only blank out if this group has no cache — fetchMessagesForGroup will serve cache instantly
+    if (!_roomChatCache.get(`${roomId}:${groupId || 'main'}`)?.length) setMessages([]);
     fetchMessagesForGroup(groupId);
   };
 
@@ -831,14 +845,18 @@ const RoomPageNew = () => {
 
   // Fetch messages for specific group (or main chat if null)
   const fetchMessagesForGroup = async (groupId) => {
+    const cacheKey = `${roomId}:${groupId || 'main'}`;
+    const cached = _roomChatCache.get(cacheKey);
+    if (cached?.length) setMessages(cached);
     try {
-      const url = groupId 
+      const url = groupId
         ? `/api/rooms/${roomId}/messages?room_group_id=${groupId}`
         : `/api/rooms/${roomId}/messages?room_group_id=null`;
-      
       const response = await apiClient.get(url);
       const msgs = response.data.messages || [];
-      setMessages(msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs);
+      const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
+      _roomChatCache.set(cacheKey, capped.slice(-50));
+      setMessages(capped);
     } catch (err) {
       console.error('Failed to fetch messages:', err);
       toast.error('Failed to load messages');
@@ -1079,9 +1097,11 @@ const RoomPageNew = () => {
             const existingIds = prev.map(m => m.id || m.ID);
             if (id && existingIds.includes(id)) return prev;
             const next = [...prev, message.data];
-            return next.length > 200 ? next.slice(next.length - 200) : next;
+            const capped = next.length > 200 ? next.slice(next.length - 200) : next;
+            _roomChatCache.set(chatCacheKeyRef.current, capped.slice(-50));
+            return capped;
           });
-          
+
           // Check if user is scrolled up — if so, track unread and @mentions
           if (messagesContainerRef.current) {
             const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
@@ -2228,7 +2248,7 @@ const RoomPageNew = () => {
   const membersInSessionCount = membersInSession.length;
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white overflow-hidden relative">
+    <div className="h-screen flex flex-col bg-violet-50 dark:bg-gray-900 text-gray-900 dark:text-white overflow-hidden relative">
       <Toaster position="top-center" />
 
       {/* ✅ Recording Watermark - Bottom Right */}
@@ -2585,7 +2605,7 @@ const RoomPageNew = () => {
         {/* ✅ Chat Messages - Fills remaining space */}
         <div
           ref={messagesContainerRef}
-          className={`flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900 px-4 space-y-1.5 scrollbar-hide relative ${
+          className={`flex-1 overflow-y-auto bg-violet-50 dark:bg-gray-900 px-4 space-y-1.5 scrollbar-hide relative ${
             isMobile ? '' : 'py-2'
           }`}
           style={isMobile ? { paddingTop: `${mobileHeaderHeight + 8}px`, paddingBottom: '110px' } : undefined}
@@ -2701,7 +2721,7 @@ const RoomPageNew = () => {
                       <div className={`flex items-stretch rounded-lg overflow-hidden border ${
                         isOwnMessage
                           ? 'bg-blue-900/50 border-blue-700/40'
-                          : 'bg-gray-200/60 dark:bg-gray-700/60 border-gray-300/40 dark:border-gray-600/40'
+                          : 'bg-violet-100/70 dark:bg-gray-700/60 border-violet-200/60 dark:border-gray-600/40'
                       }`}>
                         {/* Colored left accent bar */}
                         <div className={`w-1 flex-shrink-0 ${isOwnMessage ? 'bg-blue-400' : 'bg-purple-400'}`} />
@@ -2722,7 +2742,7 @@ const RoomPageNew = () => {
                     className={`relative px-3 py-1.5 rounded-lg shadow-sm cursor-pointer select-none ${
                       isOwnMessage
                         ? 'bg-blue-600 text-white'
-                        : 'bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-100'
+                        : 'bg-violet-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100'
                     } ${openMenuIndex === index ? 'opacity-90 scale-[0.98]' : ''} transition-all duration-100`}
                     onClick={(e) => {
                       if (isEditing) return;
@@ -2758,7 +2778,7 @@ const RoomPageNew = () => {
                         <textarea
                           value={editText}
                           onChange={(e) => setEditText(e.target.value)}
-                          className="w-full px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white rounded border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                          className="w-full px-2 py-1 bg-violet-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded border border-violet-200 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                           rows={2}
                           autoFocus
                         />
@@ -2917,7 +2937,7 @@ const RoomPageNew = () => {
 
             {/* Reply Banner */}
             {replyingTo && (
-              <div className="flex items-stretch mb-1.5 rounded-lg overflow-hidden bg-gray-100/80 dark:bg-gray-700/80 border border-purple-400/40 dark:border-purple-500/40">
+              <div className="flex items-stretch mb-1.5 rounded-lg overflow-hidden bg-violet-100/80 dark:bg-gray-700/80 border border-purple-400/40 dark:border-purple-500/40">
                 <div className="w-1 flex-shrink-0 bg-purple-500" />
                 <div className="flex items-center flex-1 min-w-0 px-3 py-2 gap-2">
                   <svg className="w-4 h-4 text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2941,7 +2961,7 @@ const RoomPageNew = () => {
             )}
 
             {/* Input Card */}
-            <div className="rounded-2xl bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 shadow-lg overflow-visible">
+            <div className="rounded-2xl bg-white dark:bg-gray-700 border border-violet-200 dark:border-gray-600 shadow-lg overflow-visible">
 
               {/* Text area or recording indicator */}
               {isRecording ? (
@@ -3081,7 +3101,7 @@ const RoomPageNew = () => {
 
       {/* ✅ Join Room Button - Replaces input area when not a member */}
       {!isMember && !isHost && currentUser && (
-        <div className={`bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700/50 ${
+        <div className={`bg-violet-50 dark:bg-gray-800 border-t border-violet-200 dark:border-gray-700/50 ${
           isMobile ? `fixed bottom-0 ${roomGroups.length > 0 ? 'left-16 sm:left-20 md:left-24 lg:left-28' : 'left-0'} right-0 z-40 px-2 py-2 shadow-lg` : 'flex-none px-4 py-3'
         }`}>
           <button

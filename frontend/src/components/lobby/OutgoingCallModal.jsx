@@ -1,122 +1,85 @@
-// frontend/src/components/lobby/OutgoingCallModal.jsx
 import React, { useEffect, useState } from 'react';
 import Avatar from '../Avatar';
-import useNetworkQuality from '../../hooks/useNetworkQuality';
-import NetworkQualityBanner from '../NetworkQualityBanner';
 
-const OutgoingCallModal = ({
-  isOpen,
-  friend,
-  onCancel,
-  callStatus = 'calling' // 'calling', 'declined', 'busy', 'no_answer'
-}) => {
+const EndCallIcon = () => (
+  <svg className="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24" style={{ transform: 'rotate(135deg)' }}>
+    <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
+  </svg>
+);
+
+const STATUS = {
+  calling:   { color: 'text-violet-300' },
+  declined:  { color: 'text-red-400' },
+  busy:      { color: 'text-amber-400' },
+  no_answer: { color: 'text-purple-400/60' },
+};
+
+const OutgoingCallModal = ({ isOpen, friend, onCancel, callStatus = 'calling' }) => {
   const [elapsed, setElapsed] = useState(0);
-  const networkQuality = useNetworkQuality();
+  const [dots, setDots] = useState('');
 
   useEffect(() => {
-    if (!isOpen || callStatus !== 'calling') return;
-
-    const interval = setInterval(() => {
-      setElapsed(prev => prev + 1);
-    }, 1000);
-
-    return () => clearInterval(interval);
+    if (!isOpen) { setElapsed(0); setDots(''); return; }
+    if (callStatus !== 'calling') return;
+    setElapsed(0);
+    const elapsedInterval = setInterval(() => setElapsed(prev => prev + 1), 1000);
+    const dotsInterval   = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 600);
+    return () => { clearInterval(elapsedInterval); clearInterval(dotsInterval); };
   }, [isOpen, callStatus]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setElapsed(0);
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const getStatusText = () => {
-    switch (callStatus) {
-      case 'calling':
-        return 'Calling...';
-      case 'declined':
-        return 'Call declined';
-      case 'busy':
-        return 'User is busy';
-      case 'no_answer':
-        return 'No answer';
-      default:
-        return 'Calling...';
-    }
-  };
-
-  const getStatusColor = () => {
-    switch (callStatus) {
-      case 'calling':
-        return 'text-gray-400';
-      case 'declined':
-        return 'text-red-400';
-      case 'busy':
-        return 'text-yellow-400';
-      case 'no_answer':
-        return 'text-gray-500';
-      default:
-        return 'text-gray-400';
-    }
-  };
+  const isCalling = callStatus === 'calling';
+  const statusText = {
+    calling:   `Calling${dots}`,
+    declined:  'Call declined',
+    busy:      'User is busy',
+    no_answer: 'No answer',
+  }[callStatus] ?? 'Calling';
+  const statusColor = (STATUS[callStatus] ?? STATUS.calling).color;
 
   return (
-    <div className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-      <NetworkQualityBanner quality={networkQuality} />
-      <div className="flex flex-col items-center justify-center max-w-sm w-full">
-        {/* Avatar with pulse animation for calling state */}
-        <div className={`relative ${callStatus === 'calling' ? 'animate-pulse' : ''}`}>
-          <Avatar
-            user={friend}
-            className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover border-4 border-blue-500 shadow-2xl"
-          />
-          
-          {/* Ripple effect for calling */}
-          {callStatus === 'calling' && (
-            <>
-              <div className="absolute inset-0 rounded-full border-4 border-blue-400 animate-ping opacity-75"></div>
-              <div className="absolute inset-0 rounded-full border-4 border-blue-400 animate-ping opacity-75" style={{ animationDelay: '0.5s' }}></div>
-            </>
-          )}
-        </div>
+    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-between py-16 px-6 overflow-hidden">
+      {/* Background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-[#0f0520] via-[#1a0a3d] to-[#0a0f1e]" />
 
-        {/* Name */}
-        <h2 className="text-white text-2xl sm:text-3xl font-bold mt-6 text-center">
-          {friend?.username || 'User'}
-        </h2>
+      {/* lwoIcon watermark */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+        <img src="/icons/lwoIcon.png" alt="" className="w-96 h-96 opacity-[0.04]" style={{ filter: 'blur(6px)' }} />
+      </div>
 
-        {/* Status */}
-        <p className={`${getStatusColor()} text-lg sm:text-xl mt-2 text-center`}>
-          {getStatusText()}
-        </p>
+      {/* Brand icon */}
+      <img src="/icons/lwoIcon.png" alt="" className="relative z-10 w-8 h-8 opacity-60" />
 
-        {/* Timer for calling state */}
-        {callStatus === 'calling' && (
-          <p className="text-gray-500 text-sm mt-2">
-            {elapsed}s
-          </p>
-        )}
-
-        {/* Phone icon */}
-        <div className="mt-8 mb-8">
-          <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-            callStatus === 'calling' ? 'bg-blue-600' : 'bg-gray-700'
-          }`}>
-            <span className="text-3xl">📞</span>
+      {/* Friend info */}
+      <div className="relative z-10 flex flex-col items-center">
+        <div className="relative w-52 h-52 flex items-center justify-center">
+          {isCalling && [{ size: 'w-36 h-36', delay: '0s' }, { size: 'w-44 h-44', delay: '0.7s' }, { size: 'w-52 h-52', delay: '1.4s' }].map(({ size, delay }, i) => (
+            <div
+              key={i}
+              className={`absolute ${size} rounded-full border border-indigo-500/25 animate-ping`}
+              style={{ animationDuration: '2.1s', animationDelay: delay }}
+            />
+          ))}
+          <div className={`relative w-28 h-28 rounded-full ring-4 shadow-2xl overflow-hidden flex-shrink-0 transition-all ${isCalling ? 'ring-indigo-500/80 shadow-indigo-900/60' : 'ring-gray-600/50 shadow-gray-900/40'}`}>
+            <Avatar user={friend} className="w-full h-full object-cover" />
           </div>
         </div>
 
-        {/* Cancel/Close button */}
-        <button
-          onClick={onCancel}
-          className={`px-8 py-3 rounded-full font-semibold text-white transition-all ${
-            callStatus === 'calling' 
-              ? 'bg-red-600 hover:bg-red-700' 
-              : 'bg-gray-700 hover:bg-gray-600'
-          }`}
-        >
-          {callStatus === 'calling' ? 'Cancel' : 'Close'}
+        <h2 className="text-white text-3xl font-bold mt-4 tracking-tight">
+          {friend?.username || 'Unknown'}
+        </h2>
+        <p className={`mt-2 text-sm font-medium ${statusColor}`}>{statusText}</p>
+        {isCalling && <p className="text-purple-400/40 text-xs mt-1">{elapsed}s</p>}
+      </div>
+
+      {/* Cancel / Close */}
+      <div className="relative z-10">
+        <button onClick={onCancel} className="flex flex-col items-center gap-2.5 group" aria-label={isCalling ? 'Cancel' : 'Close'}>
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-transform group-active:scale-90 group-hover:opacity-80 ${isCalling ? 'bg-red-500 shadow-red-500/40' : 'bg-gray-700 shadow-gray-900/40'}`}>
+            <EndCallIcon />
+          </div>
+          <span className="text-white/40 text-xs">{isCalling ? 'Cancel' : 'Close'}</span>
         </button>
       </div>
     </div>

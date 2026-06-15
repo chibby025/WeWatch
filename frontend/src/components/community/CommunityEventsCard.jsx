@@ -693,7 +693,7 @@ const CommunityEventsCard = ({
               <ScheduledEventPreviewCard event={fullscreenCard.data} onRSVP={onRSVP} apiBaseUrl={apiBaseUrl} currentUser={currentUser} />
             )}
             {fullscreenCard.type === 'leaderboard' && (
-              <LeaderboardCard rooms={fullscreenCard.data} />
+              <LeaderboardCard rooms={fullscreenCard.data} fullscreen />
             )}
             {fullscreenCard.type === 'request' && (
               <CommunityRequestCard

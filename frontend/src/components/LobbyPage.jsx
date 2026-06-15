@@ -101,6 +101,7 @@ const _lobbyCache = {
   rooms: null, roomsTs: 0, roomsFp: '',
   sessions: null, sessionsTs: 0, sessionsFp: '',
   friends: null, friendsTs: 0, friendsFp: '',
+  dms: new Map(), // key: friendId → last 30 messages (survives tab switches)
 };
 // Cheap fingerprint: join id + a volatile field so we catch joins/renames/previews.
 const _roomsFp  = (arr) => arr.map(r => `${r.id}:${r.updated_at || ''}:${r.member_count ?? ''}`).join('|');
@@ -1154,7 +1155,7 @@ const LobbyPage = () => {
       normalizedFriends.forEach(friend => {
         if (friend.last_message_at) {
           previews[friend.id] = {
-            text: friend.last_message_type === 'text'
+            text: (friend.last_message_type === 'text' || friend.last_message_type === 'system_call')
               ? friend.last_message
               : `[${friend.last_message_type || 'message'}]`,
             timestamp: friend.last_message_at,
@@ -1471,11 +1472,20 @@ const LobbyPage = () => {
       console.error('Invalid userId:', userId);
       return;
     }
-    
+
+    // Serve cache instantly so the conversation appears before the API responds
+    const cached = _lobbyCache.dms.get(actualUserId);
+    if (cached?.length) {
+      setChatMessages(prev => ({ ...prev, [actualUserId]: cached }));
+    }
+
     try {
       const response = await apiClient.get(`/api/lobby-chats/messages/${actualUserId}`);
       const messages = response.data.messages || [];
-      
+
+      // Update cache (last 30 messages per conversation)
+      _lobbyCache.dms.set(actualUserId, messages.slice(-30));
+
       setChatMessages(prev => ({
         ...prev,
         [actualUserId]: messages
@@ -1487,7 +1497,7 @@ const LobbyPage = () => {
         setLastMessagePreviews(prev => ({
           ...prev,
           [actualUserId]: {
-            text: lastMsg.message_type === 'text' ? lastMsg.message : `[${lastMsg.message_type}]`,
+            text: (lastMsg.message_type === 'text' || lastMsg.message_type === 'system_call') ? lastMsg.message : `[${lastMsg.message_type}]`,
             timestamp: lastMsg.created_at,
             isOwn: lastMsg.sender_id === currentUser?.id
           }
@@ -2981,12 +2991,16 @@ const LobbyPage = () => {
                     const pendingIdx = existing.findIndex(m =>
                       m._pending && m.sender_id === chatData.sender_id && m.message === chatData.message
                     );
+                    let next;
                     if (pendingIdx !== -1) {
-                      const updated = [...existing];
-                      updated[pendingIdx] = chatData;
-                      return { ...prev, [otherUserId]: updated };
+                      next = [...existing];
+                      next[pendingIdx] = chatData;
+                    } else {
+                      next = [...existing, chatData];
                     }
-                    return { ...prev, [otherUserId]: [...existing, chatData] };
+                    // Keep cache in sync so re-opening the chat is instant
+                    _lobbyCache.dms.set(otherUserId, next.slice(-30));
+                    return { ...prev, [otherUserId]: next };
                   });
                   // Badge increment for closed chats
                   setSelectedChatUser(scu => {
@@ -3002,7 +3016,7 @@ const LobbyPage = () => {
                   setLastMessagePreviews(prev => ({
                     ...prev,
                     [otherUserId]: {
-                      text: chatData.message_type === 'text' ? chatData.message : `[${chatData.message_type}]`,
+                      text: (chatData.message_type === 'text' || chatData.message_type === 'system_call') ? chatData.message : `[${chatData.message_type}]`,
                       timestamp: chatData.created_at,
                       isOwn: dmSenderId === currentUser?.id,
                     }
@@ -4012,7 +4026,7 @@ const LobbyPage = () => {
                 const RoomCard = (room) => (
                   <div
                     key={`card-${room.id}`}
-                    className={`group bg-white dark:bg-gray-800 shadow-md rounded-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 relative cursor-pointer ${
+                    className={`group bg-gray-200 dark:bg-gray-800 shadow-md rounded-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 relative cursor-pointer ${
                       room.host_id === authenticatedUserID
                         ? 'ring-2 ring-purple-500 dark:ring-purple-400'
                         : room.is_member

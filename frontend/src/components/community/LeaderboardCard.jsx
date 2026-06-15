@@ -5,7 +5,7 @@ const STAR_COLORS = ['', '#ef4444', '#f97316', '#eab308', '#22c55e', '#22c55e'];
 function Stars({ rating }) {
   const full = Math.round(rating);
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="flex items-center gap-px">
       {[1, 2, 3, 4, 5].map(n => (
         <svg key={n} width="10" height="10" viewBox="0 0 10 10">
           <polygon
@@ -25,7 +25,18 @@ const RANK_GLOW   = [
   '0 0 10px rgba(205,127,50,0.3)',
 ];
 
-const LeaderboardCard = ({ rooms = [] }) => {
+const RATING_ICON = {
+  'G':           '/icons/G Rating Icon.webp',
+  'PG':          '/icons/PG Rating Icon.webp',
+  'Educational': '/icons/Educational_Rating_Icon.webp',
+  'Religious':   '/icons/Religious Rating.webp',
+  '13+':         '/icons/13_ Rating Icon.webp',
+  '16+':         '/icons/16_ Rating Icon.webp',
+  '18+':         '/icons/18_ Rating Icon.webp',
+  'Mature':      '/icons/Mature Rating Icon.webp',
+};
+
+const LeaderboardCard = ({ rooms = [], fullscreen = false }) => {
   if (!rooms.length) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center gap-3 px-6 text-center bg-gradient-to-br from-gray-900 to-black">
@@ -70,7 +81,16 @@ const LeaderboardCard = ({ rooms = [] }) => {
 
               {/* Room info */}
               <div className="flex-1 min-w-0">
-                <p className="text-white text-xs font-semibold truncate">{room.name}</p>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <p className="text-white text-xs font-semibold truncate">{room.name}</p>
+                  {fullscreen && room.content_rating && RATING_ICON[room.content_rating] && (
+                    <img
+                      src={RATING_ICON[room.content_rating]}
+                      alt={room.content_rating}
+                      className="flex-shrink-0 w-5 h-5 object-contain"
+                    />
+                  )}
+                </div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <Stars rating={room.avg_rating} />
                   <span className="text-white/45 text-[10px]">{room.avg_rating?.toFixed(1)}</span>

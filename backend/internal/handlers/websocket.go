@@ -942,6 +942,9 @@ func (h *Hub) Run() {
 			h.mutex.Unlock()
 			log.Printf("🔵 [Hub.Run] ✅ RELEASED h.mutex lock after register for client %p", client)
 
+		// Deliver any pending ringing call to a recipient who connected after initiation
+		go deliverPendingCall(client)
+
 		case client := <-h.unregister:
 			log.Printf("🔴 [Hub.Run] UNREGISTER received for client %p (user %d, room %d)", client, client.userID, client.roomID)
 			log.Printf("🔴 [Hub.Run] About to lock h.mutex for unregistration...")

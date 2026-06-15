@@ -469,7 +469,7 @@ func sendCallMessage(client *Client, messageType string, data map[string]interfa
 	}
 }
 
-// sendCallMessageToUser sends a call message to a user in the lobby
+// sendCallMessageToUser sends a call message to a user across ALL rooms (lobby + watch sessions).
 func sendCallMessageToUser(userID uint, messageType string, data map[string]interface{}) {
 	msg := WebSocketMessage{
 		Type: messageType,
@@ -482,35 +482,62 @@ func sendCallMessageToUser(userID uint, messageType string, data map[string]inte
 		return
 	}
 
-	// Send to user's lobby WebSocket (roomID = 0)
-	hub.mutex.RLock()
-	lobbyClients, exists := hub.rooms[0]
-	hub.mutex.RUnlock()
-
-	if !exists {
-		log.Printf("❌ [Call] No lobby clients found")
-		return
-	}
-
 	sent := false
 	hub.mutex.RLock()
-	for client := range lobbyClients {
-		if client.userID == userID {
-			select {
-			case client.send <- OutgoingMessage{Data: msgBytes, IsBinary: false}:
-				log.Printf("📤 [Call] Sent %s to user %d", messageType, userID)
-				sent = true
-			default:
-				log.Printf("❌ [Call] Failed to send %s to user %d (buffer full)", messageType, userID)
+	for _, roomClients := range hub.rooms {
+		for client := range roomClients {
+			if client.userID == userID {
+				select {
+				case client.send <- OutgoingMessage{Data: msgBytes, IsBinary: false}:
+					log.Printf("📤 [Call] Sent %s to user %d", messageType, userID)
+					sent = true
+				default:
+					log.Printf("❌ [Call] Failed to send %s to user %d (buffer full)", messageType, userID)
+				}
 			}
-			break
 		}
 	}
 	hub.mutex.RUnlock()
 
 	if !sent {
-		log.Printf("⚠️ [Call] User %d not found in lobby", userID)
+		log.Printf("⚠️ [Call] User %d not found in any room", userID)
 	}
+}
+
+// deliverPendingCall sends a pending call_incoming to a client who connected after the call started.
+// Called from Hub.Run register case so late-joining recipients don't miss the ring.
+func deliverPendingCall(client *Client) {
+	activeCallsMutex.RLock()
+	callID, exists := userCalls[client.userID]
+	if !exists {
+		activeCallsMutex.RUnlock()
+		return
+	}
+	call, ok := activeCalls[callID]
+	if !ok || call.Status != "ringing" || call.RecipientID != client.userID {
+		activeCallsMutex.RUnlock()
+		return
+	}
+	callerID := call.CallerID
+	activeCallsMutex.RUnlock()
+
+	var caller models.User
+	if err := DB.First(&caller, callerID).Error; err != nil {
+		log.Printf("❌ [Call] deliverPendingCall: failed to fetch caller %d: %v", callerID, err)
+		return
+	}
+
+	callData := map[string]interface{}{
+		"call_id":      callID,
+		"from_user_id": callerID,
+		"from_user": map[string]interface{}{
+			"id":         caller.ID,
+			"username":   caller.Username,
+			"avatar_url": caller.AvatarURL,
+		},
+	}
+	log.Printf("📞 [Call] Delivering pending call_incoming to late-connect user %d", client.userID)
+	sendCallMessage(client, "call_incoming", callData)
 }
 
 // generateLiveKitToken generates a LiveKit access token for a user
@@ -530,13 +557,16 @@ func generateLiveKitToken(userID uint, roomName string) (string, error) {
 	return token, nil
 }
 
-// getLiveKitURL returns the LiveKit server URL from environment
+// getLiveKitURL returns the LiveKit server URL from environment.
+// Checks LIVEKIT_WS_URL first (matches the rest of the app), then LIVEKIT_URL as fallback.
 func getLiveKitURL() string {
-	url := os.Getenv("LIVEKIT_URL")
-	if url == "" {
-		url = "ws://localhost:7880"
+	if url := os.Getenv("LIVEKIT_WS_URL"); url != "" {
+		return url
 	}
-	return url
+	if url := os.Getenv("LIVEKIT_URL"); url != "" {
+		return url
+	}
+	return "ws://localhost:7880"
 }
 
 // CleanupUserCalls removes a user from any active calls when they disconnect

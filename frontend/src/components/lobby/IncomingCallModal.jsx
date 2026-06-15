@@ -1,106 +1,83 @@
-// frontend/src/components/lobby/IncomingCallModal.jsx
 import React, { useEffect, useState } from 'react';
 import Avatar from '../Avatar';
-import useNetworkQuality from '../../hooks/useNetworkQuality';
-import NetworkQualityBanner from '../NetworkQualityBanner';
 
-const IncomingCallModal = ({
-  isOpen,
-  caller,
-  onAccept,
-  onDecline
-}) => {
+const PhoneIcon = () => (
+  <svg className="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24">
+    <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
+  </svg>
+);
+
+const EndCallIcon = () => (
+  <svg className="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24" style={{ transform: 'rotate(135deg)' }}>
+    <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
+  </svg>
+);
+
+const IncomingCallModal = ({ isOpen, caller, onAccept, onDecline }) => {
   const [elapsed, setElapsed] = useState(0);
-  const networkQuality = useNetworkQuality();
 
   useEffect(() => {
     if (!isOpen) return;
-
-    const interval = setInterval(() => {
-      setElapsed(prev => prev + 1);
-    }, 1000);
-
-    // Auto-decline after 60 seconds
-    const timeout = setTimeout(() => {
-      onDecline?.();
-    }, 60000);
-
-    return () => {
-      clearInterval(interval);
-      clearTimeout(timeout);
-    };
+    setElapsed(0);
+    const interval = setInterval(() => setElapsed(prev => prev + 1), 1000);
+    const timeout = setTimeout(() => onDecline?.(), 60000);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
   }, [isOpen, onDecline]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setElapsed(0);
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-      <NetworkQualityBanner quality={networkQuality} />
-      <div className="flex flex-col items-center justify-center max-w-sm w-full animate-pulse">
-        {/* Avatar with pulse animation */}
-        <div className="relative">
-          <Avatar
-            user={caller}
-            className="w-32 h-32 sm:w-40 sm:h-40 rounded-full object-cover border-4 border-green-500 shadow-2xl"
-          />
-          
-          {/* Ripple effect */}
-          <div className="absolute inset-0 rounded-full border-4 border-green-400 animate-ping opacity-75"></div>
-          <div className="absolute inset-0 rounded-full border-4 border-green-400 animate-ping opacity-75" style={{ animationDelay: '0.5s' }}></div>
-        </div>
+    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-between py-16 px-6 overflow-hidden">
+      {/* Dark purple/indigo gradient background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-[#0f0520] via-[#1a0a3d] to-[#0a0f1e]" />
 
-        {/* Name */}
-        <h2 className="text-white text-2xl sm:text-3xl font-bold mt-6 text-center">
-          {caller?.username || 'User'}
-        </h2>
+      {/* lwoIcon watermark */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+        <img src="/icons/lwoIcon.png" alt="" className="w-96 h-96 opacity-[0.04]" style={{ filter: 'blur(6px)' }} />
+      </div>
 
-        {/* Status */}
-        <p className="text-green-400 text-lg sm:text-xl mt-2 text-center">
-          Incoming call...
-        </p>
+      {/* Brand icon */}
+      <img src="/icons/lwoIcon.png" alt="" className="relative z-10 w-8 h-8 opacity-60" />
 
-        {/* Timer */}
-        <p className="text-gray-500 text-sm mt-2">
-          {elapsed}s / 60s
-        </p>
-
-        {/* Phone icon */}
-        <div className="mt-8 mb-8">
-          <div className="w-16 h-16 rounded-full bg-green-600 flex items-center justify-center animate-bounce">
-            <span className="text-3xl">📞</span>
+      {/* Caller */}
+      <div className="relative z-10 flex flex-col items-center">
+        <div className="relative w-52 h-52 flex items-center justify-center">
+          {/* Concentric pulsing rings */}
+          {[{ size: 'w-36 h-36', delay: '0s' }, { size: 'w-44 h-44', delay: '0.7s' }, { size: 'w-52 h-52', delay: '1.4s' }].map(({ size, delay }, i) => (
+            <div
+              key={i}
+              className={`absolute ${size} rounded-full border border-violet-500/25 animate-ping`}
+              style={{ animationDuration: '2.1s', animationDelay: delay }}
+            />
+          ))}
+          {/* Avatar */}
+          <div className="relative w-28 h-28 rounded-full ring-4 ring-violet-500/80 shadow-2xl shadow-violet-900/60 overflow-hidden flex-shrink-0">
+            <Avatar user={caller} className="w-full h-full object-cover" />
           </div>
         </div>
 
-        {/* Action buttons */}
-        <div className="flex gap-4 w-full px-4">
-          {/* Decline button */}
-          <button
-            onClick={onDecline}
-            className="flex-1 px-6 py-4 rounded-full font-semibold text-white bg-red-600 hover:bg-red-700 transition-all flex items-center justify-center gap-2"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-            <span className="hidden sm:inline">Decline</span>
-          </button>
+        <h2 className="text-white text-3xl font-bold mt-4 tracking-tight">
+          {caller?.username || 'Unknown'}
+        </h2>
+        <p className="text-violet-300 mt-2 text-sm font-medium">Incoming call</p>
+        <p className="text-purple-400/40 text-xs mt-1">{elapsed}s / 60s</p>
+      </div>
 
-          {/* Accept button */}
-          <button
-            onClick={onAccept}
-            className="flex-1 px-6 py-4 rounded-full font-semibold text-white bg-green-600 hover:bg-green-700 transition-all flex items-center justify-center gap-2"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            <span className="hidden sm:inline">Accept</span>
-          </button>
-        </div>
+      {/* Decline / Accept */}
+      <div className="relative z-10 flex items-end gap-20">
+        <button onClick={onDecline} className="flex flex-col items-center gap-2.5 group" aria-label="Decline">
+          <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg shadow-red-500/40 transition-transform group-active:scale-90 group-hover:bg-red-400">
+            <EndCallIcon />
+          </div>
+          <span className="text-white/40 text-xs">Decline</span>
+        </button>
+
+        <button onClick={onAccept} className="flex flex-col items-center gap-2.5 group" aria-label="Accept">
+          <div className="w-16 h-16 rounded-full bg-green-500 flex items-center justify-center shadow-lg shadow-green-500/40 transition-transform group-active:scale-90 group-hover:bg-green-400">
+            <PhoneIcon />
+          </div>
+          <span className="text-white/40 text-xs">Accept</span>
+        </button>
       </div>
     </div>
   );

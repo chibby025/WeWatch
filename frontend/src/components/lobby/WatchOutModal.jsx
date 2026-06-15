@@ -4,6 +4,7 @@ import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/solid';
 import { sendWatchOut, getRoomsWithActiveSessions, startPrivateWatchout, getWatchoutAllowedRatings } from '../../services/api';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
+import WatchTypePicker from '../WatchTypePicker';
 
 const WATCH_TYPE_EMOJI = {
   video: '🎬',
@@ -13,13 +14,6 @@ const WATCH_TYPE_EMOJI = {
   livestream: '📡',
   custom: '🎨',
 };
-
-const WATCH_TYPES = [
-  { id: 'video',     label: 'Video Watch',  img: '/icons/VWIcon.webp' },
-  { id: '3d_cinema', label: '3D Cinema',    img: '/icons/3dCineIcon.webp' },
-  { id: 'classroom', label: 'Lecture Hall', img: '/icons/LHIcon.webp' },
-  { id: 'custom',    label: 'Custom Scene', img: '/images/custom-backgrounds/Family Movie Night.webp' },
-];
 
 const RATING_LABELS = {
   G: 'G',
@@ -127,7 +121,7 @@ const WatchOutModal = ({ recipientUser, onClose, onSent, groupMode = false, onSe
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
         <div
-          className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm"
+          className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md"
           onClick={e => e.stopPropagation()}
         >
           {/* Header */}
@@ -156,31 +150,12 @@ const WatchOutModal = ({ recipientUser, onClose, onSent, groupMode = false, onSe
 
           {/* Step 1: Watch Type */}
           {swapStep === 1 && (
-            <div className="p-5 pb-7">
-              <div className="grid grid-cols-2 gap-3">
-                {WATCH_TYPES.map(({ id, label, img }) => (
-                  <button
-                    key={id}
-                    onClick={() => setSelectedWatchType(id)}
-                    className={`flex flex-col items-center rounded-xl border-2 overflow-hidden transition-all ${
-                      selectedWatchType === id
-                        ? 'border-indigo-500 ring-2 ring-indigo-400'
-                        : 'border-transparent hover:border-indigo-200 dark:hover:border-indigo-800'
-                    }`}
-                  >
-                    <img
-                      src={img}
-                      alt={label}
-                      className="w-full aspect-video object-contain bg-gray-100 dark:bg-gray-800"
-                      loading="lazy"
-                    />
-                    <span className={`text-xs font-semibold py-2 text-center w-full ${
-                      selectedWatchType === id ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-600 dark:text-gray-300'
-                    }`}>{label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+            <WatchTypePicker
+              selectedTypeId={selectedWatchType}
+              onChange={setSelectedWatchType}
+              showDescription
+              maxWidth={320}
+            />
           )}
 
           {/* Step 2: Content Rating + Price */}

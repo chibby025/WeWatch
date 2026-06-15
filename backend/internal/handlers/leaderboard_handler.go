@@ -7,16 +7,17 @@ import (
 )
 
 type leaderboardRoom struct {
-	RoomID       uint    `json:"room_id"`
-	Name         string  `json:"name"`
-	ImageURL     string  `json:"image_url"`
-	RoomType     string  `json:"room_type"`
-	HostID       uint    `json:"host_id"`
-	HostUsername string  `json:"host_username"`
-	HostAvatar   string  `json:"host_avatar_url"`
-	AvgRating    float64 `json:"avg_rating"`
-	TotalRatings int64   `json:"total_ratings"`
-	BayesScore   float64 `json:"bayes_score"`
+	RoomID        uint    `json:"room_id"`
+	Name          string  `json:"name"`
+	ImageURL      string  `json:"image_url"`
+	RoomType      string  `json:"room_type"`
+	ContentRating string  `json:"content_rating"`
+	HostID        uint    `json:"host_id"`
+	HostUsername  string  `json:"host_username"`
+	HostAvatar    string  `json:"host_avatar_url"`
+	AvgRating     float64 `json:"avg_rating"`
+	TotalRatings  int64   `json:"total_ratings"`
+	BayesScore    float64 `json:"bayes_score"`
 }
 
 // GetRoomsLeaderboardHandler handles GET /api/rooms/leaderboard
@@ -29,6 +30,7 @@ func GetRoomsLeaderboardHandler(c *gin.Context) {
 			r.name,
 			r.image_url,
 			r.room_type,
+			r.content_rating,
 			u.id                                         AS host_id,
 			u.username                                   AS host_username,
 			u.avatar_url                                 AS host_avatar,
