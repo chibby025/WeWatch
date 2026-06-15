@@ -56,15 +56,15 @@ const WATCH_LABELS = {
   podcast:     '🎙️ Podcast',
 };
 
-const RATING_COLOR = {
-  'G':           'bg-green-600',
-  'PG':          'bg-blue-600',
-  'Educational': 'bg-indigo-600',
-  'Religious':   'bg-purple-700',
-  '13+':         'bg-yellow-600',
-  '16+':         'bg-orange-600',
-  '18+':         'bg-red-600',
-  'Mature':      'bg-red-900',
+const RATING_ICON = {
+  'G':           '/icons/G Rating Icon.webp',
+  'PG':          '/icons/PG Rating Icon.webp',
+  'Educational': '/icons/Educational_Rating_Icon.webp',
+  'Religious':   '/icons/Religious Rating.webp',
+  '13+':         '/icons/13_ Rating Icon.webp',
+  '16+':         '/icons/16_ Rating Icon.webp',
+  '18+':         '/icons/18_ Rating Icon.webp',
+  'Mature':      '/icons/Mature Rating Icon.webp',
 };
 
 function buildInterleavedCards(events, requests, leaderboard) {
@@ -532,13 +532,13 @@ const CommunityEventsCard = ({
               </span>
             ) : (
               <>
-                <span
-                  className={`flex-shrink-0 text-white text-xs font-black px-2 py-0.5 rounded-lg ${
-                    RATING_COLOR[cur?.data?.content_rating] || 'bg-gray-600'
-                  }`}
-                >
-                  {cur?.data?.content_rating || '—'}
-                </span>
+                {cur?.data?.content_rating && RATING_ICON[cur.data.content_rating] && (
+                  <img
+                    src={RATING_ICON[cur.data.content_rating]}
+                    alt={cur.data.content_rating}
+                    className="flex-shrink-0 w-7 h-7 object-contain"
+                  />
+                )}
                 {cur?.type === 'event' && cur.data.is_paid && (
                   <span className="flex-shrink-0 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/90">
                     Ticketed

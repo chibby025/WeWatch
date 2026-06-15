@@ -15,15 +15,15 @@ const WATCH_TYPE_EMOJI = {
   custom: '🎨',
 };
 
-const RATING_LABELS = {
-  G: 'G',
-  PG: 'PG',
-  Educational: 'Edu',
-  Religious: 'Rel',
-  '13+': '13+',
-  '16+': '16+',
-  '18+': '18+',
-  Mature: 'Mature',
+const RATING_ICON = {
+  'G':           '/icons/G Rating Icon.webp',
+  'PG':          '/icons/PG Rating Icon.webp',
+  'Educational': '/icons/Educational_Rating_Icon.webp',
+  'Religious':   '/icons/Religious Rating.webp',
+  '13+':         '/icons/13_ Rating Icon.webp',
+  '16+':         '/icons/16_ Rating Icon.webp',
+  '18+':         '/icons/18_ Rating Icon.webp',
+  'Mature':      '/icons/Mature Rating Icon.webp',
 };
 
 const NAIRA_PER_TOKEN = 100;
@@ -173,13 +173,20 @@ const WatchOutModal = ({ recipientUser, onClose, onSent, groupMode = false, onSe
                       <button
                         key={rating}
                         onClick={() => setSelectedRating(rating)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-semibold border-2 transition-all ${
+                        className={`flex flex-col items-center gap-0.5 p-1.5 rounded-xl border-2 transition-all ${
                           selectedRating === rating
-                            ? 'border-indigo-500 bg-indigo-600 text-white'
-                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:border-indigo-300'
+                            ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
+                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 hover:border-indigo-300'
                         }`}
                       >
-                        {RATING_LABELS[rating] || rating}
+                        <img
+                          src={RATING_ICON[rating]}
+                          alt={rating}
+                          className="w-10 h-10 object-contain"
+                        />
+                        <span className="text-[10px] font-semibold text-gray-600 dark:text-gray-300">
+                          {rating}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -212,6 +219,24 @@ const WatchOutModal = ({ recipientUser, onClose, onSent, groupMode = false, onSe
                     Paid
                   </button>
                 </div>
+                {isPaid && (
+                  <div className="flex gap-1.5 mb-2">
+                    {[50, 100, 200, 1000].map(amount => (
+                      <button
+                        key={amount}
+                        type="button"
+                        onClick={() => setPriceInput(String(amount))}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                          priceInput === String(amount)
+                            ? 'border-amber-500 bg-amber-500 text-white'
+                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:border-amber-300'
+                        }`}
+                      >
+                        ₦{amount}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {isPaid && (
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500 font-medium pointer-events-none">

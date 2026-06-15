@@ -276,14 +276,32 @@ export default function ExplorePage() {
       }
       return;
     }
-    const audio = new Audio('/sounds/communitymusic.mp3');
-    audio.loop = true;
-    audio.volume = 0.35;
-    communityEventsTuneRef.current = audio;
-    audio.play().catch(() => {});
+    const tracks = [
+      '/sounds/music/track1.opus',
+      '/sounds/music/track2.opus',
+      '/sounds/music/track3.opus',
+      '/sounds/music/track4.opus',
+      '/sounds/music/track5.opus',
+    ].sort(() => Math.random() - 0.5);
+
+    let cancelled = false;
+    let current = null;
+
+    const playTrack = (idx) => {
+      if (cancelled) return;
+      current = new Audio(tracks[idx % tracks.length]);
+      current.volume = 0.35;
+      current.addEventListener('ended', () => playTrack(idx + 1));
+      communityEventsTuneRef.current = current;
+      current.play().catch(() => {});
+    };
+
+    playTrack(0);
+
     return () => {
-      audio.pause();
-      audio.currentTime = 0;
+      cancelled = true;
+      current?.pause();
+      communityEventsTuneRef.current = null;
     };
   }, [showCommunityEventsView]);
 
