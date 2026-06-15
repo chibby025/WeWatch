@@ -280,35 +280,31 @@ func PurchaseSessionTicketHandler(db *gorm.DB) gin.HandlerFunc {
 				ticketPriceTokens, buyer.ID, hostEarning, transferFeeTokens)
 
 		} else {
-			// Gateway payment (Stripe/Paystack)
-			// TODO: Process payment with gateway API
-			log.Printf("💳 Processing %s payment: $%.2f %s", req.PaymentMethod, ticketPriceAmount, ticketPriceCurrency)
-
-			// Calculate commission (25%)
-			grossAmount := ticketPriceAmount
-			commission := grossAmount * 0.25
-			netAmount := grossAmount - commission
-
-			// Create gateway earning record
-			gatewayEarning := models.GatewayEarning{
-				HostID:             session.HostID,
-				SessionID:          &session.ID,
-				PaymentGateway:     req.PaymentMethod,
-				Currency:           ticketPriceCurrency,
-				GrossAmount:        grossAmount,
-				PlatformCommission: commission,
-				NetAmount:          netAmount,
-				PaymentID:          *req.PaymentToken,
-			}
-			if err := tx.Create(&gatewayEarning).Error; err != nil {
-				tx.Rollback()
-				log.Printf("❌ Error creating gateway earning: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record earning"})
-				return
-			}
-			gatewayEarningID = &gatewayEarning.ID
-
-			log.Printf("✅ Gateway earning recorded: Gross=%.2f, Commission=%.2f, Net=%.2f %s", grossAmount, commission, netAmount, ticketPriceCurrency)
+			// ── GATEWAY TICKET PATH NOT IN USE ──────────────────────────────────
+			// All session tickets are token-only. Direct Paystack/Stripe ticket
+			// payments were removed: the token economy (buy at ₦165, platform
+			// takes ₦43 spread at purchase time) makes a separate gateway
+			// commission redundant and creates a bypass risk (payers going
+			// direct instead of through the token system).
+			//
+			// If gateway tickets are re-enabled in future, restore the
+			// GatewayEarning record creation below and wire the actual
+			// Paystack charge (initialize + verify) before creating the ticket.
+			//
+			// gatewayEarning := models.GatewayEarning{
+			//     HostID:             session.HostID,
+			//     SessionID:          &session.ID,
+			//     PaymentGateway:     req.PaymentMethod,
+			//     Currency:           ticketPriceCurrency,
+			//     GrossAmount:        ticketPriceAmount,
+			//     PlatformCommission: ticketPriceAmount * 0.25,
+			//     NetAmount:          ticketPriceAmount * 0.75,
+			//     PaymentID:          *req.PaymentToken,
+			// }
+			// ────────────────────────────────────────────────────────────────────
+			tx.Rollback()
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Gateway payments are not available for tickets — please use tokens"})
+			return
 		}
 
 		// Create ticket record

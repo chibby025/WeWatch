@@ -13,7 +13,7 @@ var (
 	ErrPaymentFailed           = errors.New("payment processing failed")
 	ErrRefundNotAllowed        = errors.New("refund not allowed (24-hour window passed)")
 	ErrKYCNotVerified          = errors.New("KYC verification required for this transaction")
-	ErrMinimumPayoutNotMet     = errors.New("minimum payout amount not met (50 tokens)")
+	ErrMinimumPayoutNotMet     = errors.New("minimum withdrawal is ₦1,000 (approximately 8 tokens)")
 	ErrInvalidCurrency         = errors.New("invalid or unsupported currency")
 	ErrPayoutProcessing        = errors.New("payout is already being processed")
 	ErrInsufficientReserveBalance = errors.New("insufficient reserve balance for host payouts")

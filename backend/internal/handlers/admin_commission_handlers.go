@@ -66,6 +66,54 @@ func TransferTokenDonationCommission(c *gin.Context) {
 	})
 }
 
+// SweepWithdrawalFeeRevenue logs a quarterly sweep of accumulated ₦100 withdrawal fees.
+// The fees are already booked in PlatformProfit (via RecordWithdrawalFee) and physically
+// sit in the Reserve Paystack subaccount. This endpoint resets the WithdrawalFeeRevenue
+// counter and logs the manual transfer so the admin knows to move the funds via Paystack
+// Dashboard.
+// POST /api/admin/sweep-withdrawal-fees
+func SweepWithdrawalFeeRevenue(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	accounting, err := models.GetPlatformAccounting(db)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch accounting data"})
+		return
+	}
+
+	if accounting.WithdrawalFeeRevenue <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No withdrawal fees accumulated yet"})
+		return
+	}
+
+	amount := accounting.WithdrawalFeeRevenue
+	reserveSubaccountID := os.Getenv("PAYSTACK_RESERVE_SUBACCOUNT_ID")
+	revenueSubaccountID := os.Getenv("PAYSTACK_REVENUE_SUBACCOUNT_ID")
+
+	log.Printf("💸 Withdrawal Fee Sweep — Manual Transfer Required:")
+	log.Printf("   From: Reserve Subaccount (%s)", reserveSubaccountID)
+	log.Printf("   To: Revenue Subaccount (%s)", revenueSubaccountID)
+	log.Printf("   Amount: ₦%.2f (%d kobo)", amount, int(amount*100))
+	log.Printf("   Reason: Accumulated ₦100 withdrawal fees (sweep quarterly)")
+
+	// Reset the current-period counter — PlatformProfit and IsBalanced() are unaffected.
+	accounting.WithdrawalFeeRevenue = 0
+	if saveErr := db.Save(accounting).Error; saveErr != nil {
+		log.Printf("❌ Failed to reset withdrawal fee counter: %v", saveErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update records"})
+		return
+	}
+
+	sweepRef := fmt.Sprintf("WITHDRAWAL_FEE_SWEEP_%d", int(amount*100))
+	log.Printf("✅ Withdrawal fee sweep logged: ₦%.2f (ref: %s)", amount, sweepRef)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Sweep logged — complete the transfer via Paystack Dashboard",
+		"amount":   amount,
+		"sweep_ref": sweepRef,
+	})
+}
+
 // initiateCommissionTransfer handles Paystack transfer from Reserve to Revenue Subaccount
 func initiateCommissionTransfer(amount float64) (string, error) {
 	// Get Paystack keys and subaccount IDs

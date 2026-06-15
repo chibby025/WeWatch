@@ -60,10 +60,13 @@ const TokenPurchaseModal = ({ isOpen, onClose }) => {
       setError(null);
       setSuccess(null);
 
+      const packagePriceNGN = currency === 'NGN' ? getPriceForCurrency(selectedPackage) : null;
       const purchaseData = {
         amount: selectedPackage.tokens,
         currency: currency,
-        gateway: gateway
+        gateway: gateway,
+        // Gross-up amount for Paystack: ensures platform receives clean package price after fees
+        ...(packagePriceNGN ? { charge_amount_ngn: calcBuyerCharge(packagePriceNGN) } : {}),
       };
 
       let response;
@@ -121,6 +124,15 @@ const TokenPurchaseModal = ({ isOpen, onClose }) => {
       GBP: pkg.gbp
     };
     return prices[currency] || pkg.usd;
+  };
+
+  // For packages ≥ ₦2,500 Paystack charges 1.5% + ₦100 flat. We gross-up the charge so the
+  // platform always receives the clean package price — buyer covers the processing overhead.
+  // For packages < ₦2,500 the 1.5% is small enough that the platform absorbs it.
+  const calcBuyerCharge = (packagePriceNGN) => {
+    if (packagePriceNGN < 2500) return packagePriceNGN;
+    // gross-up: find Y such that Y * 0.985 - 100 = packagePrice
+    return Math.ceil((packagePriceNGN + 100) / 0.985);
   };
 
   if (!isOpen) return null;
@@ -264,35 +276,45 @@ const TokenPurchaseModal = ({ isOpen, onClose }) => {
           </div>
 
           {/* Purchase Summary */}
-          {selectedPackage && (
-            <div className="bg-gray-750 rounded-lg p-4 border border-gray-700">
-              <div className="text-gray-300 font-medium mb-3">Purchase Summary</div>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Base Tokens:</span>
-                  <span className="text-white font-medium">{selectedPackage.tokens.toLocaleString()}</span>
-                </div>
-                {selectedPackage.bonus > 0 && (
+          {selectedPackage && (() => {
+            const price = getPriceForCurrency(selectedPackage);
+            const isNGN = currency === 'NGN';
+            const buyerCharge = isNGN ? calcBuyerCharge(price) : price;
+            const processingFee = buyerCharge - price;
+            const totalTokens = selectedPackage.tokens + (selectedPackage.bonus || 0);
+            return (
+              <div className="bg-gray-750 rounded-lg p-4 border border-gray-700">
+                <div className="text-gray-300 font-medium mb-3">Purchase Summary</div>
+                <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-gray-400">Bonus Tokens:</span>
-                    <span className="text-green-400 font-medium">+{selectedPackage.bonus.toLocaleString()}</span>
+                    <span className="text-gray-400">Base Tokens:</span>
+                    <span className="text-white font-medium">{selectedPackage.tokens.toLocaleString()}</span>
                   </div>
-                )}
-                <div className="border-t border-gray-700 pt-2 flex justify-between">
-                  <span className="text-gray-300 font-medium">Total:</span>
-                  <span className="text-white font-bold">
-                    {(selectedPackage.tokens + (selectedPackage.bonus || 0)).toLocaleString()} tokens
-                  </span>
-                </div>
-                <div className="border-t border-gray-700 pt-2 flex justify-between">
-                  <span className="text-gray-300 font-medium">Amount:</span>
-                  <span className="text-purple-400 font-bold text-lg">
-                    {formatCurrency(getPriceForCurrency(selectedPackage), currency)}
-                  </span>
+                  {selectedPackage.bonus > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Bonus Tokens:</span>
+                      <span className="text-green-400 font-medium">+{selectedPackage.bonus.toLocaleString()}</span>
+                    </div>
+                  )}
+                  <div className="border-t border-gray-700 pt-2 flex justify-between font-medium">
+                    <span className="text-gray-300">You receive:</span>
+                    <span className="text-white font-bold">{totalTokens.toLocaleString()} tokens</span>
+                  </div>
+                  <div className="border-t border-gray-700 pt-2 flex justify-between items-baseline">
+                    <span className="text-gray-300 font-medium">You pay:</span>
+                    <div className="text-right">
+                      <span className="text-purple-400 font-bold text-lg">
+                        {isNGN ? `₦${buyerCharge.toLocaleString()}` : formatCurrency(buyerCharge, currency)}
+                      </span>
+                      {processingFee > 0 && (
+                        <div className="text-xs text-gray-500">incl. ₦{processingFee} processing</div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Action Buttons */}
           <div className="flex gap-3">

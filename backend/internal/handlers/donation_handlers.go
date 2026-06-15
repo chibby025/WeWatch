@@ -128,10 +128,10 @@ func DonateToSessionHandler(db *gorm.DB) gin.HandlerFunc {
 			}
 			transactionID = &transaction.ID
 
-			// Credit host wallet with 95% (platform keeps 5% as transfer fee)
+			// Credit host wallet with 75% (platform keeps 25% commission)
 			// AmountTokens is in cents (100 = 1.00 token)
-			hostEarning := int(float64(req.AmountTokens) * 0.95)
-			platformCommission := req.AmountTokens - hostEarning  // 5% fee in cents
+			hostEarning := int(float64(req.AmountTokens) * 0.75)
+			platformCommission := req.AmountTokens - hostEarning  // 25% commission in cents
 
 			var hostWallet models.UserWallet
 			result := tx.Where("user_id = ?", session.HostID).First(&hostWallet)
@@ -167,42 +167,35 @@ func DonateToSessionHandler(db *gorm.DB) gin.HandlerFunc {
 				}
 			}
 
-			log.Printf("✅ Token donation: %d cents from user %d → Host gets %d cents (95%%), Platform keeps %d cents (5%% fee)", 
+			log.Printf("✅ Token donation: %d cents from user %d → Host gets %d cents (75%%), Platform keeps %d cents (25%% commission)",
 				req.AmountTokens, donor.ID, hostEarning, platformCommission)
 
 		} else {
-			// Gateway payment (Stripe/Paystack)
-			// Calculate USD equivalent (1 token = $0.10)
-			amountUSD := float64(req.AmountTokens) * 0.10
-
-			// TODO: Process payment with gateway API
-			log.Printf("💳 Processing %s donation: $%.2f USD", req.PaymentMethod, amountUSD)
-
-			// Calculate commission (15%)
-			grossAmount := amountUSD
-			commission := grossAmount * 0.15
-			netAmount := grossAmount - commission
-
-			// Create gateway earning record
-			gatewayEarning := models.GatewayEarning{
-				HostID:             session.HostID,
-				SessionID:          &session.ID,
-				PaymentGateway:     req.PaymentMethod,
-				Currency:           "USD", // Gateway donations always in USD
-				GrossAmount:        grossAmount,
-				PlatformCommission: commission,
-				NetAmount:          netAmount,
-				PaymentID:          *req.PaymentToken,
-			}
-			if err := tx.Create(&gatewayEarning).Error; err != nil {
-				tx.Rollback()
-				log.Printf("❌ Error creating gateway earning: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record earning"})
-				return
-			}
-			gatewayEarningID = &gatewayEarning.ID
-
-			log.Printf("✅ Gateway donation recorded: Gross=%.2f, Commission=%.2f, Net=%.2f USD", grossAmount, commission, netAmount)
+			// ── GATEWAY DONATION PATH NOT IN USE ────────────────────────────────
+			// All donations are token-only. Direct Paystack/Stripe donations were
+			// removed: users who hold tokens are locked into the platform economy.
+			// A gateway donation path would let donors bypass the token spread
+			// and send value directly, cutting out the ₦43/token platform margin.
+			//
+			// If gateway donations are re-enabled in future, restore the
+			// GatewayEarning record creation below and wire a real Paystack
+			// charge (initialize + verify) before creating the donation record.
+			//
+			// amountUSD := float64(req.AmountTokens) * 0.10
+			// gatewayEarning := models.GatewayEarning{
+			//     HostID:             session.HostID,
+			//     SessionID:          &session.ID,
+			//     PaymentGateway:     req.PaymentMethod,
+			//     Currency:           "USD",
+			//     GrossAmount:        amountUSD,
+			//     PlatformCommission: amountUSD * 0.25,
+			//     NetAmount:          amountUSD * 0.75,
+			//     PaymentID:          *req.PaymentToken,
+			// }
+			// ────────────────────────────────────────────────────────────────────
+			tx.Rollback()
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Gateway payments are not available for donations — please use tokens"})
+			return
 		}
 
 		// Create donation record

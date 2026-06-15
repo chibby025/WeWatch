@@ -32,6 +32,11 @@ type PlatformAccounting struct {
 	// Ticket Transfer Fee Revenue (5% fee on ticket gifts/transfers)
 	TransferFeeRevenue         float64 `gorm:"type:decimal(15,2);not null;default:0" json:"transfer_fee_revenue"`          // Current balance of 5% transfer fees
 	LifetimeTransferFeeRevenue float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_transfer_fee_revenue"` // All transfer fees ever earned
+
+	// Withdrawal Fee Revenue (₦100 flat fee charged per withdrawal)
+	// Money stays in Reserve Paystack subaccount; swept quarterly to Platform Revenue.
+	WithdrawalFeeRevenue         float64 `gorm:"type:decimal(15,2);not null;default:0" json:"withdrawal_fee_revenue"`          // Accumulated ₦100 fees not yet swept
+	LifetimeWithdrawalFeeRevenue float64 `gorm:"type:decimal(15,2);not null;default:0" json:"lifetime_withdrawal_fee_revenue"` // All withdrawal fees ever earned
 	
 	// Early Bird Analytics (informational - not revenue)
 	TotalEarlyBirdSavings float64 `gorm:"type:decimal(15,2);not null;default:0" json:"total_early_bird_savings"` // Total savings given to users via early bird pricing
@@ -137,6 +142,18 @@ func (pa *PlatformAccounting) RecordTokenDonationCommission(commissionInCents fl
 	
 	pa.TokenDonationCommission += commissionInNaira
 	pa.LifetimeTokenDonationCommission += commissionInNaira
+}
+
+// RecordWithdrawalFee records the ₦100 flat withdrawal fee as platform revenue.
+// The ₦100 stays physically in the Reserve Paystack subaccount (it was never
+// transferred out). Accounting-wise it moves from host reserve → platform profit,
+// keeping TotalGatewayBalance and IsBalanced() intact.
+// Call this after ProcessPayout(netNGN) succeeds for the same withdrawal.
+func (pa *PlatformAccounting) RecordWithdrawalFee(feeNGN float64) {
+	pa.HostReserveBalance -= feeNGN          // no longer the host's
+	pa.PlatformProfit += feeNGN              // now ours — sweep quarterly
+	pa.WithdrawalFeeRevenue += feeNGN
+	pa.LifetimeWithdrawalFeeRevenue += feeNGN
 }
 
 // RecordHostEarning when host earns from tickets/donations

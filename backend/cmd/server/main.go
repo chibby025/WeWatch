@@ -1096,7 +1096,8 @@ func main() {
 		superAdminGroup.GET("/event-analytics", handlers.GetEventAnalytics)                    // GET /api/admin/event-analytics (Event ticketing metrics)
 		superAdminGroup.GET("/community-analytics", handlers.GetCommunityAnalyticsHandler)     // GET /api/admin/community-analytics (Community request stats)
 		superAdminGroup.POST("/transfer-donation-commission", handlers.TransferTokenDonationCommission) // POST /api/admin/transfer-donation-commission (Transfer 5% token gift commissions)
-		
+		superAdminGroup.POST("/sweep-withdrawal-fees", handlers.SweepWithdrawalFeeRevenue)            // POST /api/admin/sweep-withdrawal-fees (Sweep accumulated ₦100 withdrawal fees quarterly)
+
 		// Legacy pending payouts (for manually flagged accounts)
 		superAdminGroup.GET("/payouts/pending", handlers.GetPendingPayoutsHandler(DB))         // GET /api/admin/payouts/pending (List pending payouts)
 		superAdminGroup.POST("/payouts/:id/process", handlers.ProcessPayoutHandler(DB))        // POST /api/admin/payouts/:id/process (Process payout)

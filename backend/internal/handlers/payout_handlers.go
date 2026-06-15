@@ -50,7 +50,7 @@ func RequestPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "amount_tokens required for token payouts"})
 				return
 			}
-			if *req.AmountTokens < 50 {
+			if *req.AmountTokens < 820 {
 				c.JSON(http.StatusBadRequest, gin.H{"error": models.ErrMinimumPayoutNotMet.Error()})
 				return
 			}
@@ -142,7 +142,7 @@ func RequestPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 				return
 			}
 
-			if !wallet.CanWithdraw(50) {
+			if !wallet.CanWithdraw(820) {
 				tx.Rollback()
 				c.JSON(http.StatusBadRequest, gin.H{"error": models.ErrMinimumPayoutNotMet.Error()})
 				return
@@ -220,16 +220,24 @@ func RequestPayoutHandler(db *gorm.DB) gin.HandlerFunc {
 			log.Printf("✅ Token payout created: ID=%d, UserID=%d, Amount=%d tokens, Status=%s", 
 				payout.ID, user.ID, *req.AmountTokens, initialStatus)
 			
+			// Calculate withdrawal amounts for response and auto-processing
+			grossNGN := float64(*req.AmountTokens) * 122.0 / 100.0
+			const withdrawalFeeNGN = 100.0
+			netNGN := grossNGN - withdrawalFeeNGN
+
 			// Process auto-approval if applicable
 			if autoApprove && req.PayoutMethod == string(models.PayoutMethodBankTransfer) {
-				go autoProcessPayout(db, payout.ID, user.ID, float64(*req.AmountTokens)*122.0/100.0, "NGN", req.Details)
+				go autoProcessPayout(db, payout.ID, user.ID, netNGN, "NGN", req.Details)
 			}
 
 			c.JSON(http.StatusOK, gin.H{
-				"success":      true,
-				"payout":       payout,
-				"auto_approve": autoApprove,
-				"message":      processingMessage,
+				"success":            true,
+				"payout":             payout,
+				"auto_approve":       autoApprove,
+				"message":            processingMessage,
+				"gross_ngn":          grossNGN,
+				"withdrawal_fee_ngn": withdrawalFeeNGN,
+				"net_ngn":            netNGN,
 			})
 
 		} else {
@@ -618,6 +626,17 @@ func autoProcessPayout(db *gorm.DB, payoutID uint, userID uint, amount float64, 
 		Where("host_id = ? AND currency = ? AND is_withdrawn = ?", userID, currency, false).
 		Limit(1).
 		Update("is_withdrawn", true)
+
+	// Update platform accounting: move net payout out of reserve, then reclassify
+	// the ₦100 withdrawal fee from reserve → platform profit so it can be swept.
+	// amount is netNGN (after fee); grossNGN = amount + 100.
+	if accounting, err := models.GetPlatformAccounting(db); err == nil {
+		accounting.ProcessPayout(amount)        // deduct netNGN from reserve + gateway
+		accounting.RecordWithdrawalFee(100.0)   // reclassify ₦100 fee to platform profit
+		if saveErr := db.Save(accounting).Error; saveErr != nil {
+			log.Printf("⚠️ Failed to update platform accounting for payout %d: %v", payoutID, saveErr)
+		}
+	}
 
 	log.Printf("✅ Auto-processed payout %d: Transfer %s, Amount %.2f %s", payoutID, transferCode, amount, currency)
 }

@@ -2336,7 +2336,7 @@ const RoomPageNew = () => {
                         src="/icons/beginWatchIcon.svg"
                         alt="Begin Watch"
                         onClick={isHost ? handleBeginWatch : undefined}
-                        className={`h-7 w-7 md:h-[38px] md:w-[38px] flex-shrink-0 ${
+                        className={`h-7 w-7 md:h-[38px] md:w-[38px] flex-shrink-0 invert dark:invert-0 ${
                           isHost ? 'cursor-pointer hover:opacity-80 transition-opacity' : 'opacity-30 cursor-not-allowed'
                         }`}
                         title={isHost ? "Begin Watch" : "Only the host can start a watch session"}
@@ -2479,14 +2479,14 @@ const RoomPageNew = () => {
                               src="/icons/beginWatchIcon.svg"
                               alt="Begin Watch"
                               onClick={handleBeginWatch}
-                              className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity"
+                              className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity invert dark:invert-0"
                               title="Begin Watch"
                             />
                           ) : (
                             <img
                               src="/icons/beginWatchIcon.svg"
                               alt="Begin Watch"
-                              className="h-10 w-10 opacity-30 cursor-not-allowed"
+                              className="h-10 w-10 opacity-30 cursor-not-allowed invert dark:invert-0"
                               title="Only the host can start a watch session"
                             />
                           )}

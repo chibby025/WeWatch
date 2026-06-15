@@ -1,164 +1,77 @@
-# WeWatch Token Pricing System
-
-## Overview
-WeWatch uses a token-based system for payments within the platform.
+# LetsWatchOut — Token Pricing System
 
 ## Token Economics
 
 ### Pricing
-- **₦165 = 1 Token** (Nigerian Naira)
-- Tokens are the universal currency for all platform transactions
+- **₦165 = 1 Token** (1 token = 100 stored units)
+- Withdrawal rate: **₦122 per token** (≈74% of buy price — 26% platform margin)
+- Tokens are the universal currency for all in-app transactions
 
 ### Storage Format
-- **Tokens are stored as integers representing cents**
-- 1 token = 100 units in database
-- Example: User buys ₦200 worth of tokens:
-  - Calculation: 200 / 165 = 1.2121 tokens
-  - Stored as: 121 (represents 1.21 tokens)
-  - Display: 1.21 tokens (divide by 100)
+- Tokens stored as **integers representing cents** (100 units = 1 token)
+- `tokensInCents = int(amountNGN * 100 / 165)`
+- Display: divide by 100 and show 2 decimal places
 
-### Why This Format?
-- Avoids floating-point precision issues
-- Ensures accurate calculations for financial transactions
-- Standard practice in financial systems (like storing cents instead of dollars)
+### Paystack Fee Structure
+Local Nigerian cards (Paystack):
+- **Under ₦2,500**: 1.5% only, no flat fee
+- **₦2,500 and above**: 1.5% + ₦100 flat fee, capped at ₦2,000
 
-## Payment Split
+Examples:
+- ₦165 purchase → ₦2.48 fee → ₦162.52 net → 98 stored units (≈0.98 tokens)
+- ₦1,000 purchase → ₦15 fee → ₦985 net → 597 stored units
+- ₦5,000 purchase → ₦175 fee → ₦4,825 net → 2,924 stored units
 
-### Revenue Distribution
-All payments (token purchases, ticket sales, donations) are split:
-- **25%** → Platform Revenue Account
-- **75%** → Host Reserve Account
+## Revenue Splits
 
-### Token Purchase Flow
-```
-Customer pays ₦200
-    ↓
-Gateway Earnings Record Created:
-- gross_amount: 200.00
-- platform_commission: 50.00 (25%)
-- net_amount: 150.00 (75%)
-    ↓
-User receives 121 tokens (1.21 tokens)
-```
+| Transaction type | Host | Platform | Notes |
+|---|---|---|---|
+| Token purchase | 75% (reserve) | 25% | Via Paystack Split Code `SPL_CcDDM4qs7n` |
+| Gateway ticket | 75% | 25% | — |
+| Token ticket | 100% | 0% | Host bears full risk; no Paystack fee |
+| Token donation | 75% | 25% | Commission deducted before crediting host |
+| Gateway donation | 75% | 25% | Commission deducted before recording net amount |
+| Token gift (peer-to-peer) | 95% (recipient) | 5% | Transfer fee, not a host commission |
 
-### Gateway Earnings Table
-Token purchases create entries in `gateway_earnings`:
-- `session_ticket_id` = NULL (identifies token purchases)
-- `donation_id` = NULL (identifies token purchases)
-- `host_id` = 1 (system user for token purchases)
-- `gross_amount` = total payment
-- `platform_commission` = 25% platform fee
-- `net_amount` = 75% reserve amount
+## Paystack Split Code
 
-## Token Transactions
+Active split code: **`SPL_CcDDM4qs7n`**
+- Automatically routes 75% → Reserve subaccount, 25% → Platform Revenue at payment time
+- No manual transfers needed for token purchases or gateway tickets
 
-### Transaction Flow
-1. User initiates payment via Paystack/Stripe
-2. Payment success webhook triggers
-3. `TokenTransaction` record created with status "completed"
-4. `GatewayEarning` record created for revenue tracking
-5. `UserWallet` updated with new token balance
+## Withdrawal Policy
 
-### Token Transaction Fields
-- `amount`: Token balance in cents (121 = 1.21 tokens)
-- `usd_value`: Equivalent USD value
-- `payment_method`: "paystack" or "stripe"
-- `payment_id`: Gateway payment reference
-- `status`: "completed", "pending", "failed"
+- **Minimum withdrawal**: 820 token units = ~8.2 tokens = **₦1,000** gross
+- **Withdrawal fee**: ₦100 flat (no percentage; no cap needed)
+- **Net payout**: gross NGN − ₦100
+- **Example**: Withdraw 1,000 units (10 tokens) → gross ₦1,220 − ₦100 fee → **₦1,120 transferred**
+
+KYC thresholds:
+- Up to ₦5,000: no KYC required (after first withdrawal)
+- ₦5,001–₦9,999: KYC required
+- ₦10,000+: manual admin review
 
 ## Implementation Notes
 
 ### Backend
-- Store tokens as integers (multiply by 100)
-- Calculate: `tokensInCents = (amount * 100) / 165`
-- Track revenue in `gateway_earnings` table
+- `tokensInCents = int((amount * 100) / 165)` when crediting wallet
+- Token → NGN conversion rate: `tokens_in_cents * 122 / 100`
+- Withdrawal fee applied in `autoProcessPayout` before Paystack transfer
 
-### Frontend
-- Display tokens by dividing by 100
-- Example: `balance / 100` shows "1.21 tokens"
-- Format with 2 decimal places
-
-### Database Queries
-Token purchases are identified in analytics by:
-```sql
-SELECT * FROM gateway_earnings 
-WHERE session_ticket_id IS NULL 
-  AND donation_id IS NULL
-```
-
-## Revenue Calculations
-
-### Admin Dashboard
-Total revenue includes:
-1. Session ticket sales (from `session_tickets`)
-2. Token purchases (from `gateway_earnings` where session_ticket_id IS NULL)
-3. Donations (separate tracking)
-
-Platform revenue (25%) calculated from:
-1. Ticket sales: `ticket_price_amount * 0.15`
-2. Token purchases: `platform_commission` from gateway_earnings
-
-## Future: Paystack Subaccounts
-
-### Option 1: Subaccounts (Recommended for Live)
-Create two Paystack subaccounts:
-1. Revenue Account (receives 25% automatically)
-2. Reserve Account (receives 75% automatically)
-
-Configure at payment time:
-```json
-{
-  "amount": 20000,
-  "subaccount": "ACCT_reserve_id",
-  "bearer": "account"
-}
-```
-
-### Option 2: Manual Transfers (Current MVP)
-- All payments go to one account
-- Track splits in database via `gateway_earnings`
-- Transfer 75% to Reserve account periodically
-
-## Testing
-
-### Token Purchase Test
-```bash
-# User pays ₦200
-# Expected:
-# - User receives 121 tokens (1.21 tokens displayed)
-# - gateway_earnings: gross_amount=200, platform_commission=30, net_amount=170
-# - Admin dashboard shows ₦200 in total revenue, ₦30 in platform revenue
-```
+### Super Admin wallet
+- Receives platform profit splits via `TransferSplitProfitHandler`
+- User ID read from `SUPER_ADMIN_USER_ID` env var (Railway config), defaults to 7
 
 ### Verification Queries
 ```sql
--- Check user's token balance
+-- User's token balance
 SELECT token_balance FROM user_wallets WHERE user_id = ?;
--- Result: 121 (display as 1.21 tokens)
 
--- Check gateway earnings
-SELECT gross_amount, platform_commission, net_amount 
-FROM gateway_earnings 
-WHERE session_ticket_id IS NULL AND donation_id IS NULL;
-
--- Check admin revenue
-SELECT 
-  SUM(gross_amount) as total_revenue,
-  SUM(platform_commission) as platform_revenue
+-- Platform revenue from gateway earnings
+SELECT SUM(gross_amount), SUM(platform_commission), SUM(net_amount)
 FROM gateway_earnings;
+
+-- Token purchases only
+SELECT * FROM gateway_earnings
+WHERE session_ticket_id IS NULL AND donation_id IS NULL;
 ```
-
-## Migration Path
-
-### From Old System (if needed)
-If old records stored tokens differently:
-1. Multiply existing balances by 100
-2. Update all queries to divide by 100 for display
-3. Test thoroughly before deployment
-
-### Current State (December 2025)
-- ✅ Token storage: Cents format (multiply by 100)
-- ✅ Revenue tracking: Gateway earnings
-- ✅ Admin dashboard: Includes token purchases
-- ⏳ Payment split: Database tracking (manual transfer needed)
-- 🔜 Paystack subaccounts: Future implementation

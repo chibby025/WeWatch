@@ -12,8 +12,8 @@ import ReportModal from './ReportModal';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
-// Module-level cache so rapid tab-switch re-mounts skip unnecessary re-renders.
-const _feedCache = { postsFp: '' };
+// Module-level cache — survives tab-switch unmounts so remounting shows posts instantly.
+const _feedCache = { postsFp: '', posts: null, hasMore: true };
 const _postsFp = (arr) => arr.map(p => `${p.id}:${p.updated_at || ''}:${p.likes_count ?? ''}:${p.comments_count ?? ''}`).join('|');
 
 const LIKE_CSS = `
@@ -66,11 +66,12 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     return () => clearInterval(t);
   }, []);
 
-  const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Seed from module cache so returning to the Feed tab shows posts immediately
+  const [posts, setPosts] = useState(() => _feedCache.posts || []);
+  const [loading, setLoading] = useState(() => !_feedCache.posts?.length);
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
+  const [hasMore, setHasMore] = useState(() => _feedCache.hasMore);
   const [loadingMore, setLoadingMore] = useState(false);
   const observerRef = useRef(null);
   const loadMoreTriggerRef = useRef(null);
@@ -156,13 +157,19 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
       const newPosts = response.data.posts || [];
 
       if (append) {
-        setPosts(prev => [...prev, ...newPosts]);
+        setPosts(prev => {
+          const merged = [...prev, ...newPosts];
+          _feedCache.posts = merged;
+          return merged;
+        });
       } else {
         const fp = _postsFp(newPosts);
         if (fp !== _feedCache.postsFp) {
           setPosts(newPosts);
           _feedCache.postsFp = fp;
         }
+        // Always update cache on page-1 fetch so next remount shows fresh data
+        _feedCache.posts = newPosts;
       }
 
       // Prefer the backend's explicit has_more flag (present when global-pool pagination
@@ -171,6 +178,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
         ? response.data.has_more
         : newPosts.length > 0;
       setHasMore(hasMore);
+      _feedCache.hasMore = hasMore;
       setError(null);
     } catch (err) {
       console.error('❌ [DiscoverFeed] Failed to fetch posts:', err);

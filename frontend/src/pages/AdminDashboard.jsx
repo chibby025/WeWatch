@@ -43,6 +43,7 @@ const AdminDashboard = () => {
   const [processingPayout, setProcessingPayout] = useState(null);
   const [splitProfit, setSplitProfit] = useState(null);
   const [transferringSplitProfit, setTransferringSplitProfit] = useState(false);
+  const [sweepingWithdrawalFees, setSweepingWithdrawalFees] = useState(false);
   const [communityAnalytics, setCommunityAnalytics] = useState(null);
 
   useEffect(() => {
@@ -147,6 +148,20 @@ const AdminDashboard = () => {
     } catch (error) {
       toast.error(error.response?.data?.error || 'Transfer failed. Please try again.');
     } finally { setTransferringCommission(false); }
+  };
+
+  const handleSweepWithdrawalFees = async () => {
+    const available = analytics?.platform_accounting?.withdrawal_fee_revenue || 0;
+    if (available <= 0) { toast.error('No withdrawal fees accumulated yet'); return; }
+    if (!window.confirm(`Sweep ₦${available.toLocaleString()} withdrawal fees to Revenue account?\n\nYou must complete the actual transfer via Paystack Dashboard after this.`)) return;
+    setSweepingWithdrawalFees(true);
+    try {
+      const response = await apiClient.post('/api/admin/sweep-withdrawal-fees');
+      toast.success(`✅ Sweep logged: ₦${response.data.amount.toLocaleString()}\nRef: ${response.data.sweep_ref}\nComplete via Paystack Dashboard.`);
+      await fetchAnalytics();
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Sweep failed. Please try again.');
+    } finally { setSweepingWithdrawalFees(false); }
   };
 
   const handleTransferSplitProfit = async () => {
@@ -408,7 +423,7 @@ const AdminDashboard = () => {
         {/* Fee Revenue Breakdown */}
         <div className="bg-gradient-to-r from-green-600/20 to-emerald-600/20 backdrop-blur-lg rounded-xl p-6 border border-green-500/30">
           <h2 className="text-2xl font-bold mb-4">💰 Platform Fee Revenue Breakdown</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <Card className="bg-white/5 border-green-500/20 hover:bg-white/10 transition-colors">
               <CardHeader className="pb-2">
                 <CardTitle className="text-xs text-gray-400 uppercase">Ticket Transfer Fees (5%)</CardTitle>
@@ -420,7 +435,7 @@ const AdminDashboard = () => {
             </Card>
             <Card className="bg-white/5 border-blue-500/20 hover:bg-white/10 transition-colors">
               <CardHeader className="pb-2">
-                <CardTitle className="text-xs text-gray-400 uppercase">Wallet Gift Commission (5%)</CardTitle>
+                <CardTitle className="text-xs text-gray-400 uppercase">Wallet Gift Commission (25%)</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-blue-400">{formatCurrency(analytics.platform_accounting.lifetime_token_donation_commission || 0)}</div>
@@ -433,6 +448,27 @@ const AdminDashboard = () => {
                   >
                     {transferringCommission ? 'Transferring...' : `Transfer ₦${analytics.platform_accounting.token_donation_commission.toLocaleString()}`}
                   </button>
+                )}
+              </CardContent>
+            </Card>
+            <Card className="bg-white/5 border-amber-500/20 hover:bg-white/10 transition-colors">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs text-gray-400 uppercase">Withdrawal Fees (₦100 flat)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-amber-400">{formatCurrency(analytics.platform_accounting.lifetime_withdrawal_fee_revenue || 0)}</div>
+                <p className="text-xs text-gray-400 mt-1">All-time · Sweep quarterly from Reserve</p>
+                {(analytics.platform_accounting.withdrawal_fee_revenue || 0) > 0 && (
+                  <button
+                    onClick={handleSweepWithdrawalFees}
+                    disabled={sweepingWithdrawalFees}
+                    className="mt-2 px-3 py-1 bg-amber-600 hover:bg-amber-700 rounded text-xs font-semibold disabled:opacity-50 w-full"
+                  >
+                    {sweepingWithdrawalFees ? 'Sweeping...' : `Sweep ₦${(analytics.platform_accounting.withdrawal_fee_revenue || 0).toLocaleString()}`}
+                  </button>
+                )}
+                {(analytics.platform_accounting.withdrawal_fee_revenue || 0) === 0 && (
+                  <p className="text-xs text-gray-500 mt-1">All fees swept ✓</p>
                 )}
               </CardContent>
             </Card>
@@ -449,11 +485,12 @@ const AdminDashboard = () => {
           <div className="bg-blue-900/20 border border-blue-500/20 rounded-lg p-4">
             <h3 className="text-sm font-semibold text-blue-300 mb-2">📊 Revenue Model Summary:</h3>
             <ul className="text-xs text-gray-300 space-y-1">
-              <li>• <strong>Token Spread Profit:</strong> ₦43 per token (Buy ₦165 - Sell ₦122 = 26% margin)</li>
+              <li>• <strong>Token Spread Profit:</strong> ₦43 per token (Buy ₦165 - Sell ₦122 = 26% margin) — captured via Paystack Split Code at purchase</li>
+              <li>• <strong>Donation Commission:</strong> 25% kept when users tip hosts during sessions (host gets 75%)</li>
+              <li>• <strong>Withdrawal Fee:</strong> ₦100 flat per withdrawal — stays in Reserve, sweep quarterly to Revenue</li>
               <li>• <strong>Transfer Fees:</strong> 5% charged when users gift tickets to others</li>
-              <li>• <strong>Gift Commission:</strong> 5% from wallet-to-wallet token gifts</li>
-              <li>• <strong>Host Revenue:</strong> 100% of ticket sales — hosts keep all tokens spent</li>
-              <li>• <strong>Early Bird:</strong> Promotional savings to incentivize early purchases</li>
+              <li>• <strong>Post Split:</strong> 25% platform share when users buy paid posts/recordings</li>
+              <li>• <strong>Host Revenue:</strong> 100% of token ticket sales — hosts keep all tokens spent on their events</li>
             </ul>
           </div>
         </div>

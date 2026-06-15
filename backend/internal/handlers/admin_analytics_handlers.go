@@ -3,12 +3,23 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
 )
+
+func getSuperAdminID() uint {
+	if v := os.Getenv("SUPER_ADMIN_USER_ID"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil && id > 0 {
+			return uint(id)
+		}
+	}
+	return 7
+}
 
 // GetPlatformAnalytics returns comprehensive platform metrics for super admins
 // GET /api/admin/analytics
@@ -410,9 +421,11 @@ func GetPlatformAnalytics(c *gin.Context) {
 			"is_balanced":               accounting.IsBalanced(),
 			"token_donation_commission": accounting.TokenDonationCommission,
 			"lifetime_token_donation_commission": accounting.LifetimeTokenDonationCommission,
-			"transfer_fee_revenue":         accounting.TransferFeeRevenue,
-			"lifetime_transfer_fee_revenue": accounting.LifetimeTransferFeeRevenue,
-			"total_early_bird_savings":     accounting.TotalEarlyBirdSavings,
+			"transfer_fee_revenue":              accounting.TransferFeeRevenue,
+			"lifetime_transfer_fee_revenue":     accounting.LifetimeTransferFeeRevenue,
+			"withdrawal_fee_revenue":            accounting.WithdrawalFeeRevenue,
+			"lifetime_withdrawal_fee_revenue":   accounting.LifetimeWithdrawalFeeRevenue,
+			"total_early_bird_savings":          accounting.TotalEarlyBirdSavings,
 		}
 	}
 
@@ -723,7 +736,7 @@ func TransferSplitProfit(c *gin.Context) {
 		return
 	}
 
-	superAdminID := uint(7)
+	superAdminID := getSuperAdminID()
 
 	// All three writes (transfer record, token transaction, wallet update) must
 	// commit together or the books drift.
