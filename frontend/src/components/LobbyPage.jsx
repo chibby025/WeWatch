@@ -1,5 +1,5 @@
 // WeWatch/frontend/src/components/LobbyPage.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getRooms, deleteRoom, getActiveSessions, verifySessionExists, getSentFriendRequests, getAssetUrl, cdnThumb, searchUsers, sendFriendRequest, getLobbyGroups, getLobbyGroupMessages, sendLobbyGroupMessage, uploadLobbyGroupImage, uploadLobbyGroupVideo, uploadLobbyGroupDocument, uploadLobbyGroupVoiceNote, sendLobbyGroupWatchOut, startLobbyGroupCall, endLobbyGroupCall, createLobbyGroup, leaveLobbyGroup, deleteLobbyGroup, toggleRoomFavourite, joinRoom, clearAllNotifications, startCircleWatchout } from '../services/api';
 import { TrashIcon, Bars3Icon, EllipsisVerticalIcon, ShareIcon, Cog6ToothIcon, ChartBarIcon, FilmIcon, PaperClipIcon, FaceSmileIcon, ChartBarSquareIcon, MicrophoneIcon, PaperAirplaneIcon, PhoneIcon, ArrowsPointingOutIcon, UsersIcon, UserIcon, VideoCameraIcon, AcademicCapIcon, HeartIcon, ChatBubbleLeftIcon, ArrowUpIcon, BellIcon, XMarkIcon, EyeIcon, ChatBubbleOvalLeftEllipsisIcon, BookmarkIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/solid';
@@ -147,13 +147,11 @@ const LobbyPage = () => {
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [upcomingEventsCount, setUpcomingEventsCount] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
-  const [rooms, setRooms] = useState([]);
-  const [sessions, setSessions] = useState([]); // ✅ Active watch sessions
-  const [loading, setLoading] = useState(true);
-  const [sessionsLoading, setSessionsLoading] = useState(true); // ✅ Separate loading for sessions
+  const [rooms, setRooms] = useState(() => _lobbyCache.rooms || []);
+  const [sessions, setSessions] = useState(() => _lobbyCache.sessions || []); // ✅ Active watch sessions
+  const [loading, setLoading] = useState(() => !_lobbyCache.rooms);
+  const [sessionsLoading, setSessionsLoading] = useState(() => !_lobbyCache.sessions); // ✅ Separate loading for sessions
   const [error, setError] = useState(null);
-  const [filteredRooms, setFilteredRooms] = useState([]);
-  const [filteredSessions, setFilteredSessions] = useState([]); // ✅ Filtered sessions
   
   // ✅ Infinite Scroll State
   const [roomsPage, setRoomsPage] = useState(0);
@@ -911,27 +909,24 @@ const LobbyPage = () => {
     return [...owned, ...member];
   };
 
-  // Filter rooms and sessions effect
-  useEffect(() => {
-    if (searchTerm === '') {
-      setFilteredRooms(sortRooms(rooms));
-      setFilteredSessions(sessions);
-    } else {
-      const termLower = searchTerm.toLowerCase().trim();
-      const filtered = rooms.filter(room =>
-        (room.name && room.name.toLowerCase().includes(termLower)) ||
-        (room.description && room.description.toLowerCase().includes(termLower))
-      );
-      setFilteredRooms(sortRooms(filtered));
+  // Derived — no useState, no useEffect; recomputes only when rooms/sessions/searchTerm change
+  const filteredRooms = useMemo(() => {
+    if (!searchTerm) return sortRooms(rooms);
+    const termLower = searchTerm.toLowerCase().trim();
+    return sortRooms(rooms.filter(room =>
+      (room.name && room.name.toLowerCase().includes(termLower)) ||
+      (room.description && room.description.toLowerCase().includes(termLower))
+    ));
+  }, [rooms, searchTerm]);
 
-      // ✅ Filter sessions by room name or host username
-      const filteredSess = sessions.filter(session =>
-        (session.room_name && session.room_name.toLowerCase().includes(termLower)) ||
-        (session.host_username && session.host_username.toLowerCase().includes(termLower))
-      );
-      setFilteredSessions(filteredSess);
-    }
-  }, [rooms, sessions, searchTerm]);
+  const filteredSessions = useMemo(() => {
+    if (!searchTerm) return sessions;
+    const termLower = searchTerm.toLowerCase().trim();
+    return sessions.filter(session =>
+      (session.room_name && session.room_name.toLowerCase().includes(termLower)) ||
+      (session.host_username && session.host_username.toLowerCase().includes(termLower))
+    );
+  }, [sessions, searchTerm]);
 
   // ✅ Infinite scroll observer for rooms
   useEffect(() => {
@@ -1035,7 +1030,6 @@ const LobbyPage = () => {
       setError('Failed to load rooms. Please try again later.');
       if (!append) {
         setRooms([]);
-        setFilteredRooms([]);
       }
     } finally {
       setLoading(false);
