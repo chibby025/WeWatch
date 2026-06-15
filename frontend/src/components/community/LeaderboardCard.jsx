@@ -1,16 +1,14 @@
 import React from 'react';
 
-const STAR_COLORS = ['', '#ef4444', '#f97316', '#eab308', '#22c55e', '#22c55e'];
-
 function Stars({ rating }) {
   const full = Math.round(rating);
   return (
-    <div className="flex items-center gap-px">
+    <div className="flex items-center" style={{ gap: 1 }}>
       {[1, 2, 3, 4, 5].map(n => (
         <svg key={n} width="10" height="10" viewBox="0 0 10 10">
           <polygon
             points="5,1 6.18,3.64 9,3.64 6.88,5.51 7.63,8.36 5,6.77 2.37,8.36 3.12,5.51 1,3.64 3.82,3.64"
-            fill={n <= full ? STAR_COLORS[full] || '#eab308' : 'rgba(255,255,255,0.15)'}
+            fill={n <= full ? '#FFD700' : 'rgba(255,255,255,0.15)'}
           />
         </svg>
       ))}
@@ -81,21 +79,21 @@ const LeaderboardCard = ({ rooms = [], fullscreen = false }) => {
 
               {/* Room info */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <p className="text-white text-xs font-semibold truncate">{room.name}</p>
-                  {fullscreen && room.content_rating && RATING_ICON[room.content_rating] && (
-                    <img
-                      src={RATING_ICON[room.content_rating]}
-                      alt={room.content_rating}
-                      className="flex-shrink-0 w-5 h-5 object-contain"
-                    />
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5 mt-0.5">
+                <p className="text-white text-xs font-semibold truncate">{room.name}</p>
+                <div className="flex items-center mt-0.5" style={{ gap: 4 }}>
                   <Stars rating={room.avg_rating} />
                   <span className="text-white/45 text-[10px]">{room.avg_rating?.toFixed(1)}</span>
                 </div>
               </div>
+
+              {/* Content rating icon — own column */}
+              {fullscreen && room.content_rating && RATING_ICON[room.content_rating] && (
+                <img
+                  src={RATING_ICON[room.content_rating]}
+                  alt={room.content_rating}
+                  className="flex-shrink-0 w-8 h-8 object-contain"
+                />
+              )}
 
               {/* Host avatar */}
               <div className="flex-shrink-0 flex flex-col items-end gap-1">
