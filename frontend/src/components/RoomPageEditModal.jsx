@@ -949,7 +949,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
 
         {/* 📹 Posts Tab - Instagram-style Grid */}
         {activeTab === 'posts' && (
-          <div className="p-6 overflow-y-auto max-h-[90vh]">
+          <div className="p-6 overflow-y-auto max-h-[90vh] bg-white">
             <PostsGrid 
               roomId={room?.id || room?.ID} 
               onPostClick={(post) => {
@@ -965,15 +965,15 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
           <div className="p-6 overflow-y-auto flex-1">
             {/* Create New Group - Host Only */}
             {isHost && (
-            <div className="bg-gray-800/50 rounded-lg p-4 mb-4 border border-gray-700/50">
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <div className="bg-white rounded-lg p-4 mb-4 border border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
                 <PlusIcon className="w-4 h-4" />
                 Create New Group
               </h3>
               <div className="space-y-3">
                 {/* Group Image (Emoji or Upload) */}
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1.5">Group Image</label>
+                  <label className="block text-xs text-gray-600 mb-1.5">Group Image</label>
                   <div className="flex items-center gap-3">
                     {/* Display uploaded image */}
                     <div className="w-16 h-16 bg-gray-700/50 rounded-lg flex items-center justify-center overflow-hidden">
@@ -1020,7 +1020,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
 
                 {/* Group Name with Emoji Support */}
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1.5">Name *</label>
+                  <label className="block text-xs text-gray-600 mb-1.5">Name *</label>
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -1059,7 +1059,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
 
                 {/* Group Description */}
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1.5">Description</label>
+                  <label className="block text-xs text-gray-600 mb-1.5">Description</label>
                   <input
                     type="text"
                     value={newGroup.description}
@@ -1079,7 +1079,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                     onChange={(e) => setNewGroup(prev => ({ ...prev, is_public: e.target.checked }))}
                     className="w-4 h-4 text-purple-600 bg-gray-700 border-gray-600 rounded focus:ring-purple-500"
                   />
-                  <label htmlFor="group-public" className="text-sm text-gray-300">
+                  <label htmlFor="group-public" className="text-sm text-gray-700">
                     Public (visible to all room members)
                   </label>
                 </div>
