@@ -979,6 +979,14 @@ export const getActiveSession = (roomId) => {
 export const postSessionHeartbeat = (roomId) =>
   apiClient.post(`/api/rooms/${roomId}/session/heartbeat`);
 
+// Logged before the WS/LiveKit connection is attempted — lets us compare attempted
+// vs confirmed joins to spot members whose connection silently never completed.
+export const logSessionJoinAttempt = (roomId, sessionId) =>
+  apiClient.post(`/api/rooms/${roomId}/sessions/${sessionId}/join-attempt`).catch(() => {});
+
+export const getSessionJoinStats = (roomId, sessionId) =>
+  apiClient.get(`/api/rooms/${roomId}/sessions/${sessionId}/join-stats`);
+
 /**
  * End a watch session (host only)
  * @param {string|number} roomId - The ID of the room

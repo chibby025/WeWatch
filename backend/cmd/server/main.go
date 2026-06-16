@@ -545,6 +545,8 @@ func main() {
 		// TODO: Remove after confirming no external API consumers
 		// roomGroup.POST("/:id/watch-session", handlers.CreateWatchSessionForRoomHandler)
 		
+		roomGroup.POST("/:id/sessions/:session_id/join-attempt", handlers.LogSessionJoinAttemptHandler) // POST /api/rooms/:id/sessions/:session_id/join-attempt (log join attempt before WS connects)
+		roomGroup.GET("/:id/sessions/:session_id/join-stats", handlers.GetSessionJoinStatsHandler)     // GET /api/rooms/:id/sessions/:session_id/join-stats (attempted vs confirmed comparison)
 		roomGroup.GET("/:id/active-session", handlers.GetActiveSessionHandler)
 		roomGroup.POST("/:id/session/heartbeat", handlers.SessionHeartbeatHandler)
 		roomGroup.PUT("/:id/status", handlers.UpdateRoomStatusHandler)

@@ -420,6 +420,15 @@ func (h *Hub) GetUserIDsInRow(roomID uint, row int) []uint {
     return users
 }
 
+// markJoinAttemptConfirmed flips the most recent pending join attempt for this
+// user+session to confirmed, once their member row has actually been written.
+func markJoinAttemptConfirmed(watchSessionID, userID uint) {
+    now := time.Now()
+    DB.Model(&models.SessionJoinAttempt{}).
+        Where("watch_session_id = ? AND user_id = ? AND status = ?", watchSessionID, userID, "pending").
+        Updates(map[string]interface{}{"status": "confirmed", "confirmed_at": now})
+}
+
 // JoinWatchSession adds a client to an active watch session
 func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     log.Printf("🎯 [JoinWatchSession] CALLED for user %d, session %s", client.userID, sessionID)
@@ -508,9 +517,11 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
             return fmt.Errorf("failed to create session member: %v", err)
         }
         log.Printf("✅ Created NEW session member record for user %d (session: %s)", client.userID, sessionID)
+        markJoinAttemptConfirmed(session.ID, client.userID)
     } else {
         log.Printf("✅ REACTIVATED existing member record for user %d (session: %s)", client.userID, sessionID)
-        
+        markJoinAttemptConfirmed(session.ID, client.userID)
+
         // 🔄 RESTORE SEAT: Check if user had a seat before disconnect
         var reactivatedMember models.WatchSessionMember
         if err := DB.Where("watch_session_id = ? AND user_id = ? AND is_active = true", 
@@ -951,8 +962,10 @@ func (h *Hub) Run() {
 			h.mutex.Lock()
 			log.Printf("🔴 [Hub.Run] ✅ Acquired h.mutex lock for unregistration")
 			roomClients, ok := h.rooms[client.roomID]
+			wasInRoom := false
 			if ok {
 				if _, exists := roomClients[client]; exists {
+					wasInRoom = true
 					// ✅ Clean up seat assignment
 					h.seatingMutex.Lock()
 					if roomHalls, seatExists := h.seatingAssignments[client.roomID]; seatExists {
@@ -980,132 +993,8 @@ func (h *Hub) Run() {
 					}
 					h.seatingMutex.Unlock()
 
-					// ✅ DATABASE CLEANUP: Mark user as left in watch_session_members
-					// Use client.sessionID if available for faster lookup
-					now := time.Now()
-					var sessionIDToCleanup string
-					var watchSessionID uint
-					
-					if client.sessionID != "" {
-						// Fast path: we know which session this client was in
-						sessionIDToCleanup = client.sessionID
-						var session models.WatchSession
-						if err := DB.Where("session_id = ?", client.sessionID).First(&session).Error; err == nil {
-							watchSessionID = session.ID
-						}
-					} else {
-						// Fallback: find active session for this room
-						var activeSession models.WatchSession
-						if err := DB.Where("room_id = ? AND ended_at IS NULL", client.roomID).First(&activeSession).Error; err == nil {
-							sessionIDToCleanup = activeSession.SessionID
-							watchSessionID = activeSession.ID
-						}
-					}
-					
-					if watchSessionID > 0 {
-						// Mark user as inactive and set left_at timestamp
-						result := DB.Model(&models.WatchSessionMember{}).
-							Where("watch_session_id = ? AND user_id = ? AND is_active = ?", watchSessionID, client.userID, true).
-							Updates(map[string]interface{}{
-								"is_active": false,
-								"left_at":   now,
-							})
-						
-						if result.Error != nil {
-							log.Printf("⚠️ Failed to mark user %d as left from session %d: %v", client.userID, watchSessionID, result.Error)
-						} else if result.RowsAffected > 0 {
-							log.Printf("✅ Marked user %d as left from session %s (watch_session_id=%d)", client.userID, sessionIDToCleanup, watchSessionID)
-							
-							// Count remaining members first so the broadcast carries ground truth.
-							var newCount int64
-							DB.Model(&models.WatchSessionMember{}).
-								Where("watch_session_id = ? AND is_active = ?", watchSessionID, true).
-								Count(&newCount)
-
-							// ✅ BROADCAST user_left TO ALL ROOM MEMBERS
-							var user models.User
-							if err := DB.First(&user, client.userID).Error; err == nil {
-								userLeftMsg := WebSocketMessage{
-									Type: "user_left",
-									Data: map[string]interface{}{
-										"userId":       client.userID,
-										"username":     user.Username,
-										"sessionId":    sessionIDToCleanup,
-										"member_count": newCount,
-									},
-								}
-								if leftBytes, err := json.Marshal(userLeftMsg); err == nil {
-									h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leftBytes, IsBinary: false}, nil)
-									log.Printf("📢 Broadcast user_left for user %d (%s) in session %s — count: %d", client.userID, user.Username, sessionIDToCleanup, newCount)
-								}
-							}
-							if countMsg, err := json.Marshal(map[string]interface{}{
-								"type":       "media_state_changed",
-								"session_id": sessionIDToCleanup,
-								"data":       map[string]interface{}{"member_count": newCount},
-							}); err == nil {
-								h.BroadcastToLobby(OutgoingMessage{Data: countMsg, IsBinary: false})
-							}
-						}
-						
-						// ✅ CHECK IF DISCONNECTING USER IS THE HOST
-						// ✅ FIXED: Only start timer if ALL host connections are gone (not just this one)
-						var room models.Room
-						if err := DB.First(&room, client.roomID).Error; err == nil {
-							if room.HostID == client.userID && sessionIDToCleanup != "" {
-								// ⚠️ DISABLED: Host connection check (was used for auto-end timer)
-								// hasOtherHostConnection := false
-								// totalRoomConnections := len(roomClients)
-								// hostConnectionCount := 0
-								// for otherClient := range roomClients {
-								// 	if otherClient.userID == room.HostID {
-								// 		hostConnectionCount++
-								// 	}
-								// 	if otherClient != client && otherClient.userID == room.HostID {
-								// 		hasOtherHostConnection = true
-								// 		log.Printf("🔍 Host still has another active connection (client %p)", otherClient)
-								// 	}
-								// }
-								// log.Printf("📊 [CONNECTION CHECK] Room %d: %d total connections, host has %d connection(s)", 
-								// 	client.roomID, totalRoomConnections, hostConnectionCount)
-								
-								// ⚠️ DISABLED: Auto-end timer feature (was used to start 1-hour countdown when host disconnects)
-								/*
-								if !hasOtherHostConnection {
-									roomName := fmt.Sprintf("room-%d", client.roomID)
-									userIdentity := fmt.Sprintf("user-%d", client.userID)
-									isActiveInLiveKit := utils.IsHostActiveInLiveKit(roomName, userIdentity)
-									
-									if isActiveInLiveKit {
-										log.Printf("🎙️ [HOST IN LIVEKIT] User %d is ACTIVE in LiveKit room %s", 
-											client.userID, roomName)
-									} else {
-										log.Printf("⏱️ [HOST DISCONNECT] User %d FULLY disconnected from session %s", 
-											client.userID, sessionIDToCleanup)
-									}
-								} else {
-									log.Printf("✅ [HOST STILL CONNECTED] User %d has other active connections in session %s", client.userID, sessionIDToCleanup)
-								}
-								*/
-								log.Printf("ℹ️ [HOST DISCONNECT] User %d disconnected from session %s (auto-end disabled)", client.userID, sessionIDToCleanup)
-							}
-						}
-					}
-
-					// ✅ Broadcast 'participant_leave' to others in the room
-					leaveMsg := WebSocketMessage{
-						Type: "participant_leave",
-						Data: map[string]interface{}{
-							"userId": client.userID,
-						},
-					}
-					if leaveBytes, err := json.Marshal(leaveMsg); err == nil {
-						// ✅ Use BroadcastToRoom method instead of channel to avoid deadlock
-						h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leaveBytes, IsBinary: false}, client)
-					}
-
 					delete(roomClients, client)
-					
+
 					// ✅ Safely close channel (may already be closed by cleanupClientSync)
 					func() {
 						defer func() {
@@ -1115,7 +1004,7 @@ func (h *Hub) Run() {
 						}()
 						close(client.send)
 					}()
-					
+
 					log.Printf("Hub: Client %p (User %d) unregistered from room %d", client, client.userID, client.roomID)
 
 					// ✅ Cleanup user from any active calls (lobby clients only)
@@ -1154,7 +1043,105 @@ func (h *Hub) Run() {
 			// ✅ Release mutex BEFORE registry cleanup to prevent deadlock
 			h.mutex.Unlock()
 			log.Printf("🔴 [Hub.Run] ✅ RELEASED h.mutex lock after unregister for client %p", client)
-			
+
+			// ⚠️ DB cleanup + broadcasts moved OUT of the h.mutex critical section.
+			// This used to run several sequential DB round-trips (session lookup, member
+			// update, count, user lookup, room lookup) while still holding h.mutex — and
+			// since Hub.Run is a single goroutine, EVERY other register/unregister/broadcast
+			// in the entire app queued up behind whichever one of those DB calls was slow.
+			// None of this touches h.rooms, so it doesn't need the lock at all.
+			if wasInRoom {
+				go func(client *Client) {
+					// ✅ Broadcast 'participant_leave' to others in the room
+					leaveMsg := WebSocketMessage{
+						Type: "participant_leave",
+						Data: map[string]interface{}{
+							"userId": client.userID,
+						},
+					}
+					if leaveBytes, err := json.Marshal(leaveMsg); err == nil {
+						h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leaveBytes, IsBinary: false}, client)
+					}
+
+					// ✅ DATABASE CLEANUP: Mark user as left in watch_session_members
+					// Use client.sessionID if available for faster lookup
+					now := time.Now()
+					var sessionIDToCleanup string
+					var watchSessionID uint
+
+					if client.sessionID != "" {
+						// Fast path: we know which session this client was in
+						sessionIDToCleanup = client.sessionID
+						var session models.WatchSession
+						if err := DB.Where("session_id = ?", client.sessionID).First(&session).Error; err == nil {
+							watchSessionID = session.ID
+						}
+					} else {
+						// Fallback: find active session for this room
+						var activeSession models.WatchSession
+						if err := DB.Where("room_id = ? AND ended_at IS NULL", client.roomID).First(&activeSession).Error; err == nil {
+							sessionIDToCleanup = activeSession.SessionID
+							watchSessionID = activeSession.ID
+						}
+					}
+
+					if watchSessionID > 0 {
+						// Mark user as inactive and set left_at timestamp
+						result := DB.Model(&models.WatchSessionMember{}).
+							Where("watch_session_id = ? AND user_id = ? AND is_active = ?", watchSessionID, client.userID, true).
+							Updates(map[string]interface{}{
+								"is_active": false,
+								"left_at":   now,
+							})
+
+						if result.Error != nil {
+							log.Printf("⚠️ Failed to mark user %d as left from session %d: %v", client.userID, watchSessionID, result.Error)
+						} else if result.RowsAffected > 0 {
+							log.Printf("✅ Marked user %d as left from session %s (watch_session_id=%d)", client.userID, sessionIDToCleanup, watchSessionID)
+
+							// Count remaining members first so the broadcast carries ground truth.
+							var newCount int64
+							DB.Model(&models.WatchSessionMember{}).
+								Where("watch_session_id = ? AND is_active = ?", watchSessionID, true).
+								Count(&newCount)
+
+							// ✅ BROADCAST user_left TO ALL ROOM MEMBERS
+							var user models.User
+							if err := DB.First(&user, client.userID).Error; err == nil {
+								userLeftMsg := WebSocketMessage{
+									Type: "user_left",
+									Data: map[string]interface{}{
+										"userId":       client.userID,
+										"username":     user.Username,
+										"sessionId":    sessionIDToCleanup,
+										"member_count": newCount,
+									},
+								}
+								if leftBytes, err := json.Marshal(userLeftMsg); err == nil {
+									h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leftBytes, IsBinary: false}, nil)
+									log.Printf("📢 Broadcast user_left for user %d (%s) in session %s — count: %d", client.userID, user.Username, sessionIDToCleanup, newCount)
+								}
+							}
+							if countMsg, err := json.Marshal(map[string]interface{}{
+								"type":       "media_state_changed",
+								"session_id": sessionIDToCleanup,
+								"data":       map[string]interface{}{"member_count": newCount},
+							}); err == nil {
+								h.BroadcastToLobby(OutgoingMessage{Data: countMsg, IsBinary: false})
+							}
+						}
+
+						// ✅ CHECK IF DISCONNECTING USER IS THE HOST (logging only — auto-end disabled)
+						var room models.Room
+						if err := DB.First(&room, client.roomID).Error; err == nil {
+							if room.HostID == client.userID && sessionIDToCleanup != "" {
+								log.Printf("ℹ️ [HOST DISCONNECT] User %d disconnected from session %s (auto-end disabled)", client.userID, sessionIDToCleanup)
+							}
+						}
+					}
+				}(client)
+			}
+
 			// 🔥 Clean up clientRegistry (must be done AFTER mutex unlock to prevent deadlock)
             h.registryMutex.Lock()
             if userMap, exists := h.clientRegistry[client.userID]; exists {

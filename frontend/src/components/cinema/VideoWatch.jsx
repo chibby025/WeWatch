@@ -7,7 +7,7 @@ import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
 import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory } from '../../services/api';
 import apiClient from '../../services/api';
-import { getRoom, getRoomMembers, getActiveSession, postSessionHeartbeat } from '../../services/api';
+import { getRoom, getRoomMembers, getActiveSession, postSessionHeartbeat, logSessionJoinAttempt } from '../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
 // ✅ Import LiveKit hook + events
 import useLiveKitRoom from '../../hooks/useLiveKitRoom';
@@ -233,6 +233,15 @@ export default function VideoWatch() {
   const urlSessionId = urlParams.get('session_id');
   const isInstantWatch = urlParams.get('instant') === 'true';
   
+  // Log a join attempt before the WS/LiveKit connection is attempted, so a connection
+  // that silently never completes (bad network, server hiccup) still shows up as a
+  // recorded attempt instead of vanishing — compare against join-stats afterward.
+  useEffect(() => {
+    if (roomId && urlSessionId) {
+      logSessionJoinAttempt(roomId, urlSessionId);
+    }
+  }, [roomId, urlSessionId]);
+
   // ✅ Initialize WebSocket connection (must be before hooks that use sessionStatus)
   const { sendMessage, messages, isConnected, sessionStatus, setBinaryMessageHandler, clearMessages } = useWebSocket(
     roomId,
