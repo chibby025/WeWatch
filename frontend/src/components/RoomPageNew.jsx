@@ -2596,7 +2596,7 @@ const RoomPageNew = () => {
                   
                   <EllipsisVerticalIcon
                     onClick={() => setIsEditModalOpen(true)}
-                    className="hidden lg:block h-8 w-8 text-white cursor-pointer hover:opacity-80 transition-opacity"
+                    className="hidden lg:block h-8 w-8 text-gray-900 dark:text-white cursor-pointer hover:opacity-80 transition-opacity"
                     title="Room Settings"
                   />
                 </div>

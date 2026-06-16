@@ -35,6 +35,10 @@ export default function Coachmark({ steps, onComplete }) {
     let timeoutId;
     let attempts = 0;
 
+    // Let a step trigger a side effect (e.g. switching tabs) before we start
+    // polling for its target — the target often won't exist until this runs.
+    stepsRef.current[stepIdx]?.onEnter?.();
+
     const check = () => {
       if (cancelled) return;
       const target = stepsRef.current[stepIdx];

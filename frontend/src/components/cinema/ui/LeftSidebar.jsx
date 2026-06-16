@@ -485,6 +485,8 @@ export default function LeftSidebar({
   const browseFilesRef = useRef(null);
   const playingNowRef = useRef(null);
   const ghostModeRef = useRef(null);
+  const liveShareRef = useRef(null);
+  const watchFromRef = useRef(null);
   const leftSidebarTourShown = useRef(false);
   const [showLeftSidebarTour, setShowLeftSidebarTour] = useState(false);
   useEffect(() => {
@@ -954,7 +956,7 @@ export default function LeftSidebar({
     // ✅ CLIENT-SIDE VALIDATION
     const allowedTypes = [
       // Video
-      'video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska',
+      'video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska', 'video/matroska',
       'video/avi', 'video/x-msvideo', 'video/x-m4v', 'video/x-wmv',
       'video/3gpp', 'video/mp2t',
       // Audio
@@ -2143,7 +2145,7 @@ export default function LeftSidebar({
 
       {/* LIVESHARE TAB */}
       {activeTab === 'liveshare' && (
-        <div className="p-4 space-y-4">
+        <div ref={liveShareRef} className="p-4 space-y-4">
           <LiveShareManager
             sessionId={sessionId}
             watchSessionMembers={watchSessionMembers}
@@ -2179,7 +2181,7 @@ export default function LeftSidebar({
       {/* WATCH FROM TAB — host only */}
       {activeTab === 'watchfrom' && isHost && (
         <div className="p-3 sm:p-4 h-full flex flex-col">
-          <h3 className="text-base sm:text-lg font-semibold text-white mb-3 sm:mb-4">Watch From Platform</h3>
+          <h3 ref={watchFromRef} className="text-base sm:text-lg font-semibold text-white mb-3 sm:mb-4">Watch From Platform</h3>
           
           {/* Legal Notice — changes wording for ticketed sessions */}
           {isTicketedSession ? (
@@ -2625,17 +2627,20 @@ export default function LeftSidebar({
         />
       )}
 
-      {/* One-time coach-mark: tabs, uploading, what's playing, and Ghost Mode */}
+      {/* One-time coach-mark: tabs, uploading, what's playing, Ghost Mode, LiveShare, Watch From */}
       {showLeftSidebarTour && (
         <Coachmark
           steps={[
-            { ref: tabBarRef, title: 'Bring In Content', description: 'Upload your own files, go live with LiveShare, or screen-share from another platform with Watch From.' },
+            { ref: tabBarRef, title: 'Bring In Content', description: 'Upload your own files, go live with LiveShare, or screen-share from another platform with Watch From.', onEnter: () => setActiveTab('upload') },
             ...(isHost ? [{ ref: browseFilesRef, title: 'Browse Files', description: 'Upload a video or audio file from your device to play for everyone.' }] : []),
             { ref: playingNowRef, title: 'Playing Now', description: "See what's currently playing in the session here." },
             ...(isHost ? [{ ref: ghostModeRef, title: 'Ghost Mode', description: 'Hide this session from the public lobby — useful for sensitive or private content.' }] : []),
+            { ref: liveShareRef, title: 'LiveShare', description: 'Go live with your screen or camera — perfect for podcasts, presentations, or reacting together.', onEnter: () => setActiveTab('liveshare') },
+            ...(isHost ? [{ ref: watchFromRef, title: 'Watch From', description: 'Screen-share from another platform (Netflix, YouTube, etc.) so everyone watches in sync.', onEnter: () => setActiveTab('watchfrom') }] : []),
           ]}
           onComplete={() => {
             setShowLeftSidebarTour(false);
+            setActiveTab('upload');
             localStorage.setItem('wewatch_leftsidebar_tour_seen', '1');
           }}
         />

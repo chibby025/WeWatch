@@ -742,7 +742,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               {/* Unified card — member list when idle, search results when typing */}
               {showMembersList && (
                 <div className="relative mt-2">
-                  <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-hide rounded-xl bg-white/5 border border-white/10 p-1.5">
+                  <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-hide rounded-xl bg-white border border-gray-200 p-1.5">
                     {addMemberQuery.trim().length >= 2 ? (
                       addMemberLoading ? (
                         <p className="text-xs text-gray-400 px-2 py-3 text-center">Searching…</p>
@@ -750,9 +750,9 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                         <p className="text-xs text-gray-500 px-2 py-3 text-center">No users found</p>
                       ) : (
                         addMemberResults.map(user => (
-                          <div key={user.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/10 transition-colors">
+                          <div key={user.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-gray-100 transition-colors">
                             <Avatar user={user} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
-                            <span className="text-sm text-gray-200 flex-1 truncate">@{user.username}</span>
+                            <span className="text-sm text-gray-900 flex-1 truncate">@{user.username}</span>
                             {invitedIds.has(user.id) ? (
                               <span className="text-xs text-green-400 font-medium">Invited ✓</span>
                             ) : (
@@ -772,7 +772,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                         members.map((member) => (
                           <div
                             key={member.id}
-                            className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/10 transition-colors"
+                            className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-gray-100 transition-colors"
                           >
                             <Avatar
                               user={member}
@@ -780,7 +780,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                               title="Click to view full size"
                               className="w-7 h-7 rounded-full object-cover flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all"
                             />
-                            <span className="text-sm text-gray-200 flex-1 truncate">
+                            <span className="text-sm text-gray-900 flex-1 truncate">
                               {member.username || `User ${member.id}`}
                             </span>
                             {member.id === room?.host_id && (
@@ -797,7 +797,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   </div>
                   {/* Scroll hint — member list only, when 5+ rows */}
                   {addMemberQuery.trim().length < 2 && members.length > 4 && (
-                    <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-8 rounded-b-xl bg-gradient-to-t from-gray-900/80 to-transparent" />
+                    <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-8 rounded-b-xl bg-gradient-to-t from-white to-transparent" />
                   )}
                 </div>
               )}
