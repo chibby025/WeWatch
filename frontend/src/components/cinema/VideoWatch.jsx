@@ -6421,6 +6421,7 @@ export default function VideoWatch() {
           onEmoteSend={handleEmoteSend}
           openChat={openChat}
           hasOpenModal={isLiveShareWizardOpen} // ✅ Prevent taskbar from showing during wizard
+          isChatActive={showChatHome || isChatOpen}
           onQuizClick={handleQuizClick}
           activeQuizCount={activeQuiz ? 1 : 0}
           isVisible={isVisible}

@@ -34,10 +34,14 @@ const TaskbarButton = React.memo(({
   buttonRef = null,
   notificationCount = 0, // ✅ Notification badge count
   localAudioLevel = 0, // ✅ Audio level for waveform animation (0-255)
-  isLoading = false // ✅ Show spinner instead of icon
+  isLoading = false, // ✅ Show spinner instead of icon
+  small = false // Leave Call keeps the smaller icon; every other button is a touch bigger
 }) => {
   const [isHovered, setIsHovered] = useState(false);
-  
+  const iconBoxClass = small ? 'h-6 w-6' : 'h-7 w-7';
+  const spinnerClass = small ? 'h-4 w-4' : 'h-5 w-5';
+  const emojiSize = small ? 24 : 28;
+
   // Debug: log pulse state for Audio button
   useEffect(() => {
     if (label === 'Audio') {
@@ -49,7 +53,7 @@ const TaskbarButton = React.memo(({
     <div className="relative flex flex-col items-center">
       <button
         ref={buttonRef}
-        className={`flex flex-col items-center justify-center text-white text-sm font-medium bg-transparent border-none p-2 rounded-md transition-colors duration-200 ${isHovered ? 'bg-white/10' : ''}`}
+        className={`flex flex-col items-center justify-center text-white text-sm font-medium bg-transparent border-none p-1.5 rounded-md transition-colors duration-200 ${isHovered ? 'bg-white/10' : ''}`}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         onClick={onClick}
@@ -61,18 +65,18 @@ const TaskbarButton = React.memo(({
         }}
         aria-label={label}
       >
-        <div className="relative h-8 w-8 flex items-center justify-center">
+        <div className={`relative ${iconBoxClass} flex items-center justify-center`}>
           {isLoading ? (
-            <div className="h-6 w-6 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+            <div className={`${spinnerClass} rounded-full border-2 border-white/25 border-t-white animate-spin`} />
           ) : isEmoji ? (
-            <EmojiImage emoji={icon} size={32} />
+            <EmojiImage emoji={icon} size={emojiSize} />
           ) : (
-            <img src={icon} alt={label} className="h-8 w-8" />
+            <img src={icon} alt={label} className={iconBoxClass} />
           )}
           {/* Green ring: mic on. Brightens + pulses when actually speaking. */}
           {!isLoading && label === 'Audio' && shouldPulse && (
             <span
-              className={`absolute -inset-1 rounded-full border-2 pointer-events-none transition-colors duration-150 ${
+              className={`absolute -inset-0.5 rounded-full border-2 pointer-events-none transition-colors duration-150 ${
                 localAudioLevel > 10
                   ? 'border-green-400 animate-pulse'
                   : 'border-green-500/30'
@@ -80,22 +84,22 @@ const TaskbarButton = React.memo(({
             />
           )}
           {showCancelIndicator && (
-            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center">
-              <span className="text-[8px] text-white font-bold">×</span>
+            <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full flex items-center justify-center">
+              <span className="text-[7px] text-white font-bold">×</span>
             </div>
           )}
           {notificationCount > 0 && (
-            <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 shadow-lg">
+            <div className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-1 shadow-lg">
               {notificationCount > 99 ? '99+' : notificationCount}
             </div>
           )}
         </div>
-        <span className="text-xs mt-1 whitespace-normal text-center w-full px-1">
+        <span className="text-[9px] mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight">
           {label}
         </span>
       </button>
       {subtitle && (
-        <span className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">
+        <span className="text-[8px] text-gray-400 mt-0.5 whitespace-nowrap">
           {subtitle}
         </span>
       )}
@@ -151,6 +155,7 @@ const Taskbar = ({
   onToggleSilenceMode,
   broadcastPermissions = {},
   hasOpenModal = false, // ✅ Prevent taskbar from showing when modal is open
+  isChatActive = false, // ✅ Suppress taskbar while ChatHomeModal or an open chat thread is showing
   // Raise hand props
   handRaised = false,
   hasHostApproval = false,
@@ -244,67 +249,83 @@ const Taskbar = ({
   const memberCount = authoritativeMemberCount ?? watchSessionMembers?.length ?? 0;
   const hideTimerRef = useRef(null);
   const lastEventTimeRef = useRef(0);
+  const isHoveringRef = useRef(false); // mouse is over the pill — suspend the idle-hide countdown
+  const isSuppressed = hasOpenModal || isLeftSidebarOpen || isChatActive;
 
-
-  // Auto-show for 3 seconds on mount
+  // Initial 3s grace period when a user first joins — shown once on mount only.
+  // Shares hideTimerRef with the tap-activity effect below, so if the user taps
+  // during (or right after) this window, that tap's own 1s timer simply replaces
+  // this one — i.e. continued tapping keeps it visible indefinitely, it doesn't
+  // get force-hidden at the 3s mark regardless of what the user is doing.
   useEffect(() => {
+    if (isSuppressed) return; // don't auto-show into an already-suppressed state
     setIsVisible(true);
-    const timer = setTimeout(() => {
-      if (!showTaskbarTourRef.current) setIsVisible(false);
+    hideTimerRef.current = setTimeout(() => {
+      if (!showTaskbarTourRef.current && !isHoveringRef.current) setIsVisible(false);
+      hideTimerRef.current = null;
     }, 3000);
-    return () => clearTimeout(timer);
+    return () => {
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Mouse visibility logic — stable during media playback
+  // Tap-anywhere visibility — replaces the old swipe-up gesture. Any deliberate
+  // click/tap anywhere on screen reveals the pill; it fades again after 1s of no
+  // further taps. Suppressed entirely while a modal, the left sidebar, or chat
+  // (ChatHomeModal or an open chat thread) is active — it shouldn't pop up over them.
   useEffect(() => {
-    // ✅ Force hide taskbar when modal is open
-    if (hasOpenModal) {
+    if (isSuppressed) {
       setIsVisible(false);
       if (hideTimerRef.current) {
         clearTimeout(hideTimerRef.current);
         hideTimerRef.current = null;
       }
-      return; // Skip mouse movement logic when modal is active
+      return; // Skip tap logic while suppressed
     }
 
-    const handleMouseMove = (e) => {
+    const handleActivity = () => {
+      if (isHoveringRef.current) return; // hover already keeps it visible/pinned
       const now = Date.now();
-      if (now - lastEventTimeRef.current < 100) return; // debounce
+      if (now - lastEventTimeRef.current < 100) return; // debounce rapid taps
       lastEventTimeRef.current = now;
 
-      const windowHeight = window.innerHeight;
-      const mouseY = e.clientY;
-
-      // ✅ Changed from 0.92 (8%) to 0.94 (6%) - show taskbar in bottom 6% of screen
-      if (mouseY > windowHeight * 0.94) {
-        setIsVisible(true);
-        if (hideTimerRef.current) {
-          clearTimeout(hideTimerRef.current);
-          hideTimerRef.current = null;
-        }
-      } else if (mouseY < windowHeight * 0.85) {
-        if (!hideTimerRef.current) {
-          hideTimerRef.current = setTimeout(() => {
-            if (!showTaskbarTourRef.current) setIsVisible(false);
-            hideTimerRef.current = null;
-          }, 600);
-        }
-      }
+      setIsVisible(true);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = setTimeout(() => {
+        if (!showTaskbarTourRef.current && !isHoveringRef.current) setIsVisible(false);
+        hideTimerRef.current = null;
+      }, 1000);
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('click', handleActivity);
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('click', handleActivity);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
-  }, [hasOpenModal]);
+  }, [isSuppressed]);
 
-  // Auto-unpin when sidebar closes
-  useEffect(() => {
-    if (!isLeftSidebarOpen && !showTaskbarTourRef.current) {
-      setIsVisible(false);
+  // Hovering (or pressing) the pill itself keeps it visible until the hover ends,
+  // then resumes the normal 1s idle countdown from that point.
+  const handlePillMouseEnter = () => {
+    isHoveringRef.current = true;
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
     }
-  }, [isLeftSidebarOpen]);
+    setIsVisible(true);
+  };
+  const handlePillMouseLeave = () => {
+    isHoveringRef.current = false;
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => {
+      if (!showTaskbarTourRef.current) setIsVisible(false);
+      hideTimerRef.current = null;
+    }, 1000);
+  };
 
   // Close mic dropdown
   useEffect(() => {
@@ -319,136 +340,61 @@ const Taskbar = ({
   }, [showMicDropdown]);
 
 
-  // Touch handling for swipe-up gesture (mobile landscape)
-  const [touchStart, setTouchStart] = useState(null);
-  const [touchEnd, setTouchEnd] = useState(null);
-  const [touchStartY, setTouchStartY] = useState(null);
-
-  const handleTouchStart = (e) => {
-    const touch = e.targetTouches[0];
-    setTouchStart(touch.clientY);
-    setTouchStartY(touch.clientY);
-  };
-  
-  const handleTouchMove = (e) => {
-    setTouchEnd(e.targetTouches[0].clientY);
-  };
-  
-  const handleTouchEnd = () => {
-    if (!touchStart || !touchEnd) return;
-    const distance = touchStart - touchEnd;
-    
-    // Swipe up (positive distance) shows taskbar
-    if (distance > 50) {
-      setIsVisible(true);
-    }
-    // Swipe down (negative distance) hides taskbar
-    else if (distance < -50) {
-      setIsVisible(false);
-    }
-    
-    setTouchStart(null);
-    setTouchEnd(null);
-    setTouchStartY(null);
-  };
-
-  // Touch zone for swipe-up gesture at bottom of screen
-  const handleSwipeZoneTouchStart = (e) => {
-    const touch = e.targetTouches[0];
-    const windowHeight = window.innerHeight;
-    
-    // Only detect touches in bottom 20% of screen
-    if (touch.clientY > windowHeight * 0.8) {
-      setTouchStart(touch.clientY);
-      setTouchStartY(touch.clientY);
-    }
-  };
-  
-  const handleSwipeZoneTouchMove = (e) => {
-    if (touchStart !== null) {
-      setTouchEnd(e.targetTouches[0].clientY);
-    }
-  };
-  
-  const handleSwipeZoneTouchEnd = () => {
-    if (touchStart === null || touchEnd === null) return;
-    
-    const distance = touchStart - touchEnd;
-    
-    // Swipe up gesture (distance > 50) shows taskbar
-    if (distance > 50) {
-      setIsVisible(true);
-    }
-    
-    setTouchStart(null);
-    setTouchEnd(null);
-    setTouchStartY(null);
-  };
-
+  // Floating pill — fades in/out via opacity + scale instead of height-collapse,
+  // since it no longer spans the full width or sits flush against the edge.
   const taskbarStyle = {
     position: 'fixed',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: isVisible ? '80px' : '0px',
-    backgroundColor: '#3b82f6',
+    bottom: '20px',
+    left: '50%',
+    transform: isVisible
+      ? 'translateX(-50%) translateY(0) scale(1)'
+      : 'translateX(-50%) translateY(12px) scale(0.95)',
+    opacity: isVisible ? 1 : 0,
+    pointerEvents: isVisible ? 'auto' : 'none',
+    background: 'linear-gradient(90deg, #9333ea, #2563eb)',
     color: 'white',
     display: 'flex',
     alignItems: 'center',
-    padding: '0 20px',
-    transition: 'height 0.3s ease-in-out',
+    padding: '4px 20px',
+    borderRadius: '9999px',
+    gap: '14px',
+    boxShadow: '0 10px 25px -5px rgba(0,0,0,0.45)',
+    transition: 'opacity 0.25s ease, transform 0.25s ease',
     zIndex: 1000,
-    overflow: 'hidden',
+    maxWidth: '95vw',
+    overflowX: 'auto',
   };
 
   return (
     <>
-      {/* Invisible swipe-up zone at bottom of screen (mobile only) */}
-      {/* ✅ Hidden when modal is open to prevent blocking modal buttons */}
-      {!hasOpenModal && (
-        <div
-          className="fixed bottom-0 left-0 right-0 h-20 z-[999] pointer-events-auto md:hidden"
-          style={{
-            touchAction: 'none',
-            background: isVisible ? 'transparent' : 'transparent'
-          }}
-          onTouchStart={handleSwipeZoneTouchStart}
-          onTouchMove={handleSwipeZoneTouchMove}
-          onTouchEnd={handleSwipeZoneTouchEnd}
-        />
-      )}
-      
       <div
         style={taskbarStyle}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        className="taskbar-container justify-evenly sm:justify-start"
+        className="taskbar-container scrollbar-hide"
+        onMouseEnter={handlePillMouseEnter}
+        onMouseLeave={handlePillMouseLeave}
       >
-        <div className="contents sm:flex-1 sm:flex sm:items-center sm:justify-start">
-          <TaskbarButton
-            buttonRef={leaveCallButtonRef}
-            icon={LeaveCallIcon}
-            label="Leave Call"
-            onClick={async () => {
-              if (onLeaveCall) {
-                try {
-                  console.log('🔌 [Taskbar] Leave Call clicked, awaiting handler...');
-                  await onLeaveCall(); // ✅ CRITICAL: Await async cleanup before navigation
-                  console.log('✅ [Taskbar] Leave Call handler completed');
-                } catch (error) {
-                  console.error('❌ [Taskbar] Leave Call handler failed:', error);
-                  toast.error('Failed to end session. Please try again.');
-                }
-              } else {
-                console.error('❌ [Taskbar] onLeaveCall handler is undefined!');
+        <TaskbarButton
+          buttonRef={leaveCallButtonRef}
+          icon={LeaveCallIcon}
+          label="Leave Call"
+          small
+          onClick={async () => {
+            if (onLeaveCall) {
+              try {
+                console.log('🔌 [Taskbar] Leave Call clicked, awaiting handler...');
+                await onLeaveCall(); // ✅ CRITICAL: Await async cleanup before navigation
+                console.log('✅ [Taskbar] Leave Call handler completed');
+              } catch (error) {
+                console.error('❌ [Taskbar] Leave Call handler failed:', error);
+                toast.error('Failed to end session. Please try again.');
               }
-            }}
-          />
-        </div>
+            } else {
+              console.error('❌ [Taskbar] onLeaveCall handler is undefined!');
+            }
+          }}
+        />
 
-        <div className="contents sm:flex sm:items-center sm:justify-center sm:gap-6 sm:flex-nowrap">
-          <TaskbarButton
+        <TaskbarButton
             buttonRef={chatButtonRef}
             icon={ChatIcon}
             label="Chat"
@@ -532,9 +478,9 @@ const Taskbar = ({
             showCancelIndicator={!isAudioActive && !isSilenceMode}
             shouldPulse={isAudioActive && !isSilenceMode}
             subtitle={
-              isSilenceMode 
-                ? "Silence ON" 
-                : (!isAudioActive ? "Mic OFF" : (() => {
+              isSilenceMode
+                ? "Silence ON"
+                : (!isAudioActive ? null : (() => {
                     // ✅ Check if user has broadcast permission or is host broadcasting
                     const hasBroadcastPermission = broadcastPermissions[authenticatedUserID];
                     const isGlobalBroadcast = (isHost && isHostBroadcasting) || hasBroadcastPermission;
@@ -650,9 +596,7 @@ const Taskbar = ({
               subtitle={hasHostApproval ? '📢 Approved' : (handRaised ? '⏳ Waiting' : null)}
             />
           )}
-        </div>
 
-        <div className="contents sm:flex-1 sm:flex sm:items-center sm:justify-end">
           {showProgram && (
             <TaskbarButton
               icon={isClassroom ? BoardIcon : ProgramMenuIcon}
@@ -666,7 +610,6 @@ const Taskbar = ({
               }}
             />
           )}
-        </div>
       </div>
 
 
@@ -781,10 +724,11 @@ const Taskbar = ({
           scrollbar-width: none;  /* Firefox */
         }
         
-        /* Portrait mode adjustments */
+        /* Portrait mode: slightly tighter side padding on the pill, keep vertical padding intact */
         @media (orientation: portrait) {
           .taskbar-container {
-            padding: 0 8px !important;
+            padding-left: 14px !important;
+            padding-right: 14px !important;
           }
         }
       `}</style>

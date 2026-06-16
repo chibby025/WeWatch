@@ -7445,6 +7445,7 @@ const PositionCalculatorPage = () => {
           onToggleDiscussionMode={toggleDiscussionMode}
           availableCameras={[]}
           isLeftSidebarOpen={isLeftSidebarOpen}
+          isChatActive={showChatHome || isChatOpen || privateChatOpen}
           onEmoteSend={() => {}}
           showProgram={true} // Enable Board button for classroom
           showEmotes={false}
