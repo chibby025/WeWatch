@@ -18,6 +18,7 @@ import CallHistoryModal from './CallHistoryModal';
 import UserProfileModal from './UserProfileModal';
 import SettingsModal from './SettingsModal';
 import CreateNewModal from './CreateNewModal';
+import OnboardingTour from './OnboardingTour';
 import PostUploadModal from './PostUploadModal';
 import PostViewModal from './PostViewModal';
 import DiscoverFeed from './DiscoverFeed';
@@ -141,6 +142,13 @@ const LobbyPage = () => {
   useEffect(() => {
     localStorage.setItem('wewatch_last_tab', activeTab);
   }, [activeTab]);
+
+  // Show the one-time onboarding tour right after a fresh signup (flag set in Register.jsx)
+  useEffect(() => {
+    if (localStorage.getItem('wewatch_show_onboarding_tour')) {
+      setIsOnboardingTourOpen(true);
+    }
+  }, []);
 
   // 🔔 Notification state
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
@@ -272,6 +280,7 @@ const LobbyPage = () => {
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isCreateNewModalOpen, setIsCreateNewModalOpen] = useState(false);
+  const [isOnboardingTourOpen, setIsOnboardingTourOpen] = useState(false);
   const [isPostUploadModalOpen, setIsPostUploadModalOpen] = useState(false);
   const [isRoomExplainerOpen, setIsRoomExplainerOpen] = useState(false);
   const [openMenuRoomId, setOpenMenuRoomId] = useState(null);
@@ -3710,6 +3719,7 @@ const LobbyPage = () => {
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
+        onReplayAppTour={() => setIsOnboardingTourOpen(true)}
       />
 
       <div className="container mx-auto p-4">
@@ -3799,6 +3809,17 @@ const LobbyPage = () => {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ✅ Onboarding Tour — one-time, shown right after fresh signup */}
+        {isOnboardingTourOpen && (
+          <OnboardingTour
+            onClose={() => {
+              setIsOnboardingTourOpen(false);
+              localStorage.removeItem('wewatch_show_onboarding_tour');
+              localStorage.setItem('wewatch_tour_seen', '1');
+            }}
+          />
         )}
 
         {/* ✅ Create New Modal */}

@@ -65,6 +65,9 @@ const Register = () => {
         await refreshUser();
       }
 
+      // Flag for the Lobby to show the one-time onboarding tour right after this fresh signup
+      localStorage.setItem('wewatch_show_onboarding_tour', '1');
+
       setSuccess(true);
       setTimeout(() => {
         navigate('/lobby', { replace: true });

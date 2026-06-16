@@ -45,6 +45,7 @@ import DateOfBirthPromptModal from './DateOfBirthPromptModal';
 import RoomPageLeftSidebar from './RoomPageLeftSidebar';
 import RoomGroupEditModal from './RoomGroupEditModal';
 import RoomJoinRequestsModal from './RoomJoinRequestsModal';
+import Coachmark from './Coachmark';
 import { checkDateOfBirth, updateDateOfBirth, getRoomJoinRequests } from '../services/api';
 import TwemojiText from './TwemojiText';
 import { parseTwemoji } from '../utils/twemoji';
@@ -73,6 +74,12 @@ const RoomPageNew = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const sessionAutoOpened = useRef(false);
+  const roomTourShown = useRef(false);
+  const roomTourBlockedToastShown = useRef(false);
+  const beginWatchRef = useRef(null);
+  const scheduleIconRef = useRef(null);
+  const roomTvIconRef = useRef(null);
+  const [showRoomTour, setShowRoomTour] = useState(false);
   const { currentUser, roomMemberships, addRoomMembership, removeRoomMembership } = useAuth();
   const isMobile = useMobile();
 
@@ -264,6 +271,24 @@ const RoomPageNew = () => {
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [room]);
+
+  // One-time coach-mark tour of the header buttons for hosts visiting their own room
+  useEffect(() => {
+    if (!room || !isHost || roomTourShown.current || localStorage.getItem('wewatch_room_tour_seen')) return;
+    if (activeSession) {
+      // Begin Watch / Schedule / RoomTV are hidden while a session is live, so the
+      // tour has nothing to point at — tell the host why instead of doing nothing.
+      // Don't mark roomTourShown yet: retry once the session ends.
+      if (!roomTourBlockedToastShown.current) {
+        roomTourBlockedToastShown.current = true;
+        toast('End your active session to see the room tour', { icon: '👋', duration: 4000 });
+      }
+      return;
+    }
+    roomTourShown.current = true;
+    const t = setTimeout(() => setShowRoomTour(true), 600);
+    return () => clearTimeout(t);
+  }, [room, isHost, activeSession]);
 
   // ✅ INSTANT membership check from auth context
   useEffect(() => {
@@ -2364,6 +2389,7 @@ const RoomPageNew = () => {
                     {/* Begin Watch Icon */}
                     {!activeSession && (
                       <img
+                        ref={beginWatchRef}
                         src="/icons/beginWatchIcon.svg"
                         alt="Begin Watch"
                         onClick={isHost ? handleBeginWatch : undefined}
@@ -2373,11 +2399,12 @@ const RoomPageNew = () => {
                         title={isHost ? "Begin Watch" : "Only the host can start a watch session"}
                       />
                     )}
-                    
+
                     {/* Schedule Watch Icon */}
                     {!activeSession && (isHost || scheduledEventsCount > 0) && (
                       <div className="relative flex-shrink-0">
                         <img
+                          ref={scheduleIconRef}
                           src="/icons/scheduleWatchIcon.svg"
                           alt="Schedule"
                           onClick={() => {
@@ -2395,12 +2422,13 @@ const RoomPageNew = () => {
                         )}
                       </div>
                     )}
-                    
+
                     {/* RoomTV Icon (Host only) */}
                     {!activeSession && isHost && (
-                      <img 
-                        src="/icons/roomTvIcon.svg" 
-                        alt="RoomTV" 
+                      <img
+                        ref={roomTvIconRef}
+                        src="/icons/roomTvIcon.svg"
+                        alt="RoomTV"
                         onClick={() => setIsTVContentModalOpen(true)}
                         className="h-[38px] w-[38px] cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
                       />
@@ -2477,7 +2505,7 @@ const RoomPageNew = () => {
                         <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-300">
                           {!selectedGroupId && room.show_host !== false && (
                             <span className="flex items-center gap-1">
-                              <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4" />
+                              <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4 brightness-0 dark:brightness-100" />
                               Host: {room.host_username || `User ${room.host_id}`}
                             </span>
                           )}
@@ -2486,7 +2514,7 @@ const RoomPageNew = () => {
                             onClick={() => setIsMembersModalOpen(true)}
                             title="View members"
                           >
-                            <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4" />
+                            <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4 brightness-0 dark:brightness-100" />
                             {selectedGroupId ? (
                               `${roomGroups.find(g => g.ID === selectedGroupId)?.member_count || 0} in group`
                             ) : (
@@ -2507,6 +2535,7 @@ const RoomPageNew = () => {
                           {/* Begin Watch Button - Host: clickable, Members: greyed out */}
                           {isHost ? (
                             <img
+                              ref={beginWatchRef}
                               src="/icons/beginWatchIcon.svg"
                               alt="Begin Watch"
                               onClick={handleBeginWatch}
@@ -2527,6 +2556,7 @@ const RoomPageNew = () => {
                       {(isHost || scheduledEventsCount > 0) && (
                         <div className="relative">
                           <img
+                            ref={scheduleIconRef}
                             src="/icons/scheduleWatchIcon.svg"
                             alt="Schedule Watch"
                             onClick={() => {
@@ -2553,6 +2583,7 @@ const RoomPageNew = () => {
                       )}
                       {isHost && (
                         <img
+                          ref={roomTvIconRef}
                           src="/icons/roomTvIcon.svg"
                           alt="Post to RoomTV"
                           onClick={() => setIsTVContentModalOpen(true)}
@@ -3310,6 +3341,21 @@ const RoomPageNew = () => {
         onJoin={handleGroupJoin}
         onLeave={handleGroupLeave}
       />
+
+      {/* One-time coach-mark tour for hosts visiting their own room */}
+      {showRoomTour && (
+        <Coachmark
+          steps={[
+            { ref: beginWatchRef, title: 'Begin Watch', description: 'Start a watch session here — your room comes alive the moment you press this.' },
+            { ref: scheduleIconRef, title: 'Schedule Event', description: 'Plan a watch party, class, or service ahead of time so members know when to show up.' },
+            { ref: roomTvIconRef, title: 'RoomTV', description: 'Share important updates, clips, and posts with everyone in your room.' },
+          ]}
+          onComplete={() => {
+            setShowRoomTour(false);
+            localStorage.setItem('wewatch_room_tour_seen', '1');
+          }}
+        />
+      )}
 
       {/* Room Join Requests Modal (host only, private rooms) */}
       {isHost && (

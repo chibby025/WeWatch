@@ -1,21 +1,57 @@
 // frontend/src/components/SettingsModal.jsx
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Avatar from './Avatar';
 import {
   XMarkIcon,
-  SunIcon, 
+  SunIcon,
   MoonIcon,
   BellIcon,
   ShieldCheckIcon,
   UserIcon,
-  ChevronRightIcon
+  ChevronRightIcon,
+  QuestionMarkCircleIcon,
 } from '@heroicons/react/24/outline';
 import apiClient from '../services/api';
 import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
 
-const SettingsModal = ({ isOpen, onClose }) => {
+const TOURS = [
+  {
+    key: 'wewatch_tour_seen',
+    title: 'App Tour',
+    description: 'Chats, Rooms, WatchOuts, Feed, Community Events, and your content preferences.',
+  },
+  {
+    key: 'wewatch_room_tour_seen',
+    title: 'Room Page Tour',
+    description: 'What Begin Watch, Schedule Event, and RoomTV do — shown in your own room.',
+  },
+  {
+    key: 'wewatch_settings_tour_seen',
+    title: 'Watch Session Tour',
+    description: 'How to share your session and invite friends — shown in a watch session\'s Settings.',
+    replayHint: "You'll see this next time you open Settings during a watch session",
+  },
+  {
+    key: 'wewatch_leftsidebar_tour_seen',
+    title: 'Sidebar Tour',
+    description: 'Upload, LiveShare, Watch From, Playing Now, and Ghost Mode — shown when you open the sidebar in a session.',
+    replayHint: "You'll see this next time you open the sidebar during a watch session",
+  },
+  {
+    key: 'wewatch_taskbar_tour_seen',
+    title: 'Taskbar Tour',
+    description: 'Leave Call, Chat, Audio, and Members — shown when you enter a watch session.',
+    replayHint: "You'll see this next time you enter a watch session",
+  },
+];
+
+const SettingsModal = ({ isOpen, onClose, onReplayAppTour }) => {
+  const navigate = useNavigate();
+  const { currentUser } = useAuth();
   const [theme, setTheme] = useState('dark');
-  const [activeTab, setActiveTab] = useState('appearance'); // 'appearance', 'notifications', 'privacy'
+  const [activeTab, setActiveTab] = useState('appearance'); // 'appearance', 'notifications', 'privacy', 'help'
   
   // Settings state
   const [notificationSettings, setNotificationSettings] = useState({
@@ -229,6 +265,19 @@ const SettingsModal = ({ isOpen, onClose }) => {
             <div className="flex items-center gap-2">
               <ShieldCheckIcon className="h-4 w-4" />
               Privacy
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('help')}
+            className={`px-6 py-3 font-semibold transition-all relative ${
+              activeTab === 'help'
+                ? 'text-blue-400 border-b-2 border-blue-400'
+                : 'text-gray-400 hover:text-gray-300'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <QuestionMarkCircleIcon className="h-4 w-4" />
+              Help
             </div>
           </button>
         </div>
@@ -500,6 +549,51 @@ const SettingsModal = ({ isOpen, onClose }) => {
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* Help Tab */}
+          {activeTab === 'help' && (
+            <div className="space-y-3">
+              <h4 className="text-white font-medium">Tours</h4>
+              <p className="text-gray-400 text-sm -mt-2">
+                One-time tours you've already seen — replay any of them here.
+              </p>
+              {TOURS.map((tour) => {
+                const replay = () => {
+                  localStorage.removeItem(tour.key);
+                  if (tour.key === 'wewatch_tour_seen') {
+                    onClose();
+                    onReplayAppTour?.();
+                  } else if (tour.key === 'wewatch_room_tour_seen') {
+                    if (!currentUser?.main_room_id) {
+                      toast.error('Create a room first to see this tour');
+                      return;
+                    }
+                    onClose();
+                    navigate(`/rooms/${currentUser.main_room_id}`);
+                  } else {
+                    toast.success(tour.replayHint || "You'll see this again next time it's due");
+                  }
+                };
+                return (
+                  <div
+                    key={tour.key}
+                    className="bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-3 flex items-center justify-between gap-3"
+                  >
+                    <div className="flex-1">
+                      <p className="text-white font-medium text-sm">{tour.title}</p>
+                      <p className="text-gray-400 text-xs mt-0.5">{tour.description}</p>
+                    </div>
+                    <button
+                      onClick={replay}
+                      className="flex-shrink-0 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors"
+                    >
+                      Replay
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

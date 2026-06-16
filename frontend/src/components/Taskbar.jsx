@@ -5,6 +5,7 @@ import EmotePicker from './cinema/ui/EmotePicker';
 import EmojiImage from './cinema/ui/EmojiImage';
 import AudioSettingsDropdown from './AudioSettingsDropdown';
 import { playMicOnSound, playMicOffSound } from '../utils/audio';
+import Coachmark from './Coachmark';
 
 // Import SVG icons
 const LeaveCallIcon = '/icons/LeaveCallIcon.svg';
@@ -225,6 +226,20 @@ const Taskbar = ({
   const [showRaisedHandsPopup, setShowRaisedHandsPopup] = useState(false);
   const audioButtonRef = useRef(null);
   const membersButtonRef = useRef(null);
+  const chatButtonRef = useRef(null);
+  const leaveCallButtonRef = useRef(null);
+  const [showTaskbarTour, setShowTaskbarTour] = useState(false);
+  const showTaskbarTourRef = useRef(false);
+  useEffect(() => { showTaskbarTourRef.current = showTaskbarTour; }, [showTaskbarTour]);
+  useEffect(() => {
+    if (!localStorage.getItem('wewatch_taskbar_tour_seen')) {
+      const t = setTimeout(() => {
+        setIsVisible(true);
+        setShowTaskbarTour(true);
+      }, 1200);
+      return () => clearTimeout(t);
+    }
+  }, []);
   // Prefer the backend-supplied authoritative count; fall back to local array length.
   const memberCount = authoritativeMemberCount ?? watchSessionMembers?.length ?? 0;
   const hideTimerRef = useRef(null);
@@ -234,7 +249,9 @@ const Taskbar = ({
   // Auto-show for 3 seconds on mount
   useEffect(() => {
     setIsVisible(true);
-    const timer = setTimeout(() => setIsVisible(false), 3000);
+    const timer = setTimeout(() => {
+      if (!showTaskbarTourRef.current) setIsVisible(false);
+    }, 3000);
     return () => clearTimeout(timer);
   }, []);
 
@@ -268,7 +285,7 @@ const Taskbar = ({
       } else if (mouseY < windowHeight * 0.85) {
         if (!hideTimerRef.current) {
           hideTimerRef.current = setTimeout(() => {
-            setIsVisible(false);
+            if (!showTaskbarTourRef.current) setIsVisible(false);
             hideTimerRef.current = null;
           }, 600);
         }
@@ -284,7 +301,7 @@ const Taskbar = ({
 
   // Auto-unpin when sidebar closes
   useEffect(() => {
-    if (!isLeftSidebarOpen) {
+    if (!isLeftSidebarOpen && !showTaskbarTourRef.current) {
       setIsVisible(false);
     }
   }, [isLeftSidebarOpen]);
@@ -410,6 +427,7 @@ const Taskbar = ({
       >
         <div className="contents sm:flex-1 sm:flex sm:items-center sm:justify-start">
           <TaskbarButton
+            buttonRef={leaveCallButtonRef}
             icon={LeaveCallIcon}
             label="Leave Call"
             onClick={async () => {
@@ -430,9 +448,10 @@ const Taskbar = ({
         </div>
 
         <div className="contents sm:flex sm:items-center sm:justify-center sm:gap-6 sm:flex-nowrap">
-          <TaskbarButton 
-            icon={ChatIcon} 
-            label="Chat" 
+          <TaskbarButton
+            buttonRef={chatButtonRef}
+            icon={ChatIcon}
+            label="Chat"
             notificationCount={totalUnreadCount}
             onClick={() => {
               if (openChat) {
@@ -769,6 +788,22 @@ const Taskbar = ({
           }
         }
       `}</style>
+
+      {/* One-time coach-mark: Leave Call, Chat, Audio, and Members controls */}
+      {showTaskbarTour && (
+        <Coachmark
+          steps={[
+            { ref: leaveCallButtonRef, title: 'Leave Call', description: 'Exit the watch session whenever you\'re done.' },
+            { ref: chatButtonRef, title: 'Chat', description: 'Open the chat panel to talk with everyone in the session.' },
+            { ref: audioButtonRef, title: 'Audio', description: 'Mute or unmute your mic. Right-click (or long-press) for audio device settings.' },
+            { ref: membersButtonRef, title: 'Members', description: 'See who\'s in the session right now.' },
+          ]}
+          onComplete={() => {
+            setShowTaskbarTour(false);
+            localStorage.setItem('wewatch_taskbar_tour_seen', '1');
+          }}
+        />
+      )}
     </>
   );
 };

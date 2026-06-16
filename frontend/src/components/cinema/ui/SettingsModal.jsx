@@ -1,7 +1,8 @@
 // frontend/src/components/cinema/ui/SettingsModal.jsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getFriendsList, sendWatchOut } from '../../../services/api';
 import toast from 'react-hot-toast';
+import Coachmark from '../../Coachmark';
 
 const ShareIcon = '/icons/ShareIcon.svg';
 
@@ -73,6 +74,17 @@ const SettingsModal = ({
 
   const [seatInput, setSeatInput] = useState('1');
   const [seatViewExpanded, setSeatViewExpanded] = useState(false);
+
+  // ── One-time Share/Invite coach-mark tour ────────────────────────────────
+  const shareRowRef = useRef(null);
+  const inviteRowRef = useRef(null);
+  const [showSettingsTour, setShowSettingsTour] = useState(false);
+  useEffect(() => {
+    if (!localStorage.getItem('wewatch_settings_tour_seen')) {
+      const t = setTimeout(() => setShowSettingsTour(true), 400);
+      return () => clearTimeout(t);
+    }
+  }, []);
 
   // ── Invite Friends state ─────────────────────────────────────────────────
   const [showInvite, setShowInvite]         = useState(false);
@@ -162,6 +174,7 @@ const SettingsModal = ({
               {/* Share — public sessions only */}
               {!isPrivateSession && (
                 <button
+                  ref={shareRowRef}
                   onClick={() => { onShareRoom(); onClose(); }}
                   className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-gray-700/50 text-gray-200 transition-all group bg-gray-800/50 border border-gray-700/30"
                 >
@@ -179,6 +192,7 @@ const SettingsModal = ({
               {/* Invite Friends — WatchOut DM, works for both public and private */}
               <div className="bg-gray-800/50 border border-gray-700/30 rounded-xl overflow-hidden">
                 <button
+                  ref={inviteRowRef}
                   onClick={() => setShowInvite(v => !v)}
                   className="w-full flex items-center space-x-3 px-4 py-3 hover:bg-gray-700/50 text-gray-200 transition-all group"
                 >
@@ -826,6 +840,28 @@ const SettingsModal = ({
           )}
         </div>
       </div>
+
+      {/* One-time coach-mark: how to share and invite people */}
+      {showSettingsTour && (
+        <Coachmark
+          steps={[
+            ...(!isPrivateSession ? [{
+              ref: shareRowRef,
+              title: 'Share',
+              description: 'Copy your room link here to share it anywhere.',
+            }] : []),
+            {
+              ref: inviteRowRef,
+              title: 'Invite Friends',
+              description: 'Send a direct WatchOut invite to friends from your circle.',
+            },
+          ]}
+          onComplete={() => {
+            setShowSettingsTour(false);
+            localStorage.setItem('wewatch_settings_tour_seen', '1');
+          }}
+        />
+      )}
     </div>
   );
 };

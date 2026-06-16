@@ -163,8 +163,9 @@ func GoogleCallbackHandler(c *gin.Context) {
 	// Find or create user (using global DB variable like other auth handlers)
 	var user models.User
 	result := DB.Where("email = ?", googleUser.Email).First(&user)
-	
-	if result.Error == gorm.ErrRecordNotFound {
+	isNewUser := result.Error == gorm.ErrRecordNotFound
+
+	if isNewUser {
 		// Create new user
 		provider := "google"
 		user = models.User{
@@ -228,6 +229,6 @@ func GoogleCallbackHandler(c *gin.Context) {
 		frontendURL = "http://localhost:5173"
 	}
 
-	redirectURL := fmt.Sprintf("%s/auth/google/success#token=%s", frontendURL, jwtToken)
+	redirectURL := fmt.Sprintf("%s/auth/google/success#token=%s&new_user=%t", frontendURL, jwtToken, isNewUser)
 	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }

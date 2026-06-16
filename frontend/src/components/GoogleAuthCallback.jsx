@@ -15,9 +15,13 @@ const GoogleAuthCallback = () => {
         const token = params.get('token');
         if (token) {
           localStorage.setItem('wewatch_token', token);
-          // Clean token from URL bar
-          window.history.replaceState(null, '', window.location.pathname);
         }
+        if (params.get('new_user') === 'true') {
+          // Flag for the Lobby to show the one-time onboarding tour right after this fresh signup
+          localStorage.setItem('wewatch_show_onboarding_tour', '1');
+        }
+        // Clean token + new_user flag from URL bar
+        window.history.replaceState(null, '', window.location.pathname);
 
         // Fetch current user (cookie or token header via interceptor)
         const response = await getCurrentUser();

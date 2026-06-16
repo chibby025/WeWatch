@@ -22,6 +22,7 @@ import { useUploadServiceWorker } from '../../../hooks/useUploadServiceWorker';
 import LiveShareManager from './LiveShareManager';
 import ReportModal from '../../ReportModal';
 import { extractYouTubeVideoId } from '../YouTubePlayer';
+import Coachmark from '../../Coachmark';
 
 const playSuccess = () => new Audio('/sounds/success.mp3').play().catch(() => {});
 
@@ -478,6 +479,22 @@ export default function LeftSidebar({
   // 🖼️ Preview thumbnails toggle state (content moderation)
   // ✅ Initialize from isSessionPrivate - if session is private, Ghost Mode is enforced
   const [hidePreviewThumbnails, setHidePreviewThumbnails] = useState(isSessionPrivate);
+
+  // ── One-time LeftSidebar coach-mark tour ─────────────────────────────────
+  const tabBarRef = useRef(null);
+  const browseFilesRef = useRef(null);
+  const playingNowRef = useRef(null);
+  const ghostModeRef = useRef(null);
+  const leftSidebarTourShown = useRef(false);
+  const [showLeftSidebarTour, setShowLeftSidebarTour] = useState(false);
+  useEffect(() => {
+    if (isLeftSidebarOpen && !leftSidebarTourShown.current && !localStorage.getItem('wewatch_leftsidebar_tour_seen')) {
+      leftSidebarTourShown.current = true;
+      setActiveTab('upload');
+      const t = setTimeout(() => setShowLeftSidebarTour(true), 500);
+      return () => clearTimeout(t);
+    }
+  }, [isLeftSidebarOpen]);
 
   // Sync Ghost Mode when isSessionPrivate prop changes (handles late-arriving prop)
   useEffect(() => {
@@ -944,8 +961,13 @@ export default function LeftSidebar({
       'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg',
       'audio/flac', 'audio/aac', 'audio/x-m4a',
     ];
-    if (!allowedTypes.includes(file.type)) {
-      toast.error(`Invalid file type: ${file.type}. Allowed: MP4, WebM, MOV, MKV, AVI, MP3, M4A, WAV, AAC, FLAC`);
+    // Many browsers/OSes report an empty file.type for .mkv (no universal MIME
+    // registration) — fall back to extension matching when type sniffing fails.
+    const allowedExtensions = ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v', 'wmv', '3gp', 'ts', 'mp3', 'm4a', 'wav', 'ogg', 'flac', 'aac'];
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const typeOk = allowedTypes.includes(file.type) || (!file.type && allowedExtensions.includes(ext));
+    if (!typeOk) {
+      toast.error(`Invalid file type: ${file.type || ext}. Allowed: MP4, WebM, MOV, MKV, AVI, MP3, M4A, WAV, AAC, FLAC`);
       return;
     }
 
@@ -1462,7 +1484,7 @@ export default function LeftSidebar({
 
       {/* 🖼️ Host Settings - Preview Thumbnails Toggle */}
       {isHost && (
-        <div className="mb-3 p-3 sm:p-4 bg-gradient-to-br from-[#D9D9D9]/10 to-[#D9D9D9]/5 rounded-xl border border-purple-500/20 hover:border-purple-500/40 transition-all duration-300">
+        <div ref={ghostModeRef} className="mb-3 p-3 sm:p-4 bg-gradient-to-br from-[#D9D9D9]/10 to-[#D9D9D9]/5 rounded-xl border border-purple-500/20 hover:border-purple-500/40 transition-all duration-300">
           <style jsx>{`
             @keyframes ghostFloat {
               0%, 100% { transform: translateY(0px); }
@@ -1561,7 +1583,7 @@ export default function LeftSidebar({
       )}
 
       {/* Tab Navigation */}
-      <div className="p-2 sm:p-3 bg-[#D9D9D9]/10 rounded-xl">
+      <div ref={tabBarRef} className="p-2 sm:p-3 bg-[#D9D9D9]/10 rounded-xl">
         <div className="flex gap-1 sm:gap-2">
           {availableTabs.map(tab => (
             <button
@@ -1603,6 +1625,7 @@ export default function LeftSidebar({
                 </div>
                 <div className="flex gap-2 mb-3">
                   <button
+                    ref={browseFilesRef}
                     onClick={() => {
                       if (!hasAcceptedTerms) {
                         setShowUploadDisclaimer(true);
@@ -1755,7 +1778,7 @@ export default function LeftSidebar({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="video/*,audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/flac,audio/aac,audio/x-m4a"
+                  accept="video/*,.mkv,audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/flac,audio/aac,audio/x-m4a"
                   className="hidden"
                   onChange={(e) => {
                     handleFileUpload(e.target.files);
@@ -1971,7 +1994,7 @@ export default function LeftSidebar({
                 );
               })()}
               
-              <h4 className="text-sm sm:text-base font-semibold text-gray-400 mb-2">PLAYING NOW</h4>
+              <h4 ref={playingNowRef} className="text-sm sm:text-base font-semibold text-gray-400 mb-2">PLAYING NOW</h4>
               {currentMedia ? (
                 <div className="bg-gray-800 rounded-lg p-2 sm:p-3 mb-3 sm:mb-4">
                   <div className="flex items-center gap-2 sm:gap-3">
@@ -2599,6 +2622,22 @@ export default function LeftSidebar({
             toast.success('Sermon displayed', { icon: '📜' });
           }}
           onHideSermon={() => setShowSermonSelector(false)}
+        />
+      )}
+
+      {/* One-time coach-mark: tabs, uploading, what's playing, and Ghost Mode */}
+      {showLeftSidebarTour && (
+        <Coachmark
+          steps={[
+            { ref: tabBarRef, title: 'Bring In Content', description: 'Upload your own files, go live with LiveShare, or screen-share from another platform with Watch From.' },
+            ...(isHost ? [{ ref: browseFilesRef, title: 'Browse Files', description: 'Upload a video or audio file from your device to play for everyone.' }] : []),
+            { ref: playingNowRef, title: 'Playing Now', description: "See what's currently playing in the session here." },
+            ...(isHost ? [{ ref: ghostModeRef, title: 'Ghost Mode', description: 'Hide this session from the public lobby — useful for sensitive or private content.' }] : []),
+          ]}
+          onComplete={() => {
+            setShowLeftSidebarTour(false);
+            localStorage.setItem('wewatch_leftsidebar_tour_seen', '1');
+          }}
         />
       )}
     </div>
