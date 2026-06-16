@@ -67,6 +67,22 @@ func main() {
 	}
 	log.Println("Connected to the database successfully")
 
+	// --- Connection Pool Tuning ---
+	// Previously unconfigured, which left Go's database/sql defaults in place:
+	// unlimited max open connections but only 2 idle. Under light load that means
+	// connections get closed and reopened constantly; under a burst (e.g. many
+	// clients disconnecting/reconnecting at once) there was nothing capping how many
+	// connections got opened, risking hitting Postgres's own connection limit.
+	if sqlDB, err := DB.DB(); err != nil {
+		log.Println("⚠️ Failed to get underlying sql.DB for pool tuning:", err)
+	} else {
+		sqlDB.SetMaxOpenConns(25)
+		sqlDB.SetMaxIdleConns(10)
+		sqlDB.SetConnMaxLifetime(30 * time.Minute)
+		sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+		log.Println("🔧 DB connection pool configured: max_open=25 max_idle=10 max_lifetime=30m max_idle_time=5m")
+	}
+
 	// Make the DB connection available to handlers
 	handlers.DB = DB // Pass DB to handlers package
 
@@ -1097,6 +1113,7 @@ func main() {
 		superAdminGroup.GET("/token-spending-analytics", handlers.GetTokenSpendingAnalytics)   // GET /api/admin/token-spending-analytics (Token spending by rooms/hosts)
 		superAdminGroup.GET("/event-analytics", handlers.GetEventAnalytics)                    // GET /api/admin/event-analytics (Event ticketing metrics)
 		superAdminGroup.GET("/community-analytics", handlers.GetCommunityAnalyticsHandler)     // GET /api/admin/community-analytics (Community request stats)
+		superAdminGroup.GET("/hub-stats", handlers.GetHubStatsHandler)                         // GET /api/admin/hub-stats (WebSocket Hub drop counters + queue depth)
 		superAdminGroup.POST("/transfer-donation-commission", handlers.TransferTokenDonationCommission) // POST /api/admin/transfer-donation-commission (Transfer 5% token gift commissions)
 		superAdminGroup.POST("/sweep-withdrawal-fees", handlers.SweepWithdrawalFeeRevenue)            // POST /api/admin/sweep-withdrawal-fees (Sweep accumulated ₦100 withdrawal fees quarterly)
 

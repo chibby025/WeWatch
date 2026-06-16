@@ -3,6 +3,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -141,6 +143,14 @@ type Hub struct {
     sessionMuteAllState map[string]bool // sessionID → isMuteAllActive
     muteAllMutex        sync.RWMutex
 
+    // ── Phase 3 observability counters ──────────────────────────────────────
+    // Incremented wherever a channel-full "default: drop" branch already existed.
+    // Lets /api/admin/hub-stats answer "is the Hub falling behind?" without
+    // grepping Railway logs for "dropping message" after the fact.
+    statRoomBroadcastDropped atomic.Int64 // h.broadcastToRoom enqueue dropped
+    statUserBroadcastDropped atomic.Int64 // h.broadcastToUsers enqueue dropped
+    statUnregisterDropped    atomic.Int64 // h.unregister enqueue dropped (duplicate-client kick path)
+    statClientSendDropped    atomic.Int64 // any individual client.send buffer was full
 }
 
 type RoomBroadcastMessage struct {
@@ -210,6 +220,37 @@ func NewHub() *Hub {
 		seatingMutex:        sync.RWMutex{},
 		sessionMuteAllState: make(map[string]bool),
 		muteAllMutex:        sync.RWMutex{},
+	}
+}
+
+// Stats reports the Phase 3 observability counters plus a live snapshot of queue
+// depth and room/session counts. Channel len()/cap() are safe to read without a
+// lock — reading a channel's length never races with sends/receives in Go.
+func (h *Hub) Stats() map[string]interface{} {
+	h.mutex.RLock()
+	roomCount := len(h.rooms)
+	h.mutex.RUnlock()
+
+	h.sessionMutex.RLock()
+	activeSessionCount := len(h.activeSessions)
+	h.sessionMutex.RUnlock()
+
+	return map[string]interface{}{
+		"dropped": map[string]int64{
+			"room_broadcast_enqueue": h.statRoomBroadcastDropped.Load(),
+			"user_broadcast_enqueue": h.statUserBroadcastDropped.Load(),
+			"unregister_enqueue":     h.statUnregisterDropped.Load(),
+			"client_send":            h.statClientSendDropped.Load(),
+		},
+		"queue_depth": map[string]map[string]int{
+			"broadcast":         {"len": len(h.broadcast), "cap": cap(h.broadcast)},
+			"broadcast_to_room":  {"len": len(h.broadcastToRoom), "cap": cap(h.broadcastToRoom)},
+			"broadcast_to_users": {"len": len(h.broadcastToUsers), "cap": cap(h.broadcastToUsers)},
+			"register":           {"len": len(h.register), "cap": cap(h.register)},
+			"unregister":         {"len": len(h.unregister), "cap": cap(h.unregister)},
+		},
+		"rooms_active":      roomCount,
+		"sessions_active":   activeSessionCount,
 	}
 }
 
@@ -432,11 +473,29 @@ func markJoinAttemptConfirmed(watchSessionID, userID uint) {
 // JoinWatchSession adds a client to an active watch session
 func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     log.Printf("🎯 [JoinWatchSession] CALLED for user %d, session %s", client.userID, sessionID)
-    h.sessionMutex.Lock()
-    defer h.sessionMutex.Unlock()
 
+    // Bound the whole join operation — if the DB is slow, fail fast instead of hanging.
+    ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+    defer cancel()
+    db := DB.WithContext(ctx)
+
+    // removeFromSessionMembers re-acquires the lock briefly — used on every error path
+    // below, none of which hold h.sessionMutex by that point.
+    removeFromSessionMembers := func() {
+        h.sessionMutex.Lock()
+        delete(h.sessionMembers[sessionID], client)
+        h.sessionMutex.Unlock()
+    }
+
+    // ⚠️ Only the in-memory map mutation happens under the lock. Everything after —
+    // DB role lookup, member upsert, seat restore, broadcasts — runs unlocked, since
+    // none of it touches h.activeSessions/h.sessionMembers and holding a global lock
+    // across several sequential DB round-trips previously stalled every other join,
+    // leave, and lookup in the entire app for as long as this one took.
+    h.sessionMutex.Lock()
     session, exists := h.activeSessions[sessionID]
-    if (!exists) {
+    if !exists {
+        h.sessionMutex.Unlock()
         log.Printf("❌ [JoinWatchSession] Session %s NOT found in activeSessions map", sessionID)
         return fmt.Errorf("watch session %s does not exist", sessionID)
     }
@@ -449,22 +508,23 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
 
     // Add client to session members
     h.sessionMembers[sessionID][client] = true
-    
+    h.sessionMutex.Unlock()
+
     // ✅ Determine user role: host if user_id matches session host, otherwise viewer
     var watchSession models.WatchSession
-    if err := DB.Where("session_id = ?", sessionID).First(&watchSession).Error; err != nil {
-        delete(h.sessionMembers[sessionID], client)
+    if err := db.Where("session_id = ?", sessionID).First(&watchSession).Error; err != nil {
+        removeFromSessionMembers()
         log.Printf("❌ Failed to fetch session %s for role assignment: %v", sessionID, err)
         return fmt.Errorf("failed to fetch session: %v", err)
     }
-    
+
     var room models.Room
-    if err := DB.First(&room, watchSession.RoomID).Error; err != nil {
-        delete(h.sessionMembers[sessionID], client)
+    if err := db.First(&room, watchSession.RoomID).Error; err != nil {
+        removeFromSessionMembers()
         log.Printf("❌ Failed to fetch room %d for role assignment: %v", watchSession.RoomID, err)
         return fmt.Errorf("failed to fetch room: %v", err)
     }
-    
+
     userRole := "viewer"
     if client.userID == room.HostID {
         userRole = "host"
@@ -479,7 +539,7 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     
     // First try to UPDATE an existing inactive member (reconnection)
     now := time.Now()
-    result := DB.Model(&models.WatchSessionMember{}).
+    result := db.Model(&models.WatchSessionMember{}).
         Where("watch_session_id = ? AND user_id = ? AND is_active = false", session.ID, client.userID).
         Updates(map[string]interface{}{
             "is_active": true,
@@ -487,13 +547,13 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
             "left_at":   nil,
             "user_role": userRole,
         })
-    
+
     if result.Error != nil {
-        delete(h.sessionMembers[sessionID], client)
+        removeFromSessionMembers()
         log.Printf("❌ Failed to reactivate member for user %d: %v", client.userID, result.Error)
         return fmt.Errorf("failed to reactivate session member: %v", result.Error)
     }
-    
+
     // If no inactive member was updated, INSERT a new one
     if result.RowsAffected == 0 {
         member := models.WatchSessionMember{
@@ -504,9 +564,9 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
             UserRole:      userRole,
             LeftAt:        nil,
         }
-        
-        if err := DB.Create(&member).Error; err != nil {
-            delete(h.sessionMembers[sessionID], client)
+
+        if err := db.Create(&member).Error; err != nil {
+            removeFromSessionMembers()
             // Check if error is duplicate key violation (someone else created it just now)
             if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
                 log.Printf("⚠️ Duplicate member record detected for user %d in session %s (database constraint caught it)", client.userID, sessionID)
@@ -524,13 +584,13 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
 
         // 🔄 RESTORE SEAT: Check if user had a seat before disconnect
         var reactivatedMember models.WatchSessionMember
-        if err := DB.Where("watch_session_id = ? AND user_id = ? AND is_active = true", 
+        if err := db.Where("watch_session_id = ? AND user_id = ? AND is_active = true",
             session.ID, client.userID).First(&reactivatedMember).Error; err == nil {
-            
+
             // Check if cinema mode - restore cinema seat from UserTheaterAssignment
             if watchSession.WatchType == "3d_cinema" {
                 var assignment models.UserTheaterAssignment
-                if err := DB.Where("user_id = ? AND watch_session_id = ?",
+                if err := db.Where("user_id = ? AND watch_session_id = ?",
                     client.userID, session.ID).
                     Preload("Theater").First(&assignment).Error; err == nil {
                     
@@ -615,7 +675,7 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     // Query authoritative count BEFORE broadcasting so every receiver gets ground truth.
     // Floor to 1: the joining user is always at least 1 active member regardless of DB timing.
     var joinedMemberCount int64
-    DB.Model(&models.WatchSessionMember{}).
+    db.Model(&models.WatchSessionMember{}).
         Where("watch_session_id = ? AND is_active = ?", session.ID, true).
         Count(&joinedMemberCount)
     if joinedMemberCount < 1 {
@@ -623,7 +683,7 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     }
 
     var joiningUser models.User
-    if err := DB.First(&joiningUser, client.userID).Error; err == nil {
+    if err := db.First(&joiningUser, client.userID).Error; err == nil {
         memberJoinedMsg := WebSocketMessage{
             Type: "session_member_joined",
             Data: map[string]interface{}{
@@ -646,7 +706,7 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     // If the DB query fails or returns empty, seed with the joining user so the frontend
     // always gets at least a count of 1 instead of silently receiving nothing.
     var activeMembers []models.WatchSessionMember
-    dbErr := DB.Where("watch_session_id = ? AND is_active = ?", session.ID, true).Find(&activeMembers).Error
+    dbErr := db.Where("watch_session_id = ? AND is_active = ?", session.ID, true).Find(&activeMembers).Error
     if dbErr != nil {
         log.Printf("⚠️ [JoinWatchSession] DB query for active members failed: %v — using minimal fallback", dbErr)
         activeMembers = nil
@@ -681,7 +741,7 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
         userMap := make(map[uint]string)
         avatarMap := make(map[uint]string)
         log.Printf("🔍 [JoinWatchSession] Querying %d users for usernames and avatars", len(userIDs))
-        if err := DB.Where("id IN ?", userIDs).Find(&users).Error; err == nil {
+        if err := db.Where("id IN ?", userIDs).Find(&users).Error; err == nil {
             log.Printf("✅ [JoinWatchSession] Found %d users in database", len(users))
             for _, user := range users {
                 userMap[user.ID] = user.Username
@@ -1052,6 +1112,12 @@ func (h *Hub) Run() {
 			// None of this touches h.rooms, so it doesn't need the lock at all.
 			if wasInRoom {
 				go func(client *Client) {
+					// Bound this cleanup — if the DB is slow, fail fast instead of letting
+					// goroutines pile up indefinitely during a burst of disconnects.
+					ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+					defer cancel()
+					db := DB.WithContext(ctx)
+
 					// ✅ Broadcast 'participant_leave' to others in the room
 					leaveMsg := WebSocketMessage{
 						Type: "participant_leave",
@@ -1073,13 +1139,13 @@ func (h *Hub) Run() {
 						// Fast path: we know which session this client was in
 						sessionIDToCleanup = client.sessionID
 						var session models.WatchSession
-						if err := DB.Where("session_id = ?", client.sessionID).First(&session).Error; err == nil {
+						if err := db.Where("session_id = ?", client.sessionID).First(&session).Error; err == nil {
 							watchSessionID = session.ID
 						}
 					} else {
 						// Fallback: find active session for this room
 						var activeSession models.WatchSession
-						if err := DB.Where("room_id = ? AND ended_at IS NULL", client.roomID).First(&activeSession).Error; err == nil {
+						if err := db.Where("room_id = ? AND ended_at IS NULL", client.roomID).First(&activeSession).Error; err == nil {
 							sessionIDToCleanup = activeSession.SessionID
 							watchSessionID = activeSession.ID
 						}
@@ -1087,7 +1153,7 @@ func (h *Hub) Run() {
 
 					if watchSessionID > 0 {
 						// Mark user as inactive and set left_at timestamp
-						result := DB.Model(&models.WatchSessionMember{}).
+						result := db.Model(&models.WatchSessionMember{}).
 							Where("watch_session_id = ? AND user_id = ? AND is_active = ?", watchSessionID, client.userID, true).
 							Updates(map[string]interface{}{
 								"is_active": false,
@@ -1101,13 +1167,13 @@ func (h *Hub) Run() {
 
 							// Count remaining members first so the broadcast carries ground truth.
 							var newCount int64
-							DB.Model(&models.WatchSessionMember{}).
+							db.Model(&models.WatchSessionMember{}).
 								Where("watch_session_id = ? AND is_active = ?", watchSessionID, true).
 								Count(&newCount)
 
 							// ✅ BROADCAST user_left TO ALL ROOM MEMBERS
 							var user models.User
-							if err := DB.First(&user, client.userID).Error; err == nil {
+							if err := db.First(&user, client.userID).Error; err == nil {
 								userLeftMsg := WebSocketMessage{
 									Type: "user_left",
 									Data: map[string]interface{}{
@@ -1133,7 +1199,7 @@ func (h *Hub) Run() {
 
 						// ✅ CHECK IF DISCONNECTING USER IS THE HOST (logging only — auto-end disabled)
 						var room models.Room
-						if err := DB.First(&room, client.roomID).Error; err == nil {
+						if err := db.First(&room, client.roomID).Error; err == nil {
 							if room.HostID == client.userID && sessionIDToCleanup != "" {
 								log.Printf("ℹ️ [HOST DISCONNECT] User %d disconnected from session %s (auto-end disabled)", client.userID, sessionIDToCleanup)
 							}
@@ -1167,6 +1233,7 @@ func (h *Hub) Run() {
 						select {
 						case c.send <- message:
 						default:
+							h.statClientSendDropped.Add(1)
 							log.Printf("Hub: Dropping message for client %p (buffer full)", c)
 						}
 					}(client)
@@ -1194,6 +1261,7 @@ func (h *Hub) Run() {
 						select {
 						case c.send <- roomBroadcast.data:
 						default:
+							h.statClientSendDropped.Add(1)
 							log.Printf("Hub: Dropping message for client %p in room %d (buffer full)", c, roomBroadcast.roomID)
 						}
 					}(client)
@@ -1212,6 +1280,7 @@ func (h *Hub) Run() {
 							select {
 							case client.send <- userBroadcast.data:
 							default:
+								h.statClientSendDropped.Add(1)
 								log.Printf("Hub: Dropping message for targeted client %p (User %d) (buffer full)", client, targetUserID)
 							}
 							break // Found the user, move to next user ID
@@ -1238,6 +1307,7 @@ func (h *Hub) BroadcastToRoom(roomID uint, message OutgoingMessage, sender *Clie
 	select {
 	case h.broadcastToRoom <- RoomBroadcastMessage{roomID: roomID, data: message, sender: sender}:
 	default:
+		h.statRoomBroadcastDropped.Add(1)
 		log.Printf("Hub: BroadcastToRoom channel is full, dropping message for room %d", roomID)
 	}
 }
@@ -1265,6 +1335,7 @@ func (h *Hub) BroadcastToRoomBinary(roomID uint, data []byte, senderUserID uint)
 		case client.send <- OutgoingMessage{Data: data, IsBinary: true}:
 			log.Printf("[Hub] Sent binary chunk to user %d (%d bytes)", client.userID, len(data))
 		default:
+			h.statClientSendDropped.Add(1)
 			log.Printf("[Hub] Failed to send binary to user %d (channel full)", client.userID)
 		}
 	}
@@ -1340,6 +1411,7 @@ func (h *Hub) BroadcastToUsers(userIDs []uint, message OutgoingMessage) {
 	select {
 	case h.broadcastToUsers <- UserBroadcastMessage{userIDs: userIDs, data: message}:
 	default:
+		h.statUserBroadcastDropped.Add(1)
 		log.Printf("Hub: BroadcastToUsers channel is full, dropping message")
 	}
 }
@@ -1932,6 +2004,7 @@ func WebSocketHandler(c *gin.Context) {
 			case hub.unregister <- oldClient:
 				log.Printf("[WebSocketHandler] ✅ Old client queued for cleanup")
 			default:
+				hub.statUnregisterDropped.Add(1)
 				log.Printf("[WebSocketHandler] ⚠️ Hub.unregister channel full, skipping cleanup")
 			}
 			
