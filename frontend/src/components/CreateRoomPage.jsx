@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'; // For navigation after creation
 import { createRoom } from '../services/api'; // Assume you'll create this function in api.js
 import PersistentRoomInfoModal from './PersistentRoomInfoModal';
 import EmojiPicker from './EmojiPicker';
+import { useAuth } from '../contexts/AuthContext';
 
 const ROOM_TYPES = [
   {
@@ -58,6 +59,7 @@ const CreateRoomPage = () => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiPickerRef = useRef(null);
   const navigate = useNavigate();
+  const { refreshUser } = useAuth();
 
   const selectedType = ROOM_TYPES.find(t => t.id === roomType);
   const lockedRating = selectedType?.lockedRating || null;
@@ -128,12 +130,12 @@ const CreateRoomPage = () => {
       console.log('Room created successfully:', data);
       console.log("👑 [CreateRoomPage] New Room Host ID:", data.room?.HostID);
 
-      // Handle successful creation
-      alert(`Room "${data.room.name}" created successfully!`);
-      // Redirect to the newly created room's page (you'll need to implement the RoomPage component)
-      // For now, let's redirect to a generic "rooms list" page or back to home
-      navigate(`/rooms/${data.room.id}`); // Or '/rooms' if you make a list page first
-      // navigate('/'); // Or back to home/dashboard
+      // Refresh currentUser so main_room_id is set immediately — without this the
+      // lobby taskbar FAB keeps showing "+" instead of switching to the W icon
+      await refreshUser();
+
+      // Redirect to the newly created room's page; RoomPageNew shows the success toast
+      navigate(`/rooms/${data.room.id}`, { state: { justCreated: true, roomName: data.room.name } });
 
     } catch (err) {
       console.error('Error creating room:', err);

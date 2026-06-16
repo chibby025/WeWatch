@@ -1,7 +1,7 @@
 // WeWatch/frontend/src/components/RoomPageEditModal.jsx
 // Modal for editing room settings and preferences
 import React, { useState, useEffect } from 'react';
-import { XMarkIcon, FilmIcon, PhotoIcon, TrashIcon, PencilIcon, ShareIcon, PlusIcon, UserPlusIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, FilmIcon, PhotoIcon, TrashIcon, PencilIcon, PlusIcon, UserPlusIcon } from '@heroicons/react/24/outline';
 import { InformationCircleIcon, Squares2X2Icon, UsersIcon, UserGroupIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/solid';
 import apiClient, { createRoomGroup, getRoomGroups, updateRoomGroup, deleteRoomGroup, searchUsers, inviteUserToRoom } from '../services/api';
 import toast from 'react-hot-toast';
@@ -485,8 +485,8 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   }}
                 />
               ) : (
-                <h2 
-                  className={`text-xl sm:text-2xl font-bold text-white truncate mb-0.5 ${isHost ? 'cursor-pointer hover:text-purple-400 transition-colors' : ''}`}
+                <h2
+                  className={`text-base sm:text-xl font-bold text-white truncate mb-0.5 ${isHost ? 'cursor-pointer hover:text-purple-400 transition-colors' : ''}`}
                   onClick={() => isHost && setIsEditingName(true)}
                   title={isHost ? 'Click to edit' : ''}
                 >
@@ -579,7 +579,9 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   className="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 transition-colors"
                   title="Share room"
                 >
-                  <ShareIcon className="h-5 w-5" />
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-5 w-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
+                  </svg>
                 </button>
               )}
               <button

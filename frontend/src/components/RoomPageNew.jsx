@@ -254,6 +254,17 @@ const RoomPageNew = () => {
     }
   }, [room, isHost]);
 
+  // Welcome toast when navigated here right after creating this room
+  useEffect(() => {
+    if (room && location.state?.justCreated) {
+      toast.success(
+        `🎉 "${location.state.roomName || room.name}" is live! Use it to host watch parties, run classes or meetings, and grow your followers.`,
+        { duration: 6000 }
+      );
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [room]);
+
   // ✅ INSTANT membership check from auth context
   useEffect(() => {
     if (roomMemberships && roomMemberships.length > 0) {
@@ -2316,9 +2327,9 @@ const RoomPageNew = () => {
                       (() => {
                         const displayName = selectedGroupId ? (roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name) : room.name;
                         const length = displayName.length;
-                        if (length <= 8) return 'text-2xl lg:text-2xl';
-                        if (length <= 12) return 'text-xl lg:text-xl';
-                        return 'text-lg lg:text-lg';
+                        if (length <= 8) return 'text-xl lg:text-2xl';
+                        if (length <= 12) return 'text-base lg:text-xl';
+                        return 'text-sm lg:text-lg';
                       })()
                     }`}>
                       {selectedGroupId ? (roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name) : room.name}

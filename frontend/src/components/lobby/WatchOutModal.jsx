@@ -1,6 +1,7 @@
 // WeWatch/frontend/src/components/lobby/WatchOutModal.jsx
 import React, { useState, useEffect } from 'react';
 import { XMarkIcon, ArrowLeftIcon } from '@heroicons/react/24/solid';
+import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { sendWatchOut, getRoomsWithActiveSessions, startPrivateWatchout, getWatchoutAllowedRatings } from '../../services/api';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
@@ -15,16 +16,16 @@ const WATCH_TYPE_EMOJI = {
   custom: '🎨',
 };
 
-const RATING_ICON = {
-  'G':           '/icons/G Rating Icon.webp',
-  'PG':          '/icons/PG Rating Icon.webp',
-  'Educational': '/icons/Educational_Rating_Icon.webp',
-  'Religious':   '/icons/Religious Rating.webp',
-  '13+':         '/icons/13_ Rating Icon.webp',
-  '16+':         '/icons/16_ Rating Icon.webp',
-  '18+':         '/icons/18_ Rating Icon.webp',
-  'Mature':      '/icons/Mature Rating Icon.webp',
-};
+const ALL_RATINGS = [
+  { id: 'G',           name: 'G',           icon: '/icons/G Rating Icon.webp',              gradient: 'from-green-400 to-green-600',   desc: 'General Audiences — all ages admitted.' },
+  { id: 'PG',          name: 'PG',          icon: '/icons/PG Rating Icon.webp',             gradient: 'from-blue-400 to-blue-600',     desc: 'Parental Guidance — some material may not suit children.' },
+  { id: 'Educational', name: 'Educational', icon: '/icons/Educational_Rating_Icon.webp',    gradient: 'from-teal-400 to-teal-600',     desc: 'Educational content — classes, tutorials, school & university.' },
+  { id: 'Religious',   name: 'Religious',   icon: '/icons/Religious Rating.webp',           gradient: 'from-yellow-400 to-amber-600',  desc: 'Religious & spiritual content — church, Bible study, worship.' },
+  { id: '13+',         name: '13+',         icon: '/icons/13_ Rating Icon.webp',            gradient: 'from-yellow-400 to-yellow-600', desc: 'Teens 13+ — may contain content unsuitable for under 13s.' },
+  { id: '16+',         name: '16+',         icon: '/icons/16_ Rating Icon.webp',            gradient: 'from-orange-400 to-orange-600', desc: 'Older Teens 16+ — may not suit viewers under 16.' },
+  { id: '18+',         name: '18+',         icon: '/icons/18_ Rating Icon.webp',            gradient: 'from-red-400 to-red-600',       desc: 'Adults only — restricted to ages 18 and over.' },
+  { id: 'Mature',      name: 'Mature',      icon: '/icons/Mature Rating Icon.webp',         gradient: 'from-purple-400 to-purple-600', desc: 'For mature audiences only. May contain strong language, violence, gore or explicit scenes.' },
+];
 
 const NAIRA_PER_TOKEN = 100;
 
@@ -45,6 +46,7 @@ const WatchOutModal = ({ recipientUser, onClose, onSent, groupMode = false, onSe
   const [isPaid, setIsPaid] = useState(false);
   const [priceInput, setPriceInput] = useState('');
   const [allowedRatings, setAllowedRatings] = useState([]);
+  const [ratingScrollIndex, setRatingScrollIndex] = useState(0);
   const [loadingRatings, setLoadingRatings] = useState(false);
   const [sendingPrivate, setSendingPrivate] = useState(false);
 
@@ -69,6 +71,7 @@ const WatchOutModal = ({ recipientUser, onClose, onSent, groupMode = false, onSe
       const ratings = data.allowed_ratings || ['G', 'PG', 'Educational', 'Religious'];
       setAllowedRatings(ratings);
       setSelectedRating(ratings[0] || 'G');
+      setRatingScrollIndex(0);
     } catch {
       setAllowedRatings(['G', 'PG', 'Educational', 'Religious']);
       setSelectedRating('G');
@@ -125,26 +128,30 @@ const WatchOutModal = ({ recipientUser, onClose, onSent, groupMode = false, onSe
           onClick={e => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-center gap-3 p-4 border-b border-gray-200 dark:border-gray-800">
+          <div className={`flex items-center gap-3 p-4 rounded-t-2xl ${
+            swapStep === 2
+              ? 'bg-gradient-to-r from-purple-600 to-blue-600'
+              : 'border-b border-gray-200 dark:border-gray-800'
+          }`}>
             <button
               onClick={() => (swapStep === 1 ? setShowSwapper(false) : setSwapStep(1))}
-              className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              className={`p-1.5 rounded-lg transition-colors ${swapStep === 2 ? 'hover:bg-white/20 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
             >
-              <ArrowLeftIcon className="w-4 h-4 text-gray-500" />
+              <ArrowLeftIcon className={`w-4 h-4 ${swapStep === 2 ? 'text-white' : 'text-gray-500'}`} />
             </button>
             <div className="flex-1">
-              <h2 className="font-semibold text-gray-900 dark:text-white text-base">
+              <h2 className={`font-bold text-base ${swapStep === 2 ? 'text-white' : 'text-gray-900 dark:text-white'}`}>
                 {swapStep === 1 ? 'Watch Type' : 'Content & Price'}
               </h2>
-              <p className="text-xs text-gray-500 mt-0.5">
+              <p className={`text-xs mt-0.5 ${swapStep === 2 ? 'text-purple-100' : 'text-gray-500'}`}>
                 Private session with {recipientUser?.username} · Step {swapStep}/2
               </p>
             </div>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              className={`p-1.5 rounded-lg transition-colors ${swapStep === 2 ? 'hover:bg-white/20' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
             >
-              <XMarkIcon className="w-5 h-5 text-gray-500" />
+              <XMarkIcon className={`w-5 h-5 ${swapStep === 2 ? 'text-white' : 'text-gray-500'}`} />
             </button>
           </div>
 
@@ -167,30 +174,88 @@ const WatchOutModal = ({ recipientUser, onClose, onSent, groupMode = false, onSe
                 </p>
                 {loadingRatings ? (
                   <p className="text-xs text-gray-400 py-2">Loading…</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {allowedRatings.map(rating => (
-                      <button
-                        key={rating}
-                        onClick={() => setSelectedRating(rating)}
-                        className={`flex flex-col items-center gap-0.5 p-1.5 rounded-xl border-2 transition-all ${
-                          selectedRating === rating
-                            ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
-                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 hover:border-indigo-300'
-                        }`}
-                      >
-                        <img
-                          src={RATING_ICON[rating]}
-                          alt={rating}
-                          className="w-10 h-10 object-contain"
-                        />
-                        <span className="text-[10px] font-semibold text-gray-600 dark:text-gray-300">
-                          {rating}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                ) : (() => {
+                  const visibleRatings = ALL_RATINGS.filter(r => allowedRatings.includes(r.id));
+                  const total = visibleRatings.length;
+                  const scrollToRating = (idx) => {
+                    setRatingScrollIndex(idx);
+                    setSelectedRating(visibleRatings[idx].id);
+                  };
+                  const currentRating = visibleRatings[ratingScrollIndex] || visibleRatings[0];
+
+                  let startIndex;
+                  if (total <= 4) startIndex = 0;
+                  else if (ratingScrollIndex === 0) startIndex = 0;
+                  else if (ratingScrollIndex === total - 1) startIndex = total - 4;
+                  else if (ratingScrollIndex === 1) startIndex = 0;
+                  else startIndex = ratingScrollIndex - 1;
+
+                  const visibleCards = visibleRatings.slice(startIndex, startIndex + 4);
+
+                  return (
+                    <>
+                      <div className="relative">
+                        <button
+                          onClick={() => scrollToRating(Math.max(0, ratingScrollIndex - 1))}
+                          disabled={ratingScrollIndex === 0}
+                          className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white dark:bg-gray-700 shadow-lg rounded-full p-1 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-600 transition-all"
+                        >
+                          <ChevronLeftIcon className="w-4 h-4 text-gray-700 dark:text-gray-200" />
+                        </button>
+
+                        <div className="flex items-center justify-center gap-2 py-2 px-7 min-h-[120px]">
+                          {visibleCards.map((rating, idx) => {
+                            const actualIndex = startIndex + idx;
+                            const isSelected = actualIndex === ratingScrollIndex;
+                            return (
+                              <div
+                                key={actualIndex}
+                                onClick={() => scrollToRating(actualIndex)}
+                                className={`flex-shrink-0 cursor-pointer transition-all duration-300 ${isSelected ? 'w-20' : 'w-12 opacity-50 scale-90'}`}
+                              >
+                                <div className={`bg-gradient-to-br ${rating.gradient} rounded-lg ${isSelected ? 'p-2 shadow-lg ring-4 ring-purple-500 ring-offset-2' : 'p-1.5 shadow hover:scale-105'} transition-all`}>
+                                  <img src={rating.icon} alt={rating.name} className="w-full h-auto rounded" />
+                                  <p className={`text-white font-bold text-center mt-1 ${isSelected ? 'text-[10px]' : 'text-[8px]'}`}>{rating.name}</p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <button
+                          onClick={() => scrollToRating(Math.min(total - 1, ratingScrollIndex + 1))}
+                          disabled={ratingScrollIndex === total - 1}
+                          className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white dark:bg-gray-700 shadow-lg rounded-full p-1 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-600 transition-all"
+                        >
+                          <ChevronRightIcon className="w-4 h-4 text-gray-700 dark:text-gray-200" />
+                        </button>
+
+                        <div className="flex justify-center gap-1 mt-1">
+                          {visibleRatings.map((_, i) => (
+                            <button
+                              key={i}
+                              onClick={() => scrollToRating(i)}
+                              className={`transition-all !min-h-0 !min-w-0 rounded-full ${i === ratingScrollIndex ? 'w-5 h-1.5 bg-purple-500' : 'w-1.5 h-1.5 bg-gray-300 dark:bg-gray-600 hover:bg-gray-400'}`}
+                              aria-label={`Go to rating ${i + 1}`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      {currentRating && (
+                        <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border border-purple-200 dark:border-purple-700 rounded-lg p-2.5 mt-2 flex items-start gap-2">
+                          <div className={`flex-shrink-0 bg-gradient-to-br ${currentRating.gradient} rounded-lg p-1.5`}>
+                            <img src={currentRating.icon} alt={currentRating.name} className="w-7 h-7" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-gray-900 dark:text-white text-xs mb-0.5">{currentRating.name} Rating</p>
+                            <p className="text-[11px] text-gray-600 dark:text-gray-400 leading-snug">{currentRating.desc}</p>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               <div>

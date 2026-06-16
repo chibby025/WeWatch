@@ -1,8 +1,8 @@
-import React from 'react';
-import { FilmIcon, CubeIcon, AcademicCapIcon } from '@heroicons/react/24/outline';
+import React, { useState } from 'react';
+import { FilmIcon, CubeIcon, AcademicCapIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 
 const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
-  if (!isOpen) return null;
+  const [slide, setSlide] = useState(0);
 
   // Define content for each watch type
   const watchTypeContent = {
@@ -117,10 +117,24 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
 
   const content = watchTypeContent[watchType] || watchTypeContent.video;
   const IconComponent = content.icon;
+  const total = content.images.length;
+
+  const goTo = (idx) => setSlide(((idx % total) + total) % total);
+  const prev = () => goTo(slide - 1);
+  const next = () => goTo(slide + 1);
+
+  // Reset slide whenever the modal is (re)opened for a (possibly new) watch type
+  React.useEffect(() => {
+    if (isOpen) setSlide(0);
+  }, [isOpen, watchType]);
+
+  if (!isOpen) return null;
+
+  const active = content.images[slide];
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[95vh] overflow-y-auto animate-fade-in custom-sleek-scrollbar">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[95vh] overflow-y-auto animate-fade-in custom-sleek-scrollbar">
         {/* Header */}
         <div className={`bg-gradient-to-r ${content.gradient} text-white p-4 sm:p-6`}>
           <div className="flex justify-between items-start">
@@ -150,46 +164,65 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
           </div>
         </div>
 
-        {/* Image Grid */}
+        {/* Carousel */}
         <div className="p-4 sm:p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-6">
-            {content.images.map((image, index) => (
-              <div
-                key={index}
-                className="group relative bg-gray-50 rounded-xl overflow-hidden hover:shadow-lg transition-all duration-300"
-              >
-                {/* Image Container */}
-                <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center overflow-hidden">
-                  <img
-                    src={image.src}
-                    alt={image.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    onError={(e) => {
-                      e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect width="200" height="200" fill="%23e5e7eb"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%239ca3af" font-family="sans-serif" font-size="14"%3EImage%3C/text%3E%3C/svg%3E';
-                    }}
-                  />
-                </div>
-                
-                {/* Caption */}
-                <div className="p-3 sm:p-4">
-                  <h3 className="font-bold text-gray-900 text-sm sm:text-base mb-1">
-                    {image.title}
-                  </h3>
-                  <p className="text-gray-600 text-xs sm:text-sm">
-                    {image.description}
-                  </p>
-                </div>
+          <div className="relative group rounded-xl overflow-hidden bg-gray-100">
+            <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center overflow-hidden">
+              <img
+                key={active.src}
+                src={active.src}
+                alt={active.title}
+                className="w-full h-full object-cover animate-fade-in"
+                onError={(e) => {
+                  e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect width="200" height="200" fill="%23e5e7eb"/%3E%3Ctext x="50%25" y="50%25" text-anchor="middle" dy=".3em" fill="%239ca3af" font-family="sans-serif" font-size="14"%3EImage%3C/text%3E%3C/svg%3E';
+                }}
+              />
+            </div>
 
-                {/* Number Badge */}
-                <div className={`absolute top-2 right-2 sm:top-3 sm:right-3 bg-gradient-to-br ${content.gradient} text-white w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm shadow-lg`}>
-                  {index + 1}
-                </div>
-              </div>
+            {/* Number Badge */}
+            <div className={`absolute top-2 right-2 sm:top-3 sm:right-3 bg-gradient-to-br ${content.gradient} text-white w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm shadow-lg`}>
+              {slide + 1}/{total}
+            </div>
+
+            {/* Chevron arrows */}
+            <button
+              onClick={prev}
+              aria-label="Previous"
+              className="absolute left-1.5 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white rounded-full p-1.5 sm:p-2 transition-colors opacity-0 group-hover:opacity-100 sm:opacity-70"
+            >
+              <ChevronLeftIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+            <button
+              onClick={next}
+              aria-label="Next"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white rounded-full p-1.5 sm:p-2 transition-colors opacity-0 group-hover:opacity-100 sm:opacity-70"
+            >
+              <ChevronRightIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+          </div>
+
+          {/* Caption */}
+          <div className="mt-3 text-center">
+            <h3 className="font-bold text-gray-900 text-base sm:text-lg mb-1">{active.title}</h3>
+            <p className="text-gray-600 text-xs sm:text-sm">{active.description}</p>
+          </div>
+
+          {/* Pagination dots */}
+          <div className="flex items-center justify-center gap-1.5 mt-3">
+            {content.images.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={() => goTo(idx)}
+                aria-label={`Go to slide ${idx + 1}`}
+                className={`!min-h-0 !min-w-0 rounded-full transition-all ${
+                  idx === slide ? `w-5 h-1.5 bg-gradient-to-r ${content.gradient}` : 'w-1.5 h-1.5 bg-gray-300 hover:bg-gray-400'
+                }`}
+              />
             ))}
           </div>
 
           {/* Features List */}
-          <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 sm:p-6 mb-6">
+          <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 sm:p-6 mt-5 mb-6">
             <h3 className="font-bold text-gray-900 text-base sm:text-lg mb-3 sm:mb-4">
               ✨ What You Get:
             </h3>

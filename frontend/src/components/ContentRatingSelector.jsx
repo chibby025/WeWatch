@@ -72,8 +72,8 @@ const ContentRatingSelector = ({ value = 'G', onChange, showLabel = true, userAg
     },
     {
       id: 'Mature',
-      name: 'Mature - Explicit',
-      desc: 'Explicit, nude adult content',
+      name: 'Mature',
+      desc: 'For mature audiences only. May contain strong language, violence, gore or explicit scenes.',
       icon: '/icons/Mature Rating Icon.webp',
       color: 'from-purple-600 to-purple-700',
       minAge: 18
