@@ -1,6 +1,6 @@
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { uploadMediaToRoom, uploadChunk, uploadFileToBunnyCDN, assembleUpload, apiClient, API_BASE_URL } from '../../../services/api';
+import { apiClient } from '../../../services/api';
 import { Gamepad2, Video, BookOpen, Music, FileText } from 'lucide-react'; // Game, Video, Bible, Hymn, Sermon icons
 import toast from 'react-hot-toast';
 import BibleControl from '../../liveshare/BibleControl';
@@ -8,17 +8,6 @@ import HymnsControl from '../../liveshare/HymnsControl';
 import SermonControl from '../../liveshare/SermonControl';
 import useSessionRecording from '../../../hooks/useSessionRecording';
 import RecordingOptionsModal from '../../RecordingOptionsModal';
-import { 
-  splitFileIntoChunks, 
-  generateUploadId, 
-  uploadChunkWithRetry,
-  uploadChunksParallel,
-  getOptimalChunkSize,
-  getUploadConcurrency,
-  saveChunkUploadState,
-  clearChunkUploadState 
-} from '../../../utils/uploadChunker';
-import { useUploadServiceWorker } from '../../../hooks/useUploadServiceWorker';
 import LiveShareManager from './LiveShareManager';
 import ReportModal from '../../ReportModal';
 import { extractYouTubeVideoId } from '../YouTubePlayer';
@@ -47,6 +36,7 @@ export default function LeftSidebar({
   isHost: isHostProp,
   onClose,
   onUploadComplete,
+  upload, // useMediaUploadManager() result, owned by the parent page so it survives sidebar toggles
   sessionId,
   finalSessionId, // For resume state detection
   onQuizClick, // Quiz management button handler
@@ -152,49 +142,33 @@ export default function LeftSidebar({
   const [cameraDevices, setCameraDevices] = useState([]);
   const [selectedCameraDeviceId, setSelectedCameraDeviceId] = useState('');
   const currentPreviewStreamRef = useRef(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadPaused, setUploadPaused] = useState(false); // same-session pause on network drop
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadSpeed, setUploadSpeed] = useState(0); // MB/s
-  const [uploadETA, setUploadETA] = useState(''); // Estimated time remaining
-  const [uploadedBytes, setUploadedBytes] = useState(0);
-  const [totalBytes, setTotalBytes] = useState(0);
-  const uploadAbortControllerRef = useRef(null);
-  const uploadStartTimeRef = useRef(null);
-  const lastProgressUpdateRef = useRef(0); // Throttle progress updates
-  const progressPersistenceTimerRef = useRef(null); // Save progress every 5s
-  // Refs for same-session auto-retry — always current, no stale-closure risk.
-  const uploadFileRef = useRef(null);        // the live File object for the current upload
-  const uploadPausedRef = useRef(false);     // mirrors uploadPaused without closure staleness
-  const visibilityPauseRef = useRef(false);  // true when upload was paused by a tab switch (not user cancel)
-  const uploadFileDirectRef = useRef(null);  // always points at the latest uploadFileDirect fn
-  const posterPollTimerRef = useRef(null);   // cleanup handle for poster polling
-  
-  // Network quality state
-  const [networkQuality, setNetworkQuality] = useState('unknown'); // '2g', '3g', '4g', 'wifi', 'unknown'
-  
-  // ✅ Service Worker for background uploads
-  const uploadSW = useUploadServiceWorker();
-  
-  // Listen for SW status updates (not used in simplified approach but kept for future)
-  useEffect(() => {
-    if (!uploadSW.isRegistered) return;
-    
-    const unregister = uploadSW.onMessage('UPLOAD_STATUS', (data) => {
-      console.log('[SW Status]:', data);
-    });
-    
-    return unregister;
-  }, [uploadSW.isRegistered]);
-  
+  // Upload state/handlers all come from useMediaUploadManager(), owned by the parent
+  // page so the upload survives this sidebar unmounting/remounting on toggle.
+  const {
+    uploading,
+    uploadPaused,
+    uploadProgress,
+    uploadSpeed,
+    uploadETA,
+    uploadedBytes,
+    totalBytes,
+    showUploadDisclaimer,
+    setShowUploadDisclaimer,
+    hasAcceptedTerms,
+    acceptUploadTerms,
+    showResumeUpload,
+    pendingResumeData,
+    resumeUpload,
+    discardResume,
+    finalizeResume,
+    handleFileUpload,
+    handleCancelUpload,
+    handleRetryNow,
+    formatFileSize,
+  } = upload;
+
   const [showWatchFromInstructions, setShowWatchFromInstructions] = useState(false);
   const [showLiveShareMenu, setShowLiveShareMenu] = useState(false);
-  const [showUploadDisclaimer, setShowUploadDisclaimer] = useState(false);
-  const [showResumeUpload, setShowResumeUpload] = useState(false);
-  const [pendingResumeData, setPendingResumeData] = useState(null);
-  const [hasAcceptedTerms, setHasAcceptedTerms] = useState(() => {
-    return localStorage.getItem('wewatch_upload_terms_accepted') === 'true';
-  });
 
   // 🔴 Recording state
   const [showRecordingModal, setShowRecordingModal] = useState(false);
@@ -219,239 +193,6 @@ export default function LeftSidebar({
   const [showHymnSelector, setShowHymnSelector] = useState(false);
   const [showSermonSelector, setShowSermonSelector] = useState(false);
   
-  // Check for incomplete uploads on mount (dev chunked path + production BunnyCDN path).
-  useEffect(() => {
-    // Dev path: chunks sent directly to Railway
-    const uploadId = localStorage.getItem('current_upload_id');
-    if (uploadId) {
-      const stateStr = localStorage.getItem(`upload_chunks_${uploadId}`);
-      if (!stateStr) {
-        localStorage.removeItem('current_upload_id');
-      } else {
-        const state = JSON.parse(stateStr);
-        const uploadedChunks = state.uploadedChunks || [];
-        const remaining = state.totalChunks - uploadedChunks.length;
-        if (remaining > 0) {
-          console.log('📋 [Resume] Found incomplete dev upload:', {
-            uploadId,
-            fileName: state.fileName,
-            progress: Math.round((uploadedChunks.length / state.totalChunks) * 100),
-            remainingChunks: remaining,
-          });
-          setPendingResumeData({ ...state, uploadPath: 'dev' });
-          setShowResumeUpload(true);
-          return; // only show one resume prompt at a time
-        } else {
-          clearChunkUploadState(uploadId);
-          localStorage.removeItem('current_upload_id');
-        }
-      }
-    }
-
-    // Production path: chunks go to BunnyCDN via Vercel edge function
-    const bunnyId = localStorage.getItem('current_bunny_upload_id');
-    if (!bunnyId) return;
-    const bunnyStr = localStorage.getItem(`wewatch_bunny_upload_${bunnyId}`);
-    if (!bunnyStr) {
-      localStorage.removeItem('current_bunny_upload_id');
-      return;
-    }
-    try {
-      const state = JSON.parse(bunnyStr);
-      const completed = state.completedChunks?.length ?? 0;
-      const total = state.totalChunks ?? Math.ceil(state.fileSize / (state.chunkSize || 1));
-      console.log('📋 [Resume] Found incomplete BunnyCDN upload:', {
-        uploadId: bunnyId,
-        fileName: state.fileName,
-        progress: Math.round((completed / total) * 100),
-        needsAssembly: state.needsAssembly ?? false,
-      });
-      setPendingResumeData({ ...state, uploadPath: 'bunny' });
-      setShowResumeUpload(true);
-    } catch (_) {
-      localStorage.removeItem(`wewatch_bunny_upload_${bunnyId}`);
-      localStorage.removeItem('current_bunny_upload_id');
-    }
-  }, []);
-  
-  // Detect network quality on mount
-  useEffect(() => {
-    const detectNetworkQuality = () => {
-      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-      
-      if (!connection) {
-        // Network Information API unavailable (iOS Safari, Firefox).
-        // Use onLine as a binary fallback — offline = treat as 2G, online = unknown/conservative.
-        setNetworkQuality(navigator.onLine === false ? '2g' : 'unknown');
-        return;
-      }
-      
-      const effectiveType = connection.effectiveType; // '2g', '3g', '4g', 'slow-2g'
-
-      if (effectiveType === 'slow-2g' || effectiveType === '2g') {
-        setNetworkQuality('2g');
-      } else if (effectiveType === '3g') {
-        setNetworkQuality('3g');
-      } else if (effectiveType === '4g') {
-        setNetworkQuality('4g');
-      } else {
-        setNetworkQuality('wifi');
-      }
-    };
-    
-    detectNetworkQuality();
-    
-    // Listen for connection changes (Network Information API — Chrome/Android)
-    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    if (connection) {
-      connection.addEventListener('change', detectNetworkQuality);
-    }
-
-    // Fallback for iOS Safari / Firefox: online/offline events are universally supported
-    const handleOffline = () => setNetworkQuality('2g');
-    const handleOnline = () => detectNetworkQuality();
-    window.addEventListener('offline', handleOffline);
-    window.addEventListener('online', handleOnline);
-
-    return () => {
-      if (connection) connection.removeEventListener('change', detectNetworkQuality);
-      window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('online', handleOnline);
-    };
-  }, []);
-  
-  // ✅ Handle beforeunload - Notify SW that upload was paused
-  useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      // Only notify SW if actively uploading
-      if (!uploading || !uploadSW.isRegistered) return;
-      
-      const uploadId = localStorage.getItem('current_upload_id');
-      const stateStr = localStorage.getItem(`upload_chunks_${uploadId}`);
-      
-      if (!uploadId || !stateStr) return;
-      
-      const state = JSON.parse(stateStr);
-      
-      // Calculate remaining chunks
-      const uploadedChunks = state.uploadedChunks || [];
-      const remainingChunks = [];
-      
-      for (let i = 0; i < state.totalChunks; i++) {
-        if (!uploadedChunks.includes(i)) {
-          remainingChunks.push(i);
-        }
-      }
-      
-      if (remainingChunks.length === 0) return; // Already complete
-      
-      console.log(`⚠️ [Tab Close] Notifying SW - ${remainingChunks.length}/${state.totalChunks} chunks remaining`);
-      
-      // Notify Service Worker (will show notification)
-      uploadSW.notifyUploadPaused({
-        uploadId,
-        fileName: state.fileName,
-        fileSize: state.fileSize,
-        totalChunks: state.totalChunks,
-        uploadedChunks,
-        remainingChunks,
-        roomId: roomId || state.roomId,
-        sessionId: sessionId || state.sessionId
-      });
-      
-      // Browser will show confirmation dialog
-      e.preventDefault();
-      e.returnValue = 'Upload in progress. If you leave, you can resume when you return.';
-    };
-    
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [uploading, uploadSW, roomId, sessionId]);
-
-
-  // Same-session auto-retry: resumes on network restore OR when the tab becomes visible again
-  // after a background pause. Both paths share the same resume() helper.
-  // Uses refs so handlers are registered once and never go stale.
-  useEffect(() => {
-    const resume = () => {
-      const bunnyId = localStorage.getItem('current_bunny_upload_id');
-      let savedState = null;
-      if (bunnyId) {
-        try {
-          savedState = JSON.parse(localStorage.getItem(`wewatch_bunny_upload_${bunnyId}`) || 'null');
-        } catch (_) {}
-      }
-      uploadFileDirectRef.current?.(uploadFileRef.current, savedState);
-    };
-
-    const handleOnline = () => {
-      if (!uploadPausedRef.current || !uploadFileRef.current) return;
-      console.log('🔄 [AutoRetry] Connection restored — resuming upload automatically…');
-      toast('Connection restored — resuming upload…', { icon: '📶' });
-      resume();
-    };
-
-    // Pause when the user switches tabs; resume instantly when they return.
-    // This mirrors Capacitor's appStateChange suspend lifecycle for browser PWA.
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        if (!uploadFileRef.current) return; // nothing uploading
-        visibilityPauseRef.current = true;
-        uploadAbortControllerRef.current?.abort(); // frees mobile network resources while hidden
-      } else {
-        if (!visibilityPauseRef.current || !uploadFileRef.current) return;
-        visibilityPauseRef.current = false;
-        console.log('🔄 [VisibilityResume] Tab visible again — resuming upload…');
-        resume();
-      }
-    };
-
-    window.addEventListener('online', handleOnline);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, []); // empty deps — refs handle staleness
-
-  // Cancel any in-flight poster poll when the sidebar unmounts.
-  useEffect(() => {
-    return () => { if (posterPollTimerRef.current) clearTimeout(posterPollTimerRef.current); };
-  }, []);
-
-  // Poll the temporary-media API until the newly uploaded item has a real poster.
-  // Called after assembleUpload resolves. Stops after maxAttempts or on success.
-  // This is the safety net for when the WS `playlist_poster_updated` message is
-  // missed (e.g. because the WebSocket briefly dropped during the upload).
-  const pollForPoster = (itemId, attempt = 0) => {
-    const MAX_ATTEMPTS = 10;
-    const INTERVAL_MS = 3000;
-    if (attempt >= MAX_ATTEMPTS || !itemId) return;
-
-    posterPollTimerRef.current = setTimeout(async () => {
-      try {
-        const token = localStorage.getItem('wewatch_token');
-        const resp = await fetch(`${API_BASE_URL}/api/rooms/${roomId}/temporary-media`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        const items = data.temporary_media_items || [];
-        const target = items.find(it => (it.ID || it.id) === itemId);
-        if (target?.poster_url && !target.poster_url.includes('placeholder-poster')) {
-          // Real poster is ready — refresh the playlist once more.
-          console.log(`🖼️ [PosterPoll] Poster ready for item ${itemId}: ${target.poster_url}`);
-          if (onUploadComplete) { playSuccess(); onUploadComplete(); }
-        } else {
-          // Not ready yet — schedule next poll.
-          pollForPoster(itemId, attempt + 1);
-        }
-      } catch (_) {
-        pollForPoster(itemId, attempt + 1);
-      }
-    }, INTERVAL_MS);
-  };
-
   // Helper function to check if media has saved resume state
   const getSavedResumeState = (mediaItem) => {
     if (!roomId || !finalSessionId || !mediaItem) return null;
@@ -594,472 +335,6 @@ export default function LeftSidebar({
     } else {
       img.src = '/icons/placeholder-poster.jpg';
     }
-  };
-
-  const getVideoDurationFromFile = (file) =>
-    new Promise((resolve) => {
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-      video.onloadedmetadata = () => {
-        const s = Math.floor(video.duration) || 0;
-        const h = Math.floor(s / 3600);
-        const m = Math.floor((s % 3600) / 60);
-        const sec = s % 60;
-        resolve(
-          `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-        );
-        URL.revokeObjectURL(video.src);
-      };
-      video.onerror = () => { URL.revokeObjectURL(video.src); resolve('00:00:00'); };
-      video.src = URL.createObjectURL(file);
-    });
-
-  // ✅ CHUNKED UPLOAD FUNCTION WITH PARALLEL UPLOADS
-  const uploadFileChunked = async (file) => {
-    setUploading(true);
-    setUploadProgress(0);
-    setUploadSpeed(0);
-    setUploadETA('Calculating...');
-    setUploadedBytes(0);
-    setTotalBytes(file.size);
-    uploadStartTimeRef.current = Date.now();
-    lastProgressUpdateRef.current = Date.now();
-    
-    const abortController = new AbortController();
-    uploadAbortControllerRef.current = abortController;
-    
-    const uploadId = generateUploadId();
-    const chunkSize = getOptimalChunkSize(networkQuality);
-    const chunks = splitFileIntoChunks(file, chunkSize);
-    
-    console.log(`📦 [Chunked Upload] Starting:`, {
-      uploadId,
-      fileName: file.name,
-      fileSize: formatFileSize(file.size),
-      totalChunks: chunks.length,
-      chunkSize: formatFileSize(chunkSize)
-    });
-    
-    saveChunkUploadState(uploadId, {
-      uploadId,
-      fileName: file.name,
-      fileSize: file.size,
-      totalChunks: chunks.length,
-      uploadedChunks: [],
-      sessionId,
-      roomId
-    });
-    
-    // Store upload ID for background transfer
-    localStorage.setItem('current_upload_id', uploadId);
-
-    try {
-      const startTime = Date.now();
-      const concurrency = getUploadConcurrency(networkQuality);
-      
-      console.log(`🚀 [Parallel Upload] Using ${concurrency} concurrent uploads for ${networkQuality}`);
-      
-      // Upload chunks in parallel batches
-      await uploadChunksParallel({
-        chunks,
-        uploadId,
-        fileName: file.name,
-        fileSize: file.size,
-        roomId,
-        sessionId,
-        uploadFn: uploadChunk,
-        concurrency,
-        maxRetries: 3,
-        onProgress: ({ chunkIndex, totalChunks, completedChunks, percent }) => {
-          const now = Date.now();
-          if (now - lastProgressUpdateRef.current < 500 && percent < 100) return;
-          lastProgressUpdateRef.current = now;
-          
-          const uploadedBytes = completedChunks * chunkSize;
-          const elapsedSeconds = (now - startTime) / 1000;
-          const speed = uploadedBytes / 1024 / 1024 / (elapsedSeconds || 1);
-          const remainingBytes = file.size - uploadedBytes;
-          const etaSeconds = remainingBytes / (speed * 1024 * 1024);
-          
-          setUploadProgress(percent);
-          setUploadedBytes(uploadedBytes);
-          setUploadSpeed(speed);
-          
-          if (etaSeconds < 60) setUploadETA(`${Math.round(etaSeconds)}s`);
-          else if (etaSeconds < 3600) setUploadETA(`${Math.round(etaSeconds / 60)}m`);
-          else setUploadETA(`${Math.round(etaSeconds / 3600)}h`);
-          
-          saveChunkUploadState(uploadId, {
-            uploadId,
-            fileName: file.name,
-            fileSize: file.size,
-            totalChunks: chunks.length,
-            uploadedChunks: Array.from({ length: completedChunks }, (_, i) => i),
-            sessionId,
-            roomId,
-            progress: percent
-          });
-        }
-      });
-      
-      console.log('✅ [Chunked Upload] Complete');
-      setUploadProgress(100);
-      clearChunkUploadState(uploadId);
-      localStorage.removeItem('current_upload_id');
-      
-      // Notify Service Worker of completion
-      if (uploadSW.isRegistered) {
-        uploadSW.notifyUploadCompleted({
-          uploadId,
-          fileName: file.name,
-          roomId
-        });
-      }
-
-      // ✅ RETRY POSTER: Poster generates async on backend (takes ~500ms)
-      // If we get placeholder poster, retry fetching after 1.5s to get real poster
-      setTimeout(async () => {
-        try {
-          console.log('🎨 [Poster Retry] Fetching updated media items for poster...');
-          const token = localStorage.getItem('wewatch_token');
-          const response = await fetch(`${API_BASE_URL}/api/rooms/${roomId}/temporary-media`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            console.log('🎨 [Poster Retry] Received updated media items:', data);
-            
-            // Trigger parent to refresh playlist with updated posters
-            if (onUploadComplete) {
-              playSuccess();
-              onUploadComplete();
-            }
-          }
-        } catch (err) {
-          console.warn('⚠️ [Poster Retry] Failed to fetch updated poster:', err);
-        }
-      }, 5000); // Wait 5s for async poster generation + CDN upload
-
-      if (onUploadComplete) {
-        playSuccess();
-        onUploadComplete();
-      }
-    } catch (err) {
-      if (err.name === 'CanceledError' || err.message?.includes('cancel')) {
-        console.log('🚫 [Upload] Cancelled');
-        clearChunkUploadState(uploadId);
-        localStorage.removeItem('current_upload_id');
-        toast('Upload cancelled.');
-      } else {
-        console.error("❌ [Upload] Failed:", err);
-        clearChunkUploadState(uploadId);
-        localStorage.removeItem('current_upload_id');
-        toast.error(`Upload failed: ${err.message}`);
-      }
-    } finally {
-      localStorage.removeItem('wewatch_active_upload');
-      localStorage.removeItem('current_upload_id');
-      setUploading(false);
-      setUploadProgress(0);
-      setUploadSpeed(0);
-      setUploadETA('');
-      setUploadedBytes(0);
-      setTotalBytes(0);
-      uploadAbortControllerRef.current = null;
-    }
-  };
-
-  // Direct BunnyCDN upload path (production only).
-  // Browser → Vercel Edge Function → BunnyCDN (no Railway for binary data).
-  // After upload, Railway is notified via a tiny JSON confirm call.
-  // resumeState: saved state from a previous interrupted upload (Option A).
-  const uploadFileDirect = async (file, resumeState = null) => {
-    // Keep the ref current so the online-event auto-retry handler always finds this function.
-    uploadFileDirectRef.current = uploadFileDirect;
-
-    setUploading(true);
-    setUploadPaused(false);
-    uploadPausedRef.current = false;
-    setUploadProgress(resumeState
-      ? Math.round(((resumeState.completedChunks?.length ?? 0) / (resumeState.totalChunks ?? 1)) * 100)
-      : 0);
-    setUploadSpeed(0);
-    setUploadETA('Calculating...');
-    setUploadedBytes(0);
-    setTotalBytes(file.size);
-    uploadStartTimeRef.current = Date.now();
-
-    const abortController = new AbortController();
-    uploadAbortControllerRef.current = abortController;
-    let shouldPause = false; // local flag — safe to read inside finally
-
-    // Option A: track the uploadId once the first chunk completes so we can clean up on success.
-    let activeBunnyUploadId = null;
-
-    // Option A: save progress to localStorage after each successful chunk.
-    const handleChunkComplete = (completedIndices, uploadId, chunkSize) => {
-      activeBunnyUploadId = uploadId;
-      const totalChunksEstimate = Math.ceil(file.size / chunkSize);
-      localStorage.setItem('current_bunny_upload_id', uploadId);
-      localStorage.setItem(`wewatch_bunny_upload_${uploadId}`, JSON.stringify({
-        uploadId,
-        fileName: file.name,
-        fileSize: file.size,
-        chunkSize,
-        totalChunks: totalChunksEstimate,
-        completedChunks: completedIndices,
-        roomId,
-        sessionId: sessionId || '',
-        timestamp: Date.now(),
-      }));
-    };
-
-    try {
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'mp4';
-      // Reuse the cdnPath and cdnUrl from the original upload if resuming; otherwise generate fresh.
-      const uniqueId = resumeState?.uniqueId ?? crypto.randomUUID();
-      const cdnFolder = (sessionId || resumeState?.sessionId) ? 'temp-media' : 'media';
-      const cdnPath = resumeState?.cdnPath ?? `${cdnFolder}/${uniqueId}.${ext}`;
-      const pullZoneUrl = import.meta.env.VITE_BUNNY_PULL_ZONE_URL?.replace(/\/$/, '');
-      const cdnUrl = resumeState?.cdnUrl ?? `${pullZoneUrl}/${cdnPath}`;
-
-      console.log(`🚀 [DirectUpload] ${resumeState ? 'Resuming' : 'Starting'}: ${file.name} → ${cdnPath}`);
-
-      // Get duration before upload (fast, runs locally in browser)
-      const duration = resumeState?.duration ?? await getVideoDurationFromFile(file);
-
-      const startTime = Date.now();
-      const { uploadId, totalChunks } = await uploadFileToBunnyCDN(
-        file,
-        cdnPath,
-        (percent, loaded, total) => {
-          const now = Date.now();
-          if (now - lastProgressUpdateRef.current < 500 && percent < 100) return;
-          lastProgressUpdateRef.current = now;
-
-          const elapsedSeconds = (now - startTime) / 1000;
-          const speed = loaded / 1024 / 1024 / (elapsedSeconds || 1);
-          const remainingBytes = total - loaded;
-          const etaSeconds = remainingBytes / (speed * 1024 * 1024);
-
-          setUploadProgress(percent);
-          setUploadedBytes(loaded);
-          setUploadSpeed(speed);
-          if (etaSeconds < 60) setUploadETA(`${Math.round(etaSeconds)}s`);
-          else if (etaSeconds < 3600) setUploadETA(`${Math.round(etaSeconds / 60)}m`);
-          else setUploadETA(`${Math.round(etaSeconds / 3600)}h`);
-        },
-        abortController.signal,
-        resumeState,      // Option A: pass saved state (null = fresh upload)
-        handleChunkComplete, // Option A: persist per-chunk progress
-      );
-
-      console.log(`[DirectUpload] All chunks on BunnyCDN, requesting assembly...`);
-      setUploadProgress(99);
-
-      // Save assembly metadata in case assembleUpload itself fails (so we can retry without
-      // re-uploading all chunks — they're already on BunnyCDN).
-      if (activeBunnyUploadId) {
-        localStorage.setItem(`wewatch_bunny_upload_${activeBunnyUploadId}`, JSON.stringify({
-          uploadId,
-          fileName: file.name,
-          fileSize: file.size,
-          chunkSize: resumeState?.chunkSize ?? Math.ceil(file.size / totalChunks),
-          totalChunks,
-          completedChunks: Array.from({ length: totalChunks }, (_, i) => i), // all done
-          roomId,
-          sessionId: sessionId || '',
-          cdnPath,
-          cdnUrl,
-          uniqueId,
-          duration,
-          needsAssembly: true,
-          timestamp: Date.now(),
-        }));
-      }
-
-      const assembleResp = await assembleUpload(roomId, {
-        upload_id: uploadId,
-        total_chunks: totalChunks,
-        original_name: file.name,
-        mime_type: file.type || `video/${ext}`,
-        file_size: file.size,
-        session_id: sessionId || '',
-        duration,
-      });
-
-      // Option A: success — clear persisted state.
-      if (activeBunnyUploadId) {
-        localStorage.removeItem(`wewatch_bunny_upload_${activeBunnyUploadId}`);
-        localStorage.removeItem('current_bunny_upload_id');
-      }
-
-      console.log('✅ [DirectUpload] DB record created');
-      if (onUploadComplete) { playSuccess(); onUploadComplete(); }
-
-      // Poster is generated async on Railway after assembly.
-      // The WS `playlist_poster_updated` message updates the UI instantly when the
-      // socket is healthy. pollForPoster is the fallback for when the WS message
-      // is missed (brief disconnect during a long mobile upload).
-      const newItemId = assembleResp?.data?.media_item_id;
-      if (newItemId) pollForPoster(newItemId);
-    } catch (err) {
-      if (err.name === 'CanceledError' || err.message?.includes('cancel')) {
-        if (visibilityPauseRef.current) {
-          // Tab switched — preserve state so the visibilitychange handler can auto-resume.
-          console.log('⏸ [DirectUpload] Paused (tab hidden) — will resume on return');
-          shouldPause = true;
-          uploadPausedRef.current = true;
-          setUploadPaused(true);
-          setUploadSpeed(0);
-          setUploadETA('Resuming when you return…');
-        } else {
-          // User explicitly cancelled — clear everything.
-          console.log('🚫 [DirectUpload] Cancelled');
-          if (activeBunnyUploadId) {
-            localStorage.removeItem(`wewatch_bunny_upload_${activeBunnyUploadId}`);
-            localStorage.removeItem('current_bunny_upload_id');
-          }
-          uploadFileRef.current = null;
-          toast('Upload cancelled.');
-        }
-      } else {
-        console.error('❌ [DirectUpload] Network error, entering paused state:', err);
-        // Same-session: File object is still in memory. Pause and auto-retry on reconnect
-        // rather than giving up. localStorage state is already up-to-date.
-        shouldPause = true;
-        uploadPausedRef.current = true;
-        setUploadPaused(true);
-        setUploadSpeed(0);
-        setUploadETA('Waiting for connection…');
-      }
-    } finally {
-      if (!shouldPause) {
-        // Clean reset — either success or cancel.
-        setUploading(false);
-        setUploadProgress(0);
-        setUploadSpeed(0);
-        setUploadETA('');
-        setUploadedBytes(0);
-        setTotalBytes(0);
-      }
-      uploadAbortControllerRef.current = null;
-    }
-  };
-
-  const handleFileUpload = async (files) => {
-    if (!files?.length || !roomId) return;
-
-    const file = files[0];
-
-    // ✅ CLIENT-SIDE VALIDATION
-    const allowedTypes = [
-      // Video
-      'video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska', 'video/matroska',
-      'video/avi', 'video/x-msvideo', 'video/x-m4v', 'video/x-wmv',
-      'video/3gpp', 'video/mp2t',
-      // Audio
-      'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg',
-      'audio/flac', 'audio/aac', 'audio/x-m4a',
-    ];
-    // Many browsers/OSes report an empty file.type for .mkv (no universal MIME
-    // registration) — fall back to extension matching when type sniffing fails.
-    const allowedExtensions = ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v', 'wmv', '3gp', 'ts', 'mp3', 'm4a', 'wav', 'ogg', 'flac', 'aac'];
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    const typeOk = allowedTypes.includes(file.type) || (!file.type && allowedExtensions.includes(ext));
-    if (!typeOk) {
-      toast.error(`Invalid file type: ${file.type || ext}. Allowed: MP4, WebM, MOV, MKV, AVI, MP3, M4A, WAV, AAC, FLAC`);
-      return;
-    }
-
-    const maxSize = 1 * 1024 * 1024 * 1024;
-    if (file.size > maxSize) {
-      toast.error(`File too large (${(file.size / 1024 / 1024 / 1024).toFixed(2)} GB). Maximum is 1 GB.`);
-      return;
-    }
-
-    if (file.size < 1024) {
-      toast.error('File too small. Please select a valid media file.');
-      return;
-    }
-
-    console.log('✅ [Validation] Passed:', {
-      name: file.name,
-      type: file.type,
-      size: formatFileSize(file.size)
-    });
-
-    if (!hasAcceptedTerms) {
-      setShowUploadDisclaimer(true);
-      return;
-    }
-
-    // Option A: check if this file matches a pending BunnyCDN resume by name + size.
-    let resumeState = null;
-    if (
-      pendingResumeData?.uploadPath === 'bunny' &&
-      pendingResumeData.fileName === file.name &&
-      pendingResumeData.fileSize === file.size
-    ) {
-      resumeState = pendingResumeData;
-      setShowResumeUpload(false);
-      setPendingResumeData(null);
-      const completed = resumeState.completedChunks?.length ?? 0;
-      const total = resumeState.totalChunks ?? 1;
-      toast.success(`Resuming from ${Math.round((completed / total) * 100)}%…`);
-    }
-
-    // Keep the File object alive for same-session auto-retry on network drop.
-    uploadFileRef.current = file;
-    uploadFileDirectRef.current = uploadFileDirect;
-
-    if (import.meta.env.PROD) {
-      await uploadFileDirect(file, resumeState);
-    } else {
-      await uploadFileChunked(file);
-    }
-  };
-
-  const handleCancelUpload = () => {
-    if (uploadAbortControllerRef.current) {
-      uploadAbortControllerRef.current.abort();
-      console.log('🚫 [LeftSidebar] Upload cancel requested');
-    }
-
-    // Clear persistence timer
-    if (progressPersistenceTimerRef.current) {
-      clearInterval(progressPersistenceTimerRef.current);
-      progressPersistenceTimerRef.current = null;
-    }
-
-    // Clear any saved upload state (dev path + BunnyCDN path)
-    const uploads = Object.keys(localStorage).filter(key => key.startsWith('wewatch_chunk_upload_'));
-    uploads.forEach(key => localStorage.removeItem(key));
-    localStorage.removeItem('wewatch_active_upload');
-    const bunnyId = localStorage.getItem('current_bunny_upload_id');
-    if (bunnyId) {
-      localStorage.removeItem(`wewatch_bunny_upload_${bunnyId}`);
-      localStorage.removeItem('current_bunny_upload_id');
-    }
-
-    // Clear same-session refs so auto-retry doesn't fire after a deliberate cancel.
-    uploadFileRef.current = null;
-    uploadPausedRef.current = false;
-    setUploadPaused(false);
-    setUploading(false);
-    setUploadProgress(0);
-    setUploadSpeed(0);
-    setUploadETA('');
-    setUploadedBytes(0);
-    setTotalBytes(0);
-  };
-  
-  const formatFileSize = (bytes) => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
-    return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
   };
 
   const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
@@ -1754,15 +1029,7 @@ export default function LeftSidebar({
                     <div className="flex gap-2 mt-2">
                       {uploadPaused && (
                         <button
-                          onClick={() => {
-                            if (!uploadFileRef.current) return;
-                            const bunnyId = localStorage.getItem('current_bunny_upload_id');
-                            let savedState = null;
-                            if (bunnyId) {
-                              try { savedState = JSON.parse(localStorage.getItem(`wewatch_bunny_upload_${bunnyId}`) || 'null'); } catch (_) {}
-                            }
-                            uploadFileDirectRef.current?.(uploadFileRef.current, savedState);
-                          }}
+                          onClick={handleRetryNow}
                           className="flex-1 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 rounded-lg font-medium text-xs transition-colors"
                         >
                           Retry Now
@@ -2423,9 +1690,7 @@ export default function LeftSidebar({
               </button>
               <button
                 onClick={() => {
-                  setHasAcceptedTerms(true);
-                  localStorage.setItem('wewatch_upload_terms_accepted', 'true');
-                  setShowUploadDisclaimer(false);
+                  acceptUploadTerms();
                   // Trigger file picker after accepting
                   fileInputRef.current?.click();
                 }}
@@ -2442,7 +1707,10 @@ export default function LeftSidebar({
         </div>
       )}
 
-      {/* 🔄 Resume Upload Modal */}
+      {/* 🔄 Resume Upload Modal — only ever appears after a full page reload truly
+          lost the in-memory File reference. Closing/reopening this sidebar never
+          triggers this: the upload state lives in the parent page's useMediaUploadManager
+          hook, which survives sidebar toggles, so the upload just keeps going. */}
       {showResumeUpload && pendingResumeData && (() => {
         const isBunny = pendingResumeData.uploadPath === 'bunny';
         const needsAssembly = isBunny && pendingResumeData.needsAssembly;
@@ -2451,46 +1719,6 @@ export default function LeftSidebar({
           : (pendingResumeData.uploadedChunks?.length ?? 0);
         const totalCount = pendingResumeData.totalChunks ?? 1;
         const progressPct = Math.round((completedCount / totalCount) * 100);
-
-        const handleDiscard = () => {
-          // Clear dev path state
-          const devId = localStorage.getItem('current_upload_id');
-          if (devId) { clearChunkUploadState(devId); localStorage.removeItem('current_upload_id'); }
-          // Clear BunnyCDN path state
-          const bunnyId = localStorage.getItem('current_bunny_upload_id');
-          if (bunnyId) {
-            localStorage.removeItem(`wewatch_bunny_upload_${bunnyId}`);
-            localStorage.removeItem('current_bunny_upload_id');
-          }
-          setShowResumeUpload(false);
-          setPendingResumeData(null);
-        };
-
-        const handleResumeAssembly = async () => {
-          setShowResumeUpload(false);
-          const state = pendingResumeData;
-          setPendingResumeData(null);
-          try {
-            toast('Finalising upload…');
-            const finalResp = await assembleUpload(roomId, {
-              upload_id: state.uploadId,
-              total_chunks: state.totalChunks,
-              original_name: state.fileName,
-              mime_type: state.mimeType || `video/${state.fileName.split('.').pop()?.toLowerCase() || 'mp4'}`,
-              file_size: state.fileSize,
-              session_id: state.sessionId || '',
-              duration: state.duration || '00:00:00',
-            });
-            localStorage.removeItem(`wewatch_bunny_upload_${state.uploadId}`);
-            localStorage.removeItem('current_bunny_upload_id');
-            toast.success('Upload finalised!');
-            if (onUploadComplete) { playSuccess(); onUploadComplete(); }
-            const resumedItemId = finalResp?.data?.media_item_id;
-            if (resumedItemId) pollForPoster(resumedItemId);
-          } catch (err) {
-            toast.error(`Finalisation failed: ${err.message}`);
-          }
-        };
 
         return (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -2522,27 +1750,21 @@ export default function LeftSidebar({
               </p>
               <div className="flex gap-3">
                 <button
-                  onClick={handleDiscard}
+                  onClick={discardResume}
                   className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
                 >
                   Discard
                 </button>
                 {needsAssembly ? (
                   <button
-                    onClick={handleResumeAssembly}
+                    onClick={finalizeResume}
                     className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors font-semibold"
                   >
                     Finalise
                   </button>
                 ) : (
                   <button
-                    onClick={() => {
-                      setShowResumeUpload(false);
-                      if (!isBunny) {
-                        toast('Use the upload button and re-select the same file.', { duration: 5000 });
-                      }
-                      // For bunny path, pendingResumeData stays set so handleFileUpload can match it.
-                    }}
+                    onClick={resumeUpload}
                     className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors font-semibold"
                   >
                     Resume

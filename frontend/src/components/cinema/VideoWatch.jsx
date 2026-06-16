@@ -54,6 +54,7 @@ import TikTokHeartAnimation, { makeHeart } from '../TikTokHeartAnimation';
 import { HeartIcon } from '@heroicons/react/24/solid';
 import useEmoteSounds from '../../hooks/useEmoteSounds';
 import useNetworkQuality from '../../hooks/useNetworkQuality';
+import useMediaUploadManager from '../../hooks/useMediaUploadManager';
 import FloatingEmoteOverlay from './ui/FloatingEmoteOverlay';
 import NetworkQualityBanner from '../NetworkQualityBanner';
 import AdVideoPreroll from '../AdVideoPreroll';
@@ -3572,6 +3573,14 @@ export default function VideoWatch() {
     fetchAndGeneratePosters();
   }, [fetchAndGeneratePosters]);
 
+  // Owns LeftSidebar's upload state at this (non-unmounting) level so an in-progress
+  // upload survives the sidebar being closed/reopened — see useMediaUploadManager.js.
+  const mediaUploadManager = useMediaUploadManager({
+    roomId,
+    sessionId: activeSessionId,
+    onUploadComplete: fetchAndGeneratePosters,
+  });
+
   // Handle ALL WebSocket messages
   useEffect(() => {
     // If the cap in useWebSocket truncated the array, processedMessageCountRef may exceed
@@ -6589,6 +6598,7 @@ export default function VideoWatch() {
             isHost={isHost || isAdmin}
             onClose={() => setIsLeftSidebarOpen(false)}
             onUploadComplete={fetchAndGeneratePosters}
+            upload={mediaUploadManager}
             sessionId={activeSessionId}
             onSessionCleanup={(cleanup) => { leftSidebarCleanupRef.current = cleanup; }}
             // ✅ LiveShare props

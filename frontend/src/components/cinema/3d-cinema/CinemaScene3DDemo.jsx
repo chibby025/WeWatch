@@ -17,6 +17,7 @@ import AudioModeBar from './ui/AudioModeBar'; // 🎤 Audio mode toggle bar
 import CinemaVideoPlayer from '../ui/CinemaVideoPlayer';
 import useLiveKitRoom from "../../../hooks/useLiveKitRoom"; // LiveKit room hook
 import useCinemaAudio from "../../../hooks/useCinemaAudio"; // 🎤 Cinema audio hook
+import useMediaUploadManager from "../../../hooks/useMediaUploadManager";
 import { Track, ParticipantEvent, RoomEvent, LocalVideoTrack } from 'livekit-client';
 import { getTemporaryMediaItemsForRoom, getSessionTemporaryMedia, getFriendshipStatus, sendFriendRequest, getFriendsList, getPendingFriendRequests, getSentFriendRequests } from '../../../services/api';
 import { useSeatController } from './useSeatController';
@@ -2671,7 +2672,15 @@ export default function CinemaScene3DDemo() {
     console.log('🎬 [PLAYLIST] Fetching playlist on mount...');
     fetchAndGeneratePosters();
   }, [fetchAndGeneratePosters]);
-  
+
+  // Owns LeftSidebar's upload state at this (non-unmounting) level so an in-progress
+  // upload survives the sidebar being closed/reopened — see useMediaUploadManager.js.
+  const mediaUploadManager = useMediaUploadManager({
+    roomId,
+    sessionId: sessionStatus?.id,
+    onUploadComplete: fetchAndGeneratePosters,
+  });
+
   // 🐛 DEBUG: Track playlist state changes
   useEffect(() => {
     console.log('📝 [PLAYLIST STATE] Playlist changed:', {
@@ -5968,6 +5977,7 @@ export default function CinemaScene3DDemo() {
             }}
             onClose={() => setIsLeftSidebarOpen(false)}
             onUploadComplete={fetchAndGeneratePosters} // ✅ Refresh after upload
+            upload={mediaUploadManager}
             mousePosition={{ x: 0, y: 0 }}
             sessionId={sessionStatus?.id}
             watchSessionMembers={roomMembers}

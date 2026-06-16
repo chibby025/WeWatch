@@ -26,6 +26,7 @@ import UserProfileModal from '../components/UserProfileModal';
 import LectureHallSeatsGrid from '../components/cinema/ui/LectureHallSeatsGrid';
 import SeatSwapNotification from '../components/cinema/ui/SeatSwapNotification';
 import LeftSidebar from '../components/cinema/ui/LeftSidebar';
+import useMediaUploadManager from '../hooks/useMediaUploadManager';
 import QuizManagementModal from '../components/cinema/modals/QuizManagementModal';
 import MakeQuizModal from '../components/cinema/modals/MakeQuizModal';
 import TakeQuizModal from '../components/cinema/modals/TakeQuizModal';
@@ -1605,7 +1606,15 @@ const PositionCalculatorPage = () => {
       toast.error('Upload succeeded but failed to refresh playlist');
     }
   }, [actualSessionId]);
-  
+
+  // Owns LeftSidebar's upload state at this (non-unmounting) level so an in-progress
+  // upload survives the sidebar being closed/reopened — see useMediaUploadManager.js.
+  const mediaUploadManager = useMediaUploadManager({
+    roomId: actualRoomId,
+    sessionId: actualSessionId,
+    onUploadComplete: handleUploadComplete,
+  });
+
   // ✅ Fetch watch session members from backend
   const prevMembersRef = useRef([]);
   const fetchWatchSessionMembers = useCallback(async () => {
@@ -7322,6 +7331,7 @@ const PositionCalculatorPage = () => {
           isHost={isHost}
           onClose={() => setIsLeftSidebarOpen(false)}
           onUploadComplete={handleUploadComplete}
+          upload={mediaUploadManager}
           sessionId={actualSessionId}
           onQuizClick={handleQuizClick}
           activeQuiz={activeQuiz}
