@@ -75,11 +75,13 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
         userID := uint(playerMap["user_id"].(float64))
         username := playerMap["username"].(string)
         color := playerMap["color"].(string)
+        avatarURL, _ := playerMap["avatar_url"].(string)
 
         players = append(players, models.Player{
             UserID:   userID,
             Username: username,
             Color:    color,
+            Avatar:   avatarURL,
             Position: i,
         })
     }
@@ -175,7 +177,7 @@ func (h *GameWebSocketHandler) handleGameEnd(client interface{}, data map[string
     }
     cf := client.(ClientFields)
     roomID := cf.GetRoomID()
-    hostID := cf.GetUserID()
+    userID := cf.GetUserID()
 
     gameState, exists := h.gameManager.GetActiveGame(roomID)
     if !exists {
@@ -183,18 +185,22 @@ func (h *GameWebSocketHandler) handleGameEnd(client interface{}, data map[string
         return
     }
 
-    if gameState.GameSession.HostID != hostID {
-        h.sendError(client, "only host can end game")
-        return
+    // Any participant can forfeit — the OTHER player wins.
+    var winnerID *uint
+    for _, p := range gameState.Players {
+        if p.UserID != userID {
+            id := p.UserID
+            winnerID = &id
+            break
+        }
     }
 
-    err := h.gameManager.EndGame(gameSessionID, nil, "ended_by_host")
+    err := h.gameManager.EndGame(gameSessionID, winnerID, "forfeited")
     if err != nil {
         h.sendError(client, fmt.Sprintf("failed to end game: %v", err))
         return
     }
-    // endGameLocked already broadcasts game_state_update + game_ended to all clients.
-    log.Printf("🎮 [GameWebSocketHandler] Host ended game %d in room %d", gameSessionID, roomID)
+    log.Printf("🎮 [GameWebSocketHandler] Player %d forfeited game %d in room %d", userID, gameSessionID, roomID)
 }
 
 func (h *GameWebSocketHandler) CleanupPlayerDisconnect(roomID uint, userID uint) {

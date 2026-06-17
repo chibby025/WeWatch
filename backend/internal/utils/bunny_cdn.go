@@ -395,6 +395,56 @@ func ValidateBunnyCDNConfig() error {
 	return nil
 }
 
+// UploadAvatarToBunnyCDN uploads a user avatar to BunnyCDN under the avatars/ subdirectory.
+// In local dev it falls back to ./uploads/avatars/ (served by the Go static handler).
+func UploadAvatarToBunnyCDN(fileData []byte, filename string, contentType string) (string, error) {
+	sanitizedFilename := sanitizeFilename(filename)
+	timestamp := time.Now().Unix()
+	localFilename := fmt.Sprintf("%d_%s", timestamp, sanitizedFilename)
+	cdnPath := "avatars/" + localFilename
+
+	if IsLocalDev() || BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {
+		dir := "./uploads/avatars"
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", fmt.Errorf("failed to create avatars dir: %w", err)
+		}
+		localPath := filepath.Join(dir, localFilename)
+		if err := os.WriteFile(localPath, fileData, 0644); err != nil {
+			return "", fmt.Errorf("failed to write avatar: %w", err)
+		}
+		url := "/uploads/avatars/" + localFilename
+		log.Printf("🏠 [Local] Avatar saved: %s", url)
+		return url, nil
+	}
+
+	uploadURL := fmt.Sprintf("%s/%s", getBunnyCDNStorageURL(), cdnPath)
+	log.Printf("📤 [BunnyCDN] Uploading avatar: %s (%d bytes)", cdnPath, len(fileData))
+
+	req, err := http.NewRequest("PUT", uploadURL, bytes.NewReader(fileData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create upload request: %w", err)
+	}
+	req.Header.Set("AccessKey", BunnyCDNAccessKey)
+	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = int64(len(fileData))
+
+	client := &http.Client{Timeout: 2 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	cdnURL := fmt.Sprintf("%s/%s", BunnyCDNPullZoneURL, cdnPath)
+	log.Printf("✅ [BunnyCDN] Avatar uploaded: %s", cdnURL)
+	return cdnURL, nil
+}
+
 // UploadTrailerToBunnyCDN uploads a trailer video to BunnyCDN under the trailers/ subdirectory
 func UploadTrailerToBunnyCDN(fileData []byte, filename string, contentType string) (string, error) {
 	if BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {

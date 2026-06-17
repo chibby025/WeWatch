@@ -36,7 +36,7 @@ const games = [
   {
     id: 'trivia',
     name: 'Trivia',
-    description: 'Answer fast — points for speed and accuracy!',
+    description: 'Pick a topic — Film, Anime, Games & more!',
     minPlayers: 2,
     maxPlayers: 10,
     icon: '🧠',
@@ -45,7 +45,7 @@ const games = [
   },
 ];
 
-const playerColors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A'];
+const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 
 export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame }) {
   const [selectedGame, setSelectedGame] = useState('tic_tac_toe');
@@ -126,6 +126,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
       return {
         user_id: playerId,
         username: member?.username || `Player ${index + 1}`,
+        avatar_url: member?.avatar_url || null,
         color: playerColors[index]
       };
     });
@@ -218,49 +219,53 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
               </div>
 
               <div className="space-y-2 max-h-48 overflow-y-auto">
-                {roomMembers.map((member, index) => {
+                {/* Deduplicate by id before rendering */}
+                {roomMembers.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i).map((member) => {
                   const isSelected = selectedPlayers.includes(member.id);
-              const isHost = member.id === currentUserId;
-              const playerColorIndex = selectedPlayers.indexOf(member.id);
+                  const isHost = member.id === currentUserId;
+                  const playerColorIndex = selectedPlayers.indexOf(member.id);
+                  const initials = (member.username || '?').slice(0, 2).toUpperCase();
 
-              return (
-                <label
-                  key={member.id}
-                  className={`
-                    flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all
-                    ${isSelected
-                      ? 'border-purple-500 bg-purple-500/10'
-                      : 'border-gray-600 bg-gray-700/30 hover:border-gray-500'
-                    }
-                    ${isHost ? 'cursor-not-allowed opacity-80' : ''}
-                  `}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => togglePlayerSelection(member.id)}
-                    disabled={isHost}
-                    className="w-5 h-5 rounded accent-purple-500"
-                  />
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-white font-medium">{member.username}</span>
-                      {isHost && (
-                        <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">
-                          Host
-                        </span>
+                  return (
+                    <label
+                      key={member.id}
+                      onClick={() => togglePlayerSelection(member.id)}
+                      className={`
+                        flex items-center gap-3 p-3 rounded-lg border transition-all
+                        ${isSelected
+                          ? 'border-purple-500 bg-purple-500/10'
+                          : 'border-gray-600 bg-gray-700/30 hover:border-gray-500'
+                        }
+                        ${isHost ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}
+                      `}
+                    >
+                      {/* Avatar */}
+                      <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 flex items-center justify-center">
+                        {member.avatar_url ? (
+                          <img src={member.avatar_url} alt={member.username} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-xs font-bold text-white">{initials}</span>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-medium">{member.username}</span>
+                          {isHost && (
+                            <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">
+                              Host
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {isSelected && playerColorIndex >= 0 && (
+                        <div
+                          className="w-6 h-6 rounded-full border-2 border-white flex-shrink-0"
+                          style={{ backgroundColor: playerColors[playerColorIndex] }}
+                        />
                       )}
-                    </div>
-                  </div>
-                  {isSelected && playerColorIndex >= 0 && (
-                    <div
-                      className="w-6 h-6 rounded-full border-2 border-white"
-                      style={{ backgroundColor: playerColors[playerColorIndex] }}
-                    />
-                  )}
-                </label>
-              );
-            })}
+                    </label>
+                  );
+                })}
           </div>
 
           {roomMembers.length < selectedGameData.minPlayers && selectedGameData.type === 'multiplayer' && (

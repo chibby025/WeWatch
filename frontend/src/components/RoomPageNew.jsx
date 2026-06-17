@@ -962,6 +962,8 @@ const RoomPageNew = () => {
     };
 
     ws.onmessage = (event) => {
+      // Skip binary frames — they are video/audio data not intended for this handler
+      if (event.data instanceof ArrayBuffer || event.data instanceof Blob) return;
       try {
         const message = JSON.parse(event.data);
         logger.debug('📨 [RoomPageNew] Received message:', {
@@ -974,8 +976,7 @@ const RoomPageNew = () => {
       } catch (err) {
         logger.error('❌ [RoomPageNew] Failed to parse WebSocket message');
         logger.error('🔍 [RoomPageNew] Parse error:', err);
-        logger.error('📄 [RoomPageNew] Raw message data:', event.data.substring(0, 200));
-        logger.error('📊 [RoomPageNew] Message size: ${event.data.length} bytes');
+        logger.error('📄 [RoomPageNew] Raw message data:', typeof event.data === 'string' ? event.data.substring(0, 200) : '[binary]');
       }
     };
 

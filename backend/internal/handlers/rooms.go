@@ -2652,37 +2652,59 @@ func GetActiveSessionHandler(c *gin.Context) {
 
 	// ✅ Fetch active members with user details
 	type MemberResponse struct {
-		UserID    uint   `json:"user_id"`
-		Username  string `json:"username"`
-		AvatarURL string `json:"avatar_url"`
-		IsActive  bool   `json:"is_active"`
-		UserRole  string `json:"user_role"`
+		UserID      uint       `json:"user_id"`
+		Username    string     `json:"username"`
+		AvatarURL   string     `json:"avatar_url"`
+		IsActive    bool       `json:"is_active"`
+		UserRole    string     `json:"user_role"`
+		LastSeenAt  *time.Time `json:"last_seen_at"`
+		JoinedAt    time.Time  `json:"joined_at"`
 	}
 
 	var members []MemberResponse
 	DB.Table("watch_session_members").
-		Select("watch_session_members.user_id, users.username, users.avatar_url, watch_session_members.is_active, user_rooms.user_role").
+		Select("watch_session_members.user_id, users.username, users.avatar_url, watch_session_members.is_active, user_rooms.user_role, watch_session_members.last_seen_at, watch_session_members.joined_at").
 		Joins("JOIN users ON users.id = watch_session_members.user_id").
 		Joins("LEFT JOIN user_rooms ON user_rooms.user_id = watch_session_members.user_id AND user_rooms.room_id = ?", roomID).
 		Where("watch_session_members.watch_session_id = ? AND watch_session_members.is_active = ?", session.ID, true).
 		Scan(&members)
 
 	// Ghost cleanup: fire-and-forget to avoid blocking the response.
-	// The hourly CleanupStaleSessions goroutine is the primary cleanup path;
-	// this just accelerates convergence without adding latency.
+	// Only deactivates members who are both absent from WS AND outside the 90-second
+	// grace period. The grace period covers WS reconnection windows (max ~12s for 5
+	// attempts) and tab-switches that throttle the 60s presence ping. Members are
+	// never touched if their last_seen_at (or joined_at when last_seen_at is NULL) is
+	// within 90 seconds — that window is sufficient for all reconnection paths.
 	wsActiveUserIDs := hub.GetRoomActiveUserIDs(uint(roomID))
 	go func(sessionID uint, snap []MemberResponse, activeIDs map[uint]bool) {
 		isLikelyZombie := len(activeIDs) == 0 && len(snap) > 0 && time.Since(session.StartedAt) > 5*time.Minute
 		if len(activeIDs) == 0 && !isLikelyZombie {
 			return
 		}
+		const gracePeriod = 90 * time.Second
 		now := time.Now()
 		for _, m := range snap {
-			if !activeIDs[m.UserID] {
-				DB.Model(&models.WatchSessionMember{}).
-					Where("watch_session_id = ? AND user_id = ? AND is_active = ?", sessionID, m.UserID, true).
-					Updates(map[string]interface{}{"is_active": false, "left_at": now})
+			if activeIDs[m.UserID] {
+				continue // WS is live — no action needed
 			}
+			// Determine the most recent activity timestamp for this member.
+			// last_seen_at is set on join and refreshed by presence pings; fall back to
+			// joined_at when the column is NULL (pre-migration rows or very first join).
+			var lastActivity time.Time
+			if m.LastSeenAt != nil {
+				lastActivity = *m.LastSeenAt
+			} else {
+				lastActivity = m.JoinedAt
+			}
+			if now.Sub(lastActivity) < gracePeriod {
+				// Member pinged or joined recently — they are almost certainly
+				// reconnecting (WS drop + reconnect takes 2–12 s). Leave them alone.
+				continue
+			}
+			// No WS connection AND stale activity — this is a true ghost.
+			DB.Model(&models.WatchSessionMember{}).
+				Where("watch_session_id = ? AND user_id = ? AND is_active = ?", sessionID, m.UserID, true).
+				Updates(map[string]interface{}{"is_active": false, "left_at": now})
 		}
 	}(session.ID, members, wsActiveUserIDs)
 

@@ -1146,7 +1146,8 @@ const PositionCalculatorPage = () => {
   const viewIconsHideTimeoutRef = useRef(null);
   
   // WebSocket and session state
-  const [watchSessionMembers, setWatchSessionMembers] = useState([]); // Active watch session participants
+  const [watchSessionMembers, setWatchSessionMembers] = useState([]);
+  const [authoritativeMemberCount, setAuthoritativeMemberCount] = useState(null); // DB-sourced count from WS events; overrides array length
   const [liveShareGuest, setLiveShareGuest] = useState(null); // Active LiveShare guest object
   const [hasLiveSharePermission, setHasLiveSharePermission] = useState(false); // Member permission for LiveShare
   const hasApiFetchedMembersRef = useRef(false); // Track if we've fetched members from API to prevent fallback overwrite
@@ -1904,14 +1905,32 @@ const PositionCalculatorPage = () => {
     }
   }, [actualRoomId, actualSessionId]);
   
-  // ⚠️ API polling DISABLED - WebSocket session_status provides real-time member data
-  // fetchWatchSessionMembers function kept for manual refresh fallback if needed
-  // useEffect(() => {
-  //   fetchWatchSessionMembers();
-  //   // Poll every 5 seconds for member updates
-  //   const interval = setInterval(fetchWatchSessionMembers, 5000);
-  //   return () => clearInterval(interval);
-  // }, [fetchWatchSessionMembers]);
+  // Reconciliation poll: every 5s compare DB truth against local array.
+  // WS events are the primary path; this catches any missed events.
+  useEffect(() => {
+    if (!actualRoomId) return;
+    const interval = setInterval(async () => {
+      try {
+        const response = await getActiveSession(actualRoomId);
+        const session = response?.data;
+        if (!session?.is_existing || !Array.isArray(session.members)) return;
+        const dbIds = new Set(session.members.map(m => m.user_id));
+        const localIds = new Set(watchSessionMembers.map(m => m.id || m.user_id));
+        const mismatch = dbIds.size !== localIds.size ||
+          [...dbIds].some(id => !localIds.has(id)) ||
+          [...localIds].some(id => !dbIds.has(id));
+        if (mismatch) {
+          console.log('[LectureHall] Member mismatch — reconciling from REST');
+          setWatchSessionMembers(session.members.map(m => ({
+            id: m.user_id, username: m.username || `User ${m.user_id}`,
+            user_role: m.user_role, avatar_url: m.avatar_url || null,
+          })));
+          setAuthoritativeMemberCount(session.members.length);
+        }
+      } catch { /* network hiccups ignored */ }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [actualRoomId, watchSessionMembers]);
   
   // Populate watchSessionMembers from sessionStatus, using userIdToUsername mapping
   useEffect(() => {
@@ -3986,6 +4005,10 @@ const PositionCalculatorPage = () => {
             }];
           });
           
+          if (typeof data.member_count === 'number') {
+            setAuthoritativeMemberCount(data.member_count);
+          }
+
           // Show toast notification (except for current user)
           if (data.user_id !== currentUser?.id) {
             toast.success(`${data.username} joined the session`);
@@ -4035,15 +4058,19 @@ const PositionCalculatorPage = () => {
       case 'session_member_left':
         const leavingUserId = data?.user_id;
         const leavingUsername = data?.username;
-        
+
         if (!leavingUserId) {
           console.error('❌ [session_member_left] No user_id in message');
           break;
         }
-        
+
         // Remove from watchSessionMembers
         setWatchSessionMembers(prev => {
           const filtered = prev.filter(m => (m.id || m.user_id) !== leavingUserId);
+          // If backend supplied an authoritative count use it; otherwise trust array length.
+          if (typeof data?.member_count === 'number') {
+            setAuthoritativeMemberCount(data.member_count);
+          }
           console.log('👋 [MEMBER LEFT] User', leavingUserId, leavingUsername, '| Members:', prev.length, '→', filtered.length);
           return filtered;
         });
@@ -4224,7 +4251,7 @@ const PositionCalculatorPage = () => {
         break;
         
       case 'user_left':
-        const leftUserId = data?.user_id;
+        const leftUserId = data?.user_id || data?.userId;
         if (!leftUserId) {
           console.error('❌ [user_left] No user_id in message');
           break;
@@ -7436,6 +7463,7 @@ const PositionCalculatorPage = () => {
           onShareRoom={() => toast('Share feature coming soon!')}
           onSeatsClick={handleSeatsClick}
           watchSessionMembers={watchSessionMembers}
+          authoritativeMemberCount={authoritativeMemberCount}
           userSeats={userSeats}
           currentUser={currentUser}
           isViewLocked={isViewLocked}

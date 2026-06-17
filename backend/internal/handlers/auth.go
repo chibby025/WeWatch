@@ -3,9 +3,9 @@ package handlers
 
 import (
     "fmt"
+    "io"
     "log"
     "net/http"
-    "os"
     "path/filepath"
     "strconv"
     "strings"
@@ -602,22 +602,39 @@ func UpdateProfileHandler(c *gin.Context) {
         // Handle avatar file upload
         file, err := c.FormFile("avatar")
         if err == nil {
-            // Avatar file provided - save it
-            uploadDir := "./uploads/avatars"
-            os.MkdirAll(uploadDir, os.ModePerm)
-            
-            // Generate unique filename
-            ext := filepath.Ext(file.Filename)
-            filename := fmt.Sprintf("avatar_%d_%d%s", userID, time.Now().Unix(), ext)
-            filepath := filepath.Join(uploadDir, filename)
-            
-            if err := c.SaveUploadedFile(file, filepath); err != nil {
-                log.Printf("Failed to save avatar file: %v", err)
-                c.JSON(500, gin.H{"error": "Failed to save avatar"})
+            f, openErr := file.Open()
+            if openErr != nil {
+                c.JSON(500, gin.H{"error": "Failed to read avatar"})
                 return
             }
-            
-            avatarURL = fmt.Sprintf("/uploads/avatars/%s", filename)
+            defer f.Close()
+
+            fileData, readErr := io.ReadAll(f)
+            if readErr != nil {
+                c.JSON(500, gin.H{"error": "Failed to read avatar"})
+                return
+            }
+
+            ext := filepath.Ext(file.Filename)
+            if ext == "" {
+                ext = ".jpg"
+            }
+            contentType := file.Header.Get("Content-Type")
+            if contentType == "" {
+                contentType = "image/jpeg"
+            }
+
+            cdnURL, uploadErr := utils.UploadAvatarToBunnyCDN(
+                fileData,
+                fmt.Sprintf("avatar_%d%s", userID, ext),
+                contentType,
+            )
+            if uploadErr != nil {
+                log.Printf("Failed to upload avatar to CDN: %v", uploadErr)
+                c.JSON(500, gin.H{"error": "Failed to upload avatar"})
+                return
+            }
+            avatarURL = cdnURL
         }
     } else {
         // Handle JSON request

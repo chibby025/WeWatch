@@ -470,7 +470,33 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
           });
         }
 
-        // 🔥 KEY FIX: DO NOT buffer — drop if no handler is ready
+        // If the payload starts with '{' it is JSON accidentally sent as a binary
+        // frame (e.g. an older backend using BroadcastToRoomBinary for game state).
+        // Route it through the normal text-message pipeline so all subscribers see it.
+        if (event.data instanceof ArrayBuffer && event.data.byteLength > 0) {
+          const firstByte = new Uint8Array(event.data, 0, 1)[0];
+          if (firstByte === 0x7b) { // '{'
+            try {
+              const message = JSON.parse(new TextDecoder().decode(event.data));
+              console.log(`[${now}] useWebSocket: 🔄 Binary frame is JSON — re-routing to text pipeline (type: ${message.type})`);
+              poolEntry.subscribers.forEach(sub => {
+                if (sub.directHandlerRef?.current) {
+                  const intercepted = sub.directHandlerRef.current(message);
+                  if (intercepted) return;
+                }
+                sub.setMessages(prev => {
+                  const next = [...prev, message];
+                  return next.length > 500 ? next.slice(-500) : next;
+                });
+              });
+              return; // Do not pass to binary handler
+            } catch {
+              // Not valid JSON — fall through to binary handler
+            }
+          }
+        }
+
+        // Actual binary data (video frames etc.)
         if (onBinaryMessageRef.current) {
           console.log(`[${now}] useWebSocket: ✅ Binary handler is READY — forwarding message`);
           onBinaryMessageRef.current(event.data);

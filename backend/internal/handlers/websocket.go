@@ -533,19 +533,34 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
         log.Printf("✅ User %d identified as VIEWER for session %s", client.userID, sessionID)
     }
 
-    // ✅ IMPROVED: UPDATE existing inactive member OR INSERT new one
-    // This prevents duplicates even with race conditions (database constraint will catch any)
-    log.Printf("📝 [JoinWatchSession] Creating/updating DB member record: session.ID=%d, userID=%d, userRole=%s", session.ID, client.userID, userRole)
-    
-    // First try to UPDATE an existing inactive member (reconnection)
+    // ✅ Presence-aware join: check if member is already active (silent WS reconnect).
+    // If so, just refresh last_seen_at and send session_status unicast — no count change, no broadcast.
     now := time.Now()
+    silentReconnect := false
+    {
+        var existingActive models.WatchSessionMember
+        if err := db.Where("watch_session_id = ? AND user_id = ? AND is_active = true", session.ID, client.userID).
+            First(&existingActive).Error; err == nil {
+            log.Printf("🔄 [JoinWatchSession] User %d already active in session %s — silent reconnect", client.userID, sessionID)
+            db.Model(&existingActive).Update("last_seen_at", now)
+            client.sessionID = sessionID
+            silentReconnect = true
+        }
+    }
+
+    if !silentReconnect {
+    // ✅ IMPROVED: UPDATE existing inactive member OR INSERT new one
+    log.Printf("📝 [JoinWatchSession] Creating/updating DB member record: session.ID=%d, userID=%d, userRole=%s", session.ID, client.userID, userRole)
+    {
+    // First try to UPDATE an existing inactive member (reconnection after explicit leave)
     result := db.Model(&models.WatchSessionMember{}).
         Where("watch_session_id = ? AND user_id = ? AND is_active = false", session.ID, client.userID).
         Updates(map[string]interface{}{
-            "is_active": true,
-            "joined_at": now,
-            "left_at":   nil,
-            "user_role": userRole,
+            "is_active":    true,
+            "joined_at":    now,
+            "left_at":      nil,
+            "user_role":    userRole,
+            "last_seen_at": now,
         })
 
     if result.Error != nil {
@@ -563,14 +578,13 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
             IsActive:      true,
             UserRole:      userRole,
             LeftAt:        nil,
+            LastSeenAt:    &now,
         }
 
         if err := db.Create(&member).Error; err != nil {
             removeFromSessionMembers()
-            // Check if error is duplicate key violation (someone else created it just now)
             if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
-                log.Printf("⚠️ Duplicate member record detected for user %d in session %s (database constraint caught it)", client.userID, sessionID)
-                // This is actually fine - another connection beat us to it
+                log.Printf("⚠️ Duplicate member record detected for user %d in session %s", client.userID, sessionID)
                 return nil
             }
             log.Printf("❌ Failed to create session member for user %d: %v", client.userID, err)
@@ -668,40 +682,45 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
         }
     }
     
-    // ✅ Store sessionID in client for cleanup on disconnect
+    } // end inner block for new-join / reactivation path
+    } // end if !silentReconnect
+
+    // ✅ Store sessionID in client for cleanup on disconnect (safe to re-assign for reconnect path)
     client.sessionID = sessionID
-    
-    // ✅ EVENT-DRIVEN: Broadcast session_member_joined to all clients in room
-    // Query authoritative count BEFORE broadcasting so every receiver gets ground truth.
-    // Floor to 1: the joining user is always at least 1 active member regardless of DB timing.
-    var joinedMemberCount int64
-    db.Model(&models.WatchSessionMember{}).
-        Where("watch_session_id = ? AND is_active = ?", session.ID, true).
-        Count(&joinedMemberCount)
-    if joinedMemberCount < 1 {
-        joinedMemberCount = 1
+
+    if !silentReconnect {
+        // Count and broadcast session_member_joined only for new joins.
+        var joinedMemberCount int64
+        db.Model(&models.WatchSessionMember{}).
+            Where("watch_session_id = ? AND is_active = ?", session.ID, true).
+            Count(&joinedMemberCount)
+        if joinedMemberCount < 1 {
+            joinedMemberCount = 1
+        }
+        var joiningUser models.User
+        if err := db.First(&joiningUser, client.userID).Error; err == nil {
+            memberJoinedMsg := WebSocketMessage{
+                Type: "session_member_joined",
+                Data: map[string]interface{}{
+                    "user_id":      client.userID,
+                    "username":     joiningUser.Username,
+                    "avatar_url":   joiningUser.AvatarURL,
+                    "session_id":   sessionID,
+                    "user_role":    userRole,
+                    "member_count": joinedMemberCount,
+                },
+            }
+            if memberJoinedBytes, err := json.Marshal(memberJoinedMsg); err == nil {
+                h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: memberJoinedBytes, IsBinary: false}, nil)
+                log.Printf("[JoinWatchSession] 📢 Broadcasted session_member_joined for user %d (%s) — count: %d", client.userID, joiningUser.Username, joinedMemberCount)
+            }
+        }
+    } else {
+        log.Printf("[JoinWatchSession] 🔄 Silent reconnect for user %d — skipping session_member_joined broadcast", client.userID)
     }
 
-    var joiningUser models.User
-    if err := db.First(&joiningUser, client.userID).Error; err == nil {
-        memberJoinedMsg := WebSocketMessage{
-            Type: "session_member_joined",
-            Data: map[string]interface{}{
-                "user_id":      client.userID,
-                "username":     joiningUser.Username,
-                "avatar_url":   joiningUser.AvatarURL,
-                "session_id":   sessionID,
-                "user_role":    userRole,
-                "member_count": joinedMemberCount,
-            },
-        }
-        if memberJoinedBytes, err := json.Marshal(memberJoinedMsg); err == nil {
-            h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: memberJoinedBytes, IsBinary: false}, nil)
-            log.Printf("[JoinWatchSession] 📢 Broadcasted session_member_joined for user %d (%s) — count: %d", client.userID, joiningUser.Username, joinedMemberCount)
-        }
-    }
-
-    // ✅ EVENT-DRIVEN: Broadcast updated session status with current member list
+    // ✅ Always send session_status unicast (both new joins and silent reconnects need current state)
+    // Query active members from database (source of truth).
     // Query active members from database (source of truth).
     // If the DB query fails or returns empty, seed with the joining user so the frontend
     // always gets at least a count of 1 instead of silently receiving nothing.
@@ -888,22 +907,44 @@ func (h *Hub) cleanupClientSync(client *Client) {
                 log.Printf("⚠️ [cleanupClientSync] Failed to mark user %d as left from session %d: %v", client.userID, watchSessionID, result.Error)
             } else if result.RowsAffected > 0 {
                 log.Printf("✅ [cleanupClientSync] Marked user %d as left from session %s (watch_session_id=%d)", client.userID, sessionIDToCleanup, watchSessionID)
-                
-                // ✅ BROADCAST user_left TO ALL ROOM MEMBERS
+
+                // Authoritative remaining count after marking user inactive.
+                var remainingCount int64
+                DB.Model(&models.WatchSessionMember{}).
+                    Where("watch_session_id = ? AND is_active = ?", watchSessionID, true).
+                    Count(&remainingCount)
+
                 var user models.User
                 if err := DB.First(&user, client.userID).Error; err == nil {
+                    // user_left — snake_case user_id so all frontend handlers agree.
                     userLeftMsg := WebSocketMessage{
                         Type: "user_left",
                         Data: map[string]interface{}{
-                            "userId":    client.userID,
-                            "username":  user.Username,
-                            "sessionId": sessionIDToCleanup,
+                            "user_id":      client.userID,
+                            "userId":       client.userID, // kept for legacy handlers
+                            "username":     user.Username,
+                            "session_id":   sessionIDToCleanup,
+                            "sessionId":    sessionIDToCleanup,
+                            "member_count": remainingCount,
                         },
                     }
                     if leftBytes, err := json.Marshal(userLeftMsg); err == nil {
-                        // ✅ Use BroadcastToRoom method instead of channel to avoid deadlock
                         h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leftBytes, IsBinary: false}, nil)
-                        log.Printf("📢 [cleanupClientSync] Broadcast user_left for user %d (%s) in session %s", client.userID, user.Username, sessionIDToCleanup)
+                        log.Printf("📢 [cleanupClientSync] Broadcast user_left for user %d (%s) — count: %d", client.userID, user.Username, remainingCount)
+                    }
+                    // session_member_left — consumed by LectureHall and Cinema pages.
+                    memberLeftMsg := WebSocketMessage{
+                        Type: "session_member_left",
+                        Data: map[string]interface{}{
+                            "user_id":      client.userID,
+                            "username":     user.Username,
+                            "session_id":   sessionIDToCleanup,
+                            "member_count": remainingCount,
+                        },
+                    }
+                    if leftBytes, err := json.Marshal(memberLeftMsg); err == nil {
+                        h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leftBytes, IsBinary: false}, nil)
+                        log.Printf("📢 [cleanupClientSync] Broadcast session_member_left for user %d (%s) — count: %d", client.userID, user.Username, remainingCount)
                     }
                 }
                 
@@ -1104,21 +1145,13 @@ func (h *Hub) Run() {
 			h.mutex.Unlock()
 			log.Printf("🔴 [Hub.Run] ✅ RELEASED h.mutex lock after unregister for client %p", client)
 
-			// ⚠️ DB cleanup + broadcasts moved OUT of the h.mutex critical section.
-			// This used to run several sequential DB round-trips (session lookup, member
-			// update, count, user lookup, room lookup) while still holding h.mutex — and
-			// since Hub.Run is a single goroutine, EVERY other register/unregister/broadcast
-			// in the entire app queued up behind whichever one of those DB calls was slow.
-			// None of this touches h.rooms, so it doesn't need the lock at all.
+			// WS transport closed. Session membership is NOT removed here — the member
+			// stays active in watch_session_members and will reconnect automatically.
+			// Removal happens only on: explicit leave_session, session end, or the
+			// 5-minute presence-ping sweep (CleanupStaleMembers).
 			if wasInRoom {
 				go func(client *Client) {
-					// Bound this cleanup — if the DB is slow, fail fast instead of letting
-					// goroutines pile up indefinitely during a burst of disconnects.
-					ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-					defer cancel()
-					db := DB.WithContext(ctx)
-
-					// ✅ Broadcast 'participant_leave' to others in the room
+					// Broadcast 'participant_leave' so LiveKit participant tiles update.
 					leaveMsg := WebSocketMessage{
 						Type: "participant_leave",
 						Data: map[string]interface{}{
@@ -1129,93 +1162,15 @@ func (h *Hub) Run() {
 						h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leaveBytes, IsBinary: false}, client)
 					}
 
-					// ✅ DATABASE CLEANUP: Mark user as left in watch_session_members
-					// Use client.sessionID if available for faster lookup
-					now := time.Now()
-					var sessionIDToCleanup string
-					var watchSessionID uint
-
+					// Host disconnect logging (auto-end disabled).
 					if client.sessionID != "" {
-						// Fast path: we know which session this client was in
-						sessionIDToCleanup = client.sessionID
-						var session models.WatchSession
-						if err := db.Where("session_id = ?", client.sessionID).First(&session).Error; err == nil {
-							watchSessionID = session.ID
-						}
-					} else {
-						// Fallback: find active session for this room
-						var activeSession models.WatchSession
-						if err := db.Where("room_id = ? AND ended_at IS NULL", client.roomID).First(&activeSession).Error; err == nil {
-							sessionIDToCleanup = activeSession.SessionID
-							watchSessionID = activeSession.ID
-						}
-					}
-
-					if watchSessionID > 0 {
-						// Mark user as inactive and set left_at timestamp
-						result := db.Model(&models.WatchSessionMember{}).
-							Where("watch_session_id = ? AND user_id = ? AND is_active = ?", watchSessionID, client.userID, true).
-							Updates(map[string]interface{}{
-								"is_active": false,
-								"left_at":   now,
-							})
-
-						if result.Error != nil {
-							log.Printf("⚠️ Failed to mark user %d as left from session %d: %v", client.userID, watchSessionID, result.Error)
-						} else if result.RowsAffected > 0 {
-							log.Printf("✅ Marked user %d as left from session %s (watch_session_id=%d)", client.userID, sessionIDToCleanup, watchSessionID)
-
-							// Count remaining members first so the broadcast carries ground truth.
-							var newCount int64
-							db.Model(&models.WatchSessionMember{}).
-								Where("watch_session_id = ? AND is_active = ?", watchSessionID, true).
-								Count(&newCount)
-
-							// ✅ BROADCAST user_left TO ALL ROOM MEMBERS
-							var user models.User
-							if err := db.First(&user, client.userID).Error; err == nil {
-								userLeftMsg := WebSocketMessage{
-									Type: "user_left",
-									Data: map[string]interface{}{
-										"userId":       client.userID,
-										"username":     user.Username,
-										"sessionId":    sessionIDToCleanup,
-										"member_count": newCount,
-									},
-								}
-								if leftBytes, err := json.Marshal(userLeftMsg); err == nil {
-									h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leftBytes, IsBinary: false}, nil)
-									log.Printf("📢 Broadcast user_left for user %d (%s) in session %s — count: %d", client.userID, user.Username, sessionIDToCleanup, newCount)
-								}
-								// Emit session_member_left so pages that don't handle user_left
-								// (LectureHallPage, CinemaScene3DDemo) also decrement on abrupt disconnect.
-								memberLeftMsg := WebSocketMessage{
-									Type: "session_member_left",
-									Data: map[string]interface{}{
-										"user_id":      client.userID,
-										"username":     user.Username,
-										"session_id":   sessionIDToCleanup,
-										"member_count": newCount,
-									},
-								}
-								if memberLeftBytes, err := json.Marshal(memberLeftMsg); err == nil {
-									h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: memberLeftBytes, IsBinary: false}, nil)
-								}
-							}
-							if countMsg, err := json.Marshal(map[string]interface{}{
-								"type":       "media_state_changed",
-								"session_id": sessionIDToCleanup,
-								"data":       map[string]interface{}{"member_count": newCount},
-							}); err == nil {
-								h.BroadcastToLobby(OutgoingMessage{Data: countMsg, IsBinary: false})
-							}
-						}
-
-						// ✅ CHECK IF DISCONNECTING USER IS THE HOST (logging only — auto-end disabled)
+						ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+						defer cancel()
+						db := DB.WithContext(ctx)
 						var room models.Room
 						if err := db.First(&room, client.roomID).Error; err == nil {
-							if room.HostID == client.userID && sessionIDToCleanup != "" {
-								log.Printf("ℹ️ [HOST DISCONNECT] User %d disconnected from session %s (auto-end disabled)", client.userID, sessionIDToCleanup)
+							if room.HostID == client.userID {
+								log.Printf("ℹ️ [HOST DISCONNECT] User %d disconnected from session %s (auto-end disabled)", client.userID, client.sessionID)
 							}
 						}
 					}
@@ -2358,6 +2313,16 @@ func InitializeHub() {
             }
         }()
         log.Println("✅ Stale session cleanup started (runs hourly, ends sessions >24 hours old)")
+
+        // ✅ Start presence-based ghost-member sweep (runs every 2 minutes)
+        go func() {
+            ticker := time.NewTicker(2 * time.Minute)
+            defer ticker.Stop()
+            for range ticker.C {
+                CleanupStaleMembers()
+            }
+        }()
+        log.Println("✅ Ghost-member sweep started (runs every 2 min, removes members with no presence_ping > 5 min)")
     }
 }
 
@@ -2511,6 +2476,98 @@ func CleanupStaleSessions() {
 			log.Printf("✅ [CleanupStaleSessions] Cleaned up %d orphaned active members for ended sessions", result.RowsAffected)
 		}
 	}
+}
+
+// CleanupStaleMembers marks session members as left if their last_seen_at is older than 5 minutes.
+// Runs every 2 minutes. This is the only path that removes members whose WS dropped without an
+// explicit leave — a WS disconnect alone no longer touches is_active.
+func CleanupStaleMembers() {
+    threshold := time.Now().Add(-5 * time.Minute)
+    log.Printf("🧹 [CleanupStaleMembers] Sweeping members with last_seen_at < %s", threshold.Format(time.RFC3339))
+
+    // Find stale members in sessions that are still active.
+    type staleRow struct {
+        WatchSessionID uint
+        UserID         uint
+        SessionID      string
+        RoomID         uint
+    }
+    var rows []staleRow
+    err := DB.Raw(`
+        SELECT wsm.watch_session_id, wsm.user_id, ws.session_id, ws.room_id
+        FROM watch_session_members wsm
+        JOIN watch_sessions ws ON ws.id = wsm.watch_session_id
+        WHERE wsm.is_active = true
+          AND wsm.last_seen_at IS NOT NULL
+          AND wsm.last_seen_at < ?
+          AND ws.ended_at IS NULL
+    `, threshold).Scan(&rows).Error
+    if err != nil {
+        log.Printf("❌ [CleanupStaleMembers] Query error: %v", err)
+        return
+    }
+    if len(rows) == 0 {
+        log.Printf("✅ [CleanupStaleMembers] No stale members found")
+        return
+    }
+    log.Printf("🗑️ [CleanupStaleMembers] Removing %d stale members", len(rows))
+
+    now := time.Now()
+    for _, row := range rows {
+        result := DB.Model(&models.WatchSessionMember{}).
+            Where("watch_session_id = ? AND user_id = ? AND is_active = true", row.WatchSessionID, row.UserID).
+            Updates(map[string]interface{}{"is_active": false, "left_at": now})
+        if result.Error != nil || result.RowsAffected == 0 {
+            continue // already cleaned by another path
+        }
+
+        var remainingCount int64
+        DB.Model(&models.WatchSessionMember{}).
+            Where("watch_session_id = ? AND is_active = true", row.WatchSessionID).
+            Count(&remainingCount)
+
+        var user models.User
+        username := fmt.Sprintf("User%d", row.UserID)
+        if err := DB.First(&user, row.UserID).Error; err == nil {
+            username = user.Username
+        }
+
+        userLeftMsg := map[string]interface{}{
+            "type": "user_left",
+            "data": map[string]interface{}{
+                "user_id":      row.UserID,
+                "userId":       row.UserID,
+                "username":     username,
+                "session_id":   row.SessionID,
+                "sessionId":    row.SessionID,
+                "member_count": remainingCount,
+            },
+        }
+        memberLeftMsg := map[string]interface{}{
+            "type": "session_member_left",
+            "data": map[string]interface{}{
+                "user_id":      row.UserID,
+                "username":     username,
+                "session_id":   row.SessionID,
+                "member_count": remainingCount,
+            },
+        }
+        if b, err := json.Marshal(userLeftMsg); err == nil {
+            hub.BroadcastToRoom(row.RoomID, OutgoingMessage{Data: b, IsBinary: false}, nil)
+        }
+        if b, err := json.Marshal(memberLeftMsg); err == nil {
+            hub.BroadcastToRoom(row.RoomID, OutgoingMessage{Data: b, IsBinary: false}, nil)
+        }
+        if countMsg, err := json.Marshal(map[string]interface{}{
+            "type":       "media_state_changed",
+            "session_id": row.SessionID,
+            "data":       map[string]interface{}{"member_count": remainingCount},
+        }); err == nil {
+            hub.BroadcastToLobby(OutgoingMessage{Data: countMsg, IsBinary: false})
+        }
+        log.Printf("✅ [CleanupStaleMembers] Removed ghost member user %d (%s) from session %s — count: %d",
+            row.UserID, username, row.SessionID, remainingCount)
+    }
 }
 
 // Helper to create a pointer to an int
@@ -5386,6 +5443,20 @@ func (client *Client) handleMessage(message []byte) {
         return
     }
     
+    // ✅ Handle presence_ping — member heartbeat every 60s to prove they're still in-session.
+    // Touching last_seen_at resets the 5-minute ghost-member sweep timer.
+    if msg.Type == "presence_ping" {
+        if client.sessionID != "" {
+            var session models.WatchSession
+            if err := DB.Where("session_id = ?", client.sessionID).First(&session).Error; err == nil {
+                DB.Model(&models.WatchSessionMember{}).
+                    Where("watch_session_id = ? AND user_id = ? AND is_active = true", session.ID, client.userID).
+                    Update("last_seen_at", time.Now())
+            }
+        }
+        return
+    }
+
     // ✅ Handle leave_session - User explicitly leaves the session
     if msg.Type == "leave_session" {
         var leaveData struct {

@@ -443,6 +443,8 @@ export default function VideoWatch() {
   // Heartbeat: poll every 60s to catch session-ended when WS was down at broadcast time.
   // Requires 2 consecutive "session gone" responses before acting — prevents a single
   // bad response from kicking users who are sharing their screen in another tab.
+  // NOTE: keep this at 60 000ms. A faster interval triggers the ghost-cleanup goroutine
+  // in GetActiveSessionHandler on every tick, which can race with WS reconnection windows.
   useEffect(() => {
     const activeSessionId = sessionStatus?.id || urlSessionId;
     if (!activeSessionId || !roomId) return;
@@ -492,7 +494,7 @@ export default function VideoWatch() {
         }
         // Network hiccups (5xx, timeout) are ignored — don't penalise tab-switchers
       }
-    }, 5000);
+    }, 60000);
 
     return () => clearInterval(interval);
   }, [sessionStatus?.id, urlSessionId, roomId]);
@@ -941,19 +943,7 @@ export default function VideoWatch() {
   const [isQuizResultsOpen, setIsQuizResultsOpen] = useState(false);
   
   // 🎓 Swipe-up tutorial: shown up to 5 times total across sessions
-  const [showSwipeTutorial, setShowSwipeTutorial] = useState(() => {
-    const count = parseInt(localStorage.getItem('swipe_tutorial_count') || '0', 10);
-    return count < 5;
-  });
-  useEffect(() => {
-    if (!showSwipeTutorial) return;
-    const t = setTimeout(() => {
-      setShowSwipeTutorial(false);
-      const count = parseInt(localStorage.getItem('swipe_tutorial_count') || '0', 10);
-      localStorage.setItem('swipe_tutorial_count', String(count + 1));
-    }, 3500);
-    return () => clearTimeout(t);
-  }, [showSwipeTutorial]);
+  // Swipe tutorial removed — taskbar is always visible.
 
   // 🎮 GAME SYSTEM: State
   const [isGameLobbyOpen, setIsGameLobbyOpen] = useState(false);
@@ -1040,6 +1030,17 @@ export default function VideoWatch() {
     
     return () => clearTimeout(timer);
   }, [isConnected, currentUser?.id, isHost, sendMessage]);
+
+  // ✅ Presence heartbeat — sends presence_ping every 60s so the backend knows we're still here.
+  // This prevents the ghost-member sweep from removing us when we're in a background tab.
+  // Fires immediately on (re)connect so the 5-min timer resets right away.
+  useEffect(() => {
+    if (!isConnected || !sessionStatus?.id) return;
+    const ping = () => sendMessage({ type: 'presence_ping', session_id: sessionStatus.id });
+    ping(); // immediate ping on connect/reconnect
+    const interval = setInterval(ping, 60_000);
+    return () => clearInterval(interval);
+  }, [isConnected, sessionStatus?.id, sendMessage]);
 
   // ✅ Connect to LiveKit when room and user are ready
   const hasAttemptedLiveKitConnection = useRef(false);
@@ -1941,65 +1942,10 @@ export default function VideoWatch() {
         toast.error(messageData.data.message || 'Quiz error occurred');
       }
 
-      // 🎮 All game events arrive as { type: 'game', action: '...' }
-      if (messageData.type === 'game') {
-        const action = messageData.action;
-
-        if (action === 'game_started') {
-          console.log('🎮 [VideoWatch] Game started:', messageData.data);
-          // Normalise to a consistent shape used by game components
-          setActiveGame({
-            game_session_id: messageData.data.game_session_id,
-            game_type:       messageData.data.game_type,
-            status:          'active',
-            current_turn:    0,
-            players:         messageData.data.players,
-            game_state:      messageData.data.game_state,
-          });
-          toast.success(`${(messageData.data.game_type || '').replace(/_/g, ' ').toUpperCase()} started!`, {
-            duration: 3000,
-            icon: '🎮',
-          });
-        }
-
-        if (action === 'game_state_update') {
-          setActiveGame({
-            game_session_id: messageData.game_session_id,
-            game_type:       messageData.game_type,
-            status:          messageData.status,
-            current_turn:    messageData.current_turn,
-            players:         messageData.players,
-            game_state:      messageData.game_state,
-          });
-        }
-
-        if (action === 'game_ended') {
-          console.log('🎮 [VideoWatch] Game ended:', messageData.data);
-          const winnerId = messageData.data?.winner_id;
-          const players  = messageData.data?.players || [];
-          const winner   = winnerId ? players.find(p => p.user_id === winnerId) : null;
-          if (winner) {
-            toast.success(`${winner.username} wins! 🏆`, { duration: 4000, icon: '🏆' });
-          } else {
-            toast.success("It's a draw!", { duration: 3000, icon: '🤝' });
-          }
-          setActiveGame(null);
-        }
-
-        if (action === 'game_forfeited') {
-          console.log('🎮 [VideoWatch] Game forfeited:', messageData.data);
-          const winner = messageData.data?.winner_username;
-          toast(winner ? `${winner} wins! (opponent forfeited)` : 'Opponent forfeited', {
-            duration: 4000, icon: '🏆',
-          });
-          setActiveGame(null);
-        }
-
-        if (messageData.error) {
-          console.error('❌ [VideoWatch] Game error:', messageData.error);
-          toast.error(messageData.error);
-        }
-      }
+      // 🎮 Game messages are handled in the forEach messages loop below,
+      // so all messages (game_state_update, game_ended, etc.) are processed
+      // in order rather than only the latest one being seen.
+      if (messageData.type === 'game') return;
 
     } catch (error) {
       console.error('❌ [VideoWatch] Error processing quiz message:', error);
@@ -2149,41 +2095,17 @@ export default function VideoWatch() {
     };
   }, [localParticipant, selectedAudioDeviceId]);
 
-  // 📹 Binary WebSocket handler for receiving camera streams
+  // Binary WebSocket handler — only real video/audio binary frames reach here;
+  // JSON-encoded messages sent as binary are intercepted upstream in useWebSocket
+  // and re-routed to the text pipeline before this handler is called.
+  // Camera sharing now goes through LiveKit, so this is currently a no-op.
   useEffect(() => {
     if (!setBinaryMessageHandler) return;
-
     const handleBinaryMessage = (data) => {
-      console.log('📹 [VideoWatch] Binary data received:', data.byteLength, 'bytes');
-      console.log('📹 [VideoWatch] Active camera sources:', Object.keys(remoteCameraSourcesRef.current));
-      
-      // Find active camera users and append to their SourceBuffer
-      Object.entries(remoteCameraSourcesRef.current).forEach(([userId, source]) => {
-        console.log(`📹 [VideoWatch] Checking user ${userId}:`, {
-          hasSourceBuffer: !!source.sourceBuffer,
-          isUpdating: source.sourceBuffer?.updating,
-          readyState: source.mediaSource?.readyState
-        });
-        
-        if (source.sourceBuffer && !source.sourceBuffer.updating) {
-          try {
-            source.sourceBuffer.appendBuffer(data);
-            console.log(`✅ [VideoWatch] Appended ${data.byteLength} bytes to user ${userId}'s camera buffer`);
-          } catch (err) {
-            console.error(`❌ [VideoWatch] Failed to append buffer for user ${userId}:`, err);
-          }
-        } else {
-          console.warn(`⚠️ [VideoWatch] Skipping user ${userId} - buffer updating or not ready`);
-        }
-      });
+      // No-op: LiveKit handles A/V; JSON frames are caught by useWebSocket before here.
     };
-
     setBinaryMessageHandler(handleBinaryMessage);
-    console.log('✅ [VideoWatch] Binary message handler registered');
-    
-    return () => {
-      setBinaryMessageHandler(null);
-    };
+    return () => { setBinaryMessageHandler(null); };
   }, [setBinaryMessageHandler]);
 
   // Camera toggle - Use LiveKit instead of WebSocket binary
@@ -2363,12 +2285,34 @@ export default function VideoWatch() {
     setActiveGame(null);
   }, []);
 
+  const handlePlayAgain = useCallback(() => {
+    if (!activeGame) return;
+    sendMessage({
+      type: 'start_game',
+      data: {
+        game_type: activeGame.game_type,
+        players: (activeGame.players || []).map(p => ({
+          user_id:    p.user_id,
+          username:   p.username,
+          avatar_url: p.avatar || p.avatar_url || null,
+          color:      p.color,
+        })),
+      }
+    });
+  }, [activeGame, sendMessage]);
+
   const handleEndGame = useCallback(() => {
-    if (activeGame?.game_session_id) {
-      sendMessage({ type: 'end_game', data: { game_session_id: activeGame.game_session_id } });
-    }
-    setActiveGame(null);
-  }, [activeGame?.game_session_id, sendMessage]);
+    if (!activeGame?.game_session_id) return;
+    sendMessage({ type: 'end_game', data: { game_session_id: activeGame.game_session_id } });
+    // Optimistic update: show the forfeit result immediately without waiting for the
+    // server round-trip. The server will also broadcast game_ended to the other player.
+    const opponentId = activeGame.players?.find(p => p.user_id !== currentUser?.id)?.user_id ?? null;
+    setActiveGame(prev => prev ? {
+      ...prev,
+      status: 'forfeited',
+      winner_id: opponentId,
+    } : null);
+  }, [activeGame, sendMessage, currentUser?.id]);
 
   // Define stable callbacks
   const handlePlay = useCallback(() => setIsPlaying(true), []);
@@ -4931,6 +4875,79 @@ export default function VideoWatch() {
           }
           break;
           
+        case 'game': {
+          const _gAction = message.action;
+          if (_gAction === 'game_started') {
+            console.log('🎮 [VideoWatch] Game started:', message.data);
+            const enrichedPlayers = (message.data.players || []).map(p => {
+              const member = roomMembers.find(m => m.id === p.user_id);
+              const avatarUrl = p.avatar || p.avatar_url
+                || member?.avatar_url
+                || (p.user_id === currentUser?.id ? currentUser?.avatar_url : null)
+                || null;
+              return { ...p, avatar: avatarUrl, avatar_url: avatarUrl };
+            });
+            setActiveGame({
+              game_session_id: message.data.game_session_id,
+              game_type:       message.data.game_type,
+              status:          'active',
+              current_turn:    0,
+              players:         enrichedPlayers,
+              game_state:      message.data.game_state,
+            });
+            setIsLeftSidebarOpen(false);
+            toast.success(`${(message.data.game_type || '').replace(/_/g, ' ').toUpperCase()} started!`, {
+              duration: 3000,
+              icon: '🎮',
+            });
+          }
+          if (_gAction === 'game_state_update') {
+            setActiveGame(prev => ({
+              ...(prev || {}),
+              game_session_id: message.game_session_id,
+              game_type:       message.game_type,
+              status:          message.status,
+              current_turn:    message.current_turn,
+              players:         message.players,
+              game_state:      message.game_state,
+              winner_id:       message.winner_id ?? prev?.winner_id ?? null,
+            }));
+          }
+          if (_gAction === 'game_ended') {
+            console.log('🎮 [VideoWatch] Game ended:', message.data);
+            const winnerId  = message.data?.winner_id;
+            const plyrs     = message.data?.players || [];
+            const _gs       = message.data?.game_state;
+            const winner    = winnerId ? plyrs.find(p => p.user_id === winnerId) : null;
+            if (winner) {
+              toast.success(`${winner.username} wins! 🏆`, { duration: 4000, icon: '🏆' });
+            } else {
+              toast.success("It's a draw!", { duration: 3000, icon: '🤝' });
+            }
+            setActiveGame(prev => prev ? {
+              ...prev,
+              status: 'finished',
+              winner_id: winnerId ?? null,
+              ...(_gs ? { game_state: { ...prev.game_state, ..._gs } } : {}),
+            } : null);
+          }
+          if (_gAction === 'game_forfeited') {
+            console.log('🎮 [VideoWatch] Game forfeited:', message.data);
+            const winnerId = message.data?.winner_id;
+            const plyrs    = message.data?.players || [];
+            const winner   = winnerId ? plyrs.find(p => p.user_id === winnerId) : null;
+            toast(winner ? `${winner.username} wins! (opponent forfeited)` : 'Opponent forfeited', {
+              duration: 4000, icon: '🏆',
+            });
+            setActiveGame(prev => prev ? { ...prev, status: 'finished', winner_id: winnerId ?? null } : null);
+          }
+          if (message.error) {
+            console.error('❌ [VideoWatch] Game error:', message.error);
+            toast.error(message.error);
+          }
+          break;
+        }
+
         default:
           // Known informational message types that don't need action
           if (message.type === 'session_preview_updated' || message.type === 'media_state_changed') {
@@ -6430,7 +6447,7 @@ export default function VideoWatch() {
           raisedHandsCount={raisedHands.length}
           onEmoteSend={handleEmoteSend}
           openChat={openChat}
-          hasOpenModal={isLiveShareWizardOpen} // ✅ Prevent taskbar from showing during wizard
+          hasOpenModal={isLiveShareWizardOpen || !!activeGame || isGameLobbyOpen}
           isChatActive={showChatHome || isChatOpen}
           onQuizClick={handleQuizClick}
           activeQuizCount={activeQuiz ? 1 : 0}
@@ -6949,11 +6966,8 @@ export default function VideoWatch() {
           isOpen={isGameLobbyOpen}
           onClose={() => setIsGameLobbyOpen(false)}
           roomMembers={[
-            { id: currentUser?.id, username: currentUser?.username },
-            ...participants.map(p => ({
-              id: p.id,
-              username: p.username || p.name
-            }))
+            { id: currentUser?.id, username: currentUser?.username, avatar_url: currentUser?.avatar_url },
+            ...roomMembers.filter(m => m.id !== currentUser?.id)
           ].filter(m => m.id)}
           currentUserId={currentUser?.id}
           onStartGame={handleStartGame}
@@ -6967,35 +6981,10 @@ export default function VideoWatch() {
           onMove={handleGameMove}
           onClose={handleGameClose}
           onEndGame={handleEndGame}
+          onPlayAgain={handlePlayAgain}
         />
       )}
 
-      {/* Swipe-up tutorial — shown max 5 sessions, auto-dismisses after 3.5s */}
-      {showSwipeTutorial && (
-        <div
-          className="pointer-events-none fixed bottom-24 left-0 right-0 flex flex-col items-center z-[200]"
-          style={{ animation: 'fadeInOut 3.5s ease forwards' }}
-        >
-          <div style={{ animation: 'swipeUp 1.2s ease-in-out infinite' }}>
-            <img src="/icons/finger.webp" alt="" style={{ width: 52, height: 52, filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.6))' }} />
-          </div>
-          <p className="mt-3 text-white text-sm font-semibold" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
-            Swipe up to see the taskbar
-          </p>
-          <style>{`
-            @keyframes swipeUp {
-              0%, 100% { transform: translateY(0); opacity: 0.85; }
-              50% { transform: translateY(-18px); opacity: 1; }
-            }
-            @keyframes fadeInOut {
-              0% { opacity: 0; }
-              12% { opacity: 1; }
-              78% { opacity: 1; }
-              100% { opacity: 0; }
-            }
-          `}</style>
-        </div>
-      )}
 
 
     </div>

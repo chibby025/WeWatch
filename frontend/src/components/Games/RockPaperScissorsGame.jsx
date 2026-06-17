@@ -8,22 +8,30 @@ const choices = [
   { id: 'scissors', name: 'Scissors', icon: '✂️' }
 ];
 
-export default function RockPaperScissorsGame({ gameState, players, currentUserId, onMove, onClose }) {
+export default function RockPaperScissorsGame({ gameState, players, currentUserId, onMove, onClose, onPlayAgain }) {
   const [myPick, setMyPick] = useState(null);
   const [countdown, setCountdown] = useState(5);
   const [revealed, setRevealed] = useState(false);
   const [winner, setWinner] = useState(null);
 
   useEffect(() => {
-    if (gameState?.game_state) {
-      // Check if final picks are revealed
-      if (gameState.game_state.final_picks) {
-        setRevealed(true);
-        
-        if (gameState.status === 'finished') {
-          const winnerPlayer = players.find(p => p.score > 0);
-          setWinner(winnerPlayer || 'draw');
-        }
+    const finalPicks = gameState?.game_state?.final_picks;
+    const picks = gameState?.game_state?.picks || {};
+    const playerIds = (players || []).map(p => String(p.user_id));
+    // Reveal if explicit final_picks exist, OR if picks has an entry for every player
+    const hasFinalPicks = !!finalPicks || (playerIds.length >= 2 && playerIds.every(id => picks[id]));
+    const isOver = gameState?.status === 'finished' || gameState?.status === 'completed';
+
+    if (hasFinalPicks) {
+      setRevealed(true);
+    }
+
+    if (isOver) {
+      const winnerId = gameState.winner_id;
+      if (!winnerId) {
+        setWinner('draw');
+      } else {
+        setWinner(players.find(p => p.user_id === winnerId) || 'draw');
       }
     }
   }, [gameState, players]);
@@ -43,6 +51,8 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
     setMyPick(choice);
     onMove({ pick: choice });
   };
+
+  const isHost = players?.[0]?.user_id === currentUserId;
 
   const getPlayerPick = (userId) => {
     if (!revealed || !gameState?.game_state?.final_picks) return null;
@@ -155,7 +165,15 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-gray-700 flex justify-end">
+        <div className="p-6 border-t border-gray-700 flex justify-end gap-3">
+          {revealed && isHost && (
+            <button
+              onClick={onPlayAgain}
+              className="px-6 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-lg font-semibold transition-colors"
+            >
+              Play Again 🔄
+            </button>
+          )}
           <button
             onClick={onClose}
             className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"

@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import useAuth from '../../../hooks/useAuth';
 import useWebSocket from '../../../hooks/useWebSocket';
-import { getChatHistory } from '../../../services/api';
+import { getChatHistory, getActiveSession } from '../../../services/api';
 import apiClient from '../../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../../utils/ticketCache';
 import CinemaScene3D from './CinemaScene3D';
@@ -487,6 +487,7 @@ export default function CinemaScene3DDemo() {
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
   const [isTheaterOverviewOpen, setIsTheaterOverviewOpen] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
+  const [authoritativeMemberCount, setAuthoritativeMemberCount] = useState(null);
   const [isAudioActive, setIsAudioActive] = useState(false);
   const [isSeatedMode] = useState(true); // ✅ Always enabled in 3D cinema - row-based audio by default
   const [userSeats, setUserSeats] = useState({});
@@ -1548,6 +1549,32 @@ export default function CinemaScene3DDemo() {
     }, 2000);
     return () => clearInterval(id);
   }, [isHost, isPlaying]);
+
+  // Member reconciliation poll: every 5s compare DB truth against local array.
+  useEffect(() => {
+    if (!roomId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await getActiveSession(roomId);
+        const session = res?.data;
+        if (!session?.is_existing || !Array.isArray(session.members)) return;
+        const dbIds = new Set(session.members.map(m => m.user_id));
+        const localIds = new Set(roomMembers.map(m => m.id));
+        const mismatch = dbIds.size !== localIds.size ||
+          [...dbIds].some(id => !localIds.has(id)) ||
+          [...localIds].some(id => !dbIds.has(id));
+        if (mismatch) {
+          console.log('[CinemaScene3D] Member mismatch — reconciling from REST');
+          setRoomMembers(session.members.map(m => ({
+            id: m.user_id, username: m.username || `User ${m.user_id}`,
+            avatar_url: m.avatar_url || null, user_role: m.user_role || 'viewer',
+          })));
+          setAuthoritativeMemberCount(session.members.length);
+        }
+      } catch { /* network hiccups ignored */ }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [roomId, roomMembers]);
 
   // Intercept same-media playback_control seek messages before they reach setMessages.
   // Applies smooth playback-rate correction (< 5s drift) or a hard seek (>= 5s drift)
@@ -4178,6 +4205,9 @@ export default function CinemaScene3DDemo() {
               fullData: msg.data
             });
             
+            if (typeof msg.data.member_count === 'number') {
+              setAuthoritativeMemberCount(msg.data.member_count);
+            }
             setRoomMembers(prev => {
               const exists = prev.some(m => m.id === userId);
               if (exists) {
@@ -4221,6 +4251,9 @@ export default function CinemaScene3DDemo() {
         case 'session_member_left':
           // ✅ EVENT-DRIVEN: Real-time member leave from backend
           console.log('👋 [CinemaScene3D] Received session_member_left:', msg.data);
+          if (typeof msg.data?.member_count === 'number') {
+            setAuthoritativeMemberCount(msg.data.member_count);
+          }
           if (msg.data?.user_id) {
             const userId = msg.data.user_id;
             const username = msg.data.username;
@@ -5767,7 +5800,8 @@ export default function CinemaScene3DDemo() {
             showAudioNotification(notificationText);
           }
         }}
-        watchSessionMembers={roomMembers} // ✅ pass full list (renamed to watchSessionMembers for Taskbar)
+        watchSessionMembers={roomMembers}
+        authoritativeMemberCount={authoritativeMemberCount}
         openChat={() => setShowChatHome(true)}
         onMembersClick={openMembers}
         onShareRoom={() => alert('Share room')}
@@ -5981,6 +6015,7 @@ export default function CinemaScene3DDemo() {
             mousePosition={{ x: 0, y: 0 }}
             sessionId={sessionStatus?.id}
             watchSessionMembers={roomMembers}
+            authoritativeMemberCount={authoritativeMemberCount}
             liveShareMode={liveShareMode}
             liveShareGuest={liveShareGuest}
             hasLiveSharePermission={hasLiveSharePermission}
@@ -6136,6 +6171,7 @@ export default function CinemaScene3DDemo() {
           currentUser={currentUser}
           userSeats={userSeats}
           watchSessionMembers={roomMembers}
+          authoritativeMemberCount={authoritativeMemberCount}
           audioDevices={audioDevices}
           selectedAudioDeviceId={selectedAudioDeviceId}
           onAudioDeviceChange={handleAudioDeviceChange}

@@ -1,7 +1,6 @@
 package games
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -194,6 +193,7 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 			"current_turn":    gameState.CurrentTurn,
 			"players":         gameState.Players,
 			"game_state":      gameState.GameData,
+			"winner_id":       winnerID,
 		})
 		hub.BroadcastJSON(roomID, map[string]interface{}{
 			"type":   "game",
@@ -203,6 +203,7 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 				"winner_id":       winnerID,
 				"reason":          status,
 				"players":         gameState.Players,
+				"game_state":      gameState.GameData,
 			},
 		})
 	}
@@ -270,11 +271,13 @@ func (gm *GameManager) HandlePlayerDisconnect(roomID uint, userID uint) error {
 	return gm.endGameLocked(gameSessionID, winnerID, "forfeited")
 }
 
-// BroadcastGameState sends the current game state to all room members
+// BroadcastGameState sends the current game state to all room members as a text frame.
+// Must use BroadcastJSON (text), NOT BroadcastToRoomBinary — binary frames are routed
+// to the video handler on the frontend and silently dropped.
 func (gm *GameManager) BroadcastGameState(roomID uint) error {
 	gameState, exists := gm.GetActiveGame(roomID)
 	if !exists {
-		return fmt.Errorf("no active game for room %d", roomID)
+		return nil // game already ended; endGameLocked already broadcast the final state
 	}
 
 	message := map[string]interface{}{
@@ -288,14 +291,8 @@ func (gm *GameManager) BroadcastGameState(roomID uint) error {
 		"game_state":      gameState.GameData,
 	}
 
-	messageBytes, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("failed to marshal game state: %w", err)
-	}
-
-	// Use type assertion to call BroadcastToRoomBinary
-	if hub, ok := gm.hub.(interface{ BroadcastToRoomBinary(uint, []byte, uint) }); ok {
-		hub.BroadcastToRoomBinary(roomID, messageBytes, 0)
+	if hub, ok := gm.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+		hub.BroadcastJSON(roomID, message)
 	}
 	return nil
 }

@@ -4,7 +4,7 @@ import RockPaperScissorsGame from './RockPaperScissorsGame';
 import ChessGame from './ChessGame';
 import TriviaGame from './TriviaGame';
 
-export default function GameOverlay({ activeGame, currentUserId, onMove, onClose, onEndGame }) {
+export default function GameOverlay({ activeGame, currentUserId, onMove, onClose, onEndGame, onPlayAgain }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -23,17 +23,20 @@ export default function GameOverlay({ activeGame, currentUserId, onMove, onClose
           currentUserId={currentUserId}
           onMove={handleMove}
           onClose={onClose}
+          onEndGame={onEndGame}
         />
       );
 
     case 'rock_paper_scissors':
       return (
         <RockPaperScissorsGame
+          key={activeGame.game_session_id}
           gameState={activeGame}
           players={activeGame.players}
           currentUserId={currentUserId}
           onMove={handleMove}
           onClose={onClose}
+          onPlayAgain={onPlayAgain}
         />
       );
 
@@ -45,6 +48,7 @@ export default function GameOverlay({ activeGame, currentUserId, onMove, onClose
           currentUserId={currentUserId}
           onMove={handleMove}
           onClose={onClose}
+          onEndGame={onEndGame}
         />
       );
 

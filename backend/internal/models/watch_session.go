@@ -106,11 +106,12 @@ type WatchSessionMember struct {
 	JoinedAt       time.Time `json:"joined_at"`
 	LeftAt         *time.Time `json:"left_at,omitempty"`
 	IsActive       bool      `gorm:"default:true" json:"is_active"`
-	UserRole           string    `gorm:"type:varchar(20);default:'viewer'" json:"user_role"` // viewer, broadcaster
-	CanBroadcast       bool      `gorm:"default:false" json:"can_broadcast"` // Host-granted permission to speak to whole room
-	SeatID             *int      `json:"seat_id,omitempty"` // Seat number (1-145) in 3D classroom, NULL if not seated
-	LectureHallNumber  *int      `gorm:"default:1" json:"lecture_hall_number,omitempty"` // Lecture hall number (1, 2, 3...) for overflow support
-	// Client         *Client   `gorm:"-" json:"-"` // WebSocket client reference (not stored in DB)
+	UserRole           string     `gorm:"type:varchar(20);default:'viewer'" json:"user_role"` // viewer, broadcaster
+	CanBroadcast       bool       `gorm:"default:false" json:"can_broadcast"`
+	SeatID             *int       `json:"seat_id,omitempty"`
+	LectureHallNumber  *int       `gorm:"default:1" json:"lecture_hall_number,omitempty"`
+	LastSeenAt         *time.Time `gorm:"index" json:"last_seen_at,omitempty"` // Updated by presence_ping; used by ghost-member sweep
+	// Client         *Client   `gorm:"-" json:"-"`
 }
 
 // TableName overrides the table name used by GORM.
