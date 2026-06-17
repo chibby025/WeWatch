@@ -49,10 +49,10 @@ const RATING_SECTIONS = [
   {
     title: 'General Entertainment',
     items: [
-      { value: 'G', chips: ['🍿 Family & General', '😊 All Ages'] },
-      { value: 'PG', chips: ['🎬 Movies & Shows', '👨‍👩‍👧 Family Movie Night'] },
-      { value: '13+', chips: ['🎮 Gaming & Anime', '⚽ Sports & Live Events'] },
-      { value: '16+', chips: ['🔥 Action & Thriller', '💫 Teen Drama'] },
+      { value: 'G',   chips: ['🍿 Family & General', '😊 All Ages', '😂 Comedy', '📖 Books & Stories', '🎞️ Vintage Classics', '📰 News', '🤝 Community'] },
+      { value: 'PG',  chips: ['🎬 Indie Films', '📺 Shows', '⚽ Sports', '🎤 Live Events', '👨‍👩‍👧 Family Movie Night'] },
+      { value: '13+', chips: ['🎮 Gaming', '🌸 Anime', '✍️ Fan Fiction', '💫 Teen Drama'] },
+      { value: '16+', chips: ['🔥 Action & Thriller', '👻 Horror', '💼 Business & Finance'] },
     ],
   },
   {
@@ -64,14 +64,14 @@ const RATING_SECTIONS = [
   {
     title: 'Learning',
     items: [
-      { value: 'Educational', chips: ['📚 Classes & Tutorials', '🧪 Science & Tech'] },
+      { value: 'Educational', chips: ['📚 Classes & Tutorials', '🧪 Science & Tech', '📖 Book Clubs'] },
     ],
   },
   {
     title: 'Mature Audiences',
     caption: 'May contain strong language, violence, gore or explicit scenes. For adults only.',
     items: [
-      { value: '18+', chips: ['🔓 Adults Only', '🌙 Late Night'] },
+      { value: '18+',    chips: ['🔞 Adults Only', '🌙 Late Night'] },
       { value: 'Mature', chips: ['🔒 Mature Audiences', '🎭 Strong Content'] },
     ],
   },
@@ -82,6 +82,7 @@ const TOTAL_SLIDES = INFO_SLIDES.length + 1; // + the preference slide
 export default function OnboardingTour({ onClose }) {
   const [slide, setSlide] = useState(0);
   const [selectedRating, setSelectedRating] = useState(null);
+  const [selectedChipKey, setSelectedChipKey] = useState(null);
   const [saving, setSaving] = useState(false);
   const touchRef = useRef(null);
 
@@ -156,20 +157,23 @@ export default function OnboardingTour({ onClose }) {
                     <p className="text-[11px] text-gray-500 mb-2 italic leading-snug">{section.caption}</p>
                   )}
                   <div className="flex flex-wrap gap-2">
-                    {section.items.flatMap(item => item.chips.map((chip, ci) => (
-                      <button
-                        key={`${item.value}-${ci}`}
-                        type="button"
-                        onClick={() => setSelectedRating(item.value)}
-                        className={`px-3 py-2 rounded-full text-xs font-medium border transition-all ${
-                          selectedRating === item.value
-                            ? 'border-white bg-white text-gray-900'
-                            : 'border-gray-700 text-gray-300 hover:border-gray-500'
-                        }`}
-                      >
-                        {chip}
-                      </button>
-                    )))}
+                    {section.items.flatMap(item => item.chips.map((chip, ci) => {
+                      const chipKey = `${item.value}-${ci}`;
+                      return (
+                        <button
+                          key={chipKey}
+                          type="button"
+                          onClick={() => { setSelectedRating(item.value); setSelectedChipKey(chipKey); }}
+                          className={`px-3 py-2 rounded-full text-xs font-medium border transition-all ${
+                            selectedChipKey === chipKey
+                              ? 'border-white bg-white text-gray-900'
+                              : 'border-gray-700 text-gray-300 hover:border-gray-500'
+                          }`}
+                        >
+                          {chip}
+                        </button>
+                      );
+                    }))}
                   </div>
                 </div>
               ))}

@@ -51,6 +51,7 @@ const CIRCLE_IMAGES = {
 //   maxWidth        — SVG max-width in px (default 340)
 const WatchTypePicker = ({ selectedTypeId, onChange, showDescription = true, maxWidth = 340 }) => {
   const [circlePhase, setCirclePhase] = useState('emoji');
+  const [introVisible, setIntroVisible] = useState(true);
 
   // Cycle: emoji → image (1 s) → emoji (2 s) on every selection change
   useEffect(() => {
@@ -60,14 +61,22 @@ const WatchTypePicker = ({ selectedTypeId, onChange, showDescription = true, max
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [selectedTypeId]);
 
+  // Show all labels for 1s on mount so the user notices them, then fade unselected ones out
+  useEffect(() => {
+    const t = setTimeout(() => setIntroVisible(false), 1000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const labelOpacity = (typeId) => (selectedTypeId === typeId || introVisible) ? 1 : 0;
+
   const selectedType = WATCH_TYPES.find(t => t.id === selectedTypeId) ?? WATCH_TYPES[0];
 
   return (
     <div>
-      {/* Always-white container so petal colours read correctly in both modes */}
-      <div className="flex justify-center py-4 px-6 mx-4 rounded-2xl bg-white">
+      {/* Slightly off-white so the selected-petal white glow reads correctly */}
+      <div className="flex justify-center py-4 px-6 mx-4 rounded-2xl bg-gray-100">
         <svg
-          viewBox="2 2 218 226"
+          viewBox="2 2 265 228"
           className="w-full"
           style={{ maxWidth }}
           aria-label="Watch type selector"
@@ -94,24 +103,30 @@ const WatchTypePicker = ({ selectedTypeId, onChange, showDescription = true, max
                   filter={isSelected ? 'url(#wtp-petal-glow)' : undefined}
                 />
                 {type.id === 'video' ? (
+                  // Not selected: scale(0.75) → 18px icon. Selected: scale(1.0) → 24px icon.
+                  // Translation shifts by -3 each axis on selection to keep center fixed.
                   <g
-                    transform={`translate(${PETAL_EMOJI_POS[i].x - 9}, ${PETAL_EMOJI_POS[i].y - 9}) scale(0.75)`}
-                    fill="none" stroke="white" strokeWidth="1.5"
+                    transform={isSelected
+                      ? `translate(${PETAL_EMOJI_POS[i].x - 12}, ${PETAL_EMOJI_POS[i].y - 12}) scale(1.0)`
+                      : `translate(${PETAL_EMOJI_POS[i].x - 9}, ${PETAL_EMOJI_POS[i].y - 9}) scale(0.75)`}
+                    fill="none" stroke="white" strokeWidth={isSelected ? "1.2" : "1.5"}
                     strokeLinecap="round" strokeLinejoin="round"
-                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                    style={{ pointerEvents: 'none', userSelect: 'none', transition: 'transform 0.2s ease' }}
                   >
                     {PETAL_VIDEO_ICON}
                   </g>
                 ) : (() => {
                   const HIcon = PETAL_HEROICONS[type.id];
+                  const sz = isSelected ? 24 : 18;
+                  const offset = sz / 2;
                   return (
                     <foreignObject
-                      x={PETAL_EMOJI_POS[i].x - 9}
-                      y={PETAL_EMOJI_POS[i].y - 9}
-                      width="18" height="18"
-                      style={{ pointerEvents: 'none', userSelect: 'none', overflow: 'visible' }}
+                      x={PETAL_EMOJI_POS[i].x - offset}
+                      y={PETAL_EMOJI_POS[i].y - offset}
+                      width={sz} height={sz}
+                      style={{ pointerEvents: 'none', userSelect: 'none', overflow: 'visible', transition: 'all 0.2s ease' }}
                     >
-                      <HIcon style={{ width: 18, height: 18, color: 'white', display: 'block' }} />
+                      <HIcon style={{ width: sz, height: sz, color: 'white', display: 'block' }} />
                     </foreignObject>
                   );
                 })()}
@@ -145,6 +160,24 @@ const WatchTypePicker = ({ selectedTypeId, onChange, showDescription = true, max
               />
             </foreignObject>
           </g>
+
+          {/* Outer petal labels — show all for 1s on mount, then only selected stays */}
+          <text x="142" y="7" textAnchor="middle" dominantBaseline="central" fontSize="7.5" fontWeight="700" fill="#38bdf8"
+            style={{ pointerEvents: 'none', userSelect: 'none', opacity: labelOpacity('video'), transition: 'opacity 0.5s ease' }}>
+            Video Watch
+          </text>
+          <text x="216" y="70" textAnchor="start" dominantBaseline="central" fontSize="7.5" fontWeight="700" fill="#3b82f6"
+            style={{ pointerEvents: 'none', userSelect: 'none', opacity: labelOpacity('3d_cinema'), transition: 'opacity 0.5s ease' }}>
+            3D Cinema
+          </text>
+          <text x="216" y="158" textAnchor="start" dominantBaseline="central" fontSize="7.5" fontWeight="700" fill="#4f46e5"
+            style={{ pointerEvents: 'none', userSelect: 'none', opacity: labelOpacity('classroom'), transition: 'opacity 0.5s ease' }}>
+            Lecture Hall
+          </text>
+          <text x="140" y="226" textAnchor="middle" dominantBaseline="central" fontSize="7.5" fontWeight="700" fill="#7c3aed"
+            style={{ pointerEvents: 'none', userSelect: 'none', opacity: labelOpacity('custom'), transition: 'opacity 0.5s ease' }}>
+            Custom Scene
+          </text>
 
           {/* Emoji + label — fade out during image phase */}
           <text x="80" y="111" textAnchor="middle" dominantBaseline="central" fontSize="26"

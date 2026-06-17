@@ -298,7 +298,7 @@ const Taskbar = ({
       hideTimerRef.current = setTimeout(() => {
         if (!showTaskbarTourRef.current && !isHoveringRef.current) setIsVisible(false);
         hideTimerRef.current = null;
-      }, 1000);
+      }, 2000);
     };
 
     window.addEventListener('click', handleActivity);
@@ -324,7 +324,7 @@ const Taskbar = ({
     hideTimerRef.current = setTimeout(() => {
       if (!showTaskbarTourRef.current) setIsVisible(false);
       hideTimerRef.current = null;
-    }, 1000);
+    }, 2000);
   };
 
   // Close mic dropdown

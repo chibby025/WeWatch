@@ -492,7 +492,7 @@ export default function VideoWatch() {
         }
         // Network hiccups (5xx, timeout) are ignored — don't penalise tab-switchers
       }
-    }, 15000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [sessionStatus?.id, urlSessionId, roomId]);
@@ -854,9 +854,10 @@ export default function VideoWatch() {
       } catch (err) {
         console.error('[VideoWatch] Drift reconciliation fetch failed:', err);
       } finally {
-        // Suppress further checks for 15 s regardless of outcome.
+        // Suppress further checks for 6 s — slightly longer than the 5 s poll interval
+        // so the heartbeat poll gets one clean run before the drift detector can re-fire.
         driftCheckCooldownRef.current = true;
-        setTimeout(() => { driftCheckCooldownRef.current = false; }, 15000);
+        setTimeout(() => { driftCheckCooldownRef.current = false; }, 6000);
       }
     }, 3000);
 

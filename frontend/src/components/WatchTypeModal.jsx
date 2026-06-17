@@ -143,6 +143,8 @@ function RegionPicker({ imageUrl, box, onChange }) {
 // ── Main modal ────────────────────────────────────────────────────────────────
 const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch Experience" }) => {
   const [step, setStep]               = useState(1);
+  const [tourStep, setTourStep]       = useState(() => localStorage.getItem('wewatch_watch_type_tour_seen') ? -1 : 0);
+  const dismissTour = () => { setTourStep(-1); localStorage.setItem('wewatch_watch_type_tour_seen', '1'); };
   const [previewUrl, setPreviewUrl]   = useState(null);   // local object URL for RegionPicker
   const [uploadedUrl, setUploadedUrl] = useState(null);   // server URL after upload
   const [isUploading, setIsUploading] = useState(false);
@@ -368,7 +370,7 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
   // ── Step 1: Semicircle fan selector ───────────────────────────────────────
   return (
     <div className="fixed inset-0 bg-black/50 dark:bg-gray-800/70 flex items-center justify-center z-50 p-3 sm:p-4">
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md">
+      <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
           <div>
@@ -397,6 +399,61 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
             <ArrowRightIcon className="w-4 h-4" />
           </button>
         </div>
+
+        {/* One-time inline tour — bottom sheet inside the modal card */}
+        {tourStep >= 0 && (
+          <div className="absolute inset-0 bg-black/65 rounded-2xl z-10 flex flex-col justify-end">
+            <div className="bg-gray-950 rounded-b-2xl rounded-t-2xl m-2 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] text-gray-500 font-medium">{tourStep + 1} / 2</span>
+                <button onClick={dismissTour} className="text-[10px] text-gray-500 hover:text-gray-300 font-medium">Skip</button>
+              </div>
+
+              {tourStep === 0 ? (
+                <>
+                  <h4 className="text-sm font-bold text-white mb-2.5">Pick your experience</h4>
+                  <div className="space-y-2 mb-4">
+                    <div className="flex items-start gap-2 text-xs text-gray-300">
+                      <span className="mt-px">🎬</span>
+                      <span><span className="font-semibold text-sky-400">Video Watch</span> — Simple co-watch with any video, zero setup</span>
+                    </div>
+                    <div className="flex items-start gap-2 text-xs text-gray-300">
+                      <span className="mt-px">🎭</span>
+                      <span><span className="font-semibold text-blue-400">3D Cinema</span> — Virtual seats, spatial audio, avatar presence</span>
+                    </div>
+                    <div className="flex items-start gap-2 text-xs text-gray-300">
+                      <span className="mt-px">🎓</span>
+                      <span><span className="font-semibold text-indigo-400">Lecture Hall</span> — Whiteboard, quizzes, interactive classroom</span>
+                    </div>
+                    <div className="flex items-start gap-2 text-xs text-gray-300">
+                      <span className="mt-px">🖼️</span>
+                      <span><span className="font-semibold text-violet-400">Custom Scene</span> — Upload a room photo, position the screen</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setTourStep(1)}
+                    className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors"
+                  >
+                    Next →
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h4 className="text-sm font-bold text-white mb-2">Then launch your session</h4>
+                  <p className="text-xs text-gray-400 leading-relaxed mb-4">
+                    Tap any petal to pick a type. When you're ready, hit <span className="text-indigo-400 font-semibold">Continue</span> at the bottom.
+                  </p>
+                  <button
+                    onClick={dismissTour}
+                    className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors"
+                  >
+                    Got it
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

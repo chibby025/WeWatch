@@ -2924,29 +2924,25 @@ const RoomPageNew = () => {
         {(showScrollButton || hasMention) && (
           <button
             onClick={scrollToBottom}
-            className="fixed bottom-24 right-8 bg-purple-600 hover:bg-purple-700 text-white rounded-full shadow-lg transition-all duration-200 z-30"
+            className="fixed bottom-24 right-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full shadow-md hover:shadow-lg active:scale-95 transition-all duration-150 z-30 p-2"
             title={hasMention ? `You were mentioned` : unreadCount > 0 ? `${unreadCount} new message${unreadCount !== 1 ? 's' : ''}` : 'Scroll to latest message'}
           >
-            <div className="relative flex items-center gap-2 px-4 py-3">
-              {/* @mention badge — amber, takes priority over unread count */}
+            <div className="relative">
               {hasMention && (
-                <div className="absolute -top-2 -right-2 min-w-[22px] h-[22px] flex items-center justify-center bg-amber-400 rounded-full text-gray-900 text-xs font-bold px-1 shadow-lg">
+                <div className="absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center bg-amber-400 rounded-full text-gray-900 text-[10px] font-bold px-1 shadow">
                   @
                 </div>
               )}
-              {/* Unread count badge — only when no mention */}
               {!hasMention && unreadCount > 0 && (
-                <div className="absolute -top-2 -right-2 min-w-[24px] h-6 flex items-center justify-center bg-red-500 rounded-full text-white text-xs font-bold px-2 shadow-lg animate-pulse">
+                <div className="absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center bg-red-500 rounded-full text-white text-[10px] font-bold px-1 shadow animate-pulse">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </div>
               )}
-              <img src="/icons/bottomIcon.svg" alt="Scroll to bottom" className="h-6 w-6" />
-              {hasMention && (
-                <span className="text-sm font-medium whitespace-nowrap">mentioned you</span>
-              )}
-              {!hasMention && unreadCount > 0 && (
-                <span className="text-sm font-medium whitespace-nowrap">{unreadCount} new</span>
-              )}
+              {/* Scroll-to-bottom icon: chevron + baseline bar */}
+              <svg className="h-5 w-5 text-purple-600 dark:text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9" />
+                <line x1="5" y1="20" x2="19" y2="20" />
+              </svg>
             </div>
           </button>
         )}

@@ -1187,6 +1187,20 @@ func (h *Hub) Run() {
 									h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: leftBytes, IsBinary: false}, nil)
 									log.Printf("📢 Broadcast user_left for user %d (%s) in session %s — count: %d", client.userID, user.Username, sessionIDToCleanup, newCount)
 								}
+								// Emit session_member_left so pages that don't handle user_left
+								// (LectureHallPage, CinemaScene3DDemo) also decrement on abrupt disconnect.
+								memberLeftMsg := WebSocketMessage{
+									Type: "session_member_left",
+									Data: map[string]interface{}{
+										"user_id":      client.userID,
+										"username":     user.Username,
+										"session_id":   sessionIDToCleanup,
+										"member_count": newCount,
+									},
+								}
+								if memberLeftBytes, err := json.Marshal(memberLeftMsg); err == nil {
+									h.BroadcastToRoom(client.roomID, OutgoingMessage{Data: memberLeftBytes, IsBinary: false}, nil)
+								}
 							}
 							if countMsg, err := json.Marshal(map[string]interface{}{
 								"type":       "media_state_changed",

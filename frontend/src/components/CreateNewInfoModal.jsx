@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SparklesIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 
 const CreateNewInfoModal = ({ isOpen, onClose, onContinue }) => {
@@ -29,6 +29,29 @@ const CreateNewInfoModal = ({ isOpen, onClose, onContinue }) => {
   const goTo = (idx) => setSlide(((idx % total) + total) % total);
   const prev = () => goTo(slide - 1);
   const next = () => goTo(slide + 1);
+
+  const touchStartX = useRef(null);
+  const autoPlayRef = useRef(null);
+
+  const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
+  const handleTouchEnd = (e) => {
+    if (touchStartX.current === null) return;
+    const delta = touchStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(delta) > 50) delta > 0 ? next() : prev();
+    touchStartX.current = null;
+  };
+
+  // Auto-advance once through all slides (3s each), stops on the last slide
+  useEffect(() => {
+    if (!isOpen) return;
+    autoPlayRef.current = setInterval(() => {
+      setSlide(prev => {
+        if (prev >= total - 1) { clearInterval(autoPlayRef.current); return prev; }
+        return prev + 1;
+      });
+    }, 3000);
+    return () => clearInterval(autoPlayRef.current);
+  }, [isOpen, total]);
 
   useEffect(() => {
     if (isOpen) setSlide(0);
@@ -73,7 +96,7 @@ const CreateNewInfoModal = ({ isOpen, onClose, onContinue }) => {
         {/* Scrollable body — carousel + info box. Capped so the action button below
             always stays on-screen without scrolling, even on short mobile viewports. */}
         <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 custom-sleek-scrollbar">
-          <div className="relative group rounded-xl overflow-hidden bg-gray-100">
+          <div className="relative group rounded-xl overflow-hidden bg-gray-100" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
             <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center overflow-hidden">
               <img
                 key={active.src}
