@@ -686,6 +686,18 @@ func AssembleUploadHandler(c *gin.Context) {
 
 	log.Printf("[Assemble] All %d chunks assembled into %s", input.TotalChunks, tmpPath)
 
+	// Browsers don't reliably play .mkv via <video> — transcode to MP4 now so playback
+	// never depends on container support. No-op (transcoded=false) for any other extension.
+	if newPath, newExt, newMime, transcoded := utils.TranscodeMkvToMp4IfNeeded(tmpPath, ext, mimeType); transcoded {
+		tmpPath = newPath
+		ext = newExt
+		mimeType = newMime
+		if fi, statErr := os.Stat(tmpPath); statErr == nil {
+			input.FileSize = fi.Size()
+		}
+		defer os.Remove(tmpPath)
+	}
+
 	// Upload assembled file to BunnyCDN
 	uniqueID := uuid.New().String()
 	isTemporary := input.SessionID != ""

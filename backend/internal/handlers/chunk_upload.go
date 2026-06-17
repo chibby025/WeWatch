@@ -158,7 +158,18 @@ func ChunkUploadHandler(c *gin.Context) {
 		log.Printf("💾 [ChunkUpload] Creating database entry...")
 		ext := strings.ToLower(filepath.Ext(fileName))
 		mimeType := getMimeType(ext)
-		
+
+		// Browsers don't reliably play .mkv via <video> — transcode to MP4 now so playback
+		// never depends on container support. No-op (transcoded=false) for any other extension.
+		if newPath, newExt, newMime, transcoded := utils.TranscodeMkvToMp4IfNeeded(finalFilePath, ext, mimeType); transcoded {
+			finalFilePath = newPath
+			ext = newExt
+			mimeType = newMime
+			if fi, statErr := os.Stat(finalFilePath); statErr == nil {
+				fileSize = fi.Size()
+			}
+		}
+
 		// Get video duration (if video)
 		var duration string
 		if strings.HasPrefix(mimeType, "video/") {

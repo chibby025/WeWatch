@@ -134,9 +134,9 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[95vh] overflow-y-auto animate-fade-in custom-sleek-scrollbar">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[95vh] flex flex-col overflow-hidden animate-fade-in">
         {/* Header */}
-        <div className={`bg-gradient-to-r ${content.gradient} text-white p-4 sm:p-6`}>
+        <div className={`bg-gradient-to-r ${content.gradient} text-white p-4 sm:p-6 flex-shrink-0`}>
           <div className="flex justify-between items-start">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="bg-white bg-opacity-20 rounded-full p-2 sm:p-3">
@@ -164,8 +164,9 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
           </div>
         </div>
 
-        {/* Carousel */}
-        <div className="p-4 sm:p-6">
+        {/* Scrollable body — carousel + features. Capped so the action buttons below
+            always stay on-screen without scrolling, even on short mobile viewports. */}
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 custom-sleek-scrollbar">
           <div className="relative group rounded-xl overflow-hidden bg-gray-100">
             <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center overflow-hidden">
               <img
@@ -222,7 +223,7 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
           </div>
 
           {/* Features List */}
-          <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 sm:p-6 mt-5 mb-6">
+          <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 sm:p-6 mt-5">
             <h3 className="font-bold text-gray-900 text-base sm:text-lg mb-3 sm:mb-4">
               ✨ What You Get:
             </h3>
@@ -238,9 +239,11 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
               ))}
             </div>
           </div>
+        </div>
 
-          {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row gap-3">
+        {/* Fixed footer — action buttons + tip always stay visible, never require scrolling */}
+        <div className="flex-shrink-0 border-t border-gray-200">
+          <div className="p-4 sm:p-6 flex flex-col sm:flex-row gap-3">
             <button
               onClick={onClose}
               className="flex-1 px-6 py-3 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold rounded-xl transition-colors duration-200"
@@ -254,13 +257,13 @@ const WatchTypeInfoModal = ({ isOpen, onClose, onContinue, watchType }) => {
               Continue with {content.title} →
             </button>
           </div>
-        </div>
 
-        {/* Footer Tip */}
-        <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-200">
-          <p className="text-xs sm:text-sm text-gray-600 text-center">
-            💡 <span className="font-medium">Next:</span> Choose if this session will be free or paid
-          </p>
+          {/* Footer Tip */}
+          <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-200">
+            <p className="text-xs sm:text-sm text-gray-600 text-center">
+              💡 <span className="font-medium">Next:</span> Choose if this session will be free or paid
+            </p>
+          </div>
         </div>
       </div>
     </div>

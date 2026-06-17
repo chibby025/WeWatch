@@ -3,6 +3,7 @@ package utils
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -307,6 +308,30 @@ func TranscodeToMp4(inputPath, outputPath, watermarkText, logoPath string) error
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// TranscodeMkvToMp4IfNeeded converts a Matroska (.mkv) file to MP4 immediately after upload.
+// Browsers don't reliably play .mkv via <video> — Chrome's support is inconsistent and
+// Firefox doesn't support it at all, regardless of the codec inside (even H.264/AAC).
+// No-op for any other extension: returns the input unchanged with transcoded=false.
+//
+// On success the original .mkv file is deleted and the caller gets back the new .mp4
+// path/ext/mimeType. On failure (ffmpeg error) the original file is left untouched and
+// transcoded=false — caller falls back to serving the raw mkv as before.
+func TranscodeMkvToMp4IfNeeded(localPath, ext, mimeType string) (newPath, newExt, newMimeType string, transcoded bool) {
+	if ext != ".mkv" {
+		return localPath, ext, mimeType, false
+	}
+
+	mp4Path := strings.TrimSuffix(localPath, ext) + ".mp4"
+	if err := TranscodeToMp4(localPath, mp4Path, "", ""); err != nil {
+		log.Printf("⚠️ [MKV Transcode] Failed for %s: %v — falling back to original mkv", localPath, err)
+		return localPath, ext, mimeType, false
+	}
+
+	os.Remove(localPath)
+	log.Printf("✅ [MKV Transcode] %s → %s", localPath, mp4Path)
+	return mp4Path, ".mp4", "video/mp4", true
 }
 
 // GenerateMP4FromFrames creates an MP4 from a series of image frames (for WebRTC streams)

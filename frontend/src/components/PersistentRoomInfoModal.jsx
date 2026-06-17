@@ -50,9 +50,9 @@ const PersistentRoomInfoModal = ({ isOpen, onClose, onContinue }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] md:max-w-4xl lg:max-w-5xl max-h-[95vh] overflow-y-auto animate-fade-in custom-sleek-scrollbar">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] md:max-w-4xl lg:max-w-5xl max-h-[95vh] flex flex-col overflow-hidden animate-fade-in">
         {/* Header */}
-        <div className="bg-gradient-to-r from-green-500 to-green-700 text-white p-4 sm:p-6">
+        <div className="bg-gradient-to-r from-green-500 to-green-700 text-white p-4 sm:p-6 flex-shrink-0">
           <div className="flex justify-between items-start">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="bg-white bg-opacity-20 rounded-full p-2 sm:p-3">
@@ -80,8 +80,9 @@ const PersistentRoomInfoModal = ({ isOpen, onClose, onContinue }) => {
           </div>
         </div>
 
-        {/* Carousel */}
-        <div className="p-4 sm:p-6">
+        {/* Scrollable body — carousel + features. Capped so the action button below
+            always stays on-screen without scrolling, even on short mobile viewports. */}
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 custom-sleek-scrollbar">
           <div className="relative group rounded-xl overflow-hidden bg-gray-100">
             <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center overflow-hidden">
               <img
@@ -171,7 +172,7 @@ const PersistentRoomInfoModal = ({ isOpen, onClose, onContinue }) => {
           </div>
 
           {/* Monetization Highlight */}
-          <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-200 rounded-xl p-4 mb-6">
+          <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-200 rounded-xl p-4">
             <div className="flex items-start gap-3">
               <div className="text-2xl">💰</div>
               <div>
@@ -179,43 +180,48 @@ const PersistentRoomInfoModal = ({ isOpen, onClose, onContinue }) => {
                   Creator Economy Built-In
                 </h4>
                 <p className="text-gray-700 text-xs sm:text-sm">
-                  Viewers can gift tokens during your sessions. 95% goes to you, 5% platform fee. 
+                  Viewers can gift tokens during your sessions. 95% goes to you, 5% platform fee.
                   No subscriptions - pay-as-you-go model preferred by African audiences.
                 </p>
               </div>
             </div>
           </div>
-
-          {/* Don't Show Again Checkbox */}
-          <div className="bg-gray-100 rounded-lg p-4 mb-4">
-            <label htmlFor="dontShowPersistentRoom" className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                id="dontShowPersistentRoom"
-                checked={dontShowAgain}
-                onChange={(e) => setDontShowAgain(e.target.checked)}
-                className="w-5 h-5 text-green-600 rounded focus:ring-2 focus:ring-green-500 cursor-pointer"
-              />
-              <span className="text-sm font-medium text-gray-700">
-                Don't show this again
-              </span>
-            </label>
-          </div>
-
-          {/* Action Button */}
-          <button
-            onClick={handleContinue}
-            className="w-full px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-base sm:text-lg rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl"
-          >
-            Got it, Let's Create →
-          </button>
         </div>
 
-        {/* Footer Tip */}
-        <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-200">
-          <p className="text-xs sm:text-sm text-gray-600 text-center">
-            💡 <span className="font-medium">Next:</span> You'll be redirected to create your persistent room
-          </p>
+        {/* Fixed footer — checkbox + action button + tip always stay visible, never require scrolling */}
+        <div className="flex-shrink-0 border-t border-gray-200">
+          <div className="px-4 sm:px-6 pt-4 pb-2">
+            {/* Don't Show Again Checkbox */}
+            <div className="bg-gray-100 rounded-lg p-4 mb-3">
+              <label htmlFor="dontShowPersistentRoom" className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  id="dontShowPersistentRoom"
+                  checked={dontShowAgain}
+                  onChange={(e) => setDontShowAgain(e.target.checked)}
+                  className="w-5 h-5 text-green-600 rounded focus:ring-2 focus:ring-green-500 cursor-pointer"
+                />
+                <span className="text-sm font-medium text-gray-700">
+                  Don't show this again
+                </span>
+              </label>
+            </div>
+
+            {/* Action Button */}
+            <button
+              onClick={handleContinue}
+              className="w-full px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-base sm:text-lg rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl"
+            >
+              Got it, Let's Create →
+            </button>
+          </div>
+
+          {/* Footer Tip */}
+          <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-200">
+            <p className="text-xs sm:text-sm text-gray-600 text-center">
+              💡 <span className="font-medium">Next:</span> You'll be redirected to create your persistent room
+            </p>
+          </div>
         </div>
       </div>
     </div>
