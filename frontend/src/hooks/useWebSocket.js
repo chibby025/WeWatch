@@ -386,9 +386,16 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
               seating: data.seating || {},
               startTime: data.started_at || data.start_time || null,
               error: data.error || null,
-              isPrivate: data.is_private || false, // ✅ Include session privacy flag
-              hideFromLobby: data.hide_from_lobby || false, // ✅ Include lobby visibility flag
-              content_rating: data.content_rating || 'G', // ✅ Include content rating
+              isPrivate: data.is_private || false,
+              hideFromLobby: data.hide_from_lobby || false,
+              content_rating: data.content_rating || 'G',
+              currentMediaUrl: data.current_media_url || null,
+              currentMediaType: data.current_media_type || null,
+              currentPlaybackTime: data.current_playback_time || 0,
+              playbackTimeUpdatedAt: data.playback_time_updated_at || null,
+              currentDocUrl: data.current_doc_url || null,
+              currentDocType: data.current_doc_type || null,
+              currentDocPage: data.current_doc_page || 1,
             };
             
             // Update all subscribers

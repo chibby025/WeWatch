@@ -3775,7 +3775,7 @@ const LobbyPage = () => {
                 </div>
 
                 <p className="text-gray-300 text-sm leading-relaxed mb-3">
-                  Think of it as your personal TV channel on WeWatch — you host live watch sessions, your audience joins, and you can even earn from paid tickets.
+                  Think of it as your personal TV channel on LetsWatchOut — you host live watch sessions, your audience joins, and you can even earn from paid tickets.
                 </p>
                 <p className="text-amber-400 text-xs font-medium mb-4">
                   ⚠️ You can only create 1 room — make it count!
@@ -4276,7 +4276,7 @@ const LobbyPage = () => {
                         </button>
                         {/* WhatsApp */}
                         <a
-                          href={`https://wa.me/?text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on WeWatch! ${window.location.origin}/rooms/${shareSheetRoom.id}`)}`}
+                          href={`https://wa.me/?text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on LetsWatchOut! ${window.location.origin}/rooms/${shareSheetRoom.id}`)}`}
                           target="_blank" rel="noopener noreferrer"
                           onClick={() => setShareSheetRoom(null)}
                           className="flex flex-col items-center gap-1.5"
@@ -4288,7 +4288,7 @@ const LobbyPage = () => {
                         </a>
                         {/* Twitter / X */}
                         <a
-                          href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`Watching "${shareSheetRoom.name}" on WeWatch — join me! ${window.location.origin}/rooms/${shareSheetRoom.id}`)}`}
+                          href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`Watching "${shareSheetRoom.name}" on LetsWatchOut — join me! ${window.location.origin}/rooms/${shareSheetRoom.id}`)}`}
                           target="_blank" rel="noopener noreferrer"
                           onClick={() => setShareSheetRoom(null)}
                           className="flex flex-col items-center gap-1.5"
@@ -4300,7 +4300,7 @@ const LobbyPage = () => {
                         </a>
                         {/* Telegram */}
                         <a
-                          href={`https://t.me/share/url?url=${encodeURIComponent(`${window.location.origin}/rooms/${shareSheetRoom.id}`)}&text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on WeWatch!`)}`}
+                          href={`https://t.me/share/url?url=${encodeURIComponent(`${window.location.origin}/rooms/${shareSheetRoom.id}`)}&text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on LetsWatchOut!`)}`}
                           target="_blank" rel="noopener noreferrer"
                           onClick={() => setShareSheetRoom(null)}
                           className="flex flex-col items-center gap-1.5"
@@ -5541,7 +5541,7 @@ const LobbyPage = () => {
                             <button
                               onClick={async () => {
                                 const inviteUrl = `${window.location.origin}/invite?ref=${currentUser?.id}`;
-                                const shareData = { title: 'Join me on WeWatch', text: 'Hey! Join me on WeWatch — the best place to watch together.', url: inviteUrl };
+                                const shareData = { title: 'Join me on LetsWatchOut', text: 'Hey! Join me on LetsWatchOut — the best place to watch together.', url: inviteUrl };
                                 if (navigator.share && navigator.canShare?.(shareData)) {
                                   try { await navigator.share(shareData); } catch {}
                                 } else {

@@ -9,7 +9,7 @@ const games = [
     description: '3x3 grid - Get 3 in a row to win',
     minPlayers: 2,
     maxPlayers: 2,
-    icon: '⭕❌',
+    image: '/images/ttt.webp',
     disabled: false,
     type: 'multiplayer'
   },
@@ -19,7 +19,7 @@ const games = [
     description: '5-second countdown - Make your pick!',
     minPlayers: 2,
     maxPlayers: 2,
-    icon: '🪨📄✂️',
+    image: '/images/rps.webp',
     disabled: false,
     type: 'multiplayer'
   },
@@ -29,7 +29,7 @@ const games = [
     description: 'Classic strategy — checkmate your opponent',
     minPlayers: 2,
     maxPlayers: 2,
-    icon: '♟',
+    image: '/images/chess.webp',
     disabled: false,
     type: 'multiplayer'
   },
@@ -39,7 +39,7 @@ const games = [
     description: 'Pick a topic — Film, Anime, Games & more!',
     minPlayers: 2,
     maxPlayers: 10,
-    icon: '🧠',
+    image: '/images/trivia.webp',
     disabled: false,
     type: 'multiplayer'
   },
@@ -157,30 +157,31 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
         {/* Game Selection */}
         <div className="p-6 border-b border-gray-700">
           <h3 className="text-lg font-semibold text-white mb-4">Select Game</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="flex flex-col gap-2">
             {games.map(game => (
               <button
                 key={game.id}
                 onClick={() => {
-                  console.log('🎮 [GameLobbyModal] Game card clicked:', game.id, 'disabled:', game.disabled);
-                  if (!game.disabled) {
-                    setSelectedGame(game.id);
-                    console.log('🎮 [GameLobbyModal] Game selected:', game.id);
-                  }
+                  if (!game.disabled) setSelectedGame(game.id);
                 }}
                 disabled={game.disabled}
                 className={`
-                  p-4 rounded-lg border-2 transition-all
+                  flex items-center gap-4 p-3 rounded-xl border-2 text-left transition-all
                   ${selectedGame === game.id
                     ? 'border-purple-500 bg-purple-500/20'
-                    : 'border-gray-600 bg-gray-700/50 hover:border-gray-500'
+                    : 'border-gray-600 bg-gray-700/50 hover:border-gray-500 hover:bg-gray-700'
                   }
                   ${game.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
                 `}
               >
-                <div className="text-3xl mb-2">{game.icon}</div>
-                <div className="text-white font-semibold text-sm mb-1">{game.name}</div>
-                <div className="text-gray-400 text-xs">{game.description}</div>
+                <img src={game.image} alt={game.name} className="w-16 h-16 object-cover rounded-lg flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-white font-semibold text-sm">{game.name}</div>
+                  <div className="text-gray-400 text-xs mt-0.5 leading-relaxed">{game.description}</div>
+                </div>
+                {selectedGame === game.id && (
+                  <div className="w-2 h-2 rounded-full bg-purple-400 flex-shrink-0" />
+                )}
               </button>
             ))}
           </div>

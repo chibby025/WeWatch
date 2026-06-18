@@ -326,7 +326,7 @@ const CreateRoomPage = () => {
                     maxLength={100}
                     className="w-full px-4 py-2.5 text-gray-900 bg-gray-50 border-2 border-purple-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:opacity-50 transition-all text-sm"
                   />
-                  <p className="text-xs text-gray-400 mt-1">Optional — helps us understand how people use WeWatch</p>
+                  <p className="text-xs text-gray-400 mt-1">Optional — helps us understand how people use LetsWatchOut</p>
                 </div>
               )}
             </div>

@@ -185,7 +185,7 @@ const SessionPreview = ({ session, previewUrl, posterUrl, isGenerating, isCleari
           <div className="flex items-center justify-center mb-5">
             <img
               src="/icons/lwoIcon.webp"
-              alt="WeWatch"
+              alt="LetsWatchOut"
               className="w-14 h-14 object-contain"
               style={{ animation: 'iconFloat 3s ease-in-out infinite' }}
             />

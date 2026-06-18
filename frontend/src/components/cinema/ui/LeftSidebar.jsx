@@ -1047,7 +1047,7 @@ export default function LeftSidebar({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="video/*,.mkv,audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/flac,audio/aac,audio/x-m4a"
+                  accept="video/*,.mkv,audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/flac,audio/aac,audio/x-m4a,application/pdf,image/jpeg,image/png,image/gif,image/webp,text/plain,.pdf,.jpg,.jpeg,.png,.gif,.webp,.txt"
                   className="hidden"
                   onChange={(e) => {
                     handleFileUpload(e.target.files);
@@ -1562,7 +1562,7 @@ export default function LeftSidebar({
               <span className="ml-auto text-green-400 text-[9px] font-medium bg-green-400/10 px-1.5 py-0.5 rounded-full">✓ legal iframe</span>
             </div>
             <p className="text-gray-400 text-[10px] mb-2 leading-relaxed">
-              Everyone loads the same video in their own YouTube player — synced via WeWatch. No screen share needed.
+              Everyone loads the same video in their own YouTube player — synced via LetsWatchOut. No screen share needed.
             </p>
             <div className="flex gap-2">
               <input
@@ -1854,7 +1854,7 @@ export default function LeftSidebar({
         <Coachmark
           steps={[
             { ref: tabBarRef, title: 'Bring In Content', description: 'Upload your own files, go live with LiveShare, or screen-share from another platform with Watch From.', onEnter: () => setActiveTab('upload') },
-            ...(isHost ? [{ ref: browseFilesRef, title: 'Browse Files', description: 'Upload a video or audio file from your device to play for everyone.' }] : []),
+            ...(isHost ? [{ ref: browseFilesRef, title: 'Browse Files', description: 'Share a video, audio, PDF, image, or text file with everyone in the room. Host controls playback and page turns.' }] : []),
             { ref: playingNowRef, title: 'Playing Now', description: "See what's currently playing in the session here." },
             ...(isHost ? [{ ref: ghostModeRef, title: 'Ghost Mode', description: 'Hide this session from the public lobby — useful for sensitive or private content.' }] : []),
             { ref: liveShareRef, title: 'LiveShare', description: 'Go live with your screen or camera — perfect for podcasts, presentations, or reacting together.', onEnter: () => setActiveTab('liveshare') },

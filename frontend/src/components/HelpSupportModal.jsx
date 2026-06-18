@@ -104,15 +104,15 @@ const HelpSupportModal = ({ isOpen, onClose, currentUser }) => {
         },
         {
           question: 'How do I enable my camera/microphone?',
-          answer: 'Browser will prompt for permissions when you join a session. If denied, go to browser settings → Site permissions → Allow camera and microphone for WeWatch. Then refresh and rejoin.'
+          answer: 'Browser will prompt for permissions when you join a session. If denied, go to browser settings → Site permissions → Allow camera and microphone for LetsWatchOut. Then refresh and rejoin.'
         },
         {
           question: 'What is Data Saver mode?',
           answer: 'Data Saver reduces bandwidth usage by limiting video quality to 480p and disabling autoplay. Enable it in Sidebar → Data Saver Mode. Great for mobile data or slow connections.'
         },
         {
-          question: 'Can I use WeWatch on mobile?',
-          answer: 'Yes! WeWatch is fully responsive and works on mobile browsers. For best experience, use Chrome or Safari on mobile. Some features like camera positions work better on desktop.'
+          question: 'Can I use LetsWatchOut on mobile?',
+          answer: 'Yes! LetsWatchOut is fully responsive and works on mobile browsers. For best experience, use Chrome or Safari on mobile. Some features like camera positions work better on desktop.'
         }
       ]
     }

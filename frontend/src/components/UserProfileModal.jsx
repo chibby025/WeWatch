@@ -633,8 +633,8 @@ export default function UserProfileModal({
         {showShareSheet && (() => {
           const shareUrl = getShareUrl();
           const shareText = user?.main_room
-            ? `Check out ${user.username}'s room on WeWatch!`
-            : `Check out ${user.username} on WeWatch!`;
+            ? `Check out ${user.username}'s room on LetsWatchOut!`
+            : `Check out ${user.username} on LetsWatchOut!`;
           return (
             <div
               className="absolute inset-0 bg-black/60 z-[70] flex items-end justify-center rounded-lg sm:rounded-2xl overflow-hidden"

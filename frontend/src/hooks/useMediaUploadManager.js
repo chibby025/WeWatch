@@ -605,18 +605,28 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
       'video/3gpp', 'video/mp2t',
       'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg',
       'audio/flac', 'audio/aac', 'audio/x-m4a',
+      'application/pdf',
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+      'text/plain',
     ];
-    const allowedExtensions = ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v', 'wmv', '3gp', 'ts', 'mp3', 'm4a', 'wav', 'ogg', 'flac', 'aac'];
+    const allowedExtensions = [
+      'mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v', 'wmv', '3gp', 'ts',
+      'mp3', 'm4a', 'wav', 'ogg', 'flac', 'aac',
+      'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'txt',
+    ];
     const ext = file.name.split('.').pop()?.toLowerCase();
     const typeOk = allowedTypes.includes(file.type) || (!file.type && allowedExtensions.includes(ext));
     if (!typeOk) {
-      toast.error(`Invalid file type: ${file.type || ext}. Allowed: MP4, WebM, MOV, MKV, AVI, MP3, M4A, WAV, AAC, FLAC`);
+      toast.error(`Invalid file type: ${file.type || ext}. Allowed: MP4, WebM, MOV, MKV, AVI, MP3, WAV, AAC, FLAC, PDF, PNG, JPG, GIF, TXT`);
       return;
     }
 
-    const maxSize = 1 * 1024 * 1024 * 1024;
+    const isDocument = file.type === 'application/pdf' || file.type === 'text/plain'
+      || file.type?.startsWith('image/') || ['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+    const maxSize = isDocument ? 50 * 1024 * 1024 : 1 * 1024 * 1024 * 1024;
+    const maxLabel = isDocument ? '50 MB' : '1 GB';
     if (file.size > maxSize) {
-      toast.error(`File too large (${(file.size / 1024 / 1024 / 1024).toFixed(2)} GB). Maximum is 1 GB.`);
+      toast.error(`File too large (${isDocument ? (file.size / 1024 / 1024).toFixed(1) + ' MB' : (file.size / 1024 / 1024 / 1024).toFixed(2) + ' GB'}). Maximum is ${maxLabel}.`);
       return;
     }
 

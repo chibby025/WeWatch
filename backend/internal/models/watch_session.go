@@ -61,7 +61,13 @@ type WatchSession struct {
 	LikesCount            int     `gorm:"default:0" json:"likes_count"`                           // Cached count of likes (updated on like/unlike)
 	
 	// Preview generation state
-	CurrentPlaybackTime   int     `gorm:"default:0" json:"current_playback_time"`                // Current video timestamp in seconds
+	CurrentPlaybackTime      int        `gorm:"default:0" json:"current_playback_time"`          // Current video timestamp in seconds
+	PlaybackTimeUpdatedAt    *time.Time `json:"playback_time_updated_at,omitempty"`               // When current_playback_time was last written
+
+	// Document sharing state (host-driven page sync)
+	CurrentDocURL  string `gorm:"type:text" json:"current_doc_url,omitempty"`
+	CurrentDocType string `gorm:"type:varchar(20)" json:"current_doc_type,omitempty"` // "pdf", "image", "text"
+	CurrentDocPage int    `gorm:"default:1" json:"current_doc_page"`
 	CurrentMediaID        int     `gorm:"default:0" json:"current_media_id"`                      // ID of currently playing media item
 	CurrentMediaPath      string  `gorm:"type:text" json:"current_media_path,omitempty"`          // File path of currently playing media
 	

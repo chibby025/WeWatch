@@ -2939,11 +2939,7 @@ const RoomPageNew = () => {
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </div>
               )}
-              {/* Scroll-to-bottom icon: chevron + baseline bar */}
-              <svg className="h-5 w-5 text-purple-600 dark:text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="6 9 12 15 18 9" />
-                <line x1="5" y1="20" x2="19" y2="20" />
-              </svg>
+              <img src="/icons/bottomIcon.svg" alt="Scroll to bottom" className="h-5 w-5" />
             </div>
           </button>
         )}

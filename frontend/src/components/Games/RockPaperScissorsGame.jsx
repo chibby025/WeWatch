@@ -55,8 +55,10 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
   const isHost = players?.[0]?.user_id === currentUserId;
 
   const getPlayerPick = (userId) => {
-    if (!revealed || !gameState?.game_state?.final_picks) return null;
-    return gameState.game_state.final_picks[userId];
+    if (!revealed) return null;
+    const key = String(userId);
+    const src = gameState?.game_state?.final_picks || gameState?.game_state?.picks;
+    return src?.[key] || null;
   };
 
   return (

@@ -13,6 +13,7 @@ import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
 import useLiveKitRoom from '../../hooks/useLiveKitRoom';
 import { Track, ParticipantEvent, RoomEvent } from 'livekit-client';
 // UI Components
+import DocumentViewer from './DocumentViewer';
 import SeatsModal from './ui/SeatsModal';
 import LeftSidebar from './ui/LeftSidebar';
 import VideoSidebar from './ui/VideoSidebar';
@@ -514,6 +515,7 @@ export default function VideoWatch() {
   // 🎥 ALL STATE DECLARATIONS (must be before useEffects that use them)
   const [sessionEndedInfo, setSessionEndedInfo] = useState(null); // { reason: 'ended' | 'connection_lost' }
   const [currentMedia, setCurrentMedia] = useState(null);
+  const [currentDoc, setCurrentDoc] = useState(null); // { url, type, page } — set when host shares a document
   const isYouTube = currentMedia?.type === 'youtube'; // derived after state; safe here
   const [playlist, setPlaylist] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -583,6 +585,9 @@ export default function VideoWatch() {
   const [memberCount, setMemberCount] = useState(null);
   const driftCheckCooldownRef = useRef(false);   // true while on cooldown after a reconciliation
   const driftCheckTimerRef = useRef(null);        // pending debounce timer
+  const isBufferingRef = useRef(false);           // true while video.waiting; pauses drift corrections
+  const lastHostPosRef = useRef(null);            // { expected, timestamp } — updated on each sync_heartbeat
+  const [behindSeconds, setBehindSeconds] = useState(0); // > 0 shows "skip to live" banner
   // Central helper for all member map mutations. Must be declared before any useEffect that calls it.
   // 'add'     → payload is a normalised member object {id, username, avatar_url, user_role}
   // 'remove'  → payload is a userId (number)
@@ -1013,6 +1018,47 @@ export default function VideoWatch() {
     const me = roomMembers.find(m => m.id === currentUser?.id);
     return me?.user_role === 'admin';
   }, [roomMembers, currentUser?.id]);
+
+  // Late-join media restoration: when session_status arrives with a saved media URL,
+  // start playing from the estimated current position instead of sitting at a blank screen.
+  const mediaRestoredFromJoinRef = useRef(false);
+  useEffect(() => {
+    if (isHost) return;
+    if (!sessionStatus?.currentMediaUrl) return;
+    if (mediaRestoredFromJoinRef.current) return;
+    if (currentMedia) return; // already playing something
+
+    mediaRestoredFromJoinRef.current = true;
+
+    const url = sessionStatus.currentMediaUrl;
+    const type = sessionStatus.currentMediaType || 'upload';
+    const savedTime = sessionStatus.currentPlaybackTime || 0;
+    const updatedAt = sessionStatus.playbackTimeUpdatedAt;
+
+    let estimatedTime = savedTime;
+    if (updatedAt && savedTime > 0) {
+      const ageMs = Date.now() - new Date(updatedAt).getTime();
+      if (ageMs >= 0 && ageMs < 120000) {
+        estimatedTime = savedTime + ageMs / 1000;
+      }
+    }
+
+    setCurrentMedia({ url, type });
+    setPendingSeekTime(estimatedTime > 0 ? estimatedTime : 0);
+    setIsPlaying(true);
+  }, [sessionStatus?.currentMediaUrl, isHost, currentMedia]);
+
+  // Late-join document restoration: restore an open document when joining mid-session.
+  useEffect(() => {
+    if (isHost) return;
+    if (!sessionStatus?.currentDocUrl) return;
+    if (currentDoc) return;
+    setCurrentDoc({
+      url: sessionStatus.currentDocUrl,
+      type: sessionStatus.currentDocType || 'pdf',
+      page: sessionStatus.currentDocPage || 1,
+    });
+  }, [sessionStatus?.currentDocUrl, isHost, currentDoc]);
 
   // 🔄 MEMBER: Request current playback state on connect/reconnect
   useEffect(() => {
@@ -2285,6 +2331,59 @@ export default function VideoWatch() {
     setActiveGame(null);
   }, []);
 
+  const handleOpenDoc = useCallback((mediaItem) => {
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    const fileUrl = mediaItem.file_url || mediaItem.FilePath || mediaItem.file_path || '';
+    const url = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+    const mimeType = mediaItem.mime_type || mediaItem.MimeType || '';
+    const docType = mimeType === 'application/pdf' ? 'pdf'
+      : mimeType.startsWith('image/') ? 'image'
+      : 'text';
+
+    setCurrentDoc({ url, type: docType, page: 1 });
+    setCurrentMedia(null);
+    setIsPlaying(false);
+
+    if (isHost && isConnected) {
+      sendMessage({
+        type: 'document_control',
+        command: 'open',
+        url,
+        doc_type: docType,
+        page: 1,
+        timestamp: Date.now(),
+      });
+    }
+  }, [isHost, isConnected, sendMessage]);
+
+  const handleDocPageChange = useCallback((newPage) => {
+    if (newPage < 1) return;
+    setCurrentDoc(prev => prev ? { ...prev, page: newPage } : prev);
+    if (isHost && isConnected) {
+      sendMessage({ type: 'document_control', command: 'page', page: newPage, timestamp: Date.now() });
+    }
+  }, [isHost, isConnected, sendMessage]);
+
+  const handleCloseDoc = useCallback(() => {
+    setCurrentDoc(null);
+    if (isHost && isConnected) {
+      sendMessage({ type: 'document_control', command: 'close', timestamp: Date.now() });
+    }
+  }, [isHost, isConnected, sendMessage]);
+
+  const handleSkipToLive = useCallback(() => {
+    if (!lastHostPosRef.current) return;
+    const ageSeconds = (Date.now() - lastHostPosRef.current.timestamp) / 1000;
+    const skipTarget = lastHostPosRef.current.expected + ageSeconds;
+    const videoEl = videoPlayerRef.current;
+    if (videoEl) videoEl.currentTime = skipTarget;
+    if (currentMedia?.type === 'youtube' && ytPlayerRef.current) {
+      ytPlayerRef.current.seekTo(skipTarget);
+    }
+    setBehindSeconds(0);
+    isBufferingRef.current = false;
+  }, [currentMedia?.type]);
+
   const handlePlayAgain = useCallback(() => {
     if (!activeGame) return;
     sendMessage({
@@ -2429,16 +2528,23 @@ export default function VideoWatch() {
     return () => video.removeEventListener('loadeddata', applyLoad);
   }, [currentMedia]); // only re-register when the media source itself changes
 
-  // Clear stall indicator as soon as the video actually starts playing
+  // Clear stall indicator as soon as the video actually starts playing.
+  // Also track buffering state so drift corrections pause while the buffer is starved.
   useEffect(() => {
     const video = videoPlayerRef.current;
     if (!video) return;
     const onPlaying = () => {
       setVideoStalled(false);
       clearTimeout(stallTimerRef.current);
+      isBufferingRef.current = false;
     };
+    const onWaiting = () => { isBufferingRef.current = true; };
     video.addEventListener('playing', onPlaying);
-    return () => video.removeEventListener('playing', onPlaying);
+    video.addEventListener('waiting', onWaiting);
+    return () => {
+      video.removeEventListener('playing', onPlaying);
+      video.removeEventListener('waiting', onWaiting);
+    };
   }, []);
 
   // Monitor LiveKit local participant for screen share track
@@ -2669,6 +2775,18 @@ export default function VideoWatch() {
       alert("❌ Error: Invalid media item selected.");
       return;
     }
+
+    // Route documents (PDF, image, text) to the document viewer instead of the video pipeline.
+    const mimeType = mediaItem.mime_type || mediaItem.MimeType || '';
+    const ext = (mediaItem.original_name || mediaItem.OriginalName || '').split('.').pop()?.toLowerCase();
+    const isDoc = mimeType === 'application/pdf' || mimeType === 'text/plain'
+      || mimeType.startsWith('image/')
+      || ['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+    if (isDoc) {
+      handleOpenDoc(mediaItem);
+      return;
+    }
+
     const filePath = mediaItem.file_path || mediaItem.FilePath;
     if (!filePath) {
       alert("❌ This media item is missing its file path and cannot be played.");
@@ -3555,15 +3673,41 @@ export default function VideoWatch() {
           break;
         }
 
+        case "document_control": {
+          if (isHost) break; // host already updated local state in the handler
+          const dc = message;
+          if (dc.command === 'open') {
+            setCurrentDoc({ url: dc.url, type: dc.doc_type, page: dc.page || 1 });
+            setCurrentMedia(null);
+            setIsPlaying(false);
+          } else if (dc.command === 'page') {
+            setCurrentDoc(prev => prev ? { ...prev, page: dc.page } : prev);
+          } else if (dc.command === 'close') {
+            setCurrentDoc(null);
+          }
+          break;
+        }
+
         case "sync_heartbeat": {
           if (isHost) break;
+          // Guests get no sync — they watch passively without position corrections.
+          if (!currentUser?.id) break;
+
           const _hb = message;
           const _latency = Math.max(0, Date.now() - (_hb.timestamp || Date.now()));
           const _expected = (_hb.current_time || 0) + _latency / 1000;
 
+          // Store for "skip to live" handler.
+          lastHostPosRef.current = { expected: _expected, timestamp: Date.now() };
+
           if (currentMedia?.type === 'youtube' && ytPlayerRef.current) {
             const _ytTime = ytPlayerRef.current.getCurrentTime() ?? 0;
             const _drift  = Math.abs(_ytTime - _expected);
+            if (_drift >= 30) {
+              setBehindSeconds(Math.round(_drift));
+            } else if (_drift < 5) {
+              setBehindSeconds(0);
+            }
             if (_drift > 1.0 && _drift < 30) {
               console.log(`🔄 [YT Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
               ytPlayerRef.current.seekTo(_expected);
@@ -3572,6 +3716,13 @@ export default function VideoWatch() {
             const _videoEl = videoPlayerRef.current || document.querySelector('video');
             if (!_videoEl || _videoEl.paused) break;
             const _drift = Math.abs(_videoEl.currentTime - _expected);
+            if (_drift >= 30) {
+              setBehindSeconds(Math.round(_drift));
+            } else if (_drift < 5) {
+              setBehindSeconds(0);
+            }
+            // Skip correction while buffering — seeking destroys what little buffer exists.
+            if (isBufferingRef.current) break;
             if (_drift > 0.5 && _drift < 30) {
               console.log(`🔄 [Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
               _videoEl.currentTime = _expected;
@@ -5941,6 +6092,20 @@ export default function VideoWatch() {
                   />
                 )}
 
+                {/* Document viewer — shown when host shares a PDF, image, or text file */}
+                {currentDoc && (
+                  <div className="absolute inset-0 z-20">
+                    <DocumentViewer
+                      url={currentDoc.url}
+                      docType={currentDoc.type}
+                      page={currentDoc.page}
+                      isHost={isHost}
+                      onPageChange={handleDocPageChange}
+                      onClose={handleCloseDoc}
+                    />
+                  </div>
+                )}
+
                 {/* DVD screensaver — shown after 20 s inactivity when nothing is playing (not in Religious sessions) */}
                 {dvdVisible && !liveShareMode && !liveShareContentMode && contentRating !== 'Religious' && (
                   <DVDBounce />
@@ -5999,6 +6164,20 @@ export default function VideoWatch() {
                 )}
 
                 {/* Stall detector — shown to non-host members when video hasn't started 9s after play command */}
+                {behindSeconds >= 30 && !isHost && currentUser?.id && (
+                  <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
+                    <div className="flex items-center gap-3 bg-black/80 border border-white/15 rounded-full px-4 py-2 shadow-lg backdrop-blur-sm">
+                      <span className="text-white/70 text-xs">You're {behindSeconds}s behind</span>
+                      <button
+                        onClick={handleSkipToLive}
+                        className="text-xs font-semibold text-purple-400 hover:text-purple-300 transition-colors whitespace-nowrap"
+                      >
+                        Skip to live →
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {videoStalled && !isHost && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-40 pointer-events-auto">
                     <div className="bg-gray-900/90 border border-white/10 rounded-2xl px-6 py-5 flex flex-col items-center gap-3 max-w-xs text-center shadow-xl">

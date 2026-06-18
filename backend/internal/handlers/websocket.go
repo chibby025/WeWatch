@@ -98,6 +98,21 @@ func GetWebSocketManager() *Hub {
 }
 
 // Hub maintains the set of active clients and broadcasts messages to the rooms.
+// playbackPos is a lightweight in-memory record of a session's current position.
+// Updated on every playback_control and sync_heartbeat — zero DB writes for heartbeats.
+type playbackPos struct {
+    time      int
+    updatedAt time.Time
+}
+
+// docState records the currently shared document for a room.
+// Updated on document_control open/page — page changes never hit the DB.
+type docState struct {
+    url     string
+    docType string // "pdf", "image", "text"
+    page    int
+}
+
 type Hub struct {
 	// Registered clients for each room.
 	rooms map[uint]map[*Client]bool
@@ -142,6 +157,17 @@ type Hub struct {
     // Track mute-all state per session (for persistent mute across joins/refreshes)
     sessionMuteAllState map[string]bool // sessionID → isMuteAllActive
     muteAllMutex        sync.RWMutex
+
+    // In-memory playback position cache (roomID → position).
+    // Updated on sync_heartbeat and playback_control — no DB write needed on heartbeats.
+    // Falls back to DB value (current_playback_time) when empty (e.g. after server restart).
+    playbackPositions map[uint]playbackPos
+    playbackPosMutex  sync.RWMutex
+
+    // In-memory document state (roomID → current doc).
+    // open command persists to DB; page changes are memory-only.
+    docStates   map[uint]docState
+    docStateMu  sync.RWMutex
 
     // ── Phase 3 observability counters ──────────────────────────────────────
     // Incremented wherever a channel-full "default: drop" branch already existed.
@@ -216,10 +242,14 @@ func NewHub() *Hub {
 		roomStreamHost:      make(map[uint]uint),
 		roomStreamActive:    make(map[uint]bool),
 		clientRegistry:      make(map[uint]map[uint]*Client),
-		seatingAssignments:  make(map[uint]map[int]map[string]uint), // ✅ Hall-aware seating
+		seatingAssignments:  make(map[uint]map[int]map[string]uint),
 		seatingMutex:        sync.RWMutex{},
 		sessionMuteAllState: make(map[string]bool),
 		muteAllMutex:        sync.RWMutex{},
+		playbackPositions:   make(map[uint]playbackPos),
+		playbackPosMutex:    sync.RWMutex{},
+		docStates:           make(map[uint]docState),
+		docStateMu:          sync.RWMutex{},
 	}
 }
 
@@ -399,18 +429,7 @@ func (h *Hub) startBroadcastWorkers() {
                     case c.send <- data:
                         // enqueued ok
                     default:
-                        // drop for slow client; log and notify host if possible
                         log.Printf("[Hub] drop outgoing to user %d in room %d (send buffer full)", c.userID, roomID)
-                        // Try to notify the room host of backpressure (best-effort)
-                        // Produce a lightweight control message
-                        bdata, _ := json.Marshal(WebSocketMessage{Type: "screen_share_backpressure", Data: map[string]interface{}{"user_id": c.userID, "room_id": roomID}})
-                        // Send backpressure notifications via hub.broadcastToRoom as text so host can react
-                        // Note: this may re-enter this loop, but that's acceptable for low-frequency notifications
-                        select {
-                        case h.broadcastToRoom <- RoomBroadcastMessage{roomID: roomID, data: OutgoingMessage{Data: bdata, IsBinary: false}, sender: nil}:
-                        default:
-                            // drop notification if queue full
-                        }
                     }
                 }() // ✅ Close anonymous function
             }
@@ -418,24 +437,22 @@ func (h *Hub) startBroadcastWorkers() {
     }()
 
     // User-targeted broadcast worker (for BroadcastToUsers)
+    // Uses clientRegistry for O(1) lookup per user instead of scanning all rooms.
     go func() {
         for msg := range h.broadcastToUsers {
+            h.registryMutex.RLock()
             for _, uid := range msg.userIDs {
-                // We need to find client(s) for this uid in all rooms map
-                h.mutex.RLock()
-                for _, clients := range h.rooms {
-                    for c := range clients {
-                        if c.userID == uid {
-                            select {
-                            case c.send <- msg.data:
-                            default:
-                                log.Printf("[Hub] drop outgoing to user %d (send buffer full)", uid)
-                            }
+                if roomMap, ok := h.clientRegistry[uid]; ok {
+                    for _, c := range roomMap {
+                        select {
+                        case c.send <- msg.data:
+                        default:
+                            log.Printf("[Hub] drop outgoing to user %d (send buffer full)", uid)
                         }
                     }
                 }
-                h.mutex.RUnlock()
             }
+            h.registryMutex.RUnlock()
         }
     }()
 }
@@ -829,22 +846,41 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
         // 🔍 DEBUG: Log the memberList that will be sent
         log.Printf("📤 [JoinWatchSession] Member list to broadcast: %+v", memberList)
         
+        // Prefer in-memory position (updated every 10s by sync_heartbeat) over the DB value.
+        joinPlaybackTime := session.CurrentPlaybackTime
+        joinPlaybackUpdatedAt := session.PlaybackTimeUpdatedAt
+        if memPos, ok := hub.GetPlaybackPosition(client.roomID); ok {
+            joinPlaybackTime = memPos.time
+            joinPlaybackUpdatedAt = &memPos.updatedAt
+        }
+
+        // Prefer in-memory doc state (latest page) over DB value.
+        joinDocURL, joinDocType, joinDocPage := session.CurrentDocURL, session.CurrentDocType, session.CurrentDocPage
+        if ds, ok := hub.GetDocState(client.roomID); ok {
+            joinDocURL, joinDocType, joinDocPage = ds.url, ds.docType, ds.page
+        }
+
         statusMsg := WebSocketMessage{
             Type: "session_status",
             Data: map[string]interface{}{
-                "session_id":   sessionID,
-                "host_id":      session.HostID,
-                "members":      memberList,
-                "member_count": len(activeMembers),
-                "started_at":   session.StartedAt,
-                "seating":      seatingMap, // ✅ Include persistent seating data
-                "current_media_url": session.CurrentMediaURL,
-                "current_media_type": session.CurrentMediaType,
+                "session_id":               sessionID,
+                "host_id":                  session.HostID,
+                "members":                  memberList,
+                "member_count":             len(activeMembers),
+                "started_at":               session.StartedAt,
+                "seating":                  seatingMap,
+                "current_media_url":        session.CurrentMediaURL,
+                "current_media_type":       session.CurrentMediaType,
+                "current_playback_time":    joinPlaybackTime,
+                "playback_time_updated_at": joinPlaybackUpdatedAt,
+                "current_doc_url":          joinDocURL,
+                "current_doc_type":         joinDocType,
+                "current_doc_page":         joinDocPage,
                 "is_screen_sharing_active": session.IsScreenSharingActive,
-                "sharing_source": session.SharingSource,
-                "session_title": session.SessionTitle,
-                "is_private":    watchSession.IsPrivate, // ✅ Include session privacy flag
-                "content_rating": watchSession.ContentRating, // ✅ Include content rating for button filtering
+                "sharing_source":           session.SharingSource,
+                "session_title":            session.SessionTitle,
+                "is_private":              watchSession.IsPrivate,
+                "content_rating":           watchSession.ContentRating,
             },
         }
         if statusBytes, err := json.Marshal(statusMsg); err == nil {
@@ -1385,9 +1421,20 @@ func (h *Hub) BroadcastToUsers(userIDs []uint, message OutgoingMessage) {
 	}
 }
 
-// BroadcastToUser sends a message to a single user in a specific room
+// BroadcastToUser sends a message to a single user in a specific room.
+// Uses clientRegistry for O(1) lookup — bypasses the broadcastToUsers channel.
 func (h *Hub) BroadcastToUser(userID uint, roomID uint, message OutgoingMessage) {
-	h.BroadcastToUsers([]uint{userID}, message)
+    h.registryMutex.RLock()
+    if roomMap, ok := h.clientRegistry[userID]; ok {
+        if c, ok := roomMap[roomID]; ok {
+            select {
+            case c.send <- message:
+            default:
+                log.Printf("[Hub] drop BroadcastToUser to user %d room %d (send buffer full)", userID, roomID)
+            }
+        }
+    }
+    h.registryMutex.RUnlock()
 }
 
 // GetRoomConnectionCount returns the number of live WebSocket clients in a room.
@@ -1407,6 +1454,22 @@ func (h *Hub) GetRoomActiveUserIDs(roomID uint) map[uint]bool {
 		result[client.userID] = true
 	}
 	return result
+}
+
+// GetDocState returns the in-memory document state for a room, if any.
+func (h *Hub) GetDocState(roomID uint) (docState, bool) {
+    h.docStateMu.RLock()
+    ds, ok := h.docStates[roomID]
+    h.docStateMu.RUnlock()
+    return ds, ok
+}
+
+// GetPlaybackPosition returns the in-memory playback position for a room, if known.
+func (h *Hub) GetPlaybackPosition(roomID uint) (playbackPos, bool) {
+    h.playbackPosMutex.RLock()
+    pos, ok := h.playbackPositions[roomID]
+    h.playbackPosMutex.RUnlock()
+    return pos, ok
 }
 
 // GetActiveSession retrieves the active session for a sessionID.
@@ -2159,6 +2222,20 @@ func WebSocketHandler(c *gin.Context) {
 			}
 			hub.seatingMutex.Unlock()
 
+			// Prefer in-memory position over DB value.
+			wsPlaybackTime := watchSession.CurrentPlaybackTime
+			wsPlaybackUpdatedAt := watchSession.PlaybackTimeUpdatedAt
+			if memPos, ok := hub.GetPlaybackPosition(roomID); ok {
+				wsPlaybackTime = memPos.time
+				t := memPos.updatedAt
+				wsPlaybackUpdatedAt = &t
+			}
+
+			wsDocURL, wsDocType, wsDocPage := watchSession.CurrentDocURL, watchSession.CurrentDocType, watchSession.CurrentDocPage
+			if ds, ok := hub.GetDocState(roomID); ok {
+				wsDocURL, wsDocType, wsDocPage = ds.url, ds.docType, ds.page
+			}
+
 			statusMsg := WebSocketMessage{
 				Type: "session_status",
 				Data: map[string]interface{}{
@@ -2172,9 +2249,14 @@ func WebSocketHandler(c *gin.Context) {
 					"is_private":                watchSession.IsPrivate,
 					"content_rating":            watchSession.ContentRating,
 					// Late-joiner media restoration
-					"current_media_url":         watchSession.CurrentMediaURL,
-					"current_media_type":        watchSession.CurrentMediaType,
-					"liveshare_mode":            watchSession.LiveshareMode,
+					"current_media_url":        watchSession.CurrentMediaURL,
+					"current_media_type":       watchSession.CurrentMediaType,
+					"current_playback_time":    wsPlaybackTime,
+					"playback_time_updated_at": wsPlaybackUpdatedAt,
+					"current_doc_url":          wsDocURL,
+					"current_doc_type":         wsDocType,
+					"current_doc_page":         wsDocPage,
+					"liveshare_mode":           watchSession.LiveshareMode,
 					"podcast_title":             watchSession.PodcastTitle,
 					"podcast_logo_url":          watchSession.PodcastLogoURL,
 					"liveshare_banner_text":     watchSession.LiveShareBannerText,
@@ -2750,18 +2832,35 @@ func (client *Client) handleMessage(message []byte) {
         log.Printf("🪑 [client_ready] Filtered seated usernames (active only): %+v", seatedUsernames)
 
         // Build session_status (screen sharing handled by LiveKit)
+        // Prefer in-memory position over DB value.
+        lhPlaybackTime := watchSession.CurrentPlaybackTime
+        lhPlaybackUpdatedAt := watchSession.PlaybackTimeUpdatedAt
+        if memPos, ok := client.hub.GetPlaybackPosition(client.roomID); ok {
+            lhPlaybackTime = memPos.time
+            t := memPos.updatedAt
+            lhPlaybackUpdatedAt = &t
+        }
+        lhDocURL, lhDocType, lhDocPage := watchSession.CurrentDocURL, watchSession.CurrentDocType, watchSession.CurrentDocPage
+        if ds, ok := client.hub.GetDocState(client.roomID); ok {
+            lhDocURL, lhDocType, lhDocPage = ds.url, ds.docType, ds.page
+        }
         statusMsg := WebSocketMessage{
             Type: "session_status",
             Data: map[string]interface{}{
                 "session_id":       watchSession.SessionID,
                 "host_id":          watchSession.HostID,
-                "members":          activeMembers, // ✅ Send FILTERED active members only
+                "members":          activeMembers,
                 "started_at":       watchSession.StartedAt,
-                "seating":          filteredSeatingMap, // Include FILTERED seating assignments (active users only)
-                "seated_usernames": seatedUsernames,    // Include usernames for seated users (active only)
-                "discussion_mode":  watchSession.DiscussionMode, // Include discussion mode state
-                "current_media_url": watchSession.CurrentMediaURL, // Lecture hall media state
-                "current_media_type": watchSession.CurrentMediaType,
+                "seating":          filteredSeatingMap,
+                "seated_usernames": seatedUsernames,
+                "discussion_mode":  watchSession.DiscussionMode,
+                "current_media_url":        watchSession.CurrentMediaURL,
+                "current_media_type":       watchSession.CurrentMediaType,
+                "current_playback_time":    lhPlaybackTime,
+                "playback_time_updated_at": lhPlaybackUpdatedAt,
+                "current_doc_url":          lhDocURL,
+                "current_doc_type":         lhDocType,
+                "current_doc_page":         lhDocPage,
                 "is_screen_sharing_active": watchSession.IsScreenSharingActive,
                 "sharing_source": watchSession.SharingSource,
                 "session_title": watchSession.SessionTitle,
@@ -5856,7 +5955,15 @@ func (client *Client) handleMessage(message []byte) {
                 
                 // Track seek position for all commands (play, pause, seek)
                 if playbackData.SeekTime >= 0 {
-                    updates := map[string]interface{}{"current_playback_time": playbackData.SeekTime}
+                    pbNow := time.Now()
+                    // Mirror to in-memory cache so session_status reads don't need a DB round-trip.
+                    client.hub.playbackPosMutex.Lock()
+                    client.hub.playbackPositions[client.roomID] = playbackPos{time: playbackData.SeekTime, updatedAt: pbNow}
+                    client.hub.playbackPosMutex.Unlock()
+                    updates := map[string]interface{}{
+                        "current_playback_time":    playbackData.SeekTime,
+                        "playback_time_updated_at": pbNow,
+                    }
                     // Persist media URL on play so late joiners can restore state on rejoin.
                     // Only overwrite when we have a real URL (don't blank it on pause/seek).
                     if playbackData.Command == "play" && (playbackData.FileURL != "" || playbackData.FilePath != "") {
@@ -5932,12 +6039,66 @@ func (client *Client) handleMessage(message []byte) {
         return
     }
 
+    // Handle document_control: host shares a document (PDF, image, text) with the room.
+    // open → persist URL+type to DB, update in-memory; page → memory-only; close → clear both.
+    if msg.Type == "document_control" {
+        var dc struct {
+            Command string `json:"command"` // "open", "page", "close"
+            URL     string `json:"url"`
+            DocType string `json:"doc_type"` // "pdf", "image", "text"
+            Page    int    `json:"page"`
+        }
+        if err := json.Unmarshal(message, &dc); err == nil {
+            switch dc.Command {
+            case "open":
+                if dc.Page < 1 {
+                    dc.Page = 1
+                }
+                client.hub.docStateMu.Lock()
+                client.hub.docStates[client.roomID] = docState{url: dc.URL, docType: dc.DocType, page: dc.Page}
+                client.hub.docStateMu.Unlock()
+                go DB.Model(&models.WatchSession{}).
+                    Where("room_id = ? AND ended_at IS NULL", client.roomID).
+                    Updates(map[string]interface{}{
+                        "current_doc_url":  dc.URL,
+                        "current_doc_type": dc.DocType,
+                        "current_doc_page": dc.Page,
+                    })
+            case "page":
+                client.hub.docStateMu.Lock()
+                if ds, ok := client.hub.docStates[client.roomID]; ok {
+                    ds.page = dc.Page
+                    client.hub.docStates[client.roomID] = ds
+                }
+                client.hub.docStateMu.Unlock()
+            case "close":
+                client.hub.docStateMu.Lock()
+                delete(client.hub.docStates, client.roomID)
+                client.hub.docStateMu.Unlock()
+                go DB.Model(&models.WatchSession{}).
+                    Where("room_id = ? AND ended_at IS NULL", client.roomID).
+                    Updates(map[string]interface{}{
+                        "current_doc_url":  "",
+                        "current_doc_type": "",
+                        "current_doc_page": 1,
+                    })
+            }
+        }
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+
     // Handle sync_heartbeat: host → members periodic position sync.
-    // Relay immediately with server_ts; no DB write needed (high-frequency, low-cost).
+    // Relay immediately with server_ts; update in-memory position only (no DB write).
     if msg.Type == "sync_heartbeat" {
         var hbMap map[string]interface{}
         if err := json.Unmarshal(message, &hbMap); err == nil {
             hbMap["server_ts"] = time.Now().UnixMilli()
+            if ct, ok := hbMap["current_time"].(float64); ok && ct > 0 {
+                client.hub.playbackPosMutex.Lock()
+                client.hub.playbackPositions[client.roomID] = playbackPos{time: int(ct), updatedAt: time.Now()}
+                client.hub.playbackPosMutex.Unlock()
+            }
             if relayMsg, err := json.Marshal(hbMap); err == nil {
                 client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: relayMsg, IsBinary: false}, client)
             }

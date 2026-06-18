@@ -803,6 +803,7 @@ export default function CinemaScene3DDemo() {
   const isHostRef = useRef(false);
   const currentMediaRef = useRef(null); // mirrors currentMedia state for use inside direct handler
   const syncRefRef = useRef(null);      // { hostTime, receivedAt } — seeded from playback_control, used by autonomous drift check
+  const isBufferingRef3D = useRef(false); // true while video.waiting; pauses autonomous drift corrections
   const [isFullscreenHovering, setIsFullscreenHovering] = useState(false);
   
   // 🚀 PHASE 2: Model preload handled in CinemaScene3D.jsx (module-level import)
@@ -1532,23 +1533,53 @@ export default function CinemaScene3DDemo() {
   // Autonomous 2s drift check — mirrors VideoWatch.jsx.
   // Reads syncRefRef (seeded on initial playback_control) and corrects drift locally.
   // No WS round-trip, no setState — direct video element write only, so RAF is never blocked.
+  // Guests (no currentUser.id) and buffering clients skip corrections.
   useEffect(() => {
     if (isHost || !isPlaying) return;
+    const video = videoRef.current;
+    if (video) {
+      const onWaiting = () => { isBufferingRef3D.current = true; };
+      const onPlaying = () => { isBufferingRef3D.current = false; };
+      video.addEventListener('waiting', onWaiting);
+      video.addEventListener('playing', onPlaying);
+      // cleanup handled in interval cleanup below via closure
+      const id = setInterval(() => {
+        if (!currentUser?.id) return; // guests skip
+        if (!syncRefRef.current) return;
+        if (isBufferingRef3D.current) return; // paused while buffer is starved
+        const v = videoRef.current;
+        if (!v || v.paused) return;
+        const elapsed = (Date.now() - syncRefRef.current.receivedAt) / 1000;
+        const expected = syncRefRef.current.hostTime + elapsed;
+        const drift = v.currentTime - expected;
+        const absDrift = Math.abs(drift);
+        if (absDrift > 1.0 && absDrift < 30) {
+          console.log(`🔄 [3D Drift] Auto-correct ${drift > 0 ? 'ahead' : 'behind'} ${absDrift.toFixed(2)}s → ${expected.toFixed(2)}s`);
+          v.currentTime = expected;
+        }
+      }, 2000);
+      return () => {
+        clearInterval(id);
+        video.removeEventListener('waiting', onWaiting);
+        video.removeEventListener('playing', onPlaying);
+      };
+    }
     const id = setInterval(() => {
+      if (!currentUser?.id) return;
       if (!syncRefRef.current) return;
-      const video = videoRef.current;
-      if (!video || video.paused) return;
+      if (isBufferingRef3D.current) return;
+      const v = videoRef.current;
+      if (!v || v.paused) return;
       const elapsed = (Date.now() - syncRefRef.current.receivedAt) / 1000;
       const expected = syncRefRef.current.hostTime + elapsed;
-      const drift = video.currentTime - expected;
+      const drift = v.currentTime - expected;
       const absDrift = Math.abs(drift);
       if (absDrift > 1.0 && absDrift < 30) {
-        console.log(`🔄 [3D Drift] Auto-correct ${drift > 0 ? 'ahead' : 'behind'} ${absDrift.toFixed(2)}s → ${expected.toFixed(2)}s`);
-        video.currentTime = expected;
+        v.currentTime = expected;
       }
     }, 2000);
     return () => clearInterval(id);
-  }, [isHost, isPlaying]);
+  }, [isHost, isPlaying, currentUser?.id]);
 
   // Member reconciliation poll: every 5s compare DB truth against local array.
   useEffect(() => {
