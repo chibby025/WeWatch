@@ -277,6 +277,7 @@ const LobbyPage = () => {
   const [isCallHistoryModalOpen, setIsCallHistoryModalOpen] = useState(false);
   const [showGuestBanner, setShowGuestBanner] = useState(false);
   const [guestBannerDismissed, setGuestBannerDismissed] = useState(false);
+  const [showAuthSheet, setShowAuthSheet] = useState(false);
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isCreateNewModalOpen, setIsCreateNewModalOpen] = useState(false);
@@ -453,18 +454,31 @@ const LobbyPage = () => {
     });
   };
   
-  // Redirect guests to register before any write interaction
+  // Show soft auth sheet before any write interaction that genuinely needs an account
   const requireAuth = (action) => {
-    if (!currentUser) { navigate('/register'); return; }
+    if (!currentUser) { setShowAuthSheet(true); return; }
     action();
   };
 
   // ❤️ Handle session like/unlike (single click to toggle)
   const handleSessionLike = async (sessionId, e) => {
     e.stopPropagation();
-    if (!currentUser) { navigate('/register'); return; }
-    
+
     const currentLikeState = sessionLikes[sessionId] || { count: 0, isLiked: false };
+
+    // Guests: local-only toggle with a soft nudge, no API call
+    if (!currentUser) {
+      const next = !currentLikeState.isLiked;
+      setSessionLikes(prev => ({
+        ...prev,
+        [sessionId]: { count: next ? currentLikeState.count + 1 : Math.max(0, currentLikeState.count - 1), isLiked: next },
+      }));
+      if (next) {
+        setHeartAnimations(prev => [...prev, makeHeart()]);
+        toast('Sign in to save your likes', { icon: '✨', duration: 2500 });
+      }
+      return;
+    }
     
     // Toggle: If already liked, unlike. If not liked, like.
     if (currentLikeState.isLiked) {
@@ -529,7 +543,7 @@ const LobbyPage = () => {
 
   const handleToggleFavourite = async (roomId, e) => {
     e.stopPropagation();
-    if (!currentUser) { navigate('/register'); return; }
+    if (!currentUser) { setShowAuthSheet(true); return; }
     try {
       const res = await toggleRoomFavourite(roomId);
       setSavedRooms(prev => ({ ...prev, [roomId]: res.is_favourite }));
@@ -538,7 +552,7 @@ const LobbyPage = () => {
 
   const handleJoinRoomFromCard = async (roomId, e) => {
     e.stopPropagation();
-    if (!currentUser) { navigate('/register'); return; }
+    if (!currentUser) { setShowAuthSheet(true); return; }
     if (joinedRooms[roomId]) return;
     try {
       const res = await joinRoom(roomId);
@@ -3159,7 +3173,7 @@ const LobbyPage = () => {
 
   // ✅ Handle direct join from session preview
   const handleJoinSessionDirect = async (session) => {
-    if (!currentUser) { navigate('/register'); return; }
+    if (!currentUser) { setShowAuthSheet(true); return; }
     try {
       // 1. Verify session still exists (for temporary rooms)
       if (session.is_temporary) {
@@ -3584,6 +3598,53 @@ const LobbyPage = () => {
           </div>
         </div>
       )}
+
+      {/* Soft auth sheet — slides up from bottom, tapping backdrop dismisses */}
+      {showAuthSheet && (
+        <div
+          className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 backdrop-blur-sm"
+          onClick={() => setShowAuthSheet(false)}
+        >
+          <div
+            className="w-full max-w-md bg-gray-950 border border-white/10 rounded-t-2xl px-5 pt-4 pb-10 shadow-2xl"
+            style={{ animation: 'auth-sheet-up 0.26s cubic-bezier(0.32,0.72,0,1) forwards' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-9 h-1 rounded-full bg-white/20 mx-auto mb-5" />
+            <p className="text-white font-bold text-lg text-center mb-1">Sign in to continue</p>
+            <p className="text-white/50 text-sm text-center mb-6 leading-relaxed">
+              Create a free account to join sessions, save rooms and chat with others
+            </p>
+            <div className="flex flex-col gap-2.5">
+              <button
+                onClick={() => navigate('/register')}
+                className="w-full py-3.5 bg-purple-600 hover:bg-purple-500 active:scale-95 text-white rounded-2xl font-semibold text-sm transition-all"
+              >
+                Sign Up — it's free
+              </button>
+              <button
+                onClick={() => navigate('/login')}
+                className="w-full py-3.5 bg-white/8 hover:bg-white/12 active:scale-95 text-white rounded-2xl font-medium text-sm transition-all"
+              >
+                Log In
+              </button>
+              <button
+                onClick={() => setShowAuthSheet(false)}
+                className="text-white/35 hover:text-white/60 text-sm py-2 transition-colors text-center"
+              >
+                Continue browsing
+              </button>
+            </div>
+          </div>
+          <style>{`
+            @keyframes auth-sheet-up {
+              from { transform: translateY(100%); }
+              to   { transform: translateY(0); }
+            }
+          `}</style>
+        </div>
+      )}
+
       {/* ✅ Hamburger Menu Button - Fixed Top Left */}
       <button
         onClick={() => setIsLobbyLeftSidebarOpen(true)}

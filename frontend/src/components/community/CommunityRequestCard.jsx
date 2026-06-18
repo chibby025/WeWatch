@@ -23,6 +23,19 @@ const CommunityRequestCard = ({ request: initialRequest, currentUser, onRequestU
   const handleUpvote = async (e) => {
     e.stopPropagation();
     if (upvoting) return;
+
+    // Guests: local-only toggle with a soft nudge, no API call
+    if (!currentUser) {
+      const next = !request.has_upvoted;
+      setRequest(prev => ({
+        ...prev,
+        has_upvoted: next,
+        upvote_count: next ? prev.upvote_count + 1 : Math.max(0, prev.upvote_count - 1),
+      }));
+      if (next) toast('Sign in to save your upvote', { icon: '✨', duration: 2500 });
+      return;
+    }
+
     setUpvoting(true);
     try {
       const data = await toggleCommunityRequestUpvote(request.id);
