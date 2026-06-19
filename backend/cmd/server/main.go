@@ -126,7 +126,9 @@ func main() {
 		// Community Events (requests + upvotes + claims)
 		&models.CommunityRequest{}, &models.CommunityRequestUpvote{}, &models.CommunityRequestClaim{},
 		// Room message attachments
-		&models.RoomMessage{})
+		&models.RoomMessage{},
+		// Sticker packs (user-created, Telegram imports, community)
+		&models.StickerPack{}, &models.StickerItem{}, &models.UserStickerPack{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -742,6 +744,14 @@ func main() {
 		protected.GET("/scheduled-events/with-trailers", handlers.GetScheduledEventsWithTrailersHandler) // ✅ Get events with trailers (paginated)
 		protected.POST("/scheduled-events/upload-trailer", handlers.UploadTrailerHandler)               // ✅ Upload trailer video for event
 		protected.POST("/stickers/upload", handlers.UploadCustomStickerHandler)                         // POST /api/stickers/upload (Upload custom sticker image)
+		protected.GET("/stickers/packs", handlers.GetUserStickerPacksHandler)                           // GET  /api/stickers/packs
+		protected.POST("/stickers/packs", handlers.CreateStickerPackHandler)                            // POST /api/stickers/packs
+		protected.POST("/stickers/packs/:pack_id/stickers", handlers.AddStickerToPackHandler)           // POST /api/stickers/packs/:pack_id/stickers
+		protected.DELETE("/stickers/packs/:pack_id/stickers/:sticker_id", handlers.RemoveStickerFromPackHandler) // DELETE /api/stickers/packs/:pack_id/stickers/:sticker_id
+		protected.POST("/stickers/packs/:pack_id/publish", handlers.PublishStickerPackHandler)          // POST /api/stickers/packs/:pack_id/publish
+		protected.POST("/stickers/packs/:pack_id/add", handlers.AddCommunityPackHandler)                // POST /api/stickers/packs/:pack_id/add
+		protected.GET("/stickers/community", handlers.GetCommunityPacksHandler)                         // GET  /api/stickers/community
+		protected.POST("/stickers/import/telegram", handlers.ImportTelegramPackHandler)                 // POST /api/stickers/import/telegram
 		protected.POST("/upload/custom-background", handlers.UploadCustomBackgroundHandler)             // POST /api/upload/custom-background (Custom watch type background image)
 		protected.GET("/user/calendar", handlers.GetUserCalendarHandler)                                // GET /api/user/calendar?month=2026-05
 		protected.GET("/user/upcoming-events", handlers.GetUserUpcomingEventsHandler)                  // GET /api/user/upcoming-events (next 30 days)
@@ -771,6 +781,10 @@ func main() {
 		protected.POST("/community-requests/upload-image", handlers.UploadCommunityRequestImageHandler)        // POST /api/community-requests/upload-image
 		protected.POST("/community-requests/:id/upvote", handlers.ToggleCommunityRequestUpvoteHandler)         // POST /api/community-requests/:id/upvote
 		protected.POST("/community-requests/:id/claim", handlers.ClaimCommunityRequestHandler)                 // POST /api/community-requests/:id/claim
+
+		// --- ADMIN: DEMO MEDIA ROUTES (super_admin only) ---
+		protected.POST("/admin/demo-media/transcode", handlers.TranscodeDemoMediaHandler)       // Transcode .rmvb/.avi/.mkv → .mp4
+		protected.POST("/admin/demo-media/extract-posters", handlers.ExtractDemoPostersHandler) // Extract thumbnail poster from each video
 
 		// --- SUPPORT ROUTES ---
 		protected.POST("/support/send", handlers.SendSupportEmail) // POST /api/support/send (Send help/support email)

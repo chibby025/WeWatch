@@ -53,6 +53,11 @@ type Room struct {
 	LastAdShownAt *time.Time `gorm:"type:timestamp" json:"last_ad_shown_at,omitempty"`
 	// Handle — unique short identifier (e.g. "cinemahouse_108")
 	Handle string `gorm:"type:varchar(50);uniqueIndex" json:"handle,omitempty"`
+
+	// Always-on demo session fields
+	IsAlwaysOn       bool   `gorm:"column:is_always_on;default:false" json:"is_always_on"`
+	DemoWatchType    string `gorm:"column:demo_watch_type;type:varchar(50);default:'video'" json:"demo_watch_type,omitempty"`
+	DemoHostUserID   uint   `gorm:"column:demo_host_user_id" json:"demo_host_user_id,omitempty"`
 }
 
 // Remove or fix any incorrect hook functions like BeforeCreate or BeforeUpdate

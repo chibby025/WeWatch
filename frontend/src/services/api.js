@@ -2082,6 +2082,26 @@ export const uploadCustomSticker = async (file) => {
   return response.data;
 };
 
+// --- Sticker packs ---
+export const getStickerPacks = () => apiClient.get('/api/stickers/packs');
+export const createStickerPack = (name) => apiClient.post('/api/stickers/packs', { name });
+export const uploadStickerToPack = (packId, file) => {
+  const fd = new FormData();
+  fd.append('image', file);
+  return apiClient.post(`/api/stickers/packs/${packId}/stickers`, fd, {
+    headers: { 'Content-Type': undefined },
+  });
+};
+export const removeStickerFromPack = (packId, stickerId) =>
+  apiClient.delete(`/api/stickers/packs/${packId}/stickers/${stickerId}`);
+export const publishStickerPack = (packId) =>
+  apiClient.post(`/api/stickers/packs/${packId}/publish`);
+export const addCommunityPack = (packId) =>
+  apiClient.post(`/api/stickers/packs/${packId}/add`);
+export const getCommunityPacks = () => apiClient.get('/api/stickers/community');
+export const importTelegramPack = (url) =>
+  apiClient.post('/api/stickers/import/telegram', { url });
+
 export const uploadRoomChatAttachment = async (roomId, file, type, roomGroupId) => {
   const fd = new FormData();
   fd.append('file', file);

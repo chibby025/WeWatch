@@ -300,7 +300,18 @@ func InitPreviewSystem(db *gorm.DB, h *Hub) {
 	// Initialize LiveShare handler with adapter wrapper
 	liveShareHubWrapper := &liveShareHubWrapper{hub: h}
 	liveShareHandler = liveshare.NewLiveShareHandler(db, liveShareHubWrapper)
-	
+
+	// Start always-on demo session manager
+	services.InitDemoSessionManager(
+		db,
+		func(roomID uint, data []byte) {
+			h.BroadcastToRoom(roomID, OutgoingMessage{Data: data, IsBinary: false}, nil)
+		},
+		func(data []byte) {
+			h.BroadcastToLobby(OutgoingMessage{Data: data, IsBinary: false})
+		},
+	)
+
 	log.Println("✅ [InitPreviewSystem] Preview system initialized successfully")
 }
 
@@ -2487,8 +2498,11 @@ func CleanupStaleSessions() {
 	heartbeatCutoff := time.Now().Add(-5 * time.Minute)
 
 	// Kill sessions: (a) >24h old, or (b) heartbeat stale >5min (host left without ending)
+	// Exclude sessions in always-on rooms — the demo manager keeps those alive.
 	if err := DB.Where(
-		"ended_at IS NULL AND (started_at < ? OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?))",
+		"ended_at IS NULL"+
+			" AND (started_at < ? OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?))"+
+			" AND room_id NOT IN (SELECT id FROM rooms WHERE is_always_on = true)",
 		ageCutoff, heartbeatCutoff,
 	).Find(&staleSessions).Error; err != nil {
 		log.Printf("❌ [CleanupStaleSessions] Error querying stale sessions: %v", err)

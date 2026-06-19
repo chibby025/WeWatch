@@ -391,6 +391,8 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
               content_rating: data.content_rating || 'G',
               currentMediaUrl: data.current_media_url || null,
               currentMediaType: data.current_media_type || null,
+              sessionTitle: data.session_title || null,
+              posterUrl: data.poster_url || null,
               currentPlaybackTime: data.current_playback_time || 0,
               playbackTimeUpdatedAt: data.playback_time_updated_at || null,
               currentDocUrl: data.current_doc_url || null,

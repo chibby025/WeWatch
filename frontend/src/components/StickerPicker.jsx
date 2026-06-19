@@ -1,371 +1,262 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MagnifyingGlassIcon, XMarkIcon, StarIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline';
-import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
+// Room-chat sticker picker — inline dropdown (dark theme, compact).
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { MagnifyingGlassIcon, XMarkIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import EmojiPicker from './EmojiPicker';
-import { uploadCustomSticker } from '../services/api';
 import toast from 'react-hot-toast';
+import {
+  getStickerPacks, createStickerPack, uploadStickerToPack,
+  getCommunityPacks, addCommunityPack, importTelegramPack,
+} from '../services/api';
 
-const GIPHY_KEY = import.meta.env.VITE_GIPHY_API_KEY || '';
-const LIMIT = 21; // 3-col grid — multiples of 3 look tidy
-const FAVS_KEY = 'wewatch_fav_stickers';
-const CUSTOM_KEY = 'wewatch_custom_stickers';
-
-const loadLS = (key) => {
-  try { return JSON.parse(localStorage.getItem(key) || '[]'); }
-  catch { return []; }
-};
-
-const giphyUrl = (type, query) => {
-  const base = 'https://api.giphy.com/v1';
-  if (query.trim()) {
-    return `${base}/${type}/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(query)}&limit=${LIMIT}&rating=pg`;
-  }
-  return `${base}/${type}/trending?api_key=${GIPHY_KEY}&limit=${LIMIT}&rating=pg`;
-};
-
-// ── Single sticker card ───────────────────────────────────────────────────────
-const StickerCard = ({ gif, onSelect, isSaved, onToggleFav, aspectClass = 'aspect-square', children }) => {
-  const thumb = gif.images?.fixed_height_small?.url
-    || gif.images?.downsized?.url
-    || gif.preview
-    || gif.url
-    || '';
-
-  return (
-    <div className={`relative group/card rounded-xl overflow-hidden bg-gray-700/60 ${aspectClass}`}>
-      <button
-        type="button"
-        onClick={() => onSelect(gif)}
-        className="w-full h-full hover:ring-2 hover:ring-purple-500 transition-all rounded-xl"
-      >
-        <img
-          src={thumb}
-          alt={gif.title || ''}
-          className="w-full h-full object-cover"
-          loading="lazy"
-        />
-      </button>
-
-      {/* Star / save button */}
-      {onToggleFav && (
-        <button
-          type="button"
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onToggleFav(gif); }}
-          className={`absolute top-1 right-1 p-0.5 rounded-full transition-all
-            opacity-0 group-hover/card:opacity-100
-            ${isSaved ? 'bg-yellow-500/90 text-white' : 'bg-black/60 text-yellow-300 hover:bg-black/80'}`}
-          title={isSaved ? 'Remove from saved' : 'Save'}
-        >
-          {isSaved
-            ? <StarSolidIcon className="w-3 h-3" />
-            : <StarIcon className="w-3 h-3" />
-          }
-        </button>
-      )}
-
-      {/* Optional extra overlay (e.g. delete button) */}
-      {children}
-    </div>
-  );
-};
-
-// ── Grid wrapper ──────────────────────────────────────────────────────────────
-const StickerGrid = ({ loading, error, empty, children }) => (
-  <div className="flex-1 overflow-y-auto p-2" style={{ minHeight: 0 }}>
-    {loading && (
-      <div className="flex items-center justify-center py-8">
-        <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    )}
-    {!loading && error && (
-      <p className="text-center text-xs text-gray-400 py-6 px-2">{error}</p>
-    )}
-    {!loading && !error && empty && (
-      <div className="flex flex-col items-center justify-center py-8 gap-2 text-gray-500">
-        {empty}
-      </div>
-    )}
-    {!loading && !error && !empty && (
-      <div className="grid grid-cols-3 gap-2">
-        {children}
-      </div>
-    )}
-  </div>
-);
-
-// ── Main picker ───────────────────────────────────────────────────────────────
 const StickerPicker = ({ onEmojiSelect, onStickerSelect }) => {
   const [tab, setTab] = useState('emoji');
-  const [query, setQuery] = useState('');
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [favs, setFavs] = useState(() => loadLS(FAVS_KEY));
-  const [customs, setCustoms] = useState(() => loadLS(CUSTOM_KEY));
+  const [packs, setPacks] = useState([]);
+  const [selectedPack, setSelectedPack] = useState(null);
+  const [communityPacks, setCommunityPacks] = useState([]);
+  const [addedPackIds, setAddedPackIds] = useState(new Set());
+  const [newPackName, setNewPackName] = useState('');
+  const [creatingPack, setCreatingPack] = useState(false);
+  const [targetPackId, setTargetPackId] = useState(null);
   const [uploading, setUploading] = useState(false);
-  const debounceRef = useRef(null);
+  const [telegramInput, setTelegramInput] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [loadingCommunity, setLoadingCommunity] = useState(false);
   const fileInputRef = useRef(null);
 
-  const fetchItems = useCallback(async (q, type) => {
-    if (!GIPHY_KEY) { setError('Giphy API key not configured'); return; }
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(giphyUrl(type, q));
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setItems(data.data || []);
-    } catch { setError('Could not load content'); }
-    finally { setLoading(false); }
+  useEffect(() => {
+    getStickerPacks().then(r => {
+      const ps = r.data.packs || [];
+      setPacks(ps);
+      if (ps.length) { setSelectedPack(ps[0]); setTargetPackId(ps[0].id); }
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (tab !== 'stickers' && tab !== 'gifs') return;
-    setItems([]);
-    setQuery('');
-    fetchItems('', tab);
-  }, [tab, fetchItems]);
-
-  const handleQueryChange = (e) => {
-    const q = e.target.value;
-    setQuery(q);
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => fetchItems(q, tab), 400);
-  };
-
-  const handleSelectGiphy = (gif) => {
-    const url = gif.images?.fixed_height?.url || gif.images?.downsized?.url || gif.url || '';
-    const preview = gif.images?.fixed_height_small?.url || gif.images?.downsized_small?.url || gif.preview || url;
-    onStickerSelect?.({ url, preview, id: gif.id || url, title: gif.title || 'GIF', provider: 'giphy' });
-  };
-
-  const handleSelectCustom = (sticker) => {
-    onStickerSelect?.({ url: sticker.url, preview: sticker.url, id: sticker.id, title: sticker.name || 'sticker', provider: 'custom' });
-  };
-
-  const toggleFav = (gif) => {
-    const url = gif.images?.fixed_height?.url || gif.images?.downsized?.url || gif.url || '';
-    const preview = gif.images?.fixed_height_small?.url || gif.images?.downsized_small?.url || gif.preview || url;
-    const id = gif.id || url;
-    const entry = { url, preview, id, title: gif.title || 'GIF', provider: 'giphy' };
-    setFavs(prev => {
-      const next = prev.some(f => f.id === id) ? prev.filter(f => f.id !== id) : [entry, ...prev];
-      localStorage.setItem(FAVS_KEY, JSON.stringify(next));
-      return next;
-    });
-  };
-
-  const handleFileSelect = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-
-    const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-    if (!allowed.includes(file.type)) {
-      toast.error('Use PNG, JPEG, GIF, or WebP');
-      return;
+    if (tab === 'community' && communityPacks.length === 0) {
+      setLoadingCommunity(true);
+      getCommunityPacks().then(r => setCommunityPacks(r.data.packs || []))
+        .catch(() => {}).finally(() => setLoadingCommunity(false));
     }
-    if (file.size > 2 * 1024 * 1024) {
-      toast.error('Image must be under 2 MB');
-      return;
-    }
+  }, [tab]);
 
-    setUploading(true);
+  const handleStickerSelect = (sticker) => {
+    onStickerSelect?.({ url: sticker.url, id: sticker.id, provider: 'cdn' });
+  };
+
+  const handleCreatePack = async () => {
+    if (!newPackName.trim()) return;
+    setCreatingPack(true);
     try {
-      const { url } = await uploadCustomSticker(file);
-      const entry = { url, id: `custom_${Date.now()}`, name: file.name.replace(/\.[^.]+$/, '') };
-      setCustoms(prev => {
-        const next = [entry, ...prev];
-        localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
-        return next;
-      });
-    } catch {
-      toast.error('Upload failed');
-    } finally {
-      setUploading(false);
-    }
+      const r = await createStickerPack(newPackName.trim());
+      const np = r.data.pack;
+      setPacks(prev => [np, ...prev]);
+      setSelectedPack(np);
+      setTargetPackId(np.id);
+      setNewPackName('');
+    } catch { toast.error('Failed to create pack'); }
+    finally { setCreatingPack(false); }
   };
 
-  const deleteCustom = (id) => {
-    setCustoms(prev => {
-      const next = prev.filter(s => s.id !== id);
-      localStorage.setItem(CUSTOM_KEY, JSON.stringify(next));
-      return next;
-    });
+  const handleFileUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length || !targetPackId) return;
+    setUploading(true);
+    let ok = 0;
+    for (const f of files.slice(0, 5)) {
+      if (f.size > 2 * 1024 * 1024) { toast.error(`${f.name} over 2 MB`); continue; }
+      try { await uploadStickerToPack(targetPackId, f); ok++; } catch {}
+    }
+    if (ok > 0) {
+      getStickerPacks().then(r => {
+        const ps = r.data.packs || [];
+        setPacks(ps);
+        const updated = ps.find(p => p.id === targetPackId);
+        if (updated) setSelectedPack(updated);
+      });
+    }
+    setUploading(false);
+  };
+
+  const handleTelegramImport = async () => {
+    if (!telegramInput.trim()) return;
+    setImporting(true);
+    try {
+      const r = await importTelegramPack(telegramInput.trim());
+      const pack = r.data.pack;
+      setPacks(prev => prev.find(p => p.id === pack.id) ? prev : [pack, ...prev]);
+      setSelectedPack(pack);
+      setTelegramInput('');
+      setTab('my');
+      toast.success(`Imported "${pack.name}"`);
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Import failed');
+    } finally { setImporting(false); }
+  };
+
+  const handleAddCommunityPack = async (pack) => {
+    try {
+      await addCommunityPack(pack.id);
+      setAddedPackIds(prev => new Set([...prev, pack.id]));
+      setPacks(prev => prev.find(p => p.id === pack.id) ? prev : [pack, ...prev]);
+    } catch {}
   };
 
   const TABS = [
-    { id: 'saved',    label: '⭐' },
-    { id: 'emoji',    label: '😊' },
-    { id: 'stickers', label: '✨' },
-    { id: 'gifs',     label: '🎬' },
-    { id: 'mine',     label: '🖼' },
+    { id: 'emoji',     label: '😊' },
+    { id: 'my',        label: '📦' },
+    { id: 'create',    label: '✨' },
+    { id: 'import',    label: '🔗' },
+    { id: 'community', label: '🌍' },
   ];
 
-  const isGiphyTab = tab === 'stickers' || tab === 'gifs';
+  const currentItems = packs.find(p => p.id === selectedPack?.id)?.items || [];
 
   return (
-    <div
-      className="bg-gray-800 border border-gray-700 rounded-xl shadow-xl overflow-hidden flex flex-col"
-      style={{
-        width: tab === 'emoji' ? '352px' : '320px',
-        maxHeight: tab === 'emoji' ? '460px' : '380px',
-      }}
-    >
+    <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-xl overflow-hidden flex flex-col"
+      style={{ width: '320px', maxHeight: tab === 'emoji' ? '460px' : '380px' }}>
+
       {/* Tab bar */}
       <div className="flex border-b border-gray-700 flex-shrink-0">
         {TABS.map(t => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            title={t.id.charAt(0).toUpperCase() + t.id.slice(1)}
-            className={`flex-1 py-2 text-sm transition-colors ${
-              tab === t.id
-                ? 'bg-gray-700/60 border-b-2 border-purple-500'
-                : 'text-gray-400 hover:bg-gray-700/30'
-            }`}
-          >
+          <button key={t.id} type="button" onClick={() => setTab(t.id)}
+            title={{ emoji:'Emoji', my:'My Stickers', create:'Create', import:'Import', community:'Community' }[t.id]}
+            className={`flex-1 py-2 text-base transition-colors ${tab === t.id ? 'bg-gray-700/60 border-b-2 border-purple-500' : 'text-gray-400 hover:bg-gray-700/30'}`}>
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* ── Emoji ── */}
+      {/* ── EMOJI ── */}
       {tab === 'emoji' && (
         <div className="flex-1 overflow-hidden">
           <EmojiPicker onEmojiSelect={onEmojiSelect} />
         </div>
       )}
 
-      {/* ── Saved ── */}
-      {tab === 'saved' && (
-        <StickerGrid
-          empty={favs.length === 0 && (
-            <>
-              <StarIcon className="w-7 h-7" />
-              <p className="text-xs text-center px-4">Hover a sticker and tap ⭐ to save it here</p>
-            </>
-          )}
-        >
-          {favs.map(gif => (
-            <StickerCard
-              key={gif.id}
-              gif={gif}
-              onSelect={handleSelectGiphy}
-              isSaved
-              onToggleFav={toggleFav}
-            />
-          ))}
-        </StickerGrid>
-      )}
-
-      {/* ── Stickers / GIFs ── */}
-      {isGiphyTab && (
-        <>
-          <div className="px-2 pt-2 flex-shrink-0">
-            <div className="flex items-center gap-1.5 bg-gray-700 rounded-lg px-2 py-1.5">
-              <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
-              <input
-                type="text"
-                value={query}
-                onChange={handleQueryChange}
-                placeholder={`Search ${tab}…`}
-                className="flex-1 bg-transparent text-sm text-white placeholder-gray-500 outline-none min-w-0"
-                autoFocus
-              />
-              {query && (
-                <button type="button" onClick={() => { setQuery(''); fetchItems('', tab); }}
-                  className="text-gray-400 hover:text-white flex-shrink-0">
-                  <XMarkIcon className="w-3.5 h-3.5" />
+      {/* ── MY STICKERS ── */}
+      {tab === 'my' && (
+        packs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center flex-1 gap-2 py-8 text-gray-400 text-sm px-4 text-center">
+            <span className="text-3xl">📦</span>
+            Import a Telegram pack or create your own stickers
+          </div>
+        ) : (
+          <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+            {/* Pack strip */}
+            <div className="flex gap-1.5 px-2 py-1.5 border-b border-gray-700 overflow-x-auto flex-shrink-0 hide-scrollbar">
+              {packs.map(pack => (
+                <button key={pack.id} onClick={() => setSelectedPack(pack)}
+                  className={`flex-shrink-0 rounded-lg p-1 transition-all ${selectedPack?.id === pack.id ? 'ring-2 ring-purple-500' : 'opacity-60 hover:opacity-100'}`}>
+                  {pack.thumbnail_url
+                    ? <img src={pack.thumbnail_url} className="w-9 h-9 object-cover rounded-md" alt={pack.name} />
+                    : <div className="w-9 h-9 bg-gray-600 rounded-md flex items-center justify-center text-base">📦</div>}
                 </button>
-              )}
+              ))}
+            </div>
+            {/* Sticker grid */}
+            <div className="flex-1 overflow-y-auto p-1.5">
+              {currentItems.length === 0
+                ? <p className="text-center text-xs text-gray-400 py-6">No stickers in this pack</p>
+                : (
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {currentItems.map(sticker => (
+                      <button key={sticker.id} type="button" onClick={() => handleStickerSelect(sticker)}
+                        className="aspect-square rounded-lg overflow-hidden bg-gray-700/60 hover:ring-2 hover:ring-purple-500 hover:scale-105 transition-all">
+                        <img src={sticker.url} alt={sticker.emoji || ''}
+                          className="w-full h-full object-contain" loading="lazy" />
+                      </button>
+                    ))}
+                  </div>
+                )}
             </div>
           </div>
-
-          <StickerGrid
-            loading={loading}
-            error={error}
-            empty={!loading && !error && items.length === 0 && (
-              <p className="text-xs">{!GIPHY_KEY ? 'API key not set' : 'Nothing found'}</p>
-            )}
-          >
-            {items.map(gif => (
-              <StickerCard
-                key={gif.id}
-                gif={gif}
-                onSelect={handleSelectGiphy}
-                aspectClass={tab === 'gifs' ? 'aspect-video' : 'aspect-square'}
-                isSaved={favs.some(f => f.id === gif.id)}
-                onToggleFav={toggleFav}
-              />
-            ))}
-          </StickerGrid>
-
-          <div className="px-2 py-1 flex-shrink-0 border-t border-gray-700 flex justify-end">
-            <span className="text-[10px] text-gray-500 select-none">Powered by GIPHY</span>
-          </div>
-        </>
+        )
       )}
 
-      {/* ── Mine (custom) ── */}
-      {tab === 'mine' && (
-        <>
-          <div className="px-2 pt-2 flex-shrink-0">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-purple-600/20 border border-purple-500/40 text-purple-300 text-sm font-medium hover:bg-purple-600/30 transition-colors disabled:opacity-50"
-            >
-              {uploading
-                ? <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
-                : <PlusIcon className="w-4 h-4" />
-              }
-              {uploading ? 'Uploading…' : 'Add sticker'}
+      {/* ── CREATE ── */}
+      {tab === 'create' && (
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <div className="flex gap-1.5">
+            <input value={newPackName} onChange={e => setNewPackName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreatePack()}
+              placeholder="New pack name…"
+              className="flex-1 px-2.5 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 min-w-0" />
+            <button onClick={handleCreatePack} disabled={creatingPack || !newPackName.trim()}
+              className="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-purple-700">
+              {creatingPack ? '…' : 'Create'}
             </button>
           </div>
+          {packs.filter(p => p.creator_user_id != null).length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {packs.filter(p => p.creator_user_id != null).map(p => (
+                <button key={p.id} onClick={() => setTargetPackId(p.id)}
+                  className={`px-2.5 py-1 rounded-full text-xs border transition-all ${targetPackId === p.id ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-600 text-gray-300 hover:border-purple-400'}`}>
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp" className="hidden" onChange={handleFileUpload} />
+          <button onClick={() => fileInputRef.current?.click()} disabled={uploading || !targetPackId}
+            className="w-full py-5 border-2 border-dashed border-gray-600 rounded-xl flex flex-col items-center gap-1.5 text-gray-400 hover:border-purple-500 hover:text-purple-400 transition-colors disabled:opacity-50">
+            {uploading
+              ? <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+              : <PlusIcon className="w-6 h-6" />}
+            <span className="text-xs font-medium">{uploading ? 'Uploading…' : 'Upload images'}</span>
+            <span className="text-[10px] text-gray-500">PNG / WebP / GIF · max 2 MB</span>
+          </button>
+        </div>
+      )}
 
-          <StickerGrid
-            empty={customs.length === 0 && !uploading && (
-              <>
-                <p className="text-xs text-center px-4">Upload PNG, GIF, or WebP images to use as stickers</p>
-              </>
-            )}
-          >
-            {customs.map(sticker => (
-              <div key={sticker.id} className="relative group/card rounded-xl overflow-hidden bg-gray-700/60 aspect-square">
-                <button
-                  type="button"
-                  onClick={() => handleSelectCustom(sticker)}
-                  className="w-full h-full hover:ring-2 hover:ring-purple-500 transition-all rounded-xl"
-                >
-                  <img
-                    src={sticker.url}
-                    alt={sticker.name || 'sticker'}
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                  />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); deleteCustom(sticker.id); }}
-                  className="absolute top-1 right-1 p-0.5 rounded-full bg-red-500/80 text-white opacity-0 group-hover/card:opacity-100 transition-all"
-                  title="Remove"
-                >
-                  <TrashIcon className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-          </StickerGrid>
-        </>
+      {/* ── IMPORT ── */}
+      {tab === 'import' && (
+        <div className="p-3 flex flex-col gap-3 flex-1">
+          <p className="text-xs text-gray-400">Paste a Telegram sticker pack name or link</p>
+          <div className="flex gap-1.5">
+            <input value={telegramInput} onChange={e => setTelegramInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleTelegramImport()}
+              placeholder="HotCherry  or  t.me/addstickers/…"
+              className="flex-1 px-2.5 py-1.5 text-xs bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-0" />
+            <button onClick={handleTelegramImport} disabled={importing || !telegramInput.trim()}
+              className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-blue-600 flex items-center gap-1">
+              {importing
+                ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                : <ArrowDownTrayIcon className="w-3.5 h-3.5" />}
+              {importing ? '…' : 'Import'}
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-500 leading-relaxed">Only static stickers are imported. Animated Lottie stickers are skipped.</p>
+        </div>
+      )}
+
+      {/* ── COMMUNITY ── */}
+      {tab === 'community' && (
+        <div className="flex-1 overflow-y-auto p-2">
+          {loadingCommunity ? (
+            <div className="flex justify-center py-6">
+              <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : communityPacks.length === 0 ? (
+            <p className="text-center text-xs text-gray-400 py-6">No public packs yet</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {communityPacks.map(pack => (
+                <div key={pack.id} className="bg-gray-700/60 rounded-xl p-2 flex flex-col gap-1.5">
+                  {pack.thumbnail_url
+                    ? <img src={pack.thumbnail_url} className="w-full aspect-square object-cover rounded-lg" alt={pack.name} />
+                    : <div className="w-full aspect-square bg-gray-600 rounded-lg flex items-center justify-center text-xl">📦</div>}
+                  <p className="text-[10px] font-semibold text-white truncate">{pack.name}</p>
+                  <button onClick={() => handleAddCommunityPack(pack)} disabled={addedPackIds.has(pack.id)}
+                    className={`text-[10px] py-1 rounded-lg font-semibold transition-colors ${addedPackIds.has(pack.id) ? 'bg-green-900/30 text-green-400' : 'bg-purple-600 text-white hover:bg-purple-700'}`}>
+                    {addedPackIds.has(pack.id) ? '✓ Added' : '+ Add'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

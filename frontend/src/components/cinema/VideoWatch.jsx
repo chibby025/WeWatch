@@ -1043,7 +1043,13 @@ export default function VideoWatch() {
       }
     }
 
-    setCurrentMedia({ url, type });
+    setCurrentMedia({
+      type,
+      mediaUrl: url,
+      file_path: url, // use URL as identity key for same-media detection
+      original_name: sessionStatus.sessionTitle || 'Now Playing',
+      poster_url: sessionStatus.posterUrl || null,
+    });
     setPendingSeekTime(estimatedTime > 0 ? estimatedTime : 0);
     setIsPlaying(true);
   }, [sessionStatus?.currentMediaUrl, isHost, currentMedia]);
@@ -4195,6 +4201,26 @@ export default function VideoWatch() {
             break;
           }
 
+          // ── Demo / CDN direct URL (always-on rooms) ─────────────────────────
+          // Demo sessions broadcast media_url (a full CDN URL) without file_path.
+          if (!message.file_path && message.media_url) {
+            const isSameMedia = currentMedia && currentMedia.mediaUrl === message.media_url;
+            if (!isSameMedia) {
+              setCurrentMedia({
+                type: 'upload',
+                mediaUrl: message.media_url,
+                original_name: message.media_title || 'Now Playing',
+                poster_url: message.poster_url || null,
+                file_path: message.media_url, // use URL as identity key so same-media check works
+              });
+              const now = Date.now();
+              const latency = Math.max(0, now - (message.timestamp || now));
+              setPendingSeekTime((message.seek_time || 0) + latency / 1000);
+              setIsPlaying(true);
+            }
+            break;
+          }
+
           // ── Regular file path ────────────────────────────────────────────────
           if (message.file_path) {
             const isSameMedia = currentMedia && currentMedia.file_path === message.file_path;
@@ -4205,18 +4231,18 @@ export default function VideoWatch() {
               isPlaying,
               newCommand: message.command
             });
-            
+
             if (!isSameMedia || isPlaying !== (message.command === "play")) {
               // ✅ Construct full URL for uploaded media
               const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
               const fileUrl = message.file_url || message.file_path;
               const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
-              
+
               console.log('✅ [VideoWatch] MEMBER loading media:', {
                 mediaUrl,
                 original_name: message.original_name
               });
-              
+
               setCurrentMedia({
                 ID: message.media_item_id,
                 type: 'upload',
@@ -4249,7 +4275,7 @@ export default function VideoWatch() {
                 will_change_playState: message.command === "play" || message.command === "pause"
               });
               setPendingSeekTime(adjustedTime); // ✅ Use state instead of ref
-              
+
               // 🎯 FIX: Only update play/pause for explicit play/pause commands, not seek-only
               if (message.command === "play" || message.command === "pause") {
                 setIsPlaying(message.command === "play");
@@ -4260,7 +4286,7 @@ export default function VideoWatch() {
               console.log('⏭️ [VideoWatch] Skipping - same media and state');
             }
           } else {
-            console.warn('⚠️ [VideoWatch] playback_control missing file_path!');
+            console.warn('⚠️ [VideoWatch] playback_control missing file_path and media_url!');
           }
           break;
         case "camera_toggle":

@@ -603,3 +603,46 @@ func uploadTrailerToLocalStorage(fileData []byte, filename string) (string, erro
 	log.Printf("✅ [Local Storage] Trailer saved: %s", localURL)
 	return localURL, nil
 }
+
+// UploadBytesWithPath uploads raw bytes to BunnyCDN at the exact remotePath given
+// (relative to the storage zone root, e.g. "stickers/packs/42/sticker_123.webp").
+// On local dev, saves to ./uploads/{remotePath} and returns /uploads/{remotePath}.
+func UploadBytesWithPath(data []byte, remotePath, contentType string) (string, error) {
+	if IsLocalDev() || BunnyCDNStorageZone == "" || BunnyCDNAccessKey == "" {
+		localPath := filepath.Join("./uploads", remotePath)
+		if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+			return "", fmt.Errorf("failed to create local dir: %w", err)
+		}
+		if err := os.WriteFile(localPath, data, 0644); err != nil {
+			return "", fmt.Errorf("failed to write local file: %w", err)
+		}
+		url := "/uploads/" + remotePath
+		log.Printf("🏠 [Local] Saved: %s", url)
+		return url, nil
+	}
+
+	uploadURL := fmt.Sprintf("%s/%s", getBunnyCDNStorageURL(), remotePath)
+	req, err := http.NewRequest("PUT", uploadURL, bytes.NewReader(data))
+	if err != nil {
+		return "", fmt.Errorf("failed to create upload request: %w", err)
+	}
+	req.Header.Set("AccessKey", BunnyCDNAccessKey)
+	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = int64(len(data))
+
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	cdnURL := fmt.Sprintf("%s/%s", BunnyCDNPullZoneURL, remotePath)
+	log.Printf("✅ [BunnyCDN] Uploaded: %s", cdnURL)
+	return cdnURL, nil
+}

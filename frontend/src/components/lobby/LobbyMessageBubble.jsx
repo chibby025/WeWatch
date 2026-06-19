@@ -416,7 +416,7 @@ const LobbyMessageBubble = ({
         {/* ── STICKER ── */}
         {messageType === 'sticker' && (
           <div className="p-2">
-            {metadata.provider === 'custom' ? (
+            {metadata.provider === 'emoji' ? (
               <div className="text-7xl select-none">{message.attachment_url}</div>
             ) : (
               <img src={message.attachment_url} alt="Sticker" className="w-32 h-32 sm:w-40 sm:h-40 object-contain" />

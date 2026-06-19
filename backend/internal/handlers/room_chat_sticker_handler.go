@@ -45,18 +45,27 @@ func SendRoomChatStickerHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Provider != "tenor" && req.Provider != "giphy" {
+	validProviders := map[string]bool{"tenor": true, "giphy": true, "cdn": true, "emoji": true}
+	if !validProviders[req.Provider] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid provider"})
 		return
 	}
 
-	validDomain := strings.Contains(req.StickerURL, "tenor.com") ||
-		strings.Contains(req.StickerURL, "media.tenor.com") ||
-		strings.Contains(req.StickerURL, "giphy.com") ||
-		strings.Contains(req.StickerURL, "media.giphy.com")
-	if !validDomain {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sticker URL domain"})
-		return
+	if req.Provider == "cdn" {
+		if !strings.Contains(req.StickerURL, "b-cdn.net") &&
+			!strings.HasPrefix(req.StickerURL, "/uploads/") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid CDN sticker URL"})
+			return
+		}
+	} else if req.Provider != "emoji" {
+		valid := strings.Contains(req.StickerURL, "tenor.com") ||
+			strings.Contains(req.StickerURL, "giphy.com") ||
+			strings.Contains(req.StickerURL, "media.tenor.com") ||
+			strings.Contains(req.StickerURL, "media.giphy.com")
+		if !valid {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sticker URL domain"})
+			return
+		}
 	}
 
 	// Verify sender is a member or the host
