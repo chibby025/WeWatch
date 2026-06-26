@@ -258,6 +258,56 @@ const Taskbar = ({
   // working without leaving it sitting on top of game buttons for long.
   const hideDelayMs = currentGame ? 1000 : 2000;
 
+  // Minimize-while-gaming: a game's own bottom controls sit in the same
+  // screen region as the pill, so while a game is active the user can shrink
+  // the pill to a small draggable square that can be parked out of the way.
+  // Only relevant during a game — always reset back to the full pill once
+  // the game ends, so nobody is left wondering where the taskbar went.
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [minimizedPos, setMinimizedPos] = useState(null); // {x,y} in viewport px, lazily seeded on first minimize
+  const dragStateRef = useRef(null); // { startX, startY, originX, originY, moved }
+  useEffect(() => {
+    if (!currentGame) setIsMinimized(false);
+  }, [currentGame]);
+
+  const MINIMIZED_SIZE = 52;
+  const clampToViewport = (x, y) => ({
+    x: Math.min(Math.max(x, 8), window.innerWidth - MINIMIZED_SIZE - 8),
+    y: Math.min(Math.max(y, 8), window.innerHeight - MINIMIZED_SIZE - 8),
+  });
+
+  const handleMinimizeClick = () => {
+    if (!minimizedPos) {
+      setMinimizedPos(clampToViewport(window.innerWidth / 2 - MINIMIZED_SIZE / 2, window.innerHeight - 90));
+    }
+    setIsMinimized(true);
+  };
+
+  const handleMinimizedPointerDown = (e) => {
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragStateRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: minimizedPos?.x ?? 0,
+      originY: minimizedPos?.y ?? 0,
+      moved: false,
+    };
+  };
+  const handleMinimizedPointerMove = (e) => {
+    const drag = dragStateRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) drag.moved = true;
+    setMinimizedPos(clampToViewport(drag.originX + dx, drag.originY + dy));
+  };
+  const handleMinimizedPointerUp = (e) => {
+    const drag = dragStateRef.current;
+    dragStateRef.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    if (!drag?.moved) setIsMinimized(false); // a tap (no real drag) restores the full pill
+  };
+
   // Initial 3s grace period when a user first joins — shown once on mount only.
   // Shares hideTimerRef with the tap-activity effect below, so if the user taps
   // during (or right after) this window, that tap's own 1s timer simply replaces
@@ -371,6 +421,39 @@ const Taskbar = ({
     overflowX: 'auto',
   };
 
+  if (isMinimized && minimizedPos) {
+    return (
+      <div
+        onPointerDown={handleMinimizedPointerDown}
+        onPointerMove={handleMinimizedPointerMove}
+        onPointerUp={handleMinimizedPointerUp}
+        title="Tap to expand"
+        style={{
+          position: 'fixed',
+          left: minimizedPos.x,
+          top: minimizedPos.y,
+          width: MINIMIZED_SIZE,
+          height: MINIMIZED_SIZE,
+          borderRadius: '14px',
+          background: 'linear-gradient(135deg, #9333ea, #2563eb)',
+          boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          touchAction: 'none',
+          cursor: 'grab',
+          color: 'white',
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }}>
+          <polyline points="7 13 12 18 17 13" />
+          <polyline points="7 6 12 11 17 6" />
+        </svg>
+      </div>
+    );
+  }
+
   return (
     <>
       <div
@@ -379,6 +462,19 @@ const Taskbar = ({
         onMouseEnter={handlePillMouseEnter}
         onMouseLeave={handlePillMouseLeave}
       >
+        {currentGame && (
+          <button
+            onClick={handleMinimizeClick}
+            title="Minimize"
+            className="absolute top-1 left-1 w-6 h-6 rounded-full bg-gray-900 border border-white/30 flex items-center justify-center text-white hover:bg-gray-800 transition-colors"
+            style={{ zIndex: 1001 }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="17 11 12 6 7 11" />
+              <polyline points="17 18 12 13 7 18" />
+            </svg>
+          </button>
+        )}
         <TaskbarButton
           buttonRef={leaveCallButtonRef}
           icon={LeaveCallIcon}

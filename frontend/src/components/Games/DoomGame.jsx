@@ -46,8 +46,18 @@ function base64ToBytes(base64) {
 
 export default function DoomGame({ onClose, onEndGame, isHost, onRelayPacket, registerRelayReceiver }) {
   const [loaded, setLoaded] = useState(false);
+  // Shown once per load, host only (the spectator never receives input) — the
+  // build has real on-screen touch controls for actual touch devices (joystick
+  // + FIRE/USE/MAP buttons, auto-detected via `ontouchstart`/maxTouchPoints
+  // inside the iframe itself), but the desktop keyboard scheme has no in-game
+  // hint at all, so a player has to guess it the first time.
+  const [showControls, setShowControls] = useState(false);
   const iframeRef = useRef(null);
   const doomUrl = `${DOOM_BASE_URL}?role=${isHost ? 'host' : 'spectator'}`;
+
+  useEffect(() => {
+    if (loaded && isHost) setShowControls(true);
+  }, [loaded, isHost]);
 
   // Register our "deliver an incoming relay packet" function so VideoWatch.jsx
   // can call it directly (via a ref, bypassing React state) every time a
@@ -110,6 +120,34 @@ export default function DoomGame({ onClose, onEndGame, isHost, onRelayPacket, re
         allow="gamepad; fullscreen"
         sandbox="allow-scripts allow-same-origin allow-pointer-lock"
       />
+      {showControls && (
+        <div
+          className="absolute inset-0 z-20 flex items-center justify-center bg-black/70"
+          onClick={() => setShowControls(false)}
+        >
+          <div
+            className="bg-gray-900 border border-gray-700 rounded-xl p-5 max-w-sm mx-4 text-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold mb-3">Controls</h3>
+            <div className="space-y-1.5 text-sm text-gray-200">
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Move</span><span>WASD or Arrow Keys</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Fire</span><span>Space</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Use / Open Door</span><span>E</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Run</span><span>Shift (hold)</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Switch Weapon</span><span>1–7</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Map</span><span>Tab</span></div>
+            </div>
+            <p className="text-xs text-gray-500 mt-3">On a touch device, an on-screen joystick and buttons appear automatically.</p>
+            <button
+              onClick={() => setShowControls(false)}
+              className="mt-4 w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 text-white text-sm font-medium py-2 rounded-lg transition-opacity"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
