@@ -1,5 +1,6 @@
 // src/components/cinema/ui/CinemaVideoPlayer.jsx
 import { forwardRef, useRef, useImperativeHandle, useEffect, useState } from 'react';
+import Hls from 'hls.js';
 import VolumeControl from '../../VolumeControl';
 
 // Wrap your existing function with forwardRef
@@ -21,6 +22,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   const videoRef = useRef(null);
   const cameraVideoRef = useRef(null); // 📹 Separate ref for PIP camera
   const previousTrackIdRef = useRef(null); // 🔑 Track previous track ID to avoid stopping same track
+  const hlsRef = useRef(null); // 📺 hls.js instance for .m3u8 device-stream playback
   const [isHovering, setIsHovering] = useState(false);
   const [objectFit, setObjectFit] = useState('cover'); // 🎬 Smart aspect-ratio-based display mode
   
@@ -28,6 +30,14 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   const [expandedBox, setExpandedBox] = useState(null); // null | 'screen' | 'camera'
   const [showExpandIcon, setShowExpandIcon] = useState({ screen: false, camera: false });
   const iconTimeoutRef = useRef({ screen: null, camera: null });
+  // Shadow ref for onError — VideoWatch.jsx passes a new function reference on every
+  // render (not wrapped in useCallback), so listing onError directly in an effect's deps
+  // array reloads the player on any unrelated parent re-render. Mirrors the shadow-ref
+  // pattern already used in CinemaScene3DDemo.jsx for the same reason.
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   // 🔑 Expose the actual <video> DOM element to parent
   useImperativeHandle(ref, () => videoRef.current, []);
@@ -162,7 +172,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
           })
           .catch((err) => {
             console.error(`❌ [CinemaVideoPlayer LIVESHARE] ${isHost ? 'HOST' : 'MEMBER'}: Play failed:`, err);
-            if (onError) onError(err);
+            if (onErrorRef.current) onErrorRef.current(err);
           });
       };
       
@@ -226,7 +236,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         console.log(`✅ [CinemaVideoPlayer] ${streamType} stream playing successfully`);
       }).catch((err) => {
         console.error(`❌ [CinemaVideoPlayer] ${streamType} stream play failed:`, err.message);
-        onError(err);
+        onErrorRef.current?.(err);
       });
       return () => {
         console.log(`🧹 [CinemaVideoPlayer] Cleanup: Removing ${streamType} stream`, {
@@ -238,6 +248,50 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       };
     }
 
+    else if (mediaItem?.mediaUrl?.endsWith('.m3u8')) {
+      console.log('📺 [CinemaVideoPlayer] Loading HLS stream:', mediaItem.mediaUrl);
+      video.srcObject = null;
+      video.muted = muted !== undefined ? muted : false;
+
+      const handleLoadError = (e) => {
+        console.error('❌ [CinemaVideoPlayer] HLS video error:', e);
+        onErrorRef.current?.(e);
+      };
+      video.addEventListener('error', handleLoadError, { once: true });
+
+      if (Hls.isSupported()) {
+        // startPosition: 0 — without this, hls.js's default (-1/"automatic") treats a
+        // manifest with no #EXT-X-ENDLIST yet (still being appended to by a progressive
+        // upload) as a live stream and starts near the live edge instead of the
+        // beginning, which is wrong for "host just started watching from the top."
+        const hls = new Hls({ startPosition: 0 });
+        hlsRef.current = hls;
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          console.error('❌ [CinemaVideoPlayer] hls.js error:', data);
+          if (data.fatal) onErrorRef.current?.(data);
+        });
+        hls.loadSource(mediaItem.mediaUrl);
+        hls.attachMedia(video);
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari has native HLS support — no library needed
+        video.src = mediaItem.mediaUrl;
+        video.load();
+      } else {
+        console.error('❌ [CinemaVideoPlayer] HLS not supported in this browser');
+        onErrorRef.current?.(new Error('HLS not supported'));
+      }
+
+      return () => {
+        video.removeEventListener('error', handleLoadError);
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+        if (!video.srcObject) video.pause();
+        video.src = '';
+      };
+    }
+
     else if (mediaItem?.mediaUrl) {
       console.log('📁 [DEBUG CinemaVideoPlayer] Setting video.src to:', mediaItem.mediaUrl, {
         previousSrc: video.src || '(empty)',
@@ -246,7 +300,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       video.srcObject = null;
       video.src = mediaItem.mediaUrl;
       video.muted = muted !== undefined ? muted : false; // ✅ Respect the prop
-      
+
       // 🔍 DEBUG: Log video element properties when metadata loads
       const handleMetadataLoaded = () => {
         console.log('📊 [CinemaVideoPlayer] Video metadata loaded:', {
@@ -264,7 +318,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         });
       };
       video.addEventListener('loadedmetadata', handleMetadataLoaded, { once: true });
-      
+
       const handleLoadError = (e) => {
         console.error('❌ [CinemaVideoPlayer] Video load error:', {
           error: e.target.error,
@@ -301,7 +355,15 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       video.srcObject = null;
       video.src = '';
     }
-  }, [track, localScreenTrack, isHost, mediaItem, muted, onError]);
+  // Depends on mediaItem's specific fields, not the whole object — a metadata-only patch
+  // (e.g. Phase 8's poster/duration update via {...prev, poster_url}) produces a new
+  // object reference without changing any of these, and previously caused this effect to
+  // re-run and reload the player from scratch (a visible, redundant restart) even though
+  // nothing about what should actually be playing had changed. onError is deliberately
+  // excluded too — VideoWatch.jsx passes a new function reference on every render (it's
+  // not wrapped in useCallback), which was independently causing the exact same redundant
+  // reload; onErrorRef (kept fresh by its own lightweight effect above) is read instead.
+  }, [track, localScreenTrack, isHost, mediaItem?.mediaUrl, mediaItem?.type, mediaItem?.stream, mediaItem?.cameraStream, muted]);
 
   // 📹 Handle PIP camera when BOTH screen and camera streams are present
   useEffect(() => {
@@ -333,12 +395,12 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       console.log('📹 [CinemaVideoPlayer] Attaching screen stream for both mode');
       video.srcObject = mediaItem.stream;
       video.muted = muted !== undefined ? muted : false; // Screen share with audio
-      video.play().catch(onError);
+      video.play().catch((err) => onErrorRef.current?.(err));
       return () => {
         video.srcObject = null;
       };
     }
-  }, [mediaItem?.stream, mediaItem?.cameraStream, muted, onError]);
+  }, [mediaItem?.stream, mediaItem?.cameraStream, muted]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -356,7 +418,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         video.play().catch((err) => {
           if (!err.message.includes('interrupted by a call to pause')) {
             console.warn('⚠️ [CinemaVideoPlayer] Play failed:', err.message);
-            if (onError) onError(err);
+            onErrorRef.current?.(err);
           }
         });
       }
@@ -368,7 +430,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         video.play().catch((err) => {
           if (!err.message.includes('interrupted by a call to pause')) {
             console.warn('⚠️ [CinemaVideoPlayer] Play failed:', err.message);
-            if (onError) onError(err);
+            onErrorRef.current?.(err);
           }
         });
       } else {
@@ -385,7 +447,11 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
     return () => {
       video.removeEventListener('canplay', handleCanPlay);
     };
-  }, [isPlaying, mediaItem, onError]);
+  // mediaItem narrowed to mediaUrl (the only field this effect's guard actually reads) —
+  // depending on the whole object meant any metadata-only patch (poster/duration) also
+  // re-ran this effect, redundantly calling play() again. onError excluded for the same
+  // unstable-reference reason as the main media-loading effect above.
+  }, [isPlaying, mediaItem?.mediaUrl]);
 
   // 🎯 Apply latency-compensated seek time when media loads (VideoWatch only)
   useEffect(() => {

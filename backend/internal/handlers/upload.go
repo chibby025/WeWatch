@@ -371,6 +371,14 @@ func getMimeType(ext string) string {
 		return "video/x-matroska"
 	case ".webm":
 		return "video/webm"
+	case ".m4v":
+		return "video/x-m4v"
+	case ".wmv":
+		return "video/x-wmv"
+	case ".3gp":
+		return "video/3gpp"
+	case ".ts":
+		return "video/mp2t"
 	case ".mp3":
 		return "audio/mpeg"
 	case ".m4a":

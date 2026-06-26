@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -86,16 +87,17 @@ func DeleteSingleTemporaryMediaItemHandler(c *gin.Context) {
 		return
 	}
 
-	// Broadcast deletion
-	//message := map[string]interface{}{
-	//	"type": "temporary_media_item_deleted",
-	//	"data": map[string]interface{}{
-	//		"id": item.ID,
-	//	},
-	//}
-	//if msgBytes, err := json.Marshal(message); err == nil {
-	//	hub.BroadcastToRoom(uint(roomID), msgBytes)
-	//}
+	// Broadcast removal — flat shape (no "data" wrapper), matching playlist_poster_updated
+	// and playlist_duration_updated's convention. Without this, only the deleting client's
+	// own local playlist state updates; every other connected member keeps showing the
+	// dead entry until their next full playlist refetch.
+	if broadcastData, err := json.Marshal(map[string]interface{}{
+		"type":    "playlist_item_removed",
+		"item_id": item.ID,
+		"room_id": uint(roomID),
+	}); err == nil {
+		hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: broadcastData, IsBinary: false}, nil)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Temporary media item deleted successfully",
@@ -399,12 +401,15 @@ func DeleteTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 	successCount := 0
 	failureCount := 0
 	for _, item := range temporaryMediaItems {
+		// File-delete failure does NOT skip the DB row delete below — see
+		// CleanupAllTemporaryMedia in rooms.go for why (an orphaned row pointing at a
+		// dead file is a worse outcome than a leaked file).
 		if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 			log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Warning - Failed to delete file '%s': %v", item.FilePath, err)
 			failureCount++
-			continue
+		} else {
+			log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Deleted file '%s'", item.FilePath)
 		}
-		log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Deleted file '%s'", item.FilePath)
 
 		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 			if err := utils.DeleteMediaFile(item.PosterURL); err != nil {

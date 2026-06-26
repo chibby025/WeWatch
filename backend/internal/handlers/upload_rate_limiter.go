@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -74,9 +75,16 @@ func NewUploadRateLimiter(limit int, window time.Duration) gin.HandlerFunc {
 			return
 		}
 
-		// Set rate limit headers
-		c.Header("X-RateLimit-Limit", string(rune(limiter.limit)))
-		c.Header("X-RateLimit-Remaining", string(rune(remaining)))
+		// Set rate limit headers. strconv.Itoa, not string(rune(N)) — the latter
+		// converts the integer into a single UTF-8-encoded *code point* (e.g. rune(10)
+		// is a literal newline byte, not the string "10"), injecting a raw control
+		// character into the header value. That corrupts the HTTP response framing
+		// client-side (observed as net::ERR_INVALID_HTTP_RESPONSE) for any limit/
+		// remaining value that happens to map to a problematic byte (CR, LF, NUL, etc.)
+		// — silently fine for some values, broken for others, which is exactly the
+		// intermittent-looking failure this produced.
+		c.Header("X-RateLimit-Limit", strconv.Itoa(limiter.limit))
+		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
 		c.Header("X-RateLimit-Reset", resetTime.Format(time.RFC3339))
 
 		c.Next()

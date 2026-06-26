@@ -174,7 +174,18 @@ func GetVideoResolution(filePath string) (width, height int, err error) {
 		return 0, 0, fmt.Errorf("failed to get video resolution: %w", err)
 	}
 
-	parts := strings.Split(strings.TrimSpace(string(output)), ",")
+	// Raw .ts segment files (e.g. HLS output) can make ffprobe report the same
+	// width,height pair on more than one line — transport streams periodically repeat
+	// their PAT/PMT tables, which ffprobe's stream enumeration can pick up as what
+	// looks like more than one entry for "stream=width,height" against a single
+	// elementary stream. Taking only the first non-empty line is sufficient since every
+	// repeated entry reports the identical resolution.
+	firstLine := strings.TrimSpace(string(output))
+	if idx := strings.IndexByte(firstLine, '\n'); idx != -1 {
+		firstLine = firstLine[:idx]
+	}
+
+	parts := strings.Split(strings.TrimSpace(firstLine), ",")
 	if len(parts) != 2 {
 		return 0, 0, fmt.Errorf("invalid resolution output: %s", output)
 	}

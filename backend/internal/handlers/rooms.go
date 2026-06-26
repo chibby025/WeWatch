@@ -1256,19 +1256,23 @@ func CleanupAllTemporaryMedia() {
 	failedFiles := 0
 	
 	for _, item := range orphanedMedia {
-		// Delete physical file or CDN object
+		// Delete physical file or CDN object — failure does NOT skip the DB row delete
+		// below. A row left pointing at nothing is worse than a leaked file: the file is
+		// at least recoverable via a future audit, but the orphaned row surfaces directly
+		// to users as a permanently broken, still-clickable playlist entry (confirmed —
+		// this exact gap caused a real "failed to play video" report).
 		if err := utils.DeleteMediaFile(item.FilePath); err != nil {
 			log.Printf("⚠️ [CleanupTempMedia] Failed to delete file %s: %v", item.FilePath, err)
 			failedFiles++
-			continue
+		} else {
+			deletedFiles++
+			log.Printf("✅ [CleanupTempMedia] Deleted file: %s", item.FilePath)
 		}
-		deletedFiles++
-		log.Printf("✅ [CleanupTempMedia] Deleted file: %s", item.FilePath)
 		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 			utils.DeleteMediaFile(item.PosterURL) //nolint
 		}
 
-		// Delete database record
+		// Delete database record regardless of the file-delete outcome above
 		if err := DB.Delete(&item).Error; err != nil {
 			log.Printf("⚠️ [CleanupTempMedia] Failed to delete DB record for %s: %v", item.FilePath, err)
 		} else {
@@ -1561,10 +1565,13 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 	
 	if err := DB.Where("room_id = ? AND ended_at IS NULL", roomID).First(&activeSession).Error; err == nil {
 		// Found active session, check if user is a member
-		if err := DB.Where("watch_session_id = ? AND user_id = ? AND is_active = ?", 
+		if err := DB.Where("watch_session_id = ? AND user_id = ? AND is_active = ?",
 			activeSession.ID, userID, true).First(&sessionMember).Error; err == nil {
 			isSessionParticipant = true
-			log.Printf("✅ [LiveKit] User %d is active session participant (session: %s)", userID, activeSession.SessionID)
+			// Was an unconditional success-path log here — fires on every LiveKit token
+			// request (every few seconds during an active session), drowning out the
+			// device-streaming diagnostic logs in the same terminal. Removed; the
+			// denial path below still logs (the actually-interesting case).
 		}
 	}
 	

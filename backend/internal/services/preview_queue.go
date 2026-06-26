@@ -25,6 +25,7 @@ const (
 	MediaTypeUpload    MediaType = "upload"
 	MediaTypeLiveShare MediaType = "liveshare"
 	MediaTypeWatchFrom MediaType = "watchfrom"
+	MediaTypeGame      MediaType = "game"
 )
 
 // PreviewRequest represents a request to generate a preview
@@ -259,6 +260,20 @@ func (pq *PreviewQueue) StopRefreshTimer(sessionID string) {
 	}
 }
 
+// StreamPreviewRefreshCallback regenerates the session preview for an HLS/device-stream
+// item (IsStream == true). Registered by chunk_upload.go's init() rather than called
+// directly, since handlers (which knows how to resolve an HLS item's segment directory,
+// CDN-upload the result, and broadcast) can't be imported here without an import cycle —
+// handlers already imports services for GetPreviewQueue(). A flat-file TemporaryMediaItem
+// goes through the ordinary QueuePreview path below instead; this callback only fires for
+// the IsStream branch in refreshPreview.
+var StreamPreviewRefreshCallback func(sessionID string, mediaItem *models.TemporaryMediaItem)
+
+// SetStreamPreviewRefreshCallback registers the HLS-aware refresh implementation.
+func SetStreamPreviewRefreshCallback(cb func(sessionID string, mediaItem *models.TemporaryMediaItem)) {
+	StreamPreviewRefreshCallback = cb
+}
+
 func (pq *PreviewQueue) refreshPreview(sessionID string) {
 	var session models.WatchSession
 	if err := pq.db.Where("session_id = ?", sessionID).First(&session).Error; err != nil {
@@ -275,6 +290,15 @@ func (pq *PreviewQueue) refreshPreview(sessionID string) {
 		isTemporary = true
 	}
 
+	// HLS/device-stream items need a different regeneration strategy (concatenating
+	// segments, not seeking into a flat file with -ss/-t) — see StreamPreviewRefreshCallback.
+	if isTemporary && tempItem.IsStream {
+		if StreamPreviewRefreshCallback != nil {
+			StreamPreviewRefreshCallback(sessionID, &tempItem)
+		}
+		return
+	}
+
 	pq.QueuePreview(PreviewRequest{
 		SessionID:        sessionID,
 		MediaID:          uint(session.CurrentMediaID),
@@ -285,8 +309,14 @@ func (pq *PreviewQueue) refreshPreview(sessionID string) {
 	})
 }
 
-// ClearSessionPreview deletes preview files and clears database entries
-func (pq *PreviewQueue) ClearSessionPreview(sessionID string) {
+// clearSessionPreviewFiles does the file-cleanup + DB-nullify work shared by
+// ClearSessionPreview and ClearSessionPreviewFinal, without broadcasting anything.
+// Split out so a caller that's about to immediately broadcast a real replacement
+// (e.g. a game's static poster) can skip the empty "generating" broadcast entirely —
+// broadcasting it would be pure overhead at best, and at worst a transient empty
+// poster the frontend renders as a spinner if the real broadcast is delayed (e.g. by
+// a slow CDN delete call above) or never sent.
+func (pq *PreviewQueue) clearSessionPreviewFiles(sessionID string) {
 	var result struct {
 		PreviewURL string
 		PosterURL  string
@@ -312,8 +342,36 @@ func (pq *PreviewQueue) ClearSessionPreview(sessionID string) {
 
 	pq.db.Table("watch_sessions").Where("session_id = ?", sessionID).
 		Updates(map[string]interface{}{"preview_url": nil, "poster_url": nil})
+}
 
+// ClearSessionPreview deletes preview files, clears database entries, and broadcasts
+// an empty preview — the frontend renders this as "generating", expecting a real
+// poster/preview to follow shortly. Use this when one is about to be generated
+// asynchronously (e.g. uploads, which queue ffmpeg work after this call).
+func (pq *PreviewQueue) ClearSessionPreview(sessionID string) {
+	pq.clearSessionPreviewFiles(sessionID)
 	pq.broadcastPreviewToLobby(sessionID, "", "")
+}
+
+// ClearSessionPreviewFinal is the same as ClearSessionPreview, except it tells the
+// frontend nothing further is coming — render the emoji placeholder immediately
+// rather than a spinner. Use this when media has genuinely stopped (no preview
+// generation in flight), e.g. a game ending, where no follow-up broadcast will ever
+// arrive to resolve a "generating" state.
+func (pq *PreviewQueue) ClearSessionPreviewFinal(sessionID string) {
+	pq.clearSessionPreviewFiles(sessionID)
+	broadcastData := map[string]interface{}{
+		"type":        "session_preview_updated",
+		"session_id":  sessionID,
+		"poster_url":  "",
+		"preview_url": "",
+		"final":       true,
+	}
+	broadcastJSON, err := json.Marshal(broadcastData)
+	if err != nil {
+		return
+	}
+	pq.hub.BroadcastToLobby(OutgoingMessage{Data: broadcastJSON, IsBinary: false})
 }
 
 // CleanupSession stops timers and clears previews when session ends

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import toast from 'react-hot-toast';
 import { X, Clock, Trophy, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 
 const TOTAL_ROUNDS = 10;
@@ -129,29 +130,38 @@ function CategoryPicker({ onConfirm, onEnd }) {
           </div>
         </div>
 
-        <button
-          onClick={() => onConfirm(selected, difficulty)}
-          className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-bold rounded-xl text-base transition-all disabled:opacity-40"
-        >
-          {selected
-            ? `Start — ${CATEGORIES.find(c => c.id === selected)?.label}`
-            : 'Start — Random Mix'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={onEnd}
+            className="px-4 py-3 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-400 hover:text-red-300 rounded-xl text-sm font-semibold transition-colors flex-shrink-0"
+          >
+            End Game
+          </button>
+          <button
+            onClick={() => onConfirm(selected, difficulty)}
+            className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-bold rounded-xl text-base transition-all disabled:opacity-40"
+          >
+            {selected
+              ? `Start — ${CATEGORIES.find(c => c.id === selected)?.label}`
+              : 'Start — Random Mix'}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 // ─── Main game component ──────────────────────────────────────────────────────
-export default function TriviaGame({ gameState, currentUserId, onMove, onClose, onEndGame }) {
+export default function TriviaGame({ gameState, currentUserId, onMove, onClose }) {
   // 'picking' → host only; 'loading' → fetching from API; 'game' → main UI
   const [localPhase, setLocalPhase] = useState('picking');
   const [questions, setQuestions] = useState([]);
-  const [questionIndex, setQuestionIndex] = useState(0);
   const [myAnswer, setMyAnswer] = useState(null);
   const [timeLeft, setTimeLeft] = useState(ROUND_SECONDS);
   const [fetchError, setFetchError] = useState(false);
+  const [isSendingNext, setIsSendingNext] = useState(false);
   const revealSentRef = useRef(false);
+  const nextRoundTimeoutRef = useRef(null);
 
   const gs = gameState?.game_state || {};
   const phase = gs.phase || 'waiting';
@@ -161,12 +171,53 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
   const round = Number(gs.round) || 0;
 
   const players = gameState?.players || [];
-  const isHostUser = players[0]?.user_id === currentUserId;
+  // host_id is now broadcast explicitly (backend) — players[0] kept only as a fallback
+  // for the unlikely case it's ever missing. Host no longer has to be one of the
+  // players: GameLobbyModal lets the host set up a match between two other members
+  // and just spectate/run the show.
+  const isHostUser = (gameState?.host_id ?? players[0]?.user_id) === currentUserId;
+  const isPlayer = players.some(p => p.user_id === currentUserId);
+
+  // Shadow ref for round — read inside the stuck-detection timeout in sendQuestion
+  // below, which otherwise closes over whatever `round` was at click time, not the
+  // live value once the timeout actually fires.
+  const roundRef = useRef(round);
+  useEffect(() => { roundRef.current = round; }, [round]);
 
   // Non-hosts skip the picker and go straight to game
   useEffect(() => {
     if (!isHostUser) setLocalPhase('game');
   }, [isHostUser]);
+
+  // BUG FIX (2026-06-24): localPhase is local-only state — the host's CategoryPicker
+  // ('picking') and loading screen both return early, before ever checking the
+  // backend-derived `phase`. Clicking the header X on the picker correctly sends
+  // `trivia_end` and the backend correctly ends the game, but with no transition out
+  // of 'picking' nothing ever showed for it — it looked exactly like "the X button
+  // doesn't work." Force past picking/loading the moment the backend confirms the
+  // game ended, so the actual Game Over screen (gated on phase === 'ended', further
+  // down in the main render) becomes reachable.
+  useEffect(() => {
+    if (phase === 'ended' && (localPhase === 'picking' || localPhase === 'loading')) {
+      setLocalPhase('game');
+    }
+  }, [phase, localPhase]);
+
+  // The round only advances once the backend has actually processed a
+  // trivia_question move — so seeing it change here is direct confirmation the
+  // pending send in sendQuestion succeeded. Clear the stuck-detection timeout
+  // immediately rather than waiting for it to fire and find nothing wrong.
+  useEffect(() => {
+    if (nextRoundTimeoutRef.current) {
+      clearTimeout(nextRoundTimeoutRef.current);
+      nextRoundTimeoutRef.current = null;
+    }
+    setIsSendingNext(false);
+  }, [round]);
+
+  useEffect(() => () => {
+    if (nextRoundTimeoutRef.current) clearTimeout(nextRoundTimeoutRef.current);
+  }, []);
 
   // Reset answer when a new question arrives
   useEffect(() => {
@@ -205,14 +256,30 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
   };
 
   const sendQuestion = () => {
-    if (questionIndex >= questions.length) return;
-    const q = { ...questions[questionIndex], started_at: Date.now() };
+    if (round >= questions.length) return;
+    // Driven by the server-confirmed round, not a locally-incrementing pointer —
+    // if the move below never reaches the backend, round stays put and the next
+    // click resends this same question instead of silently skipping ahead.
+    const sentAtRound = round;
+    const q = { ...questions[round], started_at: Date.now() };
     onMove({ move_type: 'trivia_question', question: q });
-    setQuestionIndex(i => i + 1);
+
+    setIsSendingNext(true);
+    if (nextRoundTimeoutRef.current) clearTimeout(nextRoundTimeoutRef.current);
+    nextRoundTimeoutRef.current = setTimeout(() => {
+      nextRoundTimeoutRef.current = null;
+      setIsSendingNext(false);
+      // Still on the same round after 5s — the move never reached the backend
+      // (dropped WS frame, brief disconnect). Surface it instead of leaving the
+      // host stuck on an unresponsive button with zero feedback.
+      if (roundRef.current === sentAtRound) {
+        toast.error('Failed to start the next round — tap the button to retry.');
+      }
+    }, 5000);
   };
 
   const sendAnswer = (index) => {
-    if (myAnswer !== null || phase !== 'question') return;
+    if (!isPlayer || myAnswer !== null || phase !== 'question') return;
     setMyAnswer(index);
     onMove({ move_type: 'answer', answer_index: index });
   };
@@ -223,17 +290,33 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
     onMove({ move_type: 'reveal' });
   };
 
-  const endGame = () => { if (onEndGame) onEndGame(); else onClose(); };
+  // Host ending the game (mid-session "End Game", or "Show Results" after the last
+  // round, or cancelling at the category picker) computes a real winner from current
+  // scores server-side (trivia_end) — never the old forfeit-style "the other player
+  // automatically wins", which doesn't apply once a trivia game can have >2 players
+  // and isn't what "show results"/"end early" actually means for a score-based game.
+  // A non-host clicking the same X just leaves locally without ending it for everyone.
+  const endOrLeave = () => {
+    if (isHostUser) onMove({ move_type: 'trivia_end' });
+    else onClose();
+  };
 
   const answeredCount = Object.keys(answers).length;
   const isLastRound = round >= TOTAL_ROUNDS;
   const sortedPlayers = [...players].sort(
     (a, b) => (Number(scores[String(b.user_id)]) || 0) - (Number(scores[String(a.user_id)]) || 0)
   );
+  const scoreOf = (p) => Number(scores[String(p.user_id)]) || 0;
+  // A trophy/"winner" only makes sense when exactly one player holds the top score —
+  // showing it on sortedPlayers[0] unconditionally (the old behavior) declared a
+  // winner even when two players were tied, which is what the user actually hit.
+  const topScore = sortedPlayers.length ? scoreOf(sortedPlayers[0]) : 0;
+  const hasSoleLeader = topScore > 0 && sortedPlayers.filter(p => scoreOf(p) === topScore).length === 1;
+  const finalWinner = gameState?.winner_id != null ? players.find(p => p.user_id === gameState.winner_id) : null;
 
   // ── Host: category picker ────────────────────────────────────────────────
   if (isHostUser && localPhase === 'picking') {
-    return <CategoryPicker onConfirm={handleCategoryConfirm} onEnd={endGame} />;
+    return <CategoryPicker onConfirm={handleCategoryConfirm} onEnd={endOrLeave} />;
   }
 
   // ── Host: loading screen ─────────────────────────────────────────────────
@@ -267,7 +350,7 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
           )}
         </div>
         <button
-          onClick={endGame}
+          onClick={endOrLeave}
           className="text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors"
           title={isHostUser ? 'End game for everyone' : 'Leave game'}
         >
@@ -280,10 +363,10 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
         <div className="flex items-center gap-4 px-5 py-2 bg-gray-900 overflow-x-auto flex-shrink-0">
           {sortedPlayers.map((p, i) => (
             <div key={p.user_id} className="flex items-center gap-1.5 flex-shrink-0">
-              {i === 0 && <Trophy className="w-3.5 h-3.5 text-yellow-400" />}
+              {i === 0 && hasSoleLeader && <Trophy className="w-3.5 h-3.5 text-yellow-400" />}
               <div className="w-5 h-5 rounded-full border border-white/30" style={{ backgroundColor: p.color }} />
               <span className="text-white text-sm">{p.username}</span>
-              <span className="text-yellow-400 text-xs font-bold">{Number(scores[String(p.user_id)]) || 0}pts</span>
+              <span className="text-yellow-400 text-xs font-bold">{scoreOf(p)}pts</span>
             </div>
           ))}
         </div>
@@ -305,11 +388,45 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
             {isHostUser && (
               <button
                 onClick={sendQuestion}
-                className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-bold rounded-xl text-base transition-all"
+                disabled={isSendingNext}
+                className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold rounded-xl text-base transition-all"
               >
-                Start Round 1
+                {isSendingNext ? 'Starting…' : 'Start Round 1'}
               </button>
             )}
+          </div>
+        )}
+
+        {/* Game over — final winner/draw announcement, reachable via End Game,
+            Show Results, or the header X (host only); never the old behavior of just
+            silently closing the whole overlay with no summary at all. */}
+        {phase === 'ended' && (
+          <div className="text-center max-w-md w-full">
+            <div className="text-6xl mb-4">{finalWinner ? '🏆' : '🤝'}</div>
+            <h2 className="text-3xl font-bold text-white mb-1">
+              {finalWinner ? `${finalWinner.username} Wins!` : "It's a Draw!"}
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">
+              {finalWinner ? 'Highest score after the game ended' : 'Tied scores — no single winner'}
+            </p>
+            <div className="bg-gray-800/60 rounded-xl p-4 space-y-2.5">
+              {sortedPlayers.map(p => (
+                <div key={p.user_id} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-5 h-5 rounded-full border border-white/30 flex-shrink-0" style={{ backgroundColor: p.color }} />
+                    <span className="text-white text-sm">{p.username}</span>
+                    {finalWinner?.user_id === p.user_id && <Trophy className="w-3.5 h-3.5 text-yellow-400" />}
+                  </div>
+                  <span className="text-yellow-400 text-sm font-bold">{scoreOf(p)}pts</span>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={onClose}
+              className="mt-6 px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-bold rounded-xl text-base transition-all"
+            >
+              Close
+            </button>
           </div>
         )}
 
@@ -367,7 +484,7 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
                   <button
                     key={i}
                     onClick={() => sendAnswer(i)}
-                    disabled={revealed || myAnswer !== null}
+                    disabled={!isPlayer || revealed || myAnswer !== null}
                     className={cls}
                   >
                     <span className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-xs font-bold flex-shrink-0">
@@ -414,7 +531,10 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
             {/* Host controls */}
             {isHostUser && (
               <div className="flex justify-between items-center mt-5">
-                <button onClick={endGame} className="text-gray-500 hover:text-red-400 text-sm transition-colors">
+                <button
+                  onClick={endOrLeave}
+                  className="px-4 py-2 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-400 hover:text-red-300 rounded-xl text-sm font-semibold transition-colors"
+                >
                   End Game
                 </button>
                 <div className="flex gap-2">
@@ -429,14 +549,19 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
                   {phase === 'reveal' && !isLastRound && (
                     <button
                       onClick={sendQuestion}
-                      className="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-xl font-semibold text-sm transition-all"
+                      disabled={isSendingNext}
+                      className="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl font-semibold text-sm transition-all"
                     >
-                      Next Round <ChevronRight className="w-4 h-4" />
+                      {isSendingNext ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" /> Starting…</>
+                      ) : (
+                        <>Next Round <ChevronRight className="w-4 h-4" /></>
+                      )}
                     </button>
                   )}
                   {phase === 'reveal' && isLastRound && (
                     <button
-                      onClick={endGame}
+                      onClick={endOrLeave}
                       className="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 text-white rounded-xl font-semibold text-sm transition-all"
                     >
                       <Trophy className="w-4 h-4" /> Show Results
@@ -446,10 +571,22 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose, 
               </div>
             )}
 
-            {/* Member hint */}
-            {!isHostUser && phase === 'question' && (
+            {/* Hint for anyone not actively answering — a spectating host (set up the
+                match for two other members) or a room member who isn't one of the
+                selected players either. */}
+            {!isPlayer && phase === 'question' && (
+              <p className="text-center text-gray-500 text-xs mt-4">
+                {isHostUser ? "You're hosting — sit back and watch!" : "Watching this round — you're not one of the active players."}
+              </p>
+            )}
+            {isPlayer && !isHostUser && phase === 'question' && (
               <p className="text-center text-gray-500 text-xs mt-4">
                 {myAnswer !== null ? 'Locked in! Waiting for answers to be revealed…' : 'Pick an answer before time runs out!'}
+              </p>
+            )}
+            {!isHostUser && phase === 'reveal' && (
+              <p className="text-center text-gray-500 text-xs mt-4">
+                {isLastRound ? 'Waiting for the host to show final results…' : 'Waiting for the host to start the next round…'}
               </p>
             )}
           </div>

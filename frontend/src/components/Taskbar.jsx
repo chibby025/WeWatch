@@ -208,9 +208,8 @@ const Taskbar = ({
   // Unread Messages
   unreadMessages = {}, // {userId: unreadCount} — DMs / private room messages
   roomChatUnreadCount = 0, // unread count for the shared room/session chat
-  // 🎮 Game props (for cinema mode)
+  // Used only to shorten the auto-hide window while a game is active (see hideDelayMs).
   currentGame,
-  onGameClose,
 }) => {
   // 🎯 Derive feature flags from watch type
   const isClassroom = watchType === 'classroom';
@@ -251,6 +250,13 @@ const Taskbar = ({
   const lastEventTimeRef = useRef(0);
   const isHoveringRef = useRef(false); // mouse is over the pill — suspend the idle-hide countdown
   const isSuppressed = hasOpenModal || isLeftSidebarOpen || isChatActive;
+  // While a game is active, the pill sits bottom-center at the same screen region
+  // many games put their own bottom controls (Forfeit, Start, host action row) — and
+  // since the pill is z-index 1000 (above every game overlay), it can block taps on
+  // whatever's underneath it for as long as it stays visible. Shortening the
+  // idle-hide window to 1s while a game is up keeps "tap to reveal, then mute/etc."
+  // working without leaving it sitting on top of game buttons for long.
+  const hideDelayMs = currentGame ? 1000 : 2000;
 
   // Initial 3s grace period when a user first joins — shown once on mount only.
   // Shares hideTimerRef with the tap-activity effect below, so if the user taps
@@ -298,7 +304,7 @@ const Taskbar = ({
       hideTimerRef.current = setTimeout(() => {
         if (!showTaskbarTourRef.current && !isHoveringRef.current) setIsVisible(false);
         hideTimerRef.current = null;
-      }, 2000);
+      }, hideDelayMs);
     };
 
     window.addEventListener('click', handleActivity);
@@ -306,7 +312,7 @@ const Taskbar = ({
       window.removeEventListener('click', handleActivity);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
-  }, [isSuppressed]);
+  }, [isSuppressed, hideDelayMs]);
 
   // Hovering (or pressing) the pill itself keeps it visible until the hover ends,
   // then resumes the normal 1s idle countdown from that point.
@@ -324,7 +330,7 @@ const Taskbar = ({
     hideTimerRef.current = setTimeout(() => {
       if (!showTaskbarTourRef.current) setIsVisible(false);
       hideTimerRef.current = null;
-    }, 2000);
+    }, hideDelayMs);
   };
 
   // Close mic dropdown
@@ -408,22 +414,13 @@ const Taskbar = ({
             }} 
           />
 
-          {/* 🎮 Game Close Button - Only show when game is active in cinema mode */}
-          {currentGame && watchType === '3d_cinema' && (
-            <TaskbarButton
-              icon="✖️"
-              isEmoji={true}
-              label="End Game"
-              onClick={() => {
-                if (onGameClose) {
-                  onGameClose();
-                  toast.success('Game ended', { icon: '🎮' });
-                } else {
-                  console.warn('[Taskbar] Game close handler not provided');
-                }
-              }}
-            />
-          )}
+          {/* Removed (2026-06-24): this button's onGameClose handler was never actually
+              passed from VideoWatch.jsx, so it has always been a silent no-op — clicking
+              it just logged a console.warn. Each game (Trivia, TicTacToe, RPS) already
+              has its own correctly-wired End Game / X control inside its own overlay;
+              a second, never-functional entry point here was only confusing. currentGame
+              is still passed (below) purely so the taskbar can shorten its own
+              auto-hide window while a game is active. */}
 
           {/* Seats Button - Only show for 3D Cinema & Lecture Hall (not regular VideoWatch) */}
           {watchType !== 'video' && (

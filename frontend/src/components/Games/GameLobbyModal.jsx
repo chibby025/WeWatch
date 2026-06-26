@@ -43,13 +43,40 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
+  {
+    id: 'doom',
+    name: 'DOOM',
+    description: 'Classic vintage shooter — solo arcade mode',
+    minPlayers: 1,
+    maxPlayers: 1,
+    image: '/images/doom.webp',
+    disabled: false,
+    type: 'arcade',
+    heavy: true
+  },
+  {
+    id: 'space_shooter',
+    name: 'Stellar Swarm',
+    description: 'Real-time 3D dogfights — everyone\'s a real pilot',
+    minPlayers: 1,
+    maxPlayers: 8,
+    image: '/images/stellarswarm.webp',
+    disabled: false,
+    type: 'multiplayer',
+    heavy: true
+  },
 ];
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 
-export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame }) {
+export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame, allowHeavyGames = true }) {
   const [selectedGame, setSelectedGame] = useState('tic_tac_toe');
   const [selectedPlayers, setSelectedPlayers] = useState([currentUserId]);
+
+  // Heavy 3D games (DOOM, Space Shooter) are VideoWatch-exclusive -- 3D Cinema
+  // and Lecture Hall pass allowHeavyGames={false} to keep them out of the
+  // picker entirely, rather than showing them disabled/broken.
+  const visibleGames = allowHeavyGames ? games : games.filter(g => !g.heavy);
 
   useEffect(() => {
     // Auto-select current user (host)
@@ -71,12 +98,9 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
 
   const selectedGameData = games.find(g => g.id === selectedGame);
 
+  // Host can deselect themselves too — e.g. set up a Trivia match between two other
+  // members and just run/spectate it. minPlayers/maxPlayers still gate the count.
   const togglePlayerSelection = (playerId) => {
-    if (playerId === currentUserId) {
-      // Host cannot deselect themselves
-      return;
-    }
-
     setSelectedPlayers(prev => {
       if (prev.includes(playerId)) {
         return prev.filter(id => id !== playerId);
@@ -158,7 +182,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
         <div className="p-6 border-b border-gray-700">
           <h3 className="text-lg font-semibold text-white mb-4">Select Game</h3>
           <div className="flex flex-col gap-2">
-            {games.map(game => (
+            {visibleGames.map(game => (
               <button
                 key={game.id}
                 onClick={() => {
@@ -237,7 +261,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                           ? 'border-purple-500 bg-purple-500/10'
                           : 'border-gray-600 bg-gray-700/30 hover:border-gray-500'
                         }
-                        ${isHost ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}
+                        cursor-pointer
                       `}
                     >
                       {/* Avatar */}
@@ -253,7 +277,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                           <span className="text-white font-medium">{member.username}</span>
                           {isHost && (
                             <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">
-                              Host
+                              Host{!isSelected && selectedGameData.type !== 'arcade' ? ' · spectating' : ''}
                             </span>
                           )}
                         </div>

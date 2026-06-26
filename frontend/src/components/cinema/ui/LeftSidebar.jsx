@@ -127,6 +127,10 @@ export default function LeftSidebar({
 
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
+  // Set right before triggering the file picker from "Stream from Device" — tells the
+  // upload-completion effect below to auto-select-and-play the new item instead of
+  // leaving it sitting passively in the playlist (the behavior every other upload path uses).
+  const pendingAutoPlayRef = useRef(false);
   const [selectedCamera, setSelectedCamera] = useState('none');
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -146,6 +150,8 @@ export default function LeftSidebar({
   // page so the upload survives this sidebar unmounting/remounting on toggle.
   const {
     uploading,
+    isPreparing,
+    isUploadReady,
     uploadPaused,
     uploadProgress,
     uploadSpeed,
@@ -166,6 +172,37 @@ export default function LeftSidebar({
     handleRetryNow,
     formatFileSize,
   } = upload;
+
+  // "Stream from Device" auto-play: once the upload this triggered finishes (uploading
+  // flips true → false), fetch the freshly-created item and play it immediately instead
+  // of leaving the host to find and click it in the playlist.
+  const wasUploadingRef = useRef(false);
+  useEffect(() => {
+    const justFinished = wasUploadingRef.current && !uploading;
+    wasUploadingRef.current = uploading;
+    if (!justFinished || !pendingAutoPlayRef.current) return;
+    pendingAutoPlayRef.current = false;
+
+    (async () => {
+      try {
+        const { data } = await apiClient.get(`/api/rooms/${roomId}/temporary-media`);
+        const items = data?.temporary_media_items || [];
+        const latest = items[items.length - 1];
+        const latestId = latest?.ID ?? latest?.id;
+        // device_stream_ready (progressive) or the unified fallback ready signal almost
+        // always already started this exact item while the upload was still in flight —
+        // re-selecting it here too would force CinemaVideoPlayer to reload from scratch,
+        // a visible, redundant restart of an already-playing stream. Only fall back to
+        // this lookup-and-select path when nothing already did (e.g. a WS message
+        // genuinely missed).
+        if (latest && currentMedia?.ID !== latestId) {
+          onMediaSelect({ ...latest, type: latest.is_embed ? 'embed' : 'upload' });
+        }
+      } catch (err) {
+        console.warn('⚠️ [LeftSidebar] Stream-from-device auto-play lookup failed:', err);
+      }
+    })();
+  }, [uploading, roomId, onMediaSelect]);
 
   const [showWatchFromInstructions, setShowWatchFromInstructions] = useState(false);
   const [showLiveShareMenu, setShowLiveShareMenu] = useState(false);
@@ -907,13 +944,18 @@ export default function LeftSidebar({
                       if (!hasAcceptedTerms) {
                         setShowUploadDisclaimer(true);
                       } else {
+                        // Folded in from the now-removed "Stream from Device" button —
+                        // Browse Files now does that job too: auto-select-and-play the
+                        // freshly-uploaded item once ready, instead of leaving it sitting
+                        // passively in the playlist.
+                        pendingAutoPlayRef.current = true;
                         fileInputRef.current?.click();
                       }
                     }}
-                    disabled={uploading}
+                    disabled={uploading || isPreparing}
                     className="flex-1 px-3 sm:px-4 py-2 bg-[#444AF7]/20 text-white rounded-full font-medium text-sm sm:text-[15px] hover:bg-[#444AF7]/30 disabled:opacity-50 transition-colors"
                   >
-                    {uploading ? (uploadPaused ? 'Paused…' : 'Uploading...') : 'Browse Files'}
+                    {uploading ? (uploadPaused ? 'Paused…' : 'Loading...') : 'Browse Files'}
                   </button>
                   <button
                     onClick={() => {
@@ -933,7 +975,7 @@ export default function LeftSidebar({
                     🔗 URL
                   </button>
                 </div>
-                
+
                 {/* URL Input (hidden by default) */}
                 <div id="stream-url-input" style={{ display: 'none' }} className="mb-3 space-y-2">
                   {/* Platform logo chips — shown on focus to signal what's supported */}
@@ -989,9 +1031,20 @@ export default function LeftSidebar({
                   </button>
                 </div>
                 
-                {uploading && (
+                {isPreparing && !uploading && (
+                  <div className="w-full mt-3 flex items-center gap-2 text-gray-400 text-xs sm:text-sm">
+                    <div className="w-4 h-4 border-2 border-gray-500 border-t-gray-200 rounded-full animate-spin flex-shrink-0" />
+                    <span>Preparing your stream...</span>
+                  </div>
+                )}
+
+                {uploading && !isUploadReady && (
                   <div className="w-full mt-3">
-                    {/* Progress bar — amber when paused, blue when active */}
+                    {/* Progress bar — amber when paused, blue when active. Hidden once
+                        isUploadReady flips true (this upload's own stream confirmed
+                        playable) even though `uploading` itself stays true until every
+                        remaining chunk finishes sending in the background — the host
+                        shouldn't see a load bar next to a video that's already playing. */}
                     <div className="bg-gray-700 rounded-full h-2 mb-2">
                       <div
                         className={`h-2 rounded-full transition-all ${uploadPaused ? 'bg-amber-500' : 'bg-blue-500'}`}

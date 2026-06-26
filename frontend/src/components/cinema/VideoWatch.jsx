@@ -65,6 +65,16 @@ import VinylPlayer from '../VinylPlayer';
 
 const AUDIO_URL_RE = /\.(mp3|m4a|wav|ogg|flac|aac)(\?|$)/i;
 
+// Backend-stored media URLs (current_media_url, file_path, etc.) are relative paths
+// like "/uploads/...", resolved against whichever origin serves the API — which is
+// not the frontend's own origin. Used by every place that turns a backend-supplied
+// path into a value passed straight to <video>/hls.js.
+function resolveMediaUrl(url) {
+  if (!url) return url;
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+  return url.startsWith('http') ? url : `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 function SessionEndedOverlay({ reason, onReturn }) {
   const [countdown, setCountdown] = React.useState(8);
   const returnCalledRef = React.useRef(false);
@@ -575,6 +585,14 @@ export default function VideoWatch() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [dvdVisible, setDvdVisible] = useState(false);
   const dvdTimerRef = useRef(null);
+  // "Host is preparing a stream..." holding message — true between the moment a device
+  // upload's first chunk lands (device_stream_preparing) and the moment it's actually
+  // playable (device_stream_ready, now broadcast for both progressive and fallback
+  // uploads). preparingTimeoutRef is a safety net: if the upload silently fails or is
+  // cancelled with no corresponding broadcast, this clears the banner on its own instead
+  // of leaving members staring at it indefinitely.
+  const [isPreparingStream, setIsPreparingStream] = useState(false);
+  const preparingTimeoutRef = useRef(null);
   const [roomMembers, setRoomMembers] = useState([]);
   // Backing map for O(1) add/remove. roomMembers is always derived from this via setRoomMembers.
   const memberMapRef = useRef(new Map());
@@ -671,6 +689,15 @@ export default function VideoWatch() {
       evts.forEach(ev => window.removeEventListener(ev, resetTimer));
     };
   }, [currentMedia]);
+
+  // Safety net: if device_stream_ready (or any other clearer) never arrives — silent
+  // upload failure, cancellation, dropped connection — don't leave the holding message
+  // up forever. 90s comfortably covers a real upload's chunk-0-to-ready window.
+  useEffect(() => {
+    if (!isPreparingStream) return;
+    preparingTimeoutRef.current = setTimeout(() => setIsPreparingStream(false), 90000);
+    return () => clearTimeout(preparingTimeoutRef.current);
+  }, [isPreparingStream]);
 
   // 🎯 Fetch banner ad after preroll completes
   useEffect(() => {
@@ -1030,7 +1057,7 @@ export default function VideoWatch() {
 
     mediaRestoredFromJoinRef.current = true;
 
-    const url = sessionStatus.currentMediaUrl;
+    const url = resolveMediaUrl(sessionStatus.currentMediaUrl);
     const type = sessionStatus.currentMediaType || 'upload';
     const savedTime = sessionStatus.currentPlaybackTime || 0;
     const updatedAt = sessionStatus.playbackTimeUpdatedAt;
@@ -2338,9 +2365,8 @@ export default function VideoWatch() {
   }, []);
 
   const handleOpenDoc = useCallback((mediaItem) => {
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
     const fileUrl = mediaItem.file_url || mediaItem.FilePath || mediaItem.file_path || '';
-    const url = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+    const url = resolveMediaUrl(fileUrl);
     const mimeType = mediaItem.mime_type || mediaItem.MimeType || '';
     const docType = mimeType === 'application/pdf' ? 'pdf'
       : mimeType.startsWith('image/') ? 'image'
@@ -2419,6 +2445,22 @@ export default function VideoWatch() {
     } : null);
   }, [activeGame, sendMessage, currentUser?.id]);
 
+  // DOOM relay bridge: DOOM's own networking protocol round-trips through
+  // WeWatch's WebSocket connection as opaque base64 payloads (this app never
+  // parses them). Outgoing packets go straight through sendMessage like any
+  // other game action. Incoming packets arrive via the relay_packet case in
+  // the WS message switch below, at DOOM's own tic rate (~35/s) — far too
+  // frequent to route through setState/re-renders, so DoomGame registers a
+  // plain function ref here instead (same rationale as the 3D cinema's
+  // registerDirectMessageHandler pattern).
+  const doomRelayHandlerRef = useRef(null);
+  const registerDoomRelayReceiver = useCallback((handler) => {
+    doomRelayHandlerRef.current = handler;
+  }, []);
+  const handleDoomRelayPacket = useCallback((payload) => {
+    sendMessage({ type: 'relay_packet', data: { payload } });
+  }, [sendMessage]);
+
   // Define stable callbacks
   const handlePlay = useCallback(() => setIsPlaying(true), []);
   const handlePause = useCallback(() => setIsPlaying(false), []);
@@ -2437,10 +2479,37 @@ export default function VideoWatch() {
       console.warn("⚠️ [VideoWatch] Benign video error (ignoring):", errorMessage);
       return;
     }
-    
+
     console.error("🎬 CinemaVideoPlayer: Error:", err);
+
+    // hls.js fatal manifest-load failure (most commonly a 404) means the underlying
+    // file is confirmed gone, not a transient blip — manifestLoadTimeOut (a different
+    // `details` value) covers the slow-network case and is deliberately NOT matched
+    // here. Remove the dead entry so it never shows up again instead of leaving a
+    // permanently broken, still-clickable playlist item that errors on every click.
+    const isDeadManifest = err?.type === 'networkError' && err?.details === 'manifestLoadError'
+      && (err?.response?.code === undefined || err.response.code >= 400);
+    const deadItemId = currentMedia?.ID;
+
+    if (isDeadManifest && deadItemId) {
+      console.warn(`⚠️ [VideoWatch] Playlist item ${deadItemId} is confirmed dead (manifest load error) — removing`);
+      setPlaylist(prev => prev.filter(item => item.ID !== deadItemId));
+      setCurrentMedia(null);
+      setIsPlaying(false);
+      toast.error('This media is no longer available and was removed.');
+      // Host-only: actually purges the file + DB row (DeleteSingleTemporaryMediaItemHandler
+      // requires host) and broadcasts the removal so every other connected member's
+      // playlist updates too, instead of only disappearing locally for this client.
+      if (isHost) {
+        deleteSingleTemporaryMediaItem(roomId, deadItemId).catch(delErr => {
+          console.error('❌ [VideoWatch] Failed to purge dead playlist item:', delErr);
+        });
+      }
+      return;
+    }
+
     alert("❌ Failed to play video.");
-  }, [currentMedia]);
+  }, [currentMedia, isHost, roomId]);
 
   const handlePauseBroadcast = useCallback(() => {
     if (isHost && isConnected && currentMedia) {
@@ -2508,7 +2577,9 @@ export default function VideoWatch() {
       const pt      = pendingSeekTimeRef.current;
       const willPlay = isPlayingRef.current;
 
-      if (pt !== null && pt >= 0) {
+      // pt === 0 needs no seek — video.currentTime is already 0 before any data loads,
+      // so assigning 0 again is a no-op that never fires 'seeked', leaving play() uncalled.
+      if (pt !== null && pt > 0) {
         video.currentTime = pt;
         setPendingSeekTime(null);
         // Wait for seeked before calling play() — play() before seeked = AbortError → frozen frame
@@ -2518,8 +2589,11 @@ export default function VideoWatch() {
             video.play().catch(err => console.error('❌ [VideoWatch] play() after seek failed:', err));
           }
         });
-      } else if (willPlay) {
-        video.play().catch(err => console.error('❌ [VideoWatch] play() on load failed:', err));
+      } else {
+        if (pt !== null) setPendingSeekTime(null);
+        if (willPlay) {
+          video.play().catch(err => console.error('❌ [VideoWatch] play() on load failed:', err));
+        }
       }
     };
 
@@ -2782,6 +2856,15 @@ export default function VideoWatch() {
       return;
     }
 
+    // Already the active item — re-selecting it (e.g. the upload-completion auto-play
+    // fallback in LeftSidebar firing redundantly after device_stream_ready already
+    // started this exact stream) must not restart playback or re-broadcast a fresh
+    // seek-to-0 playback_control to the whole room. A genuine "switch media" action
+    // always targets a different id.
+    if (currentMedia?.ID === id) {
+      return;
+    }
+
     // Route documents (PDF, image, text) to the document viewer instead of the video pipeline.
     const mimeType = mediaItem.mime_type || mediaItem.MimeType || '';
     const ext = (mediaItem.original_name || mediaItem.OriginalName || '').split('.').pop()?.toLowerCase();
@@ -2799,9 +2882,8 @@ export default function VideoWatch() {
       return;
     }
     // ✅ Construct full URL for uploaded media
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
     const fileUrl = mediaItem.file_url || filePath;
-    const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+    const mediaUrl = resolveMediaUrl(fileUrl);
     
     const normalizedMediaItem = {
       ...mediaItem,
@@ -3146,6 +3228,23 @@ export default function VideoWatch() {
         }
       });
 
+      // Tell the backend the media type changed away from "upload" — without this,
+      // PreviewQueue's refresh ticker (started for any device-stream upload) keeps
+      // running against the old upload's HLS segments for the rest of the session,
+      // periodically clobbering the fresh LiveShare poster captured just below with
+      // stale content. ClearOldPreview (triggered server-side on the type-change
+      // detection in this handler) stops that ticker and clears the stale preview.
+      sendMessage({
+        type: "update_media_state",
+        data: {
+          session_id: sessionStatus?.id || urlSessionId,
+          current_media_url: "",
+          current_media_type: source === 'watchfrom' ? 'watchfrom' : 'liveshare',
+          is_screen_sharing_active: true,
+          sharing_source: source,
+        }
+      });
+
       // Capture poster + video clip previews so lobby cards update
       const captureSessionId = sessionStatus?.id || urlSessionId;
       if (captureSessionId) {
@@ -3363,7 +3462,21 @@ export default function VideoWatch() {
         liveshare_mode: null
       }
     });
-    
+
+    // Symmetric with the update_media_state sent on start — resets current_media_type
+    // away from "liveshare"/"watchfrom" (via HandleMediaStop server-side) so a late
+    // joiner or the next media switch doesn't inherit a stale type.
+    sendMessage({
+      type: "update_media_state",
+      data: {
+        session_id: sessionStatus?.id || urlSessionId,
+        current_media_url: "",
+        current_media_type: "none",
+        is_screen_sharing_active: false,
+        sharing_source: "",
+      }
+    });
+
     toast.success('LiveShare ended');
   };
   
@@ -3625,8 +3738,19 @@ export default function VideoWatch() {
         // Use backend-generated poster or fallback to placeholder
         poster_url: item.poster_url || '/icons/placeholder-poster.jpg'
       }));
-      
+
       setPlaylist(normalizedItems);
+      // This refetch — not the playlist_poster_updated/playlist_duration_updated WS
+      // broadcasts — is what actually keeps the playlist's poster/duration current in
+      // practice (it's called both on mount and via useMediaUploadManager's
+      // onUploadComplete, including its 5s-later "poster retry" pass). currentMedia is
+      // built from device_stream_ready's minimal payload and never gets this data
+      // otherwise, so "Playing Now" stayed on the placeholder/00:00 forever without this.
+      setCurrentMedia(prev => {
+        if (!prev) return prev;
+        const match = normalizedItems.find(item => item.ID === prev.ID);
+        return match ? { ...prev, poster_url: match.poster_url, duration: match.duration } : prev;
+      });
     } catch (err) {
       console.error("Failed to fetch media items:", err);
       if (err.response?.status === 404) {
@@ -3676,6 +3800,43 @@ export default function VideoWatch() {
               ? { ...item, poster_url: _ppu.poster_url }
               : item
           ));
+          // device_stream_ready builds currentMedia from a minimal payload with no
+          // poster_url — without this, "Playing Now" stays on the placeholder forever
+          // even after the playlist entry below it has the real poster.
+          setCurrentMedia(prev => (prev && prev.ID === _ppu.item_id ? { ...prev, poster_url: _ppu.poster_url } : prev));
+          break;
+        }
+
+        case "playlist_duration_updated": {
+          // Same flat-or-wrapped shape as playlist_poster_updated. Backend broadcasts
+          // this once a progressive upload's duration becomes known (chunk_upload.go's
+          // onProgressiveDurationKnown) — previously had no handler at all here.
+          const _pdu = message.data || message;
+          setPlaylist(prev => prev.map(item =>
+            (item.ID || item.id) === _pdu.item_id
+              ? { ...item, duration: _pdu.duration }
+              : item
+          ));
+          setCurrentMedia(prev => (prev && prev.ID === _pdu.item_id ? { ...prev, duration: _pdu.duration } : prev));
+          break;
+        }
+
+        case "playlist_item_removed": {
+          // Fired when the host deletes an item manually, or when this client (host or
+          // member) auto-detected a dead manifest in handleError and the host's client
+          // purged it server-side. Without this, every OTHER connected client kept
+          // showing the dead entry until their next full playlist refetch.
+          const _pir = message.data || message;
+          setPlaylist(prev => prev.filter(item => (item.ID || item.id) !== _pir.item_id));
+          // Functional form (not reading currentMedia from the outer closure) — same
+          // stale-closure-avoidance reasoning as playlist_poster_updated above.
+          setCurrentMedia(prev => {
+            if (prev?.ID === _pir.item_id) {
+              setIsPlaying(false);
+              return null;
+            }
+            return prev;
+          });
           break;
         }
 
@@ -3875,28 +4036,12 @@ export default function VideoWatch() {
             }
           }
 
-          // ✅ RESTORE REGULAR VIDEO for late joiners / rejoining host.
-          // Only applies when: (a) we have no media loaded, (b) not already in liveshare/screen-share,
-          // (c) backend sent a current_media_url.  Don't auto-play — wait for sync_heartbeat.
-          if (
-            data.current_media_url &&
-            !currentMedia &&
-            (!data.liveshare_mode || data.liveshare_mode === 'regular') &&
-            !data.is_screen_sharing
-          ) {
-            const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-            const rawUrl = data.current_media_url;
-            const fullUrl = rawUrl.startsWith('http') ? rawUrl : `${baseUrl}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
-            console.log('🔄 [VideoWatch LATE JOINER] Restoring current media from session_status:', fullUrl);
-            setCurrentMedia({
-              type: data.current_media_type || 'upload',
-              file_path: rawUrl,
-              mediaUrl: fullUrl,
-              original_name: 'Restoring…',
-            });
-            setIsPlaying(false);
-            setPendingSeekTime(null);
-          }
+          // Regular video restoration for late joiners is handled by the dedicated
+          // useEffect watching sessionStatus?.currentMediaUrl (estimates seek position
+          // and sets isPlaying:true there) — this case used to duplicate that with
+          // isPlaying:false, which won the race and starved the other effect via its
+          // `if (currentMedia) return` guard, leaving late joiners loaded but paused
+          // forever once it set currentMedia first.
 
           // Screen share restoration
           if (data.is_screen_sharing && data.screen_share_host_id) {
@@ -4115,7 +4260,6 @@ export default function VideoWatch() {
             isHost,
             currentMedia: currentMedia?.file_path
           });
-          
           // Only host responds to state requests
           if (isHost && currentMedia && currentMedia.type === 'upload' && isConnected) {
             const videoEl = document.querySelector('video');
@@ -4164,6 +4308,48 @@ export default function VideoWatch() {
             stream: null
           }]);
           break;
+        case "device_stream_preparing": {
+          // Fires the moment a device-streaming upload's first chunk lands on the
+          // backend — well before any HLS segment exists. Gives members something to
+          // see in the gap instead of the bare idle state. Cleared by device_stream_ready
+          // below, or by the 90s safety-net timeout if that never arrives.
+          setIsPreparingStream(true);
+          break;
+        }
+        case "device_stream_ready": {
+          // Progressive HLS upload's first segment just became available — start
+          // playing now rather than waiting for the rest of the file to finish
+          // uploading. Reaches every client in the room (host included, since
+          // BroadcastToRoom's sender exclusion isn't used for this message), so this
+          // is the single mechanism both host and members rely on to start watching.
+          const readyUrl = message.file_url || message.file_path;
+          if (!readyUrl) {
+            console.warn('⚠️ [VideoWatch] device_stream_ready missing file_url/file_path:', message);
+            break;
+          }
+          const readyMediaUrl = resolveMediaUrl(readyUrl);
+          console.log('📺 [VideoWatch] device_stream_ready:', readyMediaUrl);
+          // Reset the latency-compensated-seek ref — it tracks the PREVIOUS media's
+          // playback position via handleTimeUpdate and is never auto-cleared on its
+          // own, so without this a brand new stream could inherit a stale position.
+          playbackPositionRef.current = 0;
+          setIsPreparingStream(false);
+          setCurrentMedia({
+            ID: message.media_item_id,
+            type: 'upload',
+            file_path: message.file_path,
+            mediaUrl: readyMediaUrl,
+            original_name: message.original_name || 'Now Playing',
+            mime_type: message.mime_type,
+          });
+          setPendingSeekTime(0);
+          setIsPlaying(true);
+          // Lets the upload hook hide its load bar the moment THIS upload's stream is
+          // confirmed playable, instead of waiting for every remaining chunk to finish
+          // sending in the background — no-ops for any other client's upload_id.
+          mediaUploadManager.notifyUploadStreamReady(message.upload_id);
+          break;
+        }
         case "playback_control":
           console.log('📥 [VideoWatch] RECEIVED playback_control:', {
             sender_id: message.sender_id,
@@ -4234,9 +4420,8 @@ export default function VideoWatch() {
 
             if (!isSameMedia || isPlaying !== (message.command === "play")) {
               // ✅ Construct full URL for uploaded media
-              const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
               const fileUrl = message.file_url || message.file_path;
-              const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+              const mediaUrl = resolveMediaUrl(fileUrl);
 
               console.log('✅ [VideoWatch] MEMBER loading media:', {
                 mediaUrl,
@@ -5067,6 +5252,7 @@ export default function VideoWatch() {
             setActiveGame({
               game_session_id: message.data.game_session_id,
               game_type:       message.data.game_type,
+              host_id:         message.data.host_id,
               status:          'active',
               current_turn:    0,
               players:         enrichedPlayers,
@@ -5079,16 +5265,20 @@ export default function VideoWatch() {
             });
           }
           if (_gAction === 'game_state_update') {
-            setActiveGame(prev => ({
-              ...(prev || {}),
+            // A stale/late update arriving after the user already closed the game
+            // (activeGame === null) must not resurrect it — `...(prev || {})` used to
+            // spread an empty object in that case, producing a truthy result regardless.
+            setActiveGame(prev => prev ? {
+              ...prev,
               game_session_id: message.game_session_id,
               game_type:       message.game_type,
+              host_id:         message.host_id ?? prev?.host_id,
               status:          message.status,
               current_turn:    message.current_turn,
               players:         message.players,
               game_state:      message.game_state,
               winner_id:       message.winner_id ?? prev?.winner_id ?? null,
-            }));
+            } : null);
           }
           if (_gAction === 'game_ended') {
             console.log('🎮 [VideoWatch] Game ended:', message.data);
@@ -5098,7 +5288,10 @@ export default function VideoWatch() {
             const winner    = winnerId ? plyrs.find(p => p.user_id === winnerId) : null;
             if (winner) {
               toast.success(`${winner.username} wins! 🏆`, { duration: 4000, icon: '🏆' });
-            } else {
+            } else if (plyrs.length > 1) {
+              // "Draw" only makes sense when there were multiple players to draw between
+              // — a solo arcade game (DOOM) ending always has exactly 1 player and no
+              // opponent, so this branch would otherwise show a nonsensical "draw".
               toast.success("It's a draw!", { duration: 3000, icon: '🤝' });
             }
             setActiveGame(prev => prev ? {
@@ -5117,6 +5310,11 @@ export default function VideoWatch() {
               duration: 4000, icon: '🏆',
             });
             setActiveGame(prev => prev ? { ...prev, status: 'finished', winner_id: winnerId ?? null } : null);
+          }
+          if (_gAction === 'relay_packet') {
+            // DOOM's own networking protocol, ferried opaquely — deliberately
+            // bypasses setState/re-renders. See doomRelayHandlerRef above.
+            doomRelayHandlerRef.current?.(message.data?.payload);
           }
           if (message.error) {
             console.error('❌ [VideoWatch] Game error:', message.error);
@@ -5137,8 +5335,12 @@ export default function VideoWatch() {
     // Clear processed messages and reset the index counter.
     // This keeps the array near zero length rather than growing for the session's lifetime.
     // The 500-entry cap in useWebSocket acts as a safety backstop if clearMessages is slow.
+    // Pass this run's snapshot length (not a bare reset to []) so clearMessages slices off
+    // only what was actually processed here — preserving any message that arrived and was
+    // queued (via the functional setMessages form) after this snapshot but before this
+    // clear's setMessages([]) would otherwise have committed and silently discarded it.
     processedMessageCountRef.current = 0;
-    clearMessages();
+    clearMessages(messages.length);
   }, [messages, sessionStatus.id, currentUser?.id, currentMedia, localParticipant, clearMessages]);
 
   // Periodic sync heartbeat: host → members every 2.5s while playing.
@@ -5248,11 +5450,16 @@ export default function VideoWatch() {
       setIsPlaying(false);
       return;
     }
+    // Always drop the finished item — even when it was the last one. A finished item
+    // sitting in the playlist has no value: re-selecting it doesn't restart it from the
+    // beginning (the media-loading effect only reloads on an actual mediaUrl/type change,
+    // not a re-select of the same item), so leaving it there is a dead, confusing entry.
+    const finishedId = currentMedia.ID;
+    setPlaylist(prev => prev.filter(item => item.ID !== finishedId));
     const nextIndex = currentIndex + 1;
     if (nextIndex < playlist.length) {
       const nextItem = playlist[nextIndex];
       setCurrentMedia(nextItem);
-      setPlaylist(prev => prev.filter(item => item.ID !== currentMedia.ID));
       setIsPlaying(true);
     } else {
       setCurrentMedia(null);
@@ -6132,8 +6339,16 @@ export default function VideoWatch() {
                   </div>
                 )}
 
+                {/* Holding message — shown the moment a device-stream upload starts, until it's actually playable */}
+                {isPreparingStream && !currentMedia && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 pointer-events-none">
+                    <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <p className="text-white/80 text-sm sm:text-base">Host is preparing a stream...</p>
+                  </div>
+                )}
+
                 {/* DVD screensaver — shown after 20 s inactivity when nothing is playing (not in Religious sessions) */}
-                {dvdVisible && !liveShareMode && !liveShareContentMode && contentRating !== 'Religious' && (
+                {dvdVisible && !isPreparingStream && !liveShareMode && !liveShareContentMode && contentRating !== 'Religious' && (
                   <DVDBounce />
                 )}
 
@@ -6177,8 +6392,11 @@ export default function VideoWatch() {
                   )}
                 </div>
 
-                {/* Vinyl overlay for audio media (MP3/M4A/WAV etc.) */}
-                {currentMedia && AUDIO_URL_RE.test(currentMedia.mediaUrl || '') && (
+                {/* Vinyl overlay for audio media (MP3/M4A/WAV etc.). The URL-extension
+                    regex alone misses HLS-ified audio (device-streamed or any audio that
+                    went through progressive/fallback HLS) since a manifest always ends in
+                    .m3u8 regardless of source — mime_type is checked too for that case. */}
+                {currentMedia && (AUDIO_URL_RE.test(currentMedia.mediaUrl || '') || currentMedia.mime_type?.startsWith('audio/')) && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-gray-900 via-gray-950 to-black z-10 pointer-events-none">
                     <VinylPlayer
                       artworkUrl={currentMedia.poster_url || currentMedia.thumbnail_url || null}
@@ -6652,7 +6870,17 @@ export default function VideoWatch() {
           raisedHandsCount={raisedHands.length}
           onEmoteSend={handleEmoteSend}
           openChat={openChat}
-          hasOpenModal={isLiveShareWizardOpen || !!activeGame || isGameLobbyOpen}
+          // activeGame deliberately excluded from hasOpenModal — it used to suppress the
+          // taskbar for the entire duration of any game (Trivia, RPS, TicTacToe), making
+          // mute completely unreachable (opacity 0 + pointer-events: none, and the
+          // tap-anywhere-to-reveal gesture itself early-returns while suppressed) right
+          // when voice chat matters most. The taskbar's z-index (1000) is already well
+          // above every game overlay's (50-60), so showing it during a game was never a
+          // stacking-order problem. It IS passed as currentGame below so the taskbar can
+          // shorten its own auto-hide window while a game is up — still reachable via
+          // tap, just doesn't linger on top of a game's own bottom controls as long.
+          hasOpenModal={isLiveShareWizardOpen || isGameLobbyOpen}
+          currentGame={activeGame}
           isChatActive={showChatHome || isChatOpen}
           onQuizClick={handleQuizClick}
           activeQuizCount={activeQuiz ? 1 : 0}
@@ -7183,10 +7411,13 @@ export default function VideoWatch() {
         <GameOverlay
           activeGame={activeGame}
           currentUserId={currentUser?.id}
+          roomId={roomId}
           onMove={handleGameMove}
           onClose={handleGameClose}
           onEndGame={handleEndGame}
           onPlayAgain={handlePlayAgain}
+          onRelayPacket={handleDoomRelayPacket}
+          registerRelayReceiver={registerDoomRelayReceiver}
         />
       )}
 

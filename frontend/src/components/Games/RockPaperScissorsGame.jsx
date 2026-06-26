@@ -8,11 +8,25 @@ const choices = [
   { id: 'scissors', name: 'Scissors', icon: '✂️' }
 ];
 
-export default function RockPaperScissorsGame({ gameState, players, currentUserId, onMove, onClose, onPlayAgain }) {
+export default function RockPaperScissorsGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPlayAgain }) {
   const [myPick, setMyPick] = useState(null);
   const [countdown, setCountdown] = useState(5);
   const [revealed, setRevealed] = useState(false);
   const [winner, setWinner] = useState(null);
+
+  // BUG FIX (2026-06-24): this was the only one of the four games whose Forfeit
+  // button called onClose directly — onClose just dismisses the overlay locally, it
+  // never reaches the backend. No winner was ever computed (endGameLocked never ran)
+  // and the lobby session-preview poster never cleared (that logic lives inside
+  // endGameLocked too). onEndGame sends the real end_game WS message, same as
+  // TicTacToe/Chess's forfeit.
+  const handleForfeit = () => {
+    if (onEndGame) {
+      onEndGame();
+    } else {
+      onClose();
+    }
+  };
 
   useEffect(() => {
     const finalPicks = gameState?.game_state?.final_picks;
@@ -20,9 +34,18 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
     const playerIds = (players || []).map(p => String(p.user_id));
     // Reveal if explicit final_picks exist, OR if picks has an entry for every player
     const hasFinalPicks = !!finalPicks || (playerIds.length >= 2 && playerIds.every(id => picks[id]));
-    const isOver = gameState?.status === 'finished' || gameState?.status === 'completed';
+    // 'forfeited' is what handleEndGame's optimistic update sets locally, and what the
+    // backend's own EndGame(..., "forfeited") broadcasts back — missing it here meant
+    // a forfeit was never actually recognized as "over" at all.
+    const isOver = gameState?.status === 'finished' || gameState?.status === 'completed' || gameState?.status === 'forfeited';
 
-    if (hasFinalPicks) {
+    // BUG FIX (2026-06-24): a forfeit ends the game (isOver) before both players ever
+    // picked, so hasFinalPicks stays false forever in that case — the UI was stuck on
+    // the pick-a-choice screen with no way to show the winner/draw banner, and the X/
+    // Forfeit buttons (gated on `revealed`) kept calling handleForfeit again on a game
+    // that had already ended, which the backend silently rejects ("no active game"),
+    // looking exactly like "the X button doesn't work."
+    if (hasFinalPicks || isOver) {
       setRevealed(true);
     }
 
@@ -73,7 +96,7 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={revealed ? onClose : handleForfeit}
             className="text-gray-400 hover:text-white transition-colors"
           >
             <CloseIcon className="w-6 h-6" />
@@ -177,7 +200,7 @@ export default function RockPaperScissorsGame({ gameState, players, currentUserI
             </button>
           )}
           <button
-            onClick={onClose}
+            onClick={revealed ? onClose : handleForfeit}
             className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
           >
             {revealed ? 'Close' : 'Forfeit'}

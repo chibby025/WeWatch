@@ -167,11 +167,17 @@ let _refreshQueue = [];
 const _drainQueue = (token) => { _refreshQueue.forEach(cb => cb(token)); _refreshQueue = []; };
 
 // --- Request Interceptor ---
-// Attach JWT token from localStorage to every request
+// Attach JWT token from localStorage to every request — unless the caller already set
+// one explicitly (e.g. uploadChunk preferring a sessionStorage WS token when present).
+// The 401-refresh retry below also relies on this: it sets Authorization on the retried
+// request directly, and re-running it through apiClient must not have this interceptor
+// clobber that freshly-refreshed token back to the (still-stale) localStorage one.
 apiClient.interceptors.request.use((config) => {
-    const token = localStorage.getItem('wewatch_token');
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+    if (!config.headers.Authorization) {
+        const token = localStorage.getItem('wewatch_token');
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
     }
     return config;
 });
@@ -1010,7 +1016,7 @@ export const endWatchSession = async (roomId, sessionId) => {
  * @param {Object} params - Chunk upload parameters
  * @returns {Promise} Upload response
  */
-export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fileName, fileSize, roomId, sessionId, abortSignal }) => {
+export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fileName, fileSize, roomId, sessionId, abortSignal, clientDuration, clientPosterBlob }) => {
   const formData = new FormData();
   formData.append('chunk', chunk);
   formData.append('chunk_index', chunkIndex);
@@ -1018,6 +1024,14 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
   formData.append('upload_id', uploadId);
   formData.append('file_name', fileName);
   formData.append('file_size', fileSize);
+  // Client-captured duration/poster (chunk 0 only) — lets the backend skip its own
+  // ffmpeg-based extraction when the browser already supplied an equivalent value.
+  if (chunkIndex === 0 && clientDuration) {
+    formData.append('client_duration', clientDuration);
+  }
+  if (chunkIndex === 0 && clientPosterBlob) {
+    formData.append('client_poster', clientPosterBlob, 'poster.jpg');
+  }
 
   // Always go directly to Railway — Vercel's rewrite proxy does not reliably forward
   // multipart/form-data POST bodies to external URLs and returns 502. Railway's CORS
@@ -1036,7 +1050,11 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
     uploadUrl += `&auth_token=${encodeURIComponent(token)}`;
   }
 
-  const response = await axios.post(uploadUrl, formData, {
+  // apiClient (not raw axios) so an expired token gets the same auto-refresh-and-retry
+  // treatment as every other API call — previously this bypassed that interceptor
+  // entirely, so a token expiring mid-upload just failed outright instead of silently
+  // refreshing and resuming.
+  const response = await apiClient.post(uploadUrl, formData, {
     headers: { 'Content-Type': undefined, ...authHeaders }, // let browser set multipart boundary
     withCredentials: true,
     timeout: 120000,

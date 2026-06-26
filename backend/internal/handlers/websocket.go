@@ -183,6 +183,9 @@ type RoomBroadcastMessage struct {
 	roomID uint
 	data   OutgoingMessage
 	sender *Client // The client that sent the original message (to exclude from broadcast)
+	excludeUserID uint // Alternative to sender — excludes by user ID instead of *Client pointer.
+	// Needed by callers (e.g. the games package) that can't reference the concrete
+	// *Client type without an import cycle. 0 means "no exclusion via this field".
 }
 
 type UserBroadcastMessage struct {
@@ -909,6 +912,21 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
             }
         }
 
+        // Rehydrate a client joining after a game already started — game_started/
+        // game_state_update are one-shot broadcasts, so without this a joiner who
+        // missed the original broadcast would never learn a game is running at all.
+        if gameWebSocketHandler != nil {
+            if gameMsg := gameWebSocketHandler.GetActiveGameMessage(client.roomID); gameMsg != nil {
+                if gameBytes, err := json.Marshal(gameMsg); err == nil {
+                    select {
+                    case client.send <- OutgoingMessage{Data: gameBytes, IsBinary: false}:
+                    default:
+                        log.Printf("⚠️ [JoinWatchSession] active-game rehydration dropped — client.send full for user %d", client.userID)
+                    }
+                }
+            }
+        }
+
         // Push updated count to lobby so session cards update without polling
         if countMsg, err := json.Marshal(map[string]interface{}{
             "type":       "media_state_changed",
@@ -1160,11 +1178,6 @@ func (h *Hub) Run() {
 						CleanupUserCalls(client.userID)
 					}
 
-					// ✅ Cleanup game state on disconnect
-					if gameWebSocketHandler != nil {
-						gameWebSocketHandler.CleanupPlayerDisconnect(client.roomID, client.userID)
-					}
-
 					// Check if this client was the stream host
 					h.streamStateMutex.Lock()
 					if hostID, isStreaming := h.roomStreamHost[client.roomID]; isStreaming && hostID == client.userID {
@@ -1191,6 +1204,18 @@ func (h *Hub) Run() {
 			// ✅ Release mutex BEFORE registry cleanup to prevent deadlock
 			h.mutex.Unlock()
 			log.Printf("🔴 [Hub.Run] ✅ RELEASED h.mutex lock after unregister for client %p", client)
+
+			// ✅ Cleanup game state on disconnect — must run AFTER mutex unlock above.
+			// endGameLocked (triggered when this disconnect forfeits an active game) calls
+			// down into mediaSwitchHandler.HandleMediaStop -> queue.ClearSessionPreviewFinal
+			// -> hub.BroadcastToLobby, which itself takes h.mutex.RLock(). Calling this while
+			// still holding h.mutex.Lock() (as it previously did, before this fix) is a
+			// guaranteed self-deadlock: Go's sync.RWMutex is not reentrant, so the same
+			// goroutine blocking on its own already-held write lock freezes Hub.Run()'s
+			// single event loop forever, taking down WS handling for every room.
+			if wasInRoom && gameWebSocketHandler != nil {
+				gameWebSocketHandler.CleanupPlayerDisconnect(client.roomID, client.userID)
+			}
 
 			// WS transport closed. Session membership is NOT removed here — the member
 			// stays active in watch_session_members and will reconnect automatically.
@@ -1266,7 +1291,10 @@ func (h *Hub) Run() {
 					if roomBroadcast.sender != nil && client == roomBroadcast.sender {
 						continue
 					}
-					
+					if roomBroadcast.excludeUserID != 0 && client.userID == roomBroadcast.excludeUserID {
+						continue
+					}
+
 					// ✅ FIX: Protect against sending to closed channels
 					func(c *Client) {
 						defer func() {
@@ -1322,6 +1350,25 @@ func (h *Hub) BroadcastToRoom(roomID uint, message OutgoingMessage, sender *Clie
     }
 	select {
 	case h.broadcastToRoom <- RoomBroadcastMessage{roomID: roomID, data: message, sender: sender}:
+	default:
+		h.statRoomBroadcastDropped.Add(1)
+		log.Printf("Hub: BroadcastToRoom channel is full, dropping message for room %d", roomID)
+	}
+}
+
+// BroadcastJSONExceptUser broadcasts JSON data to a room, excluding one user by ID.
+// Exists for callers (e.g. the games package) that only have a plain userID to work
+// with, not a *Client pointer — referencing the concrete *Client type from there would
+// create an import cycle (handlers/games is imported by handlers).
+func (h *Hub) BroadcastJSONExceptUser(roomID uint, excludeUserID uint, data map[string]interface{}) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("[Hub] Failed to marshal JSON for room %d: %v", roomID, err)
+		return
+	}
+	message := OutgoingMessage{Data: jsonData, IsBinary: false}
+	select {
+	case h.broadcastToRoom <- RoomBroadcastMessage{roomID: roomID, data: message, excludeUserID: excludeUserID}:
 	default:
 		h.statRoomBroadcastDropped.Add(1)
 		log.Printf("Hub: BroadcastToRoom channel is full, dropping message for room %d", roomID)
@@ -2724,7 +2771,7 @@ func (client *Client) handleMessage(message []byte) {
     }
     // ✅ Handle game-related messages
     // ✅ Handle game-related messages
-    if msg.Type == "game" || msg.Type == "start_game" || msg.Type == "make_move" || msg.Type == "end_game" {
+    if msg.Type == "game" || msg.Type == "start_game" || msg.Type == "make_move" || msg.Type == "end_game" || msg.Type == "relay_packet" {
         // Convert msg.Data to map
         if dataMap, ok := msg.Data.(map[string]interface{}); ok {
             // Inject action from message type if not present

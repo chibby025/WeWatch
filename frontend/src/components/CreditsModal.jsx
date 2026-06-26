@@ -23,6 +23,16 @@ const CreditsModal = ({ isOpen, onClose }) => {
     },
   ];
 
+  const openSourceSoftware = [
+    {
+      name: 'DOOM (Arcade Mode)',
+      creator: 'id Software, Chocolate Doom contributors, Cloudflare, VectorPrivacy',
+      license: 'GPL-2.0',
+      usage: 'Arcade Mode mini-game',
+      link: 'https://github.com/letswatchout/doom-arcade',
+    },
+  ];
+
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
       <div className="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col border border-gray-700/50">
@@ -139,6 +149,49 @@ const CreditsModal = ({ isOpen, onClose }) => {
                   </span>
                 </p>
               </div>
+            </div>
+          </div>
+
+          {/* Open Source Software Section */}
+          <div>
+            <h3 className="text-lg font-semibold text-purple-300 mb-3 flex items-center gap-2">
+              <span className="w-1 h-5 bg-purple-500 rounded-full"></span>
+              Open Source Software
+            </h3>
+            <div className="space-y-3">
+              {openSourceSoftware.map((software, index) => (
+                <div
+                  key={index}
+                  className="bg-gradient-to-br from-gray-800/40 to-gray-900/40 rounded-xl p-4 border border-gray-700/30"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <h4 className="text-white font-medium">{software.name}</h4>
+                      <p className="text-sm text-gray-400 mt-1">{software.creator}</p>
+                      <div className="flex items-center gap-3 mt-2">
+                        <span className="text-xs px-2 py-1 rounded-full bg-blue-500/20 text-blue-300">
+                          {software.license}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          Used in: {software.usage}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2">
+                        Source code available at{' '}
+                        <a
+                          href={software.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-purple-400 hover:text-purple-300 underline"
+                        >
+                          {software.link}
+                        </a>
+                        {' '}per {software.license}.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>

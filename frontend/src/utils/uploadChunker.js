@@ -106,14 +106,16 @@ export const uploadChunkWithRetry = async ({
   sessionId,
   uploadFn,
   maxRetries = 3,
-  onProgress
+  onProgress,
+  clientDuration = null,
+  clientPosterBlob = null
 }) => {
   let lastError;
-  
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`📤 [Chunk ${chunk.index + 1}/${chunk.totalChunks}] Attempt ${attempt}/${maxRetries}`);
-      
+
       const response = await uploadFn({
         chunk: chunk.blob,
         chunkIndex: chunk.index,
@@ -122,7 +124,11 @@ export const uploadChunkWithRetry = async ({
         fileName,
         fileSize,
         roomId,
-        sessionId
+        sessionId,
+        // Only meaningful on chunk 0 — uploadChunk decides whether to actually attach
+        // these (no point sending the same blob/string with every chunk).
+        clientDuration,
+        clientPosterBlob
       });
       
       console.log(`✅ [Chunk ${chunk.index + 1}/${chunk.totalChunks}] Uploaded successfully`);
@@ -210,17 +216,27 @@ export const uploadChunksParallel = async ({
   uploadFn,
   concurrency = 3,
   maxRetries = 3,
-  onProgress
+  alreadyUploadedIndices = null,
+  onProgress,
+  clientDuration = null,
+  clientPosterBlob = null
 }) => {
-  console.log(`🚀 [Parallel Upload] Starting with ${concurrency} concurrent chunks`);
-  
-  let completedChunks = 0;
-  
+  // Resume support: skip chunks already confirmed uploaded in a previous attempt —
+  // re-sending them would still work (the backend overwrites by index), but wastes
+  // bandwidth on exactly the large files this is most likely to matter for.
+  const pendingChunks = alreadyUploadedIndices?.size
+    ? chunks.filter(c => !alreadyUploadedIndices.has(c.index))
+    : chunks;
+  let completedChunks = alreadyUploadedIndices?.size ?? 0;
+
+  console.log(`🚀 [Parallel Upload] Starting with ${concurrency} concurrent chunks` +
+    (completedChunks > 0 ? ` (resuming — ${completedChunks}/${chunks.length} already done)` : ''));
+
   // Process chunks in batches
-  for (let i = 0; i < chunks.length; i += concurrency) {
-    const batch = chunks.slice(i, i + concurrency);
+  for (let i = 0; i < pendingChunks.length; i += concurrency) {
+    const batch = pendingChunks.slice(i, i + concurrency);
     
-    console.log(`📦 [Batch ${Math.floor(i / concurrency) + 1}] Uploading chunks ${i + 1}-${Math.min(i + concurrency, chunks.length)} of ${chunks.length}`);
+    console.log(`📦 [Batch ${Math.floor(i / concurrency) + 1}] Uploading chunks ${batch[0].index + 1}-${batch[batch.length - 1].index + 1} of ${chunks.length}`);
     
     // Upload batch in parallel
     await Promise.all(
@@ -234,6 +250,10 @@ export const uploadChunksParallel = async ({
           sessionId,
           uploadFn,
           maxRetries,
+          // Only chunk 0 ever needs these — sending them with every chunk would just
+          // mean re-uploading the same poster blob pointlessly on every request.
+          clientDuration: chunk.index === 0 ? clientDuration : null,
+          clientPosterBlob: chunk.index === 0 ? clientPosterBlob : null,
           onProgress: ({ chunkIndex, totalChunks }) => {
             completedChunks++;
             const percent = Math.round((completedChunks / totalChunks) * 100);

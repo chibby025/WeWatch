@@ -108,9 +108,17 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
       const poolEntry = activeConnections.get(connectionKey);
       const existingWs = poolEntry.ws;
       
-      // ✅ ONLY reuse OPEN connections, NOT CONNECTING (might be stale/zombie)
-      if (existingWs.readyState === WebSocket.OPEN) {
-        console.log(`♻️ [useWebSocket] REUSING existing connection for ${connectionKey} (refCount: ${poolEntry.refCount} → ${poolEntry.refCount + 1})`);
+      // ✅ Reuse OPEN connections, and also CONNECTING ones under the same key (same
+      // roomId+sessionId+tabId) — a CONNECTING entry found here is almost always this
+      // same component's own in-flight attempt from a React StrictMode dev double-mount,
+      // not a cross-tab zombie (tabId already scopes the key to this browser tab).
+      // Treating CONNECTING as stale here used to delete the pool entry out from under
+      // the in-flight socket's own onmessage closure, orphaning its subscriber list —
+      // messages kept "delivering" to a subscriber whose setMessages no longer produced
+      // a visible re-render, since the re-mounted effect bailed out via isConnectingRef
+      // without ever registering a fresh subscriber.
+      if (existingWs.readyState === WebSocket.OPEN || existingWs.readyState === WebSocket.CONNECTING) {
+        console.log(`♻️ [useWebSocket] REUSING existing connection for ${connectionKey} (state: ${existingWs.readyState}, refCount: ${poolEntry.refCount} → ${poolEntry.refCount + 1})`);
         poolEntry.refCount++;
         
         // ✅ CRITICAL FIX: Check if this component is already subscribed before adding
@@ -920,7 +928,13 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
 
   // Clears the local messages array after a consumer has processed all pending messages.
   // Call this after the messages useEffect switch-block to keep memory near zero.
-  const clearMessages = useCallback(() => setMessages([]), []);
+  // Functional slice, not a blind setMessages([]) reset: a message that arrived (and was
+  // queued via the functional setMessages form) after the caller's snapshot was taken but
+  // before this clear commits would otherwise be silently discarded — a direct [] reset
+  // wins over an earlier-queued functional update in the same batch, dropping that message
+  // before any render ever reflected it. Slicing off only what the caller actually processed
+  // (by count) preserves anything appended after the snapshot.
+  const clearMessages = useCallback((count) => setMessages(prev => prev.slice(count)), []);
 
   // ✅ Memoize sessionStatus to prevent unnecessary re-renders when content doesn't actually change
   const memoizedSessionStatus = useMemo(() => sessionStatus, [

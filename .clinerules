@@ -25,6 +25,240 @@ This is more than a project - it's a testament to perseverance, continuous learn
 
 ---
 
+## 📍 PROJECT STATUS (June 23, 2026 - DEVICE STREAMING PHASE 19: FIXED LATE-JOINER URL + ORPHANED PREVIEW TICKER)
+
+### ✅ LATEST UPDATES (June 23, 2026, newest of all):
+
+**Device Streaming via HLS — Phase 19 (complete)** ✅
+- User asked two forward-looking questions before further testing: does the lobby preview update correctly when the host switches from a device-stream upload to LiveShare/Watch-From mid-session, and would a late joiner (relying on `session_status`, not the `device_stream_ready` broadcast) see what the host sees with no sync issues?
+- Bug 1, more serious than expected: late joiners got a fundamentally broken media URL, not just an out-of-sync one. `current_media_url` is stored as a relative `/uploads/...` path by both upload pipelines, and flows untouched into the late-join restoration effect — unlike every other path in the file (`device_stream_ready`'s own handler, `handlePlayMedia`, etc.), which all resolve it against the backend's origin first. A late joiner's browser was resolving it against the *frontend's* origin instead — a guaranteed 404. Fixed by extracting one shared `resolveMediaUrl()` helper, used at all five places in `VideoWatch.jsx` that had been duplicating this same resolution logic.
+- Bug 2: switching from a device-stream upload to LiveShare/Watch-From never told the backend the media type changed — `watch_sessions.current_media_type` stayed `"upload"` forever, and the preview-refresh ticker (Phase 17) kept running indefinitely against the old, possibly-deleted upload, periodically overwriting the fresh LiveShare poster with stale content. The backend already has the right teardown (`update_media_state`/`screen_share_started` WS handlers correctly call `ClearOldPreview`) but cinema rooms never sent either message type — only `LectureHallPage.jsx`/`PositionCalculatorPage.jsx` did. Fixed by sending `update_media_state` from `handleStartLiveShare` and `handleEndScreenShare`.
+- Verified for real: a two-account late-join test confirmed the joiner got a genuine playing `blob:` video (proof the manifest fetch succeeded against the correct origin) landing within ~2.5s of the host's actual position, then continuing smoothly. For the ticker fix — LiveKit isn't available in this dev environment to drive the real UI button — verified by sending the exact WS payload the new code constructs against a session whose ticker had been confirmed firing every ~60s for 18+ minutes straight; confirmed type-change detection, preview clearing, and the next two naturally-due ticks never firing.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 19."
+
+---
+
+## 📍 PROJECT STATUS (June 22, 2026 - DEVICE STREAMING PHASE 18: FIXED RELOAD-ON-COMPLETION + STALE LOBBY PREVIEW)
+
+### ✅ LATEST UPDATES (June 22, 2026, newest of all):
+
+**Device Streaming via HLS — Phase 18 (complete)** ✅
+- User confirmed Phase 17's fix worked, then reported two further real-testing issues: the player visibly restarted exactly when the background upload finished; the lobby preview updates a couple of times early on but then never advances further as the session continues.
+- Issue 1's real cause (different from the first guess): `CinemaVideoPlayer.jsx`'s playback effects list `onError` in their dependency arrays, and `VideoWatch.jsx` passes a fresh `onError` reference on every render (not memoized) — a parent re-render right at upload completion (and again ~5s later) reloaded the player from scratch despite `mediaUrl` never changing. Fixed with an `onErrorRef` shadow ref (same pattern already used in `CinemaScene3DDemo.jsx`), removing `onError` from both effects' deps.
+- Issue 2's real cause: Phase 17's segment-milestone poller stops once the upload completes (`#EXT-X-ENDLIST`), handing off to the old wall-clock ticker — which kept calling `fromLatest=true`, permanently meaning "the last 3 segments of the now-complete file," regenerating byte-identical content forever regardless of where anyone is actually watching.
+- Fixed by branching `refreshStreamSessionPreview` on stream completion: once complete, it centers the preview window on `session.CurrentPlaybackTime` instead — a field that already exists and is already kept fresh every 30s by `VideoWatch.jsx`'s pre-existing playback heartbeat, no new tracking needed.
+- Verified for real: a 180s video left playing for 150 real seconds confirmed three consecutive ticker refreshes tracking the actual advancing position (segment windows around 34s, 93s, 124s — never repeating, never collapsing to the tail end); the same run confirmed zero reloads and zero redundant broadcasts across the upload-completion window.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 18."
+
+---
+
+## 📍 PROJECT STATUS (June 22, 2026 - DEVICE STREAMING PHASE 17: FIXED LOST device_stream_ready WS MESSAGE)
+
+### ✅ LATEST UPDATES (June 22, 2026, newest of all):
+
+**Device Streaming via HLS — Phase 17 (complete)** ✅
+- User reported the LeftSidebar's upload progress bar stayed visible for a slow/large "Browse Files" upload well past the point where the lobby session preview already showed the media playing — the Phase 11 `isUploadReady` early-clear mechanism never fired at all.
+- Root-caused via real Playwright tests against the real dev backend (not just code reading) to two compounding bugs in `useWebSocket.js`, both upstream of `VideoWatch.jsx`'s `device_stream_ready` handler: (1) a `CONNECTING` (not-yet-`OPEN`) pool connection was wrongly treated as a stale zombie and deleted during React StrictMode's dev-only double-mount, orphaning the subscriber that would have received the message; (2) the real, deeper bug — `clearMessages()` did a non-functional `setMessages([])` direct reset instead of a functional slice, which raced with and silently discarded a `device_stream_ready` message that had been queued (via the correct functional `setMessages(prev => ...)` form) in the narrow window between the processing effect's snapshot and its own clear committing.
+- Fixed both: the pool-reuse check now also accepts `CONNECTING` sockets; `clearMessages` now takes a count and does `setMessages(prev => prev.slice(count))`, with `VideoWatch.jsx` passing its own snapshot length instead of calling it bare.
+- Scope note: bug (2) isn't specific to this one message type — any WS message arriving in that exact race window on any page using this hook is vulnerable to the same silent loss.
+- Verified for real, multiple times, with and without diagnostic logging: `device_stream_ready` now reliably reaches `VideoWatch.jsx`, `isUploadReady` flips, the progress bar disappears immediately while "Loading..." correctly persists until the background chunk transfer truly finishes, and playback starts successfully.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 17."
+
+---
+
+## 📍 PROJECT STATUS (June 22, 2026 - DEVICE STREAMING PHASE 16: CHUNK UPLOADS SURVIVE AN EXPIRED TOKEN)
+
+### ✅ LATEST UPDATES (June 22, 2026, newest of all):
+
+**Device Streaming via HLS — Phase 16 (complete)** ✅
+- User hit "failed to upload chunks" after a system restart. Root-caused as a genuine JWT expiry (7-day lifetime, token expired 22 seconds before the request per exact Unix math) — confirmed not caused by any Phase 14/15 change (no auth files touched, no stale duplicate backend process).
+- Found the real, fixable gap alongside it: `uploadChunk` used a raw `axios.post` instead of the shared `apiClient` instance, bypassing the app's existing auto-refresh-on-401 interceptor that every other API call already benefits from — so an expired token here just failed outright instead of silently refreshing and retrying.
+- Fixed by switching to `apiClient.post(...)`, plus one supporting change: the request interceptor no longer unconditionally overwrites an already-set `Authorization` header (needed so the refresh-retry's fresh token survives being re-sent through the same interceptor on retry).
+- Verified for real: registered a fresh test account, poisoned its stored token with garbage, ran a real chunked upload through the actual UI — confirmed the very first chunk attempt succeeded (refresh-and-retry happened transparently inside it) and the stored token afterward was a genuine fresh JWT.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 16."
+
+---
+
+## 📍 PROJECT STATUS (June 22, 2026 - DEVICE STREAMING PHASE 15: PLAYLIST CLEANUP + PREVIEW REFRESH FOR CINEMA ROOMS)
+
+### ✅ LATEST UPDATES (June 22, 2026, newer than the latest of the latest):
+
+**Device Streaming via HLS — Phase 15 (complete)** ✅
+- Finished playlist items are now always removed, even the last one — previously only items with a *next* item to advance to got removed; the last one just cleared "Playing Now" but stayed visible, dead and unclickable (re-selecting it doesn't restart it — the player only reloads on an actual media change, not a re-select of the same item). One-line fix: moved the playlist filter outside the if/else in `handleVideoEnd`. Still local/per-client only, same as before.
+- Session preview refresh (1m dev / 5m prod) now applies to cinema/video-watch rooms — previously the refresh ticker only ever started via a `media_play` WS message that's exclusively sent from classroom/lecture-hall pages, so cinema rooms got exactly one preview at upload time and never another. New `startSessionPreviewRefresh` persists the same session fields `HandleMediaPlay` already writes for classroom and starts the existing ticker directly, called from both the progressive and fallback upload paths.
+- Found a real bug while wiring this up: the existing flat-file refresh path would have silently misbehaved for any `IsStream: true` item — and testing showed that's nearly every video/audio upload, not just progressive ones, since the fallback path HLS-ifies almost everything regardless of pipeline. Branched `refreshPreview` on `IsStream` to route stream items through a new HLS-segment-aware callback instead, using the freshest available segments each refresh (not just replaying the same opening few seconds) and overwriting the same deterministic filename in place.
+- Verified for real: let a progressive upload's ticker run un-ended for an extended period, confirmed dozens of on-schedule refreshes, then confirmed session-end correctly stopped it (zero further refreshes after the end call). Also verified a guaranteed-fallback-pipeline tiny file — confirmed it also came back `IsStream: true` and refreshed correctly via the same path.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 15."
+
+---
+
+## 📍 PROJECT STATUS (June 22, 2026 - DEVICE STREAMING PHASE 14: SWEEP-GAP FIXES, DEAD-ITEM AUTO-REMOVAL, ANIMATED PREVIEWS)
+
+### ✅ LATEST UPDATES (June 22, 2026, the latest of the latest):
+
+**Device Streaming via HLS — Phase 14 (complete)** ✅
+- Fixed the two real sweep-function gaps from the Phase 13 incident write-up: `CleanupAllTemporaryMedia` and `DeleteTemporaryMediaItemsForRoomHandler` both skipped the DB row delete entirely when the file delete failed — removed the `continue` in both so the row always gets deleted regardless. Verified with a genuine permission-denied failure (a nonexistent file doesn't count — `DeleteMediaFile` treats that as success) via a standalone, since-deleted test program: confirmed the row was removed despite the file-delete failure being logged.
+- Dead playlist items now auto-remove instead of erroring forever: `VideoWatch.jsx`'s error handler detects hls.js's fatal `manifestLoadError` specifically, removes the item locally, shows a toast instead of a blocking alert, and (host-only) calls the existing delete-item API to purge it for real. Found and fixed a second, unrelated bug while wiring this up — the backend's room broadcast for item deletion was commented out, so even the pre-existing manual "delete" button never synced to other members in real time. Verified end-to-end with a real upload, a narrowly-scoped deletion of just that one upload's directory, and a forced reload that reproduced the exact `manifestLoadError` — confirmed the item vanished from the DOM and the DB row was genuinely soft-deleted.
+- Animated session previews (the looping video clip, not just the static poster) now generate for progressive/device-stream uploads too — previously only the poster was fixed in Phase 13. New `GeneratePreviewMP4FromHLSSegments` concatenates the first few HLS segments and re-encodes a 15s/540p clip. Found and fixed a real bug along the way: probing resolution directly against a raw `.ts` segment failed because ffprobe printed the same resolution twice (a transport-stream PAT/PMT quirk) — fixed by taking only the first line of output. No frontend changes needed; the lobby's existing broadcast handler already supported this shape. Verified with `ffprobe` against the real generated file and a direct DB check.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 14."
+
+---
+
+## 📍 PROJECT STATUS (June 22, 2026 - DEVICE STREAMING PHASE 13: FIXED MISSING WATCHOUTS PREVIEW IMAGES)
+
+### ✅ LATEST UPDATES (June 22, 2026, absolute latest):
+
+**Device Streaming via HLS — Phase 13 (complete)** ✅
+- User reported the LobbyPage WatchOuts feed showed no preview images at all for sessions playing media via "Browse Files"/device-streaming. Root-caused: this is a separate, session-scoped poster system (`watch_sessions.poster_url`) from the room-scoped playlist poster fixed in Phase 12 (`TemporaryMediaItem.PosterURL`). The fallback upload path already persisted both correctly via `PreviewQueue.generateUploadPreview`; the progressive path's two poster call sites (`onProgressiveStreamReady`, `generateAndBroadcastProgressivePoster`) only ever broadcast over WS, never wrote to the `watch_sessions` row — so anyone not already connected at broadcast time (any REST fetch, reconnect, or fresh lobby visit) saw nothing.
+- Fixed with a new shared helper, `persistAndBroadcastSessionPoster`, called from both progressive poster sites. Verified both the unaffected fallback baseline and the now-fixed progressive path (forced via network throttling) — confirmed `watch_sessions.poster_url` populated with a real 31KB JPEG, not a placeholder.
+- Known, scoped-out remaining gap: the session-level *video clip* preview (the looping MP4, not just a static poster) still never generates for progressive sessions — flagged for a future pass, not fixed now.
+- **Separately**, found and disclosed to the user that an earlier "failed to play video" report was caused by Claude's own test-cleanup commands (`rm -rf` against shared upload directories during Phases 9-12) deleting real files — including the user's own concurrent test upload — without removing the corresponding DB rows, since the cleanup bypassed the app's own paired delete logic entirely. Audited the app's own cleanup code independently and found it's correctly paired in the normal flow, but surfaced two narrow, pre-existing latent gaps (two sweep functions skip the DB delete on a transient file-delete error) plus a frontend gap (no graceful playlist-item eviction on a real 404) — flagged as a follow-up, not yet fixed pending user direction.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 13" and the "Known issue — orphaned TemporaryMediaItem rows" section right after it.
+
+---
+
+## 📍 PROJECT STATUS (June 22, 2026 - DEVICE STREAMING PHASE 12: FIXED BLACK CLIENT-CAPTURED POSTERS)
+
+### ✅ LATEST UPDATES (June 22, 2026, most latest):
+
+**Device Streaming via HLS — Phase 12 (complete)** ✅
+- User reported the "Playing Now"/playlist poster was black for 2 different files. Root-caused as a real, intermittent race in `captureClientPosterFromFile` (Phase 9): the video's `seeked` event can fire before the browser actually decodes/paints the frame, so the canvas grab sometimes captures a stale black frame. Proved it empirically by scanning poster files already on disk from earlier sessions — found a handful near-zero brightness alongside mostly-correct ones, from the *exact same source file*, confirming pure timing, not content.
+- First attempted fix (`requestVideoFrameCallback`, the API built for "frame ready to composite") turned out unreliable — built a standalone Playwright test harness and confirmed its callback never fires at all for a paused/seeked (non-playing) video in this environment. Removed it; kept only a double `requestAnimationFrame` after `seeked`, which reliably works. Also hardened the capture: `preload` changed to `'auto'`, video briefly attached off-screen to the DOM instead of fully detached.
+- Verified at volume given the bug was intermittent: 80/80 clean captures across two harder test videos (large-GOP + high-motion) via the standalone harness, plus 2 real end-to-end uploads through the actual app confirming healthy, non-black poster files on disk.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 12."
+
+---
+
+## 📍 PROJECT STATUS (June 22, 2026 - DEVICE STREAMING PHASE 11: MERGED STREAM-FROM-DEVICE INTO BROWSE FILES)
+
+### ✅ LATEST UPDATES (June 22, 2026, even more latest):
+
+**Device Streaming via HLS — Phase 11 (complete)** ✅
+- Confirmed "Stream from Device" and "Browse Files" already ran the identical upload pipeline — the only difference was one flag (`pendingAutoPlayRef.current = true`) the first button set before opening the file picker. Removed "Stream from Device" entirely; folded that flag-set into "Browse Files" unconditionally, so picking any file (including images/PDFs) now auto-displays it for the room, same as the deleted button already did.
+- Renamed the button's own "Uploading..." label to "Loading..." — "uploading" wrongly implied the whole transfer had to finish before anything useful happened.
+- Fixed a real UX gap: the load bar used to stay visible for the *entire* chunk-sending duration, even after `device_stream_ready` had already started playback partway through a large upload. Added `upload_id` to both backend `device_stream_ready` broadcasts; the upload hook now tracks its own current `upload_id` and hides the bar specifically when its own stream is confirmed ready — `uploading` itself stays `true` the whole time (preserving the button's disabled state and all retry/resume logic), only the visual bar hides early.
+- Verified with real network throttling (~5 Mbps, applied only after the app had already loaded): the bar disappeared in the exact poll tick `device_stream_ready` fired, then stayed hidden for 10+ seconds while the button still read "Loading..." — proof the background upload was still genuinely running underneath. An unthrottled localhost run showed why throttling was necessary: the whole 39MB upload finished before ffmpeg could even produce 2 segments, making the fix impossible to observe without it.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 11."
+
+---
+
+## 📍 PROJECT STATUS (June 22, 2026 - DEVICE STREAMING PHASE 10: FIX REDUNDANT RESTARTS + PREP UX)
+
+### ✅ LATEST UPDATES (June 22, 2026):
+
+**Device Streaming via HLS — Phase 10 (complete)** ✅
+- Manual testing of a real 39.5MB/79-chunk upload surfaced "restarts playback 2 times then begins playing" — root-caused as two separate, real bugs from the user's own pasted console log: (1) `LeftSidebar.jsx`'s upload-complete auto-play effect redundantly re-selects the same item `device_stream_ready` already started playing, and (2) Phase 8's own poster/duration fix (`{...prev, poster_url}`) produces a new object reference that `CinemaVideoPlayer.jsx`'s media-load effect (depending on the whole `mediaItem` object) treated as "new media," reloading from scratch. Fixed #1 by checking `currentMedia?.ID` before re-selecting; fixed #2 by narrowing the effect's dependencies to the specific fields it actually reads (`mediaUrl`, `type`, `stream`, `cameraStream`) instead of the whole object.
+- Answered directly: yes, "Stream from Device" and "Browse Files" share the same upload state by design — confirmed "Browse Files shows Uploading" is just that button's own label reacting to the same shared `uploading` flag, not a separate stuck indicator.
+- Investigated the "stuck at Uploading, 0%, 0B" report and found it isn't a bug — a `useEffect`-based state logger (not a log inside the async upload function itself, which would have hit a real stale-closure trap) confirmed the full `isPreparing → uploading → progress → reset` lifecycle works correctly on a real 39MB upload. Most likely explanation: a normal "just started" moment, made easier to misread given Phase 9's new client-capture delay.
+- Added a genuine fix for that delay: new `isPreparing` state shows "Preparing your stream..." during the client-side duration/poster capture window (which sets nothing previously, leaving the UI blank for a few real seconds on a large file) — distinct from the real upload progress bar, never shown simultaneously.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 10."
+
+---
+
+## 📍 PROJECT STATUS (June 21, 2026 - DEVICE STREAMING PHASE 9: CLIENT-SUPPLIED POSTER/DURATION)
+
+### ✅ LATEST UPDATES (June 21, 2026, even more latest):
+
+**Device Streaming via HLS — Phase 9 (complete)** ✅
+- Browser already has free, instant access to a video's duration (container metadata) and can cheaply grab a poster frame itself (`<video>` + `<canvas>`) — both techniques already existed elsewhere in this codebase but were never wired into "Stream from Device." Wired them in so the backend can skip its own ffmpeg-based poster extraction entirely when the browser supplies an equivalent frame — a real CPU saving at scale (every device-stream upload was triggering a dedicated extra ffmpeg process just to grab one frame).
+- New `captureClientPosterFromFile()` (frontend) + `SetClientUploadMetadata`/`GetClientUploadMetadata` (backend) thread the client's duration+poster through chunk 0 to both the progressive and fallback paths. Both skip their respective ffmpeg work (`generateAndBroadcastProgressivePoster` / `ExtractThumbnail` + `GetVideoDuration`) whenever the client successfully supplied a value; falls back to exactly today's server-side behavior otherwise.
+- **A real, time-costly debugging detour**: early test runs showed zero effect from the new code despite it looking correct — root cause was a *stale backend process* from hours earlier still bound to port 8080 (the `go run` wrapper-vs-actual-binary gotcha, already documented in this file, bit again). Fixed by killing via `fuser -k 8080/tcp` rather than process-name pattern matching.
+- Verified for real once testing the genuinely-fresh backend: fallback-path poster file was byte-identical in size to the client-captured blob and visually confirmed as a real frame; progressive-path duration showed correctly within ~7 seconds for a 60-second source (proof it didn't come from the ffmpeg-driven callback, which wouldn't fire for close to 60 real seconds). Non-candidate uploads (PDF) confirmed unaffected.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 9."
+
+---
+
+## 📍 PROJECT STATUS (June 21, 2026 - DEVICE STREAMING PHASE 8: SYNC "PLAYING NOW" WITH PLAYLIST)
+
+### ✅ LATEST UPDATES (June 21, 2026, latest):
+
+**Device Streaming via HLS — Phase 8 (complete)** ✅
+- Manual testing found "Playing Now" stuck on the placeholder poster and `00:00` duration even after the playlist entry for the same item correctly showed both real values.
+- First fix layer: `currentMedia` (built from `device_stream_ready`'s deliberately minimal payload) was never patched when the real poster/duration arrived later — only `playlist` was. Patched both the existing `playlist_poster_updated` handler and added a previously entirely-missing `playlist_duration_updated` handler (the backend already broadcasts it; nothing in the frontend consumed it).
+- **Real second layer found only via actual testing**: shipping that alone and testing for real showed it still didn't work — traced it by logging every WS message type received and confirming `playlist_poster_updated` never actually arrives at this client in practice, despite the backend confirmably sending it. The *real* mechanism keeping the playlist's poster current is a full REST refetch (`fetchAndGeneratePosters`, called on mount and via the upload hook's "poster retry" pass) — which also never touched `currentMedia`. Fixed at that layer too: the refetch now patches `currentMedia` from the same fresh data.
+- Verified for real: a 20-second test stream's "Playing Now" card updated from placeholder/00:00 to the real frame and the correct `00:00:20` duration within 15 seconds, matching the playlist exactly.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 8."
+
+---
+
+## 📍 PROJECT STATUS (June 21, 2026 - DEVICE STREAMING PHASE 7: REAL POSTERS FOR PROGRESSIVE UPLOADS)
+
+### ✅ LATEST UPDATES (June 21, 2026, even later):
+
+**Device Streaming via HLS — Phase 7 (complete)** ✅
+- Manual testing found progressive HLS uploads always got a hardcoded generic placeholder poster, never a real thumbnail — unlike the fallback path, which already extracts a real frame. Fixed by extracting a real frame from the first HLS segment (`seg_000.ts` — already complete and safely readable the moment the stream is announced ready) instead of the placeholder, mirroring the fallback path's existing `ExtractThumbnail` + CDN-upload + broadcast pattern exactly, in its own goroutine so it never delays the `device_stream_ready` broadcast.
+- Verified for real: a genuine H.264 MP4 streamed through a full chunked upload produced an actual correct-resolution frame from the video (opened and visually confirmed, not just "no error"); the fallback path's pre-existing poster mechanism confirmed completely untouched; an audio-only progressive stream (MP3) confirmed to fail extraction gracefully and keep the placeholder, no crash.
+- Found a real test-methodology gotcha along the way: a default-layout (moov-at-end) MP4 reliably fails the progressive probe when chunks arrive all at once (e.g. rapid curl requests on localhost) — correct, safe backend behavior, but means curl-based testing of the progressive path needs a `+faststart` source file to reliably exercise it.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 7."
+
+---
+
+## 📍 PROJECT STATUS (June 21, 2026 - DEVICE STREAMING PHASE 6: 1-SEGMENT BUFFER + HOLDING MESSAGE)
+
+### ✅ LATEST UPDATES (June 21, 2026, latest):
+
+**Device Streaming via HLS — Phase 6 (complete)** ✅
+- Progressive HLS readiness now requires 2 segments in the manifest (not 1) before announcing the stream is ready — a small cushion against an immediate stall if the host's connection hits a rough patch right at the start (`hls_progressive.go`, one-line change).
+- New `device_stream_preparing` broadcast fires the moment a device-stream upload's first chunk lands — well before any segment exists — so room members see "Host is preparing a stream..." instead of nothing. Clears on the actual ready signal, or a 90s safety-net timeout if the upload silently fails.
+- **Real bug found and fixed along the way**: the fallback (non-progressive) upload path's "ready" broadcast (`temporary_media_item_added`) had zero frontend listeners — confirmed via grep, not assumption. Members had no way to know a fallback-path stream (too-small-to-probe files, or non-H.264 sources needing a full transcode) was ready; only the host's own local auto-play was supposed to handle it, and that wasn't always firing either (per Phase 5's testing). Fixed by making fallback-path stream items broadcast the same `device_stream_ready` shape the progressive path already uses — verified with a real second-browser-context "member" connection auto-playing correctly. Non-stream uploads (documents/images) are untouched, verified via a direct curl-based PDF upload still producing the original broadcast shape.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 6."
+
+---
+
+## 📍 PROJECT STATUS (June 21, 2026 - DEVICE STREAMING PHASE 5: FORMAT COVERAGE AUDIT)
+
+### ✅ LATEST UPDATES (June 21, 2026, even later):
+
+**Device Streaming via HLS — Phase 5 (complete)** ✅
+- Audited every video/audio format the file picker advertises (`.mp4/.mov/.m4v/.m4a/.3gp/.webm/.ts/.mkv/.avi/.wmv`) with real files, real uploads, real playback — not assumptions. Result: **every one of them works**, no "can't stream this format" gate was needed at all.
+- Found and fixed 3 real bugs that were silently breaking 4 of those formats: `getMimeType()` had no mapping for `.3gp`/`.ts`/`.m4v`/`.wmv` (all fell through to `application/octet-stream`, failing every gate); and a genuinely surprising one — on this Linux test environment, `.ts` files get reported by the browser as `text/vnd.trolltech.linguist` (a Qt Linguist translation format that also uses `.ts`), which the frontend's validation gate then correctly-but-wrongly rejected. Fixed by trusting a known-good extension over a present-but-wrong browser-reported type, since the backend already re-derives the real type from the extension anyway.
+- Corrected something said in an earlier conversation: MKV does **not** need transcoding for browser compatibility in the device-streaming path specifically — that concern only applies to the separate, non-streaming permanent-upload path. A progressive MKV upload never reaches `TranscodeMkvToMp4IfNeeded` at all; confirmed with a real test file that MKV's own structure lets the existing probe succeed immediately (prefix=1 chunk), no new code needed.
+- One real, secondary finding for a future pass (not chased further now): the "auto-play immediately after upload" convenience feature didn't visibly fire for any of the three fallback-path (non-progressive) test formats within a 40-second window, even though manually clicking the resulting item always played instantly. Narrow gap, doesn't block anything, worth a closer look later.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 5" — canonical reference, not duplicated here.
+
+---
+
+## 📍 PROJECT STATUS (June 21, 2026 - DEVICE STREAMING PHASE 4: PRODUCTION FIX + MP4 FAST-START)
+
+### ✅ LATEST UPDATES (June 21, 2026, later):
+
+**Device Streaming via HLS — Phase 4 (complete)** ✅
+- **Critical, previously-unknown gap closed**: progressive HLS device-streaming only ever worked in local dev — production builds routed every upload through a completely different path (direct-to-BunnyCDN, no segmenting at all) that never touched the progressive pipeline. Fixed by routing progressive-candidate uploads through the chunked-to-Railway path regardless of environment. Verified with a real production build (`vite build`, no dev mode) served against the local backend.
+- **The original ask**: client-side MP4 "fast start" relocation (`frontend/src/utils/mp4FastStart.js`) — moves the `moov` atom ahead of `mdat` before upload, client-side, for files that aren't already fast-start, so the backend's progressive probe can succeed early instead of falling back to "wait for the whole upload." Locating `moov` only requires reading box headers (8–16 bytes each) and skipping content — never proportional to file size.
+- **Found and fixed a serious bug that unit tests completely missed**: the relocator's offset-rewriting walked from the wrong starting position, meaning it silently shifted *zero* `stco`/`co64` entries — `ffprobe`-based unit tests (duration/codec/dimensions) still passed, since none of those fields depend on chunk offsets at all. Only a real non-seekable-pipe test (piping the relocated file through ffmpeg via stdin, exactly like the backend's real FIFO) exposed it (`Invalid data found when processing input`). Root-caused with a side-by-side offset dump, fixed, and the unit test suite was strengthened with that same pipe-decode check so this class of bug can't slip through again.
+- **Also found and fixed along the way**: two more pre-existing bugs in the half-built "resume an interrupted upload" feature (wrong localStorage key meant the resume prompt's saved state was never actually found; the Resume button's handler was actively clearing the dev-path's resume data before the user could use it), plus an HTTP-response-corrupting bug in the upload rate limiter (`string(rune(N))` injecting raw control-character bytes into response headers instead of the decimal string).
+- Verified end-to-end for real: streamed a genuine moov-at-end 74MB/10-minute movie through the actual UI — backend confirmed fast-start at the very first chunk, processed the entire file through the FIFO with zero errors, computed the correct full duration, and the browser confirmed actual playback starting within ~3 seconds.
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 4" — canonical reference, not duplicated here.
+
+---
+
+## 📍 PROJECT STATUS (June 21, 2026 - DEVICE STREAMING PHASE 3: CLEANUP + CDN + AUDIO)
+
+### ✅ LATEST UPDATES (June 21, 2026):
+
+**Device Streaming via HLS — Phase 3 (complete)** ✅
+- Closed all 3 gaps deferred from Phase 1/2: session-end cleanup of HLS output directories, BunnyCDN segment distribution, and audio file support (MP3/M4A/etc. now also stream progressively, not just video).
+- **Found and fixed a real bug while building the cleanup**: the fix initially deleted the wrong directory depth for fallback-mode HLS uploads, which would have wiped out *every other* in-flight fallback HLS item sharing the same parent folder, not just the one being cleaned up. Caught via direct testing (two sibling directories, confirmed the victim survives after the fix), not by review.
+- BunnyCDN segment distribution verified against the **real CDN** (with explicit go-ahead before writing to live storage) — uploaded test segments, fetched them back from the live CDN URL, then deleted the test objects to leave no residue.
+- Audio support verified end-to-end with a real MP3 stream — confirmed correct duration computation, correct mime-type preservation through the HLS pipeline, hls.js playback of an audio-only manifest, and the VinylPlayer overlay rendering correctly (not just that audio played silently).
+- Full technical detail in `CLAUDE.md` under "Device Streaming via HLS → Phase 3" — canonical reference, not duplicated here.
+
+---
+
+## 📍 PROJECT STATUS (June 20, 2026 - DEVICE STREAMING VIA HLS)
+
+### ✅ LATEST UPDATES (June 20, 2026):
+
+**Device Streaming via HLS — Phase 1 + Phase 2** ✅
+- New "📱 Stream from Device" option in `LeftSidebar.jsx`'s upload tab — host picks a local file, it uploads via the existing chunked pipeline, and instead of waiting for the whole file then serving a flat CDN URL, the backend segments it into HLS and broadcasts a `device_stream_ready` WS message the moment the first segment exists.
+- **Progressive availability (Phase 2)**: a probe-gate (`backend/internal/utils/hls_progressive.go`) tests partial chunk prefixes with `ffprobe`; the moment a partial prefix succeeds (source's structural index is near the front — "fast-start"), commits to a FIFO→ffmpeg→HLS pipeline that produces segments *while later chunks are still uploading*. Files that never pass a partial probe fall back cleanly to the original one-shot `SegmentToHLS` path.
+- Avoids LiveKit entirely for this — bandwidth-cost reasons (LiveKit reserved for voice/video talk only). Segments currently serve from local disk via the existing static handler (CDN distribution is next up, see CLAUDE.md "Known gaps").
+- Full architecture, file list, and every gotcha hit (subtitle-stream ffmpeg crash, shadow-mode cleanup race, flat-vs-nested WS message shape, hls.js live-edge default, stale seek-ref, complete-file-probe trap) documented in `CLAUDE.md` under "Device Streaming via HLS" — that section is the canonical reference, not duplicated here.
+- Verified end-to-end with real two-browser tests (host + member), including a simulated mid-upload backend crash (clean recovery, no hang, no corruption).
+- **Not yet built**: session-end cleanup of segment directories, BunnyCDN segment distribution, audio file support. See CLAUDE.md for why each matters and what's involved.
+
+---
+
 ## 📍 PROJECT STATUS (June 7, 2026 - AVATAR SPEECH INDICATORS + LOBBY EFFICIENCY + UI POLISH)
 
 ### ✅ LATEST UPDATES (June 7, 2026):

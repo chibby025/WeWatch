@@ -39,6 +39,7 @@
     "emoji-picker-element": "^1.29.1",
     "flowbite": "^3.1.2",
     "flowbite-react": "^0.12.7",
+    "hls.js": "^1.6.16",
     "jwt-decode": "^4.0.0",
     "livekit-client": "^2.15.14",
     "lucide-react": "^0.561.0",

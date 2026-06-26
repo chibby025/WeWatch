@@ -108,9 +108,13 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 	now := time.Now()
 	m.db.Model(&session).Update("last_heartbeat_at", now)
 
-	// Rebuild state if lost (e.g. service restart)
+	// Rebuild state if lost (e.g. service restart) and re-broadcast so
+	// any clients already in the room resume playback.
 	if state == nil {
 		playlist := m.loadPlaylist(room.DemoWatchType)
+		if len(playlist) == 0 {
+			return
+		}
 		state = &roomDemoState{
 			sessionID:      session.SessionID,
 			sessionDBID:    session.ID,
@@ -121,6 +125,14 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 		m.mu.Lock()
 		m.states[room.ID] = state
 		m.mu.Unlock()
+
+		// Estimate how far into the first track we are
+		elapsed := time.Since(session.StartedAt).Seconds()
+		seek := elapsed
+		if dur := playlist[0].durationSeconds; dur > 0 && elapsed >= float64(dur) {
+			seek = 0 // past end, just restart from 0
+		}
+		m.broadcastPlay(room.ID, session.SessionID, playlist[0].url, playlist[0].title, playlist[0].posterURL, seek)
 		return
 	}
 
@@ -136,13 +148,19 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 		nextIdx := (state.currentIdx + 1) % len(state.playlist)
 		next := state.playlist[nextIdx]
 
-		// Detect duration on first play of each track
+		// Detect duration for the next track in background if not yet known
 		if next.durationSeconds == 0 {
-			if dur := probeMediaDuration(next.url); dur > 0 {
-				m.db.Exec("UPDATE demo_media_library SET duration_seconds = ? WHERE id = ?", dur, next.id)
-				state.playlist[nextIdx].durationSeconds = dur
-				next.durationSeconds = dur
-			}
+			go func(item demoTrack, idx int) {
+				if dur := probeMediaDuration(item.url); dur > 0 {
+					m.db.Exec("UPDATE demo_media_library SET duration_seconds = ? WHERE id = ?", dur, item.id)
+					m.mu.Lock()
+					s := m.states[room.ID]
+					if s != nil && idx < len(s.playlist) {
+						s.playlist[idx].durationSeconds = dur
+					}
+					m.mu.Unlock()
+				}
+			}(next, nextIdx)
 		}
 
 		m.db.Model(&session).Updates(map[string]interface{}{
@@ -176,10 +194,19 @@ func (m *DemoSessionManager) startSession(room models.Room) *roomDemoState {
 
 	first := playlist[0]
 	if first.durationSeconds == 0 {
-		if dur := probeMediaDuration(first.url); dur > 0 {
-			m.db.Exec("UPDATE demo_media_library SET duration_seconds = ? WHERE id = ?", dur, first.id)
-			playlist[0].durationSeconds = dur
-		}
+		// Probe duration in background so we don't block the 60s tick.
+		// The track will advance on the next tick once duration is known.
+		go func(item demoTrack, idx int) {
+			if dur := probeMediaDuration(item.url); dur > 0 {
+				m.db.Exec("UPDATE demo_media_library SET duration_seconds = ? WHERE id = ?", dur, item.id)
+				m.mu.Lock()
+				s := m.states[room.ID]
+				if s != nil && idx < len(s.playlist) {
+					s.playlist[idx].durationSeconds = dur
+				}
+				m.mu.Unlock()
+			}
+		}(first, 0)
 	}
 
 	sessionID := uuid.New().String()
@@ -205,7 +232,9 @@ func (m *DemoSessionManager) startSession(room models.Room) *roomDemoState {
 		return nil
 	}
 
-	// Broadcast initial poster to lobby so the session card shows a thumbnail immediately
+	// Tell any clients already in the room to start playing
+	m.broadcastPlay(room.ID, sessionID, first.url, first.title, first.posterURL, 0)
+	// Tell lobby so the session card thumbnail shows immediately
 	m.broadcastSessionPreview(sessionID, first.posterURL)
 
 	log.Printf("✅ [Demo] Room %d (%s) → session %s playing: %s", room.ID, room.DemoWatchType, sessionID, first.title)

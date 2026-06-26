@@ -64,6 +64,12 @@ import { prefetchRoom } from '../utils/prefetchCache';
 const resolvePreviewUrl = (url) => {
   if (!url) return url;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  // Frontend-hosted static assets (game posters: /images/ttt.webp, rps.webp, etc.)
+  // live in frontend/public/ and are served by this app's own origin — prepending
+  // the backend API base here points the browser at a route that doesn't exist on
+  // the backend, which the browser then blocks as an invalid image response. Only
+  // backend-hosted paths (/uploads/...) need the API base prepended.
+  if (url.startsWith('/images/')) return url;
   return `${API_BASE_URL}${url}`;
 };
 
@@ -1122,16 +1128,24 @@ const LobbyPage = () => {
       // disappear from the feed every time fetchSessionsData re-runs on WS reconnect.
       setSessionsPage(prev => {
         if (prev.data.length === 0) return { ...prev, data: filtered };
-        const filteredIds = new Set(filtered.map(s => s.session_id));
-        const pruned = prev.data.filter(s =>
-          filteredIds.has(s.session_id) ||
-          s.host_id === authenticatedUserID ||
-          s.is_member === true
-        );
+        const filteredMap = new Map(filtered.map(s => [s.session_id, s]));
+        // BUG FIX (2026-06-24): this used to keep the OLD prev.data object verbatim
+        // for any session that already existed in the list — meaning poster_url/
+        // preview_url/member_count etc. could never actually update after a
+        // session's first appearance in the feed, no matter how many times this
+        // function ran. Use the FRESH object from this fetch whenever the session
+        // reappeared in it; only fall back to the stale object for the user's own
+        // hosted/member session when it didn't come back at all this time (e.g. it
+        // scored below the top-10 cutoff) — there's nothing fresher to use there.
+        const pruned = prev.data
+          .filter(s => filteredMap.has(s.session_id) || s.host_id === authenticatedUserID || s.is_member === true)
+          .map(s => filteredMap.get(s.session_id) || s);
         const prunedIds = new Set(pruned.map(s => s.session_id));
         const newSessions = filtered.filter(s => !prunedIds.has(s.session_id));
-        if (newSessions.length === 0 && pruned.length === prev.data.length) return prev;
-        return { ...prev, data: [...newSessions, ...pruned] };
+        const merged = [...newSessions, ...pruned];
+        const fpOf = (arr) => arr.map(s => `${s.session_id}:${s.poster_url || ''}:${s.preview_url || ''}:${s.member_count ?? ''}`).join('|');
+        if (fpOf(merged) === fpOf(prev.data)) return prev;
+        return { ...prev, data: merged };
       });
     } catch (err) {
       if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
@@ -2834,13 +2848,19 @@ const LobbyPage = () => {
               case 'session_preview_updated':
                 if (message.session_id) {
                   if (!message.poster_url && !message.preview_url) {
+                    // `final: true` means nothing further is coming (e.g. a game just
+                    // ended, or any other "media genuinely stopped" case) — no async
+                    // generation is in flight, so show the emoji placeholder right
+                    // away instead of a spinner that nothing will ever resolve.
+                    // Without this flag, it's the normal "about to generate a real
+                    // preview shortly" clear (uploads), which does warrant a spinner.
                     setSessionPreviews(prev => ({
                       ...prev,
                       [message.session_id]: {
                         posterUrl: null,
                         previewUrl: null,
-                        isGenerating: true,
-                        isClearing: false,
+                        isGenerating: !message.final,
+                        isClearing: !!message.final,
                       }
                     }));
                   } else if (message.poster_url && !message.preview_url) {
@@ -3146,10 +3166,17 @@ const LobbyPage = () => {
 
   useEffect(() => {
     const interval = setInterval(() => {
+      // fetchSessionsData runs UNCONDITIONALLY — not just when WS is down. A WS
+      // connection that's "up" can still have missed a one-off broadcast (e.g. it
+      // finished connecting a few seconds after the broadcast already fired — a
+      // startup race, not a "WS down" scenario) and will stay "up" indefinitely
+      // afterward, so gating this on wsConnectedRef left exactly that case with no
+      // way to ever self-correct. This is what feeds sessionsPage.data, which in
+      // turn drives the posterChanged/previewChanged sync effect below.
+      fetchSessionsData();
       if (!wsConnectedRef.current) {
-        // WS is down — poll at 20s so newly started sessions, notifications,
-        // and DMs appear quickly even without a live connection
-        fetchSessionsData();
+        // WS is down — also poll rooms/notifications/friends at 20s so those
+        // appear quickly even without a live connection.
         fetchRoomsData();
         fetchNotifications();
         fetchFriendsList();
@@ -3424,10 +3451,16 @@ const LobbyPage = () => {
         const existing = prev[session.session_id];
 
         const previewChanged = newPreviewUrl && existing?.previewUrl !== newPreviewUrl;
+        // Poster-only changes (e.g. a game starting/ending) never get a preview_url at
+        // all, so previewChanged alone misses them entirely — this REST-poll path is
+        // the fallback for exactly the case where the WS broadcast was missed (e.g.
+        // the lobby's own WS connection wasn't open yet at the moment it fired), so it
+        // needs to catch a poster_url change on its own, not just alongside a clip.
+        const posterChanged = existing && existing.posterUrl !== (newPosterUrl || null);
         // Seed new sessions that have no entry yet but do have a poster/room avatar
         const needsSeed = !existing && newPosterUrl;
 
-        if (previewChanged || needsSeed) {
+        if (previewChanged || posterChanged || needsSeed) {
           updates[session.session_id] = {
             posterUrl: newPosterUrl || null,
             previewUrl: newPreviewUrl || null,

@@ -6236,6 +6236,7 @@ export default function CinemaScene3DDemo() {
           ].filter(m => m.id)}
           currentUserId={currentUser?.id}
           onStartGame={handleStartGame}
+          allowHeavyGames={false}
         />
       )}
 // 🎮 Game Overlay is rendered when a game is active, and receives move updates via WebSocket messages

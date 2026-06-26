@@ -17,13 +17,27 @@ type MediaSwitchHandler struct {
 	pendingTimers map[string]*time.Timer // sessionID → 30s initial-preview timer
 }
 
+// globalMediaSwitchHandler lets other packages (e.g. handlers/games, which can't be a
+// constructor argument here — InitializeHub() runs before InitPreviewSystem() in
+// main.go, so mediaSwitchHandler doesn't exist yet at games-handler construction time)
+// reach this instance lazily, the same singleton-getter pattern PreviewQueue already uses.
+var globalMediaSwitchHandler *MediaSwitchHandler
+
+// GetMediaSwitchHandler returns the global media switch handler instance, or nil if
+// InitPreviewSystem hasn't run yet.
+func GetMediaSwitchHandler() *MediaSwitchHandler {
+	return globalMediaSwitchHandler
+}
+
 // NewMediaSwitchHandler creates a new media switch handler
 func NewMediaSwitchHandler(db *gorm.DB, queue *PreviewQueue) *MediaSwitchHandler {
-	return &MediaSwitchHandler{
+	h := &MediaSwitchHandler{
 		db:            db,
 		queue:         queue,
 		pendingTimers: make(map[string]*time.Timer),
 	}
+	globalMediaSwitchHandler = h
+	return h
 }
 
 // cancelPendingTimer stops and removes the 30s initial-preview timer for a session.
@@ -221,7 +235,10 @@ func (h *MediaSwitchHandler) HandleMediaStop(sessionID string) {
 		return
 	}
 
-	h.queue.ClearSessionPreview(sessionID)
+	// Final, not the plain variant: nothing further is queued to generate a real
+	// preview after this — without "final", the frontend reads the empty broadcast as
+	// "generating" and has no later message to ever resolve that spinner.
+	h.queue.ClearSessionPreviewFinal(sessionID)
 	h.queue.StopRefreshTimer(sessionID)
 
 	h.db.Model(&session).Updates(map[string]interface{}{
@@ -234,6 +251,48 @@ func (h *MediaSwitchHandler) HandleMediaStop(sessionID string) {
 	})
 
 	log.Printf("✅ [MediaSwitch] Session %s media stopped, preview cleared", sessionID)
+}
+
+// HandleGameStart sets the lobby preview to a static image representing the active
+// game (Trivia/TicTacToe/RPS/Chess all use one of these — none of them have a video
+// frame to extract a real poster from, so this is always a static asset, never a
+// generated clip). Tears down whatever media type was previously active first — same
+// "agile" transition handling LiveShare/Watch-From/uploads already get, so a game
+// starting while a device-stream's refresh ticker is still running can't have that
+// ticker fire minutes later and silently overwrite the game poster with a media one.
+func (h *MediaSwitchHandler) HandleGameStart(sessionID, posterURL string) {
+	log.Printf("🎮 [MediaSwitch] Handling game_start for session %s", sessionID)
+
+	var session models.WatchSession
+	if err := h.db.Where("session_id = ?", sessionID).First(&session).Error; err != nil {
+		log.Printf("❌ [MediaSwitch] Session not found: %s", sessionID)
+		return
+	}
+
+	oldType := session.CurrentMediaType
+	if oldType != "" && oldType != string(MediaTypeGame) {
+		log.Printf("🔄 [MediaSwitch] Type change detected: %s → game", oldType)
+		h.cancelPendingTimer(sessionID)
+		// File cleanup only, no broadcast — the real game poster is broadcast
+		// immediately below. Broadcasting the empty "generating" state first would be
+		// pure overhead at best, and at worst a transient spinner if that CDN/file
+		// delete above takes long enough for the real broadcast to feel delayed.
+		h.queue.clearSessionPreviewFiles(sessionID)
+		h.queue.StopRefreshTimer(sessionID)
+	}
+
+	h.db.Model(&session).Updates(map[string]interface{}{
+		"current_media_type":       string(MediaTypeGame),
+		"poster_url":               posterURL,
+		"preview_url":              "",
+		"is_screen_sharing_active": false,
+		"sharing_source":           "",
+		"current_media_id":         0,
+		"current_media_path":       "",
+	})
+
+	h.queue.broadcastPreviewToLobby(sessionID, posterURL, "")
+	log.Printf("✅ [MediaSwitch] Session %s switched to game preview (%s)", sessionID, posterURL)
 }
 
 // HandleSessionEnd handles session cleanup when watch session ends

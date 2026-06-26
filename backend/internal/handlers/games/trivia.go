@@ -64,6 +64,36 @@ func (gm *GameManager) processTriviaMove(gameState *GameSessionState, playerID u
 		gameState.GameData["phase"] = "reveal"
 		return false, nil, nil
 
+	case "trivia_end":
+		// Host-only, like trivia_question/reveal — covers both the "Show Results" path
+		// (after the last round) and "End Game" (mid-session). Either way, the winner is
+		// computed from whatever scores actually exist right now — never a forfeit-style
+		// "the other player automatically wins", which doesn't even make sense once a
+		// trivia game can have more than 2 players.
+		if playerID != hostID {
+			return false, nil, fmt.Errorf("only the host can end the game")
+		}
+		scores, _ := gameState.GameData["scores"].(map[string]interface{})
+		var bestScore float64 = -1
+		var winners []uint
+		for _, p := range gameState.Players {
+			s, _ := scores[fmt.Sprintf("%d", p.UserID)].(float64)
+			if s > bestScore {
+				bestScore = s
+				winners = []uint{p.UserID}
+			} else if s == bestScore {
+				winners = append(winners, p.UserID)
+			}
+		}
+		// A tie for first (including a 0-0 tie if no one ever scored) has no single
+		// winner — winnerID stays nil and the frontend renders it as a draw.
+		var winnerID *uint
+		if len(winners) == 1 {
+			winnerID = &winners[0]
+		}
+		gameState.GameData["phase"] = "ended"
+		return true, winnerID, nil
+
 	default:
 		return false, nil, fmt.Errorf("unknown trivia move type: %s", moveType)
 	}

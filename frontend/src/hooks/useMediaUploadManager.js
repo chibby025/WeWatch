@@ -21,9 +21,11 @@ import {
   getOptimalChunkSize,
   getUploadConcurrency,
   saveChunkUploadState,
+  loadChunkUploadState,
   clearChunkUploadState,
 } from '../utils/uploadChunker';
 import { useUploadServiceWorker } from './useUploadServiceWorker';
+import { maybeRelocateMoov } from '../utils/mp4FastStart';
 
 const playSuccess = () => new Audio('/sounds/success.mp3').play().catch(() => {});
 
@@ -52,8 +54,86 @@ const getVideoDurationFromFile = (file) =>
     video.src = URL.createObjectURL(file);
   });
 
+// Grabs one frame from a local video file as a JPEG blob, entirely client-side — no
+// upload, no ffmpeg. Used to skip the backend's dedicated poster-extraction ffmpeg
+// invocation (a real, avoidable CPU cost at scale: 100 sessions x 5 videos each is up
+// to 500 redundant ffmpeg processes if the browser can supply an equivalent frame
+// itself). Resolves null on any failure (decode error, security/taint restriction,
+// timeout) — callers always get a clean signal, never a thrown exception, and fall
+// back to today's server-side extraction exactly as before.
+const captureClientPosterFromFile = (file) =>
+  new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+    // Some browsers are lazy about decoding frames for a <video> that's never been
+    // attached to the document, even when seeking succeeds — attach off-screen rather
+    // than risk that as a variable.
+    video.style.position = 'fixed';
+    video.style.width = '1px';
+    video.style.height = '1px';
+    video.style.opacity = '0';
+    video.style.pointerEvents = 'none';
+    document.body.appendChild(video);
+    const objectUrl = URL.createObjectURL(file);
+    let settled = false;
+    const cleanupAndResolve = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      URL.revokeObjectURL(objectUrl);
+      video.remove();
+      resolve(result);
+    };
+    const timeoutId = setTimeout(() => cleanupAndResolve(null), 8000);
+
+    const drawFrame = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => cleanupAndResolve(blob || null), 'image/jpeg', 0.85);
+      } catch (err) {
+        cleanupAndResolve(null);
+      }
+    };
+
+    video.onloadedmetadata = () => {
+      // Small fixed offset avoids a black/blank opening frame on most clips; clamp to
+      // the clip's own length for very short files rather than seeking past the end.
+      video.currentTime = Math.min(1, Math.max(0, (video.duration || 1) * 0.1));
+    };
+    video.onseeked = () => {
+      // The 'seeked' event can fire before the browser has actually decoded and
+      // painted the target frame — drawing immediately sometimes grabs a stale black
+      // frame (confirmed: the exact same source file produced a correct frame on most
+      // runs and a black one on others, purely a timing race, not a content issue).
+      // requestVideoFrameCallback looks like the right fix but isn't reliable here —
+      // confirmed it never fires at all for a paused/seeked (non-playing) video in some
+      // environments, since it's spec'd around active-playback frame presentation, not
+      // seek completion. A couple of rAFs reliably gives the decode enough time to land
+      // before the canvas grab instead.
+      requestAnimationFrame(() => requestAnimationFrame(drawFrame));
+    };
+    video.onerror = () => cleanupAndResolve(null);
+    video.src = objectUrl;
+  });
+
 export default function useMediaUploadManager({ roomId, sessionId, onUploadComplete }) {
   const [uploading, setUploading] = useState(false);
+  // True only during the client-side capture window (moov relocation + duration read +
+  // canvas poster grab) before the real chunked upload starts — distinct from `uploading`
+  // so the UI can show "Preparing..." instead of either nothing or a premature progress bar.
+  const [isPreparing, setIsPreparing] = useState(false);
+  // True once THIS upload's own stream has been confirmed playable (device_stream_ready
+  // arrived with a matching upload_id) — distinct from `uploading`, which stays true for
+  // the entire chunk-sending duration regardless of when playback actually starts. Lets
+  // the UI hide the load bar the moment the host can already see/hear it playing, instead
+  // of waiting for every remaining chunk to finish sending in the background.
+  const [isUploadReady, setIsUploadReady] = useState(false);
+  const currentUploadIdRef = useRef(null); // which upload_id notifyUploadStreamReady should match against
   const [uploadPaused, setUploadPaused] = useState(false); // same-session pause on network drop
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadSpeed, setUploadSpeed] = useState(0); // MB/s
@@ -100,14 +180,16 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
   // is already set, an upload survived in-memory and there's nothing to ask
   // about; this only fires for genuinely lost uploads (full page reload).
   useEffect(() => {
-    // Dev path: chunks sent directly to Railway
+    // Dev path: chunks sent directly to Railway. loadChunkUploadState reads the same
+    // key saveChunkUploadState writes (wewatch_chunk_upload_${uploadId}) — a previous
+    // version of this read used a different, never-written key (upload_chunks_${uploadId}),
+    // so this resume prompt could never actually fire; fixed to read the real key.
     const uploadId = localStorage.getItem('current_upload_id');
     if (uploadId) {
-      const stateStr = localStorage.getItem(`upload_chunks_${uploadId}`);
-      if (!stateStr) {
+      const state = loadChunkUploadState(uploadId);
+      if (!state) {
         localStorage.removeItem('current_upload_id');
       } else {
-        const state = JSON.parse(stateStr);
         const uploadedChunks = state.uploadedChunks || [];
         const remaining = state.totalChunks - uploadedChunks.length;
         if (remaining > 0) {
@@ -297,9 +379,15 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
   };
 
   // ✅ CHUNKED UPLOAD FUNCTION WITH PARALLEL UPLOADS (dev path)
-  const uploadFileChunked = async (file) => {
+  // clientMetadata: optional { clientDuration, clientPosterBlob } captured locally
+  // before upload, attached to chunk 0 so the backend can skip its own ffmpeg-based
+  // duration/poster extraction when the browser already supplied an equivalent value.
+  const uploadFileChunked = async (file, resumeState = null, clientMetadata = {}) => {
+    const { clientDuration = null, clientPosterBlob = null } = clientMetadata;
     setUploading(true);
-    setUploadProgress(0);
+    setUploadProgress(resumeState
+      ? Math.round(((resumeState.uploadedChunks?.length ?? 0) / (resumeState.totalChunks ?? 1)) * 100)
+      : 0);
     setUploadSpeed(0);
     setUploadETA('Calculating...');
     setUploadedBytes(0);
@@ -310,16 +398,25 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
     const abortController = new AbortController();
     uploadAbortControllerRef.current = abortController;
 
-    const uploadId = generateUploadId();
-    const chunkSize = getOptimalChunkSize(networkQuality);
+    // Resuming an interrupted upload must reuse the SAME upload_id — the backend's
+    // chunk directory is keyed by it, and a fresh id would leave the previously
+    // uploaded chunks orphaned in a directory nothing will ever assemble — and the
+    // SAME chunk size, since a different size produces entirely different byte
+    // ranges per index, making "skip these indices" meaningless.
+    const uploadId = resumeState?.uploadId || generateUploadId();
+    const chunkSize = resumeState?.chunkSize || getOptimalChunkSize(networkQuality);
     const chunks = splitFileIntoChunks(file, chunkSize);
+    const alreadyUploadedIndices = new Set(resumeState?.uploadedChunks ?? []);
+    currentUploadIdRef.current = uploadId;
+    setIsUploadReady(false);
 
-    console.log(`📦 [Chunked Upload] Starting:`, {
+    console.log(`📦 [Chunked Upload] ${resumeState ? 'Resuming' : 'Starting'}:`, {
       uploadId,
       fileName: file.name,
       fileSize: formatFileSize(file.size),
       totalChunks: chunks.length,
       chunkSize: formatFileSize(chunkSize),
+      alreadyUploaded: alreadyUploadedIndices.size,
     });
 
     saveChunkUploadState(uploadId, {
@@ -327,7 +424,8 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
       fileName: file.name,
       fileSize: file.size,
       totalChunks: chunks.length,
-      uploadedChunks: [],
+      chunkSize,
+      uploadedChunks: Array.from(alreadyUploadedIndices),
       sessionId,
       roomId,
     });
@@ -342,6 +440,7 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
 
       await uploadChunksParallel({
         chunks,
+        alreadyUploadedIndices,
         uploadId,
         fileName: file.name,
         fileSize: file.size,
@@ -350,6 +449,8 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
         uploadFn: uploadChunk,
         concurrency,
         maxRetries: 3,
+        clientDuration,
+        clientPosterBlob,
         onProgress: ({ chunkIndex, totalChunks, completedChunks, percent }) => {
           const now = Date.now();
           if (now - lastProgressUpdateRef.current < 500 && percent < 100) return;
@@ -374,6 +475,7 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
             fileName: file.name,
             fileSize: file.size,
             totalChunks: chunks.length,
+            chunkSize,
             uploadedChunks: Array.from({ length: completedChunks }, (_, i) => i),
             sessionId,
             roomId,
@@ -609,13 +711,23 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
       'image/jpeg', 'image/png', 'image/gif', 'image/webp',
       'text/plain',
     ];
+    const VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v', 'wmv', '3gp', 'ts'];
+    const AUDIO_EXTENSIONS = ['mp3', 'm4a', 'wav', 'ogg', 'flac', 'aac'];
     const allowedExtensions = [
-      'mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v', 'wmv', '3gp', 'ts',
-      'mp3', 'm4a', 'wav', 'ogg', 'flac', 'aac',
+      ...VIDEO_EXTENSIONS,
+      ...AUDIO_EXTENSIONS,
       'pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'txt',
     ];
     const ext = file.name.split('.').pop()?.toLowerCase();
-    const typeOk = allowedTypes.includes(file.type) || (!file.type && allowedExtensions.includes(ext));
+    // Trust a recognized extension even when file.type is present but wrong — browsers
+    // derive file.type from OS-level mime registrations that are genuinely ambiguous for
+    // some extensions (found via testing: this environment's Chromium reports .ts files
+    // as "text/vnd.trolltech.linguist", a Qt Linguist translation format that also uses
+    // .ts, not video/mp2t). The backend already re-derives the real mime type from the
+    // extension server-side regardless of what the client reports, so there's no
+    // correctness reason for this gate to trust a present-but-wrong type over an
+    // explicitly-allowed extension.
+    const typeOk = allowedTypes.includes(file.type) || allowedExtensions.includes(ext);
     if (!typeOk) {
       toast.error(`Invalid file type: ${file.type || ext}. Allowed: MP4, WebM, MOV, MKV, AVI, MP3, WAV, AAC, FLAC, PDF, PNG, JPG, GIF, TXT`);
       return;
@@ -644,14 +756,17 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
 
     let resumeState = null;
     if (
-      pendingResumeData?.uploadPath === 'bunny' &&
+      (pendingResumeData?.uploadPath === 'bunny' || pendingResumeData?.uploadPath === 'dev') &&
       pendingResumeData.fileName === file.name &&
       pendingResumeData.fileSize === file.size
     ) {
       resumeState = pendingResumeData;
       setShowResumeUpload(false);
       setPendingResumeData(null);
-      const completed = resumeState.completedChunks?.length ?? 0;
+      // 'bunny' state tracks completedChunks; 'dev' state tracks uploadedChunks — different
+      // field names for the same concept (see the two useEffect branches that detect these
+      // on mount).
+      const completed = (resumeState.completedChunks ?? resumeState.uploadedChunks)?.length ?? 0;
       const total = resumeState.totalChunks ?? 1;
       toast.success(`Resuming from ${Math.round((completed / total) * 100)}%…`);
     }
@@ -661,10 +776,72 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
     uploadFileRef.current = file;
     uploadFileDirectRef.current = uploadFileDirect;
 
-    if (import.meta.env.PROD) {
+    // Progressive-HLS device streaming needs chunks to land on the Railway backend
+    // in real time so ffmpeg can segment them as they arrive — BunnyCDN storage can't
+    // run that. This must hold regardless of environment: uploadFileDirect's flow
+    // (chunks → BunnyCDN → one assembleUpload call) never touches chunk_upload.go at
+    // all, so progressive HLS silently couldn't function in any PROD build until this
+    // check existed — it was only ever exercised in local dev. Mirrors the exact
+    // condition the backend itself uses to decide progressive-candidacy
+    // (chunk_upload.go's isProgressiveCandidate).
+    // Extension match first, file.type as a secondary fallback — same reasoning as the
+    // validation gate above: a present-but-wrong browser-reported type (e.g. .ts as
+    // "text/vnd.trolltech.linguist") would otherwise silently skip progressive treatment
+    // even after the file passed validation, for exactly the formats this matters most for.
+    const isVideoOrAudioFile = VIDEO_EXTENSIONS.includes(ext) || AUDIO_EXTENSIONS.includes(ext)
+      || file.type?.startsWith('video/') || file.type?.startsWith('audio/');
+    const isProgressiveCandidate = !!sessionId && isVideoOrAudioFile;
+
+    if (isProgressiveCandidate) {
+      let relocated = file;
+      let clientDuration = null;
+      let clientPosterBlob = null;
+      // "Preparing..." covers exactly this window — moov relocation + duration read +
+      // canvas poster grab can take a few real seconds for a large file, and none of it
+      // sets `uploading`, so without this the UI shows nothing at all in between file
+      // selection and the real upload starting. try/finally so a capture failure (or any
+      // thrown error) never leaves this stuck true.
+      setIsPreparing(true);
+      try {
+        // Relocating moov ahead of mdat (when it isn't already) gives the backend's
+        // partial-prefix ffprobe test a chance to succeed early for files that would
+        // otherwise fail it and fall back to "wait for the whole upload" — see
+        // mp4FastStart.js for the full rationale. Deterministic given the same file,
+        // so re-running it on a resume produces byte-identical chunks to skip against.
+        relocated = await maybeRelocateMoov(file);
+        // Both are local/instant operations (reading container metadata, drawing one
+        // frame) — fine to run concurrently. Letting the backend skip its own ffmpeg
+        // poster extraction when this succeeds is the actual CPU saving at scale; getting
+        // duration this way is mainly a latency win (server-side duration for a
+        // progressive upload isn't knowable until the entire source has been processed).
+        const [clientDurationRaw, capturedPosterBlob] = await Promise.all([
+          getVideoDurationFromFile(relocated),
+          captureClientPosterFromFile(relocated),
+        ]);
+        clientPosterBlob = capturedPosterBlob;
+        // getVideoDurationFromFile resolves the literal string '00:00:00' on failure too
+        // (an existing, shared convention with the BunnyCDN-direct path) — treat that as
+        // "no value" rather than risk the backend trusting a fake zero duration. A real
+        // file that's genuinely zero seconds long isn't a case worth preserving here.
+        clientDuration = clientDurationRaw !== '00:00:00' ? clientDurationRaw : null;
+      } finally {
+        setIsPreparing(false);
+      }
+      await uploadFileChunked(relocated, resumeState?.uploadPath === 'dev' ? resumeState : null, { clientDuration, clientPosterBlob });
+    } else if (import.meta.env.PROD) {
       await uploadFileDirect(file, resumeState);
     } else {
-      await uploadFileChunked(file);
+      await uploadFileChunked(file, resumeState?.uploadPath === 'dev' ? resumeState : null);
+    }
+  };
+
+  // Called by VideoWatch.jsx's device_stream_ready handler once it knows the backend
+  // considers some upload's stream ready. Only matches if it's THIS upload (a host could
+  // have an earlier item already playing while a new one is mid-upload — that earlier
+  // item's id must never be mistaken for this one finishing early).
+  const notifyUploadStreamReady = (uploadId) => {
+    if (uploadId && uploadId === currentUploadIdRef.current) {
+      setIsUploadReady(true);
     }
   };
 
@@ -737,15 +914,9 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
       }
     }
 
-    if (data.uploadPath !== 'bunny') {
-      toast('Use the upload button and re-select the same file to continue.', { duration: 5000 });
-      // pendingResumeData stays cleared for dev path — it never auto-matches on re-pick anyway.
-      setPendingResumeData(null);
-      return;
-    }
-
-    // Bunny path: keep pendingResumeData so handleFileUpload's name+size match
-    // can pick this up the moment the user re-selects the same file.
+    // Both paths: keep pendingResumeData so handleFileUpload's name+size match (it
+    // checks uploadPath === 'bunny' || 'dev') can pick this up the moment the user
+    // re-selects the same file.
     toast('Re-select the same file to continue where you left off.', { duration: 5000 });
   };
 
@@ -792,6 +963,9 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
 
   return {
     uploading,
+    isPreparing,
+    isUploadReady,
+    notifyUploadStreamReady,
     uploadPaused,
     uploadProgress,
     uploadSpeed,

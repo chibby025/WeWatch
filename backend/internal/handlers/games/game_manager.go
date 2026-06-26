@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/services"
 
 	"gorm.io/gorm"
 )
@@ -50,7 +51,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		return nil, fmt.Errorf("room %d already has an active game (ID: %d)", roomID, existingGameID)
 	}
 
-	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" && gameType != "chess" && gameType != "trivia" {
+	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" && gameType != "chess" && gameType != "trivia" && gameType != "doom" && gameType != "space_shooter" {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
 	}
 
@@ -189,6 +190,7 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 			"action":          "game_state_update",
 			"game_session_id": gameState.GameSession.ID,
 			"game_type":       gameState.GameSession.GameType,
+			"host_id":         gameState.GameSession.HostID,
 			"status":          status,
 			"current_turn":    gameState.CurrentTurn,
 			"players":         gameState.Players,
@@ -200,6 +202,7 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 			"action": "game_ended",
 			"data": map[string]interface{}{
 				"game_session_id": gameSessionID,
+				"host_id":         gameState.GameSession.HostID,
 				"winner_id":       winnerID,
 				"reason":          status,
 				"players":         gameState.Players,
@@ -212,6 +215,21 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 	delete(gm.roomActiveGames, roomID)
 
 	log.Printf("🎮 [GameManager] Ended game %d (status: %s, winner: %v)", gameSessionID, status, winnerID)
+
+	// Clear the game poster from the lobby session-preview card — reuses the same
+	// "stop ticker, clear preview, reset to none" path LiveShare/Watch-From/upload
+	// already use on stop, so a subsequent media switch sees a clean "none" state to
+	// transition away from rather than a stale game poster.
+	if msh := services.GetMediaSwitchHandler(); msh != nil {
+		var watchSession models.WatchSession
+		// Order by started_at DESC defensively — a room should only ever have one
+		// active session under normal use, but picking the most recent one avoids
+		// targeting a stale row if that invariant is ever violated.
+		if err := gm.db.Where("room_id = ? AND ended_at IS NULL", roomID).Order("started_at DESC").First(&watchSession).Error; err == nil {
+			msh.HandleMediaStop(watchSession.SessionID)
+		}
+	}
+
 	return nil
 }
 
@@ -285,6 +303,7 @@ func (gm *GameManager) BroadcastGameState(roomID uint) error {
 		"action":          "game_state_update",
 		"game_session_id": gameState.GameSession.ID,
 		"game_type":       gameState.GameSession.GameType,
+		"host_id":         gameState.GameSession.HostID,
 		"status":          gameState.GameSession.Status,
 		"current_turn":    gameState.CurrentTurn,
 		"players":         gameState.Players,
