@@ -941,6 +941,17 @@ export default function LeftSidebar({
                   <button
                     ref={browseFilesRef}
                     onClick={() => {
+                      // Once isUploadReady flips true, playback has already started even
+                      // though the background chunk upload may still be running — the
+                      // button looks clickable again (text reverted to "Browse Files"),
+                      // but starting a second upload while the first is still in flight
+                      // isn't supported, so intercept the click with an explanation
+                      // instead of either silently racing two uploads or leaving the
+                      // button looking enabled with no feedback at all.
+                      if (uploading && isUploadReady) {
+                        toast('Media is still loading in the background — please wait for it to finish.');
+                        return;
+                      }
                       if (!hasAcceptedTerms) {
                         setShowUploadDisclaimer(true);
                       } else {
@@ -952,10 +963,10 @@ export default function LeftSidebar({
                         fileInputRef.current?.click();
                       }
                     }}
-                    disabled={uploading || isPreparing}
+                    disabled={(uploading && !isUploadReady) || isPreparing}
                     className="flex-1 px-3 sm:px-4 py-2 bg-[#444AF7]/20 text-white rounded-full font-medium text-sm sm:text-[15px] hover:bg-[#444AF7]/30 disabled:opacity-50 transition-colors"
                   >
-                    {uploading ? (uploadPaused ? 'Paused…' : 'Loading...') : 'Browse Files'}
+                    {uploading && !isUploadReady ? (uploadPaused ? 'Paused…' : 'Loading...') : 'Browse Files'}
                   </button>
                   <button
                     onClick={() => {

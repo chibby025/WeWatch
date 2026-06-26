@@ -784,7 +784,10 @@
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"setsid nohup bash /home/chibuzor_dev/dev-tools/DOOM/_build_debug2.sh > /tmp/build_final_prod.log 2>&1 < /dev/null & disown; sleep 1; echo STARTED\")",
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"ps aux | grep emcc | grep -v grep | wc -l; tail -6 /tmp/build_final_prod.log\")",
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"grep -E '^BUNNY_' ~/WeWatch/backend/.env; echo '---'; grep -iE 'bunny' ~/WeWatch/backend/.env.example 2>/dev/null\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"curl -s -w '\\\\nHTTP_CODE:%{http_code}\\\\n' -X GET 'https://api.bunny.net/pullzone' -H 'AccessKey: 3eee58c0-9da4-4ef6-a7df729194c4-ea0e-4301' | tail -c 500\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"curl -s -w '\\\\nHTTP_CODE:%{http_code}\\\\n' -X GET 'https://api.bunny.net/pullzone' -H 'AccessKey: 3eee58c0-9da4-4ef6-a7df729194c4-ea0e-4301' | tail -c 500\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd ~/WeWatch/frontend && npx eslint src/utils/uploadChunker.js src/components/cinema/ui/LeftSidebar.jsx src/components/Taskbar.jsx src/components/Games/DoomGame.jsx --no-eslintrc --config .eslintrc.cjs 2>&1 | tail -60\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd ~/WeWatch/frontend && npx eslint src/utils/uploadChunker.js src/components/cinema/ui/LeftSidebar.jsx src/components/Taskbar.jsx src/components/Games/DoomGame.jsx 2>&1 | tail -80\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"curl -s -o /dev/null -w 'frontend:%{http_code}\\\\n' http://localhost:5173/\")"
     ],
     "additionalDirectories": [
       "\\dev",

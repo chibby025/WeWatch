@@ -107,6 +107,7 @@ export const uploadChunkWithRetry = async ({
   uploadFn,
   maxRetries = 3,
   onProgress,
+  onRetry,
   clientDuration = null,
   clientPosterBlob = null
 }) => {
@@ -151,7 +152,11 @@ export const uploadChunkWithRetry = async ({
       if (error.name === 'CanceledError' || error.message?.includes('cancel')) {
         throw error;
       }
-      
+
+      // Signals network strain to the caller (uploadChunksParallel uses this to back
+      // off concurrency) regardless of whether a next attempt is about to happen.
+      onRetry?.();
+
       // Wait before retry (exponential backoff: 1s, 2s, 4s)
       if (attempt < maxRetries) {
         const waitTime = Math.pow(2, attempt - 1) * 1000;
@@ -192,14 +197,29 @@ export const getOptimalChunkSize = (networkQuality) => {
 export const getUploadConcurrency = (networkQuality) => {
   const concurrency = {
     '2g': 1,      // 1 chunk at a time for 2G (slow — serialise to avoid proxy timeouts)
-    '3g': 1,      // 1 chunk at a time for 3G (Railway proxy timeout fix)
+    // 2 (not 1) for 3G — effectiveType is a heuristic and frequently misclassifies a
+    // perfectly decent connection as 3G (e.g. real-world Vercel↔Railway round trips vs.
+    // localhost), so starting fully serialized punishes a lot of users unnecessarily.
+    // uploadChunksParallel adapts this up or down per-batch based on observed retries,
+    // so this is just a starting guess, not a hard ceiling or floor.
+    '3g': 2,
     '4g': 3,      // 3 chunks at once for 4G
     'wifi': 5,    // 5 chunks at once for WiFi
     'unknown': 3  // 3 chunks default
   };
-  
+
   return concurrency[networkQuality] || concurrency['unknown'];
 };
+
+// Adaptive concurrency bounds — independent of the effectiveType-based starting guess
+// above. A batch that completes with zero retries for two batches running bumps
+// concurrency up by one (network has headroom); any retry within a batch drops it by
+// one immediately (signals strain, e.g. the Railway-proxy-timeout case the static 2G/3G
+// values were originally added to avoid). Floor/ceiling keep it from ever serializing
+// to zero or running away to an unbounded number of simultaneous requests.
+const MIN_ADAPTIVE_CONCURRENCY = 1;
+const MAX_ADAPTIVE_CONCURRENCY = 6;
+const CLEAN_BATCHES_BEFORE_RAMP_UP = 2;
 
 /**
  * Upload chunks in parallel batches
@@ -229,15 +249,25 @@ export const uploadChunksParallel = async ({
     : chunks;
   let completedChunks = alreadyUploadedIndices?.size ?? 0;
 
-  console.log(`🚀 [Parallel Upload] Starting with ${concurrency} concurrent chunks` +
+  console.log(`🚀 [Parallel Upload] Starting with ${concurrency} concurrent chunks (adaptive)` +
     (completedChunks > 0 ? ` (resuming — ${completedChunks}/${chunks.length} already done)` : ''));
 
-  // Process chunks in batches
-  for (let i = 0; i < pendingChunks.length; i += concurrency) {
-    const batch = pendingChunks.slice(i, i + concurrency);
-    
-    console.log(`📦 [Batch ${Math.floor(i / concurrency) + 1}] Uploading chunks ${batch[0].index + 1}-${batch[batch.length - 1].index + 1} of ${chunks.length}`);
-    
+  let currentConcurrency = Math.min(Math.max(concurrency, MIN_ADAPTIVE_CONCURRENCY), MAX_ADAPTIVE_CONCURRENCY);
+  let cleanBatchStreak = 0;
+  let batchNumber = 0;
+  let i = 0;
+
+  // Process chunks in batches — batch size (currentConcurrency) adapts after every
+  // batch based on whether any chunk in it needed a retry, rather than staying fixed
+  // for the whole upload. See the constants above for the ramp policy.
+  while (i < pendingChunks.length) {
+    const batch = pendingChunks.slice(i, i + currentConcurrency);
+    batchNumber++;
+
+    console.log(`📦 [Batch ${batchNumber}] Uploading chunks ${batch[0].index + 1}-${batch[batch.length - 1].index + 1} of ${chunks.length} (concurrency=${currentConcurrency})`);
+
+    let hadRetryInBatch = false;
+
     // Upload batch in parallel
     await Promise.all(
       batch.map(chunk =>
@@ -254,10 +284,11 @@ export const uploadChunksParallel = async ({
           // mean re-uploading the same poster blob pointlessly on every request.
           clientDuration: chunk.index === 0 ? clientDuration : null,
           clientPosterBlob: chunk.index === 0 ? clientPosterBlob : null,
+          onRetry: () => { hadRetryInBatch = true; },
           onProgress: ({ chunkIndex, totalChunks }) => {
             completedChunks++;
             const percent = Math.round((completedChunks / totalChunks) * 100);
-            
+
             if (onProgress) {
               onProgress({
                 chunkIndex,
@@ -270,9 +301,27 @@ export const uploadChunksParallel = async ({
         })
       )
     );
-    
-    console.log(`✅ [Batch ${Math.floor(i / concurrency) + 1}] Complete (${completedChunks}/${chunks.length} chunks uploaded)`);
+
+    console.log(`✅ [Batch ${batchNumber}] Complete (${completedChunks}/${chunks.length} chunks uploaded)`);
+
+    if (hadRetryInBatch) {
+      const next = Math.max(MIN_ADAPTIVE_CONCURRENCY, currentConcurrency - 1);
+      if (next !== currentConcurrency) {
+        console.log(`📉 [Adaptive] Retry seen — backing off concurrency ${currentConcurrency} → ${next}`);
+        currentConcurrency = next;
+      }
+      cleanBatchStreak = 0;
+    } else {
+      cleanBatchStreak++;
+      if (cleanBatchStreak >= CLEAN_BATCHES_BEFORE_RAMP_UP && currentConcurrency < MAX_ADAPTIVE_CONCURRENCY) {
+        currentConcurrency++;
+        console.log(`📈 [Adaptive] ${CLEAN_BATCHES_BEFORE_RAMP_UP} clean batches — raising concurrency to ${currentConcurrency}`);
+        cleanBatchStreak = 0;
+      }
+    }
+
+    i += batch.length;
   }
-  
+
   console.log(`🎉 [Parallel Upload] All ${chunks.length} chunks uploaded successfully`);
 };
