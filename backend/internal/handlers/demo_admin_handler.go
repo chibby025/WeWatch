@@ -21,10 +21,27 @@ import (
 // to browser-compatible .mp4. Runs as a background job; responds with a job-accepted 202.
 // Only super_admin can trigger this.
 func TranscodeDemoMediaHandler(c *gin.Context) {
-	db := c.MustGet("db").(*gorm.DB)
+	// Package-level DB var (set from main.go), not c.MustGet("db") — no middleware in
+	// this codebase ever injects a "db" key into the gin Context, so that call panicked
+	// unconditionally every time this handler was hit, with Gin's recovery middleware
+	// turning it into a bare 500 with no body and no useful log line. Every handler
+	// elsewhere in this codebase already uses this same package-level DB directly.
+	db := DB
 
-	roleVal, _ := c.Get("user_role")
-	if role, ok := roleVal.(string); !ok || role != "super_admin" {
+	// c.Get("user_role") is never set by anything in this codebase — AuthMiddleware
+	// only ever sets "user_id" (see auth.go). That made this check 403 unconditionally,
+	// for every caller, regardless of their real role — the second of two independent
+	// "this admin endpoint never actually worked" bugs found alongside the db-context
+	// panic above. Every other super_admin check in this codebase (rooms.go, posts.go)
+	// instead re-fetches the user by ID and calls IsSuperAdmin() — same fix here.
+	userIDVal, ok := c.Get("user_id")
+	userID, ok2 := userIDVal.(uint)
+	if !ok || !ok2 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	var requestingUser models.User
+	if err := db.First(&requestingUser, userID).Error; err != nil || !requestingUser.IsSuperAdmin() {
 		c.JSON(http.StatusForbidden, gin.H{"error": "super_admin only"})
 		return
 	}
@@ -74,10 +91,18 @@ func TranscodeDemoMediaHandler(c *gin.Context) {
 // ExtractDemoPostersHandler extracts a thumbnail frame from each demo media item
 // that has a video URL but no poster_url. Runs as a background job.
 func ExtractDemoPostersHandler(c *gin.Context) {
-	db := c.MustGet("db").(*gorm.DB)
+	db := DB // see TranscodeDemoMediaHandler's comment above for why not c.MustGet("db")
 
-	roleVal, _ := c.Get("user_role")
-	if role, ok := roleVal.(string); !ok || role != "super_admin" {
+	// See TranscodeDemoMediaHandler's comment above — c.Get("user_role") is never set
+	// by anything in this codebase, same fix applies here.
+	userIDVal, ok := c.Get("user_id")
+	userID, ok2 := userIDVal.(uint)
+	if !ok || !ok2 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	var requestingUser models.User
+	if err := db.First(&requestingUser, userID).Error; err != nil || !requestingUser.IsSuperAdmin() {
 		c.JSON(http.StatusForbidden, gin.H{"error": "super_admin only"})
 		return
 	}

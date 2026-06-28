@@ -2,7 +2,9 @@ package services
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 )
 
 // BroadcastRoomFunc sends JSON bytes to all WS clients in a room.
@@ -111,7 +114,7 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 	// Rebuild state if lost (e.g. service restart) and re-broadcast so
 	// any clients already in the room resume playback.
 	if state == nil {
-		playlist := m.loadPlaylist(room.DemoWatchType)
+		playlist := m.loadPlaylist(room.ID, room.DemoWatchType)
 		if len(playlist) == 0 {
 			return
 		}
@@ -163,17 +166,28 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 			}(next, nextIdx)
 		}
 
+		// started_at also refreshed here, not just current_media_url/title/poster — the
+		// lobby ranking algorithm scores recency as 1/(1+hours_since_start) off this exact
+		// field (session_helpers.go). A demo session that's been running continuously for
+		// days would otherwise decay toward zero recency despite a brand new track just
+		// starting, making genuinely-fresh content invisible in the feed. A new track
+		// starting is a legitimate freshness event — and it doubles as defense-in-depth
+		// against CleanupStaleSessions' 24h-age sweep, on top of that sweep's own explicit
+		// always-on-room exclusion.
+		now := time.Now()
 		m.db.Model(&session).Updates(map[string]interface{}{
 			"current_media_url": next.url,
 			"session_title":     next.title,
 			"poster_url":        next.posterURL,
+			"started_at":        now,
 		})
 		m.broadcastPlay(room.ID, session.SessionID, next.url, next.title, next.posterURL, 0)
-		m.broadcastSessionPreview(session.SessionID, next.posterURL)
+		m.broadcastSessionPreview(session.SessionID, next.posterURL, "")
+		go m.generatePreviewClip(session.ID, session.SessionID, next.url)
 
 		m.mu.Lock()
 		state.currentIdx = nextIdx
-		state.mediaStartedAt = time.Now()
+		state.mediaStartedAt = now
 		m.mu.Unlock()
 
 		log.Printf("🎬 [Demo] Room %d (%s) → %s", room.ID, room.DemoWatchType, next.title)
@@ -186,7 +200,7 @@ func (m *DemoSessionManager) startSession(room models.Room) *roomDemoState {
 		return nil
 	}
 
-	playlist := m.loadPlaylist(room.DemoWatchType)
+	playlist := m.loadPlaylist(room.ID, room.DemoWatchType)
 	if len(playlist) == 0 {
 		log.Printf("⚠️ [Demo] No active media for room %d (type: %s) — skipping", room.ID, room.DemoWatchType)
 		return nil
@@ -212,18 +226,27 @@ func (m *DemoSessionManager) startSession(room models.Room) *roomDemoState {
 	sessionID := uuid.New().String()
 	now := time.Now()
 	session := models.WatchSession{
-		SessionID:       sessionID,
-		RoomID:          room.ID,
-		HostID:          room.DemoHostUserID,
-		WatchType:       room.DemoWatchType,
-		StartedAt:       now,
-		IsActive:        true,
-		IsPrivate:       false,
-		PreviewEnabled:  false, // no preview generation for demo sessions
+		SessionID: sessionID,
+		RoomID:    room.ID,
+		HostID:    room.DemoHostUserID,
+		WatchType: room.DemoWatchType,
+		StartedAt: now,
+		IsActive:  true,
+		IsPrivate: false,
+		// PreviewEnabled gates PreviewQueue's own pipeline (wall-clock refresh ticker +
+		// local-file-based generation) — left false deliberately, not an oversight. That
+		// pipeline assumes a local file path and a real TemporaryMediaItem/MediaItem row
+		// backing CurrentMediaID, neither of which exists for demo sessions (the "media"
+		// is a permanent CDN URL with no DB row of its own). generatePreviewClip below is
+		// the dedicated, parallel path for these sessions instead.
+		PreviewEnabled:  false,
 		CurrentMediaURL: first.url,
 		SessionTitle:    first.title,
 		PosterURL:       first.posterURL,
-		ContentRating:   "G",
+		// Room's own ContentRating, not a hardcoded "G" — demo content (e.g. horror,
+		// mature drama) needs the same age-gating real sessions get. Falls back to "G"
+		// only if the room itself somehow has an empty rating.
+		ContentRating:   contentRatingOrDefault(room.ContentRating),
 		LastHeartbeatAt: &now,
 	}
 
@@ -235,7 +258,8 @@ func (m *DemoSessionManager) startSession(room models.Room) *roomDemoState {
 	// Tell any clients already in the room to start playing
 	m.broadcastPlay(room.ID, sessionID, first.url, first.title, first.posterURL, 0)
 	// Tell lobby so the session card thumbnail shows immediately
-	m.broadcastSessionPreview(sessionID, first.posterURL)
+	m.broadcastSessionPreview(sessionID, first.posterURL, "")
+	go m.generatePreviewClip(session.ID, sessionID, first.url)
 
 	log.Printf("✅ [Demo] Room %d (%s) → session %s playing: %s", room.ID, room.DemoWatchType, sessionID, first.title)
 
@@ -248,8 +272,12 @@ func (m *DemoSessionManager) startSession(room models.Room) *roomDemoState {
 	}
 }
 
-// loadPlaylist fetches media items for the given watch type (or items with no type restriction).
-func (m *DemoSessionManager) loadPlaylist(watchType string) []demoTrack {
+// loadPlaylist fetches media items for the given room, scoped by room_id (falling back
+// to unscoped/legacy rows with room_id IS NULL) and filtered by watch type. room_id
+// scoping is what lets two rooms share the same DemoWatchType (e.g. both "video") while
+// each drawing from a completely separate content bucket — WatchTypes alone only
+// controls rendering mode, not which room's content shows where.
+func (m *DemoSessionManager) loadPlaylist(roomID uint, watchType string) []demoTrack {
 	type row struct {
 		ID              uint
 		URL             string
@@ -263,8 +291,9 @@ func (m *DemoSessionManager) loadPlaylist(watchType string) []demoTrack {
 		FROM demo_media_library
 		WHERE is_active = true
 		  AND (watch_types = '{}' OR watch_types @> ARRAY[?]::TEXT[])
+		  AND (room_id = ? OR room_id IS NULL)
 		ORDER BY sort_order ASC, id ASC
-	`, watchType).Scan(&rows)
+	`, watchType, roomID).Scan(&rows)
 
 	tracks := make([]demoTrack, len(rows))
 	for i, r := range rows {
@@ -281,18 +310,28 @@ func (m *DemoSessionManager) loadPlaylist(watchType string) []demoTrack {
 
 // broadcastPlay sends a playback_control WS message to all room clients.
 // Includes media_title and poster_url so LeftSidebar can display track info.
+//
+// Flat shape, no "data" wrapper — matches the convention every other playback_control
+// broadcast in this codebase uses (see CLAUDE.md: "must be flat, no data wrapper") and,
+// critically, matches how VideoWatch.jsx's WS switch actually reads this message
+// (message.media_url / message.file_path directly). The previous nested-under-"data"
+// shape meant every track-start and track-advance broadcast was silently dropped —
+// VideoWatch.jsx's switch found both message.file_path and message.media_url undefined
+// and fell through to a final else that just logs a warning. This was never caught
+// because a fresh page load/late-join still picks up the *current* track via the
+// separate REST-driven session_status path, which reads current_media_url directly off
+// the session row (correctly updated in the DB) — masking that the live broadcast itself
+// never worked for anyone already connected.
 func (m *DemoSessionManager) broadcastPlay(roomID uint, sessionID, mediaURL, mediaTitle, posterURL string, seekTime float64) {
 	payload := map[string]interface{}{
-		"type": "playback_control",
-		"data": map[string]interface{}{
-			"command":     "play",
-			"media_url":   mediaURL,
-			"media_title": mediaTitle,
-			"poster_url":  posterURL,
-			"seek_time":   seekTime,
-			"timestamp":   time.Now().UnixMilli(),
-			"session_id":  sessionID,
-		},
+		"type":        "playback_control",
+		"command":     "play",
+		"media_url":   mediaURL,
+		"media_title": mediaTitle,
+		"poster_url":  posterURL,
+		"seek_time":   seekTime,
+		"timestamp":   time.Now().UnixMilli(),
+		"session_id":  sessionID,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -302,22 +341,74 @@ func (m *DemoSessionManager) broadcastPlay(roomID uint, sessionID, mediaURL, med
 }
 
 // broadcastSessionPreview pushes a session_preview_updated event to all lobby clients
-// so the LobbyPage session card shows the demo media thumbnail immediately.
-func (m *DemoSessionManager) broadcastSessionPreview(sessionID, posterURL string) {
-	if m.broadcastLobby == nil || posterURL == "" {
+// so the LobbyPage session card shows the demo media thumbnail (and, once
+// generatePreviewClip finishes, the looping clip) immediately. Called twice per track:
+// once synchronously with just the static poster, once more from generatePreviewClip
+// once the real clip is ready — SessionPreview.jsx's poster→video state machine handles
+// the second update as a normal upgrade, same as any other session type.
+func (m *DemoSessionManager) broadcastSessionPreview(sessionID, posterURL, previewURL string) {
+	if m.broadcastLobby == nil || (posterURL == "" && previewURL == "") {
 		return
 	}
 	payload := map[string]interface{}{
 		"type":        "session_preview_updated",
 		"session_id":  sessionID,
 		"poster_url":  posterURL,
-		"preview_url": "",
+		"preview_url": previewURL,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
 	m.broadcastLobby(data)
+}
+
+// generatePreviewClip builds a real, short looping preview clip for the lobby feed by
+// running GeneratePreviewMP4 directly against the remote CDN URL — ffmpeg reads HTTP(S)
+// URLs natively, so no local download of the (often 100s of MB) source is needed. No
+// MediaItem/TemporaryMediaItem row is involved either, unlike the normal upload preview
+// pipeline (PreviewQueue) — none exists for demo content, since there was never an
+// upload. This writes straight to watch_sessions.poster_url/preview_url instead, which
+// is exactly why startSession sets PreviewEnabled: false — that flag exists specifically
+// to keep PreviewQueue's own (local-file-path-assuming) machinery from ever touching
+// these sessions. Runs in its own goroutine; called from both startSession and the
+// track-advance branch in manageRoom.
+func (m *DemoSessionManager) generatePreviewClip(sessionDBID uint, sessionID, mediaURL string) {
+	tempPath := fmt.Sprintf("/tmp/demo_preview_%d.mp4", sessionDBID)
+	defer os.Remove(tempPath)
+
+	if err := utils.GeneratePreviewMP4(mediaURL, tempPath, "00:00:10", 15); err != nil {
+		log.Printf("⚠️ [Demo] Preview clip generation failed for session %s: %v", sessionID, err)
+		return
+	}
+
+	fileData, err := os.ReadFile(tempPath)
+	if err != nil {
+		log.Printf("⚠️ [Demo] Reading generated preview clip failed for session %s: %v", sessionID, err)
+		return
+	}
+
+	previewFilename := fmt.Sprintf("demo_%d_%d.mp4", sessionDBID, time.Now().Unix())
+	previewURL, err := utils.UploadPreviewToBunnyCDN(fileData, previewFilename)
+	if err != nil {
+		log.Printf("⚠️ [Demo] Uploading preview clip failed for session %s: %v", sessionID, err)
+		return
+	}
+
+	// Guard against a race: a short track + a slow clip generation could mean the
+	// playlist already advanced again before this finishes. Don't let a now-stale
+	// clip overwrite whatever the (newer) current track's own preview already is.
+	var current models.WatchSession
+	if err := m.db.Select("current_media_url, poster_url").Where("id = ?", sessionDBID).First(&current).Error; err != nil {
+		return
+	}
+	if current.CurrentMediaURL != mediaURL {
+		log.Printf("ℹ️ [Demo] Track advanced before preview clip finished for session %s — discarding stale clip", sessionID)
+		return
+	}
+
+	m.db.Model(&models.WatchSession{}).Where("id = ?", sessionDBID).Update("preview_url", previewURL)
+	m.broadcastSessionPreview(sessionID, current.PosterURL, previewURL)
 }
 
 // probeMediaDuration calls ffprobe to determine a media file's total duration in seconds.
@@ -339,4 +430,14 @@ func probeMediaDuration(url string) int {
 		return 0
 	}
 	return int(f)
+}
+
+// contentRatingOrDefault falls back to "G" only when the room itself has no rating set
+// at all — every real room already has ContentRating populated (not-null, defaulted at
+// the DB level), so this is a defensive fallback, not the primary path.
+func contentRatingOrDefault(rating string) string {
+	if rating == "" {
+		return "G"
+	}
+	return rating
 }

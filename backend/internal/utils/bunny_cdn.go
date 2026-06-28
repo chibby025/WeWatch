@@ -3,6 +3,7 @@ package utils
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -38,12 +40,23 @@ func IsLocalDev() bool {
 // BunnyCDN API endpoints by region.
 // Frankfurt (DE) uses the base endpoint — no region prefix.
 // Other regions: https://{region}.storage.bunnycdn.com/{zone}
+//
+// Reads os.Getenv directly rather than the package-level BunnyCDNStorageZone/
+// BunnyCDNStorageRegion vars above — those are evaluated once, at package-init time,
+// which on a local dev machine runs BEFORE jwt.go's init() loads .env (Go guarantees
+// all package-level var initializers run before any init() in the same package), so
+// they're permanently empty in local dev no matter what .env contains. In production
+// Railway injects real OS env vars before the process even starts, so this timing gap
+// never existed there — every existing BunnyCDN function happened to never notice
+// because they all gate on IsLocalDev() first anyway. A fresh os.Getenv call here has
+// no such ordering dependency and returns the correct value in both environments.
 func getBunnyCDNStorageURL() string {
-	region := BunnyCDNStorageRegion
+	region := os.Getenv("BUNNY_STORAGE_REGION")
+	zone := os.Getenv("BUNNY_STORAGE_ZONE")
 	if region == "" {
-		return fmt.Sprintf("https://storage.bunnycdn.com/%s", BunnyCDNStorageZone)
+		return fmt.Sprintf("https://storage.bunnycdn.com/%s", zone)
 	}
-	return fmt.Sprintf("https://%s.storage.bunnycdn.com/%s", region, BunnyCDNStorageZone)
+	return fmt.Sprintf("https://%s.storage.bunnycdn.com/%s", region, zone)
 }
 
 // UploadToBunnyCDN uploads a file to BunnyCDN storage
@@ -171,6 +184,37 @@ func UploadLocalFileToBunnyCDN(localPath, remotePath, contentType string) (strin
 	// On localhost: never touch CDN regardless of whether credentials are configured.
 	// Files are served directly by the Go static handler at /uploads/*.
 	if IsLocalDev() {
+		// Only safe to return localPath's own (./-stripped) path unchanged when it's
+		// already somewhere under ./uploads — the assumption every other caller of
+		// this function satisfies by saving there in the first place. A caller whose
+		// source file lives elsewhere (e.g. a /tmp download, as both
+		// transcodeOneDemoItem and extractDemoPoster do) would otherwise get back a
+		// bare filesystem path the Go static handler never serves — confirmed for real
+		// while testing the demo-media admin endpoints, which silently stored exactly
+		// that kind of unusable /tmp/... value as a "poster_url". Copy the bytes into
+		// ./uploads/<remotePath> instead, so the returned URL always actually resolves.
+		if !strings.Contains(filepath.ToSlash(localPath), "uploads/") {
+			destPath := filepath.Join("./uploads", remotePath)
+			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+				return "", fmt.Errorf("failed to create local uploads dir: %w", err)
+			}
+			src, err := os.Open(localPath)
+			if err != nil {
+				return "", fmt.Errorf("failed to open local file: %w", err)
+			}
+			defer src.Close()
+			dst, err := os.Create(destPath)
+			if err != nil {
+				return "", fmt.Errorf("failed to create local uploads file: %w", err)
+			}
+			defer dst.Close()
+			if _, err := io.Copy(dst, src); err != nil {
+				return "", fmt.Errorf("failed to copy file into uploads dir: %w", err)
+			}
+			rel := "/uploads/" + remotePath
+			log.Printf("🏠 [CDN skip] Local dev — copied into uploads dir: %s", rel)
+			return rel, nil
+		}
 		rel := strings.TrimPrefix(localPath, "./")
 		if !strings.HasPrefix(rel, "/") {
 			rel = "/" + rel
@@ -541,6 +585,78 @@ func DownloadChunkFromBunnyCDNStorage(chunkPath string) ([]byte, error) {
 	return data, nil
 }
 
+// BunnyCDNFileEntry is one entry returned by BunnyCDN's Storage API directory listing.
+// Field names match the Storage API's JSON response (PascalCase) — only the few fields
+// this codebase actually needs are declared; the API returns more (Guid, LastChanged,
+// etc.) which json.Unmarshal silently ignores.
+type BunnyCDNFileEntry struct {
+	ObjectName  string `json:"ObjectName"`
+	IsDirectory bool   `json:"IsDirectory"`
+	Length      int64  `json:"Length"`
+}
+
+// ListBunnyCDNFolderRaw lists everything in a BunnyCDN Storage Zone folder
+// (non-recursive), including subdirectories, unfiltered and unsorted — exactly what
+// the Storage API returned. ListBunnyCDNFolder (below) is what callers normally want;
+// this exists for inspecting folder structure (e.g. confirming whether a folder's
+// contents are nested in subdirectories rather than flat files).
+func ListBunnyCDNFolderRaw(folderPath string) ([]BunnyCDNFileEntry, error) {
+	accessKey := os.Getenv("BUNNY_ACCESS_KEY")
+	if os.Getenv("BUNNY_STORAGE_ZONE") == "" || accessKey == "" {
+		return nil, fmt.Errorf("BunnyCDN not configured (BUNNY_STORAGE_ZONE or BUNNY_ACCESS_KEY missing)")
+	}
+	trimmed := strings.Trim(folderPath, "/")
+	listURL := fmt.Sprintf("%s/%s/", getBunnyCDNStorageURL(), trimmed)
+
+	req, err := http.NewRequest("GET", listURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create list request: %w", err)
+	}
+	req.Header.Set("AccessKey", accessKey)
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read list response body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("BunnyCDN list failed: %d %s", resp.StatusCode, string(body))
+	}
+
+	var entries []BunnyCDNFileEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return nil, fmt.Errorf("failed to parse list response: %w (body: %s)", err, string(body))
+	}
+	return entries, nil
+}
+
+// ListBunnyCDNFolder lists the files in a BunnyCDN Storage Zone folder (non-recursive).
+// folderPath is storage-relative, e.g. "demo_vids/horror" (leading/trailing slashes
+// optional — normalized below). Returns only files (directories filtered out), sorted
+// by ObjectName so a caller can rely on filename-prefix ordering (e.g. "01_x.mp4",
+// "02_y.mp4") for explicit rotation order.
+func ListBunnyCDNFolder(folderPath string) ([]BunnyCDNFileEntry, error) {
+	entries, err := ListBunnyCDNFolderRaw(folderPath)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]BunnyCDNFileEntry, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDirectory {
+			files = append(files, e)
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].ObjectName < files[j].ObjectName })
+	return files, nil
+}
+
 // DeletePathFromBunnyCDNStorage deletes a file or prefix from BunnyCDN Storage Zone.
 func DeletePathFromBunnyCDNStorage(remotePath string) error {
 	deleteURL := fmt.Sprintf("%s/%s", getBunnyCDNStorageURL(), remotePath)
@@ -548,7 +664,9 @@ func DeletePathFromBunnyCDNStorage(remotePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create delete request: %w", err)
 	}
-	req.Header.Set("AccessKey", BunnyCDNAccessKey)
+	// Fresh read, not the package-level BunnyCDNAccessKey var — see getBunnyCDNStorageURL's
+	// comment for why the var is unreliable specifically in local dev.
+	req.Header.Set("AccessKey", os.Getenv("BUNNY_ACCESS_KEY"))
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
