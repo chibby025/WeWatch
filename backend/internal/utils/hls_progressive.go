@@ -38,6 +38,19 @@ type ProgressiveUploadState struct {
 	totalChunks int
 	uploadDir   string
 
+	// Set by AbortProgressiveUpload (host switched media away from this upload, or its
+	// session ended while it was still in flight). drainChunksToFIFO polls this on every
+	// busy-wait tick (≤150ms) and unwinds cleanly — closing the FIFO the same way it does
+	// on normal completion (ffmpeg sees EOF and exits) rather than being force-killed.
+	aborted bool
+
+	// Updated on every chunk write (see TouchProgressiveUpload). Lets
+	// CleanupAbandonedProgressiveUploads tell "still actively uploading, just slow" apart
+	// from "genuinely abandoned — tab closed, network died for good, host walked away
+	// mid-upload with no Cancel/switch ever reaching the backend" without needing any
+	// other signal.
+	lastChunkAt time.Time
+
 	// Carried through to the ready-callback once the first segment exists.
 	roomID          uint
 	sessionID       string
@@ -67,7 +80,31 @@ type ProgressiveUploadState struct {
 var (
 	progressiveMu      sync.Mutex
 	progressiveUploads = make(map[string]*ProgressiveUploadState)
+	// Secondary index so a session-end handler can find "is there an upload still in
+	// flight for this session" in O(1) instead of scanning every upload ever started
+	// since the process booted. Kept in sync with progressiveUploads by the same
+	// mutex — populated in GetOrCreateProgressiveUpload, removed in
+	// removeProgressiveUploadLocked (the shared tail both ForgetProgressiveUpload and
+	// AbortProgressiveUpload call into).
+	sessionToUploadID = make(map[string]string)
 )
+
+// removeProgressiveUploadLocked deletes uploadID from both progressiveUploads and the
+// sessionToUploadID index. Caller must hold progressiveMu.
+func removeProgressiveUploadLocked(uploadID string) {
+	if s, ok := progressiveUploads[uploadID]; ok {
+		s.mu.Lock()
+		sid := s.sessionID
+		s.mu.Unlock()
+		// Only clear the index entry if it still points at *this* uploadID — a session
+		// can have at most one progressive upload at a time in practice, but this guard
+		// costs nothing and avoids a theoretical stale-pointer if that were ever not true.
+		if sessionToUploadID[sid] == uploadID {
+			delete(sessionToUploadID, sid)
+		}
+	}
+	delete(progressiveUploads, uploadID)
+}
 
 // ProgressiveReadyInfo is handed to the registered callback once an upload's first HLS
 // segment exists and it's safe to let playback start.
@@ -192,9 +229,24 @@ func GetOrCreateProgressiveUpload(uploadID string, totalChunks int, uploadDir st
 		mimeType:        mimeType,
 		hlsBaseURL:      hlsBaseURL,
 		cdnRemotePrefix: cdnRemotePrefix,
+		lastChunkAt:     time.Now(),
 	}
 	progressiveUploads[uploadID] = s
+	if sessionID != "" {
+		sessionToUploadID[sessionID] = uploadID
+	}
 	return s
+}
+
+// TouchProgressiveUpload records that a chunk just landed for this upload. Called once
+// per chunk write from ChunkUploadHandler — cheap (a mutex already held by this state
+// struct specifically, not the package-level progressiveMu), and is the only signal
+// CleanupAbandonedProgressiveUploads needs to tell "still actively uploading, just slow"
+// apart from "genuinely abandoned".
+func TouchProgressiveUpload(state *ProgressiveUploadState) {
+	state.mu.Lock()
+	state.lastChunkAt = time.Now()
+	state.mu.Unlock()
 }
 
 // ForgetProgressiveUpload removes an upload's state once it's fully done (progressive
@@ -202,7 +254,143 @@ func GetOrCreateProgressiveUpload(uploadID string, totalChunks int, uploadDir st
 func ForgetProgressiveUpload(uploadID string) {
 	progressiveMu.Lock()
 	defer progressiveMu.Unlock()
-	delete(progressiveUploads, uploadID)
+	removeProgressiveUploadLocked(uploadID)
+}
+
+// AbortProgressiveUploadForSession looks up whatever upload is currently in flight for
+// a given session (via the sessionToUploadID index) and aborts it, if one exists. Called
+// from EndWatchSessionHandler's background cleanup — without this, an upload that's
+// still mid-flight at the exact moment its session ends has no TemporaryMediaItem row
+// yet, so the existing "delete temp media for this session" cleanup never finds it: it
+// just keeps running, unaware its session is gone, and eventually broadcasts
+// device_stream_ready (or persists a poster/duration) referencing a session that no
+// longer exists. A no-op if no upload is in flight for this session.
+func AbortProgressiveUploadForSession(sessionID string) {
+	progressiveMu.Lock()
+	uploadID, ok := sessionToUploadID[sessionID]
+	progressiveMu.Unlock()
+	if !ok {
+		return
+	}
+	log.Printf("🚫 [Progressive] Session %s ended with upload %s still in flight — aborting it", sessionID, uploadID)
+	AbortProgressiveUpload(uploadID)
+}
+
+// CleanupAbandonedProgressiveUploads is the safety net for everything Fix 1/Fix 2's
+// real-time paths might miss — a crash, a force-quit, a bug in either of those paths
+// themselves. Two independent passes:
+//
+//  1. In-memory: any progressiveUploads entry whose lastChunkAt is older than maxAge
+//     gets aborted the normal way (AbortProgressiveUpload) — catches an upload nobody
+//     ever explicitly cancelled or superseded, that simply stopped receiving chunks
+//     (tab closed, network died for good) without any of the real-time paths firing.
+//  2. On-disk: uploads/chunks/* directories older than maxAge with no corresponding
+//     live entry in progressiveUploads catches the case where the *map* entry is gone
+//     (e.g. the server process restarted, wiping all in-memory state) but the directory
+//     — and its sibling "<uploadID>_progressive" output directory, if the upload had
+//     reached that stage — survived on disk.
+//
+// maxAge should be generous: long enough that a real, still-legitimately-slow upload is
+// never mistaken for abandoned. Intended to run hourly, alongside the other safety-net
+// sweeps already on that cadence (CleanupStaleSessions et al.) — this is deliberately
+// not its own ticker. chunkUploadDir is passed in rather than duplicated as a constant
+// here — utils can't import the handlers package (handlers already imports utils) to
+// reference its ChunkUploadDir constant directly, and duplicating the literal would risk
+// silently drifting out of sync with it.
+func CleanupAbandonedProgressiveUploads(maxAge time.Duration, chunkUploadDir string) {
+	cutoff := time.Now().Add(-maxAge)
+
+	progressiveMu.Lock()
+	var staleUploadIDs []string
+	for id, s := range progressiveUploads {
+		s.mu.Lock()
+		stale := s.lastChunkAt.Before(cutoff)
+		s.mu.Unlock()
+		if stale {
+			staleUploadIDs = append(staleUploadIDs, id)
+		}
+	}
+	progressiveMu.Unlock()
+
+	for _, id := range staleUploadIDs {
+		log.Printf("🧹 [CleanupAbandonedProgressiveUploads] Upload %s had no chunk activity in over %s — aborting", id, maxAge)
+		AbortProgressiveUpload(id)
+	}
+
+	// Disk pass: anything left in chunkUploadDir that's old and has no live map entry.
+	entries, err := os.ReadDir(chunkUploadDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("⚠️ [CleanupAbandonedProgressiveUploads] Failed to read %s: %v", chunkUploadDir, err)
+		}
+		return
+	}
+
+	progressiveMu.Lock()
+	liveIDs := make(map[string]bool, len(progressiveUploads))
+	for id := range progressiveUploads {
+		liveIDs[id] = true
+	}
+	progressiveMu.Unlock()
+
+	seen := make(map[string]bool)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		baseID := strings.TrimSuffix(entry.Name(), "_progressive")
+		if liveIDs[baseID] || seen[baseID] {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		seen[baseID] = true
+		fullPath := filepath.Join(chunkUploadDir, baseID)
+		progressivePath := filepath.Join(chunkUploadDir, baseID+"_progressive")
+		log.Printf("🧹 [CleanupAbandonedProgressiveUploads] Removing orphaned on-disk upload %s (no live state, older than %s)", baseID, maxAge)
+		os.RemoveAll(fullPath)
+		os.RemoveAll(progressivePath)
+	}
+}
+
+// AbortProgressiveUpload cancels an in-flight upload — the host switched to different
+// media mid-upload, explicitly hit "Cancel Upload", or the upload's own session ended
+// while it was still running. Removes the upload from the map immediately (so nothing
+// new can reference it — e.g. a chunk arriving a moment later via GetOrCreateProgressiveUpload
+// would otherwise resurrect a fresh state object for an uploadID the caller just asked to
+// kill), then either cleans up directly (mode hasn't reached the ffmpeg/FIFO stage yet)
+// or sets the aborted flag for drainChunksToFIFO to notice and clean up itself (mode
+// progressive — the drainer owns those files while it's running; deleting them out from
+// under it here would race).
+func AbortProgressiveUpload(uploadID string) {
+	progressiveMu.Lock()
+	state, ok := progressiveUploads[uploadID]
+	if ok {
+		removeProgressiveUploadLocked(uploadID)
+	}
+	progressiveMu.Unlock()
+	if !ok {
+		return
+	}
+
+	state.mu.Lock()
+	state.aborted = true
+	mode := state.mode
+	uploadDir := state.uploadDir
+	state.mu.Unlock()
+
+	if mode != modeProgressive {
+		// Probing (no ffmpeg/FIFO started yet) or already-resolved-to-fallback — nothing
+		// is listening for the aborted flag, so clean up the chunk directory directly.
+		log.Printf("🚫 [Progressive] Aborted upload %s (mode=%s, no drainer running) — removing %s", uploadID, mode, uploadDir)
+		os.RemoveAll(uploadDir)
+		return
+	}
+	// modeProgressive: drainChunksToFIFO will see state.aborted on its next loop tick
+	// (at most ~150ms) and perform its own cleanup of uploadDir/outputDir/fifoPath.
+	log.Printf("🚫 [Progressive] Signalled abort to running drainer for upload %s", uploadID)
 }
 
 // MaybeStartProgressiveProbe is called after every chunk save. It is cheap to call
@@ -444,13 +632,24 @@ func drainChunksToFIFO(uploadID string, state *ProgressiveUploadState) {
 	total := state.totalChunks
 	state.mu.Unlock()
 
+	aborted := false
 	for i := 0; i < total; i++ {
 		chunkPath := filepath.Join(state.uploadDir, fmt.Sprintf("chunk_%d", i))
 		for {
+			state.mu.Lock()
+			a := state.aborted
+			state.mu.Unlock()
+			if a {
+				aborted = true
+				break
+			}
 			if _, statErr := os.Stat(chunkPath); statErr == nil {
 				break
 			}
 			time.Sleep(150 * time.Millisecond)
+		}
+		if aborted {
+			break
 		}
 
 		cf, openErr := os.Open(chunkPath)
@@ -473,17 +672,28 @@ func drainChunksToFIFO(uploadID string, state *ProgressiveUploadState) {
 		state.mu.Unlock()
 	}
 
-	fifoFile.Close() // EOF for ffmpeg
+	fifoFile.Close() // EOF for ffmpeg either way — aborted or genuinely finished
 
 	state.mu.Lock()
 	cmd := state.ffmpegCmd
 	uploadDir := state.uploadDir
+	outputDir := state.outputDir
+	fifoPath := state.fifoPath
 	state.mu.Unlock()
 	if cmd != nil {
 		if waitErr := cmd.Wait(); waitErr != nil {
 			log.Printf("⚠️ [Progressive] ffmpeg exited with error for %s: %v", uploadID, waitErr)
 		}
 	}
+
+	if aborted {
+		log.Printf("🚫 [Progressive] Drainer for %s saw abort flag — tearing down (no broadcast, no callbacks)", uploadID)
+		os.RemoveAll(uploadDir)
+		os.RemoveAll(outputDir)
+		os.Remove(fifoPath)
+		return
+	}
+
 	log.Printf("✅ [Progressive] ffmpeg finished for %s — manifest finalized at %s", uploadID, state.manifestPath)
 	os.Remove(state.fifoPath)
 	os.RemoveAll(uploadDir) // chunks are fully drained — safe to clean up now

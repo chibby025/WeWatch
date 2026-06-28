@@ -451,6 +451,13 @@ export default function VideoWatch() {
       });
   }, [sessionStatus?.error, sessionStatus?.isActive, roomId]);
 
+  // Declared here (well before isHost/currentMedia themselves exist further down the
+  // file) purely as empty ref boxes — useRef has no ordering dependency on either.
+  // Populated by the two sync effects declared right after isHost's own useMemo below;
+  // consumed by the heartbeat's media-reconciliation check further down this effect.
+  const isHostRef = useRef(false);
+  const currentMediaRef = useRef(null);
+
   // Heartbeat: poll every 60s to catch session-ended when WS was down at broadcast time.
   // Requires 2 consecutive "session gone" responses before acting — prevents a single
   // bad response from kicking users who are sharing their screen in another tab.
@@ -461,6 +468,15 @@ export default function VideoWatch() {
     if (!activeSessionId || !roomId) return;
 
     let consecutiveMisses = 0;
+    // Reconciliation backstop (Fix 5): if the WS broadcast layer ever fails to deliver a
+    // device-stream switch to this member (the exact bug class Fixes 1-4 close off at the
+    // source, but a backstop is still worth having for whatever those don't catch), this
+    // heartbeat is the independent path that eventually notices and self-corrects — it
+    // reads the session's own DB row directly, never depends on any broadcast arriving.
+    // Requires 2 consecutive mismatches (~120s) before acting, same conservatism as the
+    // existing session-gone check above — a single mismatched tick is far more likely to
+    // be a legitimate switch still landing than a genuine stuck client.
+    let consecutiveMediaMismatches = 0;
 
     const interval = setInterval(async () => {
       try {
@@ -496,6 +512,53 @@ export default function VideoWatch() {
               updateMemberMap('replace', normalized);
               setMemberCount(normalized.length);
             }
+          }
+
+          // ✅ Media reconciliation: the host is the source of truth for their own
+          // session row, never the target of a correction derived from it. Only scoped
+          // to "upload" (device-stream) sessions — liveshare/watchfrom/none don't keep
+          // current_media_id meaningfully fresh and have their own dedicated sync paths.
+          if (!isHostRef.current && session.current_media_type === 'upload' && session.current_media_id) {
+            const localId = currentMediaRef.current?.ID;
+            const resolvedHeartbeatUrl = resolveMediaUrl(session.current_media_url);
+            const sameById = localId === session.current_media_id;
+            const sameByUrl = currentMediaRef.current?.mediaUrl === resolvedHeartbeatUrl;
+            // Only ever correct a client that's either showing nothing yet, or already
+            // showing another "upload"-type item — never overrides a member legitimately
+            // watching an embed/doc/liveshare locally based on a stale upload-column read.
+            const eligibleForCorrection = !currentMediaRef.current || currentMediaRef.current?.type === 'upload';
+
+            if (!sameById && !sameByUrl && eligibleForCorrection) {
+              consecutiveMediaMismatches++;
+              if (consecutiveMediaMismatches >= 2) {
+                consecutiveMediaMismatches = 0;
+                console.log('[VideoWatch] Heartbeat media mismatch persisted 2 ticks — reconciling from DB truth', {
+                  localId, sessionMediaId: session.current_media_id,
+                });
+                const savedTime = session.current_playback_time || 0;
+                const updatedAt = session.playback_time_updated_at;
+                let estimatedTime = savedTime;
+                if (updatedAt && savedTime > 0) {
+                  const ageMs = Date.now() - new Date(updatedAt).getTime();
+                  if (ageMs >= 0 && ageMs < 120000) {
+                    estimatedTime = savedTime + ageMs / 1000;
+                  }
+                }
+                setCurrentMedia({
+                  ID: session.current_media_id,
+                  type: 'upload',
+                  mediaUrl: resolvedHeartbeatUrl,
+                  file_path: session.current_media_url,
+                  original_name: session.session_title || 'Now Playing',
+                });
+                setPendingSeekTime(estimatedTime > 0 ? estimatedTime : 0);
+                setIsPlaying(true);
+              }
+            } else {
+              consecutiveMediaMismatches = 0;
+            }
+          } else {
+            consecutiveMediaMismatches = 0;
           }
         }
       } catch (err) {
@@ -1039,6 +1102,15 @@ export default function VideoWatch() {
 
     return result;
   }, [currentUser?.id, sessionStatus?.hostId, roomHostId, hostIdFromState]);
+
+  // Shadow refs for isHost/currentMedia, read inside the 60s heartbeat's setInterval
+  // callback (declared further up the file, before either of these exist) so that
+  // callback always sees current values instead of whatever they were at the moment
+  // the heartbeat effect itself ran — its own dependency array deliberately excludes
+  // both (adding them would tear down and recreate the interval on every media switch
+  // or poster/duration patch, defeating the point of a stable periodic poll).
+  useEffect(() => { isHostRef.current = isHost; }, [isHost]);
+  useEffect(() => { currentMediaRef.current = currentMedia; }, [currentMedia]);
 
   // 🛡️ Determine if current user is a room admin
   const isAdmin = React.useMemo(() => {
@@ -2864,6 +2936,13 @@ export default function VideoWatch() {
     if (currentMedia?.ID === id) {
       return;
     }
+
+    // A genuine switch to a *different* item while an upload is still in flight must
+    // stop that upload — otherwise its eventual completion fires device_stream_ready
+    // for media the host already moved on from, racing with (and potentially
+    // overriding) the switch members are about to receive below. See
+    // cancelForMediaSwitch's own comment for the full rationale.
+    mediaUploadManager.cancelForMediaSwitch();
 
     // Route documents (PDF, image, text) to the document viewer instead of the video pipeline.
     const mimeType = mediaItem.mime_type || mediaItem.MimeType || '';

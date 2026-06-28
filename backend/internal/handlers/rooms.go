@@ -678,6 +678,15 @@ func EndWatchSessionHandler(c *gin.Context) {
 	go func() {
 		log.Printf("🧹 [EndWatchSession cleanup] Starting background cleanup for session %s", sessionID)
 
+		// An upload still mid-flight at this exact moment has no TemporaryMediaItem row
+		// yet, so the query just below (which only finds rows that already exist) can
+		// never see it — left alone, it would keep running unaware its session is gone,
+		// and eventually broadcast device_stream_ready (or persist a poster/duration)
+		// for a session that no longer exists. Must run before the tempItems query below,
+		// not after — purely for log-ordering clarity, not correctness (the two touch
+		// independent state).
+		utils.AbortProgressiveUploadForSession(sessionID)
+
 		tx := DB.Begin()
 		if tx.Error != nil {
 			log.Printf("⚠️ [EndWatchSession cleanup] Failed to start transaction: %v", tx.Error)
@@ -2763,6 +2772,19 @@ func GetActiveSessionHandler(c *gin.Context) {
 		"liveshare_logo_bug":     session.LiveShareLogoBug,
 		"liveshare_break_screen": session.LiveShareBreakScreen,
 		"liveshare_layout":       session.LiveShareLayout, // Layout selection for display
+		// Reconciliation backstop (Fix 5): lets the existing 60s heartbeat poll detect
+		// "client is showing different media than the session's own ground truth" and
+		// self-correct, independent of whatever the WS broadcast layer did or didn't
+		// deliver. These columns are already kept fresh for device-stream sessions by
+		// startSessionPreviewRefresh (chunk_upload.go) — this just surfaces them here too.
+		// current_playback_time + its updated_at let the frontend estimate a sensible
+		// seek position (same staleness-compensation idea the late-join restoration path
+		// already uses) instead of always reconciling to position 0.
+		"current_media_id":         session.CurrentMediaID,
+		"current_media_url":        session.CurrentMediaURL,
+		"current_media_type":       session.CurrentMediaType,
+		"current_playback_time":    session.CurrentPlaybackTime,
+		"playback_time_updated_at": session.PlaybackTimeUpdatedAt,
 	})
 }
 

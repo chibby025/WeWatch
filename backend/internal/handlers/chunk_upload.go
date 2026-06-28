@@ -422,6 +422,55 @@ func formatDurationHHMMSS(totalSeconds float64) string {
 	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, secs)
 }
 
+// AbortUploadHandler cancels an in-flight progressive/chunked upload server-side — the
+// host switched media away from it, or explicitly hit "Cancel Upload" (the frontend's
+// own AbortController only stops the browser from sending more chunks; without this,
+// the backend's drainer goroutine keeps waiting on chunks that will never arrive, and
+// the eventual completion would still broadcast device_stream_ready for media nobody
+// asked for anymore). Host-only, same authorization pattern as
+// DeleteSingleTemporaryMediaItemHandler. Idempotent — aborting an already-finished or
+// already-aborted upload_id is a silent no-op (AbortProgressiveUpload's own map lookup
+// just finds nothing).
+// Route: DELETE /api/rooms/:id/upload/:upload_id
+func AbortUploadHandler(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	authenticatedUserID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	roomIDStr := c.Param("id")
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil || roomID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+	uploadID := c.Param("upload_id")
+	if uploadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "upload_id is required"})
+		return
+	}
+
+	var room models.Room
+	if err := DB.First(&room, roomID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+	if room.HostID != authenticatedUserID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the host can abort an upload"})
+		return
+	}
+
+	log.Printf("🚫 [AbortUpload] Host %d aborting upload %s in room %d", authenticatedUserID, uploadID, roomID)
+	utils.AbortProgressiveUpload(uploadID)
+	c.JSON(http.StatusOK, gin.H{"aborted": true})
+}
+
 // ChunkUploadHandler handles chunked file uploads
 // Route: POST /api/rooms/:id/upload?chunked=true
 func ChunkUploadHandler(c *gin.Context) {
@@ -541,6 +590,7 @@ func ChunkUploadHandler(c *gin.Context) {
 	if isProgressiveCandidate {
 		hlsBaseURL, cdnRemotePrefix := progressiveCDNPaths(uploadID)
 		progressiveState = utils.GetOrCreateProgressiveUpload(uploadID, totalChunks, uploadDir, roomIDUint, sessionIDEarly, fileName, authenticatedUserID, earlyMimeType, hlsBaseURL, cdnRemotePrefix)
+		utils.TouchProgressiveUpload(progressiveState)
 		utils.MaybeStartProgressiveProbe(uploadID, progressiveState)
 
 		// Tell the room a stream is on its way, the moment the first chunk lands — long

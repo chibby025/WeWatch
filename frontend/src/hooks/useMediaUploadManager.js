@@ -13,7 +13,7 @@
 // survives sidebar open/close, and pass the returned object down as a prop.
 import { useState, useRef, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import { uploadChunk, uploadFileToBunnyCDN, assembleUpload, API_BASE_URL } from '../services/api';
+import { uploadChunk, uploadFileToBunnyCDN, assembleUpload, abortChunkedUpload, API_BASE_URL } from '../services/api';
 import {
   splitFileIntoChunks,
   generateUploadId,
@@ -189,6 +189,17 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
       const state = loadChunkUploadState(uploadId);
       if (!state) {
         localStorage.removeItem('current_upload_id');
+      } else if ((state.sessionId || '') !== (sessionId || '')) {
+        // This pointer belongs to a different (almost always already-ended) session —
+        // ending a session never used to clear it, so without this check it would
+        // resurface the resume dialog in every session opened afterward, in this
+        // browser, forever. The backend-side upload itself is no longer reachable
+        // through this dialog either way now (Fix 2 aborts it the moment its own
+        // session ends, Fix 3 sweeps it within the hour even if that somehow missed) —
+        // so there's nothing useful left to resume; just clear it silently.
+        console.log('🧹 [Resume] Discarding stale dev upload pointer from a different session:', { uploadId, savedSessionId: state.sessionId, currentSessionId: sessionId });
+        clearChunkUploadState(uploadId);
+        localStorage.removeItem('current_upload_id');
       } else {
         const uploadedChunks = state.uploadedChunks || [];
         const remaining = state.totalChunks - uploadedChunks.length;
@@ -219,6 +230,14 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
     }
     try {
       const state = JSON.parse(bunnyStr);
+      if ((state.sessionId || '') !== (sessionId || '')) {
+        // Same reasoning as the dev-path branch above — a pointer left over from a
+        // different (already-ended) session, never cleared by ending it.
+        console.log('🧹 [Resume] Discarding stale BunnyCDN upload pointer from a different session:', { uploadId: bunnyId, savedSessionId: state.sessionId, currentSessionId: sessionId });
+        localStorage.removeItem(`wewatch_bunny_upload_${bunnyId}`);
+        localStorage.removeItem('current_bunny_upload_id');
+        return;
+      }
       const completed = state.completedChunks?.length ?? 0;
       const total = state.totalChunks ?? Math.ceil(state.fileSize / (state.chunkSize || 1));
       console.log('📋 [Resume] Found incomplete BunnyCDN upload:', {
@@ -851,6 +870,19 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
       console.log('🚫 [Upload] Cancel requested');
     }
 
+    // Tell the backend to stop too — the browser-side abort above only stops new
+    // chunks from being *sent*. Without this, a progressive upload's drainer goroutine
+    // keeps waiting (indefinitely) on chunks that will never arrive, and an eventual
+    // stray completion could still broadcast device_stream_ready for media nobody
+    // asked for anymore. Only meaningful for the chunked/progressive path —
+    // currentUploadIdRef is only ever set inside uploadFileChunked; the BunnyCDN-direct
+    // path has no equivalent server-side state to abort. Fire-and-forget (the function
+    // itself already swallows its own errors) so a slow/failed abort call never blocks
+    // the immediate local UI reset below.
+    if (currentUploadIdRef.current && roomId) {
+      abortChunkedUpload(roomId, currentUploadIdRef.current);
+    }
+
     if (progressPersistenceTimerRef.current) {
       clearInterval(progressPersistenceTimerRef.current);
       progressPersistenceTimerRef.current = null;
@@ -865,10 +897,13 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
       localStorage.removeItem('current_bunny_upload_id');
     }
 
-    // This is the ONLY place that clears uploadFileRef — explicit user cancel.
+    // This is the ONLY place that clears uploadFileRef — explicit user cancel (or an
+    // equivalent deliberate action, like switching media away from this upload — see
+    // cancelForMediaSwitch below, which calls this same function).
     // Network drops / tab hides / sidebar toggles must never reach this.
     uploadFileRef.current = null;
     uploadPausedRef.current = false;
+    currentUploadIdRef.current = null;
     setUploadPaused(false);
     setUploading(false);
     setUploadProgress(0);
@@ -876,6 +911,22 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
     setUploadETA('');
     setUploadedBytes(0);
     setTotalBytes(0);
+    setIsUploadReady(false);
+  };
+
+  // Called by VideoWatch.jsx's handlePlayMedia when the host switches to different
+  // media while an upload is still in flight. Two unsynchronized device-stream
+  // lifecycles racing for the same room (the abandoned one and whatever the host just
+  // switched to) is exactly the failure mode that let members end up watching
+  // different things than the host, or than each other — this closes that race by
+  // construction: at most one upload is ever in flight at a time. Same cleanup as an
+  // explicit cancel, plus a toast explaining why the upload disappeared (an implicit
+  // side effect of a different action, unlike the Cancel button, which needs no extra
+  // explanation since the user just clicked it).
+  const cancelForMediaSwitch = () => {
+    if (!uploading) return;
+    handleCancelUpload();
+    toast('Switched media — previous upload stopped.', { icon: '🔁' });
   };
 
   // "Retry Now" button — same resume() used by the auto-retry effect, exposed for manual use.
@@ -983,6 +1034,7 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
     finalizeResume,
     handleFileUpload,
     handleCancelUpload,
+    cancelForMediaSwitch,
     handleRetryNow,
     formatFileSize,
   };

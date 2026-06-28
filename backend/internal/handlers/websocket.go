@@ -2450,6 +2450,12 @@ func InitializeHub() {
             for range ticker.C {
                 CleanupStaleSessions()
                 CleanupExpiredCommunityRequests()
+                // Safety net for in-flight uploads that Fix 1 (cancel-on-switch) and
+                // Fix 2 (abort-on-session-end) never got a chance to catch — a crash, a
+                // tab force-closed, or a bug in either of those real-time paths. 30
+                // minutes of no chunk activity is generous enough that a real, slow
+                // upload is never mistaken for abandoned.
+                utils.CleanupAbandonedProgressiveUploads(30*time.Minute, ChunkUploadDir)
             }
         }()
         log.Println("✅ Stale session cleanup started (runs hourly, ends sessions >24 hours old)")

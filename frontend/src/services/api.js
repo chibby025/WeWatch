@@ -1064,6 +1064,24 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
 };
 
 /**
+ * Tell the backend to stop an in-flight progressive/chunked upload — the host switched
+ * media away from it, or explicitly cancelled. Without this, the browser-side abort only
+ * stops new chunks from being *sent*; the backend's drainer keeps waiting on chunks that
+ * will never arrive, and an eventual stray completion could still broadcast
+ * device_stream_ready for media nobody asked for anymore. Fire-and-forget is fine for
+ * callers — failures are logged but never block the local cancel/switch UX, and the
+ * call is naturally idempotent (aborting an already-finished or already-aborted
+ * upload_id is a no-op on the backend).
+ */
+export const abortChunkedUpload = async (roomId, uploadId) => {
+  try {
+    await apiClient.delete(`/api/rooms/${roomId}/upload/${uploadId}`);
+  } catch (error) {
+    console.warn('⚠️ [abortChunkedUpload] Backend abort failed (non-fatal):', error.message);
+  }
+};
+
+/**
  * Upload file to BunnyCDN in 3MB chunks via Vercel Edge Function.
  * BunnyCDN Storage API requires header auth which CORS strips — the Edge Function
  * acts as a server-side proxy for each chunk (each under the 4MB Edge Function limit).
