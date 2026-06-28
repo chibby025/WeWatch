@@ -782,6 +782,13 @@ func openFIFOWriteEnd(fifoPath string, timeout time.Duration) (*os.File, error) 
 func watchManifestForFirstSegment(uploadID string, state *ProgressiveUploadState) {
 	for i := 0; i < 600; i++ { // ~5 minutes at 500ms
 		time.Sleep(500 * time.Millisecond)
+		state.mu.Lock()
+		aborted := state.aborted
+		state.mu.Unlock()
+		if aborted {
+			log.Printf("🚫 [Progressive] First-segment watcher for %s stopping — upload was aborted", uploadID)
+			return
+		}
 		data, err := os.ReadFile(state.manifestPath)
 		if err != nil {
 			continue
@@ -827,6 +834,13 @@ func watchManifestForPreviewRefresh(uploadID string, state *ProgressiveUploadSta
 	lastMilestone := 0
 	for i := 0; i < 1200; i++ { // ~10 minutes at 500ms, same budget as the CDN uploader
 		time.Sleep(500 * time.Millisecond)
+		state.mu.Lock()
+		aborted := state.aborted
+		state.mu.Unlock()
+		if aborted {
+			log.Printf("🚫 [Progressive] Preview-refresh watcher for %s stopping — upload was aborted", uploadID)
+			return
+		}
 		data, err := os.ReadFile(state.manifestPath)
 		if err != nil {
 			continue
@@ -903,6 +917,23 @@ func uploadProgressiveSegmentsToCDN(uploadID string, state *ProgressiveUploadSta
 	uploaded := make(map[string]bool)
 	for i := 0; i < 1200; i++ { // ~10 minutes at 500ms — generous since this outlives watchManifestForFirstSegment
 		time.Sleep(500 * time.Millisecond)
+		state.mu.Lock()
+		aborted := state.aborted
+		state.mu.Unlock()
+		if aborted {
+			// Unlike the two manifest-watchers above, this one can leave real artifacts
+			// behind on BunnyCDN — any segment already pushed before the abort fired
+			// would otherwise sit there forever, since the local cleanup in
+			// AbortProgressiveUpload only ever touches local disk. Delete whatever this
+			// goroutine itself already confirmed uploaded.
+			for name := range uploaded {
+				if delErr := DeletePathFromBunnyCDNStorage(state.cdnRemotePrefix + name); delErr != nil {
+					log.Printf("⚠️ [Progressive] Failed to delete orphaned CDN segment %s for aborted upload %s: %v", name, uploadID, delErr)
+				}
+			}
+			log.Printf("🚫 [Progressive] CDN segment uploader for %s stopping — upload was aborted (%d uploaded segment(s) cleaned up)", uploadID, len(uploaded))
+			return
+		}
 		data, err := os.ReadFile(state.manifestPath)
 		if err != nil {
 			continue
