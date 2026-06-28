@@ -324,10 +324,23 @@ func DeleteMediaFile(filePathOrURL string) error {
 	return nil
 }
 
+// downloadHTTPClient has a generous but bounded timeout — http.Get's default client has
+// none at all, so a connection that stalls mid-download (rather than erroring outright)
+// hangs the calling goroutine forever with no log line and no way to tell "still working"
+// apart from "silently dead". Confirmed as the likely cause of a real production stall:
+// two separate attempts at transcoding 4 ~130-325MB source files each ran 15-45+ minutes
+// with zero of the 4 completing and the server otherwise healthy — consistent with a
+// hung download, not a crash (which would at least free up to retry the next item) or a
+// slow-but-working transcode (which completed a single similarly-sized file in ~12 min
+// in local testing). 20 minutes comfortably covers even a slow download of the largest
+// file in this codebase's current use cases; a genuinely hung connection now fails
+// loudly and gets logged instead of hanging forever.
+var downloadHTTPClient = &http.Client{Timeout: 20 * time.Minute}
+
 // DownloadFileToTemp downloads a remote URL (CDN or any HTTPS) to a temporary local file.
 // Returns the temp file path. Caller is responsible for deleting it.
 func DownloadFileToTemp(remoteURL string, suffix string) (string, error) {
-	resp, err := http.Get(remoteURL)
+	resp, err := downloadHTTPClient.Get(remoteURL)
 	if err != nil {
 		return "", fmt.Errorf("download failed: %w", err)
 	}
