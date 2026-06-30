@@ -5543,6 +5543,14 @@ export default function VideoWatch() {
 
   // Handle Video End
   const handleVideoEnd = () => {
+    // Demo rooms use absolute CDN URLs; their playlist is empty (no TemporaryMediaItems).
+    // Loop immediately so there's no blank gap — the DemoSessionManager's 60s tick will
+    // override with the next track's playback_control when it's ready to advance.
+    if (currentMedia?.mediaUrl?.startsWith('http') && videoPlayerRef.current) {
+      videoPlayerRef.current.currentTime = 0;
+      videoPlayerRef.current.play().catch(() => {});
+      return;
+    }
     const currentIndex = playlist.findIndex(item => item.ID === currentMedia?.ID);
     if (currentIndex === -1) {
       setCurrentMedia(null);
