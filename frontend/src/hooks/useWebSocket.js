@@ -406,6 +406,7 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
               currentDocUrl: data.current_doc_url || null,
               currentDocType: data.current_doc_type || null,
               currentDocPage: data.current_doc_page || 1,
+              isDemoSession: data.is_demo_session || false,
             };
             
             // Update all subscribers

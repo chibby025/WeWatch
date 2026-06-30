@@ -1043,7 +1043,11 @@ export default function VideoWatch() {
   // 🎮 GAME SYSTEM: State
   const [isGameLobbyOpen, setIsGameLobbyOpen] = useState(false);
   const [activeGame, setActiveGame] = useState(null); // Currently active game session
-  
+  // Card games only: this client's own hand, delivered via a private hand_update
+  // message (never broadcast in game_state — every other player's hand and the
+  // draw pile order must stay server-side-only). Reset whenever activeGame clears.
+  const [myHand, setMyHand] = useState(null);
+
   // 🎤 Audio device management
   const [audioDevices, setAudioDevices] = useState([]);
   const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState(null);
@@ -1122,7 +1126,10 @@ export default function VideoWatch() {
   // start playing from the estimated current position instead of sitting at a blank screen.
   const mediaRestoredFromJoinRef = useRef(false);
   useEffect(() => {
-    if (isHost) return;
+    // For always-on demo rooms the "host" is a placeholder user (the room owner), not
+    // someone actively controlling playback. Skip the isHost guard so the room owner
+    // still receives the media URL from session_status and sees what's playing.
+    if (isHost && !sessionStatus?.isDemoSession) return;
     if (!sessionStatus?.currentMediaUrl) return;
     if (mediaRestoredFromJoinRef.current) return;
     if (currentMedia) return; // already playing something
@@ -2434,6 +2441,7 @@ export default function VideoWatch() {
   const handleGameClose = useCallback(() => {
     console.log('🎮 [VideoWatch] Closing game');
     setActiveGame(null);
+    setMyHand(null);
   }, []);
 
   const handleOpenDoc = useCallback((mediaItem) => {
@@ -5395,6 +5403,12 @@ export default function VideoWatch() {
             // bypasses setState/re-renders. See doomRelayHandlerRef above.
             doomRelayHandlerRef.current?.(message.data?.payload);
           }
+          if (_gAction === 'hand_update') {
+            // Private, per-player message (hub.BroadcastToUser, not a room broadcast) —
+            // only this client's own hand ever arrives here, on game start, after this
+            // player's own move, and on late-join rehydration.
+            setMyHand(message.data?.hand || []);
+          }
           if (message.error) {
             console.error('❌ [VideoWatch] Game error:', message.error);
             toast.error(message.error);
@@ -7497,6 +7511,7 @@ export default function VideoWatch() {
           onPlayAgain={handlePlayAgain}
           onRelayPacket={handleDoomRelayPacket}
           registerRelayReceiver={registerDoomRelayReceiver}
+          myHand={myHand}
         />
       )}
 

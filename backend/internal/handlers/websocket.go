@@ -909,8 +909,10 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                 "is_screen_sharing_active": session.IsScreenSharingActive,
                 "sharing_source":           session.SharingSource,
                 "session_title":            session.SessionTitle,
+                "poster_url":              session.PosterURL,
                 "is_private":              watchSession.IsPrivate,
                 "content_rating":           watchSession.ContentRating,
+                "is_demo_session":          room.IsAlwaysOn,
             },
         }
         if statusBytes, err := json.Marshal(statusMsg); err == nil {
