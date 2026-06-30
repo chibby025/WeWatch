@@ -1126,10 +1126,16 @@ export default function VideoWatch() {
   // start playing from the estimated current position instead of sitting at a blank screen.
   const mediaRestoredFromJoinRef = useRef(false);
   useEffect(() => {
-    // For always-on demo rooms the "host" is a placeholder user (the room owner), not
-    // someone actively controlling playback. Skip the isHost guard so the room owner
-    // still receives the media URL from session_status and sees what's playing.
-    if (isHost && !sessionStatus?.isDemoSession) return;
+    // For always-on demo rooms the "host" is a placeholder user, not someone actively
+    // controlling playback. Two signals identify a demo room:
+    // 1. isDemoSession (is_demo_session:true sent for always-on rooms in session_status)
+    // 2. absolute CDN URL — demo rooms always use https:// CDN URLs; regular sessions
+    //    use relative /uploads/... paths. Fallback for React 18 batching: two session_status
+    //    messages arrive 7ms apart; if the second omits is_demo_session, the first signal
+    //    could be lost but the URL is identical in both.
+    const isDemoOrCDN = sessionStatus?.isDemoSession ||
+        sessionStatus?.currentMediaUrl?.startsWith('http');
+    if (isHost && !isDemoOrCDN) return;
     if (!sessionStatus?.currentMediaUrl) return;
     if (mediaRestoredFromJoinRef.current) return;
     if (currentMedia) return; // already playing something
