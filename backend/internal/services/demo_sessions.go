@@ -147,6 +147,18 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 	current := state.playlist[state.currentIdx]
 	elapsed := time.Since(state.mediaStartedAt)
 
+	// Always rebroadcast current position on every tick — acts as a sync heartbeat and
+	// recovery signal for clients whose video ended/stalled while the manager was between
+	// advancement ticks (e.g. track ended just after the previous tick, and the client's
+	// handleVideoEnd cleared currentMedia before the new loop code deployed). Without this,
+	// a client with a blank screen has no way to recover without a page refresh.
+	// Only broadcast when the track hasn't ended yet; the advancement block below handles
+	// the ended-track case with a seek_time of 0 for the next track.
+	if current.durationSeconds == 0 || elapsed < time.Duration(current.durationSeconds)*time.Second {
+		seekPos := elapsed.Seconds()
+		m.broadcastPlay(room.ID, session.SessionID, current.url, current.title, current.posterURL, seekPos)
+	}
+
 	if current.durationSeconds > 0 && elapsed >= time.Duration(current.durationSeconds)*time.Second {
 		nextIdx := (state.currentIdx + 1) % len(state.playlist)
 		next := state.playlist[nextIdx]
