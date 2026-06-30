@@ -527,19 +527,35 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
     session, exists := h.activeSessions[sessionID]
     if !exists {
         h.sessionMutex.Unlock()
-        log.Printf("❌ [JoinWatchSession] Session %s NOT found in activeSessions map", sessionID)
-        return fmt.Errorf("watch session %s does not exist", sessionID)
+        // Always-on demo sessions are created directly by DemoSessionManager (bypassing
+        // the normal StartWatchSession API handler) so they are never registered in
+        // activeSessions. Fall back to a live DB read so joining users still get a
+        // proper session_status with the current track URL instead of waiting up to
+        // 60 s for the next broadcastPlay tick.
+        log.Printf("⚠️ [JoinWatchSession] Session %s not in activeSessions — querying DB (demo session?)", sessionID)
+        var dbSession models.WatchSession
+        if err := db.Where("session_id = ? AND is_active = true", sessionID).First(&dbSession).Error; err != nil {
+            log.Printf("❌ [JoinWatchSession] Session %s not found in activeSessions or DB", sessionID)
+            return fmt.Errorf("watch session %s does not exist", sessionID)
+        }
+        session = &dbSession
+        log.Printf("✅ [JoinWatchSession] Found demo session %s in DB (ID: %d, Room: %d)", sessionID, session.ID, session.RoomID)
+        h.sessionMutex.Lock()
+        if _, ok := h.sessionMembers[sessionID]; !ok {
+            h.sessionMembers[sessionID] = make(map[*Client]bool)
+        }
+        h.sessionMembers[sessionID][client] = true
+        h.sessionMutex.Unlock()
+    } else {
+        log.Printf("✅ [JoinWatchSession] Found session %s in activeSessions (DB ID: %d, Room: %d)", sessionID, session.ID, session.RoomID)
+        // Initialize members map if needed
+        if _, exists := h.sessionMembers[sessionID]; !exists {
+            h.sessionMembers[sessionID] = make(map[*Client]bool)
+        }
+        // Add client to session members
+        h.sessionMembers[sessionID][client] = true
+        h.sessionMutex.Unlock()
     }
-    log.Printf("✅ [JoinWatchSession] Found session %s in activeSessions (DB ID: %d, Room: %d)", sessionID, session.ID, session.RoomID)
-
-    // Initialize members map if needed
-    if _, exists := h.sessionMembers[sessionID]; !exists {
-        h.sessionMembers[sessionID] = make(map[*Client]bool)
-    }
-
-    // Add client to session members
-    h.sessionMembers[sessionID][client] = true
-    h.sessionMutex.Unlock()
 
     // ✅ Determine user role: host if user_id matches session host, otherwise viewer
     var watchSession models.WatchSession
@@ -922,6 +938,20 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                     case client.send <- OutgoingMessage{Data: gameBytes, IsBinary: false}:
                     default:
                         log.Printf("⚠️ [JoinWatchSession] active-game rehydration dropped — client.send full for user %d", client.userID)
+                    }
+                }
+            }
+            // Card games only: the public rehydration above never carries hand
+            // contents (it can't — game_state is broadcast-shaped and must stay
+            // hidden-information-free). A reconnecting/late-joining player who is
+            // themselves a player in an active card game needs their own hand
+            // delivered the same private way a fresh move does.
+            if handMsg := gameWebSocketHandler.GetPlayerHandMessage(client.roomID, client.userID); handMsg != nil {
+                if handBytes, err := json.Marshal(handMsg); err == nil {
+                    select {
+                    case client.send <- OutgoingMessage{Data: handBytes, IsBinary: false}:
+                    default:
+                        log.Printf("⚠️ [JoinWatchSession] hand rehydration dropped — client.send full for user %d", client.userID)
                     }
                 }
             }
@@ -1493,6 +1523,20 @@ func (h *Hub) BroadcastToUser(userID uint, roomID uint, message OutgoingMessage)
         }
     }
     h.registryMutex.RUnlock()
+}
+
+// BroadcastJSONToUser marshals data and sends it to a single user in a specific
+// room — the JSON-only counterpart to BroadcastToUser, so packages that can't
+// import OutgoingMessage (e.g. games, to avoid an import cycle — see MessageHub in
+// game_manager.go) can still reach this method via a plain interface assertion,
+// the same way BroadcastJSON already does for BroadcastToRoom.
+func (h *Hub) BroadcastJSONToUser(userID uint, roomID uint, data map[string]interface{}) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("[Hub] Failed to marshal JSON for user %d: %v", userID, err)
+		return
+	}
+	h.BroadcastToUser(userID, roomID, OutgoingMessage{Data: jsonData, IsBinary: false})
 }
 
 // GetRoomConnectionCount returns the number of live WebSocket clients in a room.

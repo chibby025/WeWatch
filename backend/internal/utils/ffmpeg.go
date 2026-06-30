@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -265,6 +266,24 @@ func DetectVideoCodec(filePath string) (string, error) {
 //
 // watermarkText: e.g. "@username" — empty string disables the text watermark.
 // logoPath: absolute path to a PNG logo file — empty string disables logo overlay.
+//
+// Both invocations below pass -loglevel error and capture output into a bounded buffer
+// instead of piping to the live process's os.Stdout/os.Stderr, and run under a 30-minute
+// context timeout instead of exec.Command's unbounded Run(). Root-caused for real against
+// a genuine production stall: this function (the only long-running ffmpeg call in this
+// codebase that processes a full-length video rather than a short clip/frame) reliably
+// got stuck mid-encode on Railway specifically — confirmed via the platform's own CPU
+// graph showing a real spike that cuts to flat partway through, not sustained-high
+// (ruling out "just slow") and not flat-from-the-start (ruling out an instant failure).
+// Every other ffmpeg call in this codebase (preview clips, posters, thumbnails) uses the
+// same os.Stdout/os.Stderr piping and never showed this symptom — the difference is
+// runtime: ffmpeg's default progress meter writes continuously for the full encode
+// duration, and a full-length transcode (here, ~25 minutes) generates vastly more of it
+// than a 15-second clip ever does. The leading theory is a logging-pipeline backpressure
+// stall (the write itself blocking once a buffer fills, freezing ffmpeg with it) — -loglevel
+// error eliminates the volume outright regardless of whether that theory is exactly right,
+// and the timeout means any future hang (this cause or another) fails loudly instead of
+// silently running forever with no resume mechanism.
 func TranscodeToMp4(inputPath, outputPath, watermarkText, logoPath string) error {
 	codec, err := DetectVideoCodec(inputPath)
 	if err != nil {
@@ -275,16 +294,21 @@ func TranscodeToMp4(inputPath, outputPath, watermarkText, logoPath string) error
 
 	if codec == "h264" && !hasWatermark {
 		// Instant container remux — no re-encoding
-		args := []string{"-y", "-i", inputPath, "-c", "copy", "-movflags", "+faststart", outputPath}
-		cmd := exec.Command("ffmpeg", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
+		args := []string{"-y", "-loglevel", "error", "-i", inputPath, "-c", "copy", "-movflags", "+faststart", outputPath}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("ffmpeg remux failed: %w (stderr: %s)", err, stderr.String())
+		}
+		return nil
 	}
 
 	// Full transcode (VP8/VP9 or watermark required)
 	var filterComplex string
-	inputArgs := []string{"-y", "-i", inputPath}
+	inputArgs := []string{"-y", "-loglevel", "error", "-i", inputPath}
 
 	if logoPath != "" && watermarkText != "" {
 		// Logo overlay bottom-right + text watermark above it
@@ -315,10 +339,15 @@ func TranscodeToMp4(inputPath, outputPath, watermarkText, logoPath string) error
 		outputPath,
 	)
 
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg transcode failed: %w (stderr: %s)", err, stderr.String())
+	}
+	return nil
 }
 
 // TranscodeMkvToMp4IfNeeded converts a Matroska (.mkv) file to MP4 immediately after upload.
