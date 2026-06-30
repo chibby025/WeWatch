@@ -49,7 +49,7 @@ func TranscodeDemoMediaHandler(c *gin.Context) {
 	// Find all items whose URL ends with an incompatible extension
 	incompatibleExts := []string{".rmvb", ".avi", ".mkv", ".mov"}
 	var items []models.DemoMediaItem
-	if err := db.Where("is_active = true").Find(&items).Error; err != nil {
+	if err := db.Where("is_active = true").Order("sort_order ASC, id ASC").Find(&items).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 		return
 	}
