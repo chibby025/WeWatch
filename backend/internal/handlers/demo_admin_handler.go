@@ -17,6 +17,30 @@ import (
 	"wewatch-backend/internal/utils"
 )
 
+// GetDemoMediaLibraryHandler returns all demo_media_library rows, ordered by room_id + sort_order.
+// Super_admin only.
+func GetDemoMediaLibraryHandler(c *gin.Context) {
+	db := DB
+	userIDVal, ok := c.Get("user_id")
+	userID, ok2 := userIDVal.(uint)
+	if !ok || !ok2 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	var requestingUser models.User
+	if err := db.First(&requestingUser, userID).Error; err != nil || !requestingUser.IsSuperAdmin() {
+		c.JSON(http.StatusForbidden, gin.H{"error": "super_admin only"})
+		return
+	}
+
+	var items []models.DemoMediaItem
+	if err := db.Order("room_id ASC NULLS LAST, sort_order ASC, id ASC").Find(&items).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"media": items})
+}
+
 // TranscodeDemoMediaHandler transcodes incompatible demo media files (.rmvb, .avi, .mkv, .mov)
 // to browser-compatible .mp4. Runs as a background job; responds with a job-accepted 202.
 // Only super_admin can trigger this.

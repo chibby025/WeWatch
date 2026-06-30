@@ -798,8 +798,9 @@ func main() {
 		protected.POST("/community-requests/:id/claim", handlers.ClaimCommunityRequestHandler)          // POST /api/community-requests/:id/claim
 
 		// --- ADMIN: DEMO MEDIA ROUTES (super_admin only) ---
-		protected.POST("/admin/demo-media/transcode", handlers.TranscodeDemoMediaHandler)       // Transcode .rmvb/.avi/.mkv → .mp4
-		protected.POST("/admin/demo-media/extract-posters", handlers.ExtractDemoPostersHandler) // Extract thumbnail poster from each video
+		protected.GET("/admin/demo-media/library", handlers.GetDemoMediaLibraryHandler)          // List all demo media items
+		protected.POST("/admin/demo-media/transcode", handlers.TranscodeDemoMediaHandler)        // Transcode .rmvb/.avi/.mkv → .mp4
+		protected.POST("/admin/demo-media/extract-posters", handlers.ExtractDemoPostersHandler)  // Extract thumbnail poster from each video
 
 		// --- SUPPORT ROUTES ---
 		protected.POST("/support/send", handlers.SendSupportEmail) // POST /api/support/send (Send help/support email)
