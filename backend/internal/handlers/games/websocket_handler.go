@@ -11,6 +11,13 @@ import (
     "gorm.io/gorm"
 )
 
+// gamePostersBaseURL is the same BunnyCDN origin DoomGame.jsx/ShooterGame.jsx already
+// hardcode for their own assets — game posters live there too now, not bundled into
+// the frontend package. The frontend's resolvePreviewUrl already passes any
+// "starts with http" poster URL through unchanged, so this needs no frontend changes
+// beyond GameLobbyModal.jsx's own (already-updated) image paths.
+const gamePostersBaseURL = "https://letswatchout.b-cdn.net/games/posters"
+
 // gamePosterURL maps a game type to the same static thumbnail GameLobbyModal.jsx
 // already shows in its game-picker list — reused as the lobby session-preview poster
 // while that game is active, since none of these games have a video frame to extract
@@ -18,17 +25,25 @@ import (
 func gamePosterURL(gameType string) string {
     switch gameType {
     case "tic_tac_toe":
-        return "/images/ttt.webp"
+        return gamePostersBaseURL + "/ttt.webp"
     case "rock_paper_scissors":
-        return "/images/rps.webp"
+        return gamePostersBaseURL + "/rps.webp"
     case "chess":
-        return "/images/chess.webp"
+        return gamePostersBaseURL + "/chess.webp"
     case "trivia":
-        return "/images/trivia.webp"
+        return gamePostersBaseURL + "/trivia.webp"
     case "doom":
-        return "/images/doom.webp"
+        return gamePostersBaseURL + "/doom.webp"
     case "space_shooter":
-        return "/images/stellarswarm.webp"
+        return gamePostersBaseURL + "/stellarswarm.webp"
+    case "othello":
+        return gamePostersBaseURL + "/othello.webp"
+    case "checkers":
+        return gamePostersBaseURL + "/checkers.webp"
+    case "crazy_eights":
+        return gamePostersBaseURL + "/crazy_eights.webp"
+    case "ludo":
+        return gamePostersBaseURL + "/ludo.webp"
     default:
         return ""
     }
@@ -87,6 +102,41 @@ func (h *GameWebSocketHandler) GetActiveGameMessage(roomID uint) map[string]inte
             "players":         gameState.Players,
             "game_state":      gameState.GameSession.GameState,
         },
+    }
+}
+
+// GetPlayerHandMessage returns a "hand_update"-shaped message carrying userID's
+// current hand in roomID's active game, or nil if there's no active card game or
+// this user isn't one of its players. Used both right after a card-game move and
+// for late-join rehydration (websocket.go, alongside the generic
+// GetActiveGameMessage) — without this, a player who reconnects mid-game would see
+// the public board state but never their own hand.
+func (h *GameWebSocketHandler) GetPlayerHandMessage(roomID uint, userID uint) map[string]interface{} {
+    hand, ok := h.gameManager.GetPlayerHand(roomID, userID)
+    if !ok {
+        return nil
+    }
+    return map[string]interface{}{
+        "type":   "game",
+        "action": "hand_update",
+        "data": map[string]interface{}{
+            "hand": hand,
+        },
+    }
+}
+
+// sendHandUpdate sends userID their current private hand via a direct, single-user
+// message — never a room broadcast, since every other player's hand must stay
+// hidden. A no-op for any game without hands (GetPlayerHandMessage returns nil).
+func (h *GameWebSocketHandler) sendHandUpdate(roomID uint, userID uint) {
+    message := h.GetPlayerHandMessage(roomID, userID)
+    if message == nil {
+        return
+    }
+    if hub, ok := h.hub.(interface {
+        BroadcastJSONToUser(uint, uint, map[string]interface{})
+    }); ok {
+        hub.BroadcastJSONToUser(userID, roomID, message)
     }
 }
 
@@ -233,6 +283,14 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
         hub.BroadcastJSON(roomID, message)
     }
 
+    // Card games only: each player's hand is dealt synchronously inside StartGame
+    // above, but it never goes into the public game_started broadcast (that would
+    // leak every player's hand to every other player) — deliver it privately here
+    // instead, one direct message per player.
+    for _, p := range players {
+        h.sendHandUpdate(roomID, p.UserID)
+    }
+
     log.Printf("🎮 [GameWebSocketHandler] Game started: %d (type: %s, room: %d)", gameSession.ID, gameType, roomID)
 
     // Reflect the active game in the lobby's session-preview card. Best-effort: a room
@@ -291,6 +349,10 @@ func (h *GameWebSocketHandler) handleGameMove(client interface{}, data map[strin
 	// Broadcast updated state. If the game just ended, endGameLocked already sent
 	// game_state_update + game_ended, so BroadcastGameState is a no-op (game removed).
 	h.gameManager.BroadcastGameState(roomID)
+	// Card games only: the acting player's own hand may have changed (a card
+	// removed on play, a card added on draw) — refresh it privately. A no-op for
+	// every other game type (GetPlayerHand finds no Hands map and returns false).
+	h.sendHandUpdate(roomID, playerID)
 }
 
 func (h *GameWebSocketHandler) handleGameEnd(client interface{}, data map[string]interface{}) {

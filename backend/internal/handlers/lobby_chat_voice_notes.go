@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 )
 
 const (
@@ -147,8 +149,21 @@ func UploadLobbyChatVoiceNoteHandler(c *gin.Context) {
 		return
 	}
 
-	// Create relative URL for serving
-	attachmentURL := fmt.Sprintf("/uploads/lobby-voice-notes/%d/%s", senderID, filename)
+	// Push to BunnyCDN in production — a bare relative URL here resolves against the
+	// frontend's own origin in the browser (Vercel), not the backend's, breaking playback
+	// there even though it works locally via Vite's dev proxy. UploadLocalFileToBunnyCDN
+	// already does the right thing for local dev (returns the relative path unchanged).
+	remotePath := fmt.Sprintf("lobby-voice-notes/%d/%s", senderID, filename)
+	attachmentURL, err := utils.UploadLocalFileToBunnyCDN(filePath, remotePath, contentType)
+	if err != nil {
+		log.Printf("UploadLobbyChatVoiceNoteHandler: Failed to upload to BunnyCDN: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store voice note"})
+		os.Remove(filePath)
+		return
+	}
+	if strings.HasPrefix(attachmentURL, "http") {
+		os.Remove(filePath)
+	}
 
 	// Prepare metadata
 	metadata := fmt.Sprintf(`{"duration": %.2f}`, duration)

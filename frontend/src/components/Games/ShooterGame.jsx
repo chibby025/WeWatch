@@ -7,19 +7,34 @@
 // passed as a query param so the server's per-room world routing (see
 // space-shooter's server/src/index.js) puts everyone from the same WeWatch
 // room into the same isolated match.
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X as CloseIcon } from 'lucide-react';
 import { checkDevicePerformance, hasDismissedLowEndWarning, dismissLowEndWarning } from '../../utils/devicePerformance';
 
 const SHOOTER_BASE_URL = 'https://space-shooter-production-6e0d.up.railway.app';
 
+// Same touch-capability check the game's own client/src/touch-controls.js uses to decide
+// whether to render its on-screen joysticks — kept in sync so this popup's gate matches
+// what the iframe is actually going to show. A resized desktop browser window still has
+// no real touch capability, so it correctly falls through to the keyboard popup here.
+const isMobileDevice = () => ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
 export default function ShooterGame({ onClose, onEndGame, isHost, roomId }) {
   const [loaded, setLoaded] = useState(false);
+  // Desktop keyboard scheme is EDSF (not WASD) + mouse aim + click to fire — genuinely
+  // non-obvious, so a player has to guess it without this. Real touch devices get their
+  // own on-screen joysticks (move/aim sticks + FIRE button) baked into the game itself,
+  // which are self-explanatory, so this popup is skipped there — same pattern as DOOM's.
+  const [showControls, setShowControls] = useState(false);
   const [showLowEndWarning, setShowLowEndWarning] = useState(() => {
     const { isLowEnd } = checkDevicePerformance();
     return isLowEnd && !hasDismissedLowEndWarning('space_shooter');
   });
   const shooterUrl = `${SHOOTER_BASE_URL}/?room=${encodeURIComponent(roomId)}`;
+
+  useEffect(() => {
+    if (loaded && !isMobileDevice()) setShowControls(true);
+  }, [loaded]);
 
   const dismissWarning = () => {
     dismissLowEndWarning('space_shooter');
@@ -68,6 +83,34 @@ export default function ShooterGame({ onClose, onEndGame, isHost, roomId }) {
         allow="fullscreen"
         sandbox="allow-scripts allow-same-origin"
       />
+      {showControls && (
+        <div
+          className="absolute inset-0 z-20 flex items-center justify-center bg-black/70"
+          onClick={() => setShowControls(false)}
+        >
+          <div
+            className="bg-gray-900 border border-gray-700 rounded-xl p-5 max-w-sm mx-4 text-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold mb-3">Controls</h3>
+            <div className="space-y-1.5 text-sm text-gray-200">
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Forward / Backward</span><span>E / D</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Strafe Left / Right</span><span>S / F</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Roll Left / Right</span><span>W / R</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Strafe Up / Down</span><span>Backspace / Delete</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Boost</span><span>Left Shift (hold)</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Aim</span><span>Mouse</span></div>
+              <div className="flex justify-between gap-4"><span className="text-gray-400">Fire</span><span>Left Click</span></div>
+            </div>
+            <button
+              onClick={() => setShowControls(false)}
+              className="mt-4 w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 text-white text-sm font-medium py-2 rounded-lg transition-opacity"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

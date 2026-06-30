@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -328,8 +329,27 @@ func UploadVoiceNote(c *gin.Context) {
 		return
 	}
 
-	// Construct public URL
-	audioURL := fmt.Sprintf("/%s", filepath)
+	// Push to BunnyCDN in production — Railway's local disk isn't guaranteed to persist
+	// across deploys, and a bare relative path here would resolve against the frontend's
+	// own origin (Vercel) in the browser, not the backend's, breaking playback there even
+	// though it works locally (Vite's dev proxy forwards /uploads to the backend, masking
+	// this in dev). UploadLocalFileToBunnyCDN already does the right thing for local dev
+	// (returns the relative path unchanged, leaves the file on disk) — only production
+	// actually pushes to CDN and returns an absolute URL.
+	remotePath := fmt.Sprintf("room_media/voice_notes/room_%d/%s", roomID, filename)
+	contentType := getMimeType(ext)
+	audioURL, err := utils.UploadLocalFileToBunnyCDN(filepath, remotePath, contentType)
+	if err != nil {
+		log.Printf("Failed to upload voice note to BunnyCDN: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store audio file"})
+		os.Remove(filepath)
+		return
+	}
+	// Local copy is no longer needed once it's safely on the CDN — only happens in
+	// production; UploadLocalFileToBunnyCDN returns before this point in local dev.
+	if strings.HasPrefix(audioURL, "http") {
+		os.Remove(filepath)
+	}
 
 	// Get username
 	var user models.User

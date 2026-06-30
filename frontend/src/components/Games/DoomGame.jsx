@@ -44,19 +44,26 @@ function base64ToBytes(base64) {
   return bytes;
 }
 
+// Same touch-capability check the wewatch-shell build itself uses to decide whether to
+// show its own on-screen joystick/buttons — kept in sync so this popup's gate matches
+// exactly what the iframe is actually going to render, not a screen-width guess (a
+// resized desktop browser window still has a keyboard; this is about input capability).
+const isMobileDevice = () => ('ontouchstart' in window) && navigator.maxTouchPoints > 0;
+
 export default function DoomGame({ onClose, onEndGame, isHost, onRelayPacket, registerRelayReceiver }) {
   const [loaded, setLoaded] = useState(false);
-  // Shown once per load, host only (the spectator never receives input) — the
-  // build has real on-screen touch controls for actual touch devices (joystick
-  // + FIRE/USE/MAP buttons, auto-detected via `ontouchstart`/maxTouchPoints
-  // inside the iframe itself), but the desktop keyboard scheme has no in-game
-  // hint at all, so a player has to guess it the first time.
+  // Shown once per load, host only (the spectator never receives input), and only on
+  // non-touch devices — the build has real on-screen touch controls for actual touch
+  // devices (joystick + FIRE/USE/MAP buttons, auto-detected the same way inside the
+  // iframe itself), so a keyboard-scheme popup would be irrelevant/wrong there. The
+  // desktop keyboard scheme has no in-game hint at all otherwise, so a player has to
+  // guess it the first time.
   const [showControls, setShowControls] = useState(false);
   const iframeRef = useRef(null);
   const doomUrl = `${DOOM_BASE_URL}?role=${isHost ? 'host' : 'spectator'}`;
 
   useEffect(() => {
-    if (loaded && isHost) setShowControls(true);
+    if (loaded && isHost && !isMobileDevice()) setShowControls(true);
   }, [loaded, isHost]);
 
   // Register our "deliver an incoming relay packet" function so VideoWatch.jsx
@@ -138,7 +145,6 @@ export default function DoomGame({ onClose, onEndGame, isHost, onRelayPacket, re
               <div className="flex justify-between gap-4"><span className="text-gray-400">Switch Weapon</span><span>1–7</span></div>
               <div className="flex justify-between gap-4"><span className="text-gray-400">Map</span><span>Tab</span></div>
             </div>
-            <p className="text-xs text-gray-500 mt-3">On a touch device, an on-screen joystick and buttons appear automatically.</p>
             <button
               onClick={() => setShowControls(false)}
               className="mt-4 w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 text-white text-sm font-medium py-2 rounded-lg transition-opacity"

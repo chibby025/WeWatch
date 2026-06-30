@@ -30,6 +30,18 @@ type GameSessionState struct {
 	Players     []models.Player
 	CurrentTurn int
 	GameData    map[string]interface{}
+
+	// Card-game-only fields (currently just Crazy Eights). Deliberately kept OFF
+	// GameData and never read into a room-wide broadcast or DB-persisted
+	// GameState — every other game here is perfect-information, but a card
+	// game's hands and draw-pile order are the entire game's hidden information.
+	// Only non-revealing derivatives (hand_counts, draw_pile_count) get mirrored
+	// into GameData by syncCrazyEightsPublicState (crazy_eights.go). Each
+	// player's own hand reaches them exclusively via a private hand_update
+	// message (websocket_handler.go, hub.BroadcastToUser).
+	Hands       map[uint][]string
+	DrawPile    []string
+	DiscardPile []string // includes the current top card (last element)
 }
 
 // NewGameManager creates a new game manager instance
@@ -51,8 +63,16 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		return nil, fmt.Errorf("room %d already has an active game (ID: %d)", roomID, existingGameID)
 	}
 
-	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" && gameType != "chess" && gameType != "trivia" && gameType != "doom" && gameType != "space_shooter" {
+	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" && gameType != "chess" && gameType != "trivia" && gameType != "doom" && gameType != "space_shooter" && gameType != "othello" && gameType != "checkers" && gameType != "crazy_eights" && gameType != "ludo" {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
+	}
+
+	// ludoColors only has 4 entries (red/blue/green/yellow) — indexing beyond
+	// that in ludo.go would panic. Every other game here is fixed at exactly 2
+	// players already (enforced implicitly by their own move logic), so this
+	// check is ludo-specific.
+	if gameType == "ludo" && len(players) > 4 {
+		return nil, fmt.Errorf("ludo supports at most 4 players")
 	}
 
 	gameSession := &models.GameSession{
@@ -75,6 +95,25 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		Players:     players,
 		CurrentTurn: 0,
 		GameData:    make(map[string]interface{}),
+	}
+
+	// Card games need their hands dealt immediately, before anyone has moved —
+	// unlike every other game type here, players must see their own hand from the
+	// very first moment. This can't use the lazy-init-on-first-move pattern the
+	// perfect-information games rely on.
+	switch gameType {
+	case "crazy_eights":
+		dealCrazyEights(gameState)
+		// dealCrazyEights only mutates gameState.GameData (the runtime copy) — the
+		// initial game_started broadcast (handleGameStart, websocket_handler.go)
+		// reads gameSession.GameState (the DB-row snapshot returned from this
+		// function), which initializeGameState already populated *before* dealing
+		// happened. Without this sync, the very first broadcast would carry an
+		// empty game_state (no discard_top/hand_counts) for crazy_eights — every
+		// other game type's initializeGameState case populates GameState directly,
+		// so they never hit this gap. Same reconciliation ProcessMove already does
+		// after every move.
+		gameState.GameSession.GameState = gameState.GameData
 	}
 
 	gm.activeGames[gameSession.ID] = gameState
@@ -127,6 +166,14 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processChessMove(gameState, playerID, moveData)
 	case "trivia":
 		gameOver, winnerID, err = gm.processTriviaMove(gameState, playerID, moveType, moveData)
+	case "othello":
+		gameOver, winnerID, err = gm.processOthelloMove(gameState, playerID, moveData)
+	case "checkers":
+		gameOver, winnerID, err = gm.processCheckersMove(gameState, playerID, moveData)
+	case "crazy_eights":
+		gameOver, winnerID, err = gm.processCrazyEightsMove(gameState, playerID, moveType, moveData)
+	case "ludo":
+		gameOver, winnerID, err = gm.processLudoMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -247,6 +294,29 @@ func (gm *GameManager) GetActiveGame(roomID uint) (*GameSessionState, bool) {
 	return gameState, exists
 }
 
+// GetPlayerHand returns a copy of the given player's current hand in the room's
+// active game, if that game is a card game and this user is one of its players.
+// Used to build private hand_update messages (websocket_handler.go) — the hand
+// itself must never go through a room-wide broadcast.
+func (gm *GameManager) GetPlayerHand(roomID uint, userID uint) ([]string, bool) {
+	gm.mu.RLock()
+	defer gm.mu.RUnlock()
+
+	gameSessionID, exists := gm.roomActiveGames[roomID]
+	if !exists {
+		return nil, false
+	}
+	gameState, exists := gm.activeGames[gameSessionID]
+	if !exists || gameState.Hands == nil {
+		return nil, false
+	}
+	hand, ok := gameState.Hands[userID]
+	if !ok {
+		return nil, false
+	}
+	return append([]string{}, hand...), true
+}
+
 // HandlePlayerDisconnect handles player disconnection during a game
 func (gm *GameManager) HandlePlayerDisconnect(roomID uint, userID uint) error {
 	gm.mu.Lock()
@@ -341,34 +411,18 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 		state["answers"] = map[string]interface{}{}
 
 	case "ludo":
-		state["board"] = gm.initializeLudoBoard(playerCount)
-		state["current_turn"] = 0
-		state["dice_value"] = 0
-		state["extra_turn"] = false
+		ludoBoard := ludoInitialBoard(playerCount)
+		state["tokens"] = ludoBoard["tokens"]
+		state["current_dice"] = 0
+		state["awaiting_move"] = false
+		state["consecutive_sixes"] = 0
+
+	case "othello":
+		state["board"] = othelloInitialBoard()
+
+	case "checkers":
+		state["board"] = checkersInitialBoard()
 	}
 
 	return state
-}
-
-// initializeLudoBoard creates initial Ludo board state
-func (gm *GameManager) initializeLudoBoard(playerCount int) map[string]interface{} {
-	colors := []string{"red", "blue", "green", "yellow"}
-	board := map[string]interface{}{
-		"tokens": make(map[string]interface{}),
-	}
-
-	for i := 0; i < playerCount; i++ {
-		color := colors[i]
-		tokens := make([]map[string]interface{}, 4)
-		for j := 0; j < 4; j++ {
-			tokens[j] = map[string]interface{}{
-				"id":       fmt.Sprintf("%s_%d", color, j),
-				"position": -1,
-				"safe":     false,
-			}
-		}
-		board["tokens"].(map[string]interface{})[color] = tokens
-	}
-
-	return board
 }

@@ -4,6 +4,10 @@ import TicTacToeGame from './TicTacToeGame';
 import RockPaperScissorsGame from './RockPaperScissorsGame';
 import ChessGame from './ChessGame';
 import TriviaGame from './TriviaGame';
+import OthelloGame from './OthelloGame';
+import CheckersGame from './CheckersGame';
+import CrazyEightsGame from './CrazyEightsGame';
+import LudoGame from './LudoGame';
 
 // Lazy-loaded — DOOM's iframe wrapper is tiny, but this establishes the
 // pattern for any future heavy/rarely-used game: don't pay its bundle cost
@@ -11,7 +15,7 @@ import TriviaGame from './TriviaGame';
 const DoomGame = lazy(() => import('./DoomGame'));
 const ShooterGame = lazy(() => import('./ShooterGame'));
 
-export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver }) {
+export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver, myHand }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -64,6 +68,55 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
       return (
         <TriviaGame
           gameState={activeGame}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'othello':
+      return (
+        <OthelloGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'checkers':
+      return (
+        <CheckersGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'crazy_eights':
+      return (
+        <CrazyEightsGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          myHand={myHand}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'ludo':
+      return (
+        <LudoGame
+          gameState={activeGame}
+          players={activeGame.players}
           currentUserId={currentUserId}
           onMove={handleMove}
           onClose={onClose}
