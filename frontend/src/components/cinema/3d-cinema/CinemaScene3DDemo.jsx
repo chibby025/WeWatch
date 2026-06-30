@@ -803,6 +803,7 @@ export default function CinemaScene3DDemo() {
   const isHostRef = useRef(false);
   const currentMediaRef = useRef(null); // mirrors currentMedia state for use inside direct handler
   const syncRefRef = useRef(null);      // { hostTime, receivedAt } — seeded from playback_control, used by autonomous drift check
+  const mediaRestoredFromJoinRef = useRef(false); // guard: only restore from session_status once per join
   const isBufferingRef3D = useRef(false); // true while video.waiting; pauses autonomous drift corrections
   const [isFullscreenHovering, setIsFullscreenHovering] = useState(false);
   
@@ -3869,52 +3870,43 @@ export default function CinemaScene3DDemo() {
           break;
         case "playback_control":
           if (msg.sender_id && msg.sender_id === currentUser?.id) break;
-          if (msg.file_path) {
-            // 🎯 Latency compensation: adjust seek time for network delay
-            const now = Date.now();
-            const latency = now - (msg.timestamp || now); // Fallback to 0 if no timestamp
-            const adjustedTime = (msg.seek_time || 0) + (latency / 1000);
+          {
+            // Accept file_path (regular uploads) and media_url (demo session broadcasts)
+            const resolvedFileUrl = msg.media_url || msg.file_url || msg.file_path;
+            if (resolvedFileUrl) {
+              const now = Date.now();
+              const latency = now - (msg.timestamp || now);
+              const adjustedTime = (msg.seek_time || 0) + (latency / 1000);
 
-            console.log(`[3D Cinema] playback_control received — latency=${latency}ms command=${msg.command} seek_time=${msg.seek_time}`);
+              const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+              const mediaUrl = resolvedFileUrl.startsWith('http')
+                ? resolvedFileUrl
+                : `${baseUrl}${resolvedFileUrl.startsWith('/') ? '' : '/'}${resolvedFileUrl}`;
 
-            const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-            const fileUrl = msg.file_url || msg.file_path;
-            const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+              const isSameMedia = currentMedia &&
+                                  currentMedia.ID === msg.media_item_id &&
+                                  currentMedia.mediaUrl === mediaUrl;
 
-            // 🎯 OPTIMIZATION: Skip setCurrentMedia if same media is already loaded (prevents unnecessary re-renders)
-            const isSameMedia = currentMedia &&
-                                currentMedia.ID === msg.media_item_id &&
-                                currentMedia.mediaUrl === mediaUrl;
+              if (isSameMedia && msg.command === "seek") {
+                break;
+              }
 
-            // Same-media seek: direct handler above intercepts these before setMessages,
-            // so this branch only fires if the direct handler wasn't registered yet (e.g. on mount).
-            if (isSameMedia && msg.command === "seek") {
-              break; // Direct handler already applied the correction — nothing to do here
+              loadStartTimeRef.current = Date.now();
+              syncRefRef.current = { hostTime: adjustedTime, receivedAt: Date.now() };
+              setPendingSeekTime(adjustedTime);
+
+              setCurrentMedia({
+                ID: msg.media_item_id || null,
+                type: 'upload',
+                file_path: msg.file_path || resolvedFileUrl,
+                mediaUrl: mediaUrl,
+                original_name: msg.original_name || msg.media_title || 'Media',
+              });
+
+              if (msg.command === "play" || msg.command === "pause") {
+                setIsPlaying(msg.command === "play");
+              }
             }
-
-            // 🎯 Different media or play/pause command - update state
-            console.log('🔄 [3D Cinema] New media or play/pause - updating state');
-            loadStartTimeRef.current = Date.now(); // ⏱️ Track loading start for compensation
-
-            // Seed syncRef so the autonomous drift check has a reference immediately.
-            syncRefRef.current = { hostTime: adjustedTime, receivedAt: Date.now() };
-
-            setPendingSeekTime(adjustedTime);
-            
-            setCurrentMedia({
-              ID: msg.media_item_id,
-              type: 'upload',
-              file_path: msg.file_path,
-              mediaUrl: mediaUrl,
-              original_name: msg.original_name || 'Unknown Media',
-            });
-            
-            // 🎯 FIX: Only update play/pause for explicit play/pause commands, not seek-only
-            if (msg.command === "play" || msg.command === "pause") {
-              setIsPlaying(msg.command === "play");
-              console.log(`🎬 [3D Cinema] ${msg.command === "play" ? "Playing" : "Pausing"} video from playback_control`);
-            }
-            // For "seek" commands, maintain current play state
           }
           break;
         case "screen_share_started":
@@ -4021,6 +4013,28 @@ export default function CinemaScene3DDemo() {
           console.log('🔍 [SESSION_STATUS] First seating entry:', Object.entries(msg.data.seating || {})[0]);
           console.log('🔍 [SESSION_STATUS] componentId:', componentIdRef.current, 'roomMembers.length:', roomMembers.length);
           
+          // Restore media on join for demo sessions. isHost=true for the room owner
+          // (demo host user) but they still need to see what's playing — same guard
+          // pattern as VideoWatch.jsx's late-join effect.
+          {
+            const ssUrl = msg.data.current_media_url;
+            const isDemoOrCDN = msg.data.is_demo_session || ssUrl?.startsWith('http');
+            if (ssUrl && !currentMediaRef.current && !mediaRestoredFromJoinRef.current && (!isHost || isDemoOrCDN)) {
+              const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+              const mediaUrl = ssUrl.startsWith('http') ? ssUrl : `${baseUrl}${ssUrl.startsWith('/') ? '' : '/'}${ssUrl}`;
+              mediaRestoredFromJoinRef.current = true;
+              setPendingSeekTime(msg.data.current_playback_time || 0);
+              setCurrentMedia({
+                ID: null,
+                type: 'upload',
+                file_path: ssUrl,
+                mediaUrl,
+                original_name: msg.data.session_title || 'Media',
+              });
+              setIsPlaying(true);
+            }
+          }
+
           // ✅ LECTURE HALL PATTERN: Process members array immediately (no currentUser check)
           // Member visibility should work even before auth fully loads
           if (msg.data.members && Array.isArray(msg.data.members)) {
