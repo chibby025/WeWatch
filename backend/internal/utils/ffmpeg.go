@@ -339,7 +339,12 @@ func TranscodeToMp4(inputPath, outputPath, watermarkText, logoPath string) error
 		outputPath,
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// 4 hours: generous enough for full-length episodes on Railway's shared CPU
+	// (10-bit HEVC decode + H.264 encode can take 2-3x real-time on slow hardware).
+	// The -loglevel error flag already prevents the logging-pipeline stall that was
+	// the original cause of hangs, so this is purely a "fail loudly instead of
+	// silently running forever" safety net.
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var stderr bytes.Buffer

@@ -4801,7 +4801,7 @@ const LobbyPage = () => {
                         <div className="absolute inset-0 w-9 h-9 rounded-full ring-2 ring-red-500 animate-pulse pointer-events-none" style={{ animationDuration: '2s' }} />
                         <div className="relative w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-bold text-sm overflow-hidden">
                           {session.room_avatar_url
-                            ? <img src={cdnThumb(session.room_avatar_url, 72)} alt={session.room_name} className="w-full h-full object-cover" />
+                            ? <img src={cdnThumb(getAssetUrl(session.room_avatar_url), 72)} alt={session.room_name} className="w-full h-full object-cover" />
                             : session.room_name?.[0]?.toUpperCase() || 'R'}
                         </div>
                         {!session.is_member && !joinedRooms[session.room_id] && session.host_id !== currentUser?.id && (
@@ -5109,7 +5109,7 @@ const LobbyPage = () => {
                             !session.is_temporary ? 'group-hover:scale-110' : ''
                           }`}>
                             {session.room_avatar_url ? (
-                              <img src={cdnThumb(session.room_avatar_url, 80)} alt={session.room_name} className="w-full h-full object-cover" loading="lazy" />
+                              <img src={cdnThumb(getAssetUrl(session.room_avatar_url), 80)} alt={session.room_name} className="w-full h-full object-cover" loading="lazy" />
                             ) : (
                               session.room_name?.[0]?.toUpperCase() || 'R'
                             )}
@@ -6782,7 +6782,7 @@ const LobbyPage = () => {
                         !session.is_temporary ? 'group-hover:scale-110' : ''
                       }`}>
                         {session.room_avatar_url ? (
-                          <img src={cdnThumb(session.room_avatar_url, 80)} alt={session.room_name} className="w-full h-full object-cover" loading="lazy" />
+                          <img src={cdnThumb(getAssetUrl(session.room_avatar_url), 80)} alt={session.room_name} className="w-full h-full object-cover" loading="lazy" />
                         ) : (
                           session.room_name?.[0]?.toUpperCase() || 'R'
                         )}

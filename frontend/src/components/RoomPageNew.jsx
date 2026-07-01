@@ -1660,9 +1660,12 @@ const RoomPageNew = () => {
       formData.append('audio', blob, fileName);
       formData.append('duration', recordingDuration);
       
+      // Never set Content-Type manually for FormData — it drops the boundary param;
+      // 'Content-Type': undefined lets the browser fill in the correct
+      // multipart/form-data; boundary=... value itself.
       await apiClient.post(`/api/rooms/${roomId}/messages/voice-note`, formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
+          'Content-Type': undefined,
         },
       });
       
@@ -2341,7 +2344,7 @@ const RoomPageNew = () => {
                         );
                       })()
                     ) : room.image_url ? (
-                      <img src={room.image_url} alt={room.name} className="w-full h-full object-cover" />
+                      <img src={getAssetUrl(room.image_url)} alt={room.name} className="w-full h-full object-cover" />
                     ) : (
                       <FilmIcon className="w-7 h-7 text-white opacity-80" />
                     )}
