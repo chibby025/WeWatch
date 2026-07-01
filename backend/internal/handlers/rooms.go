@@ -325,19 +325,22 @@ func UpdateRoomHandler(c *gin.Context) {
 
 	log.Printf("UpdateRoomHandler: Input data: Name=%s, ShowHost=%v, ShowDescription=%v", input.Name, input.ShowHost, input.ShowDescription)
 
-	// Update fields
+	// Build a map of only the fields being changed — avoids touching the Handle
+	// unique index on unchanged fields (DB.Save writes all columns, which fails
+	// when multiple rooms still have an empty handle from before handles existed).
+	updates := map[string]interface{}{}
 	if input.Name != "" {
-		room.Name = input.Name
+		updates["name"] = input.Name
 	}
 	if input.Description != "" {
-		room.Description = input.Description
+		updates["description"] = input.Description
 	}
 	if input.ShowHost != nil {
-		room.ShowHost = *input.ShowHost
 		log.Printf("UpdateRoomHandler: Setting ShowHost to %v", *input.ShowHost)
+		updates["show_host"] = *input.ShowHost
 	}
 	if input.ShowDescription != nil {
-		room.ShowDescription = *input.ShowDescription
+		updates["show_description"] = *input.ShowDescription
 	}
 	if input.Handle != "" {
 		newHandle := sanitizeHandle(input.Handle)
@@ -348,21 +351,20 @@ func UpdateRoomHandler(c *gin.Context) {
 				c.JSON(http.StatusConflict, gin.H{"error": "That handle is already taken"})
 				return
 			}
-			room.Handle = newHandle
+			updates["handle"] = newHandle
 		}
 	}
 	if input.HostOnlyChat != nil {
-		room.HostOnlyChat = *input.HostOnlyChat
+		updates["host_only_chat"] = *input.HostOnlyChat
 	}
 	if input.AutoInviteFollowers != nil {
-		room.AutoInviteFollowers = *input.AutoInviteFollowers
+		updates["auto_invite_followers"] = *input.AutoInviteFollowers
 	}
 	if input.IsPublic != nil {
-		room.IsPublic = *input.IsPublic
+		updates["is_public"] = *input.IsPublic
 	}
 
-	// Save updates
-	if err := DB.Save(&room).Error; err != nil {
+	if err := DB.Model(&room).Updates(updates).Error; err != nil {
 		log.Printf("UpdateRoomHandler: Failed to save room to database: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to update room: %v", err)})
 		return

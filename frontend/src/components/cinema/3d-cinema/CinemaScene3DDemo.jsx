@@ -675,6 +675,8 @@ export default function CinemaScene3DDemo() {
   const podcastCanvasRef = useRef(null); // 🎙️ Canvas for compositing podcast overlays
   const podcastLogoImageRef = useRef(null); // 🎙️ Preloaded logo image
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
+  const [isMediaLoading, setIsMediaLoading] = useState(false);
+  const [showCinemaTutorial, setShowCinemaTutorial] = useState(false);
   const [webglFailed, setWebglFailed] = useState(() => !checkWebGL()); // false on most devices
   // Ref to trigger local emote notification in CinemaScene3D
   const triggerLocalEmoteRef = useRef(null);
@@ -1377,6 +1379,7 @@ export default function CinemaScene3DDemo() {
     if (needsReload) {
       console.log('🔄 [Media Loading] Setting new video src:', mediaUrl);
       video.src = mediaUrl;
+      setIsMediaLoading(true);
     } else {
       console.log('✅ [Media Loading] Video already loaded, skipping src reload');
     }
@@ -1402,13 +1405,22 @@ export default function CinemaScene3DDemo() {
         });
         video.currentTime = compensatedTime;
         setPendingSeekTime(null);
-      }
-
-      if (isPlayingRef.current) {
-        console.log('▶️ [Media Loading] Starting playback...');
-        video.play().catch(err => console.error('❌ [Media Loading] Failed to play:', err));
+        // video.currentTime is async — play() before seeked fires causes AbortError → frozen frame.
+        // Wait for seeked before calling play() (same pattern as VideoWatch.jsx).
+        video.addEventListener('seeked', function onSeekedPlay() {
+          video.removeEventListener('seeked', onSeekedPlay);
+          if (isPlayingRef.current) {
+            console.log('▶️ [Media Loading] Starting playback after seek...');
+            video.play().catch(err => console.error('❌ [Media Loading] Failed to play after seek:', err));
+          }
+        });
       } else {
-        console.log('⏸️ [Media Loading] Video loaded but isPlaying=false, not starting playback');
+        if (isPlayingRef.current) {
+          console.log('▶️ [Media Loading] Starting playback...');
+          video.play().catch(err => console.error('❌ [Media Loading] Failed to play:', err));
+        } else {
+          console.log('⏸️ [Media Loading] Video loaded but isPlaying=false, not starting playback');
+        }
       }
     };
 
@@ -1456,6 +1468,7 @@ export default function CinemaScene3DDemo() {
     };
     const handlePlaying = () => {
       console.log(`🔍 [VideoBuffer] PLAYING resumed — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState}`);
+      setIsMediaLoading(false);
     };
     const handleStalled = () => {
       console.warn(`🔍 [VideoBuffer] STALLED — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState}`);
@@ -1503,8 +1516,15 @@ export default function CinemaScene3DDemo() {
     });
     
     if (isPlaying && video.paused) {
-      console.log('▶️ [Media Sync] Playing video');
-      video.play().catch(err => console.error('❌ [Media Sync] Play failed:', err));
+      // Guard: if the video src was just set (readyState < HAVE_CURRENT_DATA), calling play()
+      // immediately causes AbortError — the browser's internal pause() wins the race, leaving
+      // the video frozen. handleLoadedData will call play() once the video is actually ready.
+      if (video.readyState >= 2) {
+        console.log('▶️ [Media Sync] Playing video');
+        video.play().catch(err => console.error('❌ [Media Sync] Play failed:', err));
+      } else {
+        console.log('⏳ [Media Sync] Video not ready (readyState=' + video.readyState + '), handleLoadedData will play');
+      }
     } else if (!isPlaying && !video.paused) {
       console.log('⏸️ [Media Sync] Pausing video');
       video.pause();
@@ -3895,12 +3915,20 @@ export default function CinemaScene3DDemo() {
               syncRefRef.current = { hostTime: adjustedTime, receivedAt: Date.now() };
               setPendingSeekTime(adjustedTime);
 
+              const demoSec = msg.duration_seconds;
+              const demoDuration = demoSec
+                ? (demoSec >= 3600
+                    ? `${Math.floor(demoSec/3600)}:${String(Math.floor((demoSec%3600)/60)).padStart(2,'0')}:${String(demoSec%60).padStart(2,'0')}`
+                    : `${Math.floor(demoSec/60)}:${String(demoSec%60).padStart(2,'0')}`)
+                : null;
               setCurrentMedia({
                 ID: msg.media_item_id || null,
                 type: 'upload',
                 file_path: msg.file_path || resolvedFileUrl,
                 mediaUrl: mediaUrl,
                 original_name: msg.original_name || msg.media_title || 'Media',
+                poster_url: msg.poster_url || null,
+                duration: demoDuration,
               });
 
               if (msg.command === "play" || msg.command === "pause") {
@@ -4030,6 +4058,7 @@ export default function CinemaScene3DDemo() {
                 file_path: ssUrl,
                 mediaUrl,
                 original_name: msg.data.session_title || 'Media',
+                poster_url: msg.data.poster_url || null,
               });
               setIsPlaying(true);
             }
@@ -5001,6 +5030,24 @@ export default function CinemaScene3DDemo() {
     setShowTutorial(false);
   }, []);
 
+  // Show cinema hint once per device, 1.5s after the scene finishes loading
+  useEffect(() => {
+    if (loadingStatus) return; // scene not ready yet
+    if (localStorage.getItem('cinema_hint_seen')) return;
+    const t = setTimeout(() => setShowCinemaTutorial(true), 1500);
+    return () => clearTimeout(t);
+  }, [loadingStatus]);
+
+  // Auto-dismiss the hint after 5 seconds
+  useEffect(() => {
+    if (!showCinemaTutorial) return;
+    const t = setTimeout(() => {
+      setShowCinemaTutorial(false);
+      localStorage.setItem('cinema_hint_seen', '1');
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [showCinemaTutorial]);
+
   // Convert remoteParticipants array to Map for O(1) lookup + add audio levels
   const remoteParticipantsMap = React.useMemo(() => {
     const map = new Map();
@@ -5609,6 +5656,36 @@ export default function CinemaScene3DDemo() {
       {/* 🎬 Loading Overlay - black screen with spinner until camera loads */}
       {loadingStatus && <CinemaLoadingOverlay status={loadingStatus} />}
 
+      {/* ⏳ Media buffering spinner — shown while video is loading from CDN */}
+      {isMediaLoading && !loadingStatus && currentMedia && (
+        <div className="fixed inset-0 flex items-center justify-center z-20 pointer-events-none">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+            <span className="text-white/60 text-sm font-medium tracking-wide">Loading…</span>
+          </div>
+        </div>
+      )}
+
+      {/* 💡 One-time cinema hint: click to fullscreen, how to close */}
+      {showCinemaTutorial && !loadingStatus && (
+        <button
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 pointer-events-auto"
+          onClick={() => {
+            setShowCinemaTutorial(false);
+            localStorage.setItem('cinema_hint_seen', '1');
+          }}
+          aria-label="Dismiss hint"
+        >
+          <div className="bg-black/75 backdrop-blur-md text-white rounded-2xl px-5 py-3 flex flex-col items-center gap-1.5 shadow-lg animate-fade-in">
+            <p className="text-sm font-medium flex items-center gap-2">
+              <span>🖱️</span>
+              <span>Click the screen to go fullscreen</span>
+            </p>
+            <p className="text-xs text-white/50">Use the ✕ button at the top to close</p>
+          </div>
+        </button>
+      )}
+
       {/* 🖥️ Exit Fullscreen Button - shown when in fullscreen */}
       {isFullscreen && (
         <button
@@ -5793,7 +5870,6 @@ export default function CinemaScene3DDemo() {
         classType={null}
         authenticatedUserID={currentUser?.id}
         isAudioActive={isAudioActive}
-        isLeftSidebarOpen={isLeftSidebarOpen}
         onToggleLeftSidebar={() => setIsLeftSidebarOpen(prev => !prev)}
         toggleAudio={toggleAudio}
         hasOpenModal={isLiveShareWizardOpen} // ✅ Prevent taskbar from showing during wizard

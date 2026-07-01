@@ -99,17 +99,37 @@ func TranscodeDemoMediaHandler(c *gin.Context) {
 		"files":   len(toTranscode),
 	})
 
-	// Run in background — client gets 202 immediately
-	go func() {
-		for _, item := range toTranscode {
-			if err := transcodeOneDemoItem(db, item); err != nil {
-				log.Printf("❌ [DemoTranscode] item %d (%s): %v", item.ID, item.Title, err)
-			} else {
-				log.Printf("✅ [DemoTranscode] item %d (%s) done", item.ID, item.Title)
+	// Each item runs in its own goroutine so that completed episodes survive a
+	// process restart — re-triggering this endpoint only retries items whose URL
+	// still ends in an incompatible extension (the filter above).  Running them
+	// concurrently is fine: the bottleneck is CPU/ffmpeg, not goroutine count, and
+	// Railway's scheduler will interleave them naturally.  Each goroutine re-checks
+	// the DB at the start so a double-trigger never re-downloads an already-done file.
+	for _, item := range toTranscode {
+		go func(it models.DemoMediaItem) {
+			// Re-fetch to confirm it still needs transcoding (guards against double-trigger)
+			var current models.DemoMediaItem
+			if err := db.First(&current, it.ID).Error; err == nil {
+				ext := strings.ToLower(filepath.Ext(current.URL))
+				isIncompatible := false
+				for _, bad := range incompatibleExts {
+					if ext == bad {
+						isIncompatible = true
+						break
+					}
+				}
+				if !isIncompatible {
+					log.Printf("⏭️  [DemoTranscode] item %d (%s) already done, skipping", it.ID, it.Title)
+					return
+				}
 			}
-		}
-		log.Printf("✅ [DemoTranscode] all done")
-	}()
+			if err := transcodeOneDemoItem(db, it); err != nil {
+				log.Printf("❌ [DemoTranscode] item %d (%s): %v", it.ID, it.Title, err)
+			} else {
+				log.Printf("✅ [DemoTranscode] item %d (%s) done", it.ID, it.Title)
+			}
+		}(item)
+	}
 }
 
 // ExtractDemoPostersHandler extracts a thumbnail frame from each demo media item
