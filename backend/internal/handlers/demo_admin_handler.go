@@ -268,6 +268,93 @@ func extractDemoPoster(db *gorm.DB, item models.DemoMediaItem) error {
 		Update("poster_url", posterURL).Error
 }
 
+// ApplyFastStartHandler re-muxes every MP4 in demo_media_library with -movflags +faststart so
+// mobile browsers can start playback immediately without downloading the whole file first.
+// Uses stream-copy (no re-encode) so it's fast and lossless. Runs as a background job.
+// Super_admin only.
+func ApplyFastStartHandler(c *gin.Context) {
+	db := DB
+	userIDVal, ok := c.Get("user_id")
+	userID, ok2 := userIDVal.(uint)
+	if !ok || !ok2 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	var requestingUser models.User
+	if err := db.First(&requestingUser, userID).Error; err != nil || !requestingUser.IsSuperAdmin() {
+		c.JSON(http.StatusForbidden, gin.H{"error": "super_admin only"})
+		return
+	}
+
+	var items []models.DemoMediaItem
+	if err := db.Where("is_active = true").Order("sort_order ASC, id ASC").Find(&items).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+		return
+	}
+
+	// Only MP4 files need fast-start treatment; other formats have already been (or will be)
+	// transcoded to MP4 via TranscodeDemoMediaHandler which adds +faststart automatically.
+	mp4Items := make([]models.DemoMediaItem, 0)
+	for _, item := range items {
+		if strings.ToLower(filepath.Ext(item.URL)) == ".mp4" {
+			mp4Items = append(mp4Items, item)
+		}
+	}
+
+	if len(mp4Items) == 0 {
+		c.JSON(http.StatusOK, gin.H{"message": "no MP4 files found"})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": fmt.Sprintf("applying fast-start to %d MP4 file(s) in background", len(mp4Items)),
+		"files":   len(mp4Items),
+	})
+
+	for _, item := range mp4Items {
+		go func(it models.DemoMediaItem) {
+			if err := applyFastStart(db, it); err != nil {
+				log.Printf("❌ [FastStart] item %d (%s): %v", it.ID, it.Title, err)
+			} else {
+				log.Printf("✅ [FastStart] item %d (%s) done", it.ID, it.Title)
+			}
+		}(item)
+	}
+}
+
+// applyFastStart downloads an MP4, re-muxes it with -c copy -movflags +faststart, re-uploads.
+func applyFastStart(db *gorm.DB, item models.DemoMediaItem) error {
+	tmpIn, err := utils.DownloadFileToTemp(item.URL, ".mp4")
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer os.Remove(tmpIn)
+
+	tmpOut := tmpIn + "_faststart.mp4"
+	defer os.Remove(tmpOut)
+
+	cmd := exec.Command("ffmpeg", "-y", "-loglevel", "error",
+		"-i", tmpIn,
+		"-c", "copy",      // stream-copy: no re-encode, fast and lossless
+		"-movflags", "+faststart", // relocate moov atom to file start
+		tmpOut,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ffmpeg fast-start: %w (output: %s)", err, string(out))
+	}
+
+	remotePath := buildTranscodedRemotePath(item.URL) // keeps same path, .mp4 extension
+	publicURL, err := utils.UploadLocalFileToBunnyCDN(tmpOut, remotePath, "video/mp4")
+	if err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+
+	return db.Model(&item).Updates(map[string]interface{}{
+		"url":        publicURL,
+		"updated_at": time.Now(),
+	}).Error
+}
+
 // buildTranscodedRemotePath converts a CDN pull-zone URL to a storage path with .mp4 extension.
 // "https://LetsWatchOut.b-cdn.net/demo_media_library/Anime/DBZ.rmvb"
 //   → "demo_media_library/Anime/DBZ.mp4"

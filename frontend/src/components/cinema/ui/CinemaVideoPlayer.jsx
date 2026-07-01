@@ -580,6 +580,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       <div
         className="w-full h-full relative bg-black"
         onMouseMove={handleMouseActivity}
+        onTouchStart={handleMouseActivity}
         onMouseLeave={() => { clearTimeout(hoverTimerRef.current); setIsHovering(false); }}
       >
         {/* Split-view with expandable boxes */}
@@ -601,6 +602,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
               ref={videoRef}
               autoPlay
               playsInline
+              preload="auto"
               crossOrigin="anonymous"
               muted={muted}
               className="w-full h-full object-contain bg-black"
@@ -697,6 +699,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
     <div
       className="w-full h-full relative bg-black"
       onMouseMove={handleMouseActivity}
+      onTouchStart={handleMouseActivity}
       onMouseLeave={() => { clearTimeout(hoverTimerRef.current); setIsHovering(false); }}
     >
       {/* Main video (screen share or single stream) */}
@@ -723,6 +726,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         }}
         autoPlay
         playsInline
+        preload="auto"
         crossOrigin="anonymous"
         muted={muted} // 👈 Apply the prop
         className={`w-full h-full object-${objectFit} bg-black`}
