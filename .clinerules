@@ -25,6 +25,31 @@ This is more than a project - it's a testament to perseverance, continuous learn
 
 ---
 
+## 📍 PROJECT STATUS (June 27, 2026 - DOOM v6 ROOT-CAUSE FIX, GAME CONTROLS POPUPS, GAMELOBBYMODAL CAROUSEL REDESIGN, VOICE NOTES + STREAM-FROM-DEVICE PRODUCTION FIXES)
+
+### ✅ LATEST UPDATES (June 27, 2026, newest of all):
+
+**DOOM v6 — found and fixed the real root cause of the browser-tab crash** ✅
+- A confirmed, reproducible real-desktop-browser tab crash (black screen, frozen cursor) was root-caused via the same SAFE_HEAP/ASSERTIONS=2 debug-rebuild methodology used before: `vis->patch` (a sprite-frame lookup index) could be `-1` (an internal "no such frame" sentinel) and reach `W_CacheLumpNum` completely unguarded in `R_DrawVisSprite` (`r_things.c`), resolving to an unrelated WAD lump reinterpreted as sprite data. Fixed with a single `if (vis->patch < 0) return;`. Five other real-but-not-the-actual-bug defensive fixes were also made along the way (texturecolumn bounds, iteration cap, viewheight clamp, unconditional r_draw.c bounds checks, a missing `&127` source mask).
+- Deployed as `games/doom/v6/` on BunnyCDN; `DoomGame.jsx` updated. Verified clean for 25+ seconds of real gameplay against the live CDN URL, screenshot-confirmed correct rendering.
+- Added controls popups (gated off on real touch devices) to both `DoomGame.jsx` and `ShooterGame.jsx` (Stellar Swarm) — the latter's real keyboard scheme is EDSF, not WASD, genuinely non-obvious.
+- Added a taskbar minimize-to-draggable-square feature (`Taskbar.jsx`) for when a game's own bottom controls would otherwise be covered.
+- Full technical detail in `CLAUDE.md` under "DOOM v6" and the controls-popup/taskbar sections right after it.
+
+**Stream from Device — three real production-only bugs found and fixed** ✅
+- BunnyCDN's CORS "Add Headers" extension allowlist didn't include `ts`/`m3u8` — every HLS segment request was silently CORS-blocked on Vercel only (never reproduces on localhost). Fixed via BunnyCDN dashboard, not code.
+- Upload concurrency was getting stuck at 1 (fully serialized) on Vercel due to `navigator.connection.effectiveType` misclassifying a fine connection as 3G. Made concurrency adaptive (backs off on retries, ramps up on clean batches) instead of a fixed one-shot guess.
+- "Browse Files" button stayed stuck on "Loading..." for the entire background upload instead of reverting once playback actually started.
+- Full detail in `CLAUDE.md` under the three new "Stream from Device" subsections dated 2026-06-27.
+
+**Voice notes — fixed broken production playback** ✅
+- Both room-chat and DM voice notes were saved to Railway's local disk with a bare relative URL, never touching BunnyCDN — broke on Vercel (`NotSupportedError`) and risked data loss on redeploy. Fixed by routing both through the existing `UploadLocalFileToBunnyCDN` helper, same pattern already used elsewhere in the app. Full detail in `CLAUDE.md` under "Voice notes."
+
+**GameLobbyModal — redesigned from a vertical card list to a poster carousel** ✅
+- Modeled on `CommunityEventsCard.jsx`'s existing fan-carousel pattern: centered poster, dimming neighbors, touch-swipe + chevrons, search-to-jump. Then made mobile-compact (fits one viewport, no scroll) per follow-up feedback, with a purple gradient header banner and a 2-column player grid on mobile. Full detail in `CLAUDE.md` under "GameLobbyModal — poster carousel redesign."
+
+---
+
 ## 📍 PROJECT STATUS (June 23, 2026 - DEVICE STREAMING PHASE 19: FIXED LATE-JOINER URL + ORPHANED PREVIEW TICKER)
 
 ### ✅ LATEST UPDATES (June 23, 2026, newest of all):
@@ -9214,4 +9239,16 @@ Use this tone in onboarding, empty states, and marketing copy.
 
 ### VolumeControl layout rule
 The dismiss (×) button must be the **last child** in the `flex flex-col items-center` column — not `absolute top-1 right-1`. It sits as a centered bottom cap below the mute icon. Absolute positioning breaks the layout and pushes the button to the corner.
+
+---
+
+## Quake 3 / OpenArena port — PAUSED, not abandoned (2026-06-27/28)
+
+Full write-up lives in `CLAUDE.md` ("Quake 3 / OpenArena — PAUSED mid-port" section) — this is just a pointer so it isn't missed.
+
+**One-line status**: client engine (`~/dev-tools/quake3_fork`) now inits cleanly end-to-end in a real headless-browser test (assets, renderer/WebGL, sound, real OpenArena UI VM, a full vid_restart cycle) with zero JS errors, after ~23 found-and-fixed bugs (mostly 2014-era-codebase-vs-modern-Emscripten API drift, plus one real SDL flag-value mismatch that was the single biggest blocker). **Never confirmed**: an actual rendered frame beyond the HTML loading screen (headless Chromium+SwiftShader hangs ~30-40s in), and **multiplayer netcode was never touched at all** — no server runtime test, no client-server connection, nothing about the actual N-player goal this project exists for. Paused by explicit user request ("we can proceed with it some other time"), not a dead end.
+
+**Resume checklist**: (1) test in a real non-headless browser to settle the headless-hang question, (2) run `ioq3ded.js` for the first time, (3) connect a client to it, (4) only then continue the approved plan at `C:\Users\Chinw\.claude\plans\snappy-jumping-giraffe.md` (supervisor, Railway deploy, WeWatch wiring — none started).
+
+All of this work is local-only, outside the WeWatch repo (`~/dev-tools/quake3_fork`, `~/dev-tools/oa_gamelogic`), not committed anywhere, not deployed anywhere.
 

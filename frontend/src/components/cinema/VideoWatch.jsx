@@ -4485,12 +4485,18 @@ export default function VideoWatch() {
           if (!message.file_path && message.media_url) {
             const isSameMedia = currentMedia && currentMedia.mediaUrl === message.media_url;
             if (!isSameMedia) {
+              const _ds = message.duration_seconds;
+              const _dur = _ds > 0
+                ? [Math.floor(_ds / 3600), Math.floor((_ds % 3600) / 60), _ds % 60]
+                    .map(n => String(n).padStart(2, '0')).join(':')
+                : null;
               setCurrentMedia({
                 type: 'upload',
                 mediaUrl: message.media_url,
                 original_name: message.media_title || 'Now Playing',
                 poster_url: message.poster_url || null,
                 file_path: message.media_url, // use URL as identity key so same-media check works
+                duration: _dur,
               });
               const now = Date.now();
               const latency = Math.max(0, now - (message.timestamp || now));

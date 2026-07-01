@@ -118,10 +118,19 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 		if len(playlist) == 0 {
 			return
 		}
+		// Find which track is currently loaded by matching current_media_url — avoids
+		// always restarting at EP1 after a Railway process restart.
+		currentIdx := 0
+		for i, track := range playlist {
+			if track.url == session.CurrentMediaURL {
+				currentIdx = i
+				break
+			}
+		}
 		state = &roomDemoState{
 			sessionID:      session.SessionID,
 			sessionDBID:    session.ID,
-			currentIdx:     0,
+			currentIdx:     currentIdx,
 			mediaStartedAt: session.StartedAt,
 			playlist:       playlist,
 		}
@@ -129,13 +138,13 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 		m.states[room.ID] = state
 		m.mu.Unlock()
 
-		// Estimate how far into the first track we are
+		current := playlist[currentIdx]
 		elapsed := time.Since(session.StartedAt).Seconds()
 		seek := elapsed
-		if dur := playlist[0].durationSeconds; dur > 0 && elapsed >= float64(dur) {
-			seek = 0 // past end, just restart from 0
+		if dur := current.durationSeconds; dur > 0 && elapsed >= float64(dur) {
+			seek = 0
 		}
-		m.broadcastPlay(room.ID, session.SessionID, playlist[0].url, playlist[0].title, playlist[0].posterURL, seek)
+		m.broadcastPlay(room.ID, session.SessionID, current.url, current.title, current.posterURL, seek, current.durationSeconds)
 		return
 	}
 
@@ -147,6 +156,23 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 	current := state.playlist[state.currentIdx]
 	elapsed := time.Since(state.mediaStartedAt)
 
+	// If duration is still unknown, retry probing — this covers the case where the
+	// initial background probe (from startSession) failed or hadn't completed yet.
+	// A goroutine every 60s is cheap; on success it updates both DB and in-memory state.
+	if current.durationSeconds == 0 {
+		go func(item demoTrack, idx int, roomID uint) {
+			if dur := probeMediaDuration(item.url); dur > 0 {
+				m.db.Exec("UPDATE demo_media_library SET duration_seconds = ? WHERE id = ?", dur, item.id)
+				m.mu.Lock()
+				if s := m.states[roomID]; s != nil && idx < len(s.playlist) {
+					s.playlist[idx].durationSeconds = dur
+				}
+				m.mu.Unlock()
+				log.Printf("⏱️  [Demo] Room %d probed duration for track %d: %ds", roomID, item.id, dur)
+			}
+		}(current, state.currentIdx, room.ID)
+	}
+
 	// Always rebroadcast current position on every tick — acts as a sync heartbeat and
 	// recovery signal for clients whose video ended/stalled while the manager was between
 	// advancement ticks (e.g. track ended just after the previous tick, and the client's
@@ -156,7 +182,7 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 	// the ended-track case with a seek_time of 0 for the next track.
 	if current.durationSeconds == 0 || elapsed < time.Duration(current.durationSeconds)*time.Second {
 		seekPos := elapsed.Seconds()
-		m.broadcastPlay(room.ID, session.SessionID, current.url, current.title, current.posterURL, seekPos)
+		m.broadcastPlay(room.ID, session.SessionID, current.url, current.title, current.posterURL, seekPos, current.durationSeconds)
 	}
 
 	if current.durationSeconds > 0 && elapsed >= time.Duration(current.durationSeconds)*time.Second {
@@ -193,7 +219,7 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 			"poster_url":        next.posterURL,
 			"started_at":        now,
 		})
-		m.broadcastPlay(room.ID, session.SessionID, next.url, next.title, next.posterURL, 0)
+		m.broadcastPlay(room.ID, session.SessionID, next.url, next.title, next.posterURL, 0, next.durationSeconds)
 		m.broadcastSessionPreview(session.SessionID, next.posterURL, "")
 		go m.generatePreviewClip(session.ID, session.SessionID, next.url)
 
@@ -268,7 +294,7 @@ func (m *DemoSessionManager) startSession(room models.Room) *roomDemoState {
 	}
 
 	// Tell any clients already in the room to start playing
-	m.broadcastPlay(room.ID, sessionID, first.url, first.title, first.posterURL, 0)
+	m.broadcastPlay(room.ID, sessionID, first.url, first.title, first.posterURL, 0, first.durationSeconds)
 	// Tell lobby so the session card thumbnail shows immediately
 	m.broadcastSessionPreview(sessionID, first.posterURL, "")
 	go m.generatePreviewClip(session.ID, sessionID, first.url)
@@ -334,16 +360,17 @@ func (m *DemoSessionManager) loadPlaylist(roomID uint, watchType string) []demoT
 // separate REST-driven session_status path, which reads current_media_url directly off
 // the session row (correctly updated in the DB) — masking that the live broadcast itself
 // never worked for anyone already connected.
-func (m *DemoSessionManager) broadcastPlay(roomID uint, sessionID, mediaURL, mediaTitle, posterURL string, seekTime float64) {
+func (m *DemoSessionManager) broadcastPlay(roomID uint, sessionID, mediaURL, mediaTitle, posterURL string, seekTime float64, durationSeconds int) {
 	payload := map[string]interface{}{
-		"type":        "playback_control",
-		"command":     "play",
-		"media_url":   mediaURL,
-		"media_title": mediaTitle,
-		"poster_url":  posterURL,
-		"seek_time":   seekTime,
-		"timestamp":   time.Now().UnixMilli(),
-		"session_id":  sessionID,
+		"type":             "playback_control",
+		"command":          "play",
+		"media_url":        mediaURL,
+		"media_title":      mediaTitle,
+		"poster_url":       posterURL,
+		"seek_time":        seekTime,
+		"duration_seconds": durationSeconds,
+		"timestamp":        time.Now().UnixMilli(),
+		"session_id":       sessionID,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

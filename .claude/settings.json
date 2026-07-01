@@ -214,7 +214,11 @@
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch/backend && /snap/go/current/bin/go build ./cmd/server/... ./internal/... 2>&1; echo BACKEND_DONE\")",
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"curl -s -o /dev/null -w '%{http_code}' http://localhost:5173/ ; echo\")",
       "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && git log -3 --format='%H %ai %s' -- internal/handlers/auth.go internal/utils/jwt.go internal/middleware/rate_limit.go internal/handlers/upload_rate_limiter.go 2>/dev/null\")",
-      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && git status --short && echo '---' && git diff --stat HEAD\")"
+      "PowerShell(wsl -d Ubuntu-22.04 -- bash -c \"cd /home/chibuzor_dev/WeWatch/backend && git status --short && echo '---' && git diff --stat HEAD\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch && git log -1 --oneline && git status -sb | head -3 && git log origin/main -1 --oneline\")",
+      "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd /home/chibuzor_dev/WeWatch && git push origin main 2>&1\")",
+      "Bash(cd \"//wsl.localhost/Ubuntu-22.04/home/chibuzor_dev/WeWatch\" && grep -riE \"railway\\\\.app|vercel\\\\.app|VITE_API_BASE_URL\" frontend/.env* frontend/vercel.json vercel.json 2>/dev/null | grep -v \"^Binary\")",
+      "Read(///wsl.localhost/Ubuntu-22.04/home/chibuzor_dev/**)"
     ],
     "additionalDirectories": [
       "\\dev",

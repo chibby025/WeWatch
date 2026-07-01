@@ -23,6 +23,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   const cameraVideoRef = useRef(null); // 📹 Separate ref for PIP camera
   const previousTrackIdRef = useRef(null); // 🔑 Track previous track ID to avoid stopping same track
   const hlsRef = useRef(null); // 📺 hls.js instance for .m3u8 device-stream playback
+  const hoverTimerRef = useRef(null);
   const [isHovering, setIsHovering] = useState(false);
   const [objectFit, setObjectFit] = useState('cover'); // 🎬 Smart aspect-ratio-based display mode
   
@@ -527,6 +528,13 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   // Show volume control only for uploaded media (not LiveShare/screen share)
   const showVolumeControl = mediaItem?.mediaUrl && !muted;
 
+  // Mouse activity shows the volume icon for 1s then auto-hides
+  const handleMouseActivity = () => {
+    setIsHovering(true);
+    clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => setIsHovering(false), 1000);
+  };
+
   // 🎨 ADAPTIVE SPLIT-VIEW: Only log state changes (reduced verbosity)
   // Removed: excessive split-view waiting logs
 
@@ -569,10 +577,10 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   if (layout === 'split-view' && hasBothStreams) {
     console.log('[CinemaVideoPlayer] Rendering split-view with both streams');
     return (
-      <div 
+      <div
         className="w-full h-full relative bg-black"
-        onMouseEnter={() => setIsHovering(true)}
-        onMouseLeave={() => setIsHovering(false)}
+        onMouseMove={handleMouseActivity}
+        onMouseLeave={() => { clearTimeout(hoverTimerRef.current); setIsHovering(false); }}
       >
         {/* Split-view with expandable boxes */}
         <div className={`flex w-full h-full ${
@@ -677,8 +685,8 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         </div>
         
         {/* Volume Control */}
-        {showVolumeControl && isHovering && (
-          <VolumeControl videoRef={videoRef} onDismiss={() => setIsHovering(false)} />
+        {showVolumeControl && (
+          <VolumeControl videoRef={videoRef} iconVisible={isHovering} />
         )}
       </div>
     );
@@ -686,10 +694,10 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
 
   // Default: Screen Share with PIP camera (or single video)
   return (
-    <div 
+    <div
       className="w-full h-full relative bg-black"
-      onMouseEnter={() => setIsHovering(true)}
-      onMouseLeave={() => setIsHovering(false)}
+      onMouseMove={handleMouseActivity}
+      onMouseLeave={() => { clearTimeout(hoverTimerRef.current); setIsHovering(false); }}
     >
       {/* Main video (screen share or single stream) */}
       <video
@@ -739,8 +747,8 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       )}
       
       {/* Volume Control - shows on hover for uploaded media */}
-      {showVolumeControl && isHovering && (
-        <VolumeControl videoRef={videoRef} onDismiss={() => setIsHovering(false)} />
+      {showVolumeControl && (
+        <VolumeControl videoRef={videoRef} iconVisible={isHovering} />
       )}
     </div>
   );
