@@ -2460,6 +2460,7 @@ const LobbyPage = () => {
       navigate(`/rooms/${n.entity_id}`);
     } else if (postTypes.includes(nType)) {
       setActiveTab('watching');
+      setWatchingSubTab('discover');
     } else if (nType === 'dm_received' || nType === 'missed_call') {
       setActiveTab('chats');
       const friend = friendsList.find(f => (f.id || f.ID) === n.entity_id);
@@ -4153,7 +4154,7 @@ const LobbyPage = () => {
                       if (bR !== aR) return bR - aR;
                       return new Date(a.created_at) - new Date(b.created_at);
                     });
-                const collapseMemberRooms = memberRooms.length > 10;
+                const collapseMemberRooms = memberRooms.length > 5;
 
                 // Helper: renders a single room card (shared across all sections)
                 const RoomCard = (room) => (

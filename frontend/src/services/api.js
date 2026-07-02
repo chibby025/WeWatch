@@ -674,7 +674,7 @@ export const getScheduledEvents = async (roomId) => {
 };
 
 // ✅ Get active sessions with pagination (for lobby infinite scroll)
-export const getActiveSessions = async (limit = 10, offset = 0, { signal } = {}) => {
+export const getActiveSessions = async (limit = 50, offset = 0, { signal } = {}) => {
   try {
     const response = await apiClient.get(`/api/sessions/active?limit=${limit}&offset=${offset}`, { signal });
     return response.data;

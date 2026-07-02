@@ -70,7 +70,7 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 	}
 
 	// ✅ Parse pagination parameters
-	limit := 10 // Default
+	limit := 50 // Default — show all active sessions (quality score orders them, not filters)
 	if l := c.Query("limit"); l != "" {
 		if parsedLimit, err := strconv.Atoi(l); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
@@ -86,9 +86,12 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 
 	log.Printf("🔍 [GetAllActiveSessionsHandler] Fetching active sessions for user %d (limit: %d, offset: %d)...", userID, limit, offset)
 	
-	// Get total count for pagination
+	// Get total count for pagination.
+	// 30-min heartbeat window: demo sessions in permanent rooms may have no active VideoWatch tab
+	// keeping the heartbeat alive. Temporary orphaned sessions are caught separately in the
+	// response loop's own cleanup path (is_temporary + 0 members check).
 	var totalCount int64
-	heartbeatCutoff := time.Now().Add(-5 * time.Minute)
+	heartbeatCutoff := time.Now().Add(-30 * time.Minute)
 	if err := DB.Model(&models.WatchSession{}).Where(
 		"ended_at IS NULL AND (last_heartbeat_at IS NULL OR last_heartbeat_at > ?)", heartbeatCutoff,
 	).Count(&totalCount).Error; err != nil {
@@ -122,7 +125,7 @@ func GetAllActiveSessionsHandler(c *gin.Context) {
 	) DESC`
 
 	// Query active sessions with pagination — scored by quality, audience, recency, preview.
-	// Exclude sessions with stale heartbeats (> 5 min since last heartbeat) to suppress ghost sessions.
+	// Exclude sessions with stale heartbeats (> 30 min since last heartbeat) to suppress ghost sessions.
 	var sessions []models.WatchSession
 	if err := DB.Select("watch_sessions.*").
 		Where("watch_sessions.ended_at IS NULL AND (watch_sessions.last_heartbeat_at IS NULL OR watch_sessions.last_heartbeat_at > ?)", heartbeatCutoff).

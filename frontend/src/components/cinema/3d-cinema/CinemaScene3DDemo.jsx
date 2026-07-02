@@ -5960,40 +5960,7 @@ export default function CinemaScene3DDemo() {
       />
       )}
       
-      {/* 📋 DEBUG: Log Export Button (matches VideoWatch style) */}
-      <button
-        onClick={handleExportLogs}
-        style={{
-          position: 'fixed',
-          bottom: '80px',
-          right: '20px',
-          zIndex: 10000,
-          background: '#4CAF50',
-          color: 'white',
-          border: 'none',
-          borderRadius: '50%',
-          width: '60px',
-          height: '60px',
-          fontSize: '28px',
-          cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.2s ease',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'scale(1.1)';
-          e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.4)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'scale(1)';
-          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
-        }}
-        title="Copy All Logs to Clipboard (Ctrl+L)"
-      >
-        📋
-      </button>
+      {/* DEBUG: Log export via Ctrl+L keyboard shortcut only (button hidden) */}
 
       {/* Left Sidebar */}
       {isLeftSidebarOpen && (

@@ -321,16 +321,17 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
 
     setLoading(true);
     try {
-      // Upload image first if a new file was selected
+      // Upload image first if a new file was selected; don't call onUpdate here —
+      // the subsequent room settings PUT re-fetches the full room from DB (including
+      // the updated image_url) so a single onUpdate at the end carries everything.
       if (imageFile) {
         setUploadingImage(true);
         try {
           const formDataImg = new FormData();
           formDataImg.append('image', imageFile);
-          const imgResponse = await apiClient.put(`/api/rooms/${roomId}/image`, formDataImg, {
+          await apiClient.put(`/api/rooms/${roomId}/image`, formDataImg, {
             headers: { 'Content-Type': undefined },
           });
-          onUpdate({ ...room, image_url: imgResponse.data.image_url });
           setImageFile(null);
         } catch (imgError) {
           console.error('Failed to upload image:', imgError);
