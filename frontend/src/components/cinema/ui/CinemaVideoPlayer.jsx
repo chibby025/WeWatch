@@ -18,6 +18,8 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   muted = false, // 👈 NEW: default to false (so 2D mode works unchanged)
   playbackPositionRef, // 🎯 Ref containing adjusted seek time from latency compensation
   layout = 'screen-share', // 'solo-view' | 'screen-share' | 'split-view'
+  subtitleUrl = null, // Blob URL to a VTT subtitle track (set by host via WS)
+  ducked = false,     // When true, VolumeControl smoothly reduces movie audio (mic active)
 }, ref) {
   const videoRef = useRef(null);
   const cameraVideoRef = useRef(null); // 📹 Separate ref for PIP camera
@@ -56,6 +58,35 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
     return () => video.removeEventListener('timeupdate', handleTimeUpdateEvent);
   }, [onTimeUpdate]);
 
+  // 📝 Subtitle track — dynamically add/remove a VTT track on the video element.
+  // Uses DOM manipulation rather than JSX children so the track loads reliably
+  // even when added after the video is already playing.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    // Remove any previously-added dynamic subtitle track
+    Array.from(video.querySelectorAll('track[data-subtitle="true"]')).forEach(t => t.remove());
+    if (!subtitleUrl) return;
+    const track = document.createElement('track');
+    track.kind = 'subtitles';
+    track.label = 'Subtitles';
+    track.src = subtitleUrl;
+    track.default = true;
+    track.setAttribute('data-subtitle', 'true');
+    video.appendChild(track);
+    // Force the newly-added track into "showing" mode after the browser loads it
+    const timer = setTimeout(() => {
+      const tracks = video.textTracks;
+      for (let i = 0; i < tracks.length; i++) {
+        tracks[i].mode = tracks[i].label === 'Subtitles' ? 'showing' : 'hidden';
+      }
+    }, 150);
+    return () => {
+      clearTimeout(timer);
+      Array.from(video.querySelectorAll('track[data-subtitle="true"]')).forEach(t => t.remove());
+    };
+  }, [subtitleUrl]);
+
   // 🎬 Smart aspect ratio detection - TikTok-style adaptive display
   useEffect(() => {
     const video = videoRef.current;
@@ -64,7 +95,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
     const updateObjectFit = () => {
       const videoWidth = video.videoWidth;
       const videoHeight = video.videoHeight;
-      
+
       if (!videoWidth || !videoHeight) return;
 
       const videoAspect = videoWidth / videoHeight;
@@ -688,7 +719,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         
         {/* Volume Control */}
         {showVolumeControl && (
-          <VolumeControl videoRef={videoRef} iconVisible={isHovering} />
+          <VolumeControl videoRef={videoRef} iconVisible={isHovering} ducked={ducked} />
         )}
       </div>
     );
@@ -752,7 +783,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
       
       {/* Volume Control - shows on hover for uploaded media */}
       {showVolumeControl && (
-        <VolumeControl videoRef={videoRef} iconVisible={isHovering} />
+        <VolumeControl videoRef={videoRef} iconVisible={isHovering} ducked={ducked} />
       )}
     </div>
   );

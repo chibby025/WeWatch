@@ -1112,7 +1112,6 @@ const LobbyPage = () => {
         return false;
       });
 
-      console.log(`🔍 [Sessions] API returned ${rawSessions.length}, after frontend filter: ${filtered.length}`, filtered.map(s => `${s.session_id}(${s.is_public ? 'pub' : 'priv'},member=${s.is_member})`));
       
       const fp = _sessionsFp(filtered);
       if (fp !== _lobbyCache.sessionsFp) {
@@ -1133,23 +1132,19 @@ const LobbyPage = () => {
         // If the API returned nothing, preserve existing cards — a transient empty result
         // (heartbeat gap, momentary network glitch, WS-reconnect re-fetch race) must not
         // wipe the feed. Real session removals are handled by the session_ended WS message.
-        if (filtered.length === 0) {
-          console.log(`🔍 [Sessions] Pruning skipped — API returned 0, keeping ${prev.data.length} existing cards`);
-          return prev;
-        }
+        if (filtered.length === 0) return prev;
         const filteredMap = new Map(filtered.map(s => [s.session_id, s]));
         // Use the FRESH object from this fetch whenever the session reappeared in it;
         // only fall back to the stale object for the user's own hosted/member session
         // when it didn't come back at all this time (scored below limit cutoff etc.)
         const pruned = prev.data
-          .filter(s => filteredMap.has(s.session_id) || s.host_id === authenticatedUserID || s.is_member === true)
+          .filter(s => filteredMap.has(s.session_id) || s.host_id === authenticatedUserID || s.is_member === true || !s.is_temporary)
           .map(s => filteredMap.get(s.session_id) || s);
         const prunedIds = new Set(pruned.map(s => s.session_id));
         const newSessions = filtered.filter(s => !prunedIds.has(s.session_id));
         const merged = [...newSessions, ...pruned];
         const fpOf = (arr) => arr.map(s => `${s.session_id}:${s.poster_url || ''}:${s.preview_url || ''}:${s.member_count ?? ''}`).join('|');
         if (fpOf(merged) === fpOf(prev.data)) return prev;
-        console.log(`🔍 [Sessions] Feed updated: ${prev.data.length} → ${merged.length} cards`);
         return { ...prev, data: merged };
       });
     } catch (err) {
@@ -6657,7 +6652,7 @@ const LobbyPage = () => {
             // Determine chat title based on watch type
             const chatTitle = session.watch_type === 'classroom' && session.class_type === 'lecture_hall'
               ? 'Class Chat'
-              : 'Watch Party Chat';
+              : 'WatchOut Chat';
 
             return (
               <div 

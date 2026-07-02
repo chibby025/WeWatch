@@ -263,6 +263,34 @@ export default function LeftSidebar({
   const browseFilesRef = useRef(null);
   const playingNowRef = useRef(null);
   const ghostModeRef = useRef(null);
+  const subtitleFileRef = useRef(null);
+  const [hasSubtitles, setHasSubtitles] = useState(false);
+
+  const srtToVtt = (srt) => {
+    const vtt = srt
+      .replace(/\r\n/g, '\n')
+      .replace(/^\d+\n/gm, '')
+      .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2')
+      .trim();
+    return 'WEBVTT\n\n' + vtt;
+  };
+
+  const handleSubtitleSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      let content = ev.target.result;
+      if (file.name.toLowerCase().endsWith('.srt')) {
+        content = srtToVtt(content);
+      }
+      sendMessage?.({ type: 'subtitle_added', content });
+      setHasSubtitles(true);
+      toast.success('Subtitles added');
+    };
+    reader.readAsText(file);
+  };
   const liveShareRef = useRef(null);
   const watchFromRef = useRef(null);
   const leftSidebarTourShown = useRef(false);
@@ -1347,10 +1375,43 @@ export default function LeftSidebar({
                 <p className="text-gray-500 text-xs sm:text-sm">No media playing</p>
               )}
 
+              {/* Subtitle upload — host only, sends .vtt/.srt content over WS */}
+              {isHostProp && currentMedia && (
+                <div className="mt-2 mb-3">
+                  <input
+                    ref={subtitleFileRef}
+                    type="file"
+                    accept=".vtt,.srt"
+                    className="hidden"
+                    onChange={handleSubtitleSelect}
+                  />
+                  <button
+                    onClick={() => subtitleFileRef.current?.click()}
+                    className="w-full text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 rounded-lg px-3 py-1.5 transition-colors text-left"
+                  >
+                    📄 Add Subtitles (.vtt / .srt)
+                  </button>
+                  {hasSubtitles && (
+                    <button
+                      onClick={() => {
+                        setHasSubtitles(false);
+                        sendMessage?.({ type: 'subtitle_removed' });
+                        toast.success('Subtitles removed');
+                      }}
+                      className="mt-1 w-full text-xs text-red-400 hover:text-red-300 border border-red-900 hover:border-red-700 rounded-lg px-3 py-1.5 transition-colors text-left"
+                    >
+                      ✕ Remove Subtitles
+                    </button>
+                  )}
+                </div>
+              )}
+
               <h4 className="text-sm sm:text-base font-semibold text-gray-400 mb-2">PLAYLIST</h4>
-              {playlist.length > 0 ? (
+              {(() => {
+                const displayPlaylist = playlist.filter(item => item.ID !== currentMedia?.ID);
+                return displayPlaylist.length > 0 ? (
                 <div className="space-y-2">
-                  {playlist.map((item) => (
+                  {displayPlaylist.map((item) => (
                     <div
                       key={item.ID}
                       className={`bg-gray-800 rounded-lg p-2 sm:p-3 ${
@@ -1468,7 +1529,8 @@ export default function LeftSidebar({
                 </div>
               ) : (
                 <p className="text-gray-500 text-sm">No media uploaded</p>
-              )}
+              );
+              })()}
             </div>
           </div>
         </div>

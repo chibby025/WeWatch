@@ -270,6 +270,42 @@ const Taskbar = ({
     if (!currentGame) setIsMinimized(false);
   }, [currentGame]);
 
+  // Full pill drag (always available, not just in game mode)
+  const [pillPos, setPillPos] = useState(null); // null = centered default; {x, y} = dragged position
+  const pillDragRef = useRef(null); // { startX, startY, originX, originY, moved }
+  const pillRef = useRef(null);
+
+  const handlePillPointerDown = (e) => {
+    // Don't steal clicks on interactive elements inside the pill
+    if (e.target.closest('button, input, select, a')) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    const current = pillPos || { x: window.innerWidth / 2 - (pillRef.current?.offsetWidth ?? 300) / 2, y: window.innerHeight - 70 };
+    pillDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: current.x,
+      originY: current.y,
+      moved: false,
+    };
+  };
+  const handlePillPointerMove = (e) => {
+    const drag = pillDragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) drag.moved = true;
+    const pw = pillRef.current?.offsetWidth ?? 300;
+    const ph = pillRef.current?.offsetHeight ?? 52;
+    setPillPos({
+      x: Math.min(Math.max(drag.originX + dx, 8), window.innerWidth - pw - 8),
+      y: Math.min(Math.max(drag.originY + dy, 8), window.innerHeight - ph - 8),
+    });
+  };
+  const handlePillPointerUp = (e) => {
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    pillDragRef.current = null;
+  };
+
   const MINIMIZED_SIZE = 52;
   const clampToViewport = (x, y) => ({
     x: Math.min(Math.max(x, 8), window.innerWidth - MINIMIZED_SIZE - 8),
@@ -398,13 +434,21 @@ const Taskbar = ({
 
   // Floating pill — fades in/out via opacity + scale instead of height-collapse,
   // since it no longer spans the full width or sits flush against the edge.
+  // When pillPos is set (user has dragged it), override centered positioning.
   const taskbarStyle = {
     position: 'fixed',
-    bottom: '20px',
-    left: '50%',
-    transform: isVisible
-      ? 'translateX(-50%) translateY(0) scale(1)'
-      : 'translateX(-50%) translateY(12px) scale(0.95)',
+    ...(pillPos ? {
+      left: pillPos.x,
+      top: pillPos.y,
+      bottom: 'auto',
+      transform: isVisible ? 'scale(1)' : 'scale(0.95)',
+    } : {
+      bottom: '20px',
+      left: '50%',
+      transform: isVisible
+        ? 'translateX(-50%) translateY(0) scale(1)'
+        : 'translateX(-50%) translateY(12px) scale(0.95)',
+    }),
     opacity: isVisible ? 1 : 0,
     pointerEvents: isVisible ? 'auto' : 'none',
     background: 'linear-gradient(90deg, #9333ea, #2563eb)',
@@ -419,6 +463,8 @@ const Taskbar = ({
     zIndex: 1000,
     maxWidth: '95vw',
     overflowX: 'auto',
+    cursor: pillDragRef.current?.moved ? 'grabbing' : 'grab',
+    touchAction: 'none',
   };
 
   if (isMinimized && minimizedPos) {
@@ -457,10 +503,14 @@ const Taskbar = ({
   return (
     <>
       <div
+        ref={pillRef}
         style={taskbarStyle}
         className="taskbar-container scrollbar-hide"
         onMouseEnter={handlePillMouseEnter}
         onMouseLeave={handlePillMouseLeave}
+        onPointerDown={handlePillPointerDown}
+        onPointerMove={handlePillPointerMove}
+        onPointerUp={handlePillPointerUp}
       >
         {currentGame && (
           <button

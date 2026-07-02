@@ -639,6 +639,8 @@ export default function VideoWatch() {
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [roomChatUnreadCount, setRoomChatUnreadCount] = useState(0);
+  const [subtitleUrl, setSubtitleUrl] = useState(null);
   const [sessionChatMessages, setSessionChatMessages] = useState([]);
   const [newSessionMessage, setNewSessionMessage] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -2637,9 +2639,17 @@ export default function VideoWatch() {
   // Handle chat modal
   const openChat = () => {
     setShowChatHome(true);
+    setRoomChatUnreadCount(0);
   };
 
   // Shadow refs — let the stable loadeddata listener read current state without stale closures
+  const chatIsActiveRef      = useRef(false);
+  const subtitleUrlRef       = useRef(null);
+  useEffect(() => { chatIsActiveRef.current = showChatHome || isChatOpen; }, [showChatHome, isChatOpen]);
+  useEffect(() => { subtitleUrlRef.current = subtitleUrl; }, [subtitleUrl]);
+  // Revoke subtitle blob URL on unmount to avoid memory leaks
+  useEffect(() => () => { if (subtitleUrlRef.current) URL.revokeObjectURL(subtitleUrlRef.current); }, []);
+
   const isPlayingRef         = useRef(isPlaying);
   const pendingSeekTimeRef   = useRef(pendingSeekTime);
   const liveShareModeRef     = useRef(liveShareMode);
@@ -4602,7 +4612,28 @@ export default function VideoWatch() {
               const exists = prev.some(msg => msg.ID === chatMsg.ID);
               return exists ? prev : [...prev, chatMsg];
             });
+            if (!chatIsActiveRef.current) {
+              setRoomChatUnreadCount(prev => prev + 1);
+            }
           }
+          break;
+        case "subtitle_added": {
+          const content = message.content || message.data?.content;
+          if (content) {
+            const blob = new Blob([content], { type: 'text/vtt' });
+            if (subtitleUrlRef.current) URL.revokeObjectURL(subtitleUrlRef.current);
+            const url = URL.createObjectURL(blob);
+            subtitleUrlRef.current = url;
+            setSubtitleUrl(url);
+          }
+          break;
+        }
+        case "subtitle_removed":
+          if (subtitleUrlRef.current) {
+            URL.revokeObjectURL(subtitleUrlRef.current);
+            subtitleUrlRef.current = null;
+          }
+          setSubtitleUrl(null);
           break;
         case "reaction":
           // ✅ Match against sessionStatus.id OR URL session_id
@@ -5552,7 +5583,10 @@ export default function VideoWatch() {
     // Demo rooms use absolute CDN URLs; their playlist is empty (no TemporaryMediaItems).
     // Loop immediately so there's no blank gap — the DemoSessionManager's 60s tick will
     // override with the next track's playback_control when it's ready to advance.
-    if (currentMedia?.mediaUrl?.startsWith('http') && videoPlayerRef.current) {
+    // HLS device-stream manifests also start with http but must NOT loop via this path —
+    // they are real user uploads with a definitive end.
+    const isCDNDemoUrl = currentMedia?.mediaUrl?.startsWith('http') && !currentMedia?.mediaUrl?.endsWith('.m3u8');
+    if (isCDNDemoUrl && videoPlayerRef.current) {
       videoPlayerRef.current.currentTime = 0;
       videoPlayerRef.current.play().catch(() => {});
       return;
@@ -6501,6 +6535,8 @@ export default function VideoWatch() {
                       onError={handleError}
                       onPauseBroadcast={handlePauseBroadcast}
                       onTimeUpdate={handleTimeUpdate}
+                      subtitleUrl={subtitleUrl}
+                      ducked={isAudioActive}
                     />
                   )}
                 </div>
@@ -7035,6 +7071,7 @@ export default function VideoWatch() {
           onCameraSwitch={switchCamera}
           broadcastPermissions={broadcastPermissions}
           unreadMessages={unreadMessages}
+          roomChatUnreadCount={roomChatUnreadCount}
         />
 
       {/* ⚙️ Settings modal — opened via LeftSidebar Settings button */}
@@ -7242,7 +7279,7 @@ export default function VideoWatch() {
         >
           {/* Header */}
           <div className="flex justify-between items-center p-3 border-b border-gray-700">
-            <h3 className="text-white font-medium">Watch Party Chat</h3>
+            <h3 className="text-white font-medium">WatchOut Chat</h3>
             <button 
               onClick={() => setIsChatOpen(false)}
               className="text-gray-400 hover:text-white"
@@ -7401,6 +7438,7 @@ export default function VideoWatch() {
           onOpenRoomChat={() => {
             setShowChatHome(false);
             setIsChatOpen(true);
+            setRoomChatUnreadCount(0);
           }}
           onOpenPrivateChat={(user) => {
             setShowChatHome(false);

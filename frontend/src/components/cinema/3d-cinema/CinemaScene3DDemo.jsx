@@ -6124,7 +6124,7 @@ export default function CinemaScene3DDemo() {
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex justify-between items-center p-3 border-b border-gray-700">
-            <h3 className="text-white font-medium">Watch Party Chat</h3>
+            <h3 className="text-white font-medium">WatchOut Chat</h3>
             <button 
               onClick={() => setIsChatOpen(false)}
               className="text-gray-400 hover:text-white"
