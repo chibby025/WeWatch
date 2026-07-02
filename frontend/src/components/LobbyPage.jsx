@@ -1087,7 +1087,7 @@ const LobbyPage = () => {
       // 2. Show all public sessions
       // 3. Show private sessions only if current user is a member
       const rawSessions = data.sessions || [];
-      
+
       const now = Date.now();
       const filtered = rawSessions.filter(s => {
         // Drop orphaned instant sessions: temporary + 0 members + started > 30s ago.
@@ -1097,20 +1097,22 @@ const LobbyPage = () => {
           const startedAt = s.started_at ? new Date(s.started_at).getTime() : 0;
           if (now - startedAt > 30_000) return false;
         }
-        
+
         // Show all public sessions
         if (s.is_public) return true;
-        
-        // For private sessions, check if current user is a member
+
+        // For private sessions, check if current user is a member.
+        // API returns is_member: bool (not member_ids array) — check that first.
         if (!s.is_public && authenticatedUserID) {
-          // Check if user is in the members array or is the host
-          const isMember = s.member_ids?.includes(authenticatedUserID) || s.host_id === authenticatedUserID;
+          const isMember = s.is_member || s.member_ids?.includes(authenticatedUserID) || s.host_id === authenticatedUserID;
           return isMember;
         }
-        
+
         // Hide private sessions if user not authenticated
         return false;
       });
+
+      console.log(`🔍 [Sessions] API returned ${rawSessions.length}, after frontend filter: ${filtered.length}`, filtered.map(s => `${s.session_id}(${s.is_public ? 'pub' : 'priv'},member=${s.is_member})`));
       
       const fp = _sessionsFp(filtered);
       if (fp !== _lobbyCache.sessionsFp) {
@@ -1128,15 +1130,17 @@ const LobbyPage = () => {
       // disappear from the feed every time fetchSessionsData re-runs on WS reconnect.
       setSessionsPage(prev => {
         if (prev.data.length === 0) return { ...prev, data: filtered };
+        // If the API returned nothing, preserve existing cards — a transient empty result
+        // (heartbeat gap, momentary network glitch, WS-reconnect re-fetch race) must not
+        // wipe the feed. Real session removals are handled by the session_ended WS message.
+        if (filtered.length === 0) {
+          console.log(`🔍 [Sessions] Pruning skipped — API returned 0, keeping ${prev.data.length} existing cards`);
+          return prev;
+        }
         const filteredMap = new Map(filtered.map(s => [s.session_id, s]));
-        // BUG FIX (2026-06-24): this used to keep the OLD prev.data object verbatim
-        // for any session that already existed in the list — meaning poster_url/
-        // preview_url/member_count etc. could never actually update after a
-        // session's first appearance in the feed, no matter how many times this
-        // function ran. Use the FRESH object from this fetch whenever the session
-        // reappeared in it; only fall back to the stale object for the user's own
-        // hosted/member session when it didn't come back at all this time (e.g. it
-        // scored below the top-10 cutoff) — there's nothing fresher to use there.
+        // Use the FRESH object from this fetch whenever the session reappeared in it;
+        // only fall back to the stale object for the user's own hosted/member session
+        // when it didn't come back at all this time (scored below limit cutoff etc.)
         const pruned = prev.data
           .filter(s => filteredMap.has(s.session_id) || s.host_id === authenticatedUserID || s.is_member === true)
           .map(s => filteredMap.get(s.session_id) || s);
@@ -1145,6 +1149,7 @@ const LobbyPage = () => {
         const merged = [...newSessions, ...pruned];
         const fpOf = (arr) => arr.map(s => `${s.session_id}:${s.poster_url || ''}:${s.preview_url || ''}:${s.member_count ?? ''}`).join('|');
         if (fpOf(merged) === fpOf(prev.data)) return prev;
+        console.log(`🔍 [Sessions] Feed updated: ${prev.data.length} → ${merged.length} cards`);
         return { ...prev, data: merged };
       });
     } catch (err) {
