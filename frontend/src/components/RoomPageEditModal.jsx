@@ -82,9 +82,15 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
         is_public: room.is_public !== undefined ? room.is_public : true,
       });
       
-      // Set existing image preview
-      setImagePreview(room.image_url || null);
-      setImageFile(null);
+      // Only reset image preview if the user hasn't already selected a new file.
+      // Without this guard, a room prop change from a WS update wipes a pending
+      // file selection before the user can click "Upload Image".
+      setImageFile(prev => {
+        if (!prev) {
+          setImagePreview(room.image_url || null);
+        }
+        return prev;
+      });
     }
   }, [room]);
 
@@ -298,16 +304,16 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     // Handle both lowercase 'id' and uppercase 'ID' from backend
     const roomId = room?.id || room?.ID;
-    
+
     if (!room || !roomId) {
       toast.error('Room information is missing');
       console.error('Room prop is:', room);
       return;
     }
-    
+
     if (!formData.name.trim()) {
       toast.error('Room name is required');
       return;
@@ -315,6 +321,26 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
 
     setLoading(true);
     try {
+      // Upload image first if a new file was selected
+      if (imageFile) {
+        setUploadingImage(true);
+        try {
+          const formDataImg = new FormData();
+          formDataImg.append('image', imageFile);
+          const imgResponse = await apiClient.put(`/api/rooms/${roomId}/image`, formDataImg, {
+            headers: { 'Content-Type': undefined },
+          });
+          onUpdate({ ...room, image_url: imgResponse.data.image_url });
+          setImageFile(null);
+        } catch (imgError) {
+          console.error('Failed to upload image:', imgError);
+          toast.error(imgError.response?.data?.error || 'Failed to upload image');
+          return;
+        } finally {
+          setUploadingImage(false);
+        }
+      }
+
       console.log('Updating room:', roomId, 'with data:', formData);
       // Always set show_host and show_description to true
       const updateData = {
@@ -323,7 +349,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
         show_description: true
       };
       const response = await apiClient.put(`/api/rooms/${roomId}`, updateData);
-      
+
       // Update local state to reflect saved changes
       setFormData(prev => ({
         ...prev,
@@ -334,7 +360,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
         show_description: true,
         is_public: response.data.is_public !== undefined ? response.data.is_public : prev.is_public,
       }));
-      
+
       onUpdate(response.data);
       toast.success('Room updated successfully');
       onClose();
