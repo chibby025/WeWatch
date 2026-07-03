@@ -397,6 +397,7 @@ function CinemaCamera({
         />
       </PerspectiveCamera>
       {/* OrbitControls - locked mode prevents movement but allows looking around */}
+      {/* enableDamping=false on mobile: damping keeps RAF running after every touch-end, wasting GPU */}
       <OrbitControls
         ref={controlsRef}
         enableDamping={!isMobile}
@@ -844,6 +845,15 @@ const CinemaScene3D = forwardRef(({
     <div className="relative w-full h-screen bg-black overflow-hidden">
       {/* 3D Canvas */}
       <div className="absolute inset-0">
+        {/*
+          MOBILE GL SETTINGS (added 2026-07):
+          - dpr capped at 1.5 on mobile (vs 2.0 on desktop) — halves pixel fill cost on high-DPI phones
+          - antialias disabled on mobile — MSAA is expensive and imperceptible on small screens
+          - OrbitControls enableDamping=false on mobile — damping causes continuous RAF after
+            finger-lift even with no visible movement; disabling stops the idle render loop
+          These are reversed in the Phase 3 Capacitor build (VITE_CAPACITOR=true) where
+          WKWebView (iOS Metal) and Android WebView have better GPU throughput.
+        */}
         <Canvas
           shadows={false}
           frameloop={isTabVisible ? 'always' : 'demand'}
@@ -910,79 +920,53 @@ const CinemaScene3D = forwardRef(({
                   castShadow={false}
                 />
           
-          {/* Additional directional lighting — skipped on mobile to reduce GPU load */}
+          {/*
+            MOBILE LIGHT REDUCTION (added 2026-07):
+            Dark-mode atmosphere depends heavily on the corner/center fill lights (blue hues)
+            and wall sconces, so those are kept on mobile.
+            Safe to drop on mobile because they have negligible dark-mode value:
+              - 2 directional lights  (intensity 0.02 when dark — essentially invisible)
+              - 3 back wall lights    (behind the viewer's FOV in the normal cinema seat)
+              - 4 outer wall sconces  (kept 1 per side at the middle position for depth)
+            Restored in full when Phase 3 Capacitor build ships (VITE_CAPACITOR=true) —
+            WKWebView/Android WebView have direct GPU access with no Chrome security overhead.
+          */}
+
+          {/* Directional lights — MOBILE: skipped (0.02 dark-mode intensity, negligible) */}
           {!isMobile && <directionalLight position={[0, 10, 0]} intensity={lightsOn ? 1.0 : 0.02} castShadow={false} color={lightsOn ? "#ffffff" : "#4169e1"} />}
           {!isMobile && <directionalLight position={[0, -10, 0]} intensity={lightsOn ? 1.0 : 0.02} castShadow={false} />}
 
-          {/* Corner fill lights — skipped on mobile */}
-          {!isMobile && <pointLight position={[10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />}
-          {!isMobile && <pointLight position={[-10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />}
-          {!isMobile && <pointLight position={[10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />}
-          {!isMobile && <pointLight position={[-10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />}
-          {!isMobile && <pointLight position={[0, 5, 0]} intensity={lightsOn ? 3.2 : 1.5} distance={100} color={lightsOn ? "#ffffff" : "#5a9fd4"} />}
+          {/*
+            Corner/center fill lights — KEPT ON MOBILE.
+            In dark mode these are the main source of the blue atmospheric glow
+            (intensity 1.2–1.5, #4682b4/#5a9fd4) that makes the cinema look premium.
+            Removing them makes dark mode look like a plain black room.
+          */}
+          <pointLight position={[10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[-10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[-10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
+          <pointLight position={[0, 5, 0]} intensity={lightsOn ? 3.2 : 1.5} distance={100} color={lightsOn ? "#ffffff" : "#5a9fd4"} />
 
-                {/* Blue ambient wall lights — skipped on mobile to reduce GPU load */}
-                {!isMobile && <>
-                {/* Left wall blue lights */}
-                <pointLight
-                  position={[-14, 4, -10]}
-                  intensity={lightsOn ? 3.2 : wallDark}
-                  distance={20}
-                  color="#4a90e2"
-                />
-                <pointLight
-                  position={[-14, 4, 0]}
-                  intensity={lightsOn ? 3.2 : wallDark}
-                  distance={20}
-                  color="#4a90e2"
-                />
-                <pointLight
-                  position={[-14, 4, 10]}
-                  intensity={lightsOn ? 3.2 : wallDark}
-                  distance={20}
-                  color="#4a90e2"
-                />
+                {/*
+                  Wall sconces — MOBILE: keep 1 per side (middle position) for depth,
+                  drop the front and rear sconces (4 lights saved).
+                  Back wall lights dropped entirely — not in viewer's FOV from any seat.
+                */}
+                {/* Left wall — middle sconce kept; front/rear dropped on mobile */}
+                {!isMobile && <pointLight position={[-14, 4, -10]} intensity={lightsOn ? 3.2 : wallDark} distance={20} color="#4a90e2" />}
+                <pointLight position={[-14, 4, 0]} intensity={lightsOn ? 3.2 : wallDark} distance={20} color="#4a90e2" />
+                {!isMobile && <pointLight position={[-14, 4, 10]} intensity={lightsOn ? 3.2 : wallDark} distance={20} color="#4a90e2" />}
 
-                {/* Right wall blue lights */}
-                <pointLight
-                  position={[14, 4, -10]}
-                  intensity={lightsOn ? 3.2 : wallDark}
-                  distance={20}
-                  color="#4a90e2"
-                />
-                <pointLight
-                  position={[14, 4, 0]}
-                  intensity={lightsOn ? 3.2 : wallDark}
-                  distance={20}
-                  color="#4a90e2"
-                />
-                <pointLight
-                  position={[14, 4, 10]}
-                  intensity={lightsOn ? 3.2 : wallDark}
-                  distance={20}
-                  color="#4a90e2"
-                />
+                {/* Right wall — middle sconce kept; front/rear dropped on mobile */}
+                {!isMobile && <pointLight position={[14, 4, -10]} intensity={lightsOn ? 3.2 : wallDark} distance={20} color="#4a90e2" />}
+                <pointLight position={[14, 4, 0]} intensity={lightsOn ? 3.2 : wallDark} distance={20} color="#4a90e2" />
+                {!isMobile && <pointLight position={[14, 4, 10]} intensity={lightsOn ? 3.2 : wallDark} distance={20} color="#4a90e2" />}
 
-                {/* Back wall blue lights */}
-                <pointLight
-                  position={[-10, 4, 15]}
-                  intensity={lightsOn ? 1.3 : pathwayDark}
-                  distance={18}
-                  color="#5a9fd4"
-                />
-                <pointLight
-                  position={[0, 4, 15]}
-                  intensity={lightsOn ? 1.3 : pathwayDark}
-                  distance={18}
-                  color="#5a9fd4"
-                />
-                <pointLight
-                  position={[10, 4, 15]}
-                  intensity={lightsOn ? 1.3 : pathwayDark}
-                  distance={18}
-                  color="#5a9fd4"
-                />
-                </>}
+                {/* Back wall lights — MOBILE: skipped (behind viewer's FOV in all seats) */}
+                {!isMobile && <pointLight position={[-10, 4, 15]} intensity={lightsOn ? 1.3 : pathwayDark} distance={18} color="#5a9fd4" />}
+                {!isMobile && <pointLight position={[0, 4, 15]} intensity={lightsOn ? 1.3 : pathwayDark} distance={18} color="#5a9fd4" />}
+                {!isMobile && <pointLight position={[10, 4, 15]} intensity={lightsOn ? 1.3 : pathwayDark} distance={18} color="#5a9fd4" />}
               </>
             );
           })()}
