@@ -30,6 +30,7 @@ function CinemaCamera({
   onCameraMove, // 🎯 NEW: Callback for Position Calculator
   cameraLookAt, // ✅ NEW: LookAt target from cinemaSeats.json center view
   isChatActive, // 🚫 Disable keyboard bindings when chat is open
+  isMobile = false, // 📱 Mobile flag — disables damping to prevent continuous RAF
 }) {
   const cameraRef = useRef();
   const { camera } = useThree();
@@ -398,7 +399,7 @@ function CinemaCamera({
       {/* OrbitControls - locked mode prevents movement but allows looking around */}
       <OrbitControls
         ref={controlsRef}
-        enableDamping
+        enableDamping={!isMobile}
         dampingFactor={0.05}
         enablePan={!isViewLocked}        // Disable panning when locked
         enableZoom={true}                 // Allow zoom in both modes
@@ -846,15 +847,16 @@ const CinemaScene3D = forwardRef(({
         <Canvas
           shadows={false}
           frameloop={isTabVisible ? 'always' : 'demand'}
+          dpr={[1, isMobile ? 1.5 : 2]}
           gl={{
-            antialias: true,
+            antialias: !isMobile,
             alpha: false,
             powerPreference: 'high-performance',
           }}
           flat
         >
           {/* Camera positioned INSIDE the cinema box */}
-          <CinemaCamera 
+          <CinemaCamera
             userSeatPosition={activeCameraPosition}   // ✅
             initialRotation={activeCameraRotation}
             onPositionUpdate={handlePositionUpdate}
@@ -866,6 +868,7 @@ const CinemaScene3D = forwardRef(({
             onControlsReady={(ref) => { controlsRef.current = ref.current; }}
             onCameraMove={onCameraMove} // 🎯 Pass callback for Position Calculator
             isChatActive={isChatActive} // 🚫 Pass chat state to disable keyboard controls
+            isMobile={isMobile}
           />
 
           {/* Dynamic lighting - toggle between bright and dark */}
@@ -907,77 +910,79 @@ const CinemaScene3D = forwardRef(({
                   castShadow={false}
                 />
           
-          {/* Additional directional lighting */}
-          <directionalLight position={[0, 10, 0]} intensity={lightsOn ? 1.0 : 0.02} castShadow={false} color={lightsOn ? "#ffffff" : "#4169e1"} />
-          <directionalLight position={[0, -10, 0]} intensity={lightsOn ? 1.0 : 0.02} castShadow={false} />
-          
-          {/* Corner fill lights */}
-          <pointLight position={[10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
-          <pointLight position={[-10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
-          <pointLight position={[10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
-          <pointLight position={[-10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />
-          <pointLight position={[0, 5, 0]} intensity={lightsOn ? 3.2 : 1.5} distance={100} color={lightsOn ? "#ffffff" : "#5a9fd4"} />
+          {/* Additional directional lighting — skipped on mobile to reduce GPU load */}
+          {!isMobile && <directionalLight position={[0, 10, 0]} intensity={lightsOn ? 1.0 : 0.02} castShadow={false} color={lightsOn ? "#ffffff" : "#4169e1"} />}
+          {!isMobile && <directionalLight position={[0, -10, 0]} intensity={lightsOn ? 1.0 : 0.02} castShadow={false} />}
 
-                {/* Blue ambient wall lights - always on, more visible when main lights off */}
+          {/* Corner fill lights — skipped on mobile */}
+          {!isMobile && <pointLight position={[10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />}
+          {!isMobile && <pointLight position={[-10, 5, 10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />}
+          {!isMobile && <pointLight position={[10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />}
+          {!isMobile && <pointLight position={[-10, 5, -10]} intensity={lightsOn ? 3.2 : 1.2} distance={100} color={lightsOn ? "#ffffff" : "#4682b4"} />}
+          {!isMobile && <pointLight position={[0, 5, 0]} intensity={lightsOn ? 3.2 : 1.5} distance={100} color={lightsOn ? "#ffffff" : "#5a9fd4"} />}
+
+                {/* Blue ambient wall lights — skipped on mobile to reduce GPU load */}
+                {!isMobile && <>
                 {/* Left wall blue lights */}
-                <pointLight 
-                  position={[-14, 4, -10]} 
-                  intensity={lightsOn ? 3.2 : wallDark} 
-                  distance={20} 
+                <pointLight
+                  position={[-14, 4, -10]}
+                  intensity={lightsOn ? 3.2 : wallDark}
+                  distance={20}
                   color="#4a90e2"
                 />
-                <pointLight 
-                  position={[-14, 4, 0]} 
-                  intensity={lightsOn ? 3.2 : wallDark} 
-                  distance={20} 
+                <pointLight
+                  position={[-14, 4, 0]}
+                  intensity={lightsOn ? 3.2 : wallDark}
+                  distance={20}
                   color="#4a90e2"
                 />
-                <pointLight 
-                  position={[-14, 4, 10]} 
-                  intensity={lightsOn ? 3.2 : wallDark} 
-                  distance={20} 
+                <pointLight
+                  position={[-14, 4, 10]}
+                  intensity={lightsOn ? 3.2 : wallDark}
+                  distance={20}
                   color="#4a90e2"
                 />
-                
+
                 {/* Right wall blue lights */}
-                <pointLight 
-                  position={[14, 4, -10]} 
-                  intensity={lightsOn ? 3.2 : wallDark} 
-                  distance={20} 
+                <pointLight
+                  position={[14, 4, -10]}
+                  intensity={lightsOn ? 3.2 : wallDark}
+                  distance={20}
                   color="#4a90e2"
                 />
-                <pointLight 
-                  position={[14, 4, 0]} 
-                  intensity={lightsOn ? 3.2 : wallDark} 
-                  distance={20} 
+                <pointLight
+                  position={[14, 4, 0]}
+                  intensity={lightsOn ? 3.2 : wallDark}
+                  distance={20}
                   color="#4a90e2"
                 />
-                <pointLight 
-                  position={[14, 4, 10]} 
-                  intensity={lightsOn ? 3.2 : wallDark} 
-                  distance={20} 
+                <pointLight
+                  position={[14, 4, 10]}
+                  intensity={lightsOn ? 3.2 : wallDark}
+                  distance={20}
                   color="#4a90e2"
                 />
 
                 {/* Back wall blue lights */}
-                <pointLight 
-                  position={[-10, 4, 15]} 
-                  intensity={lightsOn ? 1.3 : pathwayDark} 
-                  distance={18} 
+                <pointLight
+                  position={[-10, 4, 15]}
+                  intensity={lightsOn ? 1.3 : pathwayDark}
+                  distance={18}
                   color="#5a9fd4"
                 />
-                <pointLight 
-                  position={[0, 4, 15]} 
-                  intensity={lightsOn ? 1.3 : pathwayDark} 
-                  distance={18} 
+                <pointLight
+                  position={[0, 4, 15]}
+                  intensity={lightsOn ? 1.3 : pathwayDark}
+                  distance={18}
                   color="#5a9fd4"
                 />
-                <pointLight 
-                  position={[10, 4, 15]} 
-                  intensity={lightsOn ? 1.3 : pathwayDark} 
-                  distance={18} 
+                <pointLight
+                  position={[10, 4, 15]}
+                  intensity={lightsOn ? 1.3 : pathwayDark}
+                  distance={18}
                   color="#5a9fd4"
                 />
+                </>}
               </>
             );
           })()}

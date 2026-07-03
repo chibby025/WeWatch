@@ -9,6 +9,7 @@ import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatH
 import apiClient from '../../services/api';
 import { getRoom, getRoomMembers, getActiveSession, postSessionHeartbeat, logSessionJoinAttempt } from '../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
+import { prefetchRoom } from '../../utils/prefetchCache';
 // ✅ Import LiveKit hook + events
 import useLiveKitRoom from '../../hooks/useLiveKitRoom';
 import { Track, ParticipantEvent, RoomEvent } from 'livekit-client';
@@ -5678,6 +5679,7 @@ export default function VideoWatch() {
 
   // Handle Leave Room
   const handleLeaveRoom = async () => {
+    prefetchRoom(roomId);
     const finalSessionId = sessionStatus?.id || urlSessionId || activeSessionId;
     const urlParams = new URLSearchParams(window.location.search);
     const isInstantWatch = urlParams.get('instant') === 'true';

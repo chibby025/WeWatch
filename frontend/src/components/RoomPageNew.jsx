@@ -23,7 +23,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useMobile } from '../hooks/useMobile';
 import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup, getAssetUrl, uploadRoomChatAttachment, sendRoomChatSticker } from '../services/api';
-import { consumePrefetchedRoom } from '../utils/prefetchCache';
+import { consumePrefetchedRoom, consumePrefetchedMembers } from '../utils/prefetchCache';
 import WatchTypeModal from './WatchTypeModal';
 import WatchTypeInfoModal from './WatchTypeInfoModal';
 import ClassTypeModal from './modals/ClassTypeModal';
@@ -695,7 +695,10 @@ const RoomPageNew = () => {
 
   const fetchMembers = async () => {
     try {
-      const response = await apiClient.get(`/api/rooms/${roomId}/members`);
+      const prefetchedMembers = consumePrefetchedMembers(roomId);
+      const response = prefetchedMembers
+        ? { data: prefetchedMembers }
+        : await apiClient.get(`/api/rooms/${roomId}/members`);
       const membersList = response.data.members || [];
       setMembers(membersList);
       
