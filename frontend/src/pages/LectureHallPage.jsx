@@ -35,6 +35,7 @@ import MakeQuizModal from '../components/cinema/modals/MakeQuizModal';
 import TakeQuizModal from '../components/cinema/modals/TakeQuizModal';
 import BlackboardMediaPlayer from '../components/classroom/BlackboardMediaPlayer';
 import CinemaVideoPlayer from '../components/cinema/ui/CinemaVideoPlayer';
+import Hls from 'hls.js';
 import { playSeatSound, playMicOnSound, playMicOffSound } from '../utils/audio';
 import LiveKitAudioDebugPanel from '../components/LiveKitAudioDebugPanel';
 import logger from '../utils/logger';
@@ -211,6 +212,7 @@ function MeshMarker({ position, name, color }) {
 function BlackboardWithMedia({ position, dimensions, media, onClose, isHost, sendMessage, videoElementRef, cameraVideoElementRef, onTimeUpdate, onRemoveCamera, liveShareMode, onFullscreenRequest, pendingSeekTime, setPendingSeekTime, loadStartTimeRef }) {
   const videoRef = useRef();
   const cameraVideoRef = useRef();
+  const hlsRef = useRef(null);
   const [videoTexture, setVideoTexture] = useState(null);
   const [cameraTexture, setCameraTexture] = useState(null);
   const videoTextureRef = useRef(null);
@@ -565,10 +567,49 @@ function BlackboardWithMedia({ position, dimensions, media, onClose, isHost, sen
         return;
       }
 
-      // Set video source if different
-      if (video.src !== videoUrl) {
-        video.src = videoUrl;
-        video.load();
+      const isHLS = videoUrl.endsWith('.m3u8');
+
+      if (isHLS) {
+        // HLS stream: Chrome can't play .m3u8 natively — use hls.js.
+        // Destroy any previous hls instance first (media changed).
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+        if (Hls.isSupported()) {
+          const hls = new Hls({
+            startPosition: 0,
+            lowLatencyMode: false,
+            liveSyncDurationCount: 9990,
+            liveMaxLatencyDurationCount: 9999,
+            manifestLoadingTimeOut: 10000,
+            manifestLoadingMaxRetry: 6,
+            fragLoadingTimeOut: 20000,
+            fragLoadingMaxRetry: 6,
+          });
+          hlsRef.current = hls;
+          hls.on(Hls.Events.ERROR, (_e, data) => {
+            if (data.fatal) console.error('❌ [LH HLS] Fatal:', data.type, data.details);
+          });
+          hls.loadSource(videoUrl);
+          hls.attachMedia(video);
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          // Safari native HLS
+          if (video.src !== videoUrl) video.src = videoUrl;
+        } else {
+          console.warn('⚠️ [LH HLS] HLS not supported on this browser');
+          return;
+        }
+      } else {
+        // Non-HLS: destroy any leftover hls instance then set src directly
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+        if (video.src !== videoUrl) {
+          video.src = videoUrl;
+          video.load();
+        }
       }
       
       videoRef.current = video;
@@ -646,6 +687,11 @@ function BlackboardWithMedia({ position, dimensions, media, onClose, isHost, sen
         video.removeEventListener('loadeddata', handleLoadedData);
         video.removeEventListener('error', handleError);
         video.removeEventListener('ended', handleEnded);
+        // Destroy hls.js if it was used for this media
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
         // Don't pause or clear src - it's shared
         if (videoTextureRef.current) {
           videoTextureRef.current.dispose();
@@ -4884,7 +4930,27 @@ const PositionCalculatorPage = () => {
           return newState;
         });
         break;
-        
+
+      case 'device_stream_ready': {
+        // Progressive HLS upload is ready — start playing immediately (upload may still be in progress).
+        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+        const rawPath = message.file_path;
+        const readyUrl = rawPath?.startsWith('http') ? rawPath : `${API_BASE_URL}/${rawPath?.replace(/^\//, '')}`;
+        console.log('🎬 [LH device_stream_ready] Starting HLS stream:', readyUrl);
+        setBlackboardMedia({
+          file_url: readyUrl,
+          url: readyUrl,
+          mediaUrl: readyUrl,
+          type: message.mime_type || 'video/mp4',
+          title: message.original_name || 'Stream',
+          playing: true,
+          id: message.media_item_id,
+        });
+        handleUploadComplete(); // refresh sidebar playlist
+        mediaUploadManager.notifyUploadStreamReady?.(message.upload_id);
+        break;
+      }
+
       case 'liveshare_started':
         console.log('🎥 [LiveShare] Received liveshare_started:', data);
         

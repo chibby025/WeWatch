@@ -576,7 +576,9 @@ func commitProgressiveMode(uploadID string, state *ProgressiveUploadState) {
 		"-f", "hls",
 		"-hls_time", fmt.Sprintf("%d", hlsSegmentSeconds),
 		"-hls_list_size", "0",
-		"-hls_flags", "append_list",
+		// append_list intentionally omitted: -hls_list_size 0 already keeps all segments in the
+		// manifest, and append_list adds a spurious #EXT-X-DISCONTINUITY before the first segment
+		// which confuses hls.js's PTS tracking and causes playback to start at the wrong position.
 	}
 	if state.hlsBaseURL != "" {
 		// Manifest segment lines point straight at the CDN prefix — uploadProgressiveSegmentsToCDN

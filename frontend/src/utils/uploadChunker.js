@@ -115,8 +115,6 @@ export const uploadChunkWithRetry = async ({
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`📤 [Chunk ${chunk.index + 1}/${chunk.totalChunks}] Attempt ${attempt}/${maxRetries}`);
-
       const response = await uploadFn({
         chunk: chunk.blob,
         chunkIndex: chunk.index,
@@ -131,8 +129,6 @@ export const uploadChunkWithRetry = async ({
         clientDuration,
         clientPosterBlob
       });
-      
-      console.log(`✅ [Chunk ${chunk.index + 1}/${chunk.totalChunks}] Uploaded successfully`);
       
       if (onProgress) {
         onProgress({
@@ -160,7 +156,6 @@ export const uploadChunkWithRetry = async ({
       // Wait before retry (exponential backoff: 1s, 2s, 4s)
       if (attempt < maxRetries) {
         const waitTime = Math.pow(2, attempt - 1) * 1000;
-        console.log(`⏳ [Chunk ${chunk.index + 1}/${chunk.totalChunks}] Retrying in ${waitTime}ms...`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }

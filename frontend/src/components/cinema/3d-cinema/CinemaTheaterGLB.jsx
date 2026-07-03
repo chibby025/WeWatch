@@ -227,9 +227,8 @@ const CinemaTheaterGLB = React.memo(function CinemaTheaterGLB({
       const gap = now - lastTexUpdateRef.current;
       lastTexUpdateRef.current = now;
 
-      // Log stalls > 80ms (~5 dropped frames at 60fps).
-      // Include wall-clock time so you can line up with WS message arrival logs.
-      if (gap > 80 && now - lastGapLogRef.current > 200) {
+      // Log stalls > 500ms — lowered from 3s for debugging the upload/frame-gap interaction.
+      if (gap > 500 && now - lastGapLogRef.current > 2000) {
         lastGapLogRef.current = now;
         console.warn(
           `[CinemaTheaterGLB] ⏱️ FRAME GAP ${gap}ms at ${new Date(now).toISOString()} — ` +

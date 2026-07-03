@@ -1036,7 +1036,6 @@ export const uploadChunk = async ({ chunk, chunkIndex, totalChunks, uploadId, fi
   // Always go directly to Railway — Vercel's rewrite proxy does not reliably forward
   // multipart/form-data POST bodies to external URLs and returns 502. Railway's CORS
   // config already allows *.vercel.app origins, so no proxy is needed.
-  console.log(`🔗 [uploadChunk] API_BASE_URL=${API_BASE_URL}`);
   let uploadUrl = `${API_BASE_URL}/api/rooms/${roomId}/upload?chunked=true`;
   if (sessionId) {
     uploadUrl += `&session_id=${encodeURIComponent(sessionId)}`;

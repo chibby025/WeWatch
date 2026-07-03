@@ -133,6 +133,7 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
   // the UI hide the load bar the moment the host can already see/hear it playing, instead
   // of waiting for every remaining chunk to finish sending in the background.
   const [isUploadReady, setIsUploadReady] = useState(false);
+  const isUploadReadyRef = useRef(false); // mirrors isUploadReady without stale-closure risk in onProgress
   const currentUploadIdRef = useRef(null); // which upload_id notifyUploadStreamReady should match against
   const [uploadPaused, setUploadPaused] = useState(false); // same-session pause on network drop
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -428,6 +429,8 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
     const alreadyUploadedIndices = new Set(resumeState?.uploadedChunks ?? []);
     currentUploadIdRef.current = uploadId;
     setIsUploadReady(false);
+    isUploadReadyRef.current = false;
+    lastProgressUpdateRef._skippedLogged = false;
 
     console.log(`📦 [Chunked Upload] ${resumeState ? 'Resuming' : 'Starting'}:`, {
       uploadId,
@@ -471,9 +474,24 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
         clientDuration,
         clientPosterBlob,
         onProgress: ({ chunkIndex, totalChunks, completedChunks, percent }) => {
+          // Once the stream is live (device_stream_ready fired), the progress bar is
+          // already hidden in the UI (uploading && !isUploadReady gates it). Skip the
+          // state updates entirely — in 3D Cinema, each one re-renders the 280KB
+          // CinemaScene3DDemo parent, blocking the main thread long enough to stall RAF
+          // and prevent useFrame from calling videoTexture.needsUpdate, making the 3D
+          // screen appear black/frozen while the video is actually playing from position 0.
+          if (isUploadReadyRef.current) {
+            // Log the first skip only — confirms the frame-gap guard is active.
+            if (!lastProgressUpdateRef._skippedLogged) {
+              lastProgressUpdateRef._skippedLogged = true;
+              console.log(`🔇 [UPLOAD] stream live — suppressing progress re-renders (${completedChunks}/${totalChunks} chunks done, continuing in background)`);
+            }
+            return;
+          }
           const now = Date.now();
           if (now - lastProgressUpdateRef.current < 500 && percent < 100) return;
           lastProgressUpdateRef.current = now;
+          console.log(`📤 [UPLOAD] chunk ${completedChunks}/${totalChunks} (${percent}%)`);
 
           const uploadedBytesNow = completedChunks * chunkSize;
           const elapsedSeconds = (now - startTime) / 1000;
@@ -860,6 +878,8 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
   // item's id must never be mistaken for this one finishing early).
   const notifyUploadStreamReady = (uploadId) => {
     if (uploadId && uploadId === currentUploadIdRef.current) {
+      console.log(`✅ [UPLOAD] notifyUploadStreamReady — upload_id=${uploadId} → progress re-renders will stop`);
+      isUploadReadyRef.current = true;
       setIsUploadReady(true);
     }
   };
@@ -904,6 +924,7 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
     uploadFileRef.current = null;
     uploadPausedRef.current = false;
     currentUploadIdRef.current = null;
+    isUploadReadyRef.current = false;
     setUploadPaused(false);
     setUploading(false);
     setUploadProgress(0);

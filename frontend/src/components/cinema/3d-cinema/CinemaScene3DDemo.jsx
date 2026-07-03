@@ -1,5 +1,6 @@
 // src/components/cinema/3d-cinema/CinemaScene3DDemo.jsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import Hls from 'hls.js';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import useAuth from '../../../hooks/useAuth';
@@ -668,6 +669,11 @@ export default function CinemaScene3DDemo() {
   const [showDemoAvatars, setShowDemoAvatars] = useState(false); // 🎯 Turned off for production
   // State for video ref
   const videoRef = useRef(null);
+  // videoEl mirrors videoRef.current but triggers a re-render when the element is first
+  // created, so CinemaTheaterGLB receives the real element (not null) on the very same
+  // render cycle that media starts loading.  Without this, THREE.VideoTexture is never
+  // created from the device_stream_ready path because ref mutations don't cause re-renders.
+  const [videoEl, setVideoEl] = useState(null);
   const videoInitializedRef = useRef(false);
   const screenMeshRef = useRef(null);
   const liveShareVideoRef = useRef(null); // ✅ Separate ref for LiveShare main video
@@ -758,6 +764,10 @@ export default function CinemaScene3DDemo() {
   // === VIDEO/PLAYBACK STATE ===
   const [currentMedia, setCurrentMedia] = useState(null);
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // 🎯 Pending seek time for sync
+  // True between device_stream_preparing (first chunk) and device_stream_ready (2 segments ready).
+  // Shows a "Host is preparing a stream…" holding message for non-host members.
+  const [isPreparingStream, setIsPreparingStream] = useState(false);
+  const preparingTimeoutRef = useRef(null);
   // === MEDIA PLAYLIST STATE ===
   const [playlist, setPlaylist] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -805,6 +815,7 @@ export default function CinemaScene3DDemo() {
   const isHostRef = useRef(false);
   const currentMediaRef = useRef(null); // mirrors currentMedia state for use inside direct handler
   const syncRefRef = useRef(null);      // { hostTime, receivedAt } — seeded from playback_control, used by autonomous drift check
+  const hlsRef3D = useRef(null);        // hls.js instance for .m3u8 device-stream playback on the VideoTexture video element
   const mediaRestoredFromJoinRef = useRef(false); // guard: only restore from session_status once per join
   const isBufferingRef3D = useRef(false); // true while video.waiting; pauses autonomous drift corrections
   const [isFullscreenHovering, setIsFullscreenHovering] = useState(false);
@@ -941,6 +952,20 @@ export default function CinemaScene3DDemo() {
     console.error("🎬 CinemaVideoPlayer error:", err);
     alert("❌ Failed to play video.");
   }, [currentMedia]);
+
+  // Clear the preparing banner the moment media arrives; 90s safety-net if the ready
+  // broadcast is never received (upload cancelled, silent failure, etc.).
+  useEffect(() => {
+    if (currentMedia) {
+      setIsPreparingStream(false);
+      if (preparingTimeoutRef.current) { clearTimeout(preparingTimeoutRef.current); preparingTimeoutRef.current = null; }
+    }
+  }, [currentMedia]);
+  useEffect(() => {
+    if (!isPreparingStream) return;
+    preparingTimeoutRef.current = setTimeout(() => { setIsPreparingStream(false); preparingTimeoutRef.current = null; }, 90000);
+    return () => { if (preparingTimeoutRef.current) { clearTimeout(preparingTimeoutRef.current); preparingTimeoutRef.current = null; } };
+  }, [isPreparingStream]);
 
   if (!authLoading && wsToken && !stableTokenRef.current) {
     stableTokenRef.current = wsToken;
@@ -1320,6 +1345,39 @@ export default function CinemaScene3DDemo() {
     });
   }, [currentMedia]);
   
+  // 🎬 Create the shared video element EAGERLY on mount so CinemaTheaterGLB receives a real
+  // HTMLVideoElement before any media loads.  Creating it lazily (inside the media-loading
+  // effect below) would only mutate videoRef without triggering a re-render, so
+  // CinemaScene3D would keep passing null as videoElement and THREE.VideoTexture would never
+  // be created on the device_stream_ready path.
+  useEffect(() => {
+    if (videoRef.current) return; // already exists
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.loop = false;
+    video.muted = false;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.style.cssText = 'position: fixed; width: 100vw; height: 100vh; top: 0; left: 0; object-fit: contain; background: black; opacity: 0; z-index: -1; pointer-events: none;';
+    video.id = 'shared-cinema-video';
+    document.body.appendChild(video);
+    videoRef.current = video;
+    videoInitializedRef.current = true;
+    setVideoEl(video); // trigger re-render so CinemaScene3D gets the real element
+    return () => {
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.src = '';
+        if (document.body.contains(videoRef.current)) {
+          document.body.removeChild(videoRef.current);
+        }
+        videoRef.current = null;
+        videoInitializedRef.current = false;
+      }
+      setVideoEl(null);
+    };
+  }, []);
+
   // PHASE 2 EXTRACTION CANDIDATE: media loading + play/pause sync effects
   // (extract to useMediaPlayer hook once media handling stabilises)
   // 🎬 Load uploaded media into video element when currentMedia changes
@@ -1355,7 +1413,10 @@ export default function CinemaScene3DDemo() {
 
     console.log('🎬 [Media Loading] Loading uploaded media:', mediaUrl);
 
-    // ✅ SHARED VIDEO: Create or reuse video element with fullscreen-ready styling
+    // ✅ SHARED VIDEO: Create or reuse video element with fullscreen-ready styling.
+    // Normally already created by the mount effect above; this block is a safety net
+    // in case (in strict-mode double-invoke dev runs) the mount cleanup ran between
+    // the two effect invocations and left videoRef null again.
     if (!videoRef.current) {
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';
@@ -1363,46 +1424,130 @@ export default function CinemaScene3DDemo() {
       video.muted = false;
       video.playsInline = true;
       video.preload = 'auto';
-      video.autoplay = true;
-      // Same fullscreen-ready CSS as in the other init
+      // Same fullscreen-ready CSS as the eager-init above
       video.style.cssText = 'position: fixed; width: 100vw; height: 100vh; top: 0; left: 0; object-fit: contain; background: black; opacity: 0; z-index: -1; pointer-events: none;';
       video.id = 'shared-cinema-video';
       document.body.appendChild(video);
       videoRef.current = video;
       videoInitializedRef.current = true;
+      setVideoEl(video); // ensure CinemaTheaterGLB sees the new element
     }
 
     const video = videoRef.current;
     
-    // 🎯 FIX: Only reload src if it's actually different (prevents mid-stream reloads)
-    const needsReload = video.src !== mediaUrl;
-    if (needsReload) {
-      console.log('🔄 [Media Loading] Setting new video src:', mediaUrl);
-      video.src = mediaUrl;
-      setIsMediaLoading(true);
+    const isHLS = mediaUrl.endsWith('.m3u8');
+
+    if (isHLS) {
+      // HLS stream (device-stream / progressive upload).  Chrome can't play .m3u8 natively
+      // via plain video.src — it treats a manifest with no #EXT-X-ENDLIST as a live stream
+      // and seeks to the live edge instead of the beginning.  hls.js with startPosition:0
+      // always starts at segment 0, matching CinemaVideoPlayer.jsx's behaviour.
+      // Guard: only destroy/recreate hls instance when the URL actually changes (prevents
+      // mid-stream reloads triggered by poster_url / duration metadata updates).
+      const hlsNeedsReload = !hlsRef3D.current || hlsRef3D.current._wewatchUrl !== mediaUrl;
+      if (!hlsNeedsReload) {
+        // same URL already loaded — no-op
+      } else if (Hls.isSupported()) {
+        if (hlsRef3D.current) {
+          hlsRef3D.current.destroy();
+          hlsRef3D.current = null;
+        }
+        console.log('🎬 [HLS] New stream — creating hls.js instance');
+        // Keep this config minimal — matching CinemaVideoPlayer.jsx's { startPosition: 0 }.
+        // Extra options like maxBufferLength: 60 cause hls.js to aggressively pre-fetch
+        // segments, which makes it jump forward to the next buffered range when the first
+        // segment ends, producing the "starts at 6-8s instead of 0" bug.
+        const hls = new Hls({
+          startPosition: 0,
+          lowLatencyMode: false,
+          // Prevent hls.js from jumping to the live edge when the buffer empties.
+          // For a progressive upload that isn't truly live this causes the visible
+          // skip (e.g. stall at 2s → jump to 6s = start of next segment).
+          // Both values must be set explicitly: constraint is liveMax > liveSync.
+          // 9990×6s ≈ 16 hours behind live edge — effectively never triggers either.
+          liveSyncDurationCount: 9990,
+          liveMaxLatencyDurationCount: 9999,
+          manifestLoadingTimeOut: 10000,
+          manifestLoadingMaxRetry: 6,
+          fragLoadingTimeOut: 20000,
+          fragLoadingMaxRetry: 6,
+        });
+        hls._wewatchUrl = mediaUrl;
+        hlsRef3D.current = hls;
+        // ── Debug: key HLS lifecycle events ─────────────────────────────────
+        hls.on(Hls.Events.MANIFEST_LOADED, (_e, data) => {
+          console.log(`📋 [HLS] manifest loaded — ${data.levels?.length ?? '?'} levels, ${data.networkDetails?.url ?? ''}`);
+        });
+        let firstFragLogged = false;
+        hls.on(Hls.Events.FRAG_LOADED, (_e, data) => {
+          if (!firstFragLogged) {
+            firstFragLogged = true;
+            console.log(`🧩 [HLS] first fragment loaded — sn=${data.frag?.sn} start=${data.frag?.start?.toFixed(3)}s duration=${data.frag?.duration?.toFixed(3)}s`);
+          }
+        });
+        hls.on(Hls.Events.BUFFER_APPENDING, (_e, data) => {
+          if (data.chunkMeta?.sn === 0 || data.chunkMeta?.id === 0) {
+            console.log(`📦 [HLS] appending first segment to buffer — type=${data.type}`);
+          }
+        });
+        // ────────────────────────────────────────────────────────────────────
+        let mediaErrorRecoveryCount = 0;
+        hls.on(Hls.Events.ERROR, (_evt, data) => {
+          if (!data.fatal) return;
+          console.error('❌ [3D Cinema] hls.js fatal error:', data.type, data.details, data);
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            console.warn('🔄 [3D Cinema] Network error — calling startLoad()');
+            hls.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            if (mediaErrorRecoveryCount < 3) {
+              mediaErrorRecoveryCount++;
+              console.warn(`🔄 [3D Cinema] Media error — recoverMediaError() attempt ${mediaErrorRecoveryCount}`);
+              hls.recoverMediaError();
+            } else {
+              console.error('❌ [3D Cinema] Media error unrecoverable after 3 attempts — destroying hls');
+              hls.destroy();
+              hlsRef3D.current = null;
+            }
+          }
+        });
+        console.log('🎬 [HLS] loadSource + attachMedia:', mediaUrl);
+        hls.loadSource(mediaUrl);
+        hls.attachMedia(video);
+        setIsMediaLoading(true);
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari native HLS
+        if (video.src !== mediaUrl) {
+          console.log('🎬 [HLS] Safari native HLS:', mediaUrl);
+          video.src = mediaUrl;
+          setIsMediaLoading(true);
+        }
+      } else {
+        console.warn('⚠️ [HLS] Not supported on this browser');
+      }
     } else {
-      console.log('✅ [Media Loading] Video already loaded, skipping src reload');
+      // Non-HLS: only reload if the src actually changed
+      if (hlsRef3D.current) {
+        hlsRef3D.current.destroy();
+        hlsRef3D.current = null;
+      }
+      const needsReload = video.src !== mediaUrl;
+      if (needsReload) {
+        console.log('🎬 [Media] Loading:', mediaUrl);
+        video.src = mediaUrl;
+        setIsMediaLoading(true);
+      }
     }
 
     const handleLoadedData = () => {
       // Read current values from refs — avoids stale closure without adding volatile deps
       const seekTime = pendingSeekTimeRef.current;
-      console.log('✅ [Media Loading] Video data loaded, attempting play...', {
-        readyState: video.readyState,
-        currentTime: video.currentTime,
-        isPlaying: isPlayingRef.current,
-        hasPendingSeek: seekTime !== null
-      });
+      console.log(`✅ [HLS] loadeddata — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState} pendingSeek=${seekTime !== null ? seekTime.toFixed(3) : 'none'}`);
 
       // 🎯 Apply pending seek time if available (for mid-playback sync)
       if (seekTime !== null && seekTime > 0) {
         const loadingDuration = (Date.now() - loadStartTimeRef.current) / 1000;
         const compensatedTime = seekTime + loadingDuration;
-        console.log(`🎯 [Sync] Latency compensation applied:`, {
-          originalSeekTime: seekTime.toFixed(2),
-          loadingDuration: loadingDuration.toFixed(2),
-          compensatedTime: compensatedTime.toFixed(2)
-        });
+        console.log(`🎯 [HLS] Seeking to compensated time: ${compensatedTime.toFixed(3)}s (seekTime=${seekTime.toFixed(3)} + loadDelay=${loadingDuration.toFixed(3)})`);
         video.currentTime = compensatedTime;
         setPendingSeekTime(null);
         // video.currentTime is async — play() before seeked fires causes AbortError → frozen frame.
@@ -1410,16 +1555,16 @@ export default function CinemaScene3DDemo() {
         video.addEventListener('seeked', function onSeekedPlay() {
           video.removeEventListener('seeked', onSeekedPlay);
           if (isPlayingRef.current) {
-            console.log('▶️ [Media Loading] Starting playback after seek...');
-            video.play().catch(err => console.error('❌ [Media Loading] Failed to play after seek:', err));
+            console.log(`▶️ [HLS] play() after seek — currentTime=${video.currentTime.toFixed(3)}`);
+            video.play().catch(err => console.error('❌ [HLS] Failed to play after seek:', err));
           }
         });
       } else {
         if (isPlayingRef.current) {
-          console.log('▶️ [Media Loading] Starting playback...');
-          video.play().catch(err => console.error('❌ [Media Loading] Failed to play:', err));
+          console.log(`▶️ [HLS] play() from position ${video.currentTime.toFixed(3)}`);
+          video.play().catch(err => console.error('❌ [HLS] Failed to play:', err));
         } else {
-          console.log('⏸️ [Media Loading] Video loaded but isPlaying=false, not starting playback');
+          console.log('⏸️ [HLS] Loaded but isPlaying=false — not starting');
         }
       }
     };
@@ -1429,7 +1574,7 @@ export default function CinemaScene3DDemo() {
     };
 
     const handleEnded = () => {
-      console.log('🏁 [Media Loading] Video ended');
+      console.log('🏁 [HLS] Video ended');
       setIsPlaying(false);
 
       if (currentMedia?.type === 'upload') {
@@ -1437,7 +1582,6 @@ export default function CinemaScene3DDemo() {
         const originalName = currentMedia.metadata?.originalName || currentMedia.originalName || currentMedia.title;
         const storageKey = `cinema_playback_${roomId}_${finalSessionId}_${originalName}_${mediaId}`;
         localStorage.removeItem(storageKey);
-        console.log('🧹 [Resume State] Cleared on video end:', storageKey);
       }
 
       // Read sendMessage and isHost from refs — stable references, no stale closure risk
@@ -1457,21 +1601,26 @@ export default function CinemaScene3DDemo() {
     let seekStartTime = 0;
     const handleSeeking = () => {
       seekStartTime = Date.now();
-      console.warn(`🔍 [VideoSeek] SEEKING START — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState} paused=${video.paused}`);
     };
     const handleSeeked = () => {
       const seekDuration = Date.now() - seekStartTime;
-      console.warn(`🔍 [VideoSeek] SEEKED COMPLETE — currentTime=${video.currentTime.toFixed(3)} duration=${seekDuration}ms readyState=${video.readyState}`);
+      if (seekDuration > 500) {
+        console.warn(`🔍 [HLS] slow seek: ${seekDuration}ms → currentTime=${video.currentTime.toFixed(3)}`);
+      }
     };
     const handleWaiting = () => {
-      console.warn(`🔍 [VideoBuffer] WAITING (buffering) — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState}`);
+      console.warn(`⏳ [HLS] WAITING at ${video.currentTime.toFixed(3)}s readyState=${video.readyState}`);
+      // Do NOT call startLoad() here — on a live/incomplete manifest (no EXT-X-ENDLIST yet,
+      // i.e. upload still in progress), startLoad() without a position jumps to the live edge,
+      // causing the visible skip-forward. hls.js handles buffer stalls internally.
     };
     const handlePlaying = () => {
-      console.log(`🔍 [VideoBuffer] PLAYING resumed — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState}`);
+      console.log(`▶️ [HLS] PLAYING — started at ${video.currentTime.toFixed(3)}s readyState=${video.readyState}`);
       setIsMediaLoading(false);
     };
     const handleStalled = () => {
-      console.warn(`🔍 [VideoBuffer] STALLED — currentTime=${video.currentTime.toFixed(3)} readyState=${video.readyState}`);
+      console.warn(`⏳ [HLS] STALLED at ${video.currentTime.toFixed(3)}s`);
+      // Same as handleWaiting — do not call startLoad() on a live/incomplete manifest.
     };
 
     video.addEventListener('loadeddata', handleLoadedData);
@@ -1492,12 +1641,19 @@ export default function CinemaScene3DDemo() {
       video.removeEventListener('waiting', handleWaiting);
       video.removeEventListener('playing', handlePlaying);
       video.removeEventListener('stalled', handleStalled);
+      if (hlsRef3D.current) {
+        hlsRef3D.current.destroy();
+        hlsRef3D.current = null;
+      }
     };
   // Only re-run when the actual media source or mode changes.
   // sendMessage, isPlaying, isHost, pendingSeekTime are read via refs above — listing them
   // here would cause the effect to re-run on every WS message, tearing down video listeners
   // and triggering CinemaTheaterGLB re-renders that gap the useFrame loop → jitter.
-  }, [currentMedia, liveShareMode, roomId, finalSessionId]);
+  // Narrowed to the fields that actually affect which media is loaded — poster_url/duration
+  // updates must NOT trigger a reload (they only change metadata, not the src).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMedia?.mediaUrl, currentMedia?.type, currentMedia?.stream, currentMedia?.cameraStream, currentMedia?.ID, liveShareMode, roomId, finalSessionId]);
 
   // 🎬 Sync play/pause state to video element
   useEffect(() => {
@@ -1507,26 +1663,14 @@ export default function CinemaScene3DDemo() {
 
     const video = videoRef.current;
     
-    console.log('🔄 [Media Sync] Checking play/pause state:', {
-      isPlaying,
-      videoPaused: video.paused,
-      currentTime: video.currentTime.toFixed(2),
-      needsPlay: isPlaying && video.paused,
-      needsPause: !isPlaying && !video.paused
-    });
-    
     if (isPlaying && video.paused) {
       // Guard: if the video src was just set (readyState < HAVE_CURRENT_DATA), calling play()
       // immediately causes AbortError — the browser's internal pause() wins the race, leaving
       // the video frozen. handleLoadedData will call play() once the video is actually ready.
       if (video.readyState >= 2) {
-        console.log('▶️ [Media Sync] Playing video');
         video.play().catch(err => console.error('❌ [Media Sync] Play failed:', err));
-      } else {
-        console.log('⏳ [Media Sync] Video not ready (readyState=' + video.readyState + '), handleLoadedData will play');
       }
     } else if (!isPlaying && !video.paused) {
-      console.log('⏸️ [Media Sync] Pausing video');
       video.pause();
     }
   }, [isPlaying, liveShareMode, currentMedia]);
@@ -1684,22 +1828,13 @@ export default function CinemaScene3DDemo() {
 
   // 📱 Mobile orientation detection and landscape lock — managed by useMobileOrientation hook
 
-  // 📱 Mobile taskbar auto-hide logic
+  // 📱 Mobile taskbar reveal — fires a synthetic click so the Taskbar's own
+  // tap-to-reveal handler picks it up. The Taskbar is always mounted (not
+  // conditionally rendered) so its drag position (pillPos) persists across
+  // hide/show cycles, making the pill draggable in the 3D Cinema.
   const showTaskbar = useCallback(() => {
-    setIsTaskbarVisible(true);
-    
-    // Clear existing timeout
-    if (taskbarTimeoutRef.current) {
-      clearTimeout(taskbarTimeoutRef.current);
-    }
-    
-    // Auto-hide after 4 seconds on mobile
-    if (isMobile) {
-      taskbarTimeoutRef.current = setTimeout(() => {
-        setIsTaskbarVisible(false);
-      }, 4000);
-    }
-  }, [isMobile]);
+    window.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  }, []);
 
   const hideTaskbar = useCallback(() => {
     if (isMobile) {
@@ -2756,7 +2891,7 @@ export default function CinemaScene3DDemo() {
   // upload survives the sidebar being closed/reopened — see useMediaUploadManager.js.
   const mediaUploadManager = useMediaUploadManager({
     roomId,
-    sessionId: sessionStatus?.id,
+    sessionId: finalSessionId || sessionStatus?.id,
     onUploadComplete: fetchAndGeneratePosters,
   });
 
@@ -3347,7 +3482,12 @@ export default function CinemaScene3DDemo() {
       }
       
       const newUrl = currentMedia.mediaUrl;
-      if (video.src !== newUrl) {
+      // HLS streams are managed entirely by the hls.js effect above — it sets
+      // video.src to a blob: MediaSource URL. Overwriting it here with the raw
+      // .m3u8 URL destroys hls.js's attachment and forces the browser to try
+      // loading the manifest natively (which Chrome can't do), causing the
+      // WAITING at 0s and preventing FRAG_LOADED from ever firing.
+      if (!newUrl.endsWith('.m3u8') && video.src !== newUrl) {
         video.pause();
         video.src = newUrl;
         video.muted = false;
@@ -4583,7 +4723,47 @@ export default function CinemaScene3DDemo() {
           console.error('❌ [CinemaScene3D] Game error:', msg.data);
           toast.error(msg.data.message || 'Game error occurred');
           break;
-        
+
+        case 'device_stream_preparing': {
+          // First chunk landed — backend will broadcast device_stream_ready once 2 HLS
+          // segments exist. Show a holding message so members see something is coming.
+          setIsPreparingStream(true);
+          break;
+        }
+        case 'device_stream_ready': {
+          // Progressive (or fallback) HLS stream is now playable. Start immediately —
+          // the same broadcast reaches every client so host and members all begin at once,
+          // without waiting for the remaining chunks to finish uploading.
+          const readyUrl = msg.file_url || msg.file_path;
+          console.log(`🎬 [STREAM] device_stream_ready at ${new Date().toISOString()} — url=${readyUrl} upload_id=${msg.upload_id}`);
+          if (!readyUrl) { console.warn('⚠️ [3D Cinema] device_stream_ready: no URL in message', msg); break; }
+          const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+          const readyMediaUrl = readyUrl.startsWith('http')
+            ? readyUrl
+            : `${baseUrl}${readyUrl.startsWith('/') ? '' : '/'}${readyUrl}`;
+          setIsPreparingStream(false);
+          // Clear stale drift-check reference from any previous media — without this the
+          // 2s autonomous drift correction would inherit the old media's host position and
+          // immediately seek the new stream to a wrong time.
+          syncRefRef.current = null;
+          // Clear any stale pendingSeekTime from a prior stream so a fresh device-stream
+          // always begins at position 0 (members will receive playback_control separately).
+          setPendingSeekTime(null);
+          setCurrentMedia({
+            ID: msg.media_item_id,
+            type: 'upload',
+            file_path: msg.file_path,
+            mediaUrl: readyMediaUrl,
+            original_name: msg.original_name || 'Now Playing',
+            mime_type: msg.mime_type,
+          });
+          setIsPlaying(true);
+          // Lets the upload hook hide its progress bar the moment the stream is playable,
+          // rather than waiting for every remaining background chunk to finish sending.
+          mediaUploadManager.notifyUploadStreamReady(msg.upload_id);
+          break;
+        }
+
         default:
           break;
       }
@@ -4757,22 +4937,9 @@ export default function CinemaScene3DDemo() {
     // console.log('🔍 [CinemaScene3D] roomId:', roomId);
     // console.log('🔍 [CinemaScene3D] currentUser:', currentUser);
     
-    // ✅ HOST: Show confirmation and end session for everyone
+    // ✅ HOST: End session for everyone immediately
     if (currentIsHost) {
-      // console.log('✅ [CinemaScene3D] User IS host - showing confirmation dialog...');
-      const confirmed = window.confirm(
-        "End this 3D Cinema session for everyone? All participants will be returned to the lobby."
-      );
-      
-      // console.log('🔍 [CinemaScene3D] User confirmation result:', confirmed);
-      
-      if (!confirmed) {
-        // console.log('❌ [CinemaScene3D] Host cancelled leave - staying in session');
-        return; // Host cancelled, stay in session
-      }
-      
-      // Host confirmed - end the session
-      // console.log('✅ [CinemaScene3D] Host confirmed - proceeding to end session');
+      // End the session;
       try {
         if (finalSessionId) {
           // console.log('🛑 [CinemaScene3D] Calling end API for session:', finalSessionId);
@@ -5796,7 +5963,7 @@ export default function CinemaScene3DDemo() {
               ref={cinemaSceneRef}
               useGLBModel="improved"
               authenticatedUserID={currentUser?.id}
-              videoElement={liveShareVideoRef.current || videoRef.current}
+              videoElement={liveShareVideoRef.current || videoEl}
               cameraVideoElement={liveShareCameraVideoRef.current || cameraVideoRef.current}
               gameCanvas={gameCanvas}
               podcastCanvas={podcastCanvasRef.current}
@@ -5862,9 +6029,16 @@ export default function CinemaScene3DDemo() {
         </div>
       )}
       
-      {/* {console.log('🎬 Final roomMembers passed to Taskbar:', roomMembers)} */}
-      {/* Taskbar - hidden by default on mobile, tap to reveal */}
-      {isTaskbarVisible && (
+      {/* Host is preparing a device stream — show a brief holding message for members */}
+      {isPreparingStream && !currentMedia && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[999] flex items-center gap-2 rounded-full bg-black/75 px-4 py-2 text-sm text-white shadow-lg pointer-events-none select-none">
+          <div className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+          <span>Host is preparing a stream…</span>
+        </div>
+      )}
+
+      {/* Taskbar — always mounted so drag position (pillPos) persists across
+          mobile hide/show cycles. Tap anywhere to reveal; auto-hides after 2 s. */}
       <Taskbar
         watchType="3d_cinema"
         classType={null}
@@ -5958,8 +6132,7 @@ export default function CinemaScene3DDemo() {
         currentGame={currentGame || activeGame}
         onGameClose={handleGameClose}
       />
-      )}
-      
+
       {/* DEBUG: Log export via Ctrl+L keyboard shortcut only (button hidden) */}
 
       {/* Left Sidebar */}
@@ -5985,6 +6158,7 @@ export default function CinemaScene3DDemo() {
             onEndScreenShare={handleEndScreenShare}
             isConnected={isConnected}
             playlist={playlist} // ✅ Now populated
+            currentMedia={currentMedia}
             currentUser={currentUser}
             sendMessage={sendMessage}
             onDeleteMedia={(mediaItem) => {
@@ -6052,7 +6226,7 @@ export default function CinemaScene3DDemo() {
                 const storageKey = `cinema_playback_${roomId}_${finalSessionId}_${media.original_name}_${media.ID}`;
                 localStorage.removeItem(storageKey);
                 console.log('🔄 [Resume] Cleared saved state - starting from beginning');
-                
+
                 // ✅ Construct full mediaUrl like VideoWatch does
                 const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
                 const fileUrl = media.file_url || media.file_path || `/uploads/temp/${media.file_name}`;
@@ -6066,6 +6240,10 @@ export default function CinemaScene3DDemo() {
                   mediaUrl, // ✅ critical!
                   original_name: media.original_name || media.file_name || 'Unknown Media',
                 };
+                // Clear stale pendingSeekTime — the host doesn't receive their own
+                // playback_control echo, so without this a prior session's seek time
+                // would apply to the newly-selected media.
+                setPendingSeekTime(null);
                 setCurrentMedia(mediaItemWithUrl);
                 setIsPlaying(true);
                 if (isHost) {
