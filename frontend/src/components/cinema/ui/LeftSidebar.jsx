@@ -75,6 +75,8 @@ export default function LeftSidebar({
   autoOpenGuestInvite = null, // Auto-trigger guest popup
   onGuestInviteConsumed = null, // Clear auto-trigger in parent
   onPlayYouTube = null, // Play YouTube video via legal iframe API (host only)
+  onSubtitleAdded = null, // Notify parent (host) that subtitle was set — relay doesn't echo back to sender
+  onSubtitleRemoved = null, // Notify parent (host) that subtitle was removed
 }) {
   // Host status is authoritative from the parent (derived from room.host_id === currentUser.id).
   // No need to re-verify via API on every sidebar open — host doesn't change during a session.
@@ -286,11 +288,17 @@ export default function LeftSidebar({
         content = srtToVtt(content);
       }
       sendMessage?.({ type: 'subtitle_added', content });
+      onSubtitleAdded?.(content); // Host never receives own WS echo — notify VideoWatch directly
       setHasSubtitles(true);
       toast.success('Subtitles added');
     };
     reader.readAsText(file);
   };
+
+  // Clear subtitle indicator when media changes
+  useEffect(() => {
+    setHasSubtitles(false);
+  }, [currentMedia?.ID]);
   const liveShareRef = useRef(null);
   const watchFromRef = useRef(null);
   const leftSidebarTourShown = useRef(false);
@@ -1396,6 +1404,7 @@ export default function LeftSidebar({
                       onClick={() => {
                         setHasSubtitles(false);
                         sendMessage?.({ type: 'subtitle_removed' });
+                        onSubtitleRemoved?.();
                         toast.success('Subtitles removed');
                       }}
                       className="mt-1 w-full text-xs text-red-400 hover:text-red-300 border border-red-900 hover:border-red-700 rounded-lg px-3 py-1.5 transition-colors text-left"

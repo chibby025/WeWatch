@@ -300,6 +300,10 @@ export default function VideoWatch() {
 
     // Always spawn a new floating heart — unlimited taps, each shows its own animation
     setHeartAnimations(prev => [...prev, makeHeart()]);
+    // Broadcast so all members see the heart too
+    if (sendMessage && currentUser?.id) {
+      sendMessage({ type: 'double_like', userId: currentUser.id, timestamp: Date.now() });
+    }
 
     // API + count increment only on the first tap; subsequent taps are animation-only
     if (isSessionLiked) return;
@@ -641,6 +645,7 @@ export default function VideoWatch() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [roomChatUnreadCount, setRoomChatUnreadCount] = useState(0);
   const [subtitleUrl, setSubtitleUrl] = useState(null);
+  const [subtitleContent, setSubtitleContent] = useState(null);
   const [sessionChatMessages, setSessionChatMessages] = useState([]);
   const [newSessionMessage, setNewSessionMessage] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -2645,8 +2650,10 @@ export default function VideoWatch() {
   // Shadow refs — let the stable loadeddata listener read current state without stale closures
   const chatIsActiveRef      = useRef(false);
   const subtitleUrlRef       = useRef(null);
+  const subtitleContentRef   = useRef(null);
   useEffect(() => { chatIsActiveRef.current = showChatHome || isChatOpen; }, [showChatHome, isChatOpen]);
   useEffect(() => { subtitleUrlRef.current = subtitleUrl; }, [subtitleUrl]);
+  useEffect(() => { subtitleContentRef.current = subtitleContent; }, [subtitleContent]);
   // Revoke subtitle blob URL on unmount to avoid memory leaks
   useEffect(() => () => { if (subtitleUrlRef.current) URL.revokeObjectURL(subtitleUrlRef.current); }, []);
 
@@ -4322,6 +4329,11 @@ export default function VideoWatch() {
               });
             }
             
+            // Host re-broadcasts subtitle so late joiners see it without any backend storage
+            if (isHost && subtitleContentRef.current && sendMessage) {
+              sendMessage({ type: 'subtitle_added', content: subtitleContentRef.current });
+            }
+
             if (!memberMapRef.current.has(userId)) {
               updateMemberMap('add', {
                 id: userId,
@@ -4624,6 +4636,8 @@ export default function VideoWatch() {
             if (subtitleUrlRef.current) URL.revokeObjectURL(subtitleUrlRef.current);
             const url = URL.createObjectURL(blob);
             subtitleUrlRef.current = url;
+            subtitleContentRef.current = content;
+            setSubtitleContent(content);
             setSubtitleUrl(url);
           }
           break;
@@ -4633,6 +4647,8 @@ export default function VideoWatch() {
             URL.revokeObjectURL(subtitleUrlRef.current);
             subtitleUrlRef.current = null;
           }
+          subtitleContentRef.current = null;
+          setSubtitleContent(null);
           setSubtitleUrl(null);
           break;
         case "reaction":
@@ -5140,13 +5156,18 @@ export default function VideoWatch() {
           };
           
           const emoteEmoji = emoteEmojiMap[receivedEmote] || '✨';
-          
+
+          // Show floating emote animation for recipients (same as sender sees)
+          setLocalEmotes(prev => [...prev, { id: Date.now(), emoji: emoteEmoji }]);
+          // Play sound for recipients (slightly quieter than sender)
+          playEmoteSound(receivedEmote, 0.4);
+
           // Update member emote for card display (2 seconds)
           setMemberEmotes(prev => ({
             ...prev,
             [emoteUserId]: { emote: emoteEmoji, timestamp: Date.now() }
           }));
-          
+
           // Auto-clear after 2 seconds
           setTimeout(() => {
             setMemberEmotes(prev => {
@@ -5160,7 +5181,16 @@ export default function VideoWatch() {
             });
           }, 2000);
           break;
-          
+
+        case "double_like": {
+          const likeUserId = message.data?.userId || message.userId;
+          // Don't double-show our own heart — already rendered locally in handleDoubleClickLike
+          if (likeUserId !== currentUser?.id) {
+            setHeartAnimations(prev => [...prev, makeHeart()]);
+          }
+          break;
+        }
+
         case "liveshare_mode_selected":
           // Host selected LiveShare mode - broadcast received by all members
           console.log('🎬 [VideoWatch] Received liveshare_mode_selected:', {
@@ -5578,6 +5608,36 @@ export default function VideoWatch() {
     }
   }, [sessionStatus?.session_id]);
 
+  // Subtitle helpers
+  const clearSubtitle = useCallback((broadcast = false) => {
+    if (subtitleUrlRef.current) URL.revokeObjectURL(subtitleUrlRef.current);
+    subtitleUrlRef.current = null;
+    subtitleContentRef.current = null;
+    setSubtitleContent(null);
+    setSubtitleUrl(null);
+    if (broadcast && sendMessage) sendMessage({ type: 'subtitle_removed' });
+  }, [sendMessage]);
+
+  // Called by LeftSidebar (host) directly — relay doesn't echo back to sender
+  const handleSubtitleAdded = useCallback((content) => {
+    if (subtitleUrlRef.current) URL.revokeObjectURL(subtitleUrlRef.current);
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/vtt' }));
+    subtitleUrlRef.current = url;
+    subtitleContentRef.current = content;
+    setSubtitleContent(content);
+    setSubtitleUrl(url);
+  }, []);
+
+  // Clear subtitle when media changes to a different item
+  const prevMediaKeyRef = useRef(null);
+  useEffect(() => {
+    const key = currentMedia?.ID ?? currentMedia?.mediaUrl ?? null;
+    if (prevMediaKeyRef.current !== null && key !== prevMediaKeyRef.current) {
+      clearSubtitle(isHost); // host broadcasts subtitle_removed; members just clear locally
+    }
+    prevMediaKeyRef.current = key;
+  }, [currentMedia, clearSubtitle, isHost]);
+
   // Handle Video End
   const handleVideoEnd = () => {
     // Demo rooms use absolute CDN URLs; their playlist is empty (no TemporaryMediaItems).
@@ -5589,8 +5649,10 @@ export default function VideoWatch() {
     if (isCDNDemoUrl && videoPlayerRef.current) {
       videoPlayerRef.current.currentTime = 0;
       videoPlayerRef.current.play().catch(() => {});
-      return;
+      return; // Demo loop — keep subtitle active
     }
+    // Clear subtitle when media actually ends (not a loop)
+    clearSubtitle(isHost);
     const currentIndex = playlist.findIndex(item => item.ID === currentMedia?.ID);
     if (currentIndex === -1) {
       setCurrentMedia(null);
@@ -7225,6 +7287,8 @@ export default function VideoWatch() {
             sessionStatus={sessionStatus}
             autoOpenGuestInvite={guestInviteAutoTrigger}
             onGuestInviteConsumed={() => setGuestInviteAutoTrigger(null)}
+            onSubtitleAdded={handleSubtitleAdded}
+            onSubtitleRemoved={() => clearSubtitle(false)}
           />
         </div>
       )}
