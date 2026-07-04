@@ -1141,7 +1141,7 @@ const LobbyPage = () => {
         // only fall back to the stale object for the user's own hosted/member session
         // when it didn't come back at all this time (scored below limit cutoff etc.)
         const pruned = prev.data
-          .filter(s => filteredMap.has(s.session_id) || s.host_id === authenticatedUserID || s.is_member === true || !s.is_temporary)
+          .filter(s => filteredMap.has(s.session_id) || s.host_id === authenticatedUserID || s.is_member === true)
           .map(s => filteredMap.get(s.session_id) || s);
         const prunedIds = new Set(pruned.map(s => s.session_id));
         const newSessions = filtered.filter(s => !prunedIds.has(s.session_id));

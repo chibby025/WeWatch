@@ -220,8 +220,10 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 			"started_at":        now,
 		})
 		m.broadcastPlay(room.ID, session.SessionID, next.url, next.title, next.posterURL, 0, next.durationSeconds)
-		m.broadcastSessionPreview(session.SessionID, next.posterURL, "")
-		go m.generatePreviewClip(session.ID, session.SessionID, next.url)
+		// Pass through the existing preview_url so the lobby card keeps the session-start clip
+		// while the poster updates to the new track's thumbnail. No new clip is generated on
+		// track advance — the one clip per session (generated in startSession) stays reused.
+		m.broadcastSessionPreview(session.SessionID, next.posterURL, session.PreviewURL)
 
 		m.mu.Lock()
 		state.currentIdx = nextIdx
@@ -427,7 +429,10 @@ func (m *DemoSessionManager) generatePreviewClip(sessionDBID uint, sessionID, me
 		return
 	}
 
-	previewFilename := fmt.Sprintf("demo_%d_%d.mp4", sessionDBID, time.Now().Unix())
+	// Deterministic filename — same path on every server restart so the CDN overwrites
+	// cleanly rather than accumulating one file per call. No timestamp suffix needed since
+	// this only fires once per session (in startSession), not on track advances.
+	previewFilename := fmt.Sprintf("demo_%d_preview.mp4", sessionDBID)
 	previewURL, err := utils.UploadPreviewToBunnyCDN(fileData, previewFilename)
 	if err != nil {
 		log.Printf("⚠️ [Demo] Uploading preview clip failed for session %s: %v", sessionID, err)
