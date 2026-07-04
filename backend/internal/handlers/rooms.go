@@ -1880,28 +1880,16 @@ func GetRoomsHandler(c *gin.Context) {
 	if userExists && userID > 0 {
 		// Authenticated user: Include membership status in query
 		query = DB.Table("rooms").
-			Select(`
+			Select(fmt.Sprintf(`
 				rooms.*,
 				users.username as host_username,
-				CASE
-					WHEN watch_sessions.id IS NOT NULL
-						AND watch_sessions.ended_at IS NULL
-					THEN true
-					ELSE false
-				END AS is_active_session,
-				CASE
-					WHEN user_rooms.user_id IS NOT NULL
-					THEN true
-					ELSE false
-				END AS is_member,
+				EXISTS(SELECT 1 FROM watch_sessions ws WHERE ws.room_id = rooms.id AND ws.ended_at IS NULL) AS is_active_session,
+				EXISTS(SELECT 1 FROM user_rooms ur WHERE ur.room_id = rooms.id AND ur.user_id = %d) AS is_member,
 				COALESCE((SELECT rm.message FROM room_messages rm WHERE rm.room_id = rooms.id AND rm.deleted_by_host = false ORDER BY rm.created_at DESC LIMIT 1), '') AS last_chat_message,
 				(SELECT rm.created_at FROM room_messages rm WHERE rm.room_id = rooms.id AND rm.deleted_by_host = false ORDER BY rm.created_at DESC LIMIT 1) AS last_chat_at
-			`).
+			`, userID)).
 			Joins("LEFT JOIN users ON rooms.host_id = users.id").
-			Joins(`LEFT JOIN watch_sessions ON rooms.id = watch_sessions.room_id
-				   AND watch_sessions.ended_at IS NULL`).
-			Joins(fmt.Sprintf("LEFT JOIN user_rooms ON user_rooms.room_id = rooms.id AND user_rooms.user_id = %d", userID)).
-			Where("rooms.deleted_at IS NULL"). // ✅ Exclude soft-deleted rooms
+			Where("rooms.deleted_at IS NULL").
 			Where(
 				"rooms.is_public = ? OR rooms.id IN (SELECT room_id FROM user_rooms WHERE user_id = ?)",
 				true, userID,
@@ -1912,20 +1900,13 @@ func GetRoomsHandler(c *gin.Context) {
 			Select(`
 				rooms.*,
 				users.username as host_username,
-				CASE
-					WHEN watch_sessions.id IS NOT NULL
-						AND watch_sessions.ended_at IS NULL
-					THEN true
-					ELSE false
-				END AS is_active_session,
+				EXISTS(SELECT 1 FROM watch_sessions ws WHERE ws.room_id = rooms.id AND ws.ended_at IS NULL) AS is_active_session,
 				false AS is_member,
 				COALESCE((SELECT rm.message FROM room_messages rm WHERE rm.room_id = rooms.id AND rm.deleted_by_host = false ORDER BY rm.created_at DESC LIMIT 1), '') AS last_chat_message,
 				(SELECT rm.created_at FROM room_messages rm WHERE rm.room_id = rooms.id AND rm.deleted_by_host = false ORDER BY rm.created_at DESC LIMIT 1) AS last_chat_at
 			`).
 			Joins("LEFT JOIN users ON rooms.host_id = users.id").
-			Joins(`LEFT JOIN watch_sessions ON rooms.id = watch_sessions.room_id
-				   AND watch_sessions.ended_at IS NULL`).
-			Where("rooms.deleted_at IS NULL"). // ✅ Exclude soft-deleted rooms
+			Where("rooms.deleted_at IS NULL").
 			Where("rooms.is_public = ?", true)
 	}
 	
@@ -1942,11 +1923,11 @@ func GetRoomsHandler(c *gin.Context) {
 	if userExists && userID > 0 {
 		result = query.
 			Order(fmt.Sprintf(`
-				CASE 
-					WHEN rooms.host_id = %d THEN 0 
-					WHEN user_rooms.user_id IS NOT NULL THEN 1 
-					ELSE 2 
-				END`, userID)).
+				CASE
+					WHEN rooms.host_id = %d THEN 0
+					WHEN EXISTS(SELECT 1 FROM user_rooms ur WHERE ur.room_id = rooms.id AND ur.user_id = %d) THEN 1
+					ELSE 2
+				END`, userID, userID)).
 			Order("rooms.created_at DESC").
 			Limit(limit).
 			Offset(offset).

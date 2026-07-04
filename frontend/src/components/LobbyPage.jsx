@@ -1031,7 +1031,10 @@ const LobbyPage = () => {
       });
       
       if (append) {
-        setRooms(prevRooms => [...prevRooms, ...filteredForRooms]);
+        setRooms(prevRooms => {
+          const existingIds = new Set(prevRooms.map(r => r.id));
+          return [...prevRooms, ...filteredForRooms.filter(r => !existingIds.has(r.id))];
+        });
       } else {
         if (page === 0) {
           const fp = _roomsFp(filteredForRooms);
