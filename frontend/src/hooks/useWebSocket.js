@@ -407,6 +407,10 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
               currentDocType: data.current_doc_type || null,
               currentDocPage: data.current_doc_page || 1,
               isDemoSession: data.is_demo_session || false,
+              custom_background_url: data.custom_background_url || null,
+              screen_region: data.screen_region || null,
+              watch_type: data.watch_type || null,
+              class_type: data.class_type || null,
             };
             
             // Update all subscribers

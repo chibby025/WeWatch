@@ -663,6 +663,19 @@ func AssembleUploadHandler(c *gin.Context) {
 
 	log.Printf("[Assemble] Starting assembly: uploadId=%s chunks=%d file=%s", input.UploadID, input.TotalChunks, input.OriginalName)
 
+	// Always clean up chunk files on the way out — regardless of whether assembly
+	// succeeded or failed. A failed assembly (chunk download error, write error, CDN
+	// upload error) used to leave the whole chunk directory orphaned forever because the
+	// cleanup goroutine was only started on the success path.
+	defer func(uploadID string, totalChunks int) {
+		go func() {
+			for i := 0; i < totalChunks; i++ {
+				utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("temp-media/%s/chunk_%d", uploadID, i))
+			}
+			log.Printf("[Assemble] Cleaned up %d chunk files for uploadId=%s", totalChunks, uploadID)
+		}()
+	}(input.UploadID, input.TotalChunks)
+
 	// Create a temp file to assemble chunks into
 	tmpFile, err := os.CreateTemp("", "ww_assemble_*"+ext)
 	if err != nil {
@@ -803,17 +816,9 @@ func AssembleUploadHandler(c *gin.Context) {
 			})
 		}
 
-		// Async: upload poster to CDN (priority), then clean up chunks in background.
-		// Chunk deletion runs in a nested goroutine so it doesn't delay the poster upload.
-		go func(itemID uint, roomID uint, sid, uploadID, posterLocalPath string, totalChunks int) {
-			// Clean up chunk files in the background — don't block poster upload on this.
-			go func() {
-				for i := 0; i < totalChunks; i++ {
-					utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("temp-media/%s/chunk_%d", uploadID, i))
-				}
-				log.Printf("[Assemble] Deleted %d chunk files for uploadId=%s", totalChunks, uploadID)
-			}()
-
+		// Async: upload poster to CDN. Chunk cleanup is handled by the defer at the top
+		// of the handler, which runs on both success and failure paths.
+		go func(itemID uint, roomID uint, sid, posterLocalPath string) {
 			posterCDNURL := "/icons/placeholder-poster.jpg"
 			if posterLocalPath != "" {
 				pBase := filepath.Base(posterLocalPath)
@@ -846,7 +851,7 @@ func AssembleUploadHandler(c *gin.Context) {
 			}
 			roomJSON, _ := json.Marshal(roomBroadcast)
 			hub.BroadcastToRoom(roomID, OutgoingMessage{Data: roomJSON, IsBinary: false}, nil)
-		}(newItem.ID, roomIDUint, input.SessionID, input.UploadID, posterLocalPath, input.TotalChunks)
+		}(newItem.ID, roomIDUint, input.SessionID, posterLocalPath)
 
 		c.JSON(http.StatusCreated, gin.H{
 			"message":       "Temporary media item uploaded successfully",
@@ -877,10 +882,8 @@ func AssembleUploadHandler(c *gin.Context) {
 			return
 		}
 
-		go func(itemID uint, uploadID, posterLocalPath string, totalChunks int) {
-			for i := 0; i < totalChunks; i++ {
-				utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("temp-media/%s/chunk_%d", uploadID, i))
-			}
+		// Chunk cleanup is handled by the defer at the top of the handler.
+		go func(itemID uint, posterLocalPath string) {
 			posterCDNURL := "/icons/placeholder-poster.jpg"
 			if posterLocalPath != "" {
 				pBase := filepath.Base(posterLocalPath)
@@ -892,7 +895,7 @@ func AssembleUploadHandler(c *gin.Context) {
 				}
 			}
 			DB.Model(&models.MediaItem{}).Where("id = ?", itemID).Update("poster_url", posterCDNURL)
-		}(newItem.ID, input.UploadID, posterLocalPath, input.TotalChunks)
+		}(newItem.ID, posterLocalPath)
 
 		c.JSON(http.StatusCreated, gin.H{
 			"message":       "Media item uploaded successfully",

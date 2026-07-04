@@ -355,6 +355,78 @@ func applyFastStart(db *gorm.DB, item models.DemoMediaItem) error {
 	}).Error
 }
 
+// CleanupOrphanedChunksHandler deletes historical chunk upload directories left behind in
+// temp-media/ before automatic post-assembly cleanup was added. Safe to run any number of
+// times — assembled files (flat, no subdirectory) are not touched. Super_admin only.
+// POST /api/admin/cleanup-orphaned-chunks
+func CleanupOrphanedChunksHandler(c *gin.Context) {
+	userIDVal, ok := c.Get("user_id")
+	userID, ok2 := userIDVal.(uint)
+	if !ok || !ok2 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	var requestingUser models.User
+	if err := DB.First(&requestingUser, userID).Error; err != nil || !requestingUser.IsSuperAdmin() {
+		c.JSON(http.StatusForbidden, gin.H{"error": "super_admin only"})
+		return
+	}
+
+	// List the top level of temp-media/ — chunk directories show up as IsDirectory:true,
+	// assembled final files show up as IsDirectory:false (they're flat objects with extensions).
+	entries, err := utils.ListBunnyCDNFolderRaw("temp-media")
+	if err != nil {
+		log.Printf("[CleanupChunks] Failed to list temp-media/: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list temp-media: " + err.Error()})
+		return
+	}
+
+	var deletedDirs int
+	var deletedFiles int
+	var errs []string
+
+	for _, entry := range entries {
+		if !entry.IsDirectory {
+			continue // assembled file, skip
+		}
+		dirPath := "temp-media/" + entry.ObjectName
+		// List the files inside this chunk directory.
+		files, listErr := utils.ListBunnyCDNFolder(dirPath)
+		if listErr != nil {
+			log.Printf("[CleanupChunks] Failed to list %s: %v", dirPath, listErr)
+			errs = append(errs, fmt.Sprintf("list %s: %v", dirPath, listErr))
+			continue
+		}
+		// Delete each chunk file.
+		allDeleted := true
+		for _, f := range files {
+			chunkPath := dirPath + "/" + f.ObjectName
+			if delErr := utils.DeletePathFromBunnyCDNStorage(chunkPath); delErr != nil {
+				log.Printf("[CleanupChunks] Failed to delete %s: %v", chunkPath, delErr)
+				errs = append(errs, fmt.Sprintf("delete %s: %v", chunkPath, delErr))
+				allDeleted = false
+			} else {
+				deletedFiles++
+			}
+		}
+		// Delete the directory itself (BunnyCDN requires the trailing slash for dirs).
+		if allDeleted {
+			if delErr := utils.DeletePathFromBunnyCDNStorage(dirPath + "/"); delErr != nil {
+				log.Printf("[CleanupChunks] Failed to delete dir %s: %v", dirPath, delErr)
+			} else {
+				deletedDirs++
+			}
+		}
+	}
+
+	log.Printf("[CleanupChunks] Done: deleted %d dirs, %d chunk files, %d errors", deletedDirs, deletedFiles, len(errs))
+	c.JSON(http.StatusOK, gin.H{
+		"deleted_dirs":  deletedDirs,
+		"deleted_files": deletedFiles,
+		"errors":        errs,
+	})
+}
+
 // buildTranscodedRemotePath converts a CDN pull-zone URL to a storage path with .mp4 extension.
 // "https://LetsWatchOut.b-cdn.net/demo_media_library/Anime/DBZ.rmvb"
 //   → "demo_media_library/Anime/DBZ.mp4"

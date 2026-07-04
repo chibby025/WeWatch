@@ -802,6 +802,7 @@ func main() {
 		protected.POST("/admin/demo-media/transcode", handlers.TranscodeDemoMediaHandler)        // Transcode .rmvb/.avi/.mkv → .mp4
 		protected.POST("/admin/demo-media/extract-posters", handlers.ExtractDemoPostersHandler)  // Extract thumbnail poster from each video
 		protected.POST("/admin/demo-media/apply-faststart", handlers.ApplyFastStartHandler)     // Re-mux MP4s with +faststart (mobile load speed)
+		protected.POST("/admin/cleanup-orphaned-chunks", handlers.CleanupOrphanedChunksHandler) // Delete historical chunk dirs left in temp-media/
 
 		// --- SUPPORT ROUTES ---
 		protected.POST("/support/send", handlers.SendSupportEmail) // POST /api/support/send (Send help/support email)

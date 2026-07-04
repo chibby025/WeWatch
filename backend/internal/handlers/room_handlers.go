@@ -78,6 +78,8 @@ func CreateWatchSessionWithTypeAndTicketing(roomID uint, hostID uint, watchType 
 		EarlyBirdEnabled     bool    `json:"early_bird_enabled"`
 		EarlyBirdPriceTokens int     `json:"early_bird_price_tokens"`
 		EarlyBirdEndTime     string  `json:"early_bird_end_time"`
+		CustomBackgroundURL  string  `json:"custom_background_url"`
+		ScreenRegion         string  `json:"screen_region"`
 	}); ok {
 		session.ClassType = ticketingInput.ClassType
 		session.TicketingEnabled = ticketingInput.TicketingEnabled
@@ -86,6 +88,8 @@ func CreateWatchSessionWithTypeAndTicketing(roomID uint, hostID uint, watchType 
 		session.TicketPriceAmount = ticketingInput.TicketPriceAmount
 		session.EarlyBirdEnabled = ticketingInput.EarlyBirdEnabled
 		session.EarlyBirdPriceTokens = ticketingInput.EarlyBirdPriceTokens
+		session.CustomBackgroundURL = ticketingInput.CustomBackgroundURL
+		session.ScreenRegion = ticketingInput.ScreenRegion
 		
 		// Set early bird as active if enabled (will be deactivated when end time passes)
 		if ticketingInput.EarlyBirdEnabled {
@@ -421,17 +425,21 @@ func CreateWatchSession(c *gin.Context) {
 		WatchType     string `json:"watch_type" binding:"required"`
 		ClassType     string `json:"class_type"`      // "classroom" or "lecture_hall" (for watch_type="classroom")
 		ContentRating string `json:"content_rating"`  // "G", "PG", "13+", "16+", "18+", "Mature"
-		
+
 		// Ticketing fields
 		TicketingEnabled     bool    `json:"ticketing_enabled"`
 		TicketPriceTokens    int     `json:"ticket_price_tokens"`
 		TicketPriceCurrency  string  `json:"ticket_price_currency"`
 		TicketPriceAmount    float64 `json:"ticket_price_amount"`
-		
+
 		// Early bird fields
 		EarlyBirdEnabled     bool   `json:"early_bird_enabled"`
 		EarlyBirdPriceTokens int    `json:"early_bird_price_tokens"`
 		EarlyBirdEndTime     string `json:"early_bird_end_time"` // ISO 8601 string
+
+		// Custom watch type fields
+		CustomBackgroundURL string `json:"custom_background_url"`
+		ScreenRegion        string `json:"screen_region"`
 	}
 
 	log.Printf("\n\n🎬🎬🎬 ========== CREATE WATCH SESSION CALLED ========== 🎬🎬🎬")
@@ -453,8 +461,8 @@ func CreateWatchSession(c *gin.Context) {
 	log.Printf("   🎫 ticketing_enabled: %v", input.TicketingEnabled)
 
 	// Validate watch_type
-	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "watch_type must be 'video', '3d_cinema', or 'classroom'"})
+	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" && input.WatchType != "custom" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "watch_type must be 'video', '3d_cinema', 'classroom', or 'custom'"})
 		return
 	}
 

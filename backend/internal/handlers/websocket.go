@@ -913,6 +913,10 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                 "is_private":              watchSession.IsPrivate,
                 "content_rating":           watchSession.ContentRating,
                 "is_demo_session":          room.IsAlwaysOn,
+                "custom_background_url":    watchSession.CustomBackgroundURL,
+                "screen_region":            watchSession.ScreenRegion,
+                "watch_type":              watchSession.WatchType,
+                "class_type":              watchSession.ClassType,
             },
         }
         if statusBytes, err := json.Marshal(statusMsg); err == nil {
@@ -2369,6 +2373,10 @@ func WebSocketHandler(c *gin.Context) {
 					"liveshare_logo_bug":        watchSession.LiveShareLogoBug,
 					"liveshare_break_screen":    watchSession.LiveShareBreakScreen,
 					"liveshare_layout":          watchSession.LiveShareLayout,
+					"custom_background_url":     watchSession.CustomBackgroundURL,
+					"screen_region":             watchSession.ScreenRegion,
+					"watch_type":                watchSession.WatchType,
+					"class_type":                watchSession.ClassType,
 				},
 			}
 			if msgBytes, err := json.Marshal(statusMsg); err == nil {

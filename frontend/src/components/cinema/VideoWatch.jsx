@@ -337,7 +337,7 @@ export default function VideoWatch() {
   const isClassroom = watchType === 'classroom';
   const isLectureHall = isClassroom && classType === 'lecture_hall';
   const isCustomWatch = watchType === 'custom';
-  const customBackgroundUrl = sessionStatus?.custom_background_url || '';
+  const customBackgroundUrl = resolveMediaUrl(sessionStatus?.custom_background_url || '');
   const screenRegion = (() => {
     try { return sessionStatus?.screen_region ? JSON.parse(sessionStatus.screen_region) : null; } catch { return null; }
   })();
@@ -7136,6 +7136,7 @@ export default function VideoWatch() {
           broadcastPermissions={broadcastPermissions}
           unreadMessages={unreadMessages}
           roomChatUnreadCount={roomChatUnreadCount}
+          videoRef={videoPlayerRef}
         />
 
       {/* ⚙️ Settings modal — opened via LeftSidebar Settings button */}

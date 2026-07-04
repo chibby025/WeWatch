@@ -210,6 +210,8 @@ const Taskbar = ({
   roomChatUnreadCount = 0, // unread count for the shared room/session chat
   // Used only to shorten the auto-hide window while a game is active (see hideDelayMs).
   currentGame,
+  // Video element ref — when provided, shows a volume button on the right edge of the pill
+  videoRef = null,
 }) => {
   // 🎯 Derive feature flags from watch type
   const isClassroom = watchType === 'classroom';
@@ -235,6 +237,49 @@ const Taskbar = ({
   const [showTaskbarTour, setShowTaskbarTour] = useState(false);
   const showTaskbarTourRef = useRef(false);
   useEffect(() => { showTaskbarTourRef.current = showTaskbarTour; }, [showTaskbarTour]);
+
+  // Volume control — synced to videoRef via native volumechange event
+  const [volLevel, setVolLevel] = useState(1.0);
+  const [isVolMuted, setIsVolMuted] = useState(false);
+  const [showVolPopover, setShowVolPopover] = useState(false);
+  const volPopoverRef = useRef(null);
+  const volButtonRef = useRef(null);
+
+  useEffect(() => {
+    const video = videoRef?.current;
+    if (!video) return;
+    const sync = () => {
+      setVolLevel(video.muted ? 0 : video.volume);
+      setIsVolMuted(video.muted);
+    };
+    sync();
+    video.addEventListener('volumechange', sync);
+    return () => video.removeEventListener('volumechange', sync);
+  }, [videoRef]);
+
+  useEffect(() => {
+    if (!showVolPopover) return;
+    const handler = (e) => {
+      if (!volPopoverRef.current?.contains(e.target) && !volButtonRef.current?.contains(e.target)) {
+        setShowVolPopover(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showVolPopover]);
+
+  const handleVolChange = (e) => {
+    const v = parseFloat(e.target.value);
+    const video = videoRef?.current;
+    if (!video) return;
+    if (v === 0) { video.muted = true; } else { video.muted = false; video.volume = v; }
+  };
+
+  const handleVolMuteToggle = () => {
+    const video = videoRef?.current;
+    if (!video) return;
+    video.muted = !video.muted;
+  };
   useEffect(() => {
     if (!localStorage.getItem('wewatch_taskbar_tour_seen')) {
       const t = setTimeout(() => {
@@ -266,8 +311,10 @@ const Taskbar = ({
   const [isMinimized, setIsMinimized] = useState(false);
   const [minimizedPos, setMinimizedPos] = useState(null); // {x,y} in viewport px, lazily seeded on first minimize
   const dragStateRef = useRef(null); // { startX, startY, originX, originY, moved }
+  // Auto-restore when a game ends so players don't lose the taskbar after a match
   useEffect(() => {
-    if (!currentGame) setIsMinimized(false);
+    if (currentGame === null || currentGame === undefined) return;
+    return () => setIsMinimized(false);
   }, [currentGame]);
 
   // Full pill drag (always available, not just in game mode)
@@ -512,19 +559,16 @@ const Taskbar = ({
         onPointerMove={handlePillPointerMove}
         onPointerUp={handlePillPointerUp}
       >
-        {currentGame && (
-          <button
-            onClick={handleMinimizeClick}
-            title="Minimize"
-            className="absolute top-1 left-1 w-6 h-6 rounded-full bg-gray-900 border border-white/30 flex items-center justify-center text-white hover:bg-gray-800 transition-colors"
-            style={{ zIndex: 1001 }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="17 11 12 6 7 11" />
-              <polyline points="17 18 12 13 7 18" />
-            </svg>
-          </button>
-        )}
+        <button
+          onClick={handleMinimizeClick}
+          title="Minimize taskbar"
+          className="absolute top-1 left-1 w-6 h-6 rounded-full bg-gray-900 border border-white/30 flex items-center justify-center text-white hover:bg-gray-800 transition-colors"
+          style={{ zIndex: 1001 }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
         <TaskbarButton
           buttonRef={leaveCallButtonRef}
           icon={LeaveCallIcon}
@@ -667,8 +711,8 @@ const Taskbar = ({
             }
           />
 
-          {/* Video Button - Hidden for regular VideoWatch to save bandwidth costs */}
-          {showVideoToggle && watchType !== 'video' && (
+          {/* Video Button - Hidden for regular VideoWatch and custom scene (no LiveKit) */}
+          {showVideoToggle && watchType !== 'video' && watchType !== 'custom' && (
             <TaskbarButton
               icon={VideoIcon}
               label="Video"
@@ -753,6 +797,23 @@ const Taskbar = ({
               }}
             />
           )}
+
+          {/* Volume button — right edge of pill, only when videoRef is provided */}
+          {videoRef && (
+            <button
+              ref={volButtonRef}
+              onClick={(e) => { e.stopPropagation(); setShowVolPopover(v => !v); }}
+              className="flex flex-col items-center justify-center text-white text-sm font-medium bg-transparent border-none p-1.5 rounded-md transition-colors duration-200 hover:bg-white/10"
+              aria-label="Volume"
+            >
+              <div className="h-7 w-7 flex items-center justify-center text-xl">
+                {isVolMuted || volLevel === 0 ? '🔇' : volLevel < 0.4 ? '🔉' : '🔊'}
+              </div>
+              <span className="text-[9px] mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight">
+                {isVolMuted || volLevel === 0 ? 'Muted' : `${Math.round(volLevel * 100)}%`}
+              </span>
+            </button>
+          )}
       </div>
 
 
@@ -834,6 +895,38 @@ const Taskbar = ({
         </div>
       )}
       
+      {/* Volume popover — above the right edge of the pill */}
+      {showVolPopover && videoRef && (
+        <div
+          ref={volPopoverRef}
+          onPointerDown={e => e.stopPropagation()}
+          className="fixed z-[1100] bg-black/85 backdrop-blur-md rounded-xl px-3 pt-3 pb-4 flex flex-col items-center gap-2 shadow-xl border border-white/10"
+          style={{ bottom: '90px', right: '20px' }}
+        >
+          <span className="text-xs font-semibold tabular-nums text-white">
+            {isVolMuted || volLevel === 0 ? '0' : Math.round(volLevel * 100)}%
+          </span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.02"
+            value={isVolMuted ? 0 : volLevel}
+            onChange={handleVolChange}
+            className="volume-slider-v cursor-pointer"
+            style={{ writingMode: 'bt-lr', WebkitAppearance: 'slider-vertical', height: '100px', width: '4px' }}
+            aria-label="Volume"
+          />
+          <button
+            onClick={handleVolMuteToggle}
+            className="text-white/70 hover:text-white text-base transition-colors !min-h-0 !min-w-0 p-0"
+            aria-label={isVolMuted ? 'Unmute' : 'Mute'}
+          >
+            {isVolMuted || volLevel === 0 ? '🔇' : volLevel < 0.4 ? '🔉' : '🔊'}
+          </button>
+        </div>
+      )}
+
       {/* Audio Settings Dropdown */}
       <AudioSettingsDropdown
         isOpen={showAudioSettings}
@@ -854,12 +947,36 @@ const Taskbar = ({
         onLowerHand={onLowerHand}
       />
       
-      {/* CSS for scrollbar hiding and portrait mode optimization */}
+      {/* CSS for scrollbar hiding, portrait mode, and volume slider */}
       <style jsx>{`
         /* Hide scrollbar for Chrome, Safari and Opera */
         .scrollbar-hide::-webkit-scrollbar {
           display: none;
         }
+
+        .volume-slider-v::-webkit-slider-thumb {
+          appearance: none;
+          width: 13px;
+          height: 13px;
+          border-radius: 50%;
+          background: #a855f7;
+          cursor: pointer;
+          transition: background 0.15s, transform 0.15s;
+        }
+        .volume-slider-v::-webkit-slider-thumb:hover {
+          background: #c084fc;
+          transform: scale(1.25);
+        }
+        .volume-slider-v::-moz-range-thumb {
+          width: 13px;
+          height: 13px;
+          border-radius: 50%;
+          background: #a855f7;
+          cursor: pointer;
+          border: none;
+          transition: background 0.15s;
+        }
+        .volume-slider-v::-moz-range-thumb:hover { background: #c084fc; }
         
         /* Hide scrollbar for IE, Edge and Firefox */
         .scrollbar-hide {

@@ -106,7 +106,7 @@ function RegionPicker({ imageUrl, box, onChange }) {
 
   return (
     <div ref={containerRef} className="relative w-full select-none overflow-hidden rounded-lg bg-black" style={{ aspectRatio: '16/9' }}>
-      <img src={imageUrl} alt="background" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
+      <img src={imageUrl} alt="background" className="absolute inset-0 w-full h-full object-contain" draggable={false} />
 
       {/* Dimmed strips outside the box */}
       {[
@@ -370,11 +370,11 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
   // ── Step 1: Semicircle fan selector ───────────────────────────────────────
   return (
     <div className="fixed inset-0 bg-black/50 dark:bg-gray-800/70 flex items-center justify-center z-50 p-3 sm:p-4">
-      <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md">
+      <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md sm:max-w-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
           <div>
-            <h2 className="text-base font-extrabold bg-gradient-to-r from-purple-600 to-blue-500 bg-clip-text text-transparent">{title}</h2>
+            <h2 className="text-base sm:text-lg font-extrabold bg-gradient-to-r from-purple-600 to-blue-500 bg-clip-text text-transparent">{title}</h2>
             <p className="text-xs text-gray-400 mt-0.5">Select your watch experience</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Close">
@@ -386,7 +386,7 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
           selectedTypeId={selectedTypeId}
           onChange={setSelectedTypeId}
           showDescription
-          maxWidth={300}
+          maxWidth={440}
         />
 
         {/* Continue */}

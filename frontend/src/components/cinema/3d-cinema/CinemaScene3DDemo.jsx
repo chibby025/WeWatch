@@ -4639,10 +4639,10 @@ export default function CinemaScene3DDemo() {
             });
           }
           
-          // Navigate back to room page after a brief delay
-          setTimeout(() => {
+          // Members navigate immediately; host already left when they clicked End Session
+          if (!isCurrentUserHost) {
             handleLeaveCall();
-          }, 2000);
+          }
           break;
         
         case 'audio_mode_changed':
@@ -4982,10 +4982,12 @@ export default function CinemaScene3DDemo() {
         setIsAudioActive(false);
       }
       
-      // 2. Disconnect from LiveKit
+      // 2. Disconnect from LiveKit (fire-and-forget — same as VideoWatch's performCleanupAndExit)
       if (disconnectLiveKit) {
-        console.log('🔌 [CinemaScene3D] Disconnecting from LiveKit...');
-        await disconnectLiveKit();
+        console.log('🔌 [CinemaScene3D] Disconnecting from LiveKit (fire-and-forget)...');
+        Promise.resolve().then(() => disconnectLiveKit()).catch(err =>
+          console.error('❌ [CinemaScene3D] LiveKit disconnect error:', err)
+        );
       }
       
       // 3. Notify backend to clear seat assignment

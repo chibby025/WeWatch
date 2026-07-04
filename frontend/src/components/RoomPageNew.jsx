@@ -1916,7 +1916,7 @@ const RoomPageNew = () => {
         const classType = finalSessionData.class_type || 'lecture_hall';
         if (classType === 'lecture_hall') {
           navigate(`/classroom/lecture-hall/${roomId}?session_id=${session_id}`, {
-            state: { isHost: true, sessionId: session_id, classType: 'lecture_hall' }
+            state: { isHost: true, sessionId: session_id, classType: 'lecture_hall', currentUser, showLoadingOverlay: true }
           });
         } else {
           // For now, route small classroom to position-calculator too (until ClassroomScene3D is built)

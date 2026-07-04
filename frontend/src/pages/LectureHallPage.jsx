@@ -1155,6 +1155,9 @@ const PositionCalculatorPage = () => {
   // Blackboard media state
   const [blackboardMedia, setBlackboardMedia] = useState(null);
   const [isMediaFullscreen, setIsMediaFullscreen] = useState(false);
+  const [boardHintDismissed, setBoardHintDismissed] = useState(() =>
+    typeof window !== 'undefined' && localStorage.getItem('lh_board_fullscreen_hint_dismissed') === '1'
+  );
   const sharedVideoRef = useRef(null); // ✅ Shared video element for both 3D board and fullscreen (uploaded media only)
   const videoInitializedRef = useRef(false);
   const boardVideoRef = useRef(null); // ✅ Legacy ref (kept for compatibility)
@@ -1286,9 +1289,16 @@ const PositionCalculatorPage = () => {
   
   // 🔄 Loading spinner state (shows for 0.8s after seat assignment)
   const { showLoadingOverlay: enableLoadingOverlay = false } = location.state || {};
-  const [loadingStatus, setLoadingStatus] = useState(null); // Always start hidden
+  const [loadingStatus, setLoadingStatus] = useState(enableLoadingOverlay ? 'initializing' : null);
   const [hasSeatAssigned, setHasSeatAssigned] = useState(false);
   
+  // Safety timeout — clear 'initializing' splash after 10s max so it can't get stuck
+  useEffect(() => {
+    if (loadingStatus !== 'initializing') return;
+    const t = setTimeout(() => setLoadingStatus(null), 10000);
+    return () => clearTimeout(t);
+  }, [loadingStatus]);
+
   // 🐛 Debug: Track loading spinner state (logs on change + every 60s)
   useEffect(() => {
     const logSpinnerState = () => {
@@ -4367,12 +4377,13 @@ const PositionCalculatorPage = () => {
             // ✅ DISABLED: View direction modal on join
             // setShowViewDirectionModal(true);
             
-            // Show spinner for 0.8s after seat assignment (only if enabled and first time)
+            // Show spinner briefly after seat assignment (only if enabled and first time)
             if (enableLoadingOverlay && !hasSeatAssigned) {
               setLoadingStatus('seat_assigned');
-              setTimeout(() => {
-                setLoadingStatus(null);
-              }, 800);
+              setTimeout(() => setLoadingStatus(null), 800);
+            } else if (loadingStatus === 'initializing') {
+              // Clear the mount-time splash if seat arrived without the overlay path
+              setLoadingStatus(null);
             }
             
             // Mark as seated to prevent spinner on reconnects
@@ -4802,8 +4813,8 @@ const PositionCalculatorPage = () => {
         // ✅ Ensure absolute URL (safety net)
         let mediaUrl = data.url || data.file_url;
         if (mediaUrl && !mediaUrl.startsWith('http')) {
-          const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-          mediaUrl = `${API_BASE_URL}/${mediaUrl}`;
+          const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
+          mediaUrl = `${API_BASE_URL}/${mediaUrl.replace(/^\//, '')}`;
           console.log('🎬 [PositionCalculator] Converted to absolute URL:', mediaUrl);
         }
         
@@ -6020,7 +6031,8 @@ const PositionCalculatorPage = () => {
       
       // Ensure the URL is absolute (points to backend server)
       if (fileUrl && !fileUrl.startsWith('http')) {
-        fileUrl = `http://localhost:8080/${fileUrl}`;
+        const base = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
+        fileUrl = `${base}/${fileUrl.replace(/^\//, '')}`;
       }
       
       const mediaState = {
@@ -6644,18 +6656,7 @@ const PositionCalculatorPage = () => {
     console.log('🚨 [handleExit] currentUser:', currentUser?.id);
     console.log('🚨 [handleExit] isHost:', isHost);
     
-    const confirmExit = window.confirm(
-      isHost 
-        ? 'End this watch session for everyone? All participants will be returned to the room lobby.'
-        : 'Leave lecture hall?'
-    );
-    
-    if (!confirmExit) {
-      console.log('🚨 [handleExit] EXIT CANCELLED by user');
-      return;
-    }
-    
-    console.log('🚨 [handleExit] EXIT CONFIRMED, proceeding...');
+    console.log('🚨 [handleExit] EXIT proceeding...');
     
     try {
       console.log('🚪 [handleExit] STARTED - Current state:', {
@@ -6674,36 +6675,16 @@ const PositionCalculatorPage = () => {
         toast.success('Watch session ended');
       } else {
         // If participant, send leave message and wait for backend acknowledgment
-        if (sendMessage && currentUser && waitForAcknowledgment) {
-          console.log('👋 [PositionCalculatorPage] Participant leaving - sending leave_session message');
-          console.log('🚨 [BEFORE sendMessage] About to send leave_session');
-          
-          // Send leave message
-          sendMessage({
-            type: 'leave_session',
-            user_id: currentUser.id
-          });
-          console.log('🚨 [AFTER sendMessage] Message sent, waiting for acknowledgment...');
-          
-          // ✅ EVENT-DRIVEN: Wait for backend to acknowledge the leave was processed
-          console.log('⏳ [PositionCalculatorPage] Waiting for leave_acknowledged from backend...');
-          await waitForAcknowledgment('leave_session', 2000); // 2s timeout
-          console.log('✅ [PositionCalculatorPage] Leave acknowledged by backend (or timeout)');
-        } else {
-          console.log('🚨 [handleExit] SKIPPING leave message - sendMessage:', !!sendMessage, 'currentUser:', !!currentUser, 'waitForAcknowledgment:', !!waitForAcknowledgment);
+        if (sendMessage && currentUser) {
+          sendMessage({ type: 'leave_session', user_id: currentUser.id });
         }
       }
       
-      // ✅ Gracefully close WebSocket connection before navigation
-      console.log('🚨🚨🚨 [handleExit] ABOUT TO CALL disconnect() - exists?', !!disconnect);
+      // Fire-and-forget WS disconnect — navigate immediately without waiting
       if (disconnect) {
-        console.log('🔌 [PositionCalculatorPage] Disconnecting WebSocket gracefully...');
-        console.log('🚨 [BEFORE disconnect()] Calling disconnect now...');
-        await disconnect();
-        console.log('🚨 [AFTER disconnect()] disconnect() returned');
-        console.log('✅ [PositionCalculatorPage] WebSocket disconnected');
-      } else {
-        console.log('🚨🚨🚨 [handleExit] disconnect is UNDEFINED or FALSE!');
+        Promise.resolve().then(() => disconnect()).catch(err =>
+          console.error('❌ [LH] WS disconnect error:', err)
+        );
       }
 
       // ✅ QUIZ CLEANUP: Clear all quiz-related state and storage
@@ -7106,9 +7087,9 @@ const PositionCalculatorPage = () => {
           {(() => {
             // ✅ Only super_admin can move camera (pan/zoom/rotate)
             const isPrivilegedUser = currentUser?.role === 'super_admin';
-            
+
             return (
-              <OrbitControls 
+              <OrbitControls
                 ref={controlsRef}
                 enabled={true}
                 enablePan={isPrivilegedUser ? (freeRoamMode ? true : !lockMovement) : false}
@@ -7547,7 +7528,6 @@ const PositionCalculatorPage = () => {
           discussionMode={discussionMode}
           onToggleDiscussionMode={toggleDiscussionMode}
           availableCameras={[]}
-          isLeftSidebarOpen={isLeftSidebarOpen}
           isChatActive={showChatHome || isChatOpen || privateChatOpen}
           onEmoteSend={() => {}}
           showProgram={true} // Enable Board button for classroom
@@ -7592,9 +7572,10 @@ const PositionCalculatorPage = () => {
           demoMode={demoMode}
           setDemoMode={setDemoMode}
           unreadMessages={unreadMessages}
+          videoRef={sharedVideoRef}
         />
       </div>
-      
+
       {/* Side Panel - Seat Management */}
       {showDebugPanels && currentUser?.role === 'super_admin' && (
       <div className="w-96 bg-gray-800 border-l border-gray-700 flex flex-col">
@@ -7745,6 +7726,20 @@ const PositionCalculatorPage = () => {
           selectedAudioDeviceId={selectedAudioDeviceId}
           onAudioDeviceChange={changeAudioDevice}
           availableCameras={[]}
+          showDebugPanels={showDebugPanels}
+          onToggleDebugPanels={setShowDebugPanels}
+          freeRoamMode={freeRoamMode}
+          setFreeRoamMode={setFreeRoamMode}
+          lockMovement={lockMovement}
+          setLockMovement={setLockMovement}
+          lockOrbit={lockOrbit}
+          setLockOrbit={setLockOrbit}
+          showPositionDebugLectureHall={showPositionDebug}
+          onTogglePositionDebugLectureHall={setShowPositionDebug}
+          showAudioDebugPanel={showAudioDebugPanel}
+          onToggleAudioDebugPanel={setShowAudioDebugPanel}
+          showCameraMarkers={showCameraMarkers}
+          setShowCameraMarkers={setShowCameraMarkers}
         />
       )}
 
@@ -8096,7 +8091,24 @@ const PositionCalculatorPage = () => {
       />
 
       {/* 🔄 Loading overlay - Shows during seat assignment */}
-      {loadingStatus && <AppSplash statusText="Finding your seat..." />}
+      {loadingStatus && <AppSplash statusText={loadingStatus === 'initializing' ? 'Loading lecture hall...' : 'Finding your seat...'} />}
+
+      {/* 👆 Board fullscreen tutorial hint — shown to members when media is playing */}
+      {!isHost && blackboardMedia && !isMediaFullscreen && !boardHintDismissed && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 bg-black/80 backdrop-blur-sm text-white text-sm px-4 py-2.5 rounded-full shadow-lg border border-white/10 pointer-events-auto">
+          <span>👆 Click the board to go fullscreen</span>
+          <button
+            className="ml-1 text-white/60 hover:text-white transition-colors !min-h-0 !min-w-0 p-0"
+            onClick={() => {
+              localStorage.setItem('lh_board_fullscreen_hint_dismissed', '1');
+              setBoardHintDismissed(true);
+            }}
+            aria-label="Dismiss hint"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* 📱 Orientation Modal - Suggest landscape mode for better experience */}
       {showOrientationModal && isPortraitMode && (
