@@ -1001,6 +1001,7 @@ export default function VideoWatch() {
   const [localScreenTrack, setLocalScreenTrack] = useState(null);
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // ⏱️ State-based seek (triggers re-renders)
   const [videoStalled,   setVideoStalled]   = useState(false); // member-side: video loaded but never played
+  const [isMediaLoading, setIsMediaLoading] = useState(false); // true while waiting for first 'playing' event after a media change
   const stallTimerRef = useRef(null);
   
   // 📹 LiveShare state (screen + camera)
@@ -2719,6 +2720,7 @@ export default function VideoWatch() {
     if (!video) return;
     const onPlaying = () => {
       setVideoStalled(false);
+      setIsMediaLoading(false);
       clearTimeout(stallTimerRef.current);
       isBufferingRef.current = false;
     };
@@ -2730,6 +2732,12 @@ export default function VideoWatch() {
       video.removeEventListener('waiting', onWaiting);
     };
   }, []);
+
+  // Show loading spinner whenever the media URL changes; cleared by the 'playing' event above.
+  useEffect(() => {
+    if (!currentMedia?.mediaUrl) { setIsMediaLoading(false); return; }
+    setIsMediaLoading(true);
+  }, [currentMedia?.mediaUrl]);
 
   // Monitor LiveKit local participant for screen share track
   useEffect(() => {
@@ -6570,6 +6578,14 @@ export default function VideoWatch() {
                   <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 pointer-events-none">
                     <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     <p className="text-white/80 text-sm sm:text-base">Host is preparing a stream...</p>
+                  </div>
+                )}
+
+                {/* Loading spinner — shown while video buffers after a media source change */}
+                {isMediaLoading && currentMedia && !liveShareMode && !isPreparingStream && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 pointer-events-none">
+                    <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <p className="text-white/70 text-sm">Loading media...</p>
                   </div>
                 )}
 

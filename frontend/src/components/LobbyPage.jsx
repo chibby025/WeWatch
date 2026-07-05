@@ -109,6 +109,7 @@ const _lobbyCache = {
   sessions: null, sessionsTs: 0, sessionsFp: '',
   friends: null, friendsTs: 0, friendsFp: '',
   dms: new Map(), // key: friendId → last 30 messages (survives tab switches)
+  sessionsPageData: null, // WatchOuts feed cards — survives unmount/remount so back-nav is instant
 };
 // Cheap fingerprint: join id + a volatile field so we catch joins/renames/previews.
 const _roomsFp  = (arr) => arr.map(r => `${r.id}:${r.updated_at || ''}:${r.member_count ?? ''}`).join('|');
@@ -384,12 +385,12 @@ const LobbyPage = () => {
   
   // ✅ Infinite Scroll State for "Watching Now"
   const [watchingSubTab, setWatchingSubTab] = useState('sessions'); // 'sessions' or 'discover'
-  const [sessionsPage, setSessionsPage] = useState({ 
-    data: [], 
-    offset: 0, 
+  const [sessionsPage, setSessionsPage] = useState(() => ({
+    data: _lobbyCache.sessionsPageData || [],
+    offset: 0,
     hasMore: true,
-    loading: false 
-  });
+    loading: false
+  }));
   const [trailersPage, setTrailersPage] = useState({ 
     data: [], 
     offset: 0, 
@@ -631,6 +632,13 @@ const LobbyPage = () => {
   };
   
   // 🧹 Cleanup session chat polling interval on unmount
+  // Keep module-level cache in sync with WatchOuts feed so back-navigation renders cards instantly.
+  useEffect(() => {
+    if (sessionsPage.data.length > 0) {
+      _lobbyCache.sessionsPageData = sessionsPage.data;
+    }
+  }, [sessionsPage.data]);
+
   useEffect(() => {
     return () => {
       if (chatIntervalRef.current) clearInterval(chatIntervalRef.current);
