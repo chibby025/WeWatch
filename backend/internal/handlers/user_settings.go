@@ -17,11 +17,11 @@ import (
 func saveAgeFlagsForUser(db *gorm.DB, userID uint, age int) {
 	currentYear := time.Now().Year()
 	flags := map[string]interface{}{
-		"can_see_13_plus": age >= 13,
-		"can_see_16_plus": age >= 16,
-		"can_see_18_plus": age >= 18,
-		"can_see_mature":  age >= 18,
-		"age_flags_year":  currentYear,
+		"can_see13_plus": age >= 13,
+		"can_see16_plus": age >= 16,
+		"can_see18_plus": age >= 18,
+		"can_see_mature": age >= 18,
+		"age_flags_year": currentYear,
 	}
 
 	var settings models.UserSettings
