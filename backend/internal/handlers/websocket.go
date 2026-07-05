@@ -169,6 +169,13 @@ type Hub struct {
     docStates   map[uint]docState
     docStateMu  sync.RWMutex
 
+    // In-memory subtitle content (roomID → VTT text).
+    // Set by subtitle_added, cleared by subtitle_removed or session end.
+    // Included in session_status so late joiners / poor-network reconnects
+    // get the current subtitle without relying on the host re-broadcasting.
+    subtitleContent map[uint]string
+    subtitleMu      sync.RWMutex
+
     // ── Phase 3 observability counters ──────────────────────────────────────
     // Incremented wherever a channel-full "default: drop" branch already existed.
     // Lets /api/admin/hub-stats answer "is the Hub falling behind?" without
@@ -253,6 +260,8 @@ func NewHub() *Hub {
 		playbackPosMutex:    sync.RWMutex{},
 		docStates:           make(map[uint]docState),
 		docStateMu:          sync.RWMutex{},
+		subtitleContent:     make(map[uint]string),
+		subtitleMu:          sync.RWMutex{},
 	}
 }
 
@@ -890,6 +899,11 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
             joinDocURL, joinDocType, joinDocPage = ds.url, ds.docType, ds.page
         }
 
+        joinSubtitle := ""
+        hub.subtitleMu.RLock()
+        joinSubtitle = hub.subtitleContent[session.RoomID]
+        hub.subtitleMu.RUnlock()
+
         statusMsg := WebSocketMessage{
             Type: "session_status",
             Data: map[string]interface{}{
@@ -917,6 +931,7 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                 "screen_region":            watchSession.ScreenRegion,
                 "watch_type":              watchSession.WatchType,
                 "class_type":              watchSession.ClassType,
+                "current_subtitle":         joinSubtitle,
             },
         }
         if statusBytes, err := json.Marshal(statusMsg); err == nil {
@@ -2344,6 +2359,11 @@ func WebSocketHandler(c *gin.Context) {
 				wsDocURL, wsDocType, wsDocPage = ds.url, ds.docType, ds.page
 			}
 
+			wsSubtitle2 := ""
+			hub.subtitleMu.RLock()
+			wsSubtitle2 = hub.subtitleContent[roomID]
+			hub.subtitleMu.RUnlock()
+
 			statusMsg := WebSocketMessage{
 				Type: "session_status",
 				Data: map[string]interface{}{
@@ -2377,6 +2397,7 @@ func WebSocketHandler(c *gin.Context) {
 					"screen_region":             watchSession.ScreenRegion,
 					"watch_type":                watchSession.WatchType,
 					"class_type":                watchSession.ClassType,
+					"current_subtitle":          wsSubtitle2,
 				},
 			}
 			if msgBytes, err := json.Marshal(statusMsg); err == nil {
@@ -2965,6 +2986,10 @@ func (client *Client) handleMessage(message []byte) {
         if ds, ok := client.hub.GetDocState(client.roomID); ok {
             lhDocURL, lhDocType, lhDocPage = ds.url, ds.docType, ds.page
         }
+        lhSubtitle := ""
+        client.hub.subtitleMu.RLock()
+        lhSubtitle = client.hub.subtitleContent[client.roomID]
+        client.hub.subtitleMu.RUnlock()
         statusMsg := WebSocketMessage{
             Type: "session_status",
             Data: map[string]interface{}{
@@ -2985,7 +3010,8 @@ func (client *Client) handleMessage(message []byte) {
                 "is_screen_sharing_active": watchSession.IsScreenSharingActive,
                 "sharing_source": watchSession.SharingSource,
                 "session_title": watchSession.SessionTitle,
-                "content_rating": watchSession.ContentRating, // ✅ Include content rating for button filtering
+                "content_rating": watchSession.ContentRating,
+                "current_subtitle": lhSubtitle,
             },
         }
 
@@ -6312,6 +6338,29 @@ func (client *Client) handleMessage(message []byte) {
         return
     }
     
+    // ✅ Handle subtitle_added: store content so late joiners / reconnects get it via session_status
+    if msg.Type == "subtitle_added" {
+        var sub struct {
+            Content string `json:"content"`
+        }
+        if err := json.Unmarshal(message, &sub); err == nil && sub.Content != "" {
+            client.hub.subtitleMu.Lock()
+            client.hub.subtitleContent[client.roomID] = sub.Content
+            client.hub.subtitleMu.Unlock()
+        }
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+
+    // ✅ Handle subtitle_removed: clear stored content
+    if msg.Type == "subtitle_removed" {
+        client.hub.subtitleMu.Lock()
+        delete(client.hub.subtitleContent, client.roomID)
+        client.hub.subtitleMu.Unlock()
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+
     // ✅ Default: Broadcast all other message types to room
     // This handles: update_room_status, platform_selected, etc.
     log.Printf("[handleMessage] 📢 Broadcasting message type '%s' to room %d", msg.Type, client.roomID)

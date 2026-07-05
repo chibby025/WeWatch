@@ -35,12 +35,13 @@ const TaskbarButton = React.memo(({
   notificationCount = 0, // ✅ Notification badge count
   localAudioLevel = 0, // ✅ Audio level for waveform animation (0-255)
   isLoading = false, // ✅ Show spinner instead of icon
-  small = false // Leave Call keeps the smaller icon; every other button is a touch bigger
+  small = false, // Leave Call keeps the smaller icon; every other button is a touch bigger
+  mobile = false, // larger touch targets on phone/tablet screens
 }) => {
   const [isHovered, setIsHovered] = useState(false);
-  const iconBoxClass = small ? 'h-6 w-6' : 'h-7 w-7';
-  const spinnerClass = small ? 'h-4 w-4' : 'h-5 w-5';
-  const emojiSize = small ? 24 : 28;
+  const iconBoxClass = small ? 'h-6 w-6' : mobile ? 'h-9 w-9' : 'h-7 w-7';
+  const spinnerClass = small ? 'h-4 w-4' : mobile ? 'h-6 w-6' : 'h-5 w-5';
+  const emojiSize = small ? 24 : mobile ? 34 : 28;
 
   // Debug: log pulse state for Audio button
   useEffect(() => {
@@ -94,12 +95,12 @@ const TaskbarButton = React.memo(({
             </div>
           )}
         </div>
-        <span className="text-[9px] mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight">
+        <span className={`${mobile ? 'text-[10px]' : 'text-[9px]'} mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight`}>
           {label}
         </span>
       </button>
       {subtitle && (
-        <span className="text-[8px] text-gray-400 mt-0.5 whitespace-nowrap">
+        <span className={`${mobile ? 'text-[9px]' : 'text-[8px]'} text-gray-400 mt-0.5 whitespace-nowrap`}>
           {subtitle}
         </span>
       )}
@@ -216,7 +217,16 @@ const Taskbar = ({
   // 🎯 Derive feature flags from watch type
   const isClassroom = watchType === 'classroom';
   const isLectureHall = isClassroom && classType === 'lecture_hall';
-  
+
+  // Mobile detection — same 1024px threshold used throughout the app.
+  // Rechecked on resize/orientation change so landscape↔portrait flips update correctly.
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 1024);
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
   // ✅ Calculate total unread message count (DMs + shared room chat)
   const totalUnreadCount = roomChatUnreadCount + Object.values(unreadMessages).reduce((sum, count) => sum + count, 0);
   
@@ -490,7 +500,7 @@ const Taskbar = ({
       bottom: 'auto',
       transform: isVisible ? 'scale(1)' : 'scale(0.95)',
     } : {
-      bottom: '20px',
+      bottom: isMobile ? '14px' : '20px',
       left: '50%',
       transform: isVisible
         ? 'translateX(-50%) translateY(0) scale(1)'
@@ -502,9 +512,9 @@ const Taskbar = ({
     color: 'white',
     display: 'flex',
     alignItems: 'center',
-    padding: '4px 20px',
+    padding: isMobile ? '8px 16px' : '4px 20px',
     borderRadius: '9999px',
-    gap: '14px',
+    gap: isMobile ? '12px' : '14px',
     boxShadow: '0 10px 25px -5px rgba(0,0,0,0.45)',
     transition: 'opacity 0.25s ease, transform 0.25s ease',
     zIndex: 1000,
@@ -569,11 +579,38 @@ const Taskbar = ({
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
         </button>
+
+        {/* Drag handle — visible on mobile so users have a clear grab target.
+            Not a <button> so pointer-down on it falls through to handlePillPointerDown,
+            which initialises the full-pill drag. */}
+        {isMobile && (
+          <div
+            aria-hidden="true"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '3px',
+              padding: '0 4px',
+              opacity: 0.5,
+              cursor: 'grab',
+              userSelect: 'none',
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ display: 'block', width: 20, height: 2, borderRadius: 9999, background: 'white' }} />
+            <span style={{ display: 'block', width: 20, height: 2, borderRadius: 9999, background: 'white' }} />
+            <span style={{ display: 'block', width: 20, height: 2, borderRadius: 9999, background: 'white' }} />
+          </div>
+        )}
+
         <TaskbarButton
           buttonRef={leaveCallButtonRef}
           icon={LeaveCallIcon}
           label="Leave Call"
           small
+          mobile={isMobile}
           onClick={async () => {
             if (onLeaveCall) {
               try {
@@ -594,6 +631,7 @@ const Taskbar = ({
             buttonRef={chatButtonRef}
             icon={ChatIcon}
             label="Chat"
+            mobile={isMobile}
             notificationCount={totalUnreadCount}
             onClick={() => {
               if (openChat) {
@@ -623,6 +661,7 @@ const Taskbar = ({
               <TaskbarButton
                 icon={SeatsIcon}
                 label="Seats"
+                mobile={isMobile}
                 onClick={() => {
                   if (onSeatsClick) {
                     onSeatsClick();
@@ -645,6 +684,7 @@ const Taskbar = ({
             buttonRef={audioButtonRef}
             icon={isSilenceMode ? SilenceIcon : AudioIcon}
             label="Audio"
+            mobile={isMobile}
             localAudioLevel={localAudioLevel}
             onClick={() => {
               if (toggleAudio) {
@@ -716,6 +756,7 @@ const Taskbar = ({
             <TaskbarButton
               icon={VideoIcon}
               label="Video"
+              mobile={isMobile}
               onClick={() => {
                 if (toggleCamera) {
                   toggleCamera();
@@ -731,6 +772,7 @@ const Taskbar = ({
             <TaskbarButton
               icon={isHandRaised ? '✋' : EmotesIcon}
               label="Emotes"
+              mobile={isMobile}
               onClick={() => setShowEmotePicker(!showEmotePicker)}
               isEmoji={true}
               notificationCount={isHost ? raisedHandsCount : 0}
@@ -741,6 +783,7 @@ const Taskbar = ({
             buttonRef={membersButtonRef}
             icon={MembersIcon}
             label={isMembersLoading ? '' : `${memberCount}`}
+            mobile={isMobile}
             isLoading={isMembersLoading}
             onClick={() => {
               // If host has raised hands, show quick popup first
@@ -759,6 +802,7 @@ const Taskbar = ({
             <TaskbarButton
               icon={QuizIcon}
               label="Quiz"
+              mobile={isMobile}
               onClick={onQuizClick}
               isEmoji={true}
               shouldPulse={activeQuizCount > 0}
@@ -771,6 +815,7 @@ const Taskbar = ({
             <TaskbarButton
               icon={handRaised ? '🙋' : '✋'}
               label={handRaised ? 'Lower Hand' : 'Raise Hand'}
+              mobile={isMobile}
               onClick={() => {
                 if (handRaised) {
                   onLowerHand();
@@ -788,6 +833,7 @@ const Taskbar = ({
             <TaskbarButton
               icon={isClassroom ? BoardIcon : ProgramMenuIcon}
               label={isClassroom ? "Board" : "Menu"}
+              mobile={isMobile}
               onClick={() => {
                 if (onToggleLeftSidebar) {
                   onToggleLeftSidebar();
@@ -806,10 +852,10 @@ const Taskbar = ({
               className="flex flex-col items-center justify-center text-white text-sm font-medium bg-transparent border-none p-1.5 rounded-md transition-colors duration-200 hover:bg-white/10"
               aria-label="Volume"
             >
-              <div className="h-7 w-7 flex items-center justify-center text-xl">
+              <div className={`${isMobile ? 'h-9 w-9' : 'h-7 w-7'} flex items-center justify-center ${isMobile ? 'text-2xl' : 'text-xl'}`}>
                 {isVolMuted || volLevel === 0 ? '🔇' : volLevel < 0.4 ? '🔉' : '🔊'}
               </div>
-              <span className="text-[9px] mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight">
+              <span className={`${isMobile ? 'text-[10px]' : 'text-[9px]'} mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight`}>
                 {isVolMuted || volLevel === 0 ? 'Muted' : `${Math.round(volLevel * 100)}%`}
               </span>
             </button>
@@ -984,8 +1030,9 @@ const Taskbar = ({
           scrollbar-width: none;  /* Firefox */
         }
         
-        /* Portrait mode: slightly tighter side padding on the pill, keep vertical padding intact */
-        @media (orientation: portrait) {
+        /* Portrait mode: slightly tighter side padding on the pill, keep vertical padding intact.
+           On mobile (handled inline via isMobile), padding is already set smaller. */
+        @media (orientation: portrait) and (min-width: 1024px) {
           .taskbar-container {
             padding-left: 14px !important;
             padding-right: 14px !important;

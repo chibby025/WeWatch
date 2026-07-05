@@ -4167,6 +4167,21 @@ export default function VideoWatch() {
             setIsScreenSharingActive(false);
             setScreenSharerUserId(null);
           }
+
+          // Restore subtitle for late joiners / reconnects (members only — host
+          // already has it locally; restoring it for the host would be a no-op anyway
+          // since subtitleContentRef.current is also already set on the host side).
+          if (data.current_subtitle && !isHostRef.current) {
+            const blob = new Blob([data.current_subtitle], { type: 'text/vtt' });
+            const url = URL.createObjectURL(blob);
+            if (subtitleUrlRef.current) {
+              URL.revokeObjectURL(subtitleUrlRef.current);
+            }
+            subtitleUrlRef.current = url;
+            subtitleContentRef.current = data.current_subtitle;
+            setSubtitleUrl(url);
+            setSubtitleContent(data.current_subtitle);
+          }
           break;
         case "update_room_status":
           // ✅ OPTIMIZE: Don't update currentMedia if we're already in LiveShare mode with same title

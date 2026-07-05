@@ -676,6 +676,11 @@ func EndWatchSessionHandler(c *gin.Context) {
 		log.Printf("📡 [EndWatchSessionHandler] Lobby broadcast sent with session_id: %s", sessionID)
 	}
 
+	// Clear in-memory subtitle for this room now that the session is over.
+	hub.subtitleMu.Lock()
+	delete(hub.subtitleContent, session.RoomID)
+	hub.subtitleMu.Unlock()
+
 	// All remaining cleanup runs in the background — no longer blocks the response path
 	go func() {
 		log.Printf("🧹 [EndWatchSession cleanup] Starting background cleanup for session %s", sessionID)

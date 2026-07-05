@@ -269,6 +269,12 @@ func UploadSessionFramesHandler(c *gin.Context) {
 			return
 		}
 
+		// Delete the previous clip from CDN before uploading the new one — prevents
+		// one file per liveshare clip capture accumulating on the storage bucket.
+		if session.PreviewURL != "" && strings.Contains(session.PreviewURL, "b-cdn.net") {
+			utils.DeleteFromBunnyCDN(session.PreviewURL)
+		}
+
 		ext := filepath.Ext(clipHeader.Filename)
 		if ext == "" {
 			ext = ".webm"
@@ -355,6 +361,10 @@ func UploadSessionFramesHandler(c *gin.Context) {
 
 	// For liveshare snapshots, skip MP4 — a static poster is all we need
 	if sourceType == "liveshare" {
+		// Delete the previous poster from CDN before uploading the new one.
+		if session.PosterURL != "" && strings.Contains(session.PosterURL, "b-cdn.net") {
+			utils.DeleteFromBunnyCDN(session.PosterURL)
+		}
 		if fileData, readErr := os.ReadFile(posterPath); readErr == nil {
 			if cdnURL, uploadErr := utils.UploadPreviewToBunnyCDN(fileData, posterFilename); uploadErr == nil {
 				posterURL = cdnURL

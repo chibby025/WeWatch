@@ -91,9 +91,12 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 	state := m.states[room.ID]
 	m.mu.Unlock()
 
-	// Check for existing active session
+	// Check for existing active session — omit is_active check intentionally.
+	// CleanupStaleSessions can set is_active=false without setting ended_at when
+	// it loses the heartbeat during a process restart; requiring is_active=true here
+	// would cause the manager to create a second session on top of the still-open one.
 	var session models.WatchSession
-	err := m.db.Where("room_id = ? AND ended_at IS NULL AND is_active = true", room.ID).
+	err := m.db.Where("room_id = ? AND ended_at IS NULL", room.ID).
 		First(&session).Error
 
 	if err != nil {
@@ -107,9 +110,13 @@ func (m *DemoSessionManager) manageRoom(room models.Room) {
 		return
 	}
 
-	// Freshen heartbeat so CleanupStaleSessions leaves this session alone
+	// Freshen heartbeat and ensure is_active stays true so CleanupStaleSessions
+	// leaves this session alone (it may have been flipped false during a restart).
 	now := time.Now()
-	m.db.Model(&session).Update("last_heartbeat_at", now)
+	m.db.Model(&session).Updates(map[string]interface{}{
+		"last_heartbeat_at": now,
+		"is_active":         true,
+	})
 
 	// Rebuild state if lost (e.g. service restart) and re-broadcast so
 	// any clients already in the room resume playback.

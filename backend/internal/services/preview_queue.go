@@ -336,8 +336,12 @@ func (pq *PreviewQueue) clearSessionPreviewFiles(sessionID string) {
 			os.Remove(strings.TrimPrefix(result.PreviewURL, "/"))
 		}
 	}
-	if result.PosterURL != "" && (strings.Contains(result.PosterURL, "webrtc") || strings.Contains(result.PosterURL, "frame")) {
-		os.Remove(strings.TrimPrefix(result.PosterURL, "/"))
+	if result.PosterURL != "" {
+		if strings.Contains(result.PosterURL, "b-cdn.net") {
+			utils.DeleteFromBunnyCDN(result.PosterURL)
+		} else if strings.Contains(result.PosterURL, "webrtc") || strings.Contains(result.PosterURL, "frame") || strings.Contains(result.PosterURL, "previews/") {
+			os.Remove(strings.TrimPrefix(result.PosterURL, "/"))
+		}
 	}
 
 	pq.db.Table("watch_sessions").Where("session_id = ?", sessionID).
