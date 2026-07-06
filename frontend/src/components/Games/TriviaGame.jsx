@@ -67,10 +67,194 @@ async function fetchQuestions(categoryId, difficulty) {
   return data.results.map(processOpentdbQuestion);
 }
 
+// ─── Custom question builder (host only) ─────────────────────────────────────
+// Opened when the host taps the "✏️ Custom" tile in CategoryPicker. Lets the host
+// author their own questions (min 3, max 20) which are handed straight to the game
+// as `questions`, skipping the OpenTDB fetch entirely. The rest of TriviaGame is
+// unchanged — it just iterates through whatever `questions` array it's given.
+const CUSTOM_MIN_QUESTIONS = 3;
+const CUSTOM_MAX_QUESTIONS = 20;
+
+function CustomQuestionBuilder({ onConfirm, onCancel }) {
+  const [questions, setQuestions] = useState([]);
+  const [text, setText] = useState('');
+  const [options, setOptions] = useState(['', '', '', '']);
+  const [correctIndex, setCorrectIndex] = useState(0);
+
+  const trimmedOptions = options.map(o => o.trim());
+  const canAdd =
+    text.trim().length > 0 &&
+    trimmedOptions.every(o => o.length > 0) &&
+    questions.length < CUSTOM_MAX_QUESTIONS;
+
+  const addQuestion = () => {
+    if (!canAdd) return;
+    setQuestions(prev => [
+      ...prev,
+      { text: text.trim(), options: [...trimmedOptions], correct_index: correctIndex },
+    ]);
+    setText('');
+    setOptions(['', '', '', '']);
+    setCorrectIndex(0);
+  };
+
+  const removeQuestion = (idx) => {
+    setQuestions(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const setOption = (idx, value) => {
+    setOptions(prev => prev.map((o, i) => (i === idx ? value : o)));
+  };
+
+  const canStart = questions.length >= CUSTOM_MIN_QUESTIONS;
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-gray-950/98 flex flex-col overflow-y-auto">
+      <div className="flex items-start justify-between pl-20 pr-5 pt-6 pb-2 flex-shrink-0">
+        <div>
+          <h2 className="text-2xl font-bold text-white mb-1">Build Your Quiz ✏️</h2>
+          <p className="text-gray-400 text-sm">
+            Add {CUSTOM_MIN_QUESTIONS}–{CUSTOM_MAX_QUESTIONS} of your own questions
+          </p>
+        </div>
+        <button
+          onClick={onCancel}
+          className="mt-1 p-1.5 text-gray-500 hover:text-white hover:bg-gray-800 rounded-lg transition-colors flex-shrink-0"
+          title="Back to topics"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="flex-1 px-5 py-4 grid grid-cols-1 lg:grid-cols-2 gap-4 overflow-y-auto">
+        {/* Builder form */}
+        <div className="bg-gray-800/60 rounded-2xl p-4 space-y-3">
+          <div>
+            <label className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-1.5 block">
+              Question
+            </label>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="What is the capital of France?"
+              rows={2}
+              className="w-full bg-gray-900/70 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 resize-none"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-gray-400 text-xs font-semibold uppercase tracking-wider block">
+              Options (tap the circle to mark the correct one)
+            </label>
+            {options.map((opt, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCorrectIndex(i)}
+                  title="Mark as correct answer"
+                  className={`w-6 h-6 rounded-full border-2 flex-shrink-0 flex items-center justify-center text-xs font-bold transition-all ${
+                    correctIndex === i
+                      ? 'border-green-400 bg-green-500 text-white'
+                      : 'border-gray-600 text-gray-500 hover:border-gray-400'
+                  }`}
+                >
+                  {OPTION_LABELS[i]}
+                </button>
+                <input
+                  type="text"
+                  value={opt}
+                  onChange={(e) => setOption(i, e.target.value)}
+                  placeholder={`Option ${OPTION_LABELS[i]}`}
+                  className="flex-1 bg-gray-900/70 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={addQuestion}
+            disabled={!canAdd}
+            className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-lg text-sm transition-all"
+          >
+            {questions.length >= CUSTOM_MAX_QUESTIONS
+              ? `Max ${CUSTOM_MAX_QUESTIONS} questions reached`
+              : '+ Add Question'}
+          </button>
+        </div>
+
+        {/* Added questions list */}
+        <div className="bg-gray-800/40 rounded-2xl p-4">
+          <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-3">
+            Your Questions ({questions.length})
+          </p>
+          {questions.length === 0 ? (
+            <div className="text-center py-10 text-gray-600 text-sm">
+              No questions yet — add your first one.
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+              {questions.map((q, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-start gap-2 bg-gray-900/60 rounded-lg p-3 border border-gray-700"
+                >
+                  <span className="text-purple-400 text-xs font-bold mt-0.5 flex-shrink-0">{idx + 1}.</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm font-medium leading-snug">{q.text}</p>
+                    <p className="text-green-400 text-xs mt-1 truncate">
+                      ✓ {q.options[q.correct_index]}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => removeQuestion(idx)}
+                    className="text-gray-500 hover:text-red-400 flex-shrink-0"
+                    title="Remove question"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="px-5 pb-6 pt-3 border-t border-gray-800 flex gap-2 flex-shrink-0">
+        <button
+          onClick={onCancel}
+          className="px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-xl text-sm font-semibold transition-colors flex-shrink-0"
+        >
+          Back
+        </button>
+        <button
+          onClick={() => canStart && onConfirm(questions)}
+          disabled={!canStart}
+          className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl text-base transition-all"
+        >
+          {canStart
+            ? `Start Game (${questions.length} question${questions.length === 1 ? '' : 's'})`
+            : `Add ${CUSTOM_MIN_QUESTIONS - questions.length} more to start`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Category picker (host only) ─────────────────────────────────────────────
-function CategoryPicker({ onConfirm, onEnd }) {
+function CategoryPicker({ onConfirm, onConfirmCustom, onEnd }) {
   const [selected, setSelected] = useState(null);
   const [difficulty, setDifficulty] = useState('medium');
+  const [showCustomBuilder, setShowCustomBuilder] = useState(false);
+
+  if (showCustomBuilder) {
+    return (
+      <CustomQuestionBuilder
+        onConfirm={onConfirmCustom}
+        onCancel={() => setShowCustomBuilder(false)}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[60] bg-gray-950/98 flex flex-col overflow-y-auto">
@@ -109,6 +293,15 @@ function CategoryPicker({ onConfirm, onEnd }) {
             )}
           </button>
         ))}
+
+        {/* Custom tile — opens the question builder instead of fetching from OpenTDB */}
+        <button
+          onClick={() => setShowCustomBuilder(true)}
+          className="relative rounded-xl p-3 flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-purple-500/60 bg-purple-500/10 hover:bg-purple-500/20 hover:border-purple-400 transition-all"
+        >
+          <span className="text-2xl sm:text-3xl">✏️</span>
+          <span className="text-white text-[11px] font-semibold text-center leading-tight">Custom</span>
+        </button>
       </div>
 
       {/* Difficulty + start */}
@@ -255,6 +448,15 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose }
     setLocalPhase('game');
   };
 
+  // Custom questions authored by the host in CustomQuestionBuilder — no fetch,
+  // no loading screen; the array is already in the exact same shape the game
+  // iterates over ({ text, options, correct_index }).
+  const handleCustomConfirm = (customQuestions) => {
+    setFetchError(false);
+    setQuestions(customQuestions);
+    setLocalPhase('game');
+  };
+
   const sendQuestion = () => {
     if (round >= questions.length) return;
     // Driven by the server-confirmed round, not a locally-incrementing pointer —
@@ -302,7 +504,11 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose }
   };
 
   const answeredCount = Object.keys(answers).length;
-  const isLastRound = round >= TOTAL_ROUNDS;
+  // Total rounds tracks however many questions were actually loaded (10 from OpenTDB,
+  // or 3–20 in Custom mode). Falls back to TOTAL_ROUNDS before questions load so the
+  // header doesn't briefly show "/0".
+  const totalRounds = questions.length || TOTAL_ROUNDS;
+  const isLastRound = round >= totalRounds;
   const sortedPlayers = [...players].sort(
     (a, b) => (Number(scores[String(b.user_id)]) || 0) - (Number(scores[String(a.user_id)]) || 0)
   );
@@ -316,7 +522,13 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose }
 
   // ── Host: category picker ────────────────────────────────────────────────
   if (isHostUser && localPhase === 'picking') {
-    return <CategoryPicker onConfirm={handleCategoryConfirm} onEnd={endOrLeave} />;
+    return (
+      <CategoryPicker
+        onConfirm={handleCategoryConfirm}
+        onConfirmCustom={handleCustomConfirm}
+        onEnd={endOrLeave}
+      />
+    );
   }
 
   // ── Host: loading screen ─────────────────────────────────────────────────
@@ -341,7 +553,7 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose }
           <span className="text-2xl">🧠</span>
           <span className="text-white font-bold text-xl">Trivia</span>
           {round > 0 && (
-            <span className="text-gray-400 text-sm ml-1">Round {round}/{TOTAL_ROUNDS}</span>
+            <span className="text-gray-400 text-sm ml-1">Round {round}/{totalRounds}</span>
           )}
           {fetchError && (
             <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full flex items-center gap-1">

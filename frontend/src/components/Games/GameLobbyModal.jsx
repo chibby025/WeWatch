@@ -1,6 +1,6 @@
 // src/components/Games/GameLobbyModal.jsx
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Gamepad2, Users, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { X, Gamepad2, Users, ChevronLeft, ChevronRight, Search, Trophy } from 'lucide-react';
 
 // Posters live on BunnyCDN, not bundled into the frontend package — same CDN origin
 // DoomGame.jsx/ShooterGame.jsx already hardcode for their own assets. Keeps the
@@ -110,14 +110,124 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
+  {
+    id: 'connect_four',
+    name: 'Connect Four',
+    description: 'Drop discs — first to 4 in a row wins!',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/connect_four.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'would_you_rather',
+    name: 'Would You Rather',
+    description: 'Pick A or B — see how the room voted!',
+    minPlayers: 1,
+    maxPlayers: 20,
+    image: `${GAME_POSTERS_BASE_URL}/would_you_rather.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'wordle',
+    name: 'Wordle',
+    description: 'Same secret word — race to guess it first!',
+    minPlayers: 1,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/wordle.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'uno',
+    name: 'UNO',
+    description: 'Match cards, play wilds — shout UNO at 1 card!',
+    minPlayers: 2,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/uno.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'quiplash',
+    name: 'Quiplash',
+    description: 'Fill in the blank — vote for the funniest answer!',
+    minPlayers: 2,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/quiplash.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'typing_race',
+    name: 'Typing Race',
+    description: 'Type the passage fastest — WPM battle!',
+    minPlayers: 1,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/typing_race.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'blackjack',
+    name: 'Blackjack',
+    description: 'Beat the dealer to 21 — hit, stand, or double!',
+    minPlayers: 1,
+    maxPlayers: 6,
+    image: `${GAME_POSTERS_BASE_URL}/blackjack.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'battleship',
+    name: 'Battleship',
+    description: 'Place your fleet, sink your rival\'s ships!',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/battleship.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'draw_guess',
+    name: 'Draw & Guess',
+    description: 'One draws, everyone guesses — race the clock!',
+    minPlayers: 2,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/draw_guess.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'vs_battle',
+    name: 'VS Battle',
+    description: 'Build your 3-character team and battle! Custom moves, tiers, and epic encounters.',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/vs_battle.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
 ];
+
+// Games eligible for tournament mode: 2-player, head-to-head games where a
+// single-elimination "winner advances" bracket makes sense. N-player party games
+// (draw_guess, typing_race, trivia, etc.) are excluded.
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship'];
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 
-export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame, allowHeavyGames = true }) {
+export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame, onCreateTournament, allowHeavyGames = true }) {
   const [selectedPlayers, setSelectedPlayers] = useState([currentUserId]);
   const [searchQuery, setSearchQuery] = useState('');
   const [carouselIndex, setCarouselIndex] = useState(0);
+
+  // "games" = the normal single-game picker; "tournament" = bracket setup.
+  const [mode, setMode] = useState('games');
+  const [tournamentGameId, setTournamentGameId] = useState(TOURNAMENT_GAME_IDS[0]);
+  const [tournamentPlayers, setTournamentPlayers] = useState([currentUserId]);
 
   // Heavy 3D games (DOOM, Space Shooter) are VideoWatch-exclusive -- 3D Cinema
   // and Lecture Hall pass allowHeavyGames={false} to keep them out of the
@@ -292,6 +402,51 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
     onClose();
   };
 
+  // ── Tournament setup ────────────────────────────────────────────────────────
+  const toggleTournamentPlayer = (playerId) => {
+    setTournamentPlayers(prev => {
+      if (prev.includes(playerId)) return prev.filter(id => id !== playerId);
+      if (prev.length >= 8) return prev; // max 8
+      return [...prev, playerId];
+    });
+  };
+
+  // Bracket preview: number of rounds + first-round pairings (top seeds get byes).
+  const tournamentPreview = useMemo(() => {
+    const n = tournamentPlayers.length;
+    if (n < 2) return { rounds: 0, pairings: [], byes: 0 };
+    let bracket = 1;
+    while (bracket < n) bracket <<= 1;
+    const byes = bracket - n;
+    const rounds = Math.log2(bracket);
+    const ordered = tournamentPlayers.map(id => roomMembers.find(m => m.id === id)?.username || `Player`);
+    const byePlayers = ordered.slice(0, byes);
+    const rest = ordered.slice(byes);
+    const pairings = [];
+    for (let i = 0; i + 1 < rest.length; i += 2) pairings.push([rest[i], rest[i + 1]]);
+    return { rounds, pairings, byes, byePlayers };
+  }, [tournamentPlayers, roomMembers]);
+
+  const handleCreateTournament = () => {
+    if (tournamentPlayers.length < 4 || tournamentPlayers.length > 8) {
+      alert('A tournament needs 4–8 players');
+      return;
+    }
+    const playersData = tournamentPlayers.map((playerId, index) => {
+      const member = roomMembers.find(m => m.id === playerId);
+      return {
+        user_id: playerId,
+        username: member?.username || `Player ${index + 1}`,
+        avatar_url: member?.avatar_url || null,
+        color: playerColors[index],
+      };
+    });
+    if (onCreateTournament) onCreateTournament(tournamentGameId, playersData);
+    onClose();
+  };
+
+  const dedupedMembers = roomMembers.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i);
+
   if (!isOpen) return null;
 
   return (
@@ -311,6 +466,40 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
           </button>
         </div>
 
+        {/* Mode tabs: single game vs tournament bracket */}
+        <div className="flex border-b border-gray-700">
+          <button
+            onClick={() => setMode('games')}
+            className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
+              mode === 'games' ? 'text-white border-b-2 border-purple-500 bg-gray-800' : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            🎮 Single Game
+          </button>
+          <button
+            onClick={() => setMode('tournament')}
+            className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
+              mode === 'tournament' ? 'text-white border-b-2 border-yellow-500 bg-gray-800' : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            🏆 Tournament
+          </button>
+        </div>
+
+        {mode === 'tournament' ? (
+          <TournamentSetup
+            gameId={tournamentGameId}
+            setGameId={setTournamentGameId}
+            members={dedupedMembers}
+            currentUserId={currentUserId}
+            selectedPlayers={tournamentPlayers}
+            togglePlayer={toggleTournamentPlayer}
+            preview={tournamentPreview}
+            onCancel={onClose}
+            onCreate={handleCreateTournament}
+          />
+        ) : (
+        <>
         {/* Game Selection — poster carousel */}
         <div className="px-4 sm:px-6 pt-3 pb-4 sm:pt-4 sm:pb-6 border-b border-gray-700">
           {/* Search */}
@@ -547,7 +736,117 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
             Start Game
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
+  );
+}
+
+// ── Tournament setup panel ─────────────────────────────────────────────────────
+function TournamentSetup({ gameId, setGameId, members, currentUserId, selectedPlayers, togglePlayer, preview, onCancel, onCreate }) {
+  const tournamentGames = games.filter(g => TOURNAMENT_GAME_IDS.includes(g.id));
+  const canCreate = selectedPlayers.length >= 4 && selectedPlayers.length <= 8;
+
+  return (
+    <>
+      <div className="px-4 sm:px-6 py-4 border-b border-gray-700">
+        <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Tournament Game</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {tournamentGames.map(g => (
+            <button
+              key={g.id}
+              onClick={() => setGameId(g.id)}
+              className={`rounded-lg overflow-hidden border-2 transition-all relative ${
+                gameId === g.id ? 'border-yellow-400 scale-[1.02]' : 'border-gray-700 hover:border-gray-500'
+              }`}
+            >
+              <img src={g.image} alt={g.name} className="w-full h-16 sm:h-20 object-cover" />
+              <div className="absolute inset-x-0 bottom-0 bg-black/70 py-1">
+                <span className="text-white text-[11px] font-semibold">{g.name}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Player selection */}
+      <div className="px-4 sm:px-6 py-4 border-b border-gray-700">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+            <Users className="w-4 h-4" /> Players ({selectedPlayers.length}/8)
+          </h3>
+          <span className="text-xs text-gray-400">4–8 players</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto">
+          {members.map(member => {
+            const isSelected = selectedPlayers.includes(member.id);
+            const initials = (member.username || '?').slice(0, 2).toUpperCase();
+            return (
+              <label
+                key={member.id}
+                onClick={() => togglePlayer(member.id)}
+                className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all min-w-0 ${
+                  isSelected ? 'border-yellow-500 bg-yellow-500/10' : 'border-gray-600 bg-gray-700/30 hover:border-gray-500'
+                }`}
+              >
+                <div className="w-6 h-6 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 flex items-center justify-center">
+                  {member.avatar_url
+                    ? <img src={member.avatar_url} alt={member.username} className="w-full h-full object-cover" />
+                    : <span className="text-[10px] font-bold text-white">{initials}</span>}
+                </div>
+                <span className="text-white text-xs truncate flex-1">{member.username}</span>
+                {member.id === currentUserId && <span className="text-[9px] text-yellow-400 flex-shrink-0">Host</span>}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Bracket preview */}
+      <div className="px-4 sm:px-6 py-4 border-b border-gray-700">
+        <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Bracket Preview</p>
+        {selectedPlayers.length < 4 ? (
+          <p className="text-gray-500 text-sm">Select at least 4 players to preview the bracket.</p>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-white text-sm">
+              {preview.rounds} round{preview.rounds === 1 ? '' : 's'} · single elimination
+              {preview.byes > 0 && <span className="text-gray-400"> · {preview.byes} bye{preview.byes === 1 ? '' : 's'}</span>}
+            </p>
+            <div className="space-y-1">
+              {preview.byePlayers?.map((name, i) => (
+                <div key={`bye-${i}`} className="text-xs text-blue-300 bg-blue-500/10 rounded px-2 py-1">
+                  {name} — bye to round 2
+                </div>
+              ))}
+              {preview.pairings.map(([a, b], i) => (
+                <div key={i} className="text-xs text-gray-300 bg-gray-700/40 rounded px-2 py-1">
+                  {a} <span className="text-gray-500">vs</span> {b}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="px-4 sm:px-6 py-4 flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          className="px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onCreate}
+          disabled={!canCreate}
+          className="px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gradient-to-r from-yellow-600 to-amber-600 hover:from-yellow-700 hover:to-amber-700 text-white rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+          Start Tournament
+        </button>
+      </div>
+    </>
   );
 }

@@ -506,6 +506,7 @@ func main() {
 		roomGroup.POST("/:id/media/stream", handlers.HandleStreamURL)                              // POST /api/rooms/:id/media/stream (Add stream URL to playlist)
 		roomGroup.GET("/:id/temporary-media", handlers.GetTemporaryMediaItemsForRoomHandler)       // GET /api/rooms/:id/temporary-media (Get list of temporary media items)
 		roomGroup.DELETE("/:id/temporary-media", handlers.DeleteTemporaryMediaItemsForRoomHandler) // DELETE /api/rooms/:id/temporary-media (Delete all temporary media items - Host only)
+		roomGroup.POST("/:id/game-assets", handlers.UploadGameAssetHandler)                       // POST /api/rooms/:id/game-assets (Upload VS Battle character images/GIFs during building phase)
 		// --- Instant Watch (Temporary Rooms) ---
 		roomGroup.POST("/instant-watch", handlers.CreateInstantWatchHandler) // POST /api/rooms/instant-watch (Create an instant watch temporary room)
 		roomGroup.GET("/:id/members", handlers.GetRoomMembersHandler)
@@ -1020,6 +1021,7 @@ func main() {
 		lobbyChatsGroup.POST("/poll", handlers.CreateLobbyChatPollHandler)                  // POST /api/lobby-chats/poll
 		lobbyChatsGroup.POST("/poll/:messageId/vote", handlers.VoteLobbyChatPollHandler)    // POST /api/lobby-chats/poll/:messageId/vote
 		lobbyChatsGroup.POST("/watch-out", handlers.SendWatchOutHandler)                    // POST /api/lobby-chats/watch-out
+		lobbyChatsGroup.POST("/game-challenge", handlers.SendGameChallengeHandler)           // POST /api/lobby-chats/game-challenge
 		lobbyChatsGroup.POST("/private-watchout", handlers.StartPrivateWatchoutHandler)     // POST /api/lobby-chats/private-watchout
 		lobbyChatsGroup.POST("/circle-watchout", handlers.StartCircleWatchoutHandler)       // POST /api/lobby-chats/circle-watchout
 		lobbyChatsGroup.GET("/watchout-ratings", handlers.GetWatchoutAllowedRatingsHandler) // GET  /api/lobby-chats/watchout-ratings?recipient_id=X

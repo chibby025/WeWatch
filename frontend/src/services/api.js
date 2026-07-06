@@ -1888,6 +1888,19 @@ export const sendWatchOut = async (recipientId, roomId) => {
   }
 };
 
+export const sendGameChallenge = async (recipientId, roomId, gameType, result, score) => {
+  try {
+    const body = { recipient_id: recipientId, room_id: roomId, game_type: gameType };
+    if (result) body.result = result;
+    if (score != null) body.score = score;
+    const response = await apiClient.post('/api/lobby-chats/game-challenge', body);
+    return response.data;
+  } catch (error) {
+    console.error('API Error (sendGameChallenge):', error);
+    throw error;
+  }
+};
+
 export const blockUser = async (userId) => {
   const response = await apiClient.post(`/api/lobby-chats/block/${userId}`);
   return response.data;

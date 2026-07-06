@@ -8,14 +8,24 @@ import OthelloGame from './OthelloGame';
 import CheckersGame from './CheckersGame';
 import CrazyEightsGame from './CrazyEightsGame';
 import LudoGame from './LudoGame';
+import ConnectFourGame from './ConnectFourGame';
+import WouldYouRatherGame from './WouldYouRatherGame';
+import WordleGame from './WordleGame';
+import UnoGame from './UnoGame';
+import QuiplashGame from './QuiplashGame';
+import TypingRaceGame from './TypingRaceGame';
+import BlackjackGame from './BlackjackGame';
+import BattleshipGame from './BattleshipGame';
+import DrawGuessGame from './DrawGuessGame';
 
 // Lazy-loaded — DOOM's iframe wrapper is tiny, but this establishes the
 // pattern for any future heavy/rarely-used game: don't pay its bundle cost
 // until a user actually opens it. First use of React.lazy in this codebase.
 const DoomGame = lazy(() => import('./DoomGame'));
 const ShooterGame = lazy(() => import('./ShooterGame'));
+const VSBattleGame = lazy(() => import('./VSBattleGame'));
 
-export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver, myHand }) {
+export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver, myHand, drawerWord }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -124,6 +134,121 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
         />
       );
 
+    case 'connect_four':
+      return (
+        <ConnectFourGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'would_you_rather':
+      return (
+        <WouldYouRatherGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'wordle':
+      return (
+        <WordleGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'uno':
+      return (
+        <UnoGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          myHand={myHand}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'quiplash':
+      return (
+        <QuiplashGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'typing_race':
+      return (
+        <TypingRaceGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'blackjack':
+      return (
+        <BlackjackGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'battleship':
+      return (
+        <BattleshipGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'draw_guess':
+      // Canvas strokes travel over the relay bridge (onRelayPacket /
+      // registerRelayReceiver), not make_move. drawerWord is the secret word,
+      // delivered privately to the drawer only via the draw_word WS message.
+      return (
+        <DrawGuessGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          drawerWord={drawerWord}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onRelayPacket={onRelayPacket}
+          registerRelayReceiver={registerRelayReceiver}
+        />
+      );
+
     case 'doom':
       // Real multiplayer over DOOM's own networking protocol: the host's
       // instance is the authoritative server, every other member's instance
@@ -154,6 +279,20 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             onEndGame={onEndGame}
             isHost={activeGame.host_id === currentUserId}
             roomId={roomId}
+          />
+        </Suspense>
+      );
+
+    case 'vs_battle':
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-gray-900 flex items-center justify-center text-white text-lg">Loading VS Battle…</div>}>
+          <VSBattleGame
+            gameState={activeGame}
+            players={activeGame.players || []}
+            currentUserId={currentUserId}
+            onMove={handleMove}
+            onClose={onClose}
+            onEndGame={onEndGame}
           />
         </Suspense>
       );

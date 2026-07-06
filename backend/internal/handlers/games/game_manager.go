@@ -22,6 +22,7 @@ type GameManager struct {
 	roomActiveGames   map[uint]uint
 	mu                sync.RWMutex
 	hub               MessageHub
+	TournamentManager *TournamentManager
 }
 
 // GameSessionState holds the runtime state of an active game
@@ -30,6 +31,12 @@ type GameSessionState struct {
 	Players     []models.Player
 	CurrentTurn int
 	GameData    map[string]interface{}
+
+	// Set when this game session is a single match inside a tournament bracket
+	// (tournament.go). Nil for ordinary standalone games. Lets the tournament
+	// manager tie a finished game session back to its bracket match, though the
+	// primary link is via TMatch.GameSessionID recorded at start time.
+	TournamentMatchID *uint
 
 	// Card-game-only fields (currently just Crazy Eights). Deliberately kept OFF
 	// GameData and never read into a room-wide broadcast or DB-persisted
@@ -47,10 +54,11 @@ type GameSessionState struct {
 // NewGameManager creates a new game manager instance
 func NewGameManager(db *gorm.DB, hub MessageHub) *GameManager {
 	return &GameManager{
-		db:              db,
-		activeGames:     make(map[uint]*GameSessionState),
-		roomActiveGames: make(map[uint]uint),
-		hub:             hub,
+		db:                db,
+		activeGames:       make(map[uint]*GameSessionState),
+		roomActiveGames:   make(map[uint]uint),
+		hub:               hub,
+		TournamentManager: NewTournamentManager(hub),
 	}
 }
 
@@ -63,7 +71,16 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		return nil, fmt.Errorf("room %d already has an active game (ID: %d)", roomID, existingGameID)
 	}
 
-	if gameType != "tic_tac_toe" && gameType != "rock_paper_scissors" && gameType != "chess" && gameType != "trivia" && gameType != "doom" && gameType != "space_shooter" && gameType != "othello" && gameType != "checkers" && gameType != "crazy_eights" && gameType != "ludo" {
+	validGameTypes := map[string]bool{
+		"tic_tac_toe": true, "rock_paper_scissors": true, "chess": true,
+		"trivia": true, "doom": true, "space_shooter": true,
+		"othello": true, "checkers": true, "crazy_eights": true, "ludo": true,
+		"connect_four": true, "would_you_rather": true, "wordle": true,
+		"uno": true, "quiplash": true,
+		"typing_race": true, "blackjack": true, "battleship": true, "draw_guess": true,
+		"vs_battle": true,
+	}
+	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
 	}
 
@@ -97,22 +114,18 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		GameData:    make(map[string]interface{}),
 	}
 
-	// Card games need their hands dealt immediately, before anyone has moved —
-	// unlike every other game type here, players must see their own hand from the
-	// very first moment. This can't use the lazy-init-on-first-move pattern the
-	// perfect-information games rely on.
+	// Card games (and any game that must distribute hidden state before the first
+	// move) need their hands dealt immediately here, then synced back onto the
+	// GameSession.GameState snapshot the initial broadcast reads.
 	switch gameType {
 	case "crazy_eights":
 		dealCrazyEights(gameState)
-		// dealCrazyEights only mutates gameState.GameData (the runtime copy) — the
-		// initial game_started broadcast (handleGameStart, websocket_handler.go)
-		// reads gameSession.GameState (the DB-row snapshot returned from this
-		// function), which initializeGameState already populated *before* dealing
-		// happened. Without this sync, the very first broadcast would carry an
-		// empty game_state (no discard_top/hand_counts) for crazy_eights — every
-		// other game type's initializeGameState case populates GameState directly,
-		// so they never hit this gap. Same reconciliation ProcessMove already does
-		// after every move.
+		gameState.GameSession.GameState = gameState.GameData
+	case "uno":
+		dealUno(gameState)
+		gameState.GameSession.GameState = gameState.GameData
+	case "blackjack":
+		dealBlackjack(gameState)
 		gameState.GameSession.GameState = gameState.GameData
 	}
 
@@ -134,7 +147,18 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		return fmt.Errorf("game session %d not found", gameSessionID)
 	}
 
-	if gameState.GameSession.GameType != "rock_paper_scissors" && gameState.GameSession.GameType != "trivia" {
+	// Games where all players act simultaneously (no strict per-player turn order).
+	simultaneousGames := map[string]bool{
+		"rock_paper_scissors": true,
+		"trivia":              true,
+		"would_you_rather":    true,
+		"wordle":              true,
+		"quiplash":            true,
+		"typing_race":         true,
+		"draw_guess":          true,
+		"vs_battle":           true, // both players lock moves simultaneously each turn
+	}
+	if !simultaneousGames[gameState.GameSession.GameType] {
 		currentPlayer := gameState.Players[gameState.CurrentTurn]
 		if currentPlayer.UserID != playerID {
 			return fmt.Errorf("not your turn")
@@ -174,6 +198,26 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processCrazyEightsMove(gameState, playerID, moveType, moveData)
 	case "ludo":
 		gameOver, winnerID, err = gm.processLudoMove(gameState, playerID, moveType, moveData)
+	case "connect_four":
+		gameOver, winnerID, err = gm.processConnectFourMove(gameState, playerID, moveData)
+	case "would_you_rather":
+		gameOver, winnerID, err = gm.processWouldYouRatherMove(gameState, playerID, moveType, moveData)
+	case "wordle":
+		gameOver, winnerID, err = gm.processWordleMove(gameState, playerID, moveData)
+	case "uno":
+		gameOver, winnerID, err = gm.processUnoMove(gameState, playerID, moveType, moveData)
+	case "quiplash":
+		gameOver, winnerID, err = gm.processQuiplashMove(gameState, playerID, moveType, moveData)
+	case "typing_race":
+		gameOver, winnerID, err = gm.processTypingRaceMove(gameState, playerID, moveType, moveData)
+	case "blackjack":
+		gameOver, winnerID, err = gm.processBlackjackMove(gameState, playerID, moveType, moveData)
+	case "battleship":
+		gameOver, winnerID, err = gm.processBattleshipMove(gameState, playerID, moveType, moveData)
+	case "draw_guess":
+		gameOver, winnerID, err = gm.processDrawGuessMove(gameState, playerID, moveType, moveData)
+	case "vs_battle":
+		gameOver, winnerID, err = processVSBattleMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -187,7 +231,16 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		log.Printf("⚠️ [GameManager] Failed to update game state: %v", err)
 	}
 
-	if !gameOver && gameState.GameSession.GameType != "rock_paper_scissors" {
+	// Blackjack and battleship manage their own turn pointer internally (a bust may
+	// skip several players; battleship tracks current_turn in GameData) — the generic
+	// "+1 mod N" advance would corrupt that, so they're excluded alongside RPS.
+	selfManagedTurn := map[string]bool{
+		"rock_paper_scissors": true,
+		"blackjack":           true,
+		"battleship":          true,
+		"vs_battle":           true, // VS Battle phase+turn managed internally
+	}
+	if !gameOver && !selfManagedTurn[gameState.GameSession.GameType] {
 		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % len(gameState.Players)
 	}
 
@@ -232,6 +285,7 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 	// Broadcast the final board state then game_ended before removing from active maps,
 	// so all clients see the winning position and can display the result.
 	if hub, ok := gm.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+		pub := publicGameData(gameState)
 		hub.BroadcastJSON(roomID, map[string]interface{}{
 			"type":            "game",
 			"action":          "game_state_update",
@@ -241,7 +295,7 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 			"status":          status,
 			"current_turn":    gameState.CurrentTurn,
 			"players":         gameState.Players,
-			"game_state":      gameState.GameData,
+			"game_state":      pub,
 			"winner_id":       winnerID,
 		})
 		hub.BroadcastJSON(roomID, map[string]interface{}{
@@ -253,7 +307,7 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 				"winner_id":       winnerID,
 				"reason":          status,
 				"players":         gameState.Players,
-				"game_state":      gameState.GameData,
+				"game_state":      pub,
 			},
 		})
 	}
@@ -262,6 +316,13 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 	delete(gm.roomActiveGames, roomID)
 
 	log.Printf("🎮 [GameManager] Ended game %d (status: %s, winner: %v)", gameSessionID, status, winnerID)
+
+	// If this game was a tournament match, tell the tournament manager so it can
+	// record the winner and advance the bracket. OnGameEnd only touches the
+	// tournament's own mutex (never gm.mu), so calling it while gm.mu is held is safe.
+	if gm.TournamentManager != nil {
+		gm.TournamentManager.OnGameEnd(gameSessionID, winnerID)
+	}
 
 	// Clear the game poster from the lobby session-preview card — reuses the same
 	// "stop ticker, clear preview, reset to none" path LiveShare/Watch-From/upload
@@ -377,13 +438,25 @@ func (gm *GameManager) BroadcastGameState(roomID uint) error {
 		"status":          gameState.GameSession.Status,
 		"current_turn":    gameState.CurrentTurn,
 		"players":         gameState.Players,
-		"game_state":      gameState.GameData,
+		"game_state":      publicGameData(gameState),
 	}
 
 	if hub, ok := gm.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
 		hub.BroadcastJSON(roomID, message)
 	}
 	return nil
+}
+
+// publicGameData returns the room-broadcastable view of a game's GameData, stripping
+// any per-game hidden fields. Draw & Guess hides the secret word from every client
+// except the drawer (who receives it via the private draw_word message); everything
+// else broadcasts GameData unchanged (perfect-information games) — note card games
+// already keep their hands OFF GameData entirely, so nothing extra is needed there.
+func publicGameData(gameState *GameSessionState) map[string]interface{} {
+	if gameState.GameSession != nil && gameState.GameSession.GameType == "draw_guess" {
+		return drawGuessPublicState(gameState.GameData)
+	}
+	return gameState.GameData
 }
 
 // initializeGameState creates the initial game state based on game type
@@ -422,6 +495,23 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 
 	case "checkers":
 		state["board"] = checkersInitialBoard()
+
+	case "typing_race":
+		for k, v := range typingRaceInitialState() {
+			state[k] = v
+		}
+
+	case "battleship":
+		// Per-player boards/ships_remaining are keyed by user ID, which isn't known
+		// here — they're seeded lazily by ensureBattleshipState on the first move
+		// (which has gameState.Players). Seed just the phase so the initial broadcast
+		// tells the frontend to render the placement UI.
+		state["phase"] = "placement"
+
+	case "draw_guess":
+		for k, v := range drawGuessInitialState() {
+			state[k] = v
+		}
 	}
 
 	return state

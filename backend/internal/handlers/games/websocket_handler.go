@@ -44,6 +44,26 @@ func gamePosterURL(gameType string) string {
         return gamePostersBaseURL + "/crazy_eights.webp"
     case "ludo":
         return gamePostersBaseURL + "/ludo.webp"
+    case "connect_four":
+        return gamePostersBaseURL + "/connect_four.webp"
+    case "would_you_rather":
+        return gamePostersBaseURL + "/would_you_rather.webp"
+    case "wordle":
+        return gamePostersBaseURL + "/wordle.webp"
+    case "uno":
+        return gamePostersBaseURL + "/uno.webp"
+    case "quiplash":
+        return gamePostersBaseURL + "/quiplash.webp"
+    case "typing_race":
+        return gamePostersBaseURL + "/typing_race.webp"
+    case "blackjack":
+        return gamePostersBaseURL + "/blackjack.webp"
+    case "battleship":
+        return gamePostersBaseURL + "/battleship.webp"
+    case "draw_guess":
+        return gamePostersBaseURL + "/draw_guess.webp"
+    case "vs_battle":
+        return gamePostersBaseURL + "/vs_battle.webp"
     default:
         return ""
     }
@@ -63,7 +83,12 @@ var arcadeGameTypes = map[string]bool{
 // the only participant ever") which doesn't apply to a true multiplayer
 // game like space_shooter that simply also happens to support 1 player.
 var minPlayersOverride = map[string]int{
-    "space_shooter": 1,
+    "space_shooter":    1,
+    "would_you_rather": 1, // can play solo (host picks for the room as a group activity)
+    "wordle":           1, // solo practice is valid
+    "quiplash":         2, // needs at least 2 for the voting mechanic to work
+    "typing_race":      1, // solo time-trial is valid
+    "draw_guess":       1, // host can draw for the room even with no other guessers
 }
 
 type GameWebSocketHandler struct {
@@ -92,6 +117,13 @@ func (h *GameWebSocketHandler) GetActiveGameMessage(roomID uint) map[string]inte
         return nil
     }
 
+    // Draw & Guess: strip the secret word so a late-joining guesser rehydrating
+    // mid-round never receives the answer (the drawer gets it via draw_word instead).
+    gameStateOut := map[string]interface{}(gameState.GameSession.GameState)
+    if gameState.GameSession.GameType == "draw_guess" {
+        gameStateOut = drawGuessPublicState(gameState.GameSession.GameState)
+    }
+
     return map[string]interface{}{
         "type":   "game",
         "action": "game_started",
@@ -100,7 +132,7 @@ func (h *GameWebSocketHandler) GetActiveGameMessage(roomID uint) map[string]inte
             "game_type":       gameState.GameSession.GameType,
             "host_id":         gameState.GameSession.HostID,
             "players":         gameState.Players,
-            "game_state":      gameState.GameSession.GameState,
+            "game_state":      gameStateOut,
         },
     }
 }
@@ -165,8 +197,88 @@ func (h *GameWebSocketHandler) HandleGameMessage(client interface{}, messageData
         h.handleGameEnd(client, messageData)
     case "relay_packet":
         h.handleRelayPacket(client, messageData)
+    case "create_tournament":
+        h.handleCreateTournament(client, messageData)
     default:
         h.sendError(client, fmt.Sprintf("unknown action: %s", action))
+    }
+}
+
+// handleCreateTournament builds a single-elimination bracket (tournament.go) from the
+// selected game type + player list and broadcasts the initial bracket. Matches are
+// started individually afterward via the normal start_game path (the tournament links
+// the resulting session to its match). Fully in-memory — no DB.
+func (h *GameWebSocketHandler) handleCreateTournament(client interface{}, data map[string]interface{}) {
+    gameType, ok := data["game_type"].(string)
+    if !ok {
+        h.sendError(client, "missing game_type")
+        return
+    }
+
+    playersData, ok := data["players"].([]interface{})
+    if !ok {
+        h.sendError(client, "missing players")
+        return
+    }
+
+    var players []models.Player
+    for i, playerData := range playersData {
+        playerMap, ok := playerData.(map[string]interface{})
+        if !ok {
+            continue
+        }
+        userID := uint(playerMap["user_id"].(float64))
+        username, _ := playerMap["username"].(string)
+        color, _ := playerMap["color"].(string)
+        avatarURL, _ := playerMap["avatar_url"].(string)
+        players = append(players, models.Player{
+            UserID:   userID,
+            Username: username,
+            Color:    color,
+            Avatar:   avatarURL,
+            Position: i,
+        })
+    }
+
+    if len(players) < 4 {
+        h.sendError(client, "a tournament needs at least 4 players")
+        return
+    }
+    if len(players) > 8 {
+        h.sendError(client, "a tournament supports at most 8 players")
+        return
+    }
+
+    type ClientFields interface {
+        GetRoomID() uint
+        GetUserID() uint
+    }
+    cf := client.(ClientFields)
+    roomID := cf.GetRoomID()
+    hostID := cf.GetUserID()
+
+    if h.gameManager.TournamentManager == nil {
+        h.sendError(client, "tournaments are unavailable")
+        return
+    }
+    h.gameManager.TournamentManager.CreateTournament(roomID, hostID, gameType, players)
+    log.Printf("🏆 [GameWebSocketHandler] Tournament created in room %d (%s, %d players)", roomID, gameType, len(players))
+}
+
+// sendDrawerWord privately delivers the current Draw & Guess secret word to the drawer
+// only (never a room broadcast — every guesser must not see the answer). A no-op if the
+// hub doesn't support single-user JSON delivery.
+func (h *GameWebSocketHandler) sendDrawerWord(roomID uint, drawerID uint, word string) {
+    if hub, ok := h.hub.(interface {
+        BroadcastJSONToUser(uint, uint, map[string]interface{})
+    }); ok {
+        hub.BroadcastJSONToUser(drawerID, roomID, map[string]interface{}{
+            "type":   "game",
+            "action": "draw_word",
+            "data": map[string]interface{}{
+                "word": word,
+            },
+        })
     }
 }
 
@@ -267,6 +379,13 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
         return
     }
 
+    // Tournament linkage: if this room has an active tournament and these two players
+    // form one of its pending matches, tie this game session to that match so the
+    // bracket advances when it ends. Harmless no-op for ordinary (non-tournament) games.
+    if h.gameManager.TournamentManager != nil && len(players) == 2 {
+        h.gameManager.TournamentManager.LinkMatchSession(roomID, players[0].UserID, players[1].UserID, gameSession.ID)
+    }
+
     message := map[string]interface{}{
         "type":   "game",
         "action": "game_started",
@@ -353,6 +472,19 @@ func (h *GameWebSocketHandler) handleGameMove(client interface{}, data map[strin
 	// removed on play, a card added on draw) — refresh it privately. A no-op for
 	// every other game type (GetPlayerHand finds no Hands map and returns false).
 	h.sendHandUpdate(roomID, playerID)
+
+	// Draw & Guess: a start_round move picks a new drawer + secret word. The word is
+	// hidden from the public broadcast (drawGuessPublicState strips current_word) —
+	// deliver it privately to the drawer only, right after the move is processed.
+	if moveType == "start_round" {
+		if gs, exists := h.gameManager.GetActiveGame(roomID); exists && gs.GameSession.GameType == "draw_guess" {
+			word, _ := gs.GameData["current_word"].(string)
+			drawerF, _ := gs.GameData["current_drawer"].(float64)
+			if word != "" && drawerF != 0 {
+				h.sendDrawerWord(roomID, uint(drawerF), word)
+            }
+		}
+	}
 }
 
 func (h *GameWebSocketHandler) handleGameEnd(client interface{}, data map[string]interface{}) {

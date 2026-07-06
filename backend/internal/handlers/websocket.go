@@ -2852,7 +2852,7 @@ func (client *Client) handleMessage(message []byte) {
     }
     // ✅ Handle game-related messages
     // ✅ Handle game-related messages
-    if msg.Type == "game" || msg.Type == "start_game" || msg.Type == "make_move" || msg.Type == "end_game" || msg.Type == "relay_packet" {
+    if msg.Type == "game" || msg.Type == "start_game" || msg.Type == "make_move" || msg.Type == "end_game" || msg.Type == "relay_packet" || msg.Type == "create_tournament" {
         // Convert msg.Data to map
         if dataMap, ok := msg.Data.(map[string]interface{}); ok {
             // Inject action from message type if not present

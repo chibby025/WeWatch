@@ -60,7 +60,7 @@ const LobbyMessageBubble = ({
 
   // Long-press + swipe-to-reply detection
   const handleTouchStart = (e) => {
-    if (messageType === 'poll' || messageType === 'watch_out') return;
+    if (messageType === 'poll' || messageType === 'watch_out' || messageType === 'game_challenge') return;
     touchStartXRef.current = e.touches[0].clientX;
     touchStartYRef.current = e.touches[0].clientY;
     isSwipingRef.current = false;
@@ -95,7 +95,7 @@ const LobbyMessageBubble = ({
   };
 
   const handleBubbleClick = (e) => {
-    if (messageType === 'poll' || messageType === 'watch_out' || messageType === 'system_call') return;
+    if (messageType === 'poll' || messageType === 'watch_out' || messageType === 'game_challenge' || messageType === 'system_call') return;
     e.stopPropagation();
     setIsSelected(s => !s);
   };
@@ -542,6 +542,53 @@ const LobbyMessageBubble = ({
                 )}
               </div>
 
+              <p className={`text-[10px] mt-1 text-gray-500 ${isOwn ? 'text-right' : 'text-left'}`}>
+                {formatMessageTime(message.created_at)}
+              </p>
+            </div>
+          );
+        })()}
+
+        {/* ── GAME CHALLENGE ── */}
+        {messageType === 'game_challenge' && (() => {
+          const GAME_EMOJI = {
+            tic_tac_toe: '⭕', rock_paper_scissors: '✊', chess: '♟️',
+            trivia: '🧠', othello: '🔵', checkers: '🔴', crazy_eights: '🎴',
+            ludo: '🎲', connect_four: '🟡', would_you_rather: '🤔',
+            wordle: '📝', uno: '🃏', quiplash: '💬',
+            typing_race: '⌨️', blackjack: '🂡', battleship: '🚢', draw_guess: '🎨',
+          };
+          const gameName = (metadata.game_type || '').replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+          const gameEmoji = GAME_EMOJI[metadata.game_type] || '🎮';
+          const resultText = metadata.result === 'won' ? 'won' : metadata.result === 'drew' ? 'drew' : 'played';
+          const senderLabel = isOwn ? 'You' : (message.sender_username || 'Someone');
+          return (
+            <div className="py-1 px-0.5">
+              <div
+                className="rounded-2xl overflow-hidden border border-purple-500/30"
+                style={{ background: 'linear-gradient(145deg, #1a0a3a 0%, #0f172a 55%, #1e1b4b 100%)' }}
+              >
+                <div className="px-3 py-3 flex items-center gap-3">
+                  <span className="text-4xl flex-shrink-0">{gameEmoji}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] text-gray-400 mb-0.5">{senderLabel} {resultText}…</p>
+                    <p className="text-sm font-bold text-white truncate">{gameName}</p>
+                    {metadata.score != null && (
+                      <p className="text-xs text-yellow-300 mt-0.5">Score: {metadata.score}</p>
+                    )}
+                  </div>
+                  <span className="text-[9px] font-bold text-purple-300 uppercase tracking-wider border border-purple-500/40 rounded px-1.5 py-0.5 flex-shrink-0">
+                    Challenge
+                  </span>
+                </div>
+                <button
+                  onClick={e => { e.stopPropagation(); navigate(`/rooms/${metadata.room_id}`); }}
+                  className="w-full py-2.5 text-xs font-bold text-white flex items-center justify-center gap-1.5 transition-opacity hover:opacity-90 active:opacity-75"
+                  style={{ background: 'linear-gradient(90deg, #7c3aed 0%, #4f46e5 100%)', borderTop: '1px solid rgba(139,92,246,0.25)' }}
+                >
+                  🎮 Accept Challenge →
+                </button>
+              </div>
               <p className={`text-[10px] mt-1 text-gray-500 ${isOwn ? 'text-right' : 'text-left'}`}>
                 {formatMessageTime(message.created_at)}
               </p>

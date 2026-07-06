@@ -827,3 +827,129 @@ func StartCircleWatchoutHandler(c *gin.Context) {
 		"session_id": sessionUUID,
 	})
 }
+
+// SendGameChallengeRequest is the body for a game challenge DM.
+type SendGameChallengeRequest struct {
+	RecipientID uint   `json:"recipient_id" binding:"required"`
+	RoomID      uint   `json:"room_id" binding:"required"`
+	GameType    string `json:"game_type" binding:"required"`
+	Result      string `json:"result"`      // "won" | "drew" | "lost" (optional)
+	Score       *int   `json:"score"`       // optional numeric score
+}
+
+// SendGameChallengeHandler creates a "game_challenge" DM card so a player can taunt a
+// friend after a game and invite them to come try to beat it.
+// POST /api/lobby-chats/game-challenge
+func SendGameChallengeHandler(c *gin.Context) {
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	senderID, ok := userIDVal.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	var req SendGameChallengeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.RecipientID == senderID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot challenge yourself"})
+		return
+	}
+
+	db := c.MustGet("db").(*gorm.DB)
+
+	// Require an accepted friendship.
+	var friendship models.Friendship
+	if err := db.Where(
+		"((requester_id = ? AND recipient_id = ?) OR (requester_id = ? AND recipient_id = ?)) AND status = ?",
+		senderID, req.RecipientID, req.RecipientID, senderID, models.FriendshipStatusAccepted,
+	).First(&friendship).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Must be friends to send a game challenge"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Block check.
+	var blockCount int64
+	db.Model(&models.UserBlock{}).Where(
+		"(blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)",
+		senderID, req.RecipientID, req.RecipientID, senderID,
+	).Count(&blockCount)
+	if blockCount > 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot message this user"})
+		return
+	}
+
+	// Sender must be a member of the room (a non-member can't legitimately have just
+	// played a game there).
+	var userRoom models.UserRoom
+	if err := db.Where("room_id = ? AND user_id = ? AND deleted_at IS NULL", req.RoomID, senderID).First(&userRoom).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You are not a member of this room"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	var room models.Room
+	if err := db.First(&room, req.RoomID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	var sender models.User
+	db.First(&sender, senderID)
+
+	metadata := map[string]interface{}{
+		"game_type": req.GameType,
+		"result":    req.Result,
+		"room_id":   room.ID,
+		"room_name": room.Name,
+	}
+	if req.Score != nil {
+		metadata["score"] = *req.Score
+	}
+	metaJSON, _ := json.Marshal(metadata)
+	metaStr := string(metaJSON)
+
+	gameName := strings.ReplaceAll(req.GameType, "_", " ")
+	var resultPhrase string
+	switch req.Result {
+	case "won":
+		resultPhrase = "won at"
+	case "drew":
+		resultPhrase = "drew at"
+	default:
+		resultPhrase = "played"
+	}
+	msg := fmt.Sprintf("🎮 %s %s %s — think you can beat it?", sender.Username, resultPhrase, gameName)
+
+	chat := models.LobbyChat{
+		SenderID:    senderID,
+		RecipientID: req.RecipientID,
+		Message:     msg,
+		MessageType: "game_challenge",
+		Metadata:    &metaStr,
+	}
+	if err := db.Create(&chat).Error; err != nil {
+		log.Printf("SendGameChallengeHandler: failed to create message: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send challenge"})
+		return
+	}
+
+	BroadcastLobbyChatMessage(db, chat, sender)
+	go CreateNotification(req.RecipientID, "dm_received", "Game Challenge from @"+sender.Username, msg, "user", senderID)
+
+	log.Printf("SendGameChallengeHandler: %d challenged %d to %s in room %d", senderID, req.RecipientID, req.GameType, req.RoomID)
+	c.JSON(http.StatusOK, gin.H{"message": "Challenge sent"})
+}

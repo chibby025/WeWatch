@@ -7,7 +7,7 @@ import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
 import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory } from '../../services/api';
 import apiClient from '../../services/api';
-import { getRoom, getRoomMembers, getActiveSession, postSessionHeartbeat, logSessionJoinAttempt } from '../../services/api';
+import { getRoom, getRoomMembers, getActiveSession, postSessionHeartbeat, logSessionJoinAttempt, sendGameChallenge } from '../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
 import { prefetchRoom } from '../../utils/prefetchCache';
 // ✅ Import LiveKit hook + events
@@ -47,6 +47,7 @@ import QuizResultsModal from './modals/QuizResultsModal';
 // Game system components
 import GameLobbyModal from '../Games/GameLobbyModal';
 import GameOverlay from '../Games/GameOverlay';
+import TournamentBracket from '../Games/TournamentBracket';
 // Graphics renderer for LiveShare overlays
 import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
 import BibleOverlay from '../liveshare/BibleOverlay';
@@ -998,10 +999,12 @@ export default function VideoWatch() {
   const videoPlayerRef  = useRef(null); // 🎬 Direct access to video element
   const ytPlayerRef     = useRef(null); // YouTube iframe API player instance
   const pendingYTSeekRef = useRef(null); // seek target for new YouTube video loads
+  const videoAreaRef    = useRef(null); // outer video area container — used to compute 16:9 scene bounds
   const [localScreenTrack, setLocalScreenTrack] = useState(null);
   const [pendingSeekTime, setPendingSeekTime] = useState(null); // ⏱️ State-based seek (triggers re-renders)
   const [videoStalled,   setVideoStalled]   = useState(false); // member-side: video loaded but never played
   const [isMediaLoading, setIsMediaLoading] = useState(false); // true while waiting for first 'playing' event after a media change
+  const [sceneBounds,   setSceneBounds]   = useState(null); // 16:9 scene frame within video area (normalized, custom watch only)
   const stallTimerRef = useRef(null);
   
   // 📹 LiveShare state (screen + camera)
@@ -1056,6 +1059,11 @@ export default function VideoWatch() {
   // message (never broadcast in game_state — every other player's hand and the
   // draw pile order must stay server-side-only). Reset whenever activeGame clears.
   const [myHand, setMyHand] = useState(null);
+  // Tournament mode (in-memory bracket). activeTournament holds the full bracket;
+  // activeTournamentMatch is the pending match the host is prompted to start.
+  const [activeTournament, setActiveTournament] = useState(null);
+  const [activeTournamentMatch, setActiveTournamentMatch] = useState(null);
+  const [showTournamentBracket, setShowTournamentBracket] = useState(false);
 
   // 🎤 Audio device management
   const [audioDevices, setAudioDevices] = useState([]);
@@ -2457,7 +2465,46 @@ export default function VideoWatch() {
     console.log('🎮 [VideoWatch] Closing game');
     setActiveGame(null);
     setMyHand(null);
+    setDrawerWord(null);
+    setShowChallengeModal(false);
   }, []);
+
+  // Tournament: create a bracket (host only). Sent as a dedicated create_tournament
+  // message the backend routes to the tournament manager.
+  const handleCreateTournament = useCallback((gameType, playersData) => {
+    if (!sendMessage) return;
+    sendMessage({ type: 'create_tournament', data: { game_type: gameType, players: playersData } });
+    setIsGameLobbyOpen(false);
+    setShowTournamentBracket(true);
+  }, [sendMessage]);
+
+  // Tournament: host starts a specific pending match — fires a normal start_game with
+  // that match's two players; the backend links the resulting session to the match.
+  const handleStartTournamentMatch = useCallback((match, gameType) => {
+    if (!sendMessage || !match?.player1 || !match?.player2) return;
+    sendMessage({
+      type: 'start_game',
+      data: {
+        game_type: gameType,
+        players: [match.player1, match.player2].map(p => ({
+          user_id: p.user_id,
+          username: p.username,
+          avatar_url: p.avatar || p.avatar_url || null,
+          color: p.color,
+        })),
+      },
+    });
+    setActiveTournamentMatch(null);
+    setShowTournamentBracket(false);
+  }, [sendMessage]);
+
+  // Auto-open the bracket when a new match is announced and nothing's on screen, so
+  // the host sees the "Start This Match" prompt without hunting for the pill.
+  useEffect(() => {
+    if (activeTournamentMatch && !activeGame) {
+      setShowTournamentBracket(true);
+    }
+  }, [activeTournamentMatch, activeGame]);
 
   const handleOpenDoc = useCallback((mediaItem) => {
     const fileUrl = mediaItem.file_url || mediaItem.FilePath || mediaItem.file_path || '';
@@ -2555,6 +2602,24 @@ export default function VideoWatch() {
   const handleDoomRelayPacket = useCallback((payload) => {
     sendMessage({ type: 'relay_packet', data: { payload } });
   }, [sendMessage]);
+
+  // Generic relay handler for non-DOOM games that also use relay_packet for
+  // real-time payloads (Draw & Guess canvas strokes register here via
+  // registerRelayReceiver). Checked before the DOOM handler in the relay_packet
+  // case so both can coexist without either clobbering the other.
+  const gameRelayHandlerRef = useRef(null);
+  const registerGameRelayReceiver = useCallback((handler) => {
+    gameRelayHandlerRef.current = handler;
+  }, []);
+
+  // Draw & Guess: the drawer's secret word, delivered via the private draw_word
+  // message (never a room broadcast). Cleared on game close.
+  const [drawerWord, setDrawerWord] = useState(null);
+
+  // Game challenge: captures the last game result so the user can taunt friends.
+  // { game_type, result: "won"|"drew"|"lost", score?, room_id, room_name }
+  const [lastGameResult, setLastGameResult] = useState(null);
+  const [showChallengeModal, setShowChallengeModal] = useState(false);
 
   // Define stable callbacks
   const handlePlay = useCallback(() => setIsPlaying(true), []);
@@ -2738,6 +2803,32 @@ export default function VideoWatch() {
     if (!currentMedia?.mediaUrl) { setIsMediaLoading(false); return; }
     setIsMediaLoading(true);
   }, [currentMedia?.mediaUrl]);
+
+  // Snap to top on mount so the menu icon is never scrolled off-screen on mobile.
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+
+  // Track the 16:9 scene frame within the video area for correct custom-watch region positioning
+  // across all screen sizes and orientations. The region percentages were defined against a 16:9
+  // reference in the RegionPicker, so we need to know where that 16:9 frame actually sits.
+  useEffect(() => {
+    if (!isCustomWatch) { setSceneBounds(null); return; }
+    const el = videoAreaRef.current;
+    if (!el) return;
+    const compute = () => {
+      const { clientWidth: pw, clientHeight: ph } = el;
+      if (!pw || !ph) return;
+      const sAR = 16 / 9;
+      const cAR = pw / ph;
+      let sw, sh, sx, sy;
+      if (cAR > sAR) { sh = ph; sw = ph * sAR; sx = (pw - sw) / 2; sy = 0; }
+      else            { sw = pw; sh = pw / sAR; sx = 0; sy = (ph - sh) / 2; }
+      setSceneBounds({ left: sx / pw, top: sy / ph, width: sw / pw, height: sh / ph });
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isCustomWatch]);
 
   // Monitor LiveKit local participant for screen share track
   useEffect(() => {
@@ -5478,6 +5569,18 @@ export default function VideoWatch() {
               // opponent, so this branch would otherwise show a nonsensical "draw".
               toast.success("It's a draw!", { duration: 3000, icon: '🤝' });
             }
+            // Capture result for the "Challenge Friends" flow (only for games the current
+            // user actually played — spectating hosts of DOOM/Stellar Swarm excluded).
+            const myEntry = plyrs.find(p => p.user_id === currentUser?.id);
+            if (myEntry) {
+              const myResult = winnerId === currentUser?.id ? 'won' : plyrs.length > 1 ? 'drew' : null;
+              setLastGameResult({
+                game_type: message.data?.game_type || activeGame?.game_type,
+                result:    myResult,
+                room_id:   roomId,
+                room_name: roomData?.name || '',
+              });
+            }
             setActiveGame(prev => prev ? {
               ...prev,
               status: 'finished',
@@ -5493,12 +5596,48 @@ export default function VideoWatch() {
             toast(winner ? `${winner.username} wins! (opponent forfeited)` : 'Opponent forfeited', {
               duration: 4000, icon: '🏆',
             });
+            const myEntry2 = plyrs.find(p => p.user_id === currentUser?.id);
+            if (myEntry2) {
+              setLastGameResult({
+                game_type: message.data?.game_type || activeGame?.game_type,
+                result:    winnerId === currentUser?.id ? 'won' : 'lost',
+                room_id:   roomId,
+                room_name: roomData?.name || '',
+              });
+            }
             setActiveGame(prev => prev ? { ...prev, status: 'finished', winner_id: winnerId ?? null } : null);
           }
           if (_gAction === 'relay_packet') {
-            // DOOM's own networking protocol, ferried opaquely — deliberately
-            // bypasses setState/re-renders. See doomRelayHandlerRef above.
-            doomRelayHandlerRef.current?.(message.data?.payload);
+            // Real-time opaque payloads. A non-DOOM game (Draw & Guess canvas
+            // strokes) registers its own receiver via registerGameRelayReceiver
+            // and takes priority; DOOM's handler is the fallback. Both bypass
+            // setState/re-renders — see the relay handler refs above.
+            if (gameRelayHandlerRef.current) {
+              gameRelayHandlerRef.current(message.data?.payload);
+            } else if (doomRelayHandlerRef.current) {
+              doomRelayHandlerRef.current(message.data?.payload);
+            }
+          }
+          if (_gAction === 'draw_word') {
+            // Private, single-recipient message: only the current Draw & Guess
+            // drawer ever receives it. Guessers never see the answer.
+            setDrawerWord(message.data?.word || null);
+          }
+          if (_gAction === 'tournament_update') {
+            setActiveTournament(message.data || null);
+          }
+          if (_gAction === 'tournament_match_ready') {
+            const d = message.data || {};
+            toast(`🏆 Next match: ${d.player1} vs ${d.player2} — host, start the game!`, { duration: 5000, icon: '🏆' });
+            setActiveTournamentMatch(d);
+          }
+          if (_gAction === 'tournament_complete') {
+            const d = message.data || {};
+            toast.success(`🏆 Tournament over! Winner: ${d.winner_name || 'nobody'}`, { duration: 6000, icon: '🏆' });
+            setActiveTournamentMatch(null);
+            // Keep activeTournament so the final bracket stays viewable; it now
+            // carries status: "completed".
+            setActiveTournament(prev => prev ? { ...prev, status: 'completed', winner_id: d.winner_id } : prev);
           }
           if (_gAction === 'hand_update') {
             // Private, per-player message (hub.BroadcastToUser, not a room broadcast) —
@@ -6478,7 +6617,7 @@ export default function VideoWatch() {
   };
 
   return (
-    <div className="relative w-full h-screen bg-[#0a0a0a] text-white overflow-hidden">
+    <div className="relative w-full bg-[#0a0a0a] text-white overflow-hidden" style={{ height: '100dvh' }}>
       {/* ✅ Toast Notifications */}
       <Toaster position="top-center" />
 
@@ -6546,16 +6685,24 @@ export default function VideoWatch() {
             <div className="flex flex-row h-full w-full overflow-hidden">
               {/* Video Player: shrinks to 80% width when ad is present, snaps back to full */}
               <div
+                ref={videoAreaRef}
                 className="relative h-full transition-all duration-500 ease-in-out"
                 style={{ width: bannerAdData ? '80%' : '100%' }}
               >
-                {/* Custom watch type — full-area background photo */}
+                {/* Custom watch type — background photo, positioned to exactly fill the 16:9 scene frame */}
                 {isCustomWatch && customBackgroundUrl && (
                   <img
                     src={customBackgroundUrl}
                     alt=""
-                    className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-                    style={{ zIndex: 0 }}
+                    className="absolute pointer-events-none"
+                    style={sceneBounds ? {
+                      left:   `${sceneBounds.left   * 100}%`,
+                      top:    `${sceneBounds.top    * 100}%`,
+                      width:  `${sceneBounds.width  * 100}%`,
+                      height: `${sceneBounds.height * 100}%`,
+                      objectFit: 'cover',
+                      zIndex: 0,
+                    } : { inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }}
                   />
                 )}
 
@@ -6594,16 +6741,16 @@ export default function VideoWatch() {
                   <DVDBounce />
                 )}
 
-                {/* Video player — full area normally, region-positioned for custom watch */}
+                {/* Video player — full area normally, positioned inside the 16:9 scene frame for custom watch */}
                 <div
-                  className={isCustomWatch && screenRegion ? 'absolute' : 'absolute inset-0'}
-                  style={isCustomWatch && screenRegion ? {
-                    left:   `${screenRegion.x * 100}%`,
-                    top:    `${screenRegion.y * 100}%`,
-                    width:  `${screenRegion.w * 100}%`,
-                    height: `${screenRegion.h * 100}%`,
+                  className="absolute"
+                  style={isCustomWatch && screenRegion && sceneBounds ? {
+                    left:   `${(sceneBounds.left + screenRegion.x * sceneBounds.width)  * 100}%`,
+                    top:    `${(sceneBounds.top  + screenRegion.y * sceneBounds.height) * 100}%`,
+                    width:  `${screenRegion.w * sceneBounds.width  * 100}%`,
+                    height: `${screenRegion.h * sceneBounds.height * 100}%`,
                     zIndex: 1,
-                  } : { zIndex: 1 }}
+                  } : { inset: 0, zIndex: 1 }}
                 >
                   {isYouTube ? (
                     <YouTubePlayer
@@ -7653,6 +7800,7 @@ export default function VideoWatch() {
           ].filter(m => m.id)}
           currentUserId={currentUser?.id}
           onStartGame={handleStartGame}
+          onCreateTournament={handleCreateTournament}
         />
       )}
 
@@ -7666,11 +7814,134 @@ export default function VideoWatch() {
           onEndGame={handleEndGame}
           onPlayAgain={handlePlayAgain}
           onRelayPacket={handleDoomRelayPacket}
-          registerRelayReceiver={registerDoomRelayReceiver}
+          registerRelayReceiver={
+            activeGame.game_type === 'draw_guess' ? registerGameRelayReceiver : registerDoomRelayReceiver
+          }
           myHand={myHand}
+          drawerWord={drawerWord}
         />
       )}
 
+      {/* Tournament bracket — shown on demand (or when a match becomes ready).
+          Hidden while an actual game is being played so the two don't overlap. */}
+      {activeTournament && showTournamentBracket && !activeGame && (
+        <TournamentBracket
+          tournament={activeTournament}
+          currentUserId={currentUser?.id}
+          onStartMatch={handleStartTournamentMatch}
+          onClose={() => setShowTournamentBracket(false)}
+        />
+      )}
+
+      {/* Floating "View Bracket" pill when a tournament is active but the bracket
+          is hidden and no game is on screen. */}
+      {activeTournament && !showTournamentBracket && !activeGame && (
+        <button
+          onClick={() => setShowTournamentBracket(true)}
+          className="fixed bottom-24 right-4 z-[54] flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-yellow-600 to-amber-600 hover:from-yellow-700 hover:to-amber-700 text-white rounded-full shadow-lg text-sm font-semibold transition-all"
+        >
+          🏆 View Bracket
+        </button>
+      )}
+
+      {/* ── Challenge Friends pill — appears after a game ends while the user
+          is still in the room. Dismissed manually or when they start a new game. ── */}
+      {lastGameResult && !activeGame && !showChallengeModal && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[54] flex items-center gap-3 px-4 py-2.5 bg-gray-900/95 border border-purple-500/50 rounded-full shadow-xl text-sm font-medium text-white backdrop-blur-sm">
+          <span>
+            {lastGameResult.result === 'won' ? '🏆 You won!' : lastGameResult.result === 'lost' ? '😤 You lost!' : '🤝 Game over!'}
+          </span>
+          <button
+            onClick={() => setShowChallengeModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-full text-xs font-semibold transition-all"
+          >
+            ⚔️ Challenge Friends
+          </button>
+          <button
+            onClick={() => setLastGameResult(null)}
+            className="text-gray-400 hover:text-white transition-colors leading-none"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* ── Challenge Friends modal — pick a room member to challenge ── */}
+      {showChallengeModal && lastGameResult && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowChallengeModal(false)}>
+          <div
+            className="relative w-full max-w-sm mx-4 bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-gray-700 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-white">Challenge a Friend</h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {lastGameResult.result === 'won' ? 'You won' : lastGameResult.result === 'lost' ? 'You lost' : 'You tied'} at{' '}
+                  <span className="text-purple-400 capitalize">{(lastGameResult.game_type || '').replace(/_/g, ' ')}</span>
+                  {' '}— think they can beat it?
+                </p>
+              </div>
+              <button
+                onClick={() => setShowChallengeModal(false)}
+                className="text-gray-400 hover:text-white transition-colors text-lg leading-none ml-3"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Member list */}
+            <div className="py-2 max-h-64 overflow-y-auto">
+              {roomMembers.filter(m => m.id !== currentUser?.id).length === 0 ? (
+                <p className="text-center text-gray-500 text-sm py-6">No other members in this room</p>
+              ) : (
+                roomMembers
+                  .filter(m => m.id !== currentUser?.id)
+                  .map(member => (
+                    <button
+                      key={member.id}
+                      onClick={async () => {
+                        try {
+                          await sendGameChallenge(
+                            member.id,
+                            lastGameResult.room_id,
+                            lastGameResult.game_type,
+                            lastGameResult.result,
+                          );
+                          toast.success(`Challenge sent to ${member.username}!`, { icon: '⚔️' });
+                          setShowChallengeModal(false);
+                          setLastGameResult(null);
+                        } catch {
+                          toast.error('Failed to send challenge');
+                        }
+                      }}
+                      className="w-full flex items-center gap-3 px-5 py-3 hover:bg-gray-800 transition-colors text-left"
+                    >
+                      {member.avatar_url ? (
+                        <img src={member.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-purple-700 flex items-center justify-center text-sm font-bold flex-shrink-0">
+                          {(member.username || '?')[0].toUpperCase()}
+                        </div>
+                      )}
+                      <span className="text-sm text-white font-medium truncate">{member.username}</span>
+                      <span className="ml-auto text-xs text-purple-400 font-semibold flex-shrink-0">Challenge →</span>
+                    </button>
+                  ))
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-gray-700">
+              <p className="text-xs text-gray-500 text-center">
+                They'll receive a DM card linking to this room.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
 
     </div>
