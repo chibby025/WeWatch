@@ -6741,6 +6741,27 @@ export default function VideoWatch() {
                   <DVDBounce />
                 )}
 
+                {/* Custom scene idle — lwoIcon floats inside the screen region only, not full-screen */}
+                {isCustomWatch && screenRegion && sceneBounds && !currentMedia && !liveShareMode && !isPreparingStream && !dvdVisible && (
+                  <div
+                    className="absolute flex flex-col items-center justify-center bg-black/30"
+                    style={{
+                      left:   `${(sceneBounds.left + screenRegion.x * sceneBounds.width)  * 100}%`,
+                      top:    `${(sceneBounds.top  + screenRegion.y * sceneBounds.height) * 100}%`,
+                      width:  `${screenRegion.w * sceneBounds.width  * 100}%`,
+                      height: `${screenRegion.h * sceneBounds.height * 100}%`,
+                      zIndex: 2,
+                    }}
+                  >
+                    <img
+                      src="/icons/lwoIcon.webp"
+                      alt="LetsWatchOut"
+                      className="w-12 h-12 object-contain"
+                      style={{ animation: 'iconFloat 3s ease-in-out infinite' }}
+                    />
+                  </div>
+                )}
+
                 {/* Video player — full area normally, positioned inside the 16:9 scene frame for custom watch */}
                 <div
                   className="absolute"
@@ -7261,16 +7282,14 @@ export default function VideoWatch() {
           raisedHandsCount={raisedHands.length}
           onEmoteSend={handleEmoteSend}
           openChat={openChat}
-          // activeGame deliberately excluded from hasOpenModal — it used to suppress the
-          // taskbar for the entire duration of any game (Trivia, RPS, TicTacToe), making
-          // mute completely unreachable (opacity 0 + pointer-events: none, and the
-          // tap-anywhere-to-reveal gesture itself early-returns while suppressed) right
-          // when voice chat matters most. The taskbar's z-index (1000) is already well
-          // above every game overlay's (50-60), so showing it during a game was never a
-          // stacking-order problem. It IS passed as currentGame below so the taskbar can
-          // shorten its own auto-hide window while a game is up — still reachable via
-          // tap, just doesn't linger on top of a game's own bottom controls as long.
-          hasOpenModal={isLiveShareWizardOpen || isGameLobbyOpen}
+          // activeGame and isGameLobbyOpen deliberately excluded from hasOpenModal.
+          // Both used to suppress the taskbar (opacity 0, pointerEvents none, tap-gesture
+          // early-returns), making mute completely unreachable during gameplay or while
+          // picking a game. The taskbar's z-index (1000) sits above every game overlay
+          // (50-60) and the game lobby backdrop, so revealing it via tap never causes a
+          // stacking-order problem. Both are still passed to currentGame / not suppressing
+          // so the taskbar can adapt (shorter auto-hide while a game is up).
+          hasOpenModal={isLiveShareWizardOpen}
           currentGame={activeGame}
           isChatActive={showChatHome || isChatOpen}
           onQuizClick={handleQuizClick}
@@ -7847,19 +7866,19 @@ export default function VideoWatch() {
       {/* ── Challenge Friends pill — appears after a game ends while the user
           is still in the room. Dismissed manually or when they start a new game. ── */}
       {lastGameResult && !activeGame && !showChallengeModal && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[54] flex items-center gap-3 px-4 py-2.5 bg-gray-900/95 border border-purple-500/50 rounded-full shadow-xl text-sm font-medium text-white backdrop-blur-sm">
-          <span>
-            {lastGameResult.result === 'won' ? '🏆 You won!' : lastGameResult.result === 'lost' ? '😤 You lost!' : '🤝 Game over!'}
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[54] flex items-center gap-2 px-3 py-2 bg-gray-900/95 border border-purple-500/50 rounded-full shadow-xl text-sm font-medium text-white backdrop-blur-sm whitespace-nowrap">
+          <span className="text-xs sm:text-sm">
+            {lastGameResult.result === 'won' ? '🏆 Won!' : lastGameResult.result === 'lost' ? '😤 Lost!' : '🤝 Done!'}
           </span>
           <button
             onClick={() => setShowChallengeModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-full text-xs font-semibold transition-all"
+            className="!min-h-0 !min-w-0 flex-shrink-0 flex items-center gap-1 px-2.5 py-1 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-full text-xs font-semibold transition-all"
           >
-            ⚔️ Challenge Friends
+            ⚔️ Challenge
           </button>
           <button
             onClick={() => setLastGameResult(null)}
-            className="text-gray-400 hover:text-white transition-colors leading-none"
+            className="!min-h-0 !min-w-0 flex-shrink-0 text-gray-400 hover:text-white transition-colors leading-none text-base px-1"
             aria-label="Dismiss"
           >
             ✕

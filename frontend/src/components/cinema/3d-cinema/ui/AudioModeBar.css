@@ -32,7 +32,7 @@
 
 /* Description line sits below the bar, fades with it */
 .audio-mode-description {
-  font-size: 11px;
+  font-size: 10px;
   color: rgba(255, 255, 255, 0.55);
   text-align: center;
   white-space: nowrap;
@@ -54,17 +54,17 @@
 .audio-mode-content {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 20px;
+  gap: 8px;
+  padding: 6px 14px;
   background: rgba(0, 0, 0, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 25px;
+  border-radius: 20px;
   backdrop-filter: blur(10px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
 .audio-mode-icon {
-  font-size: 20px;
+  font-size: 15px;
   line-height: 1;
 }
 
@@ -76,24 +76,24 @@
 
 .audio-mode-text {
   color: #ffffff;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
 }
 
 .audio-mode-status {
   color: rgba(255, 255, 255, 0.7);
-  font-size: 12px;
+  font-size: 10px;
   font-style: italic;
 }
 
 .audio-mode-toggle {
-  padding: 6px 14px;
+  padding: 4px 10px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
-  border-radius: 15px;
-  font-size: 13px;
+  border-radius: 12px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -111,18 +111,18 @@
 
 .audio-mode-divider {
   width: 1px;
-  height: 18px;
+  height: 14px;
   background: rgba(255, 255, 255, 0.25);
   flex-shrink: 0;
 }
 
 .audio-mode-silence {
-  padding: 6px 14px;
+  padding: 4px 10px;
   background: transparent;
   color: rgba(255, 255, 255, 0.75);
   border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 15px;
-  font-size: 13px;
+  border-radius: 12px;
+  font-size: 11px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;

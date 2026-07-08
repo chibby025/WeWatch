@@ -453,8 +453,13 @@ func (gm *GameManager) BroadcastGameState(roomID uint) error {
 // else broadcasts GameData unchanged (perfect-information games) — note card games
 // already keep their hands OFF GameData entirely, so nothing extra is needed there.
 func publicGameData(gameState *GameSessionState) map[string]interface{} {
-	if gameState.GameSession != nil && gameState.GameSession.GameType == "draw_guess" {
-		return drawGuessPublicState(gameState.GameData)
+	if gameState.GameSession != nil {
+		switch gameState.GameSession.GameType {
+		case "draw_guess":
+			return drawGuessPublicState(gameState.GameData)
+		case "vs_battle":
+			return vsPublicGameData(gameState.GameData)
+		}
 	}
 	return gameState.GameData
 }
@@ -512,6 +517,11 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 		for k, v := range drawGuessInitialState() {
 			state[k] = v
 		}
+
+	case "vs_battle":
+		state["phase"] = "building"
+		state["locked_moves"] = map[string]interface{}{}
+		state["turn"] = 0
 	}
 
 	return state

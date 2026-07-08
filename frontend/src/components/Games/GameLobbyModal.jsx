@@ -1,6 +1,6 @@
 // src/components/Games/GameLobbyModal.jsx
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Gamepad2, Users, ChevronLeft, ChevronRight, Search, Trophy } from 'lucide-react';
+import { X, Gamepad2, Users, ChevronLeft, ChevronRight, Search, Trophy, AlertTriangle } from 'lucide-react';
 
 // Posters live on BunnyCDN, not bundled into the frontend package — same CDN origin
 // DoomGame.jsx/ShooterGame.jsx already hardcode for their own assets. Keeps the
@@ -25,6 +25,16 @@ const games = [
     minPlayers: 2,
     maxPlayers: 2,
     image: `${GAME_POSTERS_BASE_URL}/rps.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'vs_battle',
+    name: 'VS Battle',
+    description: 'Create death battles between your favourite characters.',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/vs_battle.webp`,
     disabled: false,
     type: 'multiplayer'
   },
@@ -76,7 +86,7 @@ const games = [
     description: 'Flank your opponent\'s discs to flip the board',
     minPlayers: 2,
     maxPlayers: 2,
-    image: `${GAME_POSTERS_BASE_URL}/othello.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/othello.webp`,
     disabled: false,
     type: 'multiplayer'
   },
@@ -86,7 +96,7 @@ const games = [
     description: 'Jump your way across the board — king me!',
     minPlayers: 2,
     maxPlayers: 2,
-    image: `${GAME_POSTERS_BASE_URL}/checkers.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/checkers.webp`,
     disabled: false,
     type: 'multiplayer'
   },
@@ -96,7 +106,7 @@ const games = [
     description: 'Match rank or suit — 8s are wild!',
     minPlayers: 2,
     maxPlayers: 6,
-    image: `${GAME_POSTERS_BASE_URL}/crazy_eights.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/crazy_eights.webp`,
     disabled: false,
     type: 'multiplayer'
   },
@@ -200,16 +210,6 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
-  {
-    id: 'vs_battle',
-    name: 'VS Battle',
-    description: 'Build your 3-character team and battle! Custom moves, tiers, and epic encounters.',
-    minPlayers: 2,
-    maxPlayers: 2,
-    image: `${GAME_POSTERS_BASE_URL}/vs_battle.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
 ];
 
 // Games eligible for tournament mode: 2-player, head-to-head games where a
@@ -223,11 +223,26 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
   const [selectedPlayers, setSelectedPlayers] = useState([currentUserId]);
   const [searchQuery, setSearchQuery] = useState('');
   const [carouselIndex, setCarouselIndex] = useState(0);
-
-  // "games" = the normal single-game picker; "tournament" = bracket setup.
-  const [mode, setMode] = useState('games');
-  const [tournamentGameId, setTournamentGameId] = useState(TOURNAMENT_GAME_IDS[0]);
-  const [tournamentPlayers, setTournamentPlayers] = useState([currentUserId]);
+  const [isTournamentMode, setIsTournamentMode] = useState(false);
+  const [isLandscape, setIsLandscape] = useState(
+    typeof window !== 'undefined' ? window.matchMedia('(orientation: landscape)').matches : false
+  );
+  const [isDesktop, setIsDesktop] = useState(
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(orientation: landscape)');
+    const handler = (e) => setIsLandscape(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  useEffect(() => {
+    const check = () => setIsDesktop(window.innerWidth >= 768);
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+  // True 2-column layout: landscape on desktop/tablet. Mobile landscape stays fullscreen.
+  const isWideLayout = isLandscape && isDesktop;
 
   // Heavy 3D games (DOOM, Space Shooter) are VideoWatch-exclusive -- 3D Cinema
   // and Lecture Hall pass allowHeavyGames={false} to keep them out of the
@@ -276,6 +291,12 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  const cardW = isWideLayout
+    ? Math.max(160, Math.min(280, carouselWidth * 0.32))  // desktop/tablet: big posters
+    : isLandscape
+      ? Math.max(75, Math.min(110, carouselWidth * 0.25))  // mobile landscape: compact
+      : Math.max(130, Math.min(190, carouselWidth * 0.38)); // portrait: original
+
   const txRef = useRef(null);
   const tyRef = useRef(null);
   const dragging = useRef(false);
@@ -343,15 +364,11 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
   // members and just run/spectate it. minPlayers/maxPlayers still gate the count.
   const togglePlayerSelection = (playerId) => {
     if (!selectedGameData) return;
+    const cap = isTournamentMode ? 8 : selectedGameData.maxPlayers;
     setSelectedPlayers(prev => {
-      if (prev.includes(playerId)) {
-        return prev.filter(id => id !== playerId);
-      } else {
-        if (prev.length >= selectedGameData.maxPlayers) {
-          return prev; // Max players reached
-        }
-        return [...prev, playerId];
-      }
+      if (prev.includes(playerId)) return prev.filter(id => id !== playerId);
+      if (prev.length >= cap) return prev;
+      return [...prev, playerId];
     });
   };
 
@@ -381,14 +398,8 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
       return;
     }
 
-    // Multiplayer games need player selection
-    if (selectedPlayers.length < selectedGameData.minPlayers) {
-      alert(`Please select at least ${selectedGameData.minPlayers} players`);
-      return;
-    }
-
-    // Map selected players to player data with colors
-    const playersData = selectedPlayers.map((playerId, index) => {
+    // Map selected players to player data with colors (shared by both paths)
+    const buildPlayersData = () => selectedPlayers.map((playerId, index) => {
       const member = roomMembers.find(m => m.id === playerId);
       return {
         user_id: playerId,
@@ -398,151 +409,112 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
       };
     });
 
-    onStartGame(selectedGame, playersData);
-    onClose();
-  };
-
-  // ── Tournament setup ────────────────────────────────────────────────────────
-  const toggleTournamentPlayer = (playerId) => {
-    setTournamentPlayers(prev => {
-      if (prev.includes(playerId)) return prev.filter(id => id !== playerId);
-      if (prev.length >= 8) return prev; // max 8
-      return [...prev, playerId];
-    });
-  };
-
-  // Bracket preview: number of rounds + first-round pairings (top seeds get byes).
-  const tournamentPreview = useMemo(() => {
-    const n = tournamentPlayers.length;
-    if (n < 2) return { rounds: 0, pairings: [], byes: 0 };
-    let bracket = 1;
-    while (bracket < n) bracket <<= 1;
-    const byes = bracket - n;
-    const rounds = Math.log2(bracket);
-    const ordered = tournamentPlayers.map(id => roomMembers.find(m => m.id === id)?.username || `Player`);
-    const byePlayers = ordered.slice(0, byes);
-    const rest = ordered.slice(byes);
-    const pairings = [];
-    for (let i = 0; i + 1 < rest.length; i += 2) pairings.push([rest[i], rest[i + 1]]);
-    return { rounds, pairings, byes, byePlayers };
-  }, [tournamentPlayers, roomMembers]);
-
-  const handleCreateTournament = () => {
-    if (tournamentPlayers.length < 4 || tournamentPlayers.length > 8) {
-      alert('A tournament needs 4–8 players');
+    // Tournament mode
+    if (isTournamentMode) {
+      if (selectedPlayers.length < 4 || selectedPlayers.length > 8) {
+        alert('A tournament needs 4–8 players');
+        return;
+      }
+      if (onCreateTournament) onCreateTournament(selectedGame, buildPlayersData());
+      onClose();
       return;
     }
-    const playersData = tournamentPlayers.map((playerId, index) => {
-      const member = roomMembers.find(m => m.id === playerId);
-      return {
-        user_id: playerId,
-        username: member?.username || `Player ${index + 1}`,
-        avatar_url: member?.avatar_url || null,
-        color: playerColors[index],
-      };
-    });
-    if (onCreateTournament) onCreateTournament(tournamentGameId, playersData);
+
+    // Normal multiplayer
+    if (selectedPlayers.length < selectedGameData.minPlayers) {
+      alert(`Please select at least ${selectedGameData.minPlayers} players`);
+      return;
+    }
+
+    onStartGame(selectedGame, buildPlayersData());
     onClose();
   };
 
-  const dedupedMembers = roomMembers.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i);
+  // Reset tournament mode when switching to a game that doesn't support it
+  useEffect(() => {
+    if (!TOURNAMENT_GAME_IDS.includes(selectedGame)) setIsTournamentMode(false);
+  }, [selectedGame]);
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
-        {/* Header — purple banner, visually distinct from the dark modal body */}
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 bg-gradient-to-r from-purple-600 to-blue-600 rounded-t-xl">
+      <div className={`bg-gray-800 shadow-2xl w-full ${
+        isWideLayout
+          ? 'rounded-xl mx-4 max-w-5xl max-h-[92vh] flex flex-col overflow-hidden'
+          : isLandscape
+            ? 'h-screen max-h-screen rounded-none mx-0 flex flex-col overflow-hidden'
+            : 'rounded-xl mx-4 max-w-2xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto'
+      }`}>
+
+        {/* Header */}
+        <div className={`flex items-center justify-between bg-gradient-to-r from-purple-600 to-blue-600 flex-shrink-0 ${
+          isWideLayout ? 'px-6 py-3 rounded-t-xl' : isLandscape ? 'px-4 py-2 rounded-none' : 'px-4 sm:px-6 py-3 sm:py-4 rounded-t-xl'
+        }`}>
           <div className="flex items-center gap-2 sm:gap-3">
-            <Gamepad2 className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
-            <h2 className="text-xl sm:text-3xl font-bold text-white">Start a Game</h2>
+            <Gamepad2 className={`text-white ${isWideLayout ? 'w-6 h-6' : isLandscape ? 'w-5 h-5' : 'w-6 h-6 sm:w-7 sm:h-7'}`} />
+            <h2 className={`font-bold text-white ${isWideLayout ? 'text-xl' : isLandscape ? 'text-base' : 'text-xl sm:text-3xl'}`}>Start a Game</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="text-white/80 hover:text-white transition-colors"
-          >
+          <button onClick={onClose} className="text-white/80 hover:text-white transition-colors">
             <X className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
         </div>
 
-        {/* Mode tabs: single game vs tournament bracket */}
-        <div className="flex border-b border-gray-700">
-          <button
-            onClick={() => setMode('games')}
-            className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
-              mode === 'games' ? 'text-white border-b-2 border-purple-500 bg-gray-800' : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            🎮 Single Game
-          </button>
-          <button
-            onClick={() => setMode('tournament')}
-            className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
-              mode === 'tournament' ? 'text-white border-b-2 border-yellow-500 bg-gray-800' : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            🏆 Tournament
-          </button>
-        </div>
+        {/* Content area: stacked portrait, side-by-side landscape/desktop */}
+        <div className={(isWideLayout || isLandscape) ? 'flex flex-row flex-1 overflow-hidden' : ''}>
 
-        {mode === 'tournament' ? (
-          <TournamentSetup
-            gameId={tournamentGameId}
-            setGameId={setTournamentGameId}
-            members={dedupedMembers}
-            currentUserId={currentUserId}
-            selectedPlayers={tournamentPlayers}
-            togglePlayer={toggleTournamentPlayer}
-            preview={tournamentPreview}
-            onCancel={onClose}
-            onCreate={handleCreateTournament}
-          />
-        ) : (
-        <>
-        {/* Game Selection — poster carousel */}
-        <div className="px-4 sm:px-6 pt-3 pb-4 sm:pt-4 sm:pb-6 border-b border-gray-700">
-          {/* Search */}
-          <div className="relative mb-3">
-            <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search games…"
-              className="w-full bg-gray-900/60 border border-gray-700 rounded-full pl-9 pr-3 py-1.5 sm:py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 transition-colors"
-            />
-          </div>
+          {/* Game carousel — wide/landscape: right side, portrait: full-width with border-b */}
+          <div className={
+            isWideLayout
+              ? 'flex-1 order-2 overflow-y-auto border-l border-gray-700 px-6 py-4'
+              : isLandscape
+                ? 'w-[70%] order-2 overflow-y-auto border-l border-gray-700 px-4 py-2'
+                : 'px-4 sm:px-6 pt-3 pb-4 sm:pt-4 sm:pb-6 border-b border-gray-700'
+          }>
+            {/* Search — hidden in landscape/wide */}
+            {!(isLandscape || isWideLayout) && (
+              <div className="relative mb-3">
+                <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search games…"
+                  className="w-full bg-gray-900/60 border border-gray-700 rounded-full pl-9 pr-3 py-1.5 sm:py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 transition-colors"
+                />
+              </div>
+            )}
 
-          {filteredGames.length === 0 ? (
-            <div className="text-center py-10 text-gray-400 text-sm">
-              No games match "{searchQuery}"
-            </div>
-          ) : (
-            <>
-              {/* Title of the centered game */}
-              <h3 className="text-center text-white font-bold text-base sm:text-lg mb-1 sm:mb-2 truncate transition-all">
-                {selectedGameData?.name}
-              </h3>
+            {filteredGames.length === 0 ? (
+              <div className="text-center py-10 text-gray-400 text-sm">
+                No games match "{searchQuery}"
+              </div>
+            ) : (
+              <>
+                {/* Title of the centered game */}
+                <h3 className={`text-center text-white font-bold truncate transition-all ${
+                  isWideLayout ? 'text-xl mb-2' : isLandscape ? 'text-sm mb-1' : 'text-base sm:text-lg mb-1 sm:mb-2'
+                }`}>
+                  {selectedGameData?.name}
+                </h3>
 
-              {/* Poster fan */}
-              <div ref={carouselRef} className="relative overflow-hidden" style={{ height: Math.max(90, Math.min(140, carouselWidth * 0.32)) * 1.46 + 20 }}>
-                <button
-                  onClick={() => goTo(carouselIndex - 1)}
-                  disabled={carouselIndex === 0}
-                  className="absolute left-0 top-1/2 -translate-y-1/2 z-30 !min-h-0 !min-w-0 w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center bg-white/90 shadow-lg rounded-full disabled:opacity-0 hover:bg-white transition-all"
-                >
-                  <ChevronLeft className="w-4 h-4 text-gray-700" />
-                </button>
+                {/* Poster fan */}
+                <div ref={carouselRef} className="relative overflow-hidden" style={{ height: cardW * 1.46 + (isWideLayout ? 28 : isLandscape ? 10 : 20) }}>
+                  <button
+                    onClick={() => goTo(carouselIndex - 1)}
+                    disabled={carouselIndex === 0}
+                    className="absolute left-0 top-1/2 -translate-y-1/2 z-30 !min-h-0 !min-w-0 w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center bg-white/90 shadow-lg rounded-full disabled:opacity-0 hover:bg-white transition-all"
+                  >
+                    <ChevronLeft className="w-4 h-4 text-gray-700" />
+                  </button>
 
-                {filteredGames.map((game, i) => {
-                  const offset = i - carouselIndex;
-                  const absOffset = Math.abs(offset);
-                  if (absOffset > 2.6) return null;
+                  {filteredGames.map((game, i) => {
+                    const offset = i - carouselIndex;
+                    const absOffset = Math.abs(offset);
+                    if (absOffset > 2.6) return null;
 
-                  const isCenter = offset === 0;
-                  const cardW = Math.max(90, Math.min(140, carouselWidth * 0.32));
-                  const cardH = cardW * 1.46;
+                    const isCenter = offset === 0;
+                    const cardH = cardW * 1.46;
                   const step = cardW * 0.62;
                   const scale = isCenter ? 1 : Math.max(0.7, 1 - absOffset * 0.15);
                   const translateX = offset * step + dragX;
@@ -596,7 +568,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
 
               {/* Dot indicators */}
               {filteredGames.length > 1 && (
-                <div className="flex justify-center gap-1 sm:gap-1.5 mt-2 sm:mt-3">
+                <div className={`flex justify-center gap-1 sm:gap-1.5 ${isLandscape ? 'mt-1' : 'mt-2 sm:mt-3'}`}>
                   {filteredGames.map((game, index) => (
                     <button
                       key={game.id}
@@ -610,117 +582,134 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                 </div>
               )}
 
-              {/* Description + min/max, for the centered game */}
+              {/* Description + min/max + optional tournament toggle */}
               {selectedGameData && (
-                <div className="text-center mt-2 sm:mt-3">
-                  <p className="text-gray-400 text-[11px] sm:text-xs leading-snug max-w-md mx-auto">{selectedGameData.description}</p>
+                <div className={`text-center ${isWideLayout ? 'mt-3' : isLandscape ? 'mt-1' : 'mt-2 sm:mt-3'}`}>
+                  <p className={`text-gray-400 leading-snug max-w-lg mx-auto ${isWideLayout ? 'text-sm' : 'text-[11px] sm:text-xs'}`}>{selectedGameData.description}</p>
                   <p className="text-gray-500 text-[10px] sm:text-[11px] mt-1">
                     {selectedGameData.type === 'arcade'
                       ? 'Solo arcade'
                       : `${selectedGameData.minPlayers}–${selectedGameData.maxPlayers} players`}
                   </p>
+                  {TOURNAMENT_GAME_IDS.includes(selectedGame) && (
+                    <div className="mt-2 flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => setIsTournamentMode(t => !t)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
+                          isTournamentMode
+                            ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-400'
+                            : 'bg-gray-700/60 border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-500'
+                        }`}
+                      >
+                        <Trophy className="w-3 h-3" />
+                        Tournament Mode
+                      </button>
+                      <span className={`text-xs font-bold tracking-wide ${isTournamentMode ? 'text-yellow-400' : 'text-gray-500'}`}>
+                        {isTournamentMode ? 'ON' : 'OFF'}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </>
           )}
-        </div>
+          </div>
 
-        {/* Player Selection */}
-        <div className="px-4 sm:px-6 py-3 sm:py-6">
-          {!selectedGameData ? null : selectedGameData.type === 'arcade' ? (
-            /* Arcade games - single player info */
-            <div className="text-center py-2 sm:py-6">
-              <div className="text-4xl sm:text-6xl mb-2 sm:mb-4">🎮</div>
-              <h3 className="text-base sm:text-xl font-bold text-white mb-1 sm:mb-2">Arcade Mode</h3>
-              <p className="text-gray-400 text-sm mb-2 sm:mb-4">
-                You play, everyone watches on the big screen!
-              </p>
-              <div className="bg-purple-500/20 border border-purple-500/50 rounded-lg p-3 sm:p-4 max-w-md mx-auto">
-                <p className="text-xs sm:text-sm text-purple-300">
-                  <span className="font-semibold">Player:</span> {roomMembers.find(m => m.id === currentUserId)?.username || 'You'}
+          {/* Player selection — wide/landscape: left panel, portrait: full-width below carousel */}
+          <div className={
+            isWideLayout
+              ? 'w-[320px] flex-shrink-0 order-1 overflow-y-auto border-r border-gray-700 px-4 py-4'
+              : isLandscape
+                ? 'w-[30%] order-1 overflow-y-auto border-r border-gray-700 px-3 py-2'
+                : 'px-4 sm:px-6 py-3 sm:py-6'
+          }>
+            {!selectedGameData ? null : selectedGameData.type === 'arcade' ? (
+              /* Arcade games - single player info */
+              <div className={`text-center ${isLandscape ? 'py-2' : 'py-2 sm:py-6'}`}>
+                <div className={`mb-2 ${isLandscape ? 'text-2xl' : 'text-4xl sm:text-6xl sm:mb-4'}`}>🎮</div>
+                <h3 className={`font-bold text-white mb-1 ${isLandscape ? 'text-sm' : 'text-base sm:text-xl sm:mb-2'}`}>Arcade Mode</h3>
+                <p className={`text-gray-400 ${isLandscape ? 'text-[11px] mb-2' : 'text-sm mb-2 sm:mb-4'}`}>
+                  You play, everyone watches on the big screen!
                 </p>
-                <p className="text-[11px] sm:text-xs text-gray-400 mt-1 sm:mt-2">
-                  All room members will see your gameplay on the cinema screen
+                <div className="bg-purple-500/20 border border-purple-500/50 rounded-lg p-3 sm:p-4 max-w-md mx-auto">
+                  <p className="text-xs sm:text-sm text-purple-300">
+                    <span className="font-semibold">Player:</span> {roomMembers.find(m => m.id === currentUserId)?.username || 'You'}
+                  </p>
+                  <p className="text-[11px] sm:text-xs text-gray-400 mt-1 sm:mt-2">
+                    All room members will see your gameplay on the cinema screen
+                  </p>
+                </div>
+              </div>
+            ) : (
+              /* Multiplayer games - player selection */
+              <>
+                <div className={`flex items-center justify-between ${isLandscape ? 'mb-2' : 'mb-2 sm:mb-4'}`}>
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                    <Users className="w-4 h-4" />
+                    Players ({selectedPlayers.length}/{isTournamentMode ? 8 : selectedGameData.maxPlayers})
+                    {roomMembers.length < (isTournamentMode ? 4 : selectedGameData.minPlayers) && (
+                      <AlertTriangle
+                        className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0"
+                        title={`Need at least ${isTournamentMode ? 4 : selectedGameData.minPlayers} players in the room`}
+                      />
+                    )}
+                  </h3>
+                </div>
+                <p className={`text-xs text-gray-400 ${isLandscape ? 'mb-2' : 'mb-2 sm:mb-3'}`}>
+                  {isTournamentMode ? 'Min: 4 | Max: 8' : `Min: ${selectedGameData.minPlayers} | Max: ${selectedGameData.maxPlayers}`}
                 </p>
-              </div>
-            </div>
-          ) : (
-            /* Multiplayer games - player selection */
-            <>
-              <div className="flex items-center justify-between mb-2 sm:mb-4">
-                <h3 className="text-sm sm:text-lg font-semibold text-white flex items-center gap-1.5 sm:gap-2">
-                  <Users className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Select Players ({selectedPlayers.length}/{selectedGameData.maxPlayers})
-                </h3>
-                <span className="text-xs sm:text-sm text-gray-400">
-                  Min: {selectedGameData.minPlayers} | Max: {selectedGameData.maxPlayers}
-                </span>
-              </div>
 
-              {/* 2-column on mobile to use width instead of height; single column from sm up */}
-              <div className="grid grid-cols-2 sm:grid-cols-1 gap-2 max-h-32 sm:max-h-48 overflow-y-auto">
-                {/* Deduplicate by id before rendering */}
-                {roomMembers.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i).map((member) => {
-                  const isSelected = selectedPlayers.includes(member.id);
-                  const isHost = member.id === currentUserId;
-                  const playerColorIndex = selectedPlayers.indexOf(member.id);
-                  const initials = (member.username || '?').slice(0, 2).toUpperCase();
+                <div className={`grid gap-2 overflow-y-auto ${
+                  isLandscape ? 'grid-cols-1 max-h-full' : 'grid-cols-2 sm:grid-cols-1 max-h-32 sm:max-h-48'
+                }`}>
+                  {roomMembers.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i).map((member) => {
+                    const isSelected = selectedPlayers.includes(member.id);
+                    const isHost = member.id === currentUserId;
+                    const playerColorIndex = selectedPlayers.indexOf(member.id);
+                    const initials = (member.username || '?').slice(0, 2).toUpperCase();
 
-                  return (
-                    <label
-                      key={member.id}
-                      onClick={() => togglePlayerSelection(member.id)}
-                      className={`
-                        flex items-center gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg border transition-all min-w-0
-                        ${isSelected
-                          ? 'border-purple-500 bg-purple-500/10'
-                          : 'border-gray-600 bg-gray-700/30 hover:border-gray-500'
-                        }
-                        cursor-pointer
-                      `}
-                    >
-                      {/* Avatar */}
-                      <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 flex items-center justify-center">
-                        {member.avatar_url ? (
-                          <img src={member.avatar_url} alt={member.username} className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="text-[10px] sm:text-xs font-bold text-white">{initials}</span>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1 sm:gap-2 min-w-0">
-                          <span className="text-white font-medium text-xs sm:text-base truncate">{member.username}</span>
+                    return (
+                      <label
+                        key={member.id}
+                        onClick={() => togglePlayerSelection(member.id)}
+                        className={`flex items-center gap-2 p-2 rounded-lg border transition-all min-w-0 cursor-pointer ${
+                          isSelected ? 'border-purple-500 bg-purple-500/10' : 'border-gray-600 bg-gray-700/30 hover:border-gray-500'
+                        }`}
+                      >
+                        <div className="w-6 h-6 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 flex items-center justify-center">
+                          {member.avatar_url ? (
+                            <img src={member.avatar_url} alt={member.username} className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-[10px] font-bold text-white">{initials}</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-white font-medium text-xs truncate block">{member.username}</span>
                           {isHost && (
-                            <span className="text-[10px] sm:text-xs bg-yellow-500/20 text-yellow-400 px-1.5 sm:px-2 py-0.5 rounded flex-shrink-0 truncate">
+                            <span className="text-[10px] text-yellow-400 truncate block">
                               Host{!isSelected && selectedGameData.type !== 'arcade' ? ' · spectating' : ''}
                             </span>
                           )}
                         </div>
-                      </div>
-                      {isSelected && playerColorIndex >= 0 && (
-                        <div
-                          className="w-4 h-4 sm:w-6 sm:h-6 rounded-full border-2 border-white flex-shrink-0"
-                          style={{ backgroundColor: playerColors[playerColorIndex] }}
-                        />
-                      )}
-                    </label>
-                  );
-                })}
+                        {isSelected && playerColorIndex >= 0 && (
+                          <div
+                            className="w-4 h-4 rounded-full border-2 border-white flex-shrink-0"
+                            style={{ backgroundColor: playerColors[playerColorIndex] }}
+                          />
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
-
-          {roomMembers.length < selectedGameData.minPlayers && selectedGameData.type === 'multiplayer' && (
-            <div className="mt-2 sm:mt-4 p-2 sm:p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-              <p className="text-yellow-400 text-xs sm:text-sm">
-                ⚠️ Not enough players in the room. Need at least {selectedGameData.minPlayers} players.
-              </p>
-            </div>
-          )}
-            </>
-          )}
         </div>
 
-        {/* Footer */}
-        <div className="px-4 sm:px-6 py-3 sm:py-6 border-t border-gray-700 flex justify-end gap-2 sm:gap-3">
+        {/* Footer — always at bottom */}
+        <div className={`border-t border-gray-700 flex justify-end gap-2 sm:gap-3 flex-shrink-0 ${
+          isLandscape ? 'px-4 py-2' : 'px-4 sm:px-6 py-3 sm:py-6'
+        }`}>
           <button
             onClick={onClose}
             className="px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
@@ -729,124 +718,26 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
           </button>
           <button
             onClick={handleStartGame}
-            disabled={!selectedGameData || selectedPlayers.length < selectedGameData.minPlayers}
-            className="px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            disabled={
+              !selectedGameData ||
+              (isTournamentMode
+                ? selectedPlayers.length < 4
+                : selectedGameData.type !== 'arcade' && selectedPlayers.length < selectedGameData.minPlayers)
+            }
+            className={`px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gradient-to-r ${
+              isTournamentMode
+                ? 'from-yellow-600 to-amber-600 hover:from-yellow-700 hover:to-amber-700'
+                : 'from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700'
+            } text-white rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2`}
           >
-            <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />
-            Start Game
+            {isTournamentMode
+              ? <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+              : <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />}
+            {isTournamentMode ? 'Start Tournament' : 'Start Game'}
           </button>
         </div>
-        </>
-        )}
       </div>
     </div>
   );
 }
 
-// ── Tournament setup panel ─────────────────────────────────────────────────────
-function TournamentSetup({ gameId, setGameId, members, currentUserId, selectedPlayers, togglePlayer, preview, onCancel, onCreate }) {
-  const tournamentGames = games.filter(g => TOURNAMENT_GAME_IDS.includes(g.id));
-  const canCreate = selectedPlayers.length >= 4 && selectedPlayers.length <= 8;
-
-  return (
-    <>
-      <div className="px-4 sm:px-6 py-4 border-b border-gray-700">
-        <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Tournament Game</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {tournamentGames.map(g => (
-            <button
-              key={g.id}
-              onClick={() => setGameId(g.id)}
-              className={`rounded-lg overflow-hidden border-2 transition-all relative ${
-                gameId === g.id ? 'border-yellow-400 scale-[1.02]' : 'border-gray-700 hover:border-gray-500'
-              }`}
-            >
-              <img src={g.image} alt={g.name} className="w-full h-16 sm:h-20 object-cover" />
-              <div className="absolute inset-x-0 bottom-0 bg-black/70 py-1">
-                <span className="text-white text-[11px] font-semibold">{g.name}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Player selection */}
-      <div className="px-4 sm:px-6 py-4 border-b border-gray-700">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
-            <Users className="w-4 h-4" /> Players ({selectedPlayers.length}/8)
-          </h3>
-          <span className="text-xs text-gray-400">4–8 players</span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto">
-          {members.map(member => {
-            const isSelected = selectedPlayers.includes(member.id);
-            const initials = (member.username || '?').slice(0, 2).toUpperCase();
-            return (
-              <label
-                key={member.id}
-                onClick={() => togglePlayer(member.id)}
-                className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all min-w-0 ${
-                  isSelected ? 'border-yellow-500 bg-yellow-500/10' : 'border-gray-600 bg-gray-700/30 hover:border-gray-500'
-                }`}
-              >
-                <div className="w-6 h-6 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 flex items-center justify-center">
-                  {member.avatar_url
-                    ? <img src={member.avatar_url} alt={member.username} className="w-full h-full object-cover" />
-                    : <span className="text-[10px] font-bold text-white">{initials}</span>}
-                </div>
-                <span className="text-white text-xs truncate flex-1">{member.username}</span>
-                {member.id === currentUserId && <span className="text-[9px] text-yellow-400 flex-shrink-0">Host</span>}
-              </label>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Bracket preview */}
-      <div className="px-4 sm:px-6 py-4 border-b border-gray-700">
-        <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Bracket Preview</p>
-        {selectedPlayers.length < 4 ? (
-          <p className="text-gray-500 text-sm">Select at least 4 players to preview the bracket.</p>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-white text-sm">
-              {preview.rounds} round{preview.rounds === 1 ? '' : 's'} · single elimination
-              {preview.byes > 0 && <span className="text-gray-400"> · {preview.byes} bye{preview.byes === 1 ? '' : 's'}</span>}
-            </p>
-            <div className="space-y-1">
-              {preview.byePlayers?.map((name, i) => (
-                <div key={`bye-${i}`} className="text-xs text-blue-300 bg-blue-500/10 rounded px-2 py-1">
-                  {name} — bye to round 2
-                </div>
-              ))}
-              {preview.pairings.map(([a, b], i) => (
-                <div key={i} className="text-xs text-gray-300 bg-gray-700/40 rounded px-2 py-1">
-                  {a} <span className="text-gray-500">vs</span> {b}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="px-4 sm:px-6 py-4 flex justify-end gap-2">
-        <button
-          onClick={onCancel}
-          className="px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onCreate}
-          disabled={!canCreate}
-          className="px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gradient-to-r from-yellow-600 to-amber-600 hover:from-yellow-700 hover:to-amber-700 text-white rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
-          Start Tournament
-        </button>
-      </div>
-    </>
-  );
-}

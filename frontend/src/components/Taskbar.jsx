@@ -39,9 +39,9 @@ const TaskbarButton = React.memo(({
   mobile = false, // larger touch targets on phone/tablet screens
 }) => {
   const [isHovered, setIsHovered] = useState(false);
-  const iconBoxClass = small ? 'h-6 w-6' : mobile ? 'h-9 w-9' : 'h-7 w-7';
-  const spinnerClass = small ? 'h-4 w-4' : mobile ? 'h-6 w-6' : 'h-5 w-5';
-  const emojiSize = small ? 24 : mobile ? 34 : 28;
+  const iconBoxClass = small ? 'h-6 w-6' : 'h-7 w-7';
+  const spinnerClass = small ? 'h-4 w-4' : 'h-5 w-5';
+  const emojiSize = small ? 24 : 28;
 
   // Debug: log pulse state for Audio button
   useEffect(() => {
@@ -95,12 +95,12 @@ const TaskbarButton = React.memo(({
             </div>
           )}
         </div>
-        <span className={`${mobile ? 'text-[10px]' : 'text-[9px]'} mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight`}>
+        <span className="text-[9px] mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight">
           {label}
         </span>
       </button>
       {subtitle && (
-        <span className={`${mobile ? 'text-[9px]' : 'text-[8px]'} text-gray-400 mt-0.5 whitespace-nowrap`}>
+        <span className="text-[8px] text-gray-400 mt-0.5 whitespace-nowrap">
           {subtitle}
         </span>
       )}
@@ -213,6 +213,8 @@ const Taskbar = ({
   currentGame,
   // Video element ref — when provided, shows a volume button on the right edge of the pill
   videoRef = null,
+  // Compact mode — slightly smaller pill (used in Lecture Hall to avoid crowding the 3D scene)
+  compact = false,
 }) => {
   // 🎯 Derive feature flags from watch type
   const isClassroom = watchType === 'classroom';
@@ -221,8 +223,12 @@ const Taskbar = ({
   // Mobile detection — same 1024px threshold used throughout the app.
   // Rechecked on resize/orientation change so landscape↔portrait flips update correctly.
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
+  const [isPortrait, setIsPortrait] = useState(() => window.innerWidth < window.innerHeight);
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 1024);
+    const check = () => {
+      setIsMobile(window.innerWidth < 1024);
+      setIsPortrait(window.innerWidth < window.innerHeight);
+    };
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
@@ -321,11 +327,14 @@ const Taskbar = ({
   const [isMinimized, setIsMinimized] = useState(false);
   const [minimizedPos, setMinimizedPos] = useState(null); // {x,y} in viewport px, lazily seeded on first minimize
   const dragStateRef = useRef(null); // { startX, startY, originX, originY, moved }
-  // Auto-restore when a game ends so players don't lose the taskbar after a match
+  // Auto-restore when a game ends so players don't lose the taskbar after a match.
+  // Keyed on game_session_id (stable integer) not the whole object — every game_state_update
+  // creates a new object reference, which would reset isMinimized on every character submission.
+  const gameSessionId = currentGame?.game_session_id ?? null;
   useEffect(() => {
-    if (currentGame === null || currentGame === undefined) return;
+    if (gameSessionId === null) return;
     return () => setIsMinimized(false);
-  }, [currentGame]);
+  }, [gameSessionId]);
 
   // Full pill drag (always available, not just in game mode)
   const [pillPos, setPillPos] = useState(null); // null = centered default; {x, y} = dragged position
@@ -333,9 +342,12 @@ const Taskbar = ({
   const pillRef = useRef(null);
 
   const handlePillPointerDown = (e) => {
-    // Don't steal clicks on interactive elements inside the pill
-    if (e.target.closest('button, input, select, a')) return;
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    // Do NOT call setPointerCapture here — capturing immediately redirects
+    // pointerup to this container, so the browser fires the click event on the
+    // container rather than the child button, silently swallowing every button's
+    // onClick. Capture is set lazily in handlePillPointerMove once we know the
+    // gesture is a real drag (> 4 px movement), so taps always let the click
+    // event reach its intended button target.
     const current = pillPos || { x: window.innerWidth / 2 - (pillRef.current?.offsetWidth ?? 300) / 2, y: window.innerHeight - 70 };
     pillDragRef.current = {
       startX: e.clientX,
@@ -343,6 +355,7 @@ const Taskbar = ({
       originX: current.x,
       originY: current.y,
       moved: false,
+      pointerId: e.pointerId,
     };
   };
   const handlePillPointerMove = (e) => {
@@ -350,7 +363,15 @@ const Taskbar = ({
     if (!drag) return;
     const dx = e.clientX - drag.startX;
     const dy = e.clientY - drag.startY;
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) drag.moved = true;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      if (!drag.moved) {
+        // Lazy capture: only lock pointer to the pill once we know it's a drag,
+        // not a tap. After this point fast sweeps off the element still track.
+        e.currentTarget.setPointerCapture?.(drag.pointerId);
+      }
+      drag.moved = true;
+    }
+    if (!drag.moved) return; // no position update until past the dead zone
     const pw = pillRef.current?.offsetWidth ?? 300;
     const ph = pillRef.current?.offsetHeight ?? 52;
     setPillPos({
@@ -359,8 +380,15 @@ const Taskbar = ({
     });
   };
   const handlePillPointerUp = (e) => {
+    const drag = pillDragRef.current;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     pillDragRef.current = null;
+    if (drag?.moved) {
+      // Suppress the click event that fires after pointerup so the button
+      // the gesture started on doesn't accidentally activate after a drag.
+      const suppress = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+      window.addEventListener('click', suppress, { capture: true, once: true });
+    }
   };
 
   const MINIMIZED_SIZE = 52;
@@ -500,10 +528,10 @@ const Taskbar = ({
       bottom: 'auto',
       transform: isVisible ? 'scale(1)' : 'scale(0.95)',
     } : {
-      bottom: isMobile ? '14px' : '20px',
+      bottom: isMobile ? (compact ? '10px' : '14px') : (compact ? '14px' : '20px'),
       left: '50%',
       transform: isVisible
-        ? 'translateX(-50%) translateY(0) scale(1)'
+        ? `translateX(-50%) translateY(0) scale(${compact ? 0.82 : 1})`
         : 'translateX(-50%) translateY(12px) scale(0.95)',
     }),
     opacity: isVisible ? 1 : 0,
@@ -512,9 +540,11 @@ const Taskbar = ({
     color: 'white',
     display: 'flex',
     alignItems: 'center',
-    padding: isMobile ? '8px 16px' : '4px 20px',
+    padding: compact
+      ? (isMobile ? '4px 10px 4px 26px' : '3px 14px 3px 28px')
+      : (isMobile ? '5px 12px 5px 32px' : '4px 20px 4px 34px'),
     borderRadius: '9999px',
-    gap: isMobile ? '12px' : '14px',
+    gap: compact ? (isMobile ? '5px' : '10px') : (isMobile ? '8px' : '14px'),
     boxShadow: '0 10px 25px -5px rgba(0,0,0,0.45)',
     transition: 'opacity 0.25s ease, transform 0.25s ease',
     zIndex: 1000,
@@ -572,38 +602,16 @@ const Taskbar = ({
         <button
           onClick={handleMinimizeClick}
           title="Minimize taskbar"
-          className="absolute top-1 left-1 w-6 h-6 rounded-full bg-gray-900 border border-white/30 flex items-center justify-center text-white hover:bg-gray-800 transition-colors"
+          className="absolute top-1/2 left-1 -translate-y-1/2 w-5 h-5 lg:w-6 lg:h-6 rounded-full bg-gray-900 border border-white/30 flex items-center justify-center text-white hover:bg-gray-800 transition-colors !min-w-0 !min-h-0"
           style={{ zIndex: 1001 }}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="lg:hidden">
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="hidden lg:block">
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
         </button>
-
-        {/* Drag handle — visible on mobile so users have a clear grab target.
-            Not a <button> so pointer-down on it falls through to handlePillPointerDown,
-            which initialises the full-pill drag. */}
-        {isMobile && (
-          <div
-            aria-hidden="true"
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '3px',
-              padding: '0 4px',
-              opacity: 0.5,
-              cursor: 'grab',
-              userSelect: 'none',
-              flexShrink: 0,
-            }}
-          >
-            <span style={{ display: 'block', width: 20, height: 2, borderRadius: 9999, background: 'white' }} />
-            <span style={{ display: 'block', width: 20, height: 2, borderRadius: 9999, background: 'white' }} />
-            <span style={{ display: 'block', width: 20, height: 2, borderRadius: 9999, background: 'white' }} />
-          </div>
-        )}
 
         <TaskbarButton
           buttonRef={leaveCallButtonRef}
@@ -650,8 +658,8 @@ const Taskbar = ({
               is still passed (below) purely so the taskbar can shorten its own
               auto-hide window while a game is active. */}
 
-          {/* Seats Button - Only show for 3D Cinema & Lecture Hall (not regular VideoWatch) */}
-          {watchType !== 'video' && (
+          {/* Seats Button - Show for 3D Cinema & Lecture Hall (both have seat coordinates), hide for video/custom */}
+          {(watchType === '3d_cinema' || watchType === 'classroom') && (
             <div className="relative">
               {seatSwapRequest && (
                 <div className="absolute -top-7 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white text-xs px-2 py-1 rounded shadow z-10 whitespace-nowrap">
@@ -852,10 +860,10 @@ const Taskbar = ({
               className="flex flex-col items-center justify-center text-white text-sm font-medium bg-transparent border-none p-1.5 rounded-md transition-colors duration-200 hover:bg-white/10"
               aria-label="Volume"
             >
-              <div className={`${isMobile ? 'h-9 w-9' : 'h-7 w-7'} flex items-center justify-center ${isMobile ? 'text-2xl' : 'text-xl'}`}>
+              <div className="h-7 w-7 flex items-center justify-center text-xl">
                 {isVolMuted || volLevel === 0 ? '🔇' : volLevel < 0.4 ? '🔉' : '🔊'}
               </div>
-              <span className={`${isMobile ? 'text-[10px]' : 'text-[9px]'} mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight`}>
+              <span className="text-[9px] mt-0.5 whitespace-normal text-center w-full px-0.5 leading-tight">
                 {isVolMuted || volLevel === 0 ? 'Muted' : `${Math.round(volLevel * 100)}%`}
               </span>
             </button>
@@ -1038,6 +1046,7 @@ const Taskbar = ({
             padding-right: 14px !important;
           }
         }
+
       `}</style>
 
       {/* One-time coach-mark: Leave Call, Chat, Audio, and Members controls */}

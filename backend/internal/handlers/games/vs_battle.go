@@ -3,19 +3,20 @@ package games
 // VS Battle — turn-based 3v3 card battle game.
 //
 // Each player builds a team of 3 custom characters during the "building" phase.
-// Characters have a stat budget (determined by tier) distributed across up to 5
-// attack moves and up to 5 defense moves. Both players confirm the builds, then
+// Characters have two independent stat budgets (determined by tier): one for attack
+// moves and one for defense moves — each pool equals the full tier budget. Up to 5
+// moves per pool. Both players confirm the builds, then
 // the battle begins: each turn both players simultaneously lock in a character +
 // move choice, moves are revealed when the timer expires (or both are in), and
 // damage is resolved according to the encounter rules below.
 //
-// Tier table:
-//   Regular:     300 pts budget, 100 HP
-//   Street:      350 pts budget, 150 HP
-//   City-Wide:   400 pts budget, 200 HP
-//   Continental: 450 pts budget, 250 HP
-//   Global:      500 pts budget, 300 HP
-//   Universal:   550 pts budget, 350 HP
+// Tier table (budget = pts per pool; ATK and DEF are independent):
+//   Regular:     300 ATK pts / 300 DEF pts, 100 HP
+//   Street:      350 ATK pts / 350 DEF pts, 150 HP
+//   City-Wide:   400 ATK pts / 400 DEF pts, 200 HP
+//   Continental: 450 ATK pts / 450 DEF pts, 250 HP
+//   Global:      500 ATK pts / 500 DEF pts, 300 HP
+//   Universal:   550 ATK pts / 550 DEF pts, 350 HP
 //
 // Encounter resolution (per turn):
 //   Both attack:
@@ -66,6 +67,17 @@ type VSMove struct {
 	Power      int    `json:"power"`
 	MoveType   string `json:"move_type"` // "attack" | "defense"
 	TriggerURL string `json:"trigger_url,omitempty"`
+	IsDefault  bool   `json:"is_default,omitempty"`
+}
+
+// Default move powers per tier (outside budget).
+var vsDefaultPunchPower = map[string]int{
+	"Regular": 75, "Street": 90, "City-Wide": 100,
+	"Continental": 115, "Global": 125, "Universal": 140,
+}
+var vsDefaultBlockPower = map[string]int{
+	"Regular": 75, "Street": 90, "City-Wide": 100,
+	"Continental": 115, "Global": 125, "Universal": 140,
 }
 
 type VSCharacter struct {
@@ -239,6 +251,9 @@ func vsSavePlayers(gameState *GameSessionState, players map[uint]*VSPlayerState)
 
 func vsGetPhase(gameState *GameSessionState) string {
 	phase, _ := gameState.GameData["phase"].(string)
+	if phase == "" {
+		return "building" // GameData starts empty for a freshly-started game
+	}
 	return phase
 }
 
@@ -298,6 +313,35 @@ func vsClampHP(c *VSCharacter) {
 
 // ── Move processors ───────────────────────────────────────────────────────────
 
+// vsPublicGameData returns a version of GameData safe to broadcast to all clients.
+// It strips the locked_moves map (which would reveal opponent choices before reveal)
+// and replaces it with opponent_locked — a bool map showing who has locked without
+// revealing what they chose. Each client tracks their own lock locally in React state.
+func vsPublicGameData(data map[string]interface{}) map[string]interface{} {
+	pub := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		pub[k] = v
+	}
+
+	// Build opponent_locked from locked_moves keys
+	opponentLocked := map[string]bool{}
+	if lm, ok := data["locked_moves"]; ok {
+		switch v := lm.(type) {
+		case map[string]interface{}:
+			for uid := range v {
+				opponentLocked[uid] = true
+			}
+		case map[uint]VSLockedMove:
+			for uid := range v {
+				opponentLocked[fmt.Sprintf("%d", uid)] = true
+			}
+		}
+	}
+	pub["opponent_locked"] = opponentLocked
+	delete(pub, "locked_moves")
+	return pub
+}
+
 // processVSBattleMove is the main entry point called from game_manager.ProcessMove.
 // Move types:
 //   submit_character  — add a character to the player's roster during building
@@ -306,6 +350,11 @@ func vsClampHP(c *VSCharacter) {
 //   counter_choice    — choose option A (reflect) or B (own attack) in counter window
 //   hype              — spectator taps hype for a player
 func processVSBattleMove(gameState *GameSessionState, playerID uint, moveType string, moveData map[string]interface{}) (bool, *uint, error) {
+	// The frontend nests all character/move fields under a "move_data" key.
+	// Extract it so individual processors can read fields directly.
+	if nested, ok := moveData["move_data"].(map[string]interface{}); ok {
+		moveData = nested
+	}
 	switch moveType {
 	case "submit_character":
 		return processVSSubmitCharacter(gameState, playerID, moveData)
@@ -328,6 +377,9 @@ func processVSSubmitCharacter(gameState *GameSessionState, playerID uint, data m
 	if vsGetPhase(gameState) != "building" {
 		return false, nil, fmt.Errorf("vs_battle: cannot submit character outside building phase")
 	}
+	// Ensure phase is persisted in GameData (it may be absent on the first move
+	// of a freshly-started game whose GameData begins as an empty map).
+	vsSetPhase(gameState, "building")
 
 	players, err := vsBuildState(gameState)
 	if err != nil {
@@ -380,10 +432,11 @@ func vsParseCharacterFromData(data map[string]interface{}) (VSCharacter, error) 
 	}
 	imageURL, _ := data["image_url"].(string)
 
-	// Parse attacks
+	// Parse attacks — attack budget is independent of defence budget.
+	// Each pool allows td.Budget points; they do not share a combined cap.
 	attacksRaw, _ := data["attacks"].([]interface{})
 	var attacks []VSMove
-	var totalBudget int
+	var atkBudget int
 	for _, ar := range attacksRaw {
 		mv, err := vsDecodeMove(ar)
 		if err != nil {
@@ -393,16 +446,20 @@ func vsParseCharacterFromData(data map[string]interface{}) (VSCharacter, error) 
 		if mv.Power <= 0 {
 			return c, fmt.Errorf("vs_battle: move %q has non-positive power", mv.Name)
 		}
-		totalBudget += mv.Power
+		atkBudget += mv.Power
 		attacks = append(attacks, mv)
 	}
 	if len(attacks) > 5 {
 		return c, fmt.Errorf("vs_battle: max 5 attack moves")
 	}
+	if atkBudget > td.Budget {
+		return c, fmt.Errorf("vs_battle: attack move power %d exceeds tier attack budget %d", atkBudget, td.Budget)
+	}
 
-	// Parse defenses
+	// Parse defenses — separate budget pool from attacks.
 	defensesRaw, _ := data["defenses"].([]interface{})
 	var defenses []VSMove
+	var defBudget int
 	for _, dr := range defensesRaw {
 		mv, err := vsDecodeMove(dr)
 		if err != nil {
@@ -412,18 +469,16 @@ func vsParseCharacterFromData(data map[string]interface{}) (VSCharacter, error) 
 		if mv.Power <= 0 {
 			return c, fmt.Errorf("vs_battle: move %q has non-positive power", mv.Name)
 		}
-		totalBudget += mv.Power
+		defBudget += mv.Power
 		defenses = append(defenses, mv)
 	}
 	if len(defenses) > 5 {
 		return c, fmt.Errorf("vs_battle: max 5 defense moves")
 	}
-	if len(attacks) == 0 && len(defenses) == 0 {
-		return c, fmt.Errorf("vs_battle: character must have at least one move")
+	if defBudget > td.Budget {
+		return c, fmt.Errorf("vs_battle: defense move power %d exceeds tier defense budget %d", defBudget, td.Budget)
 	}
-	if totalBudget > td.Budget {
-		return c, fmt.Errorf("vs_battle: total move power %d exceeds tier budget %d", totalBudget, td.Budget)
-	}
+	// No minimum move count — Punch and Block are always injected as defaults below.
 
 	c.ID = id
 	c.Name = name
@@ -431,8 +486,21 @@ func vsParseCharacterFromData(data map[string]interface{}) (VSCharacter, error) 
 	c.HP = td.HP
 	c.MaxHP = td.HP
 	c.Budget = td.Budget
-	c.Attacks = attacks
-	c.Defenses = defenses
+	// Prepend tier-scaled default moves (outside budget, non-removable).
+	punchPow := vsDefaultPunchPower[tier]
+	blockPow := vsDefaultBlockPower[tier]
+	c.Attacks = append([]VSMove{{
+		Name:      "Punch",
+		Power:     punchPow,
+		MoveType:  "attack",
+		IsDefault: true,
+	}}, attacks...)
+	c.Defenses = append([]VSMove{{
+		Name:      "Block",
+		Power:     blockPow,
+		MoveType:  "defense",
+		IsDefault: true,
+	}}, defenses...)
 	c.ImageURL = imageURL
 	return c, nil
 }
@@ -675,6 +743,7 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 			result["defender"] = b.uid
 			result["damage"] = dmg
 			result["trigger_url"] = a.move.TriggerURL
+			result["attacker_move_name"] = a.move.Name
 		}
 		// if a chose defense and b timed out: nothing meaningful
 
@@ -687,6 +756,7 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 			result["defender"] = a.uid
 			result["damage"] = dmg
 			result["trigger_url"] = b.move.TriggerURL
+			result["attacker_move_name"] = b.move.Name
 		}
 
 	case a.lockData.MoveType == "attack" && b.lockData.MoveType == "attack":
@@ -744,13 +814,15 @@ func vsResolveBothAttack(gameState *GameSessionState, aUID uint, aChar *VSCharac
 	absDiff := int(math.Abs(float64(diff)))
 
 	result := map[string]interface{}{
-		"outcome":    "both_attack",
-		"player_a":   aUID,
-		"player_b":   bUID,
-		"power_a":    aMove.Power,
-		"power_b":    bMove.Power,
-		"trigger_a":  aMove.TriggerURL,
-		"trigger_b":  bMove.TriggerURL,
+		"outcome":      "both_attack",
+		"player_a":     aUID,
+		"player_b":     bUID,
+		"power_a":      aMove.Power,
+		"power_b":      bMove.Power,
+		"trigger_a":    aMove.TriggerURL,
+		"trigger_b":    bMove.TriggerURL,
+		"move_a_name":  aMove.Name,
+		"move_b_name":  bMove.Name,
 	}
 
 	if absDiff <= 5 {
@@ -798,12 +870,14 @@ func vsResolveBothAttack(gameState *GameSessionState, aUID uint, aChar *VSCharac
 func vsResolveAtkVsDef(gameState *GameSessionState, atkUID uint, atkChar *VSCharacter, atkMove *VSMove, defUID uint, defChar *VSCharacter, defMove *VSMove) map[string]interface{} {
 	diff := atkMove.Power - defMove.Power
 	result := map[string]interface{}{
-		"outcome":     "atk_vs_def",
-		"attacker":    atkUID,
-		"defender":    defUID,
-		"atk_power":   atkMove.Power,
-		"def_power":   defMove.Power,
-		"trigger_url": atkMove.TriggerURL,
+		"outcome":              "atk_vs_def",
+		"attacker":             atkUID,
+		"defender":             defUID,
+		"atk_power":            atkMove.Power,
+		"def_power":            defMove.Power,
+		"trigger_url":          atkMove.TriggerURL,
+		"attacker_move_name":   atkMove.Name,
+		"defender_move_name":   defMove.Name,
 	}
 
 	if diff >= 6 {

@@ -7124,14 +7124,16 @@ const PositionCalculatorPage = () => {
           />
         )}
         
-        {/* Discussion Mode Bar - Top of screen (auto-hides like cinema AudioModeBar) */}
-        <DiscussionModeBar
-          discussionMode={discussionMode}
-          isHost={isHost}
-          onToggleMode={toggleDiscussionMode}
-          isSilenceMode={isSilenceMode}
-          onToggleSilenceMode={() => setIsSilenceMode(prev => !prev)}
-        />
+        {/* Discussion Mode Bar - Top of screen; hidden when left sidebar is open */}
+        {!isLeftSidebarOpen && (
+          <DiscussionModeBar
+            discussionMode={discussionMode}
+            isHost={isHost}
+            onToggleMode={toggleDiscussionMode}
+            isSilenceMode={isSilenceMode}
+            onToggleSilenceMode={() => setIsSilenceMode(prev => !prev)}
+          />
+        )}
         
         {/* 🎮 View Control Icons (Left/Center/Right + Turnaround for Host) */}
         {showViewIcons && (
@@ -7497,6 +7499,7 @@ const PositionCalculatorPage = () => {
         
         {/* Taskbar for navigation controls */}
         <Taskbar
+          compact
           watchType="classroom"
           classType={modelType === 'lecture-hall' ? 'lecture_hall' : 'classroom'}
           authenticatedUserID={currentUser?.id}

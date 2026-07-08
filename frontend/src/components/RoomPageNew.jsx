@@ -2931,7 +2931,7 @@ const RoomPageNew = () => {
         {(showScrollButton || hasMention) && (
           <button
             onClick={scrollToBottom}
-            className="fixed bottom-24 right-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full shadow-md hover:shadow-lg active:scale-95 transition-all duration-150 z-30 p-2"
+            className="fixed bottom-24 right-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full shadow-md hover:shadow-lg active:scale-95 transition-all duration-150 z-30 p-2 flex items-center justify-center"
             title={hasMention ? `You were mentioned` : unreadCount > 0 ? `${unreadCount} new message${unreadCount !== 1 ? 's' : ''}` : 'Scroll to latest message'}
           >
             <div className="relative">

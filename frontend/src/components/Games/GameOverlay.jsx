@@ -23,7 +23,7 @@ import DrawGuessGame from './DrawGuessGame';
 // until a user actually opens it. First use of React.lazy in this codebase.
 const DoomGame = lazy(() => import('./DoomGame'));
 const ShooterGame = lazy(() => import('./ShooterGame'));
-const VSBattleGame = lazy(() => import('./VSBattleGame'));
+const VSBattleGame = lazy(() => import('./VsBattleGame'));
 
 export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver, myHand, drawerWord }) {
   if (!activeGame) return null;
@@ -290,6 +290,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             gameState={activeGame}
             players={activeGame.players || []}
             currentUserId={currentUserId}
+            roomId={roomId}
             onMove={handleMove}
             onClose={onClose}
             onEndGame={onEndGame}
