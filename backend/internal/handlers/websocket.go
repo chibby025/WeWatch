@@ -976,6 +976,8 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                     }
                 }
             }
+            // Player reconnected within the grace window — cancel any pending forfeit timer.
+            gameWebSocketHandler.CancelDisconnectGrace(client.roomID, client.userID)
         }
 
         // Push updated count to lobby so session cards update without polling

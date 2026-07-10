@@ -411,8 +411,8 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
 
     // Tournament mode
     if (isTournamentMode) {
-      if (selectedPlayers.length < 4 || selectedPlayers.length > 8) {
-        alert('A tournament needs 4–8 players');
+      if (selectedPlayers.length < 4 || selectedPlayers.length > 16) {
+        alert('A tournament needs 4–16 players');
         return;
       }
       if (onCreateTournament) onCreateTournament(selectedGame, buildPlayersData());
@@ -656,7 +656,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                   </h3>
                 </div>
                 <p className={`text-xs text-gray-400 ${isLandscape ? 'mb-2' : 'mb-2 sm:mb-3'}`}>
-                  {isTournamentMode ? 'Min: 4 | Max: 8' : `Min: ${selectedGameData.minPlayers} | Max: ${selectedGameData.maxPlayers}`}
+                  {isTournamentMode ? 'Min: 4 | Max: 16' : `Min: ${selectedGameData.minPlayers} | Max: ${selectedGameData.maxPlayers}`}
                 </p>
 
                 <div className={`grid gap-2 overflow-y-auto ${

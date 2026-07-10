@@ -717,6 +717,12 @@ export const getRoomsLeaderboard = async () => {
   return response.data;
 };
 
+// Get top VS Battle players ranked by wins
+export const getVsBattleLeaderboard = async () => {
+  const response = await apiClient.get('/api/games/vs-battle/leaderboard');
+  return response.data;
+};
+
 // Delete a scheduled event
 export const deleteScheduledEvent = async (eventId) => {
   try {

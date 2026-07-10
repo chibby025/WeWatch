@@ -1260,6 +1260,22 @@ const RoomPageNew = () => {
           // Trigger RoomTV to refetch posts
           setRoomTVRefetchTrigger(prev => prev + 1);
           break;
+        case 'vs_battle_result': {
+          const chars = message.winner_chars ? ` (${message.winner_chars})` : '';
+          const text = `⚔️ ${message.winner_name}${chars} wins the VS Battle!`;
+          setMessages(prev => {
+            const next = [...prev, {
+              id: `vs-result-${Date.now()}`,
+              message: text,
+              message_type: 'system',
+              created_at: new Date().toISOString(),
+            }];
+            return next.length > 200 ? next.slice(next.length - 200) : next;
+          });
+          toast.success(text, { duration: 5000 });
+          scrollToBottom?.();
+          break;
+        }
         default:
           logger.debug(`⚠️ [RoomPageNew] Unhandled message type: ${message.type}`);
           break;
@@ -2673,6 +2689,17 @@ const RoomPageNew = () => {
             const canEdit = isOwnMessage && !msg.deleted_by_host && messageAge < 5 * 60 * 1000; // 5 minutes
             const canDelete = isOwnMessage || isHost;
             const isPoll = msg.message_type === 'poll';
+
+            // System announcements (e.g. VS Battle result)
+            if (msg.message_type === 'system') {
+              return (
+                <div key={index} className="flex justify-center my-2">
+                  <div className="bg-purple-900/40 border border-purple-700/40 text-purple-200 text-xs px-4 py-1.5 rounded-full text-center max-w-xs">
+                    {msg.message}
+                  </div>
+                </div>
+              );
+            }
 
             // Poll messages have special rendering
             if (isPoll && msg.poll_data) {

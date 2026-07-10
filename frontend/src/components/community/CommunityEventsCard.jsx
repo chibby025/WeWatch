@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import ScheduledEventPreviewCard from './ScheduledEventPreviewCard';
 import CommunityRequestCard from './CommunityRequestCard';
 import LeaderboardCard from './LeaderboardCard';
+import VsBattleLeaderboardCard from './VsBattleLeaderboardCard';
 import MakeRequestSheet from './MakeRequestSheet';
 import { PlusCircleIcon, CalendarDaysIcon, MegaphoneIcon, TrophyIcon } from '@heroicons/react/24/outline';
 import { PlayIcon } from '@heroicons/react/24/solid';
@@ -67,16 +68,20 @@ const RATING_ICON = {
   'Mature':      '/icons/Mature Rating Icon.webp',
 };
 
-function buildInterleavedCards(events, requests, leaderboard) {
+function buildInterleavedCards(events, requests, leaderboard, vsBattleLeaderboard) {
   const cards = [];
   const max = Math.max(events.length, requests.length);
   for (let i = 0; i < max; i++) {
     if (i < events.length)   cards.push({ type: 'event',   data: events[i] });
     if (i < requests.length) cards.push({ type: 'request', data: requests[i] });
   }
-  // Add one leaderboard card at the end when there are rooms with enough ratings
+  // Room rating leaderboard
   if (leaderboard && leaderboard.length > 0 && cards.length > 0) {
     cards.push({ type: 'leaderboard', data: leaderboard });
+  }
+  // VS Battle player leaderboard
+  if (vsBattleLeaderboard && vsBattleLeaderboard.length > 0) {
+    cards.push({ type: 'vs_battle_leaderboard', data: vsBattleLeaderboard });
   }
   return cards;
 }
@@ -96,16 +101,17 @@ function fmtDate(dateStr) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CommunityEventsCard = ({
-  scheduledEvents = [],
-  requests        = [],
-  leaderboard     = [],
+  scheduledEvents    = [],
+  requests           = [],
+  leaderboard        = [],
+  vsBattleLeaderboard = [],
   currentUser,
   apiBaseUrl,
   onRSVP,
   onNewRequest,
   fixedBottom,
 }) => {
-  const cards = buildInterleavedCards(scheduledEvents, requests, leaderboard);
+  const cards = buildInterleavedCards(scheduledEvents, requests, leaderboard, vsBattleLeaderboard);
   const [showLeaderboardPanel, setShowLeaderboardPanel] = useState(false);
 
   const [currentIndex,     setCurrentIndex]     = useState(0);
@@ -434,6 +440,21 @@ const CommunityEventsCard = ({
                     <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>Room Leaderboard</span>
                   </div>
                 </>
+              ) : card.type === 'vs_battle_leaderboard' ? (
+                <>
+                  <VsBattleLeaderboardCard players={card.data} />
+                  <div style={{
+                    position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+                    zIndex: 46, display: 'flex', alignItems: 'center', gap: 4,
+                    whiteSpace: 'nowrap', pointerEvents: 'none',
+                    background: 'linear-gradient(135deg, #7f1d1d, #dc2626)',
+                    borderRadius: '0 0 10px 10px', padding: '3px 10px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+                  }}>
+                    <span style={{ fontSize: 12, lineHeight: 1, flexShrink: 0 }}>⚔️</span>
+                    <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>VS Battle Rankings</span>
+                  </div>
+                </>
               ) : (
                 <>
                   <CommunityRequestCard
@@ -530,6 +551,10 @@ const CommunityEventsCard = ({
               <span className="flex-shrink-0 text-white text-xs font-black px-2 py-0.5 rounded-lg bg-amber-600">
                 🏆 Top Rooms
               </span>
+            ) : cur?.type === 'vs_battle_leaderboard' ? (
+              <span className="flex-shrink-0 text-white text-xs font-black px-2 py-0.5 rounded-lg bg-red-700">
+                ⚔️ VS Battle
+              </span>
             ) : (
               <>
                 {cur?.data?.content_rating && RATING_ICON[cur.data.content_rating] && (
@@ -550,6 +575,8 @@ const CommunityEventsCard = ({
               <p className="marquee-text text-white text-sm font-bold" style={{ '--mx': '-60%' }}>
                 {cur?.type === 'leaderboard'
                   ? `${cur.data.length} rooms ranked by community`
+                  : cur?.type === 'vs_battle_leaderboard'
+                  ? `Top ${cur.data.length} VS Battle fighters`
                   : cur?.data?.title}
               </p>
             </div>
@@ -599,6 +626,19 @@ const CommunityEventsCard = ({
                       {i > 0 && <span className="text-white/30"> · </span>}
                       <span className="text-amber-300 font-semibold">#{i + 1}</span>
                       {' '}<span className="text-white/80">{r.name}</span>
+                    </span>
+                  ))}
+                </p>
+              </div>
+            ) : cur?.type === 'vs_battle_leaderboard' ? (
+              <div className="flex-1 min-w-0 overflow-hidden">
+                <p className="marquee-text text-white/70 text-xs" style={{ '--mx': '-50%' }}>
+                  {cur.data.slice(0, 3).map((p, i) => (
+                    <span key={p.user_id}>
+                      {i > 0 && <span className="text-white/30"> · </span>}
+                      <span className="text-red-400 font-semibold">#{i + 1}</span>
+                      {' '}<span className="text-white/80">@{p.username}</span>
+                      {' '}<span className="text-green-400">{p.wins}W</span>
                     </span>
                   ))}
                 </p>
@@ -673,6 +713,14 @@ const CommunityEventsCard = ({
                   <p className="text-white/45 text-[10px]">Top rooms by community rating</p>
                 </div>
               </div>
+            ) : fullscreenCard.type === 'vs_battle_leaderboard' ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xl">⚔️</span>
+                <div>
+                  <p className="text-white font-bold text-sm">VS Battle Rankings</p>
+                  <p className="text-white/45 text-[10px]">Top fighters by wins</p>
+                </div>
+              </div>
             ) : (
               <span className="text-white/70 text-xs font-semibold tracking-wide">
                 {fullscreenCard.type === 'event' ? '📅 Scheduled Event' : '📣 Community Request'}
@@ -694,6 +742,9 @@ const CommunityEventsCard = ({
             )}
             {fullscreenCard.type === 'leaderboard' && (
               <LeaderboardCard rooms={fullscreenCard.data} fullscreen />
+            )}
+            {fullscreenCard.type === 'vs_battle_leaderboard' && (
+              <VsBattleLeaderboardCard players={fullscreenCard.data} />
             )}
             {fullscreenCard.type === 'request' && (
               <CommunityRequestCard

@@ -287,6 +287,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
       return (
         <Suspense fallback={<div className="fixed inset-0 bg-gray-900 flex items-center justify-center text-white text-lg">Loading VS Battle…</div>}>
           <VSBattleGame
+            key={activeGame.game_session_id}
             gameState={activeGame}
             players={activeGame.players || []}
             currentUserId={currentUserId}

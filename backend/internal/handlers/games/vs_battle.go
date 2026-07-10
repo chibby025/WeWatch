@@ -35,6 +35,7 @@ package games
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"math/rand"
 )
@@ -113,6 +114,21 @@ type VSPlayerState struct {
 	Characters []VSCharacter `json:"characters"`
 	Confirmed  bool          `json:"confirmed"` // confirmed opponent's build
 	HypeMeter  int           `json:"hype_meter"`
+	// Consecutive-win streak counters (reset on any non-qualifying outcome)
+	AttackStreak  int `json:"attack_streak"`
+	DefenseStreak int `json:"defense_streak"`
+	// Pending power-up effects (cleared after applied in the next exchange)
+	PendingStun     bool   `json:"pending_stun,omitempty"`
+	PendingAtkBoost bool   `json:"pending_atk_boost,omitempty"`
+	PendingShield   bool   `json:"pending_shield,omitempty"`
+	PendingDefBoost bool   `json:"pending_def_boost,omitempty"`
+	PendingPoison   string `json:"pending_poison,omitempty"` // "charId:moveType:idx" of disabled move
+	// Battle stats (accumulated over the whole match)
+	DamageDealt   int `json:"damage_dealt"`
+	AttacksLanded int `json:"attacks_landed"`
+	Blocks        int `json:"blocks"`
+	Counters      int `json:"counters"`
+	BiggestHit    int `json:"biggest_hit"`
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -161,6 +177,42 @@ func vsDecodePlayerState(raw interface{}) (*VSPlayerState, error) {
 	}
 	if hype, ok := m["hype_meter"].(float64); ok {
 		ps.HypeMeter = int(hype)
+	}
+	if v, ok := m["attack_streak"].(float64); ok {
+		ps.AttackStreak = int(v)
+	}
+	if v, ok := m["defense_streak"].(float64); ok {
+		ps.DefenseStreak = int(v)
+	}
+	if v, ok := m["pending_stun"].(bool); ok {
+		ps.PendingStun = v
+	}
+	if v, ok := m["pending_atk_boost"].(bool); ok {
+		ps.PendingAtkBoost = v
+	}
+	if v, ok := m["pending_shield"].(bool); ok {
+		ps.PendingShield = v
+	}
+	if v, ok := m["pending_def_boost"].(bool); ok {
+		ps.PendingDefBoost = v
+	}
+	if v, ok := m["pending_poison"].(string); ok {
+		ps.PendingPoison = v
+	}
+	if v, ok := m["damage_dealt"].(float64); ok {
+		ps.DamageDealt = int(v)
+	}
+	if v, ok := m["attacks_landed"].(float64); ok {
+		ps.AttacksLanded = int(v)
+	}
+	if v, ok := m["blocks"].(float64); ok {
+		ps.Blocks = int(v)
+	}
+	if v, ok := m["counters"].(float64); ok {
+		ps.Counters = int(v)
+	}
+	if v, ok := m["biggest_hit"].(float64); ok {
+		ps.BiggestHit = int(v)
 	}
 	if chars, ok := m["characters"].([]interface{}); ok {
 		for _, ch := range chars {
@@ -348,6 +400,7 @@ func vsPublicGameData(data map[string]interface{}) map[string]interface{} {
 //   confirm_builds    — signal the player is happy with both rosters
 //   lock_move         — lock in this turn's character + move choice
 //   counter_choice    — choose option A (reflect) or B (own attack) in counter window
+//   dice_roll_result  — player triggers dice roll; server generates result and applies power-up
 //   hype              — spectator taps hype for a player
 func processVSBattleMove(gameState *GameSessionState, playerID uint, moveType string, moveData map[string]interface{}) (bool, *uint, error) {
 	// The frontend nests all character/move fields under a "move_data" key.
@@ -359,11 +412,13 @@ func processVSBattleMove(gameState *GameSessionState, playerID uint, moveType st
 	case "submit_character":
 		return processVSSubmitCharacter(gameState, playerID, moveData)
 	case "confirm_builds":
-		return processVSConfirmBuilds(gameState, playerID)
+		return processVSConfirmBuilds(gameState, playerID, moveData)
 	case "lock_move":
 		return processVSLockMove(gameState, playerID, moveData)
 	case "counter_choice":
 		return processVSCounterChoice(gameState, playerID, moveData)
+	case "dice_roll_result":
+		return processVSDiceRollResult(gameState, playerID, moveData)
 	case "hype":
 		return processVSHype(gameState, playerID, moveData)
 	default:
@@ -397,6 +452,13 @@ func processVSSubmitCharacter(gameState *GameSessionState, playerID uint, data m
 	char, err := vsParseCharacterFromData(data)
 	if err != nil {
 		return false, nil, err
+	}
+	// Idempotent: skip silently if this character ID is already in the roster.
+	// This lets confirm_builds safely re-submit characters that arrived earlier.
+	for _, existing := range ps.Characters {
+		if existing.ID == char.ID {
+			return false, nil, nil
+		}
 	}
 	ps.Characters = append(ps.Characters, char)
 	vsSavePlayers(gameState, players)
@@ -507,10 +569,27 @@ func vsParseCharacterFromData(data map[string]interface{}) (VSCharacter, error) 
 
 // ── Phase: confirming ─────────────────────────────────────────────────────────
 
-func processVSConfirmBuilds(gameState *GameSessionState, playerID uint) (bool, *uint, error) {
+func processVSConfirmBuilds(gameState *GameSessionState, playerID uint, moveData map[string]interface{}) (bool, *uint, error) {
 	phase := vsGetPhase(gameState)
 	if phase != "building" && phase != "confirming" {
 		return false, nil, fmt.Errorf("vs_battle: cannot confirm outside building/confirming phase")
+	}
+
+	// Process any characters sent inline with confirm_builds (all-in-one path).
+	// processVSSubmitCharacter requires "building" phase, but when the opponent
+	// already confirmed the phase is already "confirming" — temporarily restore
+	// "building" so the characters are accepted, then put the phase back.
+	if charsRaw, ok := moveData["characters"]; ok {
+		if charsList, ok := charsRaw.([]interface{}); ok {
+			savedPhase := vsGetPhase(gameState)
+			vsSetPhase(gameState, "building")
+			for _, charRaw := range charsList {
+				if charMap, ok := charRaw.(map[string]interface{}); ok {
+					processVSSubmitCharacter(gameState, playerID, charMap)
+				}
+			}
+			vsSetPhase(gameState, savedPhase)
+		}
 	}
 
 	players, err := vsBuildState(gameState)
@@ -560,6 +639,8 @@ func processVSLockMove(gameState *GameSessionState, playerID uint, data map[stri
 	moveIndexF, _ := data["move_index"].(float64)
 	moveIndex := int(moveIndexF)
 
+	log.Printf("🎮 [VSBattle] lock_move received: playerID=%d char_id=%q vs_move_type=%q move_index=%d", playerID, charID, vsMoveType, moveIndex)
+
 	if charID == "" || (vsMoveType != "attack" && vsMoveType != "defense") {
 		return false, nil, fmt.Errorf("vs_battle: invalid lock_move data (char_id=%q vs_move_type=%q)", charID, vsMoveType)
 	}
@@ -602,7 +683,7 @@ func processVSLockMove(gameState *GameSessionState, playerID uint, data map[stri
 	locked[fmt.Sprintf("%d", playerID)] = map[string]interface{}{
 		"char_id":    charID,
 		"move_type":  moveType,
-		"move_index": moveIndex,
+		"move_index": float64(moveIndex),
 	}
 	gameState.GameData["locked_moves"] = locked
 
@@ -648,15 +729,36 @@ func vsResolveTurn(gameState *GameSessionState, players map[uint]*VSPlayerState,
 		return false, nil, err
 	}
 
-	// Clear locked moves for next turn
+	// Clear locked moves and dice_roll_result from the previous turn
 	gameState.GameData["locked_moves"] = map[string]interface{}{}
+	delete(gameState.GameData, "dice_roll_result")
 	turn, _ := gameState.GameData["turn"].(int)
 	gameState.GameData["turn"] = turn + 1
 
 	// Store result for broadcast (caller reads this to construct the broadcast payload)
 	gameState.GameData["last_turn_result"] = result
-	vsSavePlayers(gameState, players)
 
+	// Check if any player earned a dice roll (streak of 3).
+	// Only triggers when the game is still ongoing.
+	if !gameOver {
+		pending := map[string]interface{}{}
+		for uid, ps := range players {
+			key := fmt.Sprintf("%d", uid)
+			if ps.AttackStreak >= 3 {
+				pending[key] = "attack"
+				ps.AttackStreak = 0 // reset so it doesn't re-trigger next turn
+			} else if ps.DefenseStreak >= 3 {
+				pending[key] = "defense"
+				ps.DefenseStreak = 0
+			}
+		}
+		if len(pending) > 0 {
+			gameState.GameData["pending_dice_rolls"] = pending
+			vsSetPhase(gameState, "dice_roll")
+		}
+	}
+
+	vsSavePlayers(gameState, players)
 	return gameOver, winnerID, nil
 }
 
@@ -711,6 +813,8 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 		}
 		if c.move == nil {
 			c.lockData = nil // invalid index, treat as timeout
+		} else {
+			log.Printf("🎮 [VSBattle] resolved move: playerID=%d char=%q moveType=%q moveIndex=%d moveName=%q", c.uid, c.char.Name, c.lockData.MoveType, c.lockData.MoveIndex, c.move.Name)
 		}
 	}
 
@@ -724,6 +828,67 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 	}
 	a, b := &choices[0], &choices[1]
 
+	// ── Apply pending power-ups before resolving ──────────────────────────────
+
+	// Stun: stunned player's effective move power becomes 0
+	if a.ps.PendingStun {
+		a.ps.PendingStun = false
+		if a.move != nil {
+			cp := *a.move
+			cp.Power = 0
+			a.move = &cp
+		}
+	}
+	if b.ps.PendingStun {
+		b.ps.PendingStun = false
+		if b.move != nil {
+			cp := *b.move
+			cp.Power = 0
+			b.move = &cp
+		}
+	}
+
+	// Poison: if the selected move is the poisoned move, disable it
+	applyPoison := func(c *playerChoice) {
+		if c.move == nil || c.ps.PendingPoison == "" {
+			return
+		}
+		key := fmt.Sprintf("%s:%s:%d", c.lockData.CharID, c.lockData.MoveType, c.lockData.MoveIndex)
+		if key == c.ps.PendingPoison {
+			cp := *c.move
+			cp.Power = 0
+			c.move = &cp
+		}
+		c.ps.PendingPoison = "" // clear after one exchange regardless
+	}
+	applyPoison(a)
+	applyPoison(b)
+
+	// Attack boost: +10% to attacker's move if they're attacking
+	applyAtkBoost := func(c *playerChoice) {
+		if c.ps.PendingAtkBoost && c.move != nil && c.lockData != nil && c.lockData.MoveType == "attack" {
+			c.ps.PendingAtkBoost = false
+			cp := *c.move
+			cp.Power = int(float64(cp.Power) * 1.10)
+			c.move = &cp
+		}
+	}
+	// Defense boost: +10% to defender's move if they're defending
+	applyDefBoost := func(c *playerChoice) {
+		if c.ps.PendingDefBoost && c.move != nil && c.lockData != nil && c.lockData.MoveType == "defense" {
+			c.ps.PendingDefBoost = false
+			cp := *c.move
+			cp.Power = int(float64(cp.Power) * 1.10)
+			c.move = &cp
+		}
+	}
+	applyAtkBoost(a)
+	applyAtkBoost(b)
+	applyDefBoost(a)
+	applyDefBoost(b)
+
+	// ── Determine what happened ───────────────────────────────────────────────
+
 	// Determine what happened
 	aSelected := a.lockData != nil
 	bSelected := b.lockData != nil
@@ -734,13 +899,15 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 		result["outcome"] = "both_timeout"
 
 	case aSelected && !bSelected:
-		// a attacks undefended b
+		// a attacks undefended b (apply atk boost if attack)
 		if a.lockData.MoveType == "attack" {
 			dmg := a.move.Power
 			vsApplyDamage(b.char, dmg)
 			result["outcome"] = "undefended"
 			result["attacker"] = a.uid
 			result["defender"] = b.uid
+			result["attacker_char_id"] = a.char.ID
+			result["defender_char_id"] = b.char.ID
 			result["damage"] = dmg
 			result["trigger_url"] = a.move.TriggerURL
 			result["attacker_move_name"] = a.move.Name
@@ -754,6 +921,8 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 			result["outcome"] = "undefended"
 			result["attacker"] = b.uid
 			result["defender"] = a.uid
+			result["attacker_char_id"] = b.char.ID
+			result["defender_char_id"] = a.char.ID
 			result["damage"] = dmg
 			result["trigger_url"] = b.move.TriggerURL
 			result["attacker_move_name"] = b.move.Name
@@ -766,10 +935,20 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 		// Both defend — each used move loses 1 point permanently
 		aIdx := a.lockData.MoveIndex
 		bIdx := b.lockData.MoveIndex
+		// Capture clip info before modifying powers
+		var aTrigger, bTrigger, aMoveName, bMoveName string
+		if aIdx < len(a.char.Defenses) {
+			aTrigger = a.char.Defenses[aIdx].TriggerURL
+			aMoveName = a.char.Defenses[aIdx].Name
+		}
+		if bIdx < len(b.char.Defenses) {
+			bTrigger = b.char.Defenses[bIdx].TriggerURL
+			bMoveName = b.char.Defenses[bIdx].Name
+		}
 		if aIdx < len(a.char.Defenses) && a.char.Defenses[aIdx].Power > 0 {
 			a.char.Defenses[aIdx] = VSMove{
 				Name:       a.char.Defenses[aIdx].Name,
-				Power:      a.char.Defenses[aIdx].Power - 1,
+				Power:      max(0, a.char.Defenses[aIdx].Power-3),
 				MoveType:   "defense",
 				TriggerURL: a.char.Defenses[aIdx].TriggerURL,
 			}
@@ -777,7 +956,7 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 		if bIdx < len(b.char.Defenses) && b.char.Defenses[bIdx].Power > 0 {
 			b.char.Defenses[bIdx] = VSMove{
 				Name:       b.char.Defenses[bIdx].Name,
-				Power:      b.char.Defenses[bIdx].Power - 1,
+				Power:      max(0, b.char.Defenses[bIdx].Power-3),
 				MoveType:   "defense",
 				TriggerURL: b.char.Defenses[bIdx].TriggerURL,
 			}
@@ -785,6 +964,10 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 		result["outcome"] = "both_defend"
 		result["player_a"] = a.uid
 		result["player_b"] = b.uid
+		result["trigger_a"] = aTrigger
+		result["trigger_b"] = bTrigger
+		result["move_a_name"] = aMoveName
+		result["move_b_name"] = bMoveName
 
 	default:
 		// One attacks, one defends
@@ -792,8 +975,16 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 		if a.lockData.MoveType == "defense" {
 			attacker, defender = b, a
 		}
-		result = vsResolveAtkVsDef(gameState, attacker.uid, attacker.char, attacker.move, defender.uid, defender.char, defender.move)
+		// Shield: if defender has shield, force block regardless of power diff
+		forceBlocked := defender.ps.PendingShield
+		if forceBlocked {
+			defender.ps.PendingShield = false
+		}
+		result = vsResolveAtkVsDef(gameState, attacker.uid, attacker.char, attacker.move, defender.uid, defender.char, defender.move, forceBlocked)
 	}
+
+	// ── Update streaks and battle stats ───────────────────────────────────────
+	vsUpdateStreaksAndStats(players, result)
 
 	// Check win condition after any damage
 	gameOver, winnerID := vsCheckWin(players)
@@ -856,40 +1047,57 @@ func vsResolveBothAttack(gameState *GameSessionState, aUID uint, aChar *VSCharac
 		vsApplyDamage(losChar, dmg)
 		result["outcome"] = "attack_wins"
 		result["loser"] = losUID
+		result["loser_char_id"] = losChar.ID
 		result["damage"] = dmg
-		// trigger URL of the winning attack
+		// identify winner char for frontend combat display
 		if diff > 0 {
+			result["winner_char_id"] = aChar.ID
 			result["trigger_url"] = aMove.TriggerURL
 		} else {
+			result["winner_char_id"] = bChar.ID
 			result["trigger_url"] = bMove.TriggerURL
 		}
 	}
 	return result
 }
 
-func vsResolveAtkVsDef(gameState *GameSessionState, atkUID uint, atkChar *VSCharacter, atkMove *VSMove, defUID uint, defChar *VSCharacter, defMove *VSMove) map[string]interface{} {
-	diff := atkMove.Power - defMove.Power
+func vsResolveAtkVsDef(gameState *GameSessionState, atkUID uint, atkChar *VSCharacter, atkMove *VSMove, defUID uint, defChar *VSCharacter, defMove *VSMove, forceBlocked bool) map[string]interface{} {
 	result := map[string]interface{}{
-		"outcome":              "atk_vs_def",
-		"attacker":             atkUID,
-		"defender":             defUID,
-		"atk_power":            atkMove.Power,
-		"def_power":            defMove.Power,
-		"trigger_url":          atkMove.TriggerURL,
-		"attacker_move_name":   atkMove.Name,
-		"defender_move_name":   defMove.Name,
+		"outcome":            "atk_vs_def",
+		"attacker":           atkUID,
+		"defender":           defUID,
+		"attacker_char_id":   atkChar.ID,
+		"atk_power":          atkMove.Power,
+		"def_power":          defMove.Power,
+		"trigger_url":        atkMove.TriggerURL,
+		"def_trigger_url":    defMove.TriggerURL,
+		"attacker_move_name": atkMove.Name,
+		"defender_move_name": defMove.Name,
 	}
+
+	// Shield blocks all attacks — no damage, no counter window
+	if forceBlocked {
+		result["outcome"] = "blocked"
+		result["damage"] = 0
+		result["defender_char_id"] = defChar.ID
+		result["shield_blocked"] = true
+		return result
+	}
+
+	diff := atkMove.Power - defMove.Power
 
 	if diff >= 6 {
 		// Attack lands
 		vsApplyDamage(defChar, diff)
 		result["outcome"] = "attack_lands"
+		result["defender_char_id"] = defChar.ID
 		result["damage"] = diff
 
 	} else if diff >= 1 {
 		// Deflect — 1-5 point gap
 		result["outcome"] = "deflect"
 		result["damage"] = 0
+		result["defender_char_id"] = defChar.ID
 
 	} else {
 		// Attack ≤ defense — 20% counter chance
@@ -908,9 +1116,28 @@ func vsResolveAtkVsDef(gameState *GameSessionState, atkUID uint, atkChar *VSChar
 		} else {
 			result["outcome"] = "blocked"
 			result["damage"] = 0
+			result["defender_char_id"] = defChar.ID
 		}
 	}
 	return result
+}
+
+// VSWinnerCharNames returns the character names for the winner of a VS Battle game.
+// Used by game_manager to build the end-of-game room announcement.
+func VSWinnerCharNames(gameState *GameSessionState, winnerID uint) []string {
+	players, err := vsBuildState(gameState)
+	if err != nil {
+		return nil
+	}
+	ps, ok := players[winnerID]
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(ps.Characters))
+	for _, c := range ps.Characters {
+		names = append(names, c.Name)
+	}
+	return names
 }
 
 func vsApplyDamage(char *VSCharacter, dmg int) {
@@ -961,14 +1188,19 @@ func processVSCounterChoice(gameState *GameSessionState, playerID uint, data map
 
 		var dmg int
 		var triggerURL string
+		var actorCharID string
 		if option == "reflect" {
 			dmg = int(math.Max(1, float64(oppAtkPower)*0.02))
+			if ac := vsFirstAliveChar(myPS); ac != nil {
+				actorCharID = ac.ID
+			}
 		} else {
 			// option == "attack" — pick any attack move at 10%
 			myChar := vsFirstAliveWithAttack(myPS)
 			if myChar != nil && moveIndex >= 0 && moveIndex < len(myChar.Attacks) {
 				dmg = int(math.Max(1, float64(myChar.Attacks[moveIndex].Power)*0.10))
 				triggerURL = myChar.Attacks[moveIndex].TriggerURL
+				actorCharID = myChar.ID
 			}
 		}
 
@@ -978,13 +1210,19 @@ func processVSCounterChoice(gameState *GameSessionState, playerID uint, data map
 			vsApplyDamage(targetChar, dmg)
 		}
 
+		var targetCharID string
+		if targetChar != nil {
+			targetCharID = targetChar.ID
+		}
 		gameState.GameData["counter_result"] = map[string]interface{}{
-			"type":        counterType,
-			"actor":       playerID,
-			"target":      oppUID,
-			"option":      option,
-			"damage":      dmg,
-			"trigger_url": triggerURL,
+			"type":           counterType,
+			"actor":          playerID,
+			"actor_char_id":  actorCharID,
+			"target":         oppUID,
+			"target_char_id": targetCharID,
+			"option":         option,
+			"damage":         dmg,
+			"trigger_url":    triggerURL,
 		}
 
 	case "atk_vs_def":
@@ -1000,14 +1238,19 @@ func processVSCounterChoice(gameState *GameSessionState, playerID uint, data map
 
 		var dmg int
 		var triggerURL string
+		var actorCharID string
 		if option == "reflect" {
 			dmg = int(math.Max(1, float64(atkPower)*0.02))
+			if ac := vsFirstAliveChar(defPS); ac != nil {
+				actorCharID = ac.ID
+			}
 		} else {
 			// option == "attack" — pick any of defender's own attack moves at 5%
 			defChar := vsFirstAliveWithAttack(defPS)
 			if defChar != nil && moveIndex >= 0 && moveIndex < len(defChar.Attacks) {
 				dmg = int(math.Max(1, float64(defChar.Attacks[moveIndex].Power)*0.05))
 				triggerURL = defChar.Attacks[moveIndex].TriggerURL
+				actorCharID = defChar.ID
 			}
 		}
 
@@ -1016,13 +1259,19 @@ func processVSCounterChoice(gameState *GameSessionState, playerID uint, data map
 			vsApplyDamage(targetChar, dmg)
 		}
 
+		var targetCharID string
+		if targetChar != nil {
+			targetCharID = targetChar.ID
+		}
 		gameState.GameData["counter_result"] = map[string]interface{}{
-			"type":        counterType,
-			"actor":       playerID,
-			"target":      atkUID,
-			"option":      option,
-			"damage":      dmg,
-			"trigger_url": triggerURL,
+			"type":           counterType,
+			"actor":          playerID,
+			"actor_char_id":  actorCharID,
+			"target":         atkUID,
+			"target_char_id": targetCharID,
+			"option":         option,
+			"damage":         dmg,
+			"trigger_url":    triggerURL,
 		}
 	}
 
@@ -1030,6 +1279,18 @@ func processVSCounterChoice(gameState *GameSessionState, playerID uint, data map
 	vsSetPhase(gameState, "battle")
 	delete(gameState.GameData, "counter_state")
 	vsSavePlayers(gameState, players)
+
+	// Expose counter result as last_turn_result so the frontend can show it.
+	// Also advance the turn counter so BattlePhase's turn-change effect fires.
+	if cr, ok := gameState.GameData["counter_result"]; ok {
+		if crMap, ok2 := cr.(map[string]interface{}); ok2 {
+			crMap["outcome"] = "counter_result"
+			gameState.GameData["last_turn_result"] = crMap
+		}
+	}
+	delete(gameState.GameData, "counter_result")
+	counterTurn, _ := gameState.GameData["turn"].(int)
+	gameState.GameData["turn"] = counterTurn + 1
 
 	// Check win condition
 	gameOver, winnerID := vsCheckWin(players)
@@ -1142,4 +1403,222 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ── Streak & stats tracking ───────────────────────────────────────────────────
+
+func vsUpdateStreaksAndStats(players map[uint]*VSPlayerState, result map[string]interface{}) {
+	outcome, _ := result["outcome"].(string)
+	getDmg := func() int {
+		if v, ok := result["damage"].(int); ok {
+			return v
+		}
+		return 0
+	}
+	resetAll := func() {
+		for _, ps := range players {
+			ps.AttackStreak = 0
+			ps.DefenseStreak = 0
+		}
+	}
+
+	switch outcome {
+	case "attack_lands":
+		atkUID, _ := result["attacker"].(uint)
+		defUID, _ := result["defender"].(uint)
+		dmg := getDmg()
+		if ps, ok := players[atkUID]; ok {
+			ps.AttackStreak++
+			ps.DefenseStreak = 0
+			ps.DamageDealt += dmg
+			ps.AttacksLanded++
+			if dmg > ps.BiggestHit {
+				ps.BiggestHit = dmg
+			}
+		}
+		if ps, ok := players[defUID]; ok {
+			ps.AttackStreak = 0
+			ps.DefenseStreak = 0
+		}
+
+	case "blocked":
+		atkUID, _ := result["attacker"].(uint)
+		defUID, _ := result["defender"].(uint)
+		if ps, ok := players[atkUID]; ok {
+			ps.AttackStreak = 0
+			ps.DefenseStreak = 0
+		}
+		if ps, ok := players[defUID]; ok {
+			ps.DefenseStreak++
+			ps.AttackStreak = 0
+			ps.Blocks++
+		}
+
+	case "counter_chance":
+		atkUID, _ := result["attacker"].(uint)
+		defUID, _ := result["defender"].(uint)
+		if ps, ok := players[defUID]; ok {
+			ps.DefenseStreak++
+			ps.AttackStreak = 0
+		}
+		if ps, ok := players[atkUID]; ok {
+			ps.AttackStreak = 0
+			ps.DefenseStreak = 0
+		}
+
+	case "counter_result":
+		actorUID, _ := result["actor"].(uint)
+		dmg := getDmg()
+		if ps, ok := players[actorUID]; ok {
+			ps.DefenseStreak++
+			ps.AttackStreak = 0
+			ps.Counters++
+			ps.DamageDealt += dmg
+		}
+
+	default:
+		// stalemate, deflect, attack_wins, both_attack, both_defend, both_timeout,
+		// undefended — reset all streaks per spec
+		resetAll()
+	}
+}
+
+// ── Dice roll ─────────────────────────────────────────────────────────────────
+
+func processVSDiceRollResult(gameState *GameSessionState, playerID uint, _ map[string]interface{}) (bool, *uint, error) {
+	players, err := vsBuildState(gameState)
+	if err != nil {
+		return false, nil, err
+	}
+
+	ps, ok := players[playerID]
+	if !ok {
+		return false, nil, fmt.Errorf("vs_battle: player %d not found", playerID)
+	}
+
+	// Validate the player has a pending roll
+	pendingRaw, _ := gameState.GameData["pending_dice_rolls"].(map[string]interface{})
+	if pendingRaw == nil {
+		return false, nil, fmt.Errorf("vs_battle: no pending dice rolls")
+	}
+	playerKey := fmt.Sprintf("%d", playerID)
+	if _, exists := pendingRaw[playerKey]; !exists {
+		return false, nil, fmt.Errorf("vs_battle: player %d has no pending dice roll", playerID)
+	}
+
+	// Find opponent
+	var oppPS *VSPlayerState
+	var oppUID uint
+	for uid, p := range players {
+		if uid != playerID {
+			oppPS = p
+			oppUID = uid
+			break
+		}
+	}
+	_ = oppUID
+
+	// Server-generated dice value (1–6)
+	diceValue := rand.Intn(6) + 1
+	var powerUpName string
+
+	switch diceValue {
+	case 1: // Stun — opponent's next move is power 0
+		if oppPS != nil {
+			oppPS.PendingStun = true
+		}
+		powerUpName = "stun"
+	case 2: // Attack Boost +10%
+		ps.PendingAtkBoost = true
+		powerUpName = "atk_boost"
+	case 3: // Health Pack — +10% MaxHP to weakest alive character
+		weakest := vsWeakestChar(ps)
+		if weakest != nil {
+			restore := int(math.Max(1, float64(weakest.MaxHP)*0.10))
+			weakest.HP = min(weakest.HP+restore, weakest.MaxHP)
+		}
+		powerUpName = "health_pack"
+	case 4: // Shield — auto-block next incoming attack
+		ps.PendingShield = true
+		powerUpName = "shield"
+	case 5: // Defense Boost +10%
+		ps.PendingDefBoost = true
+		powerUpName = "def_boost"
+	case 6: // Poison — one random opponent move is disabled for 1 exchange
+		if oppPS != nil {
+			key := vsPickRandomMove(oppPS)
+			if key != "" {
+				oppPS.PendingPoison = key
+			}
+		}
+		powerUpName = "poison"
+	}
+
+	// Record result for broadcast
+	gameState.GameData["dice_roll_result"] = map[string]interface{}{
+		"player_id":  playerID,
+		"dice_value": diceValue,
+		"power_up":   powerUpName,
+	}
+
+	// Remove this player from pending rolls
+	delete(pendingRaw, playerKey)
+	if len(pendingRaw) == 0 {
+		delete(gameState.GameData, "pending_dice_rolls")
+		vsSetPhase(gameState, "battle")
+	} else {
+		gameState.GameData["pending_dice_rolls"] = pendingRaw
+	}
+
+	vsSavePlayers(gameState, players)
+	return false, nil, nil
+}
+
+// vsWeakestChar returns the alive character with the lowest HP.
+func vsWeakestChar(ps *VSPlayerState) *VSCharacter {
+	if ps == nil {
+		return nil
+	}
+	var weakest *VSCharacter
+	for i := range ps.Characters {
+		c := &ps.Characters[i]
+		if c.Defeated {
+			continue
+		}
+		if weakest == nil || c.HP < weakest.HP {
+			weakest = c
+		}
+	}
+	return weakest
+}
+
+// vsPickRandomMove picks a random non-zero-power move from any alive character,
+// returning it as "charId:moveType:idx" (for poison targeting).
+func vsPickRandomMove(ps *VSPlayerState) string {
+	type moveKey struct {
+		charID   string
+		moveType string
+		idx      int
+	}
+	var candidates []moveKey
+	for _, c := range ps.Characters {
+		if c.Defeated {
+			continue
+		}
+		for i, m := range c.Attacks {
+			if m.Power > 0 {
+				candidates = append(candidates, moveKey{c.ID, "attack", i})
+			}
+		}
+		for i, m := range c.Defenses {
+			if m.Power > 0 {
+				candidates = append(candidates, moveKey{c.ID, "defense", i})
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	pick := candidates[rand.Intn(len(candidates))]
+	return fmt.Sprintf("%s:%s:%d", pick.charID, pick.moveType, pick.idx)
 }

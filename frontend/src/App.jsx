@@ -30,6 +30,7 @@ import PaymentAccountManagement from './components/payment/PaymentAccountManagem
 import WithdrawalRequestForm from './components/payment/WithdrawalRequestForm';
 import KYCSubmissionForm from './components/payment/KYCSubmissionForm';
 import SVGComparison from './components/dev/SVGComparison';
+import VsBattlePreview from './components/dev/VsBattlePreview';
 import ExplorePage from './pages/ExplorePage';
 import BackButtonGuard from './components/BackButtonGuard';
 import GuestViewPage from './pages/GuestViewPage';
@@ -201,6 +202,9 @@ function App() {
           {/* 🎨 DEV TOOLS */}
           <Route path="/dev/svg-comparison" element={
             <SVGComparison />
+          } />
+          <Route path="/dev/vs-battle-preview" element={
+            <VsBattlePreview />
           } />
 
           {/* ✅ ALL DEMO ROUTES COMMENTED OUT */}

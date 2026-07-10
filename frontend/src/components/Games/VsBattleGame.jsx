@@ -31,20 +31,35 @@ const TIER_INFO = {
   'Universal':   { desc: 'Cosmic forces that can reshape existence itself.',          examples: 'Thanos (Infinity Gauntlet), Galactus, Superman (full)' },
 };
 
-// Outcome label text + color for the Bangers font display
+// Outcome label text + color for the Bangers font display.
+// charPrefix: 'attacker' → show attackerChar name as a golden inline prefix before the label text.
+// defName: 'defender'   → the label fn receives the defender's name as its second arg (embedded in the text).
 const OUTCOME_MAP = {
-  stalemate:      { label: () => 'STALEMATE',                color: '#f59e0b' },
-  attack_wins:    { label: r => `ATTACK LANDS (+${r.damage} DMG)`, color: '#ef4444' },
-  attack_lands:   { label: r => `ATTACK LANDS (+${r.damage} DMG)`, color: '#ef4444' },
-  deflect:        { label: () => 'DEFLECTED',                color: '#3b82f6' },
-  blocked:        { label: () => 'BLOCKED',                  color: '#22c55e' },
-  undefended:     { label: r => `UNDEFENDED (+${r.damage} DMG)`, color: '#ef4444' },
-  both_defend:    { label: () => 'BOTH DEFEND',              color: '#9ca3af' },
-  both_timeout:   { label: () => 'TIMED OUT',                color: '#6b7280' },
-  counter_chance: { label: () => 'COUNTER!',                 color: '#facc15' },
-  both_attack:    { label: () => 'CLASH!',                   color: '#f97316' },
-  atk_vs_def:     { label: () => 'CLASH!',                   color: '#a78bfa' },
+  stalemate:      { label: () => 'STALEMATE',                                                                     color: '#f59e0b' },
+  attack_wins:    { label: r => `ATTACK LANDS (+${r.damage} DMG)`,                                               color: '#ef4444', charPrefix: 'attacker' },
+  attack_lands:   { label: r => `ATTACK LANDS (+${r.damage} DMG)`,                                               color: '#ef4444', charPrefix: 'attacker' },
+  deflect:        { label: (r, def) => def ? `DEFLECTED BY ${def.toUpperCase()}` : 'DEFLECTED',                  color: '#3b82f6', defName: 'defender' },
+  blocked:        { label: (r, def) => def ? `BLOCKED BY ${def.toUpperCase()}` : 'BLOCKED',                      color: '#22c55e', defName: 'defender' },
+  undefended:     { label: r => `UNDEFENDED (+${r.damage} DMG)`,                                                  color: '#ef4444', charPrefix: 'attacker' },
+  both_defend:    { label: () => 'BOTH DEFEND',                                                                   color: '#9ca3af' },
+  both_timeout:   { label: () => 'TIMED OUT',                                                                     color: '#6b7280' },
+  counter_chance: { label: () => 'COUNTER!',                                                                      color: '#facc15' },
+  counter_result: { label: r => r.damage ? `COUNTER HIT! (${r.damage} DMG)` : 'COUNTER REFLECT!',               color: '#facc15', charPrefix: 'attacker' },
+  both_attack:    { label: () => 'CLASH!',                                                                        color: '#f97316' },
+  atk_vs_def:     { label: () => 'CLASH!',                                                                        color: '#a78bfa' },
 };
+
+// Power-up metadata (dice roll results 1–6)
+const DICE_FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+const POWER_UP_INFO = {
+  stun:        { icon: '😵', label: 'STUN',         desc: "Opponent's next move has 0 power",         color: '#f59e0b' },
+  atk_boost:   { icon: '⚡', label: 'ATK BOOST',    desc: '+10% to your next attack power',            color: '#ef4444' },
+  health_pack: { icon: '💊', label: 'HEALTH PACK',  desc: '+10% HP restored to weakest character',     color: '#22c55e' },
+  shield:      { icon: '🛡️', label: 'SHIELD',        desc: 'Auto-blocks the next incoming attack',      color: '#3b82f6' },
+  def_boost:   { icon: '🔰', label: 'DEF BOOST',    desc: '+10% to your next defense power',           color: '#8b5cf6' },
+  poison:      { icon: '☠️', label: 'POISON',        desc: "One of opponent's moves disabled 1 turn",  color: '#84cc16' },
+};
+const DICE_POWER_MAP = ['stun', 'atk_boost', 'health_pack', 'shield', 'def_boost', 'poison'];
 
 // Default move powers per tier (injected server-side, shown read-only in UI)
 const DEFAULT_PUNCH_POWER = { Regular: 75, Street: 90, 'City-Wide': 100, Continental: 115, Global: 125, Universal: 140 };
@@ -70,6 +85,7 @@ const SOUND_FILES = {
   gameOver:     `${CDN}/games/sounds/game%20over%20sound.mp3`,
   youWin:       `${CDN}/games/sounds/you%20win%20sound.mp3`,
   youLose:      `${CDN}/games/sounds/you%20lose%20sound.mp3`,
+  lifeDrain:    `${CDN}/games/sounds/lifedrain.mp3`,
 };
 
 // Pre-made video clips (hosted on BunnyCDN)
@@ -87,12 +103,13 @@ function outcomeSound(outcome) {
     attack_lands:   'attackWin',
     undefended:     'superAttack',
     blocked:        'blocked',
-    counter_chance: 'counter',
-    deflect:        'defenseWin',
-    both_defend:    'superDefense',
-    both_timeout:   null,
-    both_attack:    'attackMove',
-    atk_vs_def:     'attackMove',
+    counter_chance:  'counter',
+    counter_result:  'counter',
+    deflect:         'defenseWin',
+    both_defend:     'superDefense',
+    both_timeout:    null,
+    both_attack:     'attackMove',
+    atk_vs_def:      'attackMove',
   })[outcome] || null;
 }
 
@@ -117,33 +134,67 @@ function resolveClipQueue(result) {
     return q.length ? q : [];
   }
   if (outcome === 'attack_wins') {
-    const winnerPunch = (result.loser === result.player_b && isPunch(aName)) || (result.loser === result.player_a && isPunch(bName));
-    if (winnerPunch) return [VID_PUNCH_WIN];
-    const url = result.trigger_url;
-    return url ? [url] : [];
+    // Both punched but one overpowered the other — VID_PUNCH_WIN already shows
+    // two fighters clashing with one overwhelming, so skip the pre-clip entirely.
+    if (isPunch(aName) && isPunch(bName)) return [VID_PUNCH_WIN];
+    const loserIsB = result.loser === result.player_b;
+    if (loserIsB) {
+      // B lost: show B's losing clip first, then A's winning blow
+      const loserClip  = isPunch(bName) ? VID_PUNCH     : result.trigger_b;
+      const winnerClip = isPunch(aName) ? VID_PUNCH_WIN : result.trigger_a;
+      return [loserClip, winnerClip].filter(Boolean);
+    } else {
+      // A lost: show A's losing clip first, then B's winning blow
+      const loserClip  = isPunch(aName) ? VID_PUNCH     : result.trigger_a;
+      const winnerClip = isPunch(bName) ? VID_PUNCH_WIN : result.trigger_b;
+      return [loserClip, winnerClip].filter(Boolean);
+    }
   }
   if (outcome === 'attack_lands') {
+    // VID_PUNCH_WIN already shows both fighters so no extra defense clip needed
     if (isPunch(atkName)) return [VID_PUNCH_WIN];
-    return result.trigger_url ? [result.trigger_url] : [];
+    const defClip = isBlock(defName) ? VID_BLOCK_LOSE : result.def_trigger_url;
+    return [result.trigger_url, defClip].filter(Boolean);
   }
   if (outcome === 'undefended') {
     if (isPunch(atkName)) return [VID_PUNCH];
     return result.trigger_url ? [result.trigger_url] : [];
   }
   if (outcome === 'blocked') {
-    if (isBlock(defName)) return [VID_BLOCK_LOSE];
-    return result.trigger_url ? [result.trigger_url] : [];
+    // Attack clip first, then the defense block clip
+    const atkClip = isPunch(atkName) ? VID_PUNCH : result.trigger_url;
+    const defClip = isBlock(defName) ? VID_BLOCK_LOSE : result.def_trigger_url;
+    return [atkClip, defClip].filter(Boolean);
   }
   if (outcome === 'counter_chance') {
-    if (isBlock(defName)) return [VID_BLOCK_STALEMATE];
-    return result.trigger_url ? [result.trigger_url] : [];
+    // Attack clip first, then the block-stalemate clip (defense got a counter window)
+    const atkClip = isPunch(atkName) ? VID_PUNCH : result.trigger_url;
+    const defClip = isBlock(defName) ? VID_BLOCK_STALEMATE : result.def_trigger_url;
+    return [atkClip, defClip].filter(Boolean);
   }
-  if (outcome === 'deflect') return result.trigger_url ? [result.trigger_url] : [];
-  if (outcome === 'both_defend') return [];
+  if (outcome === 'counter_result') return result.trigger_url ? [result.trigger_url] : [];
+  if (outcome === 'deflect') {
+    // Attack clip first, then defense deflect clip (defense barely held)
+    const atkClip = isPunch(atkName) ? VID_PUNCH : result.trigger_url;
+    const defClip = isBlock(defName) ? VID_BLOCK_STALEMATE : result.def_trigger_url;
+    return [atkClip, defClip].filter(Boolean);
+  }
+  if (outcome === 'both_defend') {
+    // Play each player's defense clip before showing "BOTH DEFEND" result
+    const aClip = isBlock(aName) ? VID_BLOCK_STALEMATE : result.trigger_a;
+    const bClip = isBlock(bName) ? VID_BLOCK_STALEMATE : result.trigger_b;
+    return [aClip, bClip].filter(Boolean);
+  }
   return [];
 }
 
 const genId = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
+
+// Returns the index of the first non-default move, or 0 if all are defaults / list is empty
+const firstNonDefaultIdx = (movesList = []) => {
+  const idx = movesList.findIndex(m => !m.is_default);
+  return idx >= 0 ? idx : 0;
+};
 
 const emptyMove = () => ({ name: '', power: 1, triggerUrl: '' });
 const emptyDraft = () => ({
@@ -168,27 +219,128 @@ function HPBar({ hp, maxHp }) {
   );
 }
 
-function CharMini({ char, dim = false, globalMaxHp }) {
+// CSS injected once for DamageHPDisplay hearts (avoids repeated <style> blocks in each heart)
+const DMG_HEART_CSS = `
+@keyframes dmg-heart-rise {
+  0%   { transform: translateY(0) translateX(0) scale(var(--hs,1)); opacity: 1; }
+  60%  { opacity: 0.8; }
+  100% { transform: translateY(-60px) translateX(var(--drift,0px)) scale(calc(var(--hs,1)*0.3)); opacity: 0; }
+}
+.dmg-heart {
+  position: absolute;
+  bottom: 0;
+  animation: dmg-heart-rise var(--dur,1s) ease-out forwards;
+  pointer-events: none;
+  font-size: 15px;
+  line-height: 1;
+  user-select: none;
+}
+`;
+
+// Big animated HP bar that slides from oldHp → newHp with floating hearts.
+// Shown in the turn-result center panel after all clips have played.
+function DamageHPDisplay({ char, oldHp, newHp, maxHp, playSound }) {
+  const [targetPct, setTargetPct] = useState(() =>
+    maxHp > 0 ? Math.min(100, (oldHp / maxHp) * 100) : 0
+  );
+  const [hearts, setHearts] = useState([]);
+
+  useEffect(() => {
+    // Trigger bar slide after a frame so the transition is visible
+    const tBar = setTimeout(() => {
+      setTargetPct(maxHp > 0 ? Math.max(0, (newHp / maxHp) * 100) : 0);
+    }, 80);
+    if (playSound) playSound('lifeDrain');
+
+    // Spawn floating hearts proportional to damage
+    const dmg = oldHp - newHp;
+    const count = Math.max(3, Math.min(14, Math.ceil(dmg / 10)));
+    setHearts(Array.from({ length: count }, (_, i) => ({
+      id: i,
+      left: 4 + Math.random() * 92,
+      delay: i * 55,
+      drift: (Math.random() - 0.5) * 48,
+      scale: 0.65 + Math.random() * 0.7,
+      dur: 0.85 + Math.random() * 0.55,
+    })));
+
+    return () => clearTimeout(tBar);
+  }, []); // run once on mount (per-result render)
+
+  const newPct = maxHp > 0 ? Math.max(0, (newHp / maxHp) * 100) : 0;
+  const barColor = newPct > 50 ? '#22c55e' : newPct > 25 ? '#eab308' : '#ef4444';
+
+  return (
+    <div className="w-full mt-1 px-1 flex flex-col items-center gap-1.5">
+      <style>{DMG_HEART_CSS}</style>
+
+      {/* Character identity row */}
+      <div className="flex items-center gap-1.5">
+        {char.image_url
+          ? <img src={char.image_url} alt={char.name} className="w-7 h-7 rounded object-cover border border-gray-600 flex-shrink-0" />
+          : <div className="w-7 h-7 rounded bg-gray-700 flex items-center justify-center text-sm flex-shrink-0">🦸</div>
+        }
+        <span className="text-white text-sm font-bold leading-none">{char.name}</span>
+        <span className="text-gray-400 text-xs tabular-nums leading-none">{newHp}/{maxHp} HP</span>
+      </div>
+
+      {/* HP bar + hearts container */}
+      <div className="relative w-full" style={{ height: '22px' }}>
+        {/* Track */}
+        <div className="absolute inset-0 bg-gray-700 rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-700 ease-out"
+            style={{ width: `${targetPct}%`, backgroundColor: barColor }}
+          />
+        </div>
+        {/* Floating hearts — positioned relative to the bar */}
+        {hearts.map(h => (
+          <span
+            key={h.id}
+            className="dmg-heart"
+            style={{
+              left: `${h.left}%`,
+              '--drift': `${h.drift}px`,
+              '--hs': h.scale,
+              '--dur': `${h.dur}s`,
+              animationDelay: `${h.delay}ms`,
+            }}
+          >
+            ❤️
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CharMini({ char, dim = false, globalMaxHp, large = false, xl = false }) {
   const tier = TIERS[char.tier] || TIERS['Regular'];
   const charMaxHp = char.max_hp ?? tier.hp;
   const pct = Math.max(0, (char.hp / (globalMaxHp ?? charMaxHp)) * 100);
   const hpColor = pct > 50 ? 'bg-green-500' : pct > 25 ? 'bg-yellow-400' : 'bg-red-500';
+  const sizeClass = xl
+    ? 'w-36 h-36 sm:w-48 sm:h-48 md:w-56 md:h-56 lg:w-64 lg:h-64'
+    : large
+      ? 'w-28 h-28 sm:w-36 sm:h-36'
+      : 'w-16 h-16 sm:w-20 sm:h-20';
+  const koSize = xl ? '3rem' : large ? '2.2rem' : '1.5rem';
   return (
     <div className={`relative flex flex-col items-center ${dim || char.defeated ? 'opacity-40 grayscale' : ''}`}>
-      <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden border border-gray-600 bg-gray-800 flex-shrink-0">
+      <div className={`relative ${sizeClass} rounded-xl overflow-hidden border border-gray-600 bg-gray-800 flex-shrink-0`}>
         {char.image_url
           ? <img src={char.image_url} alt={char.name} className="w-full h-full object-cover" />
           : <div className="w-full h-full flex items-center justify-center text-2xl">🦸</div>
         }
         {char.defeated && (
           <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
-            <span className="text-white font-black" style={{ fontFamily: 'Bangers, cursive', fontSize: '1.5rem', letterSpacing: '0.12em' }}>KO</span>
+            <span className="text-white font-black" style={{ fontFamily: 'Bangers, cursive', fontSize: koSize, letterSpacing: '0.12em' }}>KO</span>
           </div>
         )}
       </div>
-      <div className="w-full flex items-baseline justify-between gap-1 mt-0.5">
-        <span className="text-[10px] text-white font-medium leading-tight truncate">{char.name}</span>
-        <span className="text-[9px] text-gray-400 leading-none tabular-nums flex-shrink-0">{char.hp}/{char.max_hp ?? tier.hp}</span>
+      <div className={`w-full flex items-baseline justify-between gap-1 mt-0.5 ${xl || large ? 'mt-1' : 'mt-0.5'}`}>
+        <span className={`${xl ? 'text-base' : large ? 'text-sm' : 'text-[10px]'} text-white font-medium leading-tight truncate`}>{char.name}</span>
+        <span className={`${xl ? 'text-sm' : large ? 'text-xs' : 'text-[9px]'} text-gray-400 leading-none tabular-nums flex-shrink-0`}>{char.hp}/{char.max_hp ?? tier.hp}</span>
       </div>
       <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mt-0.5">
         <div className={`h-full ${hpColor} transition-all duration-500`} style={{ width: `${pct}%` }} />
@@ -197,24 +349,105 @@ function CharMini({ char, dim = false, globalMaxHp }) {
   );
 }
 
-function OutcomeLabel({ outcome, turnResult }) {
+function OutcomeLabel({ outcome, turnResult, attackerChar, defenderChar }) {
   if (!outcome || !OUTCOME_MAP[outcome]) return null;
   const cfg = OUTCOME_MAP[outcome];
-  const text = cfg.label(turnResult || {});
+
+  // For defender-embedded outcomes (blocked/deflect), pass defender name into the label fn
+  const defName = cfg.defName === 'defender' && defenderChar ? defenderChar.name : null;
+  const baseText = cfg.label(turnResult || {}, defName);
+
+  // For attacker-prefix outcomes, show char name as a golden prefix before the label
+  const charPrefix = cfg.charPrefix === 'attacker' && attackerChar
+    ? attackerChar.name.toUpperCase()
+    : null;
+
   return (
-    <div
-      className="text-center px-2"
-      style={{
-        fontFamily: 'Bangers, cursive',
-        letterSpacing: '0.08em',
-        fontSize: '1.5rem',
-        color: cfg.color,
-        WebkitTextStroke: '1.5px #000',
-        textShadow: `2px 2px 0 #000, 0 0 12px ${cfg.color}`,
-        lineHeight: 1.1,
-      }}
-    >
-      {text}
+    <div className="text-center px-2">
+      <div
+        style={{
+          fontFamily: 'Bangers, cursive',
+          letterSpacing: '0.08em',
+          lineHeight: 1.15,
+        }}
+      >
+        {charPrefix && (
+          <span
+            style={{
+              fontSize: '1.15rem',
+              color: '#facc15',
+              WebkitTextStroke: '1px #000',
+              textShadow: '1px 1px 0 #000',
+              marginRight: '0.3em',
+            }}
+          >
+            {charPrefix}
+          </span>
+        )}
+        <span
+          style={{
+            fontSize: '1.5rem',
+            color: cfg.color,
+            WebkitTextStroke: '1.5px #000',
+            textShadow: `2px 2px 0 #000, 0 0 12px ${cfg.color}`,
+          }}
+        >
+          {baseText}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Small portrait chip used inside CombatLabel
+function CharChip({ char, highlight }) {
+  return (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${highlight ? 'bg-red-900/50 ring-1 ring-red-500' : 'bg-gray-800/70'}`}>
+      {char.image_url
+        ? <img src={char.image_url} alt={char.name} className="w-8 h-8 rounded object-cover flex-shrink-0" />
+        : <div className="w-8 h-8 rounded bg-gray-700 flex items-center justify-center text-base flex-shrink-0">🦸</div>
+      }
+      <div className="flex flex-col min-w-0">
+        <span className="text-white text-xs font-bold leading-tight truncate max-w-[80px]">{char.name}</span>
+        <span className={`text-[10px] leading-none ${TIER_COLORS[char.tier]?.split(' ')[0] || 'text-gray-400'}`}>{char.tier}</span>
+      </div>
+    </div>
+  );
+}
+
+// Shows "AttackerChar ⚔ DefenderChar" or "CharA vs CharB" depending on outcome.
+// attackerChar / defenderChar may be null if only one side is known.
+function CombatLabel({ attackerChar, defenderChar, outcome }) {
+  if (!attackerChar && !defenderChar) return null;
+
+  // Stalemate / both defend: show "A vs B" with no highlight
+  const isMutual = ['stalemate', 'both_attack', 'both_defend', 'both_timeout'].includes(outcome);
+
+  if (isMutual && attackerChar && defenderChar) {
+    return (
+      <div className="flex items-center gap-2 justify-center flex-wrap">
+        <CharChip char={attackerChar} />
+        <span className="text-gray-400 font-bold text-sm">VS</span>
+        <CharChip char={defenderChar} />
+      </div>
+    );
+  }
+
+  if (attackerChar && defenderChar) {
+    return (
+      <div className="flex items-center gap-2 justify-center flex-wrap">
+        <CharChip char={attackerChar} />
+        <span className="text-yellow-400 text-lg">⚔</span>
+        <CharChip char={defenderChar} highlight />
+      </div>
+    );
+  }
+
+  // Only one char known (e.g. stalemate with only a damaged char)
+  const char = attackerChar || defenderChar;
+  return (
+    <div className="flex justify-center">
+      <CharChip char={char} highlight={!!defenderChar} />
     </div>
   );
 }
@@ -233,21 +466,17 @@ const BUILD_STEPS = [
 
 function useVsBattleAudio() {
   const audios = useRef({});
-  useEffect(() => {
-    Object.entries(SOUND_FILES).forEach(([key, src]) => {
-      const a = new Audio(src);
-      a.preload = 'none';
-      audios.current[key] = a;
-    });
-    return () => {
-      Object.values(audios.current).forEach(a => { a.pause(); a.src = ''; });
-      audios.current = {};
-    };
-  }, []);
+  // Lazy: create each Audio object on first play rather than upfront on mount.
+  // This means new entries added to SOUND_FILES work immediately without a
+  // page refresh, and HMR updates are picked up transparently.
   return useCallback((key) => {
     if (!key) return;
+    const src = SOUND_FILES[key];
+    if (!src) return;
+    if (!audios.current[key]) {
+      audios.current[key] = new Audio(src);
+    }
     const a = audios.current[key];
-    if (!a) return;
     a.currentTime = 0;
     a.play().catch(() => {});
   }, []);
@@ -671,9 +900,31 @@ function TierCarousel({ selected, onChange }) {
   );
 }
 
-function BuildingPhase({ myRoster, draft, setDraft, onSubmitChar, onReady, isReady }) {
+function BuildingPhase({ myRoster, draft, setDraft, onSubmitChar, onReady, isReady, onLoadSaved, savedRosterKey }) {
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+
+  const [savedRoster, setSavedRoster] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(savedRosterKey) || '[]'); } catch { return []; }
+  });
+  // Refresh saved roster when key changes (different user)
+  useEffect(() => {
+    try { setSavedRoster(JSON.parse(localStorage.getItem(savedRosterKey) || '[]')); } catch { setSavedRoster([]); }
+  }, [savedRosterKey]);
+
+  const canLoadSaved = savedRoster.length > 0 && myRoster.length === 0;
+  const canSave = myRoster.length > 0;
+
+  const handleSaveLoadout = () => {
+    try {
+      const toSave = myRoster.map(c => ({
+        name: c.name, tier: c.tier, image_url: c.image_url || '',
+        attacks: c.attacks || [], defenses: c.defenses || [],
+      }));
+      localStorage.setItem(savedRosterKey, JSON.stringify(toSave));
+      setSavedRoster(toSave);
+    } catch {}
+  };
 
   const tier = TIERS[draft.tier] || TIERS['Regular'];
   // Attack and defence budgets are independent — each pool gets the full tier budget.
@@ -718,19 +969,30 @@ function BuildingPhase({ myRoster, draft, setDraft, onSubmitChar, onReady, isRea
           <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
             Roster {myRoster.length}/3
           </span>
-          {myRoster.length > 0 && (
-            <button
-              onClick={onReady}
-              disabled={isReady}
-              className={`text-xs px-3 py-1 rounded-full font-semibold transition-all !min-h-0 !min-w-0 ${
-                isReady
-                  ? 'bg-green-900/50 text-green-400 border border-green-700'
-                  : 'bg-purple-600 hover:bg-purple-500 text-white'
-              }`}
-            >
-              {isReady ? '✓ Ready' : "I'm Ready →"}
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {canLoadSaved && (
+              <button
+                onClick={onLoadSaved}
+                className="text-xs px-2 py-1 rounded-full font-semibold transition-all !min-h-0 !min-w-0 bg-yellow-600 hover:bg-yellow-500 text-white"
+                title={`Load: ${savedRoster.map(c => c.name).join(', ')}`}
+              >
+                ⚡ Load
+              </button>
+            )}
+            {myRoster.length > 0 && (
+              <button
+                onClick={onReady}
+                disabled={isReady}
+                className={`text-xs px-3 py-1 rounded-full font-semibold transition-all !min-h-0 !min-w-0 ${
+                  isReady
+                    ? 'bg-green-900/50 text-green-400 border border-green-700'
+                    : 'bg-purple-600 hover:bg-purple-500 text-white'
+                }`}
+              >
+                {isReady ? '✓ Ready' : "I'm Ready →"}
+              </button>
+            )}
+          </div>
         </div>
         <div className="flex gap-3 px-4 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
           {myRoster.map(char => (
@@ -951,14 +1213,6 @@ function BuildingPhase({ myRoster, draft, setDraft, onSubmitChar, onReady, isRea
                     : `Next: ${BUILD_STEPS[step + 1].label} →`}
               </button>
             </div>
-            {myRoster.length > 0 && !rosterFull && !isReady && (
-              <button
-                onClick={onReady}
-                className="w-full py-1.5 rounded-xl border border-green-700 text-green-400 text-xs font-semibold hover:bg-green-900/20 transition-all !min-h-0"
-              >
-                Proceed with {myRoster.length}/3 characters →
-              </button>
-            )}
           </div>
 
         </div>
@@ -1046,7 +1300,7 @@ function TeamPanel({ chars, label, isMe, selectedCharId, onSelectChar }) {
   return (
     <div className="flex items-start gap-2">
       <div
-        className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider flex-shrink-0 self-center"
+        className="text-[11px] text-gray-300 font-semibold uppercase tracking-wider flex-shrink-0 self-center"
         style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
       >
         {label}
@@ -1064,11 +1318,11 @@ function TeamPanel({ chars, label, isMe, selectedCharId, onSelectChar }) {
                     : 'opacity-60 hover:opacity-90'
                 }`}
               >
-                <CharMini char={c} globalMaxHp={globalMaxHp} />
+                <CharMini char={c} globalMaxHp={globalMaxHp} large />
               </button>
             );
           }
-          return <CharMini key={c.id} char={c} globalMaxHp={globalMaxHp} />;
+          return <CharMini key={c.id} char={c} globalMaxHp={globalMaxHp} large />;
         })}
         {chars.length === 0 && <div className="text-gray-500 text-sm">—</div>}
       </div>
@@ -1090,8 +1344,11 @@ function MovePicker({ myChars, onLock, myLock, opponentName, opponentLocked, sel
     }
   }, [myLock, setSelectedCharId]);
 
-  // Reset move selection when the active character card changes
-  useEffect(() => { setMoveIndex(0); setMoveType('attack'); }, [selectedCharId]);
+  // When character changes, default to their first custom (non-default) move
+  useEffect(() => {
+    setMoveType('attack');
+    setMoveIndex(firstNonDefaultIdx(selectedChar?.attacks));
+  }, [selectedCharId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const aliveChars = myChars.filter(c => !c.defeated);
   const selectedChar = aliveChars.find(c => c.id === selectedCharId) || aliveChars[0] || null;
@@ -1109,24 +1366,19 @@ function MovePicker({ myChars, onLock, myLock, opponentName, opponentLocked, sel
     onLock({ char_id: cid, vs_move_type: moveType, move_index: mi });
   };
 
-  if (locked || !!myLock) {
-    return (
-      <div className="text-center py-4 space-y-2">
-        <div className="text-green-400 font-semibold text-sm">✓ Move locked!</div>
-        {opponentLocked
-          ? <div className="text-yellow-400 text-sm animate-pulse">Resolving…</div>
-          : <div className="text-gray-400 text-sm">Waiting for {opponentName}…</div>
-        }
-      </div>
-    );
-  }
+  const [justSelected, setJustSelected] = useState(null);
+  const handleSelectMove = (i) => {
+    setMoveIndex(i);
+    setJustSelected(i);
+    setTimeout(() => setJustSelected(null), 350);
+  };
 
   return (
     <div className="space-y-3">
       {selectedChar && (
         <div className="flex rounded-lg overflow-hidden border border-gray-600">
           <button
-            onClick={() => { setMoveType('attack'); setMoveIndex(0); }}
+            onClick={() => { setMoveType('attack'); setMoveIndex(firstNonDefaultIdx(selectedChar?.attacks)); }}
             disabled={!selectedChar.attacks?.length}
             className={`flex-1 leading-none py-px transition-colors disabled:opacity-30 ${
               moveType === 'attack' ? 'bg-red-900 text-red-300' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
@@ -1135,7 +1387,7 @@ function MovePicker({ myChars, onLock, myLock, opponentName, opponentLocked, sel
             <span className="text-lg">⚔</span><span className="text-base font-semibold ml-1">Attack</span>
           </button>
           <button
-            onClick={() => { setMoveType('defense'); setMoveIndex(0); }}
+            onClick={() => { setMoveType('defense'); setMoveIndex(firstNonDefaultIdx(selectedChar?.defenses)); }}
             disabled={!selectedChar.defenses?.length}
             className={`flex-1 leading-none py-px transition-colors disabled:opacity-30 ${
               moveType === 'defense' ? 'bg-blue-900 text-blue-300' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
@@ -1150,6 +1402,7 @@ function MovePicker({ myChars, onLock, myLock, opponentName, opponentLocked, sel
         <div className="space-y-1">
           {moves.map((m, i) => {
             const isSelected = moveIndex === i;
+            const isJust = justSelected === i;
             const accent = moveType === 'attack'
               ? 'border-red-500 bg-red-900/40'
               : 'border-blue-500 bg-blue-900/40';
@@ -1157,12 +1410,17 @@ function MovePicker({ myChars, onLock, myLock, opponentName, opponentLocked, sel
             return (
               <div
                 key={i}
-                className={`flex items-stretch rounded-lg border transition-all overflow-hidden ${
+                className={`flex items-stretch rounded-lg border overflow-hidden ${
                   isSelected ? accent : 'border-gray-700 bg-gray-800 hover:border-gray-500'
                 }`}
+                style={{
+                  transform: isJust ? 'scale(1.04)' : 'scale(1)',
+                  boxShadow: isJust ? `0 0 0 2px ${moveType === 'attack' ? '#f87171' : '#60a5fa'}` : 'none',
+                  transition: 'transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, border-color 0.2s ease',
+                }}
               >
                 <button
-                  onClick={() => setMoveIndex(i)}
+                  onClick={() => handleSelectMove(i)}
                   className={`!min-h-0 !min-w-0 flex-1 text-left px-2 py-1 flex items-center gap-2 ${isSelected ? accentText : 'text-gray-300'}`}
                 >
                   <span className={`text-xs flex-shrink-0 ${isSelected ? 'opacity-100' : 'opacity-20'}`}>●</span>
@@ -1213,12 +1471,49 @@ function TriggerClipDisplay({ url, onDone }) {
   );
 }
 
-function BattlePhase({ myChars, oppChars, myName, oppName, turn, lastTurnResult, onLock, myLock, opponentLocked, playSound }) {
+function PowerUpBadge({ ps, label }) {
+  const badges = [];
+  if (ps?.pending_stun)     badges.push({ key: 'stun',     ...POWER_UP_INFO.stun });
+  if (ps?.pending_atk_boost) badges.push({ key: 'atk',    ...POWER_UP_INFO.atk_boost });
+  if (ps?.pending_shield)   badges.push({ key: 'shield',   ...POWER_UP_INFO.shield });
+  if (ps?.pending_def_boost) badges.push({ key: 'def',    ...POWER_UP_INFO.def_boost });
+  if (ps?.pending_poison)   badges.push({ key: 'poison',   ...POWER_UP_INFO.poison });
+  if (!badges.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1 mt-1 justify-center">
+      {badges.map(b => (
+        <span key={b.key} className="text-xs px-1.5 py-0.5 rounded-full border font-semibold" style={{ borderColor: b.color, color: b.color, background: `${b.color}15` }}>
+          {b.icon} {b.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function StreakBar({ attackStreak = 0, defenseStreak = 0 }) {
+  const pip = (n, total, color) => Array.from({ length: total }, (_, i) => (
+    <span key={i} className={`inline-block w-2 h-2 rounded-full mr-0.5 ${i < n ? '' : 'opacity-20'}`} style={{ background: i < n ? color : '#6b7280' }} />
+  ));
+  return (
+    <div className="flex items-center gap-3 text-xs">
+      <div className="flex items-center gap-1">
+        <span className="text-red-400">⚔️</span>
+        {pip(attackStreak, 3, '#ef4444')}
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-blue-400">🛡️</span>
+        {pip(defenseStreak, 3, '#3b82f6')}
+      </div>
+    </div>
+  );
+}
+
+function BattlePhase({ myChars, oppChars, myName, oppName, turn, lastTurnResult, onLock, myLock, opponentLocked, playSound, myPs, oppPs }) {
   const [showResult, setShowResult] = useState(false);
   const [displayedResult, setDisplayedResult] = useState(null);
   const [clipQueue, setClipQueue] = useState([]);
   const [clipIndex, setClipIndex] = useState(0);
-  const [selectedCharId, setSelectedCharId] = useState(null); // lifted from MovePicker
+  const [selectedCharId, setSelectedCharId] = useState(null);
   const prevTurnRef = useRef(turn);
 
   useEffect(() => {
@@ -1226,13 +1521,12 @@ function BattlePhase({ myChars, oppChars, myName, oppName, turn, lastTurnResult,
       prevTurnRef.current = turn;
       setDisplayedResult(lastTurnResult);
       setShowResult(true);
-      // Play outcome sound immediately
       const snd = outcomeSound(lastTurnResult.outcome);
       if (playSound) playSound(snd);
-      // Build ordered clip queue using move-name-aware resolution
       const queue = resolveClipQueue(lastTurnResult);
       setClipQueue(queue);
       setClipIndex(0);
+      // No clips → show result panel for 3s, then clear
       if (!queue.length) setTimeout(() => setShowResult(false), 3000);
     }
   }, [turn, lastTurnResult, playSound]);
@@ -1242,32 +1536,125 @@ function BattlePhase({ myChars, oppChars, myName, oppName, turn, lastTurnResult,
       const next = prev + 1;
       if (next < clipQueue.length) return next;
       setClipQueue([]);
-      setTimeout(() => setShowResult(false), 800);
+      // Keep result panel visible long enough for HP animation + hearts (~2.5s)
+      setTimeout(() => setShowResult(false), 2500);
       return prev;
     });
   };
 
   const outcome = displayedResult?.outcome;
 
+  // Resolve which character was damaged for HP animation.
+  // Backend now sends loser_char_id / defender_char_id on damaging outcomes.
+  // oldHp is inferred as char.hp + damage because myChars/oppChars already carry post-damage HP.
+  const damageInfo = useMemo(() => {
+    if (!displayedResult?.damage || !displayedResult.damage) return null;
+    const charId = displayedResult.loser_char_id || displayedResult.defender_char_id;
+    if (!charId) return null;
+    const allChars = [...myChars, ...oppChars];
+    const char = allChars.find(c => String(c.id) === String(charId));
+    if (!char) return null;
+    const tier = TIERS[char.tier] || TIERS['Regular'];
+    const maxHp = char.max_hp ?? tier.hp;
+    const newHp = char.hp;
+    const oldHp = Math.min(newHp + displayedResult.damage, maxHp);
+    return { char, oldHp, newHp, maxHp };
+  }, [displayedResult, myChars, oppChars]);
+
+  // Resolve attacker + defender chars for the CombatLabel ("who hit who") display.
+  const combatInfo = useMemo(() => {
+    if (!displayedResult) return null;
+    const allChars = [...myChars, ...oppChars];
+    const find = (id) => id ? allChars.find(c => String(c.id) === String(id)) : null;
+    const outcome = displayedResult.outcome;
+
+    if (outcome === 'attack_wins') {
+      return {
+        attackerChar: find(displayedResult.winner_char_id),
+        defenderChar: find(displayedResult.loser_char_id),
+      };
+    }
+    if (outcome === 'attack_lands' || outcome === 'undefended') {
+      return {
+        attackerChar: find(displayedResult.attacker_char_id),
+        defenderChar: find(displayedResult.defender_char_id),
+      };
+    }
+    if (outcome === 'both_attack') {
+      return {
+        attackerChar: find(displayedResult.winner_char_id),
+        defenderChar: find(displayedResult.loser_char_id),
+      };
+    }
+    if (outcome === 'blocked' || outcome === 'deflect') {
+      // defenderChar is who blocked/deflected; attackerChar is the attacker
+      return {
+        attackerChar: find(displayedResult.attacker_char_id),
+        defenderChar: find(displayedResult.defender_char_id),
+      };
+    }
+    if (outcome === 'counter_result') {
+      // actor_char_id = who countered (attacker prefix); target_char_id = who was hit
+      return {
+        attackerChar: find(displayedResult.actor_char_id),
+        defenderChar: find(displayedResult.target_char_id),
+      };
+    }
+    // Stalemate and other mutual outcomes — try to show both if IDs exist
+    const aId = displayedResult.attacker_char_id || displayedResult.winner_char_id;
+    const bId = displayedResult.defender_char_id || displayedResult.loser_char_id;
+    if (aId || bId) {
+      return { attackerChar: find(aId), defenderChar: find(bId) };
+    }
+    return null;
+  }, [displayedResult, myChars, oppChars]);
+
+  const clipsPlaying = clipQueue.length > 0 && clipIndex < clipQueue.length;
+
   return (
     <div className="flex flex-col lg:flex-row h-full overflow-hidden">
-      {/* Opponent side — flex-shrink-0 on both orientations; compact padding on mobile */}
+      {/* Opponent side */}
       <div className="flex-shrink-0 p-2 lg:p-3 lg:w-52 border-b lg:border-b-0 lg:border-r border-gray-700 bg-gray-900/40 flex flex-col">
         <TeamPanel chars={oppChars} label={oppName} />
+        <div className="mt-1 flex justify-center">
+          <StreakBar attackStreak={oppPs?.attack_streak ?? 0} defenseStreak={oppPs?.defense_streak ?? 0} />
+        </div>
+        <PowerUpBadge ps={oppPs} />
         {opponentLocked && (
           <div className="mt-1 text-center text-yellow-400 text-xs font-medium animate-pulse">🔒 Locked in</div>
         )}
       </div>
 
-      {/* Center — flex-1 on mobile (fills remaining space for turn display), flex-1 on desktop */}
+      {/* Center panel */}
       <div className="flex-1 min-h-[80px] lg:flex-1 flex flex-col items-center justify-center p-2 lg:p-4 gap-2 lg:gap-3">
         <div className="text-xs text-gray-500 font-medium uppercase tracking-wider">Turn {turn + 1}</div>
 
         {showResult && outcome && (
           <div className="flex flex-col items-center gap-2 w-full">
-            {clipQueue.length > 0 && clipIndex < clipQueue.length
+            {clipsPlaying
               ? <TriggerClipDisplay url={clipQueue[clipIndex]} onDone={handleClipDone} />
-              : <OutcomeLabel outcome={outcome} turnResult={displayedResult} />
+              : (
+                <>
+                  <OutcomeLabel outcome={outcome} turnResult={displayedResult} attackerChar={combatInfo?.attackerChar} defenderChar={combatInfo?.defenderChar} />
+                  {combatInfo && (combatInfo.attackerChar || combatInfo.defenderChar) && (
+                    <CombatLabel
+                      attackerChar={combatInfo.attackerChar}
+                      defenderChar={combatInfo.defenderChar}
+                      outcome={outcome}
+                    />
+                  )}
+                  {damageInfo && (
+                    <DamageHPDisplay
+                      key={`${displayedResult?.outcome}-${turn}`}
+                      char={damageInfo.char}
+                      oldHp={damageInfo.oldHp}
+                      newHp={damageInfo.newHp}
+                      maxHp={damageInfo.maxHp}
+                      playSound={playSound}
+                    />
+                  )}
+                </>
+              )
             }
           </div>
         )}
@@ -1277,22 +1664,73 @@ function BattlePhase({ myChars, oppChars, myName, oppName, turn, lastTurnResult,
         )}
       </div>
 
-      {/* Player side — flex-shrink-0 on mobile (natural height, Lock In sits at bottom naturally); fixed width on desktop */}
+      {/* Player side */}
       <div className="flex-shrink-0 lg:flex-none lg:w-72 p-3 border-t lg:border-t-0 lg:border-l border-gray-700 bg-gray-900/40 flex flex-col gap-2 overflow-y-auto">
         <TeamPanel chars={myChars} label={myName} isMe selectedCharId={selectedCharId} onSelectChar={setSelectedCharId} />
-        <div className="border-t border-gray-700 pt-3">
-          <MovePicker
-            myChars={myChars}
-            selectedCharId={selectedCharId}
-            setSelectedCharId={setSelectedCharId}
-            onLock={onLock}
-            myLock={myLock}
-            opponentName={oppName}
-            opponentLocked={opponentLocked}
-          />
+        <div className="mt-1 flex justify-center">
+          <StreakBar attackStreak={myPs?.attack_streak ?? 0} defenseStreak={myPs?.defense_streak ?? 0} />
+        </div>
+        <PowerUpBadge ps={myPs} />
+        {myLock && (
+          <div className="text-center py-1 space-y-0.5">
+            <div className="text-green-400 font-semibold text-sm">✓ Move locked!</div>
+            {opponentLocked
+              ? <div className="text-yellow-400 text-xs animate-pulse">Resolving…</div>
+              : <div className="text-gray-400 text-xs">Waiting for {oppName}…</div>
+            }
+          </div>
+        )}
+        <div
+          style={{
+            maxHeight: (myLock || showResult) ? '0px' : '480px',
+            overflow: 'hidden',
+            transition: 'max-height 0.38s cubic-bezier(0.4, 0, 0.2, 1)',
+          }}
+        >
+          <div className="border-t border-gray-700 pt-3">
+            <MovePicker
+              myChars={myChars}
+              selectedCharId={selectedCharId}
+              setSelectedCharId={setSelectedCharId}
+              onLock={onLock}
+              myLock={myLock}
+              opponentName={oppName}
+              opponentLocked={opponentLocked}
+            />
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Reflect Flash ──────────────────────────────────────────────────────────────
+
+function ReflectFlashOverlay({ charName }) {
+  return (
+    <>
+      <style>{`
+        @keyframes rf-white { 0%{opacity:1} 22%{opacity:.88} 65%{opacity:.1} 100%{opacity:0} }
+        @keyframes rf-text  { 0%,20%{opacity:0;transform:translateY(10px) scale(.94)} 40%{opacity:1;transform:translateY(0) scale(1.04)} 80%{opacity:1;transform:translateY(0) scale(1)} 100%{opacity:0} }
+        @keyframes rf-shield { 0%,15%{transform:scale(.5);opacity:0} 35%{transform:scale(1.25);opacity:1} 60%{transform:scale(1);opacity:1} 100%{opacity:0} }
+      `}</style>
+      {/* Blinding white-blue flash */}
+      <div className="absolute inset-0 z-50 pointer-events-none"
+        style={{ background:'radial-gradient(ellipse at center,#fff 0%,rgba(225,225,255,.97) 50%,rgba(180,180,255,.65) 100%)', animation:'rf-white 2.6s ease-in-out forwards' }} />
+      {/* Text + icon */}
+      <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
+        style={{ animation:'rf-text 2.6s ease-in-out forwards' }}>
+        <div className="text-center">
+          <div style={{ fontSize:'3.5rem', animation:'rf-shield 2.6s ease-in-out forwards', display:'inline-block' }}>🛡️</div>
+          <div style={{ fontFamily:'Bangers,cursive', letterSpacing:'.06em', fontSize:'2.2rem', color:'#3730a3', WebkitTextStroke:'1.5px rgba(255,255,255,.7)', textShadow:'0 0 30px rgba(200,200,255,.9),0 2px 6px rgba(0,0,50,.3)', marginTop:'.1rem' }}>
+            COUNTER!
+          </div>
+          <div style={{ color:'#1e1b4b', fontWeight:700, fontSize:'1rem', marginTop:'.3rem', textShadow:'0 0 14px rgba(255,255,255,1),0 1px 3px rgba(0,0,0,.25)' }}>
+            {charName} reflects the attack!
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -1300,91 +1738,385 @@ function BattlePhase({ myChars, oppChars, myName, oppName, turn, lastTurnResult,
 
 function CounterOverlay({ counterState, myChars, myId, myName, onCounter, durationMs }) {
   const [timeLeft, setTimeLeft] = useState(durationMs || 3000);
-  const [chosen, setChosen] = useState(false);
-  const intervalRef = useRef(null);
+  const [chosen, setChosen]     = useState(false);
+  const [counterVideo, setCounterVideo] = useState(null); // { url, option, moveIndex }
+  const intervalRef    = useRef(null);
+  const chosenRef      = useRef(false);
 
-  const isMyCounter = counterState?.type === 'stalemate' || counterState?.defender_user_id === myId;
+  const isMyCounter  = counterState?.type === 'stalemate' || counterState?.defender_user_id === myId;
   const aliveAttacks = myChars.filter(c => !c.defeated).flatMap(c => c.attacks || []);
 
+  // Play slow-down sound when the counter window opens
   useEffect(() => {
+    const snd = new Audio('https://LetsWatchOut.b-cdn.net/games/sounds/slowdown.mp3');
+    snd.volume = 0.65;
+    snd.play().catch(() => {});
+    return () => { snd.pause(); snd.src = ''; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    chosenRef.current = false;
     setTimeLeft(durationMs || 3000);
     setChosen(false);
+    setCounterVideo(null);
     intervalRef.current = setInterval(() => {
       setTimeLeft(prev => {
-        if (prev <= 100) { clearInterval(intervalRef.current); return 0; }
+        if (prev <= 100) {
+          clearInterval(intervalRef.current);
+          if (isMyCounter && !chosenRef.current) {
+            chosenRef.current = true;
+            setChosen(true);
+            onCounter({ option: 'reflect', move_index: 0 });
+          }
+          return 0;
+        }
         return prev - 100;
       });
     }, 100);
     return () => clearInterval(intervalRef.current);
-  }, [counterState, durationMs]);
+  }, [counterState, durationMs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleChoice = (option, moveIndex = 0) => {
-    if (chosen || !isMyCounter) return;
+  const submitCounter = (option, moveIndex) => {
+    chosenRef.current = true;
     setChosen(true);
     clearInterval(intervalRef.current);
     onCounter({ option, move_index: moveIndex });
   };
 
-  const pct = (timeLeft / (durationMs || 3000)) * 100;
+  const handleChoice = (option, moveIndex = 0, triggerUrl = '') => {
+    if (chosenRef.current || !isMyCounter) return;
+    if (option === 'attack' && triggerUrl) {
+      // Freeze the timer and play the move video first, then submit
+      clearInterval(intervalRef.current);
+      setCounterVideo({ url: triggerUrl, option, moveIndex });
+    } else {
+      submitCounter(option, moveIndex);
+    }
+  };
+
+  const handleVideoEnd = () => {
+    if (!counterVideo) return;
+    const { option, moveIndex } = counterVideo;
+    setCounterVideo(null);
+    submitCounter(option, moveIndex);
+  };
+
+  const total = durationMs || 3000;
+  const pct   = (timeLeft / total) * 100;
+  const barColor = timeLeft > 2000 ? '#22c55e' : timeLeft > 1000 ? '#f97316' : '#ef4444';
+  const secsTxt  = (timeLeft / 1000).toFixed(1);
 
   return (
-    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-gray-900 border border-yellow-500/50 rounded-2xl p-6 w-72 shadow-2xl shadow-yellow-900/30">
-        <div className="text-center mb-4">
-          <div
-            className="text-2xl"
-            style={{ fontFamily: 'Bangers, cursive', letterSpacing: '0.1em', color: '#facc15', WebkitTextStroke: '1px #000' }}
-          >
-            ⚡ COUNTER WINDOW ⚡
-          </div>
-          {counterState?.type === 'stalemate'
-            ? <div className="text-xs text-gray-400 mt-1">Stalemate — either fighter can react!</div>
-            : <div className="text-xs text-gray-400 mt-1">{isMyCounter ? 'You can counter!' : 'Opponent may counter…'}</div>
-          }
-        </div>
+    <>
+      <style>{`
+        @keyframes cw-bg-breathe {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.88; }
+        }
+        @keyframes cw-spotlight {
+          0%, 100% { transform: scale(1);   opacity: 0.5; }
+          50%       { transform: scale(1.4); opacity: 0.9; }
+        }
+        @keyframes cw-border-glow {
+          0%, 100% { box-shadow: 0 0 0 0   rgba(234,179,8,0.25), 0 25px 50px -12px rgba(120,53,15,0.5); }
+          50%       { box-shadow: 0 0 0 6px rgba(234,179,8,0.10), 0 25px 50px -12px rgba(120,53,15,0.5); }
+        }
+        @keyframes cw-title-flicker {
+          0%, 90%, 100% { text-shadow: 0 0 8px #facc15, 0 0 22px #fbbf24; }
+          92%            { text-shadow: 0 0 3px #facc15; }
+          95%            { text-shadow: 0 0 14px #facc15, 0 0 36px #fbbf24; }
+        }
+      `}</style>
 
-        <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden mb-4">
-          <div
-            className="h-full bg-yellow-400 transition-all duration-100 rounded-full"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+      {/* ── Dark backdrop with radial breathe ── */}
+      <div
+        className="absolute inset-0 backdrop-blur-sm"
+        style={{
+          background: 'rgba(0,0,8,0.84)',
+          animation: 'cw-bg-breathe 2s ease-in-out infinite',
+        }}
+      />
 
-        {isMyCounter && !chosen && (
-          <div className="space-y-2">
-            <button
-              onClick={() => handleChoice('reflect')}
-              className="w-full py-2.5 rounded-lg border border-blue-500 bg-blue-900/40 text-blue-300 font-medium text-sm hover:bg-blue-900/60 transition-colors"
-            >
-              <div className="font-bold">REFLECT</div>
-              <div className="text-xs opacity-70">Mirror 2% of opponent's power back</div>
-            </button>
-            <div className="text-xs text-gray-500 text-center">— or —</div>
-            <div className="space-y-1">
-              <div className="text-xs text-gray-400 mb-1">STRIKE BACK with one of your attacks (at 5% power):</div>
-              {aliveAttacks.map((m, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleChoice('attack', i)}
-                  className="w-full py-1.5 rounded-lg border border-red-700 bg-red-900/30 text-red-300 text-xs hover:bg-red-900/50 transition-colors text-left px-3"
+      {/* Scan-line texture */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.05) 3px, rgba(0,0,0,0.05) 4px)',
+        }}
+      />
+
+      {/* Radial spotlight that slowly expands */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: 'radial-gradient(ellipse 55% 55% at center, rgba(234,179,8,0.06) 0%, transparent 70%)',
+          animation: 'cw-spotlight 2s ease-in-out infinite',
+        }}
+      />
+
+      {/* ── Modal ── */}
+      <div className="absolute inset-0 flex items-center justify-center z-50">
+        <div
+          className="bg-gray-900/95 border border-yellow-500/60 rounded-2xl p-6 w-80 relative overflow-hidden"
+          style={{ animation: 'cw-border-glow 1.6s ease-in-out infinite' }}
+        >
+          {/* Top edge shine */}
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-yellow-400/50 to-transparent" />
+
+          {/* ── Counter move video ── */}
+          {counterVideo && (
+            <div className="flex flex-col items-center gap-3">
+              <div className="text-yellow-400 font-bold text-sm tracking-wide">⚡ Counter Strike!</div>
+              <video
+                src={counterVideo.url}
+                autoPlay
+                playsInline
+                className="w-full rounded-xl max-h-52 object-cover"
+                onEnded={handleVideoEnd}
+                onError={handleVideoEnd}
+              />
+              <div className="text-xs text-gray-400 animate-pulse">Resolving…</div>
+            </div>
+          )}
+
+          {/* ── Main content (hidden while video plays) ── */}
+          {!counterVideo && (
+            <>
+              {/* Title */}
+              <div className="text-center mb-3">
+                <div
+                  className="text-2xl"
+                  style={{
+                    fontFamily: 'Bangers, cursive',
+                    letterSpacing: '0.1em',
+                    color: '#facc15',
+                    WebkitTextStroke: '1px #000',
+                    animation: 'cw-title-flicker 3s ease-in-out infinite',
+                  }}
                 >
-                  {m.name || '(unnamed)'} <span className="opacity-60">· {m.power} pts</span>
-                </button>
+                  ⚡ COUNTER WINDOW ⚡
+                </div>
+                {counterState?.type === 'stalemate'
+                  ? <div className="text-xs text-gray-400 mt-1">Stalemate — <span className="text-yellow-400 font-semibold">either fighter</span> can react!</div>
+                  : isMyCounter
+                    ? <div className="text-xs text-gray-400 mt-1">You can <span className="text-yellow-400 font-semibold">counter</span> their attack!</div>
+                    : <div className="text-xs text-gray-400 mt-1"><span className="text-yellow-400 font-semibold">Your opponent</span> has a window to counter — stay sharp!</div>
+                }
+              </div>
+
+              {/* Timer text */}
+              <div className="text-center text-xs font-semibold mb-1.5 transition-colors duration-300" style={{ color: barColor }}>
+                {secsTxt}s remaining
+              </div>
+
+              {/* Color bar */}
+              <div className="w-full h-2.5 bg-gray-700/80 rounded-full overflow-hidden mb-4">
+                <div
+                  className="h-full rounded-full transition-all duration-100"
+                  style={{
+                    width: `${pct}%`,
+                    background: `linear-gradient(90deg, ${barColor}99, ${barColor})`,
+                    boxShadow: `0 0 8px ${barColor}70`,
+                  }}
+                />
+              </div>
+
+              {/* Choices */}
+              {isMyCounter && !chosen && (
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleChoice('reflect')}
+                    className="w-full py-2.5 rounded-lg border border-blue-500 bg-blue-900/40 text-blue-300 font-medium text-sm hover:bg-blue-900/60 transition-colors"
+                  >
+                    <div className="font-bold">REFLECT</div>
+                    <div className="text-xs opacity-70">Mirror 2% of opponent's power back</div>
+                  </button>
+                  <div className="text-xs text-gray-500 text-center">— or —</div>
+                  <div className="space-y-1">
+                    <div className="text-xs text-gray-400 mb-1">STRIKE BACK (5% power):</div>
+                    {aliveAttacks.map((m, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleChoice('attack', i, m.trigger_url || '')}
+                        className="w-full py-1.5 rounded-lg border border-red-700 bg-red-900/30 text-red-300 text-xs hover:bg-red-900/50 transition-colors text-left px-3 flex items-center gap-2"
+                      >
+                        {m.trigger_url && <span className="text-gray-500">▶</span>}
+                        <span className="flex-1">{m.name || '(unnamed)'}</span>
+                        <span className="opacity-60">{m.power} pts</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {chosen && <div className="text-center text-green-400 font-medium py-2">Move sent!</div>}
+              {!isMyCounter && (
+                <div className="text-center py-3">
+                  <div className="text-gray-300 text-sm font-medium animate-pulse">
+                    {counterState?.type === 'stalemate' ? '⚔️ Either fighter can react…' : '⚡ Opponent is deciding…'}
+                  </div>
+                  <div className="text-gray-500 text-xs mt-1">
+                    {counterState?.type === 'stalemate'
+                      ? 'Watch the bar — they may counter or reflect at any moment'
+                      : 'They can reflect your attack or strike back with 5% power'
+                    }
+                  </div>
+                </div>
+              )}
+              {timeLeft === 0 && <div className="text-center text-gray-500 text-xs mt-2">Window closed.</div>}
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── 3D Dice ───────────────────────────────────────────────────────────────────
+
+function Dice3D({ value = 1, rolling = false, glowColor = null }) {
+  const S = 80; // cube side length in px
+
+  // Cube rotation that brings each face number toward the camera
+  const FACE_ROTATIONS = {
+    1: 'rotateX(0deg) rotateY(0deg)',
+    2: 'rotateY(-90deg)',
+    3: 'rotateX(90deg)',
+    4: 'rotateX(-90deg)',
+    5: 'rotateY(90deg)',
+    6: 'rotateY(180deg)',
+  };
+
+  // Pip positions [x%, y%] for each face value
+  const PIPS = {
+    1: [[50,50]],
+    2: [[75,25],[25,75]],
+    3: [[75,25],[50,50],[25,75]],
+    4: [[25,25],[75,25],[25,75],[75,75]],
+    5: [[25,25],[75,25],[50,50],[25,75],[75,75]],
+    6: [[25,20],[75,20],[25,50],[75,50],[25,80],[75,80]],
+  };
+
+  // [faceNumber, CSS transform that positions this face on the cube]
+  const FACES = [
+    [1, `translateZ(${S/2}px)`],
+    [6, `rotateY(180deg) translateZ(${S/2}px)`],
+    [2, `rotateY(90deg) translateZ(${S/2}px)`],
+    [5, `rotateY(-90deg) translateZ(${S/2}px)`],
+    [3, `rotateX(-90deg) translateZ(${S/2}px)`],
+    [4, `rotateX(90deg) translateZ(${S/2}px)`],
+  ];
+
+  const glow = glowColor
+    ? `drop-shadow(0 0 20px ${glowColor}cc)`
+    : 'drop-shadow(0 0 14px rgba(245,158,11,0.5))';
+
+  return (
+    <>
+      <style>{`
+        @keyframes dice-tumble {
+          0%   { transform: rotateX(0deg)    rotateY(0deg)    rotateZ(0deg); }
+          100% { transform: rotateX(720deg)  rotateY(1080deg) rotateZ(360deg); }
+        }
+      `}</style>
+      <div style={{ perspective: '300px', width: S, height: S, filter: glow }}>
+        <div style={{
+          width: S, height: S,
+          position: 'relative',
+          transformStyle: 'preserve-3d',
+          animation: rolling ? 'dice-tumble 0.65s linear infinite' : undefined,
+          transform: rolling ? undefined : (FACE_ROTATIONS[value] ?? FACE_ROTATIONS[1]),
+          transition: rolling ? undefined : 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1)',
+        }}>
+          {FACES.map(([n, faceTransform]) => (
+            <div key={n} style={{
+              position: 'absolute',
+              width: S, height: S,
+              transform: faceTransform,
+              background: 'linear-gradient(145deg, #f5f5ea 0%, #e2e2d0 100%)',
+              border: '2px solid rgba(180,170,140,0.7)',
+              borderRadius: 11,
+              boxSizing: 'border-box',
+            }}>
+              {(PIPS[n] || []).map(([x, y], i) => (
+                <div key={i} style={{
+                  position: 'absolute',
+                  width: 13, height: 13,
+                  background: '#181826',
+                  borderRadius: '50%',
+                  left: `${x}%`,
+                  top: `${y}%`,
+                  transform: 'translate(-50%, -50%)',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.35)',
+                }}/>
               ))}
             </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Dice Roll Overlay ──────────────────────────────────────────────────────────
+
+function DiceRollOverlay({ rollType, opponentAlsoRolling, myRollResult, onRoll, hasRolled }) {
+  const powerUp = myRollResult != null ? POWER_UP_INFO[DICE_POWER_MAP[myRollResult - 1]] : null;
+  const rollLabel = rollType === 'attack' ? '⚔️ Attack Bonus Roll' : '🛡️ Defense Bonus Roll';
+
+  return (
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(4px)' }}
+    >
+      <div className="flex flex-col items-center gap-5 px-6 py-8 rounded-2xl border border-gray-700 bg-gray-900/90 max-w-sm w-full mx-4">
+        {/* Title */}
+        <div className="text-center">
+          <div className="text-lg font-bold text-yellow-400 tracking-wide">{rollLabel}</div>
+          <div className="text-xs text-gray-400 mt-1">3 consecutive wins unlocked a bonus!</div>
+        </div>
+
+        {/* 3D Dice */}
+        <div className="flex flex-col items-center gap-4 py-2">
+          <Dice3D
+            value={myRollResult || 1}
+            rolling={hasRolled && myRollResult == null}
+            glowColor={powerUp?.color}
+          />
+          {myRollResult != null && powerUp && (
+            <div
+              className="flex flex-col items-center gap-1 px-4 py-3 rounded-xl border"
+              style={{ borderColor: powerUp.color, background: `${powerUp.color}18` }}
+            >
+              <div className="text-2xl">{powerUp.icon}</div>
+              <div className="font-bold tracking-widest text-sm" style={{ color: powerUp.color }}>{powerUp.label}</div>
+              <div className="text-xs text-gray-300 text-center">{powerUp.desc}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Roll button */}
+        {!hasRolled ? (
+          <button
+            onClick={onRoll}
+            className="px-8 py-3 rounded-xl font-bold text-base text-white transition-all active:scale-95"
+            style={{ background: 'linear-gradient(135deg, #f59e0b, #ef4444)' }}
+          >
+            🎲 ROLL!
+          </button>
+        ) : myRollResult == null ? (
+          <div className="text-sm text-gray-400 animate-pulse">Rolling…</div>
+        ) : (
+          <div className="text-sm text-green-400 font-medium">Power-up applied!</div>
+        )}
+
+        {/* Opponent status */}
+        {opponentAlsoRolling && (
+          <div className="text-xs text-gray-500 border-t border-gray-700 pt-3 w-full text-center">
+            {myRollResult != null
+              ? 'Waiting for opponent to roll…'
+              : 'Opponent also has a pending roll'}
           </div>
-        )}
-
-        {chosen && (
-          <div className="text-center text-green-400 font-medium py-2">Move sent!</div>
-        )}
-
-        {!isMyCounter && (
-          <div className="text-center text-gray-400 text-sm py-2 animate-pulse">Waiting for reaction…</div>
-        )}
-
-        {timeLeft === 0 && (
-          <div className="text-center text-gray-500 text-xs mt-2">Window closed.</div>
         )}
       </div>
     </div>
@@ -1393,14 +2125,17 @@ function CounterOverlay({ counterState, myChars, myId, myName, onCounter, durati
 
 // ── Game Over ─────────────────────────────────────────────────────────────────
 
-function GameOverScreen({ players, currentUserId, winnerPlayerId, myChars, oppChars, opponentName, onClose }) {
+function GameOverScreen({ players, currentUserId, winnerPlayerId, myChars, oppChars, opponentName, onClose, myStats, oppStats }) {
   const iWon = winnerPlayerId === currentUserId;
   const isDraw = winnerPlayerId == null;
+  // Use xl sizing when each side has only 1 character, large for 2, large for 3
+  const maxChars = Math.max(myChars.length, oppChars.length);
+  const useXL = maxChars <= 1;
 
   return (
-    <div className="absolute inset-0 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center z-50 p-6">
+    <div className="absolute inset-0 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center z-50 p-4 sm:p-6">
       <div
-        className="text-5xl mb-4"
+        className="text-5xl sm:text-6xl mb-3"
         style={{
           fontFamily: 'Bangers, cursive',
           letterSpacing: '0.1em',
@@ -1412,25 +2147,57 @@ function GameOverScreen({ players, currentUserId, winnerPlayerId, myChars, oppCh
         {isDraw ? "🤝 DRAW!" : iWon ? "🏆 VICTORY!" : "💀 DEFEATED!"}
       </div>
 
-      <div className="text-gray-300 text-sm mb-6">
+      <div className="text-gray-300 text-sm mb-4 sm:mb-6">
         {isDraw ? "Both teams fought to a standstill!" : iWon ? "You won the VS Battle!" : `${opponentName} won the battle.`}
       </div>
 
-      <div className="flex gap-8 mb-8">
-        <div className="flex flex-col items-center gap-2">
-          <div className="text-xs text-gray-400 mb-1">You</div>
-          <div className="flex gap-2">
-            {myChars.map(c => <CharMini key={c.id} char={c} />)}
+      {/* Character showcase — takes up most of the screen on desktop */}
+      <div className="flex gap-6 sm:gap-10 mb-6 sm:mb-8 flex-wrap justify-center items-center min-h-[40vh] sm:min-h-[50vh] lg:min-h-[60vh]">
+        <div className="flex flex-col items-center gap-2 sm:gap-3">
+          <div className="text-sm sm:text-base text-gray-400 mb-1 font-medium">You</div>
+          <div className={`flex ${maxChars === 1 ? 'justify-center' : 'gap-3 sm:gap-5 flex-wrap justify-center'}`}>
+            {myChars.map(c => <CharMini key={c.id} char={c} xl={useXL} large={!useXL} />)}
           </div>
         </div>
-        <div className="text-gray-600 text-2xl self-center">VS</div>
-        <div className="flex flex-col items-center gap-2">
-          <div className="text-xs text-gray-400 mb-1">{opponentName}</div>
-          <div className="flex gap-2">
-            {oppChars.map(c => <CharMini key={c.id} char={c} />)}
+        <div className="text-gray-600 text-3xl sm:text-4xl self-center font-black">VS</div>
+        <div className="flex flex-col items-center gap-2 sm:gap-3">
+          <div className="text-sm sm:text-base text-gray-400 mb-1 font-medium">{opponentName}</div>
+          <div className={`flex ${maxChars === 1 ? 'justify-center' : 'gap-3 sm:gap-5 flex-wrap justify-center'}`}>
+            {oppChars.map(c => <CharMini key={c.id} char={c} xl={useXL} large={!useXL} />)}
           </div>
         </div>
       </div>
+
+      {/* Battle Stats */}
+      {(myStats || oppStats) && (
+        <div className="mb-4 w-full max-w-sm border border-gray-700 rounded-xl overflow-hidden">
+          <div className="bg-gray-800/60 px-3 py-1.5 text-center text-xs font-bold text-gray-400 uppercase tracking-wider">Battle Stats</div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-700">
+                <th className="py-1.5 px-2 text-left text-gray-500 font-normal">Stat</th>
+                <th className="py-1.5 px-2 text-right text-blue-400 font-semibold">You</th>
+                <th className="py-1.5 px-2 text-right text-red-400 font-semibold">{opponentName}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { label: 'Damage Dealt',    myKey: 'damage_dealt',   oppKey: 'damage_dealt' },
+                { label: 'Attacks Landed',  myKey: 'attacks_landed', oppKey: 'attacks_landed' },
+                { label: 'Blocks',          myKey: 'blocks',         oppKey: 'blocks' },
+                { label: 'Counters',        myKey: 'counters',       oppKey: 'counters' },
+                { label: 'Biggest Hit',     myKey: 'biggest_hit',    oppKey: 'biggest_hit' },
+              ].map(({ label, myKey, oppKey }) => (
+                <tr key={myKey} className="border-b border-gray-800 last:border-0">
+                  <td className="py-1 px-2 text-gray-400">{label}</td>
+                  <td className="py-1 px-2 text-right text-white font-medium">{myStats?.[myKey] ?? '—'}</td>
+                  <td className="py-1 px-2 text-right text-white font-medium">{oppStats?.[oppKey] ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <button
         onClick={onClose}
@@ -1454,6 +2221,8 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
   const lastTurnResult = gs.last_turn_result || null;
   const counterState = gs.counter_state || null;
   const turn = Number(gs.turn) || 0;
+  const pendingDiceRolls = gs.pending_dice_rolls || {};
+  const playerStats = gameState?.player_stats || {};
 
   const myIdStr = String(currentUserId);
   const opponentPlayerInfo = players.find(p => String(p.user_id) !== myIdStr);
@@ -1467,6 +2236,13 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
       characters: raw.characters || [],
       confirmed: raw.confirmed || false,
       hype_meter: raw.hype_meter || 0,
+      attack_streak: raw.attack_streak || 0,
+      defense_streak: raw.defense_streak || 0,
+      pending_stun: raw.pending_stun || false,
+      pending_atk_boost: raw.pending_atk_boost || false,
+      pending_shield: raw.pending_shield || false,
+      pending_def_boost: raw.pending_def_boost || false,
+      pending_poison: raw.pending_poison || '',
     };
   };
   const myState = extractState(myIdStr);
@@ -1555,6 +2331,12 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
     }
   }, [gameState?.game_session_id, roomId]);
 
+  // Persist roster to localStorage so "Load Saved" works next game
+  const vsRosterKey = `vs_saved_roster_${currentUserId}`;
+  const saveRosterToStorage = useCallback((updatedRoster) => {
+    try { localStorage.setItem(vsRosterKey, JSON.stringify(updatedRoster)); } catch {}
+  }, [vsRosterKey]);
+
   const handleSubmitChar = useCallback(async (charDraft) => {
     let imageUrl = charDraft.imageUrl || '';
     if (charDraft._imageFile) {
@@ -1574,40 +2356,127 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
     const attacks  = await processMoves(charDraft.attacks.map(m => ({ ...m, move_type: 'attack' })));
     const defenses = await processMoves(charDraft.defenses.map(m => ({ ...m, move_type: 'defense' })));
 
-    onMove({
-      move_type: 'submit_character',
-      move_data: {
-        id: charDraft.id,
-        name: charDraft.name.trim(),
-        tier: charDraft.tier,
-        image_url: imageUrl,
-        attacks,
-        defenses,
-      },
-    });
-    // Optimistic update — show character immediately without waiting for WS echo
-    const tierDef = TIERS[charDraft.tier] || TIERS['Regular'];
-    setPendingChars(prev => [...prev, {
+    const charData = {
       id: charDraft.id,
       name: charDraft.name.trim(),
       tier: charDraft.tier,
       image_url: imageUrl,
-      hp: tierDef.hp,
-      max_hp: tierDef.hp,
       attacks,
       defenses,
-    }]);
-    setDraft(emptyDraft());
-  }, [onMove, uploadAsset, setPendingChars]);
+    };
 
-  const handleReady   = useCallback(() => { onMove({ move_type: 'confirm_builds', move_data: {} }); }, [onMove]);
+    // Optimistic update — characters are sent atomically with confirm_builds
+    const tierDef = TIERS[charDraft.tier] || TIERS['Regular'];
+    setPendingChars(prev => {
+      const next = [...prev, {
+        id: charDraft.id,
+        name: charDraft.name.trim(),
+        tier: charDraft.tier,
+        image_url: imageUrl,
+        hp: tierDef.hp,
+        max_hp: tierDef.hp,
+        attacks,
+        defenses,
+      }];
+      return next;
+    });
+
+    // Save a serialisable snapshot (no File/Blob references) for "Load Saved Roster"
+    const savedEntry = { name: charData.name, tier: charData.tier, image_url: imageUrl, attacks, defenses };
+    try {
+      const existing = JSON.parse(localStorage.getItem(vsRosterKey) || '[]');
+      const updated = [...existing.filter(c => c.name !== savedEntry.name), savedEntry].slice(-3);
+      saveRosterToStorage(updated);
+    } catch {}
+
+    setDraft(emptyDraft());
+  }, [uploadAsset, setPendingChars, vsRosterKey, saveRosterToStorage]);
+
+  const handleLoadSavedRoster = useCallback(() => {
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem(vsRosterKey) || '[]'); } catch { return; }
+    for (const c of saved) {
+      const id = genId();
+      const tierDef = TIERS[c.tier] || TIERS['Regular'];
+      setPendingChars(prev => [...prev, {
+        id, name: c.name, tier: c.tier, image_url: c.image_url || '',
+        hp: tierDef.hp, max_hp: tierDef.hp, attacks: c.attacks || [], defenses: c.defenses || [],
+      }]);
+    }
+  }, [vsRosterKey, setPendingChars]);
+
+  const handleReady = useCallback(() => {
+    const charPayload = displayRoster.map(c => ({
+      id: c.id,
+      name: c.name,
+      tier: c.tier,
+      image_url: c.image_url || '',
+      attacks: c.attacks || [],
+      defenses: c.defenses || [],
+    }));
+    onMove({ move_type: 'confirm_builds', move_data: { characters: charPayload } });
+  }, [onMove, displayRoster]);
   const handleLock    = useCallback((lockData) => {
     setMyLock(lockData);
     onMove({ move_type: 'lock_move', move_data: lockData });
-    playSound(lockData.move_type === 'attack' ? 'attackMove' : 'defenseMove');
-  }, [onMove, playSound]);
+    // Determine if the locked move is a default (Punch/Block) or a custom one,
+    // then play the matching sound.
+    const char = myRoster.find(c => c.id === lockData.char_id);
+    const moveList = lockData.vs_move_type === 'attack' ? char?.attacks : char?.defenses;
+    const lockedMove = moveList?.[lockData.move_index];
+    const isDefault = lockedMove?.is_default === true;
+    if (lockData.vs_move_type === 'attack') {
+      playSound(isDefault ? 'attackMove' : 'superAttack');
+    } else {
+      playSound(isDefault ? 'defenseMove' : 'superDefense');
+    }
+  }, [onMove, playSound, myRoster]);
   const handleCounter = useCallback((counterData) => { onMove({ move_type: 'counter_choice', move_data: counterData }); }, [onMove]);
-  const handleEndGame = () => { if (onEndGame) onEndGame(); else onClose(); };
+  const handleEndGame = () => {
+    if (gameOver) return;
+    if (onEndGame) onEndGame(); else onClose();
+  };
+
+  // Dice roll state — reset when phase leaves dice_roll
+  const [hasRolled, setHasRolled] = useState(false);
+  const [myRollResult, setMyRollResult] = useState(null);
+  const prevPhaseForDiceRef = useRef(phase);
+  useEffect(() => {
+    if (prevPhaseForDiceRef.current === 'dice_roll' && phase !== 'dice_roll') {
+      setHasRolled(false);
+      setMyRollResult(null);
+    }
+    prevPhaseForDiceRef.current = phase;
+  }, [phase]);
+
+  // When server echoes the dice_roll_result (dice value appears in game_state)
+  useEffect(() => {
+    if (phase !== 'dice_roll') return;
+    const myResult = gs.dice_roll_result?.[myIdStr];
+    if (myResult != null) setMyRollResult(Number(myResult));
+  }, [phase, gs.dice_roll_result, myIdStr]);
+
+  const handleDiceRoll = useCallback(() => {
+    if (hasRolled) return;
+    setHasRolled(true);
+    onMove({ move_type: 'dice_roll_result', move_data: {} });
+  }, [hasRolled, onMove]);
+
+  const myRollType = pendingDiceRolls[myIdStr] || null;
+  const oppRollType = opponentIdStr ? (pendingDiceRolls[opponentIdStr] || null) : null;
+
+  // Reflect flash — shown to all players when a counter_result with reflect fires
+  const [reflectFlash, setReflectFlash] = useState(null);
+  useEffect(() => {
+    if (lastTurnResult?.outcome !== 'counter_result' || lastTurnResult?.option !== 'reflect') return;
+    const actorUID = Number(lastTurnResult.actor) || 0;
+    const charId   = lastTurnResult.actor_char_id;
+    const roster   = actorUID === currentUserId ? myRoster : oppRoster;
+    const char     = roster?.find(c => c.id === charId);
+    setReflectFlash(char?.name || 'Fighter');
+    const t = setTimeout(() => setReflectFlash(null), 2700);
+    return () => clearTimeout(t);
+  }, [lastTurnResult?.outcome, lastTurnResult?.option, lastTurnResult?.actor_char_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="fixed inset-0 bg-gray-950 flex flex-col overflow-hidden z-50">
@@ -1623,10 +2492,10 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {isPlayer && (phase === 'battle' || phase === 'counter_window') && (
+          {isPlayer && (phase === 'battle' || phase === 'counter_window' || phase === 'dice_roll') && !gameOver && (
             <button
               onClick={handleEndGame}
-              className="text-xs font-semibold text-white bg-red-600 hover:bg-red-500 active:bg-red-700 px-3 py-1 rounded transition-colors"
+              className="text-sm font-semibold text-white bg-red-600 hover:bg-red-500 active:bg-red-700 px-4 py-0.5 rounded-2xl transition-colors"
             >
               End Game
             </button>
@@ -1651,12 +2520,14 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
             onSubmitChar={handleSubmitChar}
             onReady={handleReady}
             isReady={myConfirmed}
+            onLoadSaved={handleLoadSavedRoster}
+            savedRosterKey={`vs_saved_roster_${currentUserId}`}
           />
         )}
 
         {phase === 'confirming' && (
           <ConfirmingPhase
-            myRoster={myRoster}
+            myRoster={displayRoster}
             opponentRoster={oppRoster}
             myConfirmed={myConfirmed}
             opponentConfirmed={oppConfirmed}
@@ -1665,7 +2536,7 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
           />
         )}
 
-        {(phase === 'battle' || phase === 'counter_window') && (
+        {(phase === 'battle' || phase === 'counter_window' || phase === 'dice_roll') && (
           <BattlePhase
             myChars={myRoster}
             oppChars={oppRoster}
@@ -1677,6 +2548,8 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
             myLock={myLock}
             opponentLocked={opponentLocked[opponentIdStr] || false}
             playSound={playSound}
+            myPs={myState}
+            oppPs={oppState}
           />
         )}
 
@@ -1691,6 +2564,18 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
           />
         )}
 
+        {reflectFlash && <ReflectFlashOverlay charName={reflectFlash} />}
+
+        {phase === 'dice_roll' && myRollType && isPlayer && (
+          <DiceRollOverlay
+            rollType={myRollType}
+            opponentAlsoRolling={!!oppRollType}
+            myRollResult={myRollResult}
+            onRoll={handleDiceRoll}
+            hasRolled={hasRolled}
+          />
+        )}
+
         {gameOver && (
           <GameOverScreen
             players={players}
@@ -1700,6 +2585,8 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
             oppChars={oppRoster}
             opponentName={oppName}
             onClose={onClose}
+            myStats={playerStats[myIdStr]}
+            oppStats={opponentIdStr ? playerStats[opponentIdStr] : null}
           />
         )}
 

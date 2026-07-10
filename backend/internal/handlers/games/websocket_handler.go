@@ -244,8 +244,8 @@ func (h *GameWebSocketHandler) handleCreateTournament(client interface{}, data m
         h.sendError(client, "a tournament needs at least 4 players")
         return
     }
-    if len(players) > 8 {
-        h.sendError(client, "a tournament supports at most 8 players")
+    if len(players) > 16 {
+        h.sendError(client, "a tournament supports at most 16 players")
         return
     }
 
@@ -527,6 +527,12 @@ func (h *GameWebSocketHandler) CleanupPlayerDisconnect(roomID uint, userID uint)
     if err != nil {
         log.Printf("⚠️ [GameWebSocketHandler] Error handling disconnect: %v", err)
     }
+}
+
+// CancelDisconnectGrace cancels a pending forfeit timer for a player who
+// reconnected within the 30-second grace window.
+func (h *GameWebSocketHandler) CancelDisconnectGrace(roomID uint, userID uint) {
+    h.gameManager.CancelDisconnectTimer(userID)
 }
 
 func (h *GameWebSocketHandler) sendError(client interface{}, errorMsg string) {

@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"wewatch-backend/internal/handlers"
+	"wewatch-backend/internal/handlers/games"
 	"wewatch-backend/internal/middleware"
 	"wewatch-backend/internal/models"
 	"wewatch-backend/internal/utils"
@@ -793,6 +794,7 @@ func main() {
 
 		// --- COMMUNITY EVENTS ROUTES ---
 		// GET is public (handled separately below); POST routes require auth
+		protected.GET("/games/vs-battle/leaderboard", games.GetVsBattleLeaderboardHandler(DB)) // GET /api/games/vs-battle/leaderboard
 		protected.POST("/community-requests", handlers.CreateCommunityRequestHandler)                   // POST /api/community-requests
 		protected.POST("/community-requests/upload-image", handlers.UploadCommunityRequestImageHandler) // POST /api/community-requests/upload-image
 		protected.POST("/community-requests/:id/upvote", handlers.ToggleCommunityRequestUpvoteHandler)  // POST /api/community-requests/:id/upvote

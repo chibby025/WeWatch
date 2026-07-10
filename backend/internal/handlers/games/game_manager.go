@@ -3,6 +3,7 @@ package games
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ type GameManager struct {
 	mu                sync.RWMutex
 	hub               MessageHub
 	TournamentManager *TournamentManager
+	disconnectTimers  sync.Map // key: userID (uint) → *time.Timer; pending forfeit grace timers
 }
 
 // GameSessionState holds the runtime state of an active game
@@ -312,6 +314,39 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 		})
 	}
 
+	// Announce VS Battle winner to the whole room so RoomPageNew can display it.
+	if gameState.GameSession.GameType == "vs_battle" && winnerID != nil {
+		if hub, ok := gm.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+			charNames := VSWinnerCharNames(gameState, *winnerID)
+			var winner models.User
+			winnerName := "Unknown"
+			if err := gm.db.Select("username").First(&winner, *winnerID).Error; err == nil {
+				winnerName = winner.Username
+			}
+			// Collect per-player battle stats
+			playerStats := map[string]interface{}{}
+			if players, err := vsBuildState(gameState); err == nil {
+				for uid, ps := range players {
+					key := fmt.Sprintf("%d", uid)
+					playerStats[key] = map[string]interface{}{
+						"damage_dealt":   ps.DamageDealt,
+						"attacks_landed": ps.AttacksLanded,
+						"blocks":         ps.Blocks,
+						"counters":       ps.Counters,
+						"biggest_hit":    ps.BiggestHit,
+					}
+				}
+			}
+			hub.BroadcastJSON(roomID, map[string]interface{}{
+				"type":         "vs_battle_result",
+				"winner_id":    *winnerID,
+				"winner_name":  winnerName,
+				"winner_chars": strings.Join(charNames, ", "),
+				"player_stats": playerStats,
+			})
+		}
+	}
+
 	delete(gm.activeGames, gameSessionID)
 	delete(gm.roomActiveGames, roomID)
 
@@ -378,18 +413,22 @@ func (gm *GameManager) GetPlayerHand(roomID uint, userID uint) ([]string, bool) 
 	return append([]string{}, hand...), true
 }
 
-// HandlePlayerDisconnect handles player disconnection during a game
+// HandlePlayerDisconnect handles player disconnection during a game.
+// Starts a 30-second grace period before forfeiting so a page refresh
+// doesn't immediately end the game. Cancelled by CancelDisconnectTimer
+// when the player reconnects within the window.
 func (gm *GameManager) HandlePlayerDisconnect(roomID uint, userID uint) error {
 	gm.mu.Lock()
-	defer gm.mu.Unlock()
 
 	gameSessionID, exists := gm.roomActiveGames[roomID]
 	if !exists {
+		gm.mu.Unlock()
 		return nil
 	}
 
 	gameState, exists := gm.activeGames[gameSessionID]
 	if !exists {
+		gm.mu.Unlock()
 		return nil
 	}
 
@@ -402,6 +441,7 @@ func (gm *GameManager) HandlePlayerDisconnect(roomID uint, userID uint) error {
 	}
 
 	if !isPlayer {
+		gm.mu.Unlock()
 		return nil
 	}
 
@@ -414,10 +454,38 @@ func (gm *GameManager) HandlePlayerDisconnect(roomID uint, userID uint) error {
 			}
 		}
 	}
+	capturedWinner := winnerID
+	capturedSession := gameSessionID
+	gm.mu.Unlock()
 
-	log.Printf("🎮 [GameManager] Player %d disconnected from game %d - forfeiting", userID, gameSessionID)
+	// Cancel any previous timer for this user (e.g. double-disconnect edge case)
+	if prev, loaded := gm.disconnectTimers.LoadAndDelete(userID); loaded {
+		prev.(*time.Timer).Stop()
+	}
 
-	return gm.endGameLocked(gameSessionID, winnerID, "forfeited")
+	log.Printf("🎮 [GameManager] Player %d disconnected from game %d — 30s grace period started", userID, capturedSession)
+
+	timer := time.AfterFunc(30*time.Second, func() {
+		gm.disconnectTimers.Delete(userID)
+		gm.mu.Lock()
+		defer gm.mu.Unlock()
+		if _, still := gm.activeGames[capturedSession]; !still {
+			return // game already ended while we were waiting
+		}
+		log.Printf("🎮 [GameManager] Player %d grace period expired — forfeiting game %d", userID, capturedSession)
+		gm.endGameLocked(capturedSession, capturedWinner, "forfeited")
+	})
+	gm.disconnectTimers.Store(userID, timer)
+
+	return nil
+}
+
+// CancelDisconnectTimer cancels a pending forfeit timer for a reconnecting player.
+func (gm *GameManager) CancelDisconnectTimer(userID uint) {
+	if prev, loaded := gm.disconnectTimers.LoadAndDelete(userID); loaded {
+		prev.(*time.Timer).Stop()
+		log.Printf("🎮 [GameManager] Player %d reconnected — forfeit timer cancelled", userID)
+	}
 }
 
 // BroadcastGameState sends the current game state to all room members as a text frame.

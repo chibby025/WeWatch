@@ -413,6 +413,7 @@ const LobbyPage = () => {
   // Community Events carousel data
   const [communityEventsData, setCommunityEventsData] = useState({ scheduledEvents: [], requests: [] });
   const [leaderboardData, setLeaderboardData] = useState([]);
+  const [vsBattleLeaderboardData, setVsBattleLeaderboardData] = useState([]);
   const [showCommunityEventsView, setShowCommunityEventsView] = useState(false);
   const communityEventsTuneRef = React.useRef(null);
   const [communityCardVisible, setCommunityCardVisible] = React.useState(false);
@@ -1255,6 +1256,16 @@ const LobbyPage = () => {
     try {
       const data = await getRoomsLeaderboard();
       setLeaderboardData(data.rooms || []);
+    } catch (err) {
+      // Non-critical — fail silently
+    }
+  };
+
+  const fetchVsBattleLeaderboard = async () => {
+    try {
+      const { getVsBattleLeaderboard } = await import('../services/api');
+      const data = await getVsBattleLeaderboard();
+      setVsBattleLeaderboardData(data.players || []);
     } catch (err) {
       // Non-critical — fail silently
     }
@@ -2506,6 +2517,7 @@ const LobbyPage = () => {
       fetchStatusFeed();
       fetchCommunityEvents();
       fetchLeaderboard();
+      fetchVsBattleLeaderboard();
       fetchUpcomingEventsCount();
       prefetchWatchingNowContent();
     }, 700);
@@ -4869,6 +4881,7 @@ const LobbyPage = () => {
                   scheduledEvents={communityEventsData.scheduledEvents}
                   requests={communityEventsData.requests}
                   leaderboard={leaderboardData}
+                  vsBattleLeaderboard={vsBattleLeaderboardData}
                   currentUser={currentUser}
                   apiBaseUrl={API_BASE_URL}
                   onRSVP={(event) => { setSelectedEventForCalendar(event); setIsCalendarModalOpen(true); }}
@@ -7192,6 +7205,7 @@ const LobbyPage = () => {
               scheduledEvents={communityEventsData.scheduledEvents}
               requests={communityEventsData.requests}
               leaderboard={leaderboardData}
+              vsBattleLeaderboard={vsBattleLeaderboardData}
               currentUser={currentUser}
               apiBaseUrl={API_BASE_URL}
               onRSVP={(event) => { setShowCommunityEventsView(false); setSelectedEventForCalendar(event); setIsCalendarModalOpen(true); }}
