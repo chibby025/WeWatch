@@ -70,6 +70,17 @@ const games = [
     heavy: true
   },
   {
+    id: 'fowl_play',
+    name: 'Fowl Play',
+    description: 'Shoot the ducks before they fly away!',
+    minPlayers: 1,
+    maxPlayers: 1,
+    image: `${GAME_POSTERS_BASE_URL}/fowl_play_v2.webp`,
+    disabled: false,
+    type: 'arcade',
+    heavy: false
+  },
+  {
     id: 'space_shooter',
     name: 'Stellar Swarm',
     description: 'Real-time 3D dogfights — everyone\'s a real pilot',

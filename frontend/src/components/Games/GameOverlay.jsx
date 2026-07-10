@@ -24,6 +24,7 @@ import DrawGuessGame from './DrawGuessGame';
 const DoomGame = lazy(() => import('./DoomGame'));
 const ShooterGame = lazy(() => import('./ShooterGame'));
 const VSBattleGame = lazy(() => import('./VsBattleGame'));
+const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
 
 export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver, myHand, drawerWord }) {
   if (!activeGame) return null;
@@ -295,6 +296,19 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             onMove={handleMove}
             onClose={onClose}
             onEndGame={onEndGame}
+          />
+        </Suspense>
+      );
+
+    case 'fowl_play':
+      // Arcade: pure single-player, host only. Other room members see a
+      // placeholder inside FowlPlayGame itself (no spectator iframe load).
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <FowlPlayGame
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
           />
         </Suspense>
       );

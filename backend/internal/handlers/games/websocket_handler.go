@@ -64,6 +64,8 @@ func gamePosterURL(gameType string) string {
         return gamePostersBaseURL + "/draw_guess.webp"
     case "vs_battle":
         return gamePostersBaseURL + "/vs_battle.webp"
+    case "fowl_play":
+        return gamePostersBaseURL + "/fowl_play_v2.webp"
     default:
         return ""
     }
@@ -74,7 +76,8 @@ func gamePosterURL(gameType string) string {
 // single `if`) so the next arcade game added doesn't need another inline
 // special case.
 var arcadeGameTypes = map[string]bool{
-    "doom": true,
+    "doom":      true,
+    "fowl_play": true,
 }
 
 // minPlayersOverride lets a genuinely multiplayer game still be launched

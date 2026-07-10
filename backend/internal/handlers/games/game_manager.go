@@ -80,7 +80,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"connect_four": true, "would_you_rather": true, "wordle": true,
 		"uno": true, "quiplash": true,
 		"typing_race": true, "blackjack": true, "battleship": true, "draw_guess": true,
-		"vs_battle": true,
+		"vs_battle": true, "fowl_play": true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
