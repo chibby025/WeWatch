@@ -507,8 +507,21 @@ func runProgressiveProbe(uploadID string, state *ProgressiveUploadState, prefix 
 		return
 	}
 
-	log.Printf("✅ [Progressive] Fast-start confirmed for %s at prefix=%d chunks — committing progressive mode", uploadID, prefix)
-	commitProgressiveMode(uploadID, state)
+	// tmpPath is still on disk here (its removal is deferred to function return), and is a
+	// real, seekable prefix of the source — the only point in the progressive pipeline
+	// where codec detection is possible at all, since ffmpeg reads the FIFO itself as a
+	// non-seekable stream. Feeds commitProgressiveMode's -c:v/-c:a branching below.
+	videoCodec, err := DetectVideoCodec(tmpPath)
+	if err != nil {
+		videoCodec = "unknown"
+	}
+	audioCodec, err := DetectAudioCodec(tmpPath)
+	if err != nil {
+		audioCodec = "unknown"
+	}
+
+	log.Printf("✅ [Progressive] Fast-start confirmed for %s at prefix=%d chunks (video=%s, audio=%s) — committing progressive mode", uploadID, prefix, videoCodec, audioCodec)
+	commitProgressiveMode(uploadID, state, videoCodec, audioCodec)
 }
 
 func concatChunks(uploadDir string, count int, destPath string) error {
@@ -536,7 +549,12 @@ func concatChunks(uploadDir string, count int, destPath string) error {
 // commitProgressiveMode creates the FIFO, starts the long-running ffmpeg process reading
 // from it, and launches the drainer + manifest-watcher goroutines. Any failure here
 // degrades to the fallback path rather than leaving the upload stuck.
-func commitProgressiveMode(uploadID string, state *ProgressiveUploadState) {
+//
+// videoCodec/audioCodec (from runProgressiveProbe's one-time prefix probe, "unknown" if
+// detection failed) decide whether ffmpeg can stream-copy each track or must transcode —
+// see hls.go's SegmentToHLS for why blind -c copy on audio breaks hls.js for codecs like
+// EC-3/AC-3.
+func commitProgressiveMode(uploadID string, state *ProgressiveUploadState, videoCodec, audioCodec string) {
 	state.mu.Lock()
 	if state.mode != modeProbing {
 		state.mu.Unlock() // already transitioned by a concurrent attempt — no-op
@@ -569,9 +587,20 @@ func commitProgressiveMode(uploadID string, state *ProgressiveUploadState) {
 	}
 
 	segPattern := filepath.Join(outputDir, "seg_%03d.ts")
-	ffmpegArgs := []string{"-y",
-		"-i", fifoPath,
-		"-c", "copy",
+	ffmpegArgs := []string{"-y", "-i", fifoPath}
+	if videoCodec == "h264" {
+		ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
+	} else {
+		// Full transcode from a FIFO is fine — this only ever needs a forward-only encode,
+		// never a seek, so the non-seekable pipe isn't a problem here.
+		ffmpegArgs = append(ffmpegArgs, "-c:v", "libx264", "-preset", "veryfast", "-crf", "26")
+	}
+	if isCompatibleAudioCodec(audioCodec) {
+		ffmpegArgs = append(ffmpegArgs, "-c:a", "copy")
+	} else {
+		ffmpegArgs = append(ffmpegArgs, "-c:a", "aac", "-b:a", "128k")
+	}
+	ffmpegArgs = append(ffmpegArgs,
 		"-sn", // drop subtitle streams — see hls.go's SegmentToHLS for why
 		"-f", "hls",
 		"-hls_time", fmt.Sprintf("%d", hlsSegmentSeconds),
@@ -579,7 +608,7 @@ func commitProgressiveMode(uploadID string, state *ProgressiveUploadState) {
 		// append_list intentionally omitted: -hls_list_size 0 already keeps all segments in the
 		// manifest, and append_list adds a spurious #EXT-X-DISCONTINUITY before the first segment
 		// which confuses hls.js's PTS tracking and causes playback to start at the wrong position.
-	}
+	)
 	if state.hlsBaseURL != "" {
 		// Manifest segment lines point straight at the CDN prefix — uploadProgressiveSegmentsToCDN
 		// (started below) is responsible for actually getting each segment there before any

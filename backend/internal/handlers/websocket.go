@@ -2854,7 +2854,7 @@ func (client *Client) handleMessage(message []byte) {
     }
     // ✅ Handle game-related messages
     // ✅ Handle game-related messages
-    if msg.Type == "game" || msg.Type == "start_game" || msg.Type == "make_move" || msg.Type == "end_game" || msg.Type == "relay_packet" || msg.Type == "create_tournament" {
+    if msg.Type == "game" || msg.Type == "start_game" || msg.Type == "make_move" || msg.Type == "end_game" || msg.Type == "relay_packet" || msg.Type == "create_tournament" || msg.Type == "create_hot_seat_tournament" || msg.Type == "record_hot_seat_score" || msg.Type == "cancel_hot_seat_tournament" || msg.Type == "close_game" {
         // Convert msg.Data to map
         if dataMap, ok := msg.Data.(map[string]interface{}); ok {
             // Inject action from message type if not present
@@ -6090,6 +6090,7 @@ func (client *Client) handleMessage(message []byte) {
             FileURL      string `json:"file_url"`      // Public URL
             OriginalName string `json:"original_name"` // Display name
             SeekTime     int    `json:"seek_time"`     // Position in seconds
+            Reason       string `json:"reason"`        // "" for a real user action; "buffering" for an automatic rebuffer pause/resume
         }
         
         // Unmarshal entire message (fields are at top level, not in msg.Data)
@@ -6129,8 +6130,12 @@ func (client *Client) handleMessage(message []byte) {
                     log.Printf("[playback_control] 📍 Session %s: time=%ds, media=%s", sessionID, playbackData.SeekTime, playbackData.FileURL)
                 }
                 
-                // Only trigger preview generation on "play" command with valid media
-                if playbackData.Command == "play" && playbackData.MediaItemID > 0 && playbackData.FilePath != "" {
+                // Only trigger preview generation on "play" command with valid media.
+                // Excludes reason=="buffering": an automatic rebuffer resume isn't a real
+                // media-switch event, and without this gate a struggling connection cycling
+                // through Tier-1 buffering pauses would flood the lobby with redundant
+                // media_state_changed broadcasts on every single resume.
+                if playbackData.Command == "play" && playbackData.MediaItemID > 0 && playbackData.FilePath != "" && playbackData.Reason != "buffering" {
                     // Determine if temporary or permanent media
                     var isTemporary bool
                     var tempMedia models.TemporaryMediaItem

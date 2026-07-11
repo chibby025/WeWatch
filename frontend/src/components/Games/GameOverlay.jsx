@@ -17,6 +17,8 @@ import TypingRaceGame from './TypingRaceGame';
 import BlackjackGame from './BlackjackGame';
 import BattleshipGame from './BattleshipGame';
 import DrawGuessGame from './DrawGuessGame';
+import BoxingGame from './BoxingGame';
+import PoolGame from './PoolGame';
 
 // Lazy-loaded — DOOM's iframe wrapper is tiny, but this establishes the
 // pattern for any future heavy/rarely-used game: don't pay its bundle cost
@@ -25,8 +27,9 @@ const DoomGame = lazy(() => import('./DoomGame'));
 const ShooterGame = lazy(() => import('./ShooterGame'));
 const VSBattleGame = lazy(() => import('./VsBattleGame'));
 const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
+const PenaltyGame = lazy(() => import('./PenaltyGame'));
 
-export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver, myHand, drawerWord }) {
+export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -300,15 +303,56 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
         </Suspense>
       );
 
+    case 'boxing':
+      return (
+        <BoxingGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'pool':
+      return (
+        <PoolGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
     case 'fowl_play':
-      // Arcade: pure single-player, host only. Other room members see a
-      // placeholder inside FowlPlayGame itself (no spectator iframe load).
+      // Arcade: single-player or hot-seat tournament. Non-playing members see
+      // a placeholder inside FowlPlayGame itself (no spectator iframe load).
       return (
         <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
           <FowlPlayGame
             onClose={onClose}
             onEndGame={onEndGame}
             isHost={activeGame.host_id === currentUserId}
+            hotSeatTournament={hotSeatTournament}
+            currentUserId={currentUserId}
+            onTournamentScore={onTournamentScore}
+          />
+        </Suspense>
+      );
+
+    case 'penalty_shootout':
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <PenaltyGame
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
+            hotSeatTournament={hotSeatTournament}
+            currentUserId={currentUserId}
+            onTournamentScore={onTournamentScore}
           />
         </Suspense>
       );

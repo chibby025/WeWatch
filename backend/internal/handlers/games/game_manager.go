@@ -24,6 +24,7 @@ type GameManager struct {
 	mu                sync.RWMutex
 	hub               MessageHub
 	TournamentManager *TournamentManager
+	HotSeatManager    *HotSeatManager
 	disconnectTimers  sync.Map // key: userID (uint) → *time.Timer; pending forfeit grace timers
 }
 
@@ -61,6 +62,7 @@ func NewGameManager(db *gorm.DB, hub MessageHub) *GameManager {
 		roomActiveGames:   make(map[uint]uint),
 		hub:               hub,
 		TournamentManager: NewTournamentManager(hub),
+		HotSeatManager:    NewHotSeatManager(hub),
 	}
 }
 
@@ -81,6 +83,9 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"uno": true, "quiplash": true,
 		"typing_race": true, "blackjack": true, "battleship": true, "draw_guess": true,
 		"vs_battle": true, "fowl_play": true,
+		"boxing": true,
+		"pool":   true,
+		"penalty_shootout": true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -220,6 +225,10 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processDrawGuessMove(gameState, playerID, moveType, moveData)
 	case "vs_battle":
 		gameOver, winnerID, err = processVSBattleMove(gameState, playerID, moveType, moveData)
+	case "boxing":
+		gameOver, winnerID, err = gm.processBoxingMove(gameState, playerID, moveType, moveData)
+	case "pool":
+		gameOver, winnerID, err = gm.processPoolMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -241,6 +250,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"blackjack":           true,
 		"battleship":          true,
 		"vs_battle":           true, // VS Battle phase+turn managed internally
+		"boxing":              true, // Boxing manages attacker/defender swap internally
+		"pool":                true, // Pool stays on same player after a legal pocket
 	}
 	if !gameOver && !selfManagedTurn[gameState.GameSession.GameType] {
 		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % len(gameState.Players)

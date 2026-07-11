@@ -260,6 +260,29 @@ func DetectVideoCodec(filePath string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// DetectAudioCodec returns the primary audio codec of a file (e.g. "aac", "mp3", "eac3").
+func DetectAudioCodec(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error",
+		"-select_streams", "a:0",
+		"-show_entries", "stream=codec_name",
+		"-of", "csv=p=0",
+		filePath,
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("ffprobe audio codec detection failed: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// isCompatibleAudioCodec reports whether hls.js's demuxer can parse this audio codec
+// inside an M2TS/HLS segment. EC-3/AC-3/DTS and similar (common in movie/TV rips, e.g.
+// "DDP5.1 Atmos" = E-AC-3) are not supported and must be transcoded to AAC instead of
+// stream-copied, or every fragment containing them throws a fragParsingError.
+func isCompatibleAudioCodec(codec string) bool {
+	return codec == "aac" || codec == "mp3"
+}
+
 // TranscodeToMp4 converts any video file to H.264 MP4.
 // If the source already contains H.264 and no watermark is needed it remuxes
 // (instant, no re-encode). VP8/VP9 or watermarked sources use libx264 veryfast.

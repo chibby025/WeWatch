@@ -296,7 +296,32 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         // manifest with no #EXT-X-ENDLIST yet (still being appended to by a progressive
         // upload) as a live stream and starts near the live edge instead of the
         // beginning, which is wrong for "host just started watching from the top."
-        const hls = new Hls({ startPosition: 0 });
+        //
+        // maxBufferLength/maxBufferSize — raised from hls.js's defaults (30s / 60MB).
+        // useStreamBufferHealth's Tier 3 cushion targets (120s/240s) are structurally
+        // unreachable under the defaults: 60MB caps real buildable buffer around ~125s
+        // at this kind of file's bitrate regardless of maxBufferLength, since hls.js
+        // stops prefetching once either ceiling is hit.
+        //
+        // fragLoadPolicy — widens fragment retry/timeout so a transient 404 (BunnyCDN's
+        // segment uploader losing its race against hls.js requesting a segment before
+        // it's actually pushed — see hls_progressive.go's uploadProgressiveSegmentsToCDN)
+        // self-heals via retry instead of erroring. Structured form, not the deprecated
+        // flat fragLoadingMaxRetry/fragLoadingRetryDelay keys this hls.js version marks
+        // @deprecated in favor of this.
+        const hls = new Hls({
+          startPosition: 0,
+          maxBufferLength: 300,
+          maxBufferSize: 300 * 1000 * 1000,
+          fragLoadPolicy: {
+            default: {
+              maxTimeToFirstByteMs: 20000,
+              maxLoadTimeMs: 120000,
+              timeoutRetry: { maxNumRetry: 4, retryDelayMs: 0, maxRetryDelayMs: 0 },
+              errorRetry: { maxNumRetry: 10, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+            },
+          },
+        });
         hlsRef.current = hls;
         hls.on(Hls.Events.ERROR, (_event, data) => {
           console.error('❌ [CinemaVideoPlayer] hls.js error:', data);

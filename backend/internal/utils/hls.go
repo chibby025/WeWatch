@@ -33,12 +33,24 @@ func SegmentToHLS(inputPath, outputDir string, segmentSeconds int, hlsBaseURL st
 	if err != nil {
 		codec = "unknown"
 	}
+	audioCodec, err := DetectAudioCodec(inputPath)
+	if err != nil {
+		audioCodec = "unknown"
+	}
 
 	var args []string
 	if codec == "h264" {
 		args = []string{
 			"-y", "-i", inputPath,
-			"-c", "copy",
+			"-c:v", "copy",
+		}
+		if isCompatibleAudioCodec(audioCodec) {
+			args = append(args, "-c:a", "copy")
+		} else {
+			// Source audio (e.g. EC-3/AC-3, common in movie/TV rips) can't be parsed by
+			// hls.js's demuxer if stream-copied as-is — transcode to AAC instead. Cheap
+			// relative to a full video transcode, so this doesn't lose the fast-path benefit.
+			args = append(args, "-c:a", "aac", "-b:a", "128k")
 		}
 	} else {
 		args = []string{

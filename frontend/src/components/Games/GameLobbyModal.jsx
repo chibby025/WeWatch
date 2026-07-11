@@ -221,16 +221,48 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
+  {
+    id: 'boxing',
+    name: 'Boxing',
+    description: 'Punch-Out style 1v1 — read the tell, pick your defense!',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/boxing.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'pool',
+    name: 'Pool',
+    description: '8-ball billiards — pot your balls, then sink the black!',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/pool.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'penalty_shootout',
+    name: 'Penalty Shootout',
+    description: 'Take 5 penalties against an AI keeper — hot-seat tournament mode!',
+    minPlayers: 1,
+    maxPlayers: 10,
+    image: `${GAME_POSTERS_BASE_URL}/penalty_shootout.webp`,
+    disabled: false,
+    type: 'arcade'
+  },
 ];
 
 // Games eligible for tournament mode: 2-player, head-to-head games where a
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
-const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship'];
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'boxing', 'pool'];
+// Hot-seat tournament: each player takes a solo turn; highest score wins.
+const HOT_SEAT_GAME_IDS = ['fowl_play', 'penalty_shootout'];
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 
-export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame, onCreateTournament, allowHeavyGames = true }) {
+export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame, onCreateTournament, onCreateHotSeatTournament, allowHeavyGames = true }) {
   const [selectedPlayers, setSelectedPlayers] = useState([currentUserId]);
   const [searchQuery, setSearchQuery] = useState('');
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -393,23 +425,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
       currentUserId
     });
 
-    // Arcade games only need host
-    if (selectedGameData.type === 'arcade') {
-      const playersData = [{
-        user_id: currentUserId,
-        username: roomMembers.find(m => m.id === currentUserId)?.username || 'Player 1',
-        color: playerColors[0]
-      }];
-      console.log('🎮 [GameLobbyModal] Arcade game - calling onStartGame with:', {
-        game: selectedGame,
-        players: playersData
-      });
-      onStartGame(selectedGame, playersData);
-      onClose();
-      return;
-    }
-
-    // Map selected players to player data with colors (shared by both paths)
+    // Map selected players to player data with colors (shared by all paths)
     const buildPlayersData = () => selectedPlayers.map((playerId, index) => {
       const member = roomMembers.find(m => m.id === playerId);
       return {
@@ -420,7 +436,30 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
       };
     });
 
-    // Tournament mode
+    // Arcade hot-seat tournament (fowl_play with tournament mode on)
+    if (selectedGameData.type === 'arcade' && isTournamentMode && HOT_SEAT_GAME_IDS.includes(selectedGame)) {
+      if (selectedPlayers.length < 2) {
+        alert('A hot-seat tournament needs at least 2 players');
+        return;
+      }
+      if (onCreateHotSeatTournament) onCreateHotSeatTournament(selectedGame, buildPlayersData());
+      onClose();
+      return;
+    }
+
+    // Arcade games (solo) — only need host, no player selection
+    if (selectedGameData.type === 'arcade') {
+      const playersData = [{
+        user_id: currentUserId,
+        username: roomMembers.find(m => m.id === currentUserId)?.username || 'Player 1',
+        color: playerColors[0]
+      }];
+      onStartGame(selectedGame, playersData);
+      onClose();
+      return;
+    }
+
+    // Bracket tournament mode (multiplayer games)
     if (isTournamentMode) {
       if (selectedPlayers.length < 4 || selectedPlayers.length > 16) {
         alert('A tournament needs 4–16 players');
@@ -443,7 +482,8 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
 
   // Reset tournament mode when switching to a game that doesn't support it
   useEffect(() => {
-    if (!TOURNAMENT_GAME_IDS.includes(selectedGame)) setIsTournamentMode(false);
+    const supportsAnyTournament = TOURNAMENT_GAME_IDS.includes(selectedGame) || HOT_SEAT_GAME_IDS.includes(selectedGame);
+    if (!supportsAnyTournament) setIsTournamentMode(false);
   }, [selectedGame]);
 
   if (!isOpen) return null;
@@ -598,11 +638,13 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                 <div className={`text-center ${isWideLayout ? 'mt-3' : isLandscape ? 'mt-1' : 'mt-2 sm:mt-3'}`}>
                   <p className={`text-gray-400 leading-snug max-w-lg mx-auto ${isWideLayout ? 'text-sm' : 'text-[11px] sm:text-xs'}`}>{selectedGameData.description}</p>
                   <p className="text-gray-500 text-[10px] sm:text-[11px] mt-1">
-                    {selectedGameData.type === 'arcade'
+                    {selectedGameData.type === 'arcade' && !isTournamentMode
                       ? 'Solo arcade'
-                      : `${selectedGameData.minPlayers}–${selectedGameData.maxPlayers} players`}
+                      : selectedGameData.type === 'arcade' && isTournamentMode
+                        ? 'Hot-seat — each player takes a turn'
+                        : `${selectedGameData.minPlayers}–${selectedGameData.maxPlayers} players`}
                   </p>
-                  {TOURNAMENT_GAME_IDS.includes(selectedGame) && (
+                  {(TOURNAMENT_GAME_IDS.includes(selectedGame) || HOT_SEAT_GAME_IDS.includes(selectedGame)) && (
                     <div className="mt-2 flex items-center justify-center gap-2">
                       <button
                         onClick={() => setIsTournamentMode(t => !t)}
@@ -613,7 +655,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                         }`}
                       >
                         <Trophy className="w-3 h-3" />
-                        Tournament Mode
+                        {HOT_SEAT_GAME_IDS.includes(selectedGame) ? 'Hot-Seat Tournament' : 'Tournament Mode'}
                       </button>
                       <span className={`text-xs font-bold tracking-wide ${isTournamentMode ? 'text-yellow-400' : 'text-gray-500'}`}>
                         {isTournamentMode ? 'ON' : 'OFF'}
@@ -634,7 +676,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                 ? 'w-[30%] order-1 overflow-y-auto border-r border-gray-700 px-3 py-2'
                 : 'px-4 sm:px-6 py-3 sm:py-6'
           }>
-            {!selectedGameData ? null : selectedGameData.type === 'arcade' ? (
+            {!selectedGameData ? null : selectedGameData.type === 'arcade' && !isTournamentMode ? (
               /* Arcade games - single player info */
               <div className={`text-center ${isLandscape ? 'py-2' : 'py-2 sm:py-6'}`}>
                 <div className={`mb-2 ${isLandscape ? 'text-2xl' : 'text-4xl sm:text-6xl sm:mb-4'}`}>🎮</div>

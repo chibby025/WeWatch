@@ -66,6 +66,12 @@ func gamePosterURL(gameType string) string {
         return gamePostersBaseURL + "/vs_battle.webp"
     case "fowl_play":
         return gamePostersBaseURL + "/fowl_play_v2.webp"
+    case "boxing":
+        return gamePostersBaseURL + "/boxing.webp"
+    case "pool":
+        return gamePostersBaseURL + "/pool.webp"
+    case "penalty_shootout":
+        return gamePostersBaseURL + "/penalty_shootout.webp"
     default:
         return ""
     }
@@ -76,8 +82,9 @@ func gamePosterURL(gameType string) string {
 // single `if`) so the next arcade game added doesn't need another inline
 // special case.
 var arcadeGameTypes = map[string]bool{
-    "doom":      true,
-    "fowl_play": true,
+    "doom":             true,
+    "fowl_play":        true,
+    "penalty_shootout": true,
 }
 
 // minPlayersOverride lets a genuinely multiplayer game still be launched
@@ -202,6 +209,14 @@ func (h *GameWebSocketHandler) HandleGameMessage(client interface{}, messageData
         h.handleRelayPacket(client, messageData)
     case "create_tournament":
         h.handleCreateTournament(client, messageData)
+    case "create_hot_seat_tournament":
+        h.handleCreateHotSeatTournament(client, messageData)
+    case "record_hot_seat_score":
+        h.handleRecordHotSeatScore(client, messageData)
+    case "cancel_hot_seat_tournament":
+        h.handleCancelHotSeatTournament(client, messageData)
+    case "close_game":
+        h.handleCloseGame(client, messageData)
     default:
         h.sendError(client, fmt.Sprintf("unknown action: %s", action))
     }
@@ -556,4 +571,117 @@ func (h *GameWebSocketHandler) sendError(client interface{}, errorMsg string) {
     }
 
     log.Printf("⚠️ [GameWebSocketHandler] Error sent to user: %s", errorMsg)
+}
+
+// handleCloseGame broadcasts a game_closed event to all room members when the host
+// closes a completed game's result screen. This ensures the winner banner / game
+// overlay is dismissed for every client, not just the one that clicked Close.
+// Only the host (or any participant in a completed game) can trigger this.
+func (h *GameWebSocketHandler) handleCloseGame(client interface{}, data map[string]interface{}) {
+    type ClientFields interface {
+        GetRoomID() uint
+        GetUserID() uint
+    }
+    cf := client.(ClientFields)
+    roomID := cf.GetRoomID()
+
+    gameSessionID := uint(0)
+    if v, ok := data["game_session_id"].(float64); ok {
+        gameSessionID = uint(v)
+    }
+
+    if hub, ok := h.hub.(interface {
+        BroadcastJSON(uint, map[string]interface{})
+    }); ok {
+        hub.BroadcastJSON(roomID, map[string]interface{}{
+            "type":   "game",
+            "action": "game_closed",
+            "data": map[string]interface{}{
+                "game_session_id": gameSessionID,
+                "closed_by":       cf.GetUserID(),
+            },
+        })
+    }
+    log.Printf("🎮 [GameWebSocketHandler] game_closed broadcast for session %d in room %d", gameSessionID, roomID)
+}
+
+// handleCreateHotSeatTournament creates a hot-seat tournament for single-player arcade
+// games (e.g. Fowl Play). Players take turns one at a time; scores are submitted via
+// record_hot_seat_score after each turn. Highest score wins.
+func (h *GameWebSocketHandler) handleCreateHotSeatTournament(client interface{}, data map[string]interface{}) {
+    gameType, ok := data["game_type"].(string)
+    if !ok {
+        h.sendError(client, "missing game_type")
+        return
+    }
+    playersData, ok := data["players"].([]interface{})
+    if !ok || len(playersData) < 2 {
+        h.sendError(client, "hot-seat tournament needs at least 2 players")
+        return
+    }
+
+    type ClientFields interface {
+        GetRoomID() uint
+        GetUserID() uint
+    }
+    cf := client.(ClientFields)
+    roomID := cf.GetRoomID()
+    hostID := cf.GetUserID()
+
+    var players []models.Player
+    for _, pd := range playersData {
+        pm, ok := pd.(map[string]interface{})
+        if !ok {
+            continue
+        }
+        userID := uint(pm["user_id"].(float64))
+        username, _ := pm["username"].(string)
+        color, _ := pm["color"].(string)
+        players = append(players, models.Player{UserID: userID, Username: username, Color: color})
+    }
+
+    if h.gameManager.HotSeatManager == nil {
+        h.sendError(client, "hot-seat tournaments unavailable")
+        return
+    }
+    h.gameManager.HotSeatManager.CreateTournament(roomID, hostID, gameType, players)
+    log.Printf("🏆 [HotSeat] Created tournament in room %d (%s, %d players)", roomID, gameType, len(players))
+}
+
+// handleRecordHotSeatScore records a player's score after their Fowl Play (or any
+// hot-seat arcade game) turn ends. The score comes from the iframe via postMessage
+// and is forwarded here by the frontend.
+func (h *GameWebSocketHandler) handleRecordHotSeatScore(client interface{}, data map[string]interface{}) {
+    scoreVal, ok := data["score"].(float64)
+    if !ok {
+        h.sendError(client, "missing score")
+        return
+    }
+    type ClientFields interface {
+        GetRoomID() uint
+        GetUserID() uint
+    }
+    cf := client.(ClientFields)
+    roomID := cf.GetRoomID()
+    playerID := cf.GetUserID()
+
+    if h.gameManager.HotSeatManager == nil {
+        return
+    }
+    h.gameManager.HotSeatManager.RecordScore(roomID, playerID, int(scoreVal))
+}
+
+// handleCancelHotSeatTournament cancels an active hot-seat tournament (host only).
+func (h *GameWebSocketHandler) handleCancelHotSeatTournament(client interface{}, data map[string]interface{}) {
+    type ClientFields interface {
+        GetRoomID() uint
+        GetUserID() uint
+    }
+    cf := client.(ClientFields)
+    roomID := cf.GetRoomID()
+
+    if h.gameManager.HotSeatManager == nil {
+        return
+    }
+    h.gameManager.HotSeatManager.CancelTournament(roomID)
 }

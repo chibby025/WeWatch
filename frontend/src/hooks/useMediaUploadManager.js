@@ -54,6 +54,16 @@ const getVideoDurationFromFile = (file) =>
     video.src = URL.createObjectURL(file);
   });
 
+// Parses the "HH:MM:SS" string getVideoDurationFromFile produces back into seconds.
+// Returns 0 for anything malformed — callers already treat 0 as "unknown".
+const parseHHMMSSToSeconds = (hhmmss) => {
+  if (!hhmmss) return 0;
+  const parts = hhmmss.split(':').map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return 0;
+  const [h, m, s] = parts;
+  return h * 3600 + m * 60 + s;
+};
+
 // Grabs one frame from a local video file as a JPEG blob, entirely client-side — no
 // upload, no ffmpeg. Used to skip the backend's dedicated poster-extraction ffmpeg
 // invocation (a real, avoidable CPU cost at scale: 100 sessions x 5 videos each is up
@@ -135,6 +145,11 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
   const [isUploadReady, setIsUploadReady] = useState(false);
   const isUploadReadyRef = useRef(false); // mirrors isUploadReady without stale-closure risk in onProgress
   const currentUploadIdRef = useRef(null); // which upload_id notifyUploadStreamReady should match against
+  // Bytes/sec this upload's source needs to arrive at for progressive HLS to keep pace
+  // with real-time playback (fileSize / duration) — set once, before any chunk uploads,
+  // since both are already known client-side. 0 means "unknown" (duration capture
+  // failed) — consumers should treat that as "can't evaluate, assume healthy".
+  const uploadRequiredBpsRef = useRef(0);
   const [uploadPaused, setUploadPaused] = useState(false); // same-session pause on network drop
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadSpeed, setUploadSpeed] = useState(0); // MB/s
@@ -861,6 +876,11 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
         // "no value" rather than risk the backend trusting a fake zero duration. A real
         // file that's genuinely zero seconds long isn't a case worth preserving here.
         clientDuration = clientDurationRaw !== '00:00:00' ? clientDurationRaw : null;
+        // Required delivery rate for progressive HLS to keep pace with real-time
+        // playback — both fileSize and duration are already known here, before any
+        // chunk upload begins. Feeds useStreamBufferHealth's one-shot Tier 2 check.
+        const durationSeconds = clientDuration ? parseHHMMSSToSeconds(clientDuration) : 0;
+        uploadRequiredBpsRef.current = durationSeconds > 0 ? relocated.size / durationSeconds : 0;
       } finally {
         setIsPreparing(false);
       }
@@ -1041,6 +1061,7 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
     uploadPaused,
     uploadProgress,
     uploadSpeed,
+    uploadRequiredBpsRef,
     uploadETA,
     uploadedBytes,
     totalBytes,

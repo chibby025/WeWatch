@@ -58,6 +58,7 @@ import { HeartIcon } from '@heroicons/react/24/solid';
 import useEmoteSounds from '../../hooks/useEmoteSounds';
 import useNetworkQuality from '../../hooks/useNetworkQuality';
 import useMediaUploadManager from '../../hooks/useMediaUploadManager';
+import useStreamBufferHealth from '../../hooks/useStreamBufferHealth';
 import FloatingEmoteOverlay from './ui/FloatingEmoteOverlay';
 import NetworkQualityBanner from '../NetworkQualityBanner';
 import AdVideoPreroll from '../AdVideoPreroll';
@@ -665,6 +666,10 @@ export default function VideoWatch() {
   // of leaving members staring at it indefinitely.
   const [isPreparingStream, setIsPreparingStream] = useState(false);
   const preparingTimeoutRef = useRef(null);
+  // Non-host mirror of the host's useStreamBufferHealth tier state — set/cleared by the
+  // reason:"buffering" playback_control branch below, so members see a "buffering"
+  // indicator instead of nothing while a struggling host's upload catches up.
+  const [remoteBufferingActive, setRemoteBufferingActive] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
   // Backing map for O(1) add/remove. roomMembers is always derived from this via setRoomMembers.
   const memberMapRef = useRef(new Map());
@@ -1064,6 +1069,11 @@ export default function VideoWatch() {
   const [activeTournament, setActiveTournament] = useState(null);
   const [activeTournamentMatch, setActiveTournamentMatch] = useState(null);
   const [showTournamentBracket, setShowTournamentBracket] = useState(false);
+  // Hot-seat tournament (arcade single-player games like Fowl Play).
+  // activeHotSeatTournament carries the full server state; hotSeatCurrentPlayer
+  // is the player whose turn it currently is (id + name).
+  const [activeHotSeatTournament, setActiveHotSeatTournament] = useState(null);
+  const [hotSeatCurrentPlayer, setHotSeatCurrentPlayer] = useState(null);
 
   // 🎤 Audio device management
   const [audioDevices, setAudioDevices] = useState([]);
@@ -2463,11 +2473,20 @@ export default function VideoWatch() {
 
   const handleGameClose = useCallback(() => {
     console.log('🎮 [VideoWatch] Closing game');
+    // If host closes a completed/forfeited game, broadcast to all room members
+    // so everyone's overlay dismisses. Skip for in-progress games (those have
+    // their own end-game WS flow already).
+    if (isHost && activeGame) {
+      const s = activeGame.status;
+      if (s === 'finished' || s === 'completed' || s === 'forfeited' || s === 'ended') {
+        sendMessage?.({ type: 'close_game', data: { game_type: activeGame.game_type } });
+      }
+    }
     setActiveGame(null);
     setMyHand(null);
     setDrawerWord(null);
     setShowChallengeModal(false);
-  }, []);
+  }, [isHost, activeGame, sendMessage]);
 
   // Tournament: create a bracket (host only). Sent as a dedicated create_tournament
   // message the backend routes to the tournament manager.
@@ -2477,6 +2496,20 @@ export default function VideoWatch() {
     setIsGameLobbyOpen(false);
     setShowTournamentBracket(true);
   }, [sendMessage]);
+
+  // Hot-seat tournament: create (host only). Backend broadcasts initial state
+  // + first turn notification to all room members.
+  const handleCreateHotSeatTournament = useCallback((gameType, playersData) => {
+    if (!sendMessage) return;
+    sendMessage({ type: 'create_hot_seat_tournament', data: { game_type: gameType, players: playersData } });
+    setIsGameLobbyOpen(false);
+  }, [sendMessage]);
+
+  // Hot-seat tournament: submit this player's score after their Fowl Play session ends.
+  const handleHotSeatScore = useCallback((score) => {
+    if (!sendMessage || !activeHotSeatTournament) return;
+    sendMessage({ type: 'record_hot_seat_score', data: { score } });
+  }, [sendMessage, activeHotSeatTournament]);
 
   // Tournament: host starts a specific pending match — fires a normal start_game with
   // that match's two players; the backend links the resulting session to the match.
@@ -2671,21 +2704,6 @@ export default function VideoWatch() {
     alert("❌ Failed to play video.");
   }, [currentMedia, isHost, roomId]);
 
-  const handlePauseBroadcast = useCallback(() => {
-    if (isHost && isConnected && currentMedia) {
-      sendMessage({
-        type: "playback_control",
-        command: "play",
-        media_item_id: id,
-        file_path: filePath,
-        file_url: normalizedMediaItem.mediaUrl, // ✅ Add this
-        original_name: normalizedMediaItem.original_name,
-        seek_time: 0,
-        timestamp: Date.now(),
-        sender_id: currentUser.id,
-      });
-    }
-  }, [isHost, isConnected, currentMedia, sendMessage]);
 
   // ⏰ Callback to update playback position from video player
   const handleTimeUpdate = useCallback((currentTime) => {
@@ -3984,6 +4002,24 @@ export default function VideoWatch() {
     onUploadComplete: fetchAndGeneratePosters,
   });
 
+  // Host-only: proactively pauses/resumes device-streamed playback based on measured
+  // buffer health rather than reacting to hls.js's own non-fatal error/recovery loop —
+  // see CLAUDE.md's device-streaming section and useStreamBufferHealth.js for the full
+  // diagnosis. `remoteBufferingActive` (declared further below with the other state) is
+  // the mirror of this for non-host members, driven by the reason:"buffering"
+  // playback_control messages this hook sends.
+  const { bufferState } = useStreamBufferHealth({
+    isHost,
+    isPlaying,
+    setIsPlaying,
+    isConnected,
+    videoRef: videoPlayerRef,
+    sendMessage,
+    currentUser,
+    currentMedia,
+    mediaUploadManager,
+  });
+
   // Handle ALL WebSocket messages
   useEffect(() => {
     // If the cap in useWebSocket truncated the array, processedMessageCountRef may exceed
@@ -4573,7 +4609,14 @@ export default function VideoWatch() {
             mime_type: message.mime_type,
           });
           setPendingSeekTime(0);
-          setIsPlaying(true);
+          // Non-host: no upload-throughput signal to evaluate, start immediately as
+          // before. Host: deferred to useStreamBufferHealth's one-shot Tier 2 check
+          // (fires off the currentMedia update just above) — it calls setIsPlaying(true)
+          // right away for a healthy connection (matching this exact previous behavior)
+          // or holds off and pre-buffers first for a connection too slow to keep pace.
+          if (!isHost) {
+            setIsPlaying(true);
+          }
           // Lets the upload hook hide its load bar the moment THIS upload's stream is
           // confirmed playable, instead of waiting for every remaining chunk to finish
           // sending in the background — no-ops for any other client's upload_id.
@@ -4594,7 +4637,28 @@ export default function VideoWatch() {
             console.log('⏭️ [VideoWatch] Ignoring own playback_control message');
             break;
           }
-          
+
+          // ── Host rebuffer pause/resume (useStreamBufferHealth) ───────────────
+          // A struggling host's own upload can't feed ffmpeg fast enough for real-time
+          // HLS segmenting, so the host proactively pauses/resumes rather than letting
+          // hls.js's own error/recovery loop run. Members must hold in sync during this
+          // window (not drift ahead via the usual sync_heartbeat extrapolation) — operate
+          // directly on the already-loaded player (no setCurrentMedia reload) and reuse
+          // isBufferingRef, which sync_heartbeat's drift-correction already checks.
+          if (message.reason === 'buffering') {
+            const bufferingVideoEl = videoPlayerRef.current;
+            if (message.command === 'pause') {
+              isBufferingRef.current = true;
+              setRemoteBufferingActive(true);
+              bufferingVideoEl?.pause();
+            } else if (message.command === 'play') {
+              isBufferingRef.current = false;
+              setRemoteBufferingActive(false);
+              bufferingVideoEl?.play().catch(() => {});
+            }
+            break;
+          }
+
           // ── YouTube iframe path ──────────────────────────────────────────────
           if (message.media_type === 'youtube' && message.video_id) {
             const isSameVideo = currentMedia?.type === 'youtube' && currentMedia?.videoId === message.video_id;
@@ -5644,6 +5708,65 @@ export default function VideoWatch() {
             // only this client's own hand ever arrives here, on game start, after this
             // player's own move, and on late-join rehydration.
             setMyHand(message.data?.hand || []);
+          }
+          // ── Hot-seat tournament (arcade single-player) ──────────────────────
+          if (_gAction === 'hot_seat_tournament_update') {
+            setActiveHotSeatTournament(message.data || null);
+          }
+          if (_gAction === 'hot_seat_turn') {
+            const d = message.data || {};
+            setHotSeatCurrentPlayer({ id: d.current_player_id, name: d.current_player });
+            setActiveHotSeatTournament(prev => {
+              const updated = prev ? {
+                ...prev,
+                current_player_id: d.current_player_id,
+                current_player_name: d.current_player,
+                current_index: d.turn_index,
+              } : null;
+              // Open the Fowl Play overlay for everyone so they see whose turn it is.
+              // FowlPlayGame.jsx gates the actual iframe behind isHost && isMyTurn;
+              // everyone else sees a "waiting for X" placeholder.
+              setActiveGame({
+                game_type: d.game_type || 'fowl_play',
+                host_id: d.current_player_id, // current player is the "host" for this turn
+                players: updated?.participants?.map(p => ({
+                  user_id: p.user_id,
+                  username: p.username,
+                  color: p.color,
+                })) || [],
+                status: 'active',
+              });
+              return updated;
+            });
+          }
+          if (_gAction === 'hot_seat_score') {
+            const d = message.data || {};
+            toast(`🎯 ${d.username} scored ${(d.score || 0).toLocaleString()}!`, { duration: 3000, icon: '🦆' });
+            setActiveHotSeatTournament(prev => {
+              if (!prev) return prev;
+              const parts = (prev.participants || []).map(p =>
+                p.user_id === d.user_id ? { ...p, score: d.score, played: true } : p
+              );
+              return { ...prev, participants: parts };
+            });
+          }
+          if (_gAction === 'hot_seat_tournament_complete') {
+            const d = message.data || {};
+            toast.success(`🏆 Hot-Seat over! Winner: ${d.winner_name || 'nobody'} 🦆`, { duration: 6000, icon: '🏆' });
+            setActiveHotSeatTournament(null);
+            setHotSeatCurrentPlayer(null);
+            setActiveGame(null);
+          }
+          if (_gAction === 'hot_seat_tournament_cancelled') {
+            toast('Hot-seat tournament cancelled.', { duration: 3000 });
+            setActiveHotSeatTournament(null);
+            setHotSeatCurrentPlayer(null);
+            setActiveGame(null);
+          }
+          // ── close_game: host dismissed a completed game — close for everyone ─
+          if (_gAction === 'game_closed') {
+            setActiveGame(null);
+            setMyHand(null);
           }
           if (message.error) {
             console.error('❌ [VideoWatch] Game error:', message.error);
@@ -6736,6 +6859,33 @@ export default function VideoWatch() {
                   </div>
                 )}
 
+                {/* Host-side network-aware buffering (useStreamBufferHealth) — Tier 3b is
+                    the one deliberately "louder" state (persistent banner background),
+                    the rest are subtle, matching the Loading spinner above. */}
+                {isHost && bufferState && (
+                  <div className={`absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 text-center px-6 pointer-events-none ${bufferState === 'tier3b' ? 'bg-black/60' : ''}`}>
+                    <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    {bufferState === 'tier1' && <p className="text-white/70 text-sm">Buffering...</p>}
+                    {bufferState === 'tier2' && <p className="text-white/80 text-sm sm:text-base">Optimizing for your connection...</p>}
+                    {bufferState === 'tier3a' && <p className="text-white/80 text-sm sm:text-base">Still trying to keep up — hang tight...</p>}
+                    {bufferState === 'tier3b' && (
+                      <>
+                        <p className="text-white text-base sm:text-lg font-semibold">This connection is too slow to stream live right now</p>
+                        <p className="text-white/70 text-sm">We'll keep buffering in the background and resume automatically.</p>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Member-side mirror — the host's tier is invisible to us, just that
+                    they're currently rebuffering (see the reason:"buffering" playback_control case). */}
+                {!isHost && remoteBufferingActive && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 pointer-events-none">
+                    <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <p className="text-white/70 text-sm">Buffering...</p>
+                  </div>
+                )}
+
                 {/* DVD screensaver — shown after 20 s inactivity when nothing is playing (not in Religious sessions) */}
                 {dvdVisible && !isPreparingStream && !liveShareMode && !liveShareContentMode && contentRating !== 'Religious' && (
                   <DVDBounce />
@@ -6796,7 +6946,6 @@ export default function VideoWatch() {
                       onPause={handlePause}
                       onEnded={handleVideoEnd}
                       onError={handleError}
-                      onPauseBroadcast={handlePauseBroadcast}
                       onTimeUpdate={handleTimeUpdate}
                       subtitleUrl={subtitleUrl}
                       ducked={isAudioActive}
@@ -7820,6 +7969,7 @@ export default function VideoWatch() {
           currentUserId={currentUser?.id}
           onStartGame={handleStartGame}
           onCreateTournament={handleCreateTournament}
+          onCreateHotSeatTournament={handleCreateHotSeatTournament}
         />
       )}
 
@@ -7838,6 +7988,8 @@ export default function VideoWatch() {
           }
           myHand={myHand}
           drawerWord={drawerWord}
+          hotSeatTournament={activeHotSeatTournament}
+          onTournamentScore={handleHotSeatScore}
         />
       )}
 
