@@ -15,7 +15,10 @@ func connectFourInitialBoard() []string {
 }
 
 func (gm *GameManager) processConnectFourMove(gameState *GameSessionState, playerID uint, moveData map[string]interface{}) (gameOver bool, winnerID *uint, err error) {
-	colF, ok := moveData["col"].(float64)
+	colF, ok := moveData["column"].(float64)
+	if !ok {
+		colF, ok = moveData["col"].(float64)
+	}
 	if !ok {
 		return false, nil, fmt.Errorf("invalid col")
 	}

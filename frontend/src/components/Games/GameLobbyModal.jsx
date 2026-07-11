@@ -251,6 +251,97 @@ const games = [
     disabled: false,
     type: 'arcade'
   },
+  {
+    id: 'whot',
+    name: 'Whot!',
+    description: 'West African classic — match suit or number, play Whot to call the suit!',
+    minPlayers: 2,
+    maxPlayers: 6,
+    image: `${GAME_POSTERS_BASE_URL}/whot.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'hangman',
+    name: 'Hangman',
+    description: 'Guess the hidden word — one letter at a time!',
+    minPlayers: 2,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/hangman.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'sudoku',
+    name: 'Sudoku Race',
+    description: 'Same puzzle — first correct grid wins!',
+    minPlayers: 1,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/sudoku.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'ping_pong',
+    name: 'Ping Pong',
+    description: 'Aim your shot, block the return — first to 7!',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/ping_pong.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'air_hockey',
+    name: 'Air Hockey',
+    description: '5 aim zones + bank shots — first to 5 goals!',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/air_hockey.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'red_light_green_light',
+    name: 'Red Light Green Light',
+    description: 'Move on green, freeze on red — reach the finish!',
+    minPlayers: 2,
+    maxPlayers: 10,
+    image: `${GAME_POSTERS_BASE_URL}/red_light_green_light.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'glass_bridge',
+    name: 'Glass Bridge',
+    description: 'Left or right? One path holds — cross without falling!',
+    minPlayers: 2,
+    maxPlayers: 6,
+    image: `${GAME_POSTERS_BASE_URL}/glass_bridge.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'tug_of_war',
+    name: 'Tug of War',
+    description: 'Mash to pull the rope — best of 3 rounds!',
+    minPlayers: 2,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/tug_of_war.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'space_attack',
+    name: 'Space Attack',
+    description: 'Classic vertical space shooter — solo arcade!',
+    minPlayers: 1,
+    maxPlayers: 1,
+    image: `${GAME_POSTERS_BASE_URL}/space_attack.webp`,
+    disabled: false,
+    type: 'arcade',
+    heavy: false
+  },
 ];
 
 // Games eligible for tournament mode: 2-player, head-to-head games where a

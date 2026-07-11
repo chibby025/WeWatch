@@ -86,6 +86,16 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"boxing": true,
 		"pool":   true,
 		"penalty_shootout": true,
+		"whot": true,
+		// New games
+		"hangman":             true,
+		"glass_bridge":        true,
+		"tug_of_war":          true,
+		"red_light_green_light": true,
+		"sudoku":              true,
+		"ping_pong":           true,
+		"air_hockey":          true,
+		"space_attack":        true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -131,6 +141,9 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	case "uno":
 		dealUno(gameState)
 		gameState.GameSession.GameState = gameState.GameData
+	case "whot":
+		dealWhot(gameState)
+		gameState.GameSession.GameState = gameState.GameData
 	case "blackjack":
 		dealBlackjack(gameState)
 		gameState.GameSession.GameState = gameState.GameData
@@ -163,7 +176,15 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"quiplash":            true,
 		"typing_race":         true,
 		"draw_guess":          true,
-		"vs_battle":           true, // both players lock moves simultaneously each turn
+		"vs_battle":           true,   // both players lock moves simultaneously each turn
+		"battleship":          true,   // placement phase: both players place freely; combat turn enforced internally via GameData["current_turn"]
+		// New simultaneous games
+		"hangman":               true, // any player can guess any letter
+		"tug_of_war":            true, // all players pull; host ends round
+		"red_light_green_light": true, // all players move/stop simultaneously
+		"sudoku":                true, // all players solve same puzzle in parallel
+		"ping_pong":             true, // internal phase validation restricts who acts
+		"air_hockey":            true, // internal phase validation restricts who acts
 	}
 	if !simultaneousGames[gameState.GameSession.GameType] {
 		currentPlayer := gameState.Players[gameState.CurrentTurn]
@@ -229,6 +250,25 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processBoxingMove(gameState, playerID, moveType, moveData)
 	case "pool":
 		gameOver, winnerID, err = gm.processPoolMove(gameState, playerID, moveType, moveData)
+	case "whot":
+		gameOver, winnerID, err = gm.processWhotMove(gameState, playerID, moveType, moveData)
+	case "hangman":
+		gameOver, winnerID, err = gm.processHangmanMove(gameState, playerID, moveData)
+	case "glass_bridge":
+		gameOver, winnerID, err = gm.processGlassBridgeMove(gameState, playerID, moveData)
+	case "tug_of_war":
+		gameOver, winnerID, err = gm.processTugOfWarMove(gameState, playerID, moveType, moveData)
+	case "red_light_green_light":
+		gameOver, winnerID, err = gm.processRedLightMove(gameState, playerID, moveType, moveData)
+	case "sudoku":
+		gameOver, winnerID, err = gm.processSudokuMove(gameState, playerID, moveData)
+	case "ping_pong":
+		gameOver, winnerID, err = gm.processPingPongMove(gameState, playerID, moveData)
+	case "air_hockey":
+		gameOver, winnerID, err = gm.processAirHockeyMove(gameState, playerID, moveData)
+	case "space_attack":
+		// Arcade iframe — no server-side move logic needed
+		gameOver, winnerID, err = false, nil, nil
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -538,6 +578,16 @@ func publicGameData(gameState *GameSessionState) map[string]interface{} {
 			return drawGuessPublicState(gameState.GameData)
 		case "vs_battle":
 			return vsPublicGameData(gameState.GameData)
+		case "hangman":
+			return hangmanPublicState(gameState.GameData)
+		case "glass_bridge":
+			return glassBridgePublicState(gameState.GameData)
+		case "sudoku":
+			return sudokuPublicState(gameState.GameData)
+		case "ping_pong":
+			return pingPongPublicState(gameState.GameData)
+		case "air_hockey":
+			return airHockeyPublicState(gameState.GameData)
 		}
 	}
 	return gameState.GameData

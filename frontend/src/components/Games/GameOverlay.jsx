@@ -19,6 +19,7 @@ import BattleshipGame from './BattleshipGame';
 import DrawGuessGame from './DrawGuessGame';
 import BoxingGame from './BoxingGame';
 import PoolGame from './PoolGame';
+import WhotGame from './WhotGame';
 
 // Lazy-loaded — DOOM's iframe wrapper is tiny, but this establishes the
 // pattern for any future heavy/rarely-used game: don't pay its bundle cost
@@ -28,6 +29,15 @@ const ShooterGame = lazy(() => import('./ShooterGame'));
 const VSBattleGame = lazy(() => import('./VsBattleGame'));
 const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
 const PenaltyGame = lazy(() => import('./PenaltyGame'));
+const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
+
+import HangmanGame from './HangmanGame';
+import GlassBridgeGame from './GlassBridgeGame';
+import TugOfWarGame from './TugOfWarGame';
+import RedLightGreenLightGame from './RedLightGreenLightGame';
+import SudokuGame from './SudokuGame';
+import PingPongGame from './PingPongGame';
+import AirHockeyGame from './AirHockeyGame';
 
 export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore }) {
   if (!activeGame) return null;
@@ -343,6 +353,19 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
         </Suspense>
       );
 
+    case 'whot':
+      return (
+        <WhotGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          myHand={myHand}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
     case 'penalty_shootout':
       return (
         <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
@@ -353,6 +376,101 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             hotSeatTournament={hotSeatTournament}
             currentUserId={currentUserId}
             onTournamentScore={onTournamentScore}
+          />
+        </Suspense>
+      );
+
+    case 'hangman':
+      return (
+        <HangmanGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'glass_bridge':
+      return (
+        <GlassBridgeGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'tug_of_war':
+      return (
+        <TugOfWarGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'red_light_green_light':
+      return (
+        <RedLightGreenLightGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'sudoku':
+      return (
+        <SudokuGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'ping_pong':
+      return (
+        <PingPongGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'air_hockey':
+      return (
+        <AirHockeyGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+        />
+      );
+
+    case 'space_attack':
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <SpaceAttackGame
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
           />
         </Suspense>
       );

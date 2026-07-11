@@ -72,6 +72,24 @@ func gamePosterURL(gameType string) string {
         return gamePostersBaseURL + "/pool.webp"
     case "penalty_shootout":
         return gamePostersBaseURL + "/penalty_shootout.webp"
+    case "whot":
+        return gamePostersBaseURL + "/whot.webp"
+    case "hangman":
+        return gamePostersBaseURL + "/hangman.webp"
+    case "glass_bridge":
+        return gamePostersBaseURL + "/glass_bridge.webp"
+    case "tug_of_war":
+        return gamePostersBaseURL + "/tug_of_war.webp"
+    case "red_light_green_light":
+        return gamePostersBaseURL + "/red_light_green_light.webp"
+    case "sudoku":
+        return gamePostersBaseURL + "/sudoku.webp"
+    case "ping_pong":
+        return gamePostersBaseURL + "/ping_pong.webp"
+    case "air_hockey":
+        return gamePostersBaseURL + "/air_hockey.webp"
+    case "space_attack":
+        return gamePostersBaseURL + "/space_attack.webp"
     default:
         return ""
     }
@@ -85,6 +103,7 @@ var arcadeGameTypes = map[string]bool{
     "doom":             true,
     "fowl_play":        true,
     "penalty_shootout": true,
+    "space_attack":     true,
 }
 
 // minPlayersOverride lets a genuinely multiplayer game still be launched
