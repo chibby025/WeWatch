@@ -207,6 +207,91 @@ const emptyDraft = () => ({
   defenses: [],
 });
 
+// ── Default Characters — pre-built roster picks ───────────────────────────────
+// Budgets: Regular=300, Street=350, City-Wide=400, Continental=450, Global=500, Universal=550
+// Each attack pool and defense pool is independent; sum must stay ≤ tier budget.
+const DEFAULT_CHARACTERS = [
+  {
+    name: 'Cyclops',
+    tier: 'Continental',
+    imageUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Cyclops/Cyclops%20image.jfif',
+    attacks: [
+      { name: 'Optic Blast', power: 140, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Cyclops/Optic%20Blast.gif' },
+      { name: 'Optic Rage',  power: 310, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Cyclops/Optic%20Rage.gif' },
+    ],
+    defenses: [
+      { name: 'Optic Sweep',     power: 300, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Cyclops/Optic%20Sweep.gif' },
+      { name: 'Spot Light Shot', power: 150, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Cyclops/Spot%20Light%20Shot.jfif' },
+    ],
+  },
+  {
+    name: 'Storm',
+    tier: 'Global',
+    imageUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Storm/Storm%20Image.jfif',
+    attacks: [
+      { name: 'Lightning Discharge', power: 340, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Storm/Lightning%20Discharge.gif' },
+      { name: 'Tornado Blast',       power: 160, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Storm/Tornado%20Blast.gif' },
+    ],
+    defenses: [
+      { name: 'Whirlwind Shield', power: 300, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Storm/Whirlwind%20Shield.gif' },
+      { name: 'Electric Barrier', power: 200, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Storm/Electric%20Barrier.gif' },
+    ],
+  },
+  {
+    name: 'Thor',
+    tier: 'Universal',
+    imageUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Thor/Thor%20Image.jfif',
+    attacks: [
+      { name: "Mjolnir Throw",    power: 240, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Thor/Mjolnir%20Throw.gif' },
+      { name: "Thunderer's Storm", power: 310, triggerUrl: "https://LetsWatchOut.b-cdn.net/games/VersusBattle/Thor/Thunderer's%20Storm.gif" },
+    ],
+    defenses: [
+      { name: 'Lightning Armor',      power: 300, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Thor/Lightning%20Armor.gif' },
+      { name: "Thunder God's Summon", power: 250, triggerUrl: "https://LetsWatchOut.b-cdn.net/games/VersusBattle/Thor/Thunder%20God's%20Summon.mp4" },
+    ],
+  },
+  {
+    name: 'Iron Man',
+    tier: 'Continental',
+    imageUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Iron%20Man/IRONMAN.jfif',
+    attacks: [
+      { name: 'Repulsor Blasts', power: 200, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Iron%20Man/Repulsor%20Blasts.gif' },
+      { name: 'UniBeam',         power: 250, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Iron%20Man/UniBeam.gif' },
+    ],
+    defenses: [
+      // Note: original Stark Combo Sweep was 450 — capped to 300 so total stays within Continental budget of 450.
+      { name: 'Nanoshield Block',   power: 150, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Iron%20Man/Nanoshield%20Block.gif' },
+      { name: 'Stark Combo Sweep',  power: 300, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Iron%20Man/Stark%20Combo%20Sweep.gif' },
+    ],
+  },
+  {
+    name: 'Wolverine',
+    tier: 'City-Wide',
+    imageUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Wolverine/WOLVERINE.png',
+    attacks: [
+      { name: 'Spinning Claws', power: 200, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Wolverine/Spinning%20Claws.webp' },
+      { name: 'Beserker Rush',  power: 200, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Wolverine/Beserker%20Rush.webp' },
+    ],
+    defenses: [
+      { name: 'Claw Block', power: 200, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Wolverine/Claw%20Block.gif' },
+      { name: 'Feral Rage', power: 200, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Wolverine/Feral%20Rage.gif' },
+    ],
+  },
+  {
+    name: 'Captain America',
+    tier: 'City-Wide',
+    imageUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Captain%20America/Captain%20America%20image.jfif',
+    attacks: [
+      { name: 'Shield Throw', power: 200, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Captain%20America/Shield%20Throw.gif' },
+      { name: 'Shield Bash',  power: 200, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Captain%20America/Shield%20Bash.gif' },
+    ],
+    defenses: [
+      { name: 'Shield Charge', power: 300, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Captain%20America/Shield%20Charge.gif' },
+      { name: 'Shield Block',  power: 100, triggerUrl: 'https://LetsWatchOut.b-cdn.net/games/VersusBattle/Captain%20America/Shield%20Block.gif' },
+    ],
+  },
+];
+
 // ── Tiny shared components ─────────────────────────────────────────────────────
 
 function HPBar({ hp, maxHp }) {
@@ -903,6 +988,7 @@ function TierCarousel({ selected, onChange }) {
 function BuildingPhase({ myRoster, draft, setDraft, onSubmitChar, onReady, isReady, onLoadSaved, savedRosterKey }) {
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [showDefaults, setShowDefaults] = useState(false);
 
   const [savedRoster, setSavedRoster] = useState(() => {
     try { return JSON.parse(localStorage.getItem(savedRosterKey) || '[]'); } catch { return []; }
@@ -970,6 +1056,15 @@ function BuildingPhase({ myRoster, draft, setDraft, onSubmitChar, onReady, isRea
             Roster {myRoster.length}/3
           </span>
           <div className="flex items-center gap-2">
+            {!rosterFull && (
+              <button
+                onClick={() => setShowDefaults(v => !v)}
+                className={`text-xs px-2 py-1 rounded-full font-semibold transition-all !min-h-0 !min-w-0 ${showDefaults ? 'bg-purple-500 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
+                title="Pick a pre-built character"
+              >
+                🎭 Defaults
+              </button>
+            )}
             {canLoadSaved && (
               <button
                 onClick={onLoadSaved}
@@ -1008,6 +1103,48 @@ function BuildingPhase({ myRoster, draft, setDraft, onSubmitChar, onReady, isRea
           ))}
         </div>
       </div>
+
+      {/* ── Default characters picker ── */}
+      {showDefaults && !rosterFull && (
+        <div className="flex-shrink-0 bg-gray-900/95 border-b border-purple-800 px-3 py-3">
+          <p className="text-[10px] font-semibold text-purple-400 uppercase tracking-wider mb-2">Pick a pre-built fighter</p>
+          <div className="grid grid-cols-2 gap-2">
+            {DEFAULT_CHARACTERS.map((dc, i) => {
+              const tc = TIER_COLORS[dc.tier] || 'text-gray-300 border-gray-500';
+              const alreadyIn = myRoster.some(c => c.name === dc.name);
+              return (
+                <button
+                  key={i}
+                  disabled={alreadyIn || submitting}
+                  onClick={async () => {
+                    if (alreadyIn) return;
+                    setSubmitting(true);
+                    await onSubmitChar({ ...emptyDraft(), ...dc });
+                    setSubmitting(false);
+                    if (myRoster.length + 1 >= 3) setShowDefaults(false);
+                  }}
+                  className={`text-left p-2 rounded-xl border transition-all !min-h-0 !min-w-0 ${
+                    alreadyIn
+                      ? 'opacity-40 cursor-not-allowed border-gray-700 bg-gray-800'
+                      : 'border-gray-700 bg-gray-800 hover:border-purple-500 hover:bg-gray-750 active:scale-95'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-white font-bold text-xs">{dc.name}</span>
+                    <span className={`text-[9px] font-semibold border rounded px-1 ${tc}`}>{dc.tier}</span>
+                  </div>
+                  <div className="text-[9px] text-gray-400 leading-tight">
+                    ⚔ {dc.attacks.map(a => a.name).join(' · ')}
+                  </div>
+                  <div className="text-[9px] text-gray-400 leading-tight">
+                    🛡 {dc.defenses.map(d => d.name).join(' · ')}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {rosterFull ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">

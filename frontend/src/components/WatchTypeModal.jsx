@@ -413,7 +413,7 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
                 selectedTypeId={selectedTypeId}
                 onChange={setSelectedTypeId}
                 showDescription={false}
-                maxWidth={300}
+                maxWidth={330}
               />
             </div>
             {/* Right: description + button — no dividing line */}
@@ -480,7 +480,7 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
           selectedTypeId={selectedTypeId}
           onChange={setSelectedTypeId}
           showDescription
-          maxWidth={440}
+          maxWidth={660}
         />
 
         {/* Continue */}
