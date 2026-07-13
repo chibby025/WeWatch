@@ -1,302 +1,441 @@
 package games
 
 import (
-    "fmt"
-    "math/rand"
+	"fmt"
+	"math/rand"
 )
 
-// Ludo is perfect-information (unlike Crazy Eights) — every token's position is
-// visible to all players, so this uses the plain GameData pattern othello.go/
-// checkers.go already use, no private-state plumbing needed.
+// Ludo — 2-to-4 player board game with these rules:
 //
-// Position convention per token: -1 = in base/yard (not yet on the board);
-// 0-50 = on the shared 52-square outer track, expressed RELATIVE to that
-// color's own entry point (0 = the color's own entry square); 51-56 = in that
-// color's own home column (colored stretch leading to the center); 57 = home
-// (finished). A token needs exactly 57 forward steps from its entry to finish.
+// 2-player mode: all 4 colors are active on the board.
+//   Player 0 controls Red + Yellow, Player 1 controls Blue + Green.
+//   This doubles each player's tokens and makes the board feel full.
 //
-// Turn flow is two-phase, unlike every other game in this package: a player
-// must "roll_dice" first, then "move_token" to act on that roll (the roll
-// itself ends the turn if no token can use it, or if three 6s are rolled in a
-// row — standard anti-stalling rule). GameData's awaiting_move/current_dice
-// track this phase so the generic per-move "not your turn" check in
-// ProcessMove still applies correctly to both halves of a turn.
+// 3/4-player mode: each player controls one color (unchanged from original).
+//
+// 2-dice flow:
+//   1. "roll_dice" → rolls d1 and d2, stores dice_rolls:[d1,d2] and
+//      remaining_moves (filtered to only playable values). If doubles,
+//      a bonus roll is earned after the full turn.
+//   2. "move_token" with {color, token_index, die_value} → moves the
+//      token, consumes that die from remaining_moves, checks for further
+//      legal dice. If remaining dice exist, same player continues.
+//      At end of turn: doubles OR capture OR reaching home → bonus turn.
+//
+// Position convention: -1=yard, 0-50=shared track (relative to entry),
+// 51-56=home column, 57=finished.
 
 var ludoColors = []string{"red", "blue", "green", "yellow"}
 
 var ludoEntryOffset = map[string]int{"red": 0, "blue": 13, "green": 26, "yellow": 39}
 
-// ludoSafeSquares are global track positions (0-51) where a token can never be
-// captured: each color's own entry square plus one "star" square roughly
-// opposite it — the standard Ludo board layout.
-var ludoSafeSquares = map[int]bool{0: true, 8: true, 13: true, 21: true, 26: true, 34: true, 39: true, 47: true}
-
-func ludoGlobalSquare(color string, relPos int) int {
-    return (ludoEntryOffset[color] + relPos) % 52
+var ludoSafeSquares = map[int]bool{
+	0: true, 8: true, 13: true, 21: true,
+	26: true, 34: true, 39: true, 47: true,
 }
 
-// ludoInitialBoard creates 4 tokens for each of the first playerCount colors.
-// Colors beyond playerCount are simply never populated — gameState.Players
-// only ever has playerCount entries, so nothing else in this file ever
-// touches them. Shared by game_manager.go's initializeGameState and the
-// lazy-init fallback below, so both agree exactly.
+// ludoActiveColors returns all 4 colors for a 2-player game so both players
+// have tokens on the full board, or just the first N colors for N>2.
+func ludoActiveColors(playerCount int) []string {
+	if playerCount == 2 {
+		return ludoColors
+	}
+	return ludoColors[:playerCount]
+}
+
+// colorsForPlayer returns the slice of colors that playerIdx controls.
+// 2-player: player 0 = red+yellow, player 1 = blue+green.
+// 3/4-player: single color per player (unchanged).
+func colorsForPlayer(playerIdx, playerCount int) []string {
+	if playerCount == 2 {
+		switch playerIdx {
+		case 0:
+			return []string{"red", "yellow"}
+		case 1:
+			return []string{"blue", "green"}
+		}
+	}
+	if playerIdx >= 0 && playerIdx < len(ludoColors) {
+		return []string{ludoColors[playerIdx]}
+	}
+	return nil
+}
+
+// playerForColor returns which player index owns a given color.
+func playerForColor(playerCount int, color string) int {
+	if playerCount == 2 {
+		if color == "red" || color == "yellow" {
+			return 0
+		}
+		if color == "blue" || color == "green" {
+			return 1
+		}
+	}
+	for i, c := range ludoColors {
+		if c == color {
+			return i
+		}
+	}
+	return -1
+}
+
+func ludoGlobalSquare(color string, relPos int) int {
+	return (ludoEntryOffset[color] + relPos) % 52
+}
+
+// ludoInitialBoard creates 4 tokens for each active color.
+// For 2-player: all 4 colors; for 3/4-player: first N colors.
 func ludoInitialBoard(playerCount int) map[string]interface{} {
-    tokens := make(map[string]interface{})
-    for i := 0; i < playerCount; i++ {
-        color := ludoColors[i]
-        colorTokens := make([]map[string]interface{}, 4)
-        for j := 0; j < 4; j++ {
-            colorTokens[j] = map[string]interface{}{
-                "id":       fmt.Sprintf("%s_%d", color, j),
-                "position": -1,
-            }
-        }
-        tokens[color] = colorTokens
-    }
-    return map[string]interface{}{"tokens": tokens}
+	tokens := make(map[string]interface{})
+	for _, color := range ludoActiveColors(playerCount) {
+		colorTokens := make([]map[string]interface{}, 4)
+		for j := 0; j < 4; j++ {
+			colorTokens[j] = map[string]interface{}{
+				"id":       fmt.Sprintf("%s_%d", color, j),
+				"position": -1,
+			}
+		}
+		tokens[color] = colorTokens
+	}
+	return map[string]interface{}{"tokens": tokens}
 }
 
 func ensureLudoDealt(gameState *GameSessionState) {
-    if _, ok := gameState.GameData["tokens"]; !ok {
-        board := ludoInitialBoard(len(gameState.Players))
-        gameState.GameData["tokens"] = board["tokens"]
-    }
+	if _, ok := gameState.GameData["tokens"]; !ok {
+		board := ludoInitialBoard(len(gameState.Players))
+		gameState.GameData["tokens"] = board["tokens"]
+	}
 }
 
-// ludoTokens returns a color's 4 tokens, normalizing whatever underlying type
-// GameData happens to hold (a fresh map literal vs. round-tripped through
-// JSON) — same []interface{}-vs-typed-slice ambiguity othello.go/checkers.go
-// already handle for board state. The returned maps are the SAME underlying
-// map objects stored in GameData (Go maps are reference types), so mutating a
-// returned token's "position" field correctly updates canonical state without
-// needing to write anything back.
+// ludoTokens returns a color's 4 tokens, handling both native and JSON-decoded types.
 func ludoTokens(gameState *GameSessionState, color string) ([]map[string]interface{}, error) {
-    tokensRaw, ok := gameState.GameData["tokens"].(map[string]interface{})
-    if !ok {
-        return nil, fmt.Errorf("invalid tokens state")
-    }
-    colorRaw, ok := tokensRaw[color]
-    if !ok {
-        return nil, fmt.Errorf("unknown color: %s", color)
-    }
+	tokensRaw, ok := gameState.GameData["tokens"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid tokens state")
+	}
+	colorRaw, ok := tokensRaw[color]
+	if !ok {
+		return nil, fmt.Errorf("unknown color: %s", color)
+	}
 
-    switch v := colorRaw.(type) {
-    case []map[string]interface{}:
-        return v, nil
-    case []interface{}:
-        out := make([]map[string]interface{}, len(v))
-        for i, t := range v {
-            tm, ok := t.(map[string]interface{})
-            if !ok {
-                return nil, fmt.Errorf("invalid token at index %d", i)
-            }
-            out[i] = tm
-        }
-        return out, nil
-    default:
-        return nil, fmt.Errorf("invalid color token type: %T", colorRaw)
-    }
+	switch v := colorRaw.(type) {
+	case []map[string]interface{}:
+		return v, nil
+	case []interface{}:
+		out := make([]map[string]interface{}, len(v))
+		for i, t := range v {
+			tm, ok := t.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid token at index %d", i)
+			}
+			out[i] = tm
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("invalid color token type: %T", colorRaw)
+	}
 }
 
 func ludoTokenPosition(token map[string]interface{}) int {
-    switch v := token["position"].(type) {
-    case int:
-        return v
-    case float64:
-        return int(v)
-    default:
-        return -1
-    }
+	switch v := token["position"].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	default:
+		return -1
+	}
 }
 
 func ludoIntField(gameData map[string]interface{}, key string) int {
-    switch v := gameData[key].(type) {
-    case int:
-        return v
-    case float64:
-        return int(v)
-    default:
-        return 0
-    }
+	switch v := gameData[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+// ludoRemainingMoves reads remaining_moves from GameData as []int.
+func ludoRemainingMoves(gameState *GameSessionState) []int {
+	raw, ok := gameState.GameData["remaining_moves"].([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]int, 0, len(raw))
+	for _, v := range raw {
+		switch n := v.(type) {
+		case float64:
+			result = append(result, int(n))
+		case int:
+			result = append(result, n)
+		}
+	}
+	return result
+}
+
+// ludoHasLegalMove returns true if any token among playerColors can legally
+// use dieValue (enter the board on 6, advance, or home column).
+func ludoHasLegalMove(gameState *GameSessionState, playerColors []string, dieValue int) bool {
+	for _, color := range playerColors {
+		tokens, err := ludoTokens(gameState, color)
+		if err != nil {
+			continue
+		}
+		for _, t := range tokens {
+			pos := ludoTokenPosition(t)
+			if pos == -1 && dieValue == 6 {
+				return true
+			}
+			if pos >= 0 && pos+dieValue <= 57 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (gm *GameManager) processLudoMove(gameState *GameSessionState, playerID uint, moveType string, moveData map[string]interface{}) (gameOver bool, winnerID *uint, err error) {
-    ensureLudoDealt(gameState)
+	ensureLudoDealt(gameState)
 
-    playerIdx := gameState.CurrentTurn
-    color := ludoColors[playerIdx]
+	playerIdx := gameState.CurrentTurn
+	playerColors := colorsForPlayer(playerIdx, len(gameState.Players))
 
-    switch moveType {
-    case "roll_dice":
-        return gm.processLudoRoll(gameState, color)
-    case "move_token":
-        return gm.processLudoTokenMove(gameState, playerIdx, color, moveData)
-    default:
-        return false, nil, fmt.Errorf("unknown move type: %s", moveType)
-    }
+	switch moveType {
+	case "roll_dice":
+		return gm.processLudoRoll(gameState, playerIdx, playerColors)
+	case "move_token":
+		return gm.processLudoTokenMove(gameState, playerIdx, playerColors, moveData)
+	default:
+		return false, nil, fmt.Errorf("unknown move type: %s", moveType)
+	}
 }
 
-func (gm *GameManager) processLudoRoll(gameState *GameSessionState, color string) (bool, *uint, error) {
-    if awaiting, _ := gameState.GameData["awaiting_move"].(bool); awaiting {
-        return false, nil, fmt.Errorf("you must move your token before rolling again")
-    }
+func (gm *GameManager) processLudoRoll(gameState *GameSessionState, playerIdx int, playerColors []string) (bool, *uint, error) {
+	if awaiting, _ := gameState.GameData["awaiting_move"].(bool); awaiting {
+		return false, nil, fmt.Errorf("you must move your token before rolling again")
+	}
 
-    roll := rand.Intn(6) + 1
-    consecutiveSixes := ludoIntField(gameState.GameData, "consecutive_sixes")
+	d1 := rand.Intn(6) + 1
+	d2 := rand.Intn(6) + 1
+	doubles := d1 == d2
+	n := len(gameState.Players)
 
-    if roll == 6 {
-        consecutiveSixes++
-    } else {
-        consecutiveSixes = 0
-    }
+	gameState.GameData["dice_rolls"] = []interface{}{d1, d2}
+	gameState.GameData["doubles"] = doubles
+	gameState.GameData["bonus_earned"] = false
+	gameState.GameData["last_roll_wasted"] = false
+	gameState.GameData["last_capture"] = false
+	gameState.GameData["last_token_home"] = false
 
-    // Three 6s in a row forfeits this roll's move and passes the turn —
-    // standard anti-stalling rule. The roll itself is still visible to
-    // players via the broadcast, it just grants nothing.
-    if roll == 6 && consecutiveSixes >= 3 {
-        gameState.GameData["consecutive_sixes"] = 0
-        gameState.GameData["current_dice"] = roll
-        gameState.GameData["awaiting_move"] = false
-        gameState.GameData["last_roll_wasted"] = true
-        // Let ProcessMove's automatic turn-advance proceed normally — the
-        // turn genuinely passes here, no decrement needed.
-        return false, nil, nil
-    }
-    gameState.GameData["consecutive_sixes"] = consecutiveSixes
-    gameState.GameData["last_roll_wasted"] = false
+	// Filter to only dice values that have at least one legal move.
+	// Values with no legal move are auto-consumed (removed from remaining_moves
+	// immediately — the player never wastes a turn interacting with them).
+	remaining := []int{}
+	for _, dv := range []int{d1, d2} {
+		if ludoHasLegalMove(gameState, playerColors, dv) {
+			remaining = append(remaining, dv)
+		}
+	}
 
-    tokens, err := ludoTokens(gameState, color)
-    if err != nil {
-        return false, nil, err
-    }
+	if len(remaining) == 0 {
+		// No moves possible for either die — turn passes.
+		// If doubles, same player gets a bonus roll.
+		gameState.GameData["remaining_moves"] = []interface{}{}
+		gameState.GameData["awaiting_move"] = false
+		if doubles {
+			gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n
+		}
+		return false, nil, nil
+	}
 
-    hasLegalMove := false
-    for _, t := range tokens {
-        pos := ludoTokenPosition(t)
-        if pos == -1 && roll == 6 {
-            hasLegalMove = true
-            break
-        }
-        if pos >= 0 && pos+roll <= 57 {
-            hasLegalMove = true
-            break
-        }
-    }
-
-    gameState.GameData["current_dice"] = roll
-
-    if !hasLegalMove {
-        gameState.GameData["awaiting_move"] = false
-        if roll == 6 {
-            // Six always grants a re-roll even with nothing to use it on —
-            // same player continues. Cancel the automatic turn-advance below.
-            gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
-        }
-        // Non-6 with no legal move: the turn genuinely passes — let
-        // ProcessMove's automatic advance proceed.
-        return false, nil, nil
-    }
-
-    // A legal move exists — the SAME player must now send move_token. Cancel
-    // the automatic advance here too; it would otherwise hand the turn to
-    // someone who never got to act on this roll.
-    gameState.GameData["awaiting_move"] = true
-    gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
-    return false, nil, nil
+	rm := make([]interface{}, len(remaining))
+	for i, v := range remaining {
+		rm[i] = v
+	}
+	gameState.GameData["remaining_moves"] = rm
+	gameState.GameData["awaiting_move"] = true
+	// Same player acts — cancel the automatic turn-advance.
+	gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n
+	return false, nil, nil
 }
 
-func (gm *GameManager) processLudoTokenMove(gameState *GameSessionState, playerIdx int, color string, moveData map[string]interface{}) (bool, *uint, error) {
-    awaiting, _ := gameState.GameData["awaiting_move"].(bool)
-    if !awaiting {
-        return false, nil, fmt.Errorf("roll the dice first")
-    }
-    dice := ludoIntField(gameState.GameData, "current_dice")
-    if dice == 0 {
-        return false, nil, fmt.Errorf("no pending roll")
-    }
+func (gm *GameManager) processLudoTokenMove(gameState *GameSessionState, playerIdx int, playerColors []string, moveData map[string]interface{}) (bool, *uint, error) {
+	awaiting, _ := gameState.GameData["awaiting_move"].(bool)
+	if !awaiting {
+		return false, nil, fmt.Errorf("roll the dice first")
+	}
 
-    tokenIdxF, ok := moveData["token_index"].(float64)
-    if !ok {
-        return false, nil, fmt.Errorf("missing token_index")
-    }
-    tokenIdx := int(tokenIdxF)
-    if tokenIdx < 0 || tokenIdx > 3 {
-        return false, nil, fmt.Errorf("token_index out of range")
-    }
+	// Validate die_value
+	dieValueF, ok := moveData["die_value"].(float64)
+	if !ok {
+		return false, nil, fmt.Errorf("missing die_value")
+	}
+	dieValue := int(dieValueF)
 
-    tokens, err := ludoTokens(gameState, color)
-    if err != nil {
-        return false, nil, err
-    }
-    token := tokens[tokenIdx]
-    pos := ludoTokenPosition(token)
+	// Validate color
+	color, ok := moveData["color"].(string)
+	if !ok {
+		return false, nil, fmt.Errorf("missing color")
+	}
+	ownedColor := false
+	for _, c := range playerColors {
+		if c == color {
+			ownedColor = true
+			break
+		}
+	}
+	if !ownedColor {
+		return false, nil, fmt.Errorf("color %s does not belong to you", color)
+	}
 
-    var newPos int
-    if pos == -1 {
-        if dice != 6 {
-            return false, nil, fmt.Errorf("need a 6 to leave base")
-        }
-        newPos = 0
-    } else {
-        newPos = pos + dice
-        if newPos > 57 {
-            return false, nil, fmt.Errorf("move would overshoot home")
-        }
-    }
+	// Validate token_index
+	tokenIdxF, ok := moveData["token_index"].(float64)
+	if !ok {
+		return false, nil, fmt.Errorf("missing token_index")
+	}
+	tokenIdx := int(tokenIdxF)
+	if tokenIdx < 0 || tokenIdx > 3 {
+		return false, nil, fmt.Errorf("token_index out of range")
+	}
 
-    captured := false
-    if newPos >= 0 && newPos <= 50 {
-        globalSq := ludoGlobalSquare(color, newPos)
-        if !ludoSafeSquares[globalSq] {
-            for i, otherColor := range ludoColors {
-                if otherColor == color || i >= len(gameState.Players) {
-                    continue
-                }
-                otherTokens, terr := ludoTokens(gameState, otherColor)
-                if terr != nil {
-                    continue
-                }
-                for _, ot := range otherTokens {
-                    otPos := ludoTokenPosition(ot)
-                    if otPos >= 0 && otPos <= 50 && ludoGlobalSquare(otherColor, otPos) == globalSq {
-                        ot["position"] = -1
-                        captured = true
-                    }
-                }
-            }
-        }
-    }
+	// Remove one instance of dieValue from remaining_moves.
+	remaining := ludoRemainingMoves(gameState)
+	consumed := false
+	newRemaining := []int{}
+	for _, v := range remaining {
+		if v == dieValue && !consumed {
+			consumed = true
+		} else {
+			newRemaining = append(newRemaining, v)
+		}
+	}
+	if !consumed {
+		return false, nil, fmt.Errorf("die value %d is not in remaining moves", dieValue)
+	}
 
-    token["position"] = newPos
-    reachedHome := newPos == 57
+	// Execute the token move.
+	tokens, err := ludoTokens(gameState, color)
+	if err != nil {
+		return false, nil, err
+	}
+	token := tokens[tokenIdx]
+	pos := ludoTokenPosition(token)
 
-    gameState.GameData["current_dice"] = 0
-    gameState.GameData["awaiting_move"] = false
-    gameState.GameData["last_capture"] = captured
-    gameState.GameData["last_token_home"] = reachedHome
+	var newPos int
+	if pos == -1 {
+		if dieValue != 6 {
+			return false, nil, fmt.Errorf("need a 6 to leave base")
+		}
+		newPos = 0
+	} else {
+		newPos = pos + dieValue
+		if newPos > 57 {
+			return false, nil, fmt.Errorf("move would overshoot home")
+		}
+	}
 
-    allHome := true
-    for _, t := range tokens {
-        if ludoTokenPosition(t) != 57 {
-            allHome = false
-            break
-        }
-    }
-    if allHome {
-        winner := gameState.Players[playerIdx].UserID
-        return true, &winner, nil
-    }
+	// Capture: check every opponent token on the same global square.
+	captured := false
+	if newPos >= 0 && newPos <= 50 {
+		globalSq := ludoGlobalSquare(color, newPos)
+		if !ludoSafeSquares[globalSq] {
+			for _, otherColor := range ludoActiveColors(len(gameState.Players)) {
+				isOwnColor := false
+				for _, c := range playerColors {
+					if c == otherColor {
+						isOwnColor = true
+						break
+					}
+				}
+				if isOwnColor {
+					continue
+				}
+				otherTokens, terr := ludoTokens(gameState, otherColor)
+				if terr != nil {
+					continue
+				}
+				for _, ot := range otherTokens {
+					otPos := ludoTokenPosition(ot)
+					if otPos >= 0 && otPos <= 50 && ludoGlobalSquare(otherColor, otPos) == globalSq {
+						ot["position"] = -1
+						captured = true
+					}
+				}
+			}
+		}
+	}
 
-    // Six, a capture, or reaching home all grant an extra turn (matches the
-    // generous Ludo King-style variant) — cancel the automatic advance so the
-    // same player continues. consecutive_sixes needs no adjustment here: it's
-    // only ever non-zero immediately after a 6 was rolled, which itself
-    // already guarantees this same branch runs (same player continues) — by
-    // the time a turn genuinely passes to someone else, the prior roll wasn't
-    // a 6, so processLudoRoll already reset it to 0 on that call.
-    if dice == 6 || captured || reachedHome {
-        gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
-    }
+	token["position"] = newPos
+	reachedHome := newPos == 57
 
-    return false, nil, nil
+	gameState.GameData["last_capture"] = captured
+	gameState.GameData["last_token_home"] = reachedHome
+	if captured || reachedHome {
+		gameState.GameData["bonus_earned"] = true
+	}
+
+	// Win check: ALL tokens across ALL of this player's colors are home.
+	allHome := true
+	for _, c := range playerColors {
+		ts, e := ludoTokens(gameState, c)
+		if e != nil {
+			allHome = false
+			break
+		}
+		for _, t := range ts {
+			if ludoTokenPosition(t) != 57 {
+				allHome = false
+				break
+			}
+		}
+		if !allHome {
+			break
+		}
+	}
+	if allHome {
+		winner := gameState.Players[playerIdx].UserID
+		return true, &winner, nil
+	}
+
+	n := len(gameState.Players)
+	doubles, _ := gameState.GameData["doubles"].(bool)
+	bonusEarned, _ := gameState.GameData["bonus_earned"].(bool)
+
+	// Check if any remaining die has a legal move.
+	if len(newRemaining) > 0 {
+		legalRemaining := []int{}
+		for _, dv := range newRemaining {
+			if ludoHasLegalMove(gameState, playerColors, dv) {
+				legalRemaining = append(legalRemaining, dv)
+			}
+		}
+
+		if len(legalRemaining) > 0 {
+			lrm := make([]interface{}, len(legalRemaining))
+			for i, v := range legalRemaining {
+				lrm[i] = v
+			}
+			gameState.GameData["remaining_moves"] = lrm
+			gameState.GameData["awaiting_move"] = true
+			// Same player continues with the remaining die.
+			gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n
+			return false, nil, nil
+		}
+		// Remaining dice have no legal moves — fall through to end-of-turn.
+	}
+
+	// All dice consumed (or none with legal moves).
+	gameState.GameData["remaining_moves"] = []interface{}{}
+	gameState.GameData["awaiting_move"] = false
+
+	if doubles || bonusEarned {
+		// Bonus turn: same player gets a fresh roll.
+		gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n
+	}
+	// else: automatic turn-advance proceeds normally.
+
+	return false, nil, nil
 }

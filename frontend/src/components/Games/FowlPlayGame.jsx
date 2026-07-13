@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { X as CloseIcon } from 'lucide-react';
 
 const FOWL_PLAY_ORIGIN = 'https://letswatchout.b-cdn.net';
-const FOWL_PLAY_URL = `${FOWL_PLAY_ORIGIN}/games/fowl-play/v2/index.html`;
+const FOWL_PLAY_URL = `${FOWL_PLAY_ORIGIN}/games/fowl-play/v3/index.html`;
 
 export default function FowlPlayGame({
   onClose,

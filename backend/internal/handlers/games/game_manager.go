@@ -620,9 +620,14 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 	case "ludo":
 		ludoBoard := ludoInitialBoard(playerCount)
 		state["tokens"] = ludoBoard["tokens"]
-		state["current_dice"] = 0
+		state["dice_rolls"] = []interface{}{}
+		state["remaining_moves"] = []interface{}{}
 		state["awaiting_move"] = false
-		state["consecutive_sixes"] = 0
+		state["doubles"] = false
+		state["bonus_earned"] = false
+		state["last_capture"] = false
+		state["last_token_home"] = false
+		state["last_roll_wasted"] = false
 
 	case "othello":
 		state["board"] = othelloInitialBoard()

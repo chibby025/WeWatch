@@ -36,7 +36,6 @@ const HOME_COLUMNS = {
 const ENTRY_OFFSET   = { red: 0, blue: 13, green: 26, yellow: 39 };
 const SAFE_SQUARES   = new Set([0, 8, 13, 21, 26, 34, 39, 47]);
 const YARD_RECT      = { red:{top:0,left:0}, blue:{top:0,left:9}, green:{top:9,left:9}, yellow:{top:9,left:0} };
-// Row/col offsets within each 6×6 yard for the 4 token slots
 const YARD_OFFSETS   = [[1.3, 1.3],[1.3, 3.8],[3.8, 1.3],[3.8, 3.8]];
 
 function gSq(color, relPos)       { return (ENTRY_OFFSET[color] + relPos) % 52; }
@@ -51,6 +50,23 @@ function isSafe(color, relPos) {
   return SAFE_SQUARES.has(gSq(color, relPos));
 }
 
+// Returns which colors are active for a given player count:
+// 2-player → all 4 colors; 3/4-player → first N colors.
+function activeColorsForCount(playerCount) {
+  return playerCount === 2 ? LUDO_COLORS : LUDO_COLORS.slice(0, playerCount);
+}
+
+// Returns the colors a player at playerIdx controls.
+// 2-player: player 0 = red+yellow, player 1 = blue+green.
+// 3/4-player: single color per player.
+function colorsForPlayerIdx(playerIdx, playerCount) {
+  if (playerCount === 2) {
+    return playerIdx === 0 ? ['red', 'yellow'] : ['blue', 'green'];
+  }
+  const c = LUDO_COLORS[playerIdx];
+  return c ? [c] : [];
+}
+
 // ── 3-D Dice ──────────────────────────────────────────────────────────────────
 const PIPS = {
   1: [[50,50]],
@@ -60,7 +76,7 @@ const PIPS = {
   5: [[28,28],[72,28],[50,50],[28,72],[72,72]],
   6: [[28,22],[72,22],[28,50],[72,50],[28,78],[72,78]],
 };
-// [rotX, rotY] to rotate the CUBE so face N faces the viewer
+// [rotX, rotY] to bring face N to face the viewer
 const FACE_SHOW = { 1:[0,0], 2:[0,-90], 3:[-90,0], 4:[90,0], 5:[0,90], 6:[0,180] };
 
 function DieFace({ n, pipColor }) {
@@ -85,13 +101,13 @@ function DieFace({ n, pipColor }) {
   );
 }
 
-function Dice3D({ value, pipColor }) {
-  const S = 46;
+function Dice3D({ value, pipColor, selected, consumed, onClick }) {
+  const S = 44;
   const H = S / 2;
   const rotRef    = useRef({ x: 0, y: 0 });
   const prevVal   = useRef(0);
-  const [tf, setTf]       = useState('rotateX(-20deg) rotateY(20deg)');
-  const [tr, setTr]       = useState('none');
+  const [tf, setTf] = useState('rotateX(-20deg) rotateY(20deg)');
+  const [tr, setTr] = useState('none');
 
   useEffect(() => {
     if (!value || value === prevVal.current) return;
@@ -108,25 +124,36 @@ function Dice3D({ value, pipColor }) {
 
   const face = (transform, n) => (
     <div style={{ position:'absolute', width:S, height:S, transform }}>
-      <DieFace n={n} pipColor={pipColor} />
+      <DieFace n={n} pipColor={consumed ? '#94a3b8' : pipColor} />
     </div>
   );
 
   return (
-    <div style={{ width:S, height:S, perspective:160, perspectiveOrigin:'50% 40%' }}>
+    <div
+      onClick={!consumed && onClick ? onClick : undefined}
+      style={{
+        width:S, height:S, perspective:160, perspectiveOrigin:'50% 40%',
+        cursor: !consumed && onClick ? 'pointer' : 'default',
+        opacity: consumed ? 0.35 : 1,
+        borderRadius: 8,
+        outline: selected ? `2.5px solid ${pipColor || '#fff'}` : 'none',
+        outlineOffset: 3,
+        boxShadow: selected ? `0 0 10px ${pipColor || '#fff'}88` : 'none',
+        transition: 'opacity 0.2s, outline 0.15s',
+      }}>
       <div style={{ width:S, height:S, position:'relative', transformStyle:'preserve-3d', transform:tf, transition:tr }}>
         {face(`translateZ(${H}px)`, 1)}
         {face(`rotateY(180deg) translateZ(${H}px)`, 6)}
         {face(`rotateY(90deg) translateZ(${H}px)`, 2)}
         {face(`rotateY(-90deg) translateZ(${H}px)`, 5)}
-        {face(`rotateX(-90deg) translateZ(${H}px)`, 3)}
-        {face(`rotateX(90deg) translateZ(${H}px)`, 4)}
+        {face(`rotateX(-90deg) translateZ(${H}px)`, 4)}
+        {face(`rotateX(90deg) translateZ(${H}px)`, 3)}
       </div>
     </div>
   );
 }
 
-// ── Token (SVG flat token — clean board-game piece) ───────────────────────────
+// ── Token (SVG flat token) ─────────────────────────────────────────────────────
 function Token({ color, isClickable, isFaded }) {
   const hex  = COLOR_HEX[color];
   const lite = COLOR_LIGHT[color];
@@ -146,20 +173,14 @@ function Token({ color, isClickable, isFaded }) {
           : 'drop-shadow(0 2px 4px rgba(0,0,0,0.55))',
       }}
     >
-      {/* Pulsing ring behind the piece when it's a legal move */}
       {isClickable && (
         <circle cx="20" cy="20" r="20" fill="none" stroke={hex} strokeWidth="2.5"
           style={{ animation:'tokenRing 1.3s ease-out infinite', transformOrigin:'20px 20px' }}/>
       )}
-      {/* Outer border ring */}
       <circle cx="20" cy="20" r="18" fill={dark}/>
-      {/* Main coloured disc */}
       <circle cx="20" cy="20" r="16.5" fill={hex}/>
-      {/* Inner decorative ring */}
       <circle cx="20" cy="20" r="11" fill="none" stroke={lite} strokeWidth="2" opacity="0.55"/>
-      {/* Center dot — outer dark halo */}
       <circle cx="20" cy="20" r="5" fill={dark} opacity="0.5"/>
-      {/* Center dot — bright inner */}
       <circle cx="20" cy="20" r="3.2" fill={lite} opacity="0.8"/>
     </svg>
   );
@@ -168,57 +189,108 @@ function Token({ color, isClickable, isFaded }) {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function LudoGame({ gameState, players=[], currentUserId, onMove, onClose, onEndGame }) {
   const boardRef  = useRef(null);
-  const dragInfo  = useRef(null);   // { color, tokenIdx, startX, startY }
-  const [dragging, setDragging]   = useState(null);   // { color, tokenIdx }
-  const [ghostPos, setGhostPos]   = useState({ x:0, y:0 });
+  const dragInfo  = useRef(null);
+  const [dragging, setDragging]         = useState(null);
+  const [ghostPos, setGhostPos]         = useState({ x:0, y:0 });
+  const [selectedDieValue, setSelectedDieValue] = useState(null);
 
   const gs             = gameState?.game_state || {};
   const tokensByColor  = gs.tokens || {};
-  const currentDice    = gs.current_dice || 0;
+  const diceRolls      = gs.dice_rolls || [];        // [d1, d2] — always 2 values
+  const remainingMoves = gs.remaining_moves || [];   // subset still playable
   const awaitingMove   = !!gs.awaiting_move;
   const lastRollWasted = !!gs.last_roll_wasted;
 
   const currentTurn   = gameState?.current_turn ?? 0;
   const currentPlayer = players[currentTurn];
   const myColorIdx    = players.findIndex(p => p.user_id === currentUserId);
-  const myColor       = myColorIdx >= 0 ? LUDO_COLORS[myColorIdx] : null;
   const isMyTurn      = currentPlayer?.user_id === currentUserId;
   const isPlayer      = myColorIdx >= 0;
   const winner        = gameState?.winner_id ? players.find(p => p.user_id === gameState.winner_id) : null;
   const isOver        = ['finished','forfeited','completed'].includes(gameState?.status);
 
-  const legalTokenIndices = useMemo(() => {
-    if (!isMyTurn || !awaitingMove || !currentDice || !myColor) return [];
-    return (tokensByColor[myColor]||[]).reduce((acc,t,i) => {
-      const pos = t.position ?? -1;
-      if ((pos===-1 && currentDice===6) || (pos>=0 && pos+currentDice<=57)) acc.push(i);
-      return acc;
-    }, []);
-  }, [tokensByColor, myColor, isMyTurn, awaitingMove, currentDice]);
+  // Colors this player controls (1 or 2 depending on player count)
+  const myColors = useMemo(() => {
+    if (myColorIdx < 0) return [];
+    return colorsForPlayerIdx(myColorIdx, players.length);
+  }, [myColorIdx, players.length]);
 
-  // Map of "row,col" → tokenIdx for valid drop targets
+  const myPrimaryColor = myColors[0] || null;
+
+  // All colors shown on the board (all 4 for 2-player, first N for 3/4-player)
+  const activeColors = useMemo(() => activeColorsForCount(players.length), [players.length]);
+
+  // Figure out which dice are consumed: match remaining_moves against dice_rolls.
+  // Handles duplicate values (e.g. both dice = 4) correctly.
+  const diceConsumed = useMemo(() => {
+    const rem = [...remainingMoves];
+    return diceRolls.map(v => {
+      const idx = rem.indexOf(v);
+      if (idx >= 0) { rem.splice(idx, 1); return false; }
+      return true;
+    });
+  }, [diceRolls, remainingMoves]);
+
+  // Auto-select the die when only one playable value remains.
+  // Clear selection when it's not our turn or not awaiting a move.
+  const rmKey = JSON.stringify(remainingMoves);
+  useEffect(() => {
+    if (!awaitingMove || !isMyTurn) {
+      setSelectedDieValue(null);
+      return;
+    }
+    if (remainingMoves.length === 1) {
+      setSelectedDieValue(remainingMoves[0]);
+    } else if (remainingMoves.length === 0) {
+      setSelectedDieValue(null);
+    }
+    // If 2+ remain, wait for player to tap a die.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rmKey, awaitingMove, isMyTurn]);
+
+  // Legal moves: { color, tokenIdx } pairs for the currently selected die value.
+  const legalMoves = useMemo(() => {
+    if (!isMyTurn || !awaitingMove || !selectedDieValue || myColors.length === 0) return [];
+    const moves = [];
+    for (const color of myColors) {
+      (tokensByColor[color] || []).forEach((t, i) => {
+        const pos = t.position ?? -1;
+        if ((pos === -1 && selectedDieValue === 6) || (pos >= 0 && pos + selectedDieValue <= 57)) {
+          moves.push({ color, tokenIdx: i });
+        }
+      });
+    }
+    return moves;
+  }, [tokensByColor, myColors, isMyTurn, awaitingMove, selectedDieValue]);
+
+  // Drop-zone map: "row,col" → { color, tokenIdx }
   const targetCells = useMemo(() => {
     const map = new Map();
-    if (!awaitingMove || !myColor || !currentDice) return map;
-    const myTokens = tokensByColor[myColor] || [];
-    legalTokenIndices.forEach(idx => {
-      const pos    = myTokens[idx]?.position ?? -1;
-      const newPos = pos === -1 ? 0 : pos + currentDice;
-      const cell   = cellForToken(myColor, newPos);
-      if (cell) map.set(`${cell[0]},${cell[1]}`, idx);
+    if (!awaitingMove || !selectedDieValue) return map;
+    legalMoves.forEach(({ color, tokenIdx }) => {
+      const pos = (tokensByColor[color] || [])[tokenIdx]?.position ?? -1;
+      const newPos = pos === -1 ? 0 : pos + selectedDieValue;
+      const cell  = cellForToken(color, newPos);
+      if (cell) map.set(`${cell[0]},${cell[1]}`, { color, tokenIdx });
     });
     return map;
-  }, [awaitingMove, myColor, currentDice, tokensByColor, legalTokenIndices]);
+  }, [awaitingMove, selectedDieValue, tokensByColor, legalMoves]);
 
   const handleRoll = () => {
     if (!isMyTurn || awaitingMove || isOver) return;
     onMove({ move_type: 'roll_dice' });
   };
 
-  const handleTokenMove = (tokenIdx) => {
-    if (!isMyTurn || !awaitingMove || isOver) return;
-    if (!legalTokenIndices.includes(tokenIdx)) return;
-    onMove({ move_type: 'move_token', token_index: tokenIdx });
+  const handleTokenMove = (color, tokenIdx) => {
+    if (!isMyTurn || !awaitingMove || isOver || !selectedDieValue) return;
+    if (!legalMoves.some(m => m.color === color && m.tokenIdx === tokenIdx)) return;
+    onMove({ move_type: 'move_token', token_index: tokenIdx, color, die_value: selectedDieValue });
+    setSelectedDieValue(null);
+  };
+
+  const handleDieClick = (dieIdx) => {
+    if (!isMyTurn || !awaitingMove || diceConsumed[dieIdx]) return;
+    setSelectedDieValue(diceRolls[dieIdx]);
   };
 
   const handleForfeit = () => {
@@ -228,7 +300,7 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
 
   // ── Drag-and-drop ───────────────────────────────────────────────────────────
   const onTokenPointerDown = (e, color, tokenIdx) => {
-    if (color !== myColor || !legalTokenIndices.includes(tokenIdx)) return;
+    if (!myColors.includes(color) || !legalMoves.some(m => m.color === color && m.tokenIdx === tokenIdx)) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     dragInfo.current = { color, tokenIdx, startX: e.clientX, startY: e.clientY };
     setGhostPos({ x: e.clientX, y: e.clientY });
@@ -244,17 +316,20 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
 
   const onTokenPointerUp = (e) => {
     if (!dragInfo.current) return;
-    const { tokenIdx, startX, startY } = dragInfo.current;
+    const { color, tokenIdx, startX, startY } = dragInfo.current;
     const wasTap = Math.hypot(e.clientX - startX, e.clientY - startY) <= 7;
 
     if (wasTap) {
-      handleTokenMove(tokenIdx);
+      handleTokenMove(color, tokenIdx);
     } else if (dragging && boardRef.current) {
       const rect = boardRef.current.getBoundingClientRect();
       const col  = Math.floor(((e.clientX - rect.left) / rect.width)  * 15);
       const row  = Math.floor(((e.clientY - rect.top)  / rect.height) * 15);
       const key  = `${row},${col}`;
-      if (targetCells.has(key)) handleTokenMove(targetCells.get(key));
+      if (targetCells.has(key)) {
+        const target = targetCells.get(key);
+        handleTokenMove(target.color, target.tokenIdx);
+      }
     }
 
     dragInfo.current = null;
@@ -263,7 +338,7 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
 
   // ── Flatten tokens for rendering ────────────────────────────────────────────
   const renderTokens = [];
-  LUDO_COLORS.slice(0, players.length).forEach((color) => {
+  activeColors.forEach((color) => {
     (tokensByColor[color]||[]).forEach((t, i) => {
       const pos = t.position ?? -1;
       if (pos === -1) {
@@ -277,11 +352,13 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
     });
   });
 
-  const cp = 100 / 15;  // cell percentage
+  const cp = 100 / 15;
+
+  // Is any die selectable (helps hint the player to tap one)?
+  const needsDieSelection = isMyTurn && awaitingMove && remainingMoves.length >= 2 && !selectedDieValue;
 
   return (
     <>
-      {/* Injected keyframes */}
       <style>{`
         @keyframes tokenRing {
           0%   { transform: scale(1);   opacity: 0.75; }
@@ -348,13 +425,14 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
             </div>
           </div>
 
-          {/* Player pills with avatars */}
+          {/* Player pills */}
           <div className="flex items-center justify-center gap-2 px-3 py-2 flex-wrap flex-shrink-0"
             style={{ background:'rgba(0,0,0,0.3)' }}>
             {players.map((p, i) => {
-              const color  = LUDO_COLORS[i];
-              const active = currentPlayer?.user_id === p.user_id;
-              const hex    = COLOR_HEX[color];
+              const pColors  = colorsForPlayerIdx(i, players.length);
+              const primary  = pColors[0];
+              const hex      = COLOR_HEX[primary];
+              const active   = currentPlayer?.user_id === p.user_id;
               return (
                 <div key={p.user_id}
                   className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-semibold transition-all duration-200 ${active ? 'scale-105' : 'opacity-60'}`}
@@ -376,6 +454,12 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                     )}
                   </div>
                   <span className="max-w-[60px] truncate">{p.username}</span>
+                  {/* Color dots — show both when 2 colors */}
+                  <div className="flex gap-0.5 flex-shrink-0">
+                    {pColors.map(c => (
+                      <div key={c} className="w-2 h-2 rounded-full" style={{ background: COLOR_HEX[c] }}/>
+                    ))}
+                  </div>
                   {active && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse flex-shrink-0"/>}
                 </div>
               );
@@ -395,8 +479,8 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                 boxShadow:'inset 0 2px 8px rgba(0,0,0,0.5), 0 0 20px rgba(109,40,217,0.2)',
               }}
             >
-              {/* Yard quadrants */}
-              {LUDO_COLORS.slice(0, players.length).map((color) => {
+              {/* Yard quadrants — all 4 always shown */}
+              {LUDO_COLORS.map((color) => {
                 const y   = YARD_RECT[color];
                 const hex = COLOR_HEX[color];
                 return (
@@ -409,7 +493,6 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                       borderRadius:8,
                       overflow:'hidden',
                     }}>
-                    {/* Color label */}
                     <div style={{
                       position:'absolute', bottom:4, right:6,
                       fontSize:'55%', fontWeight:700, color:`${hex}88`,
@@ -443,8 +526,8 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                 );
               })}
 
-              {/* Home columns */}
-              {LUDO_COLORS.slice(0, players.length).map(color =>
+              {/* Home columns — all 4 always shown */}
+              {LUDO_COLORS.map(color =>
                 HOME_COLUMNS[color].map(([r,c], i) => (
                   <div key={`hc-${color}-${i}`} className="absolute"
                     style={{
@@ -478,8 +561,8 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                 }}>★</div>
               </div>
 
-              {/* Drop-zone overlays (visible when it's my turn + move pending) */}
-              {awaitingMove && Array.from(targetCells.keys()).map(key => {
+              {/* Drop-zone overlays */}
+              {awaitingMove && selectedDieValue && Array.from(targetCells.keys()).map(key => {
                 const [row, col] = key.split(',').map(Number);
                 return (
                   <div key={`dz-${key}`}
@@ -488,8 +571,8 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                       top:`${row*cp+0.25}%`, left:`${col*cp+0.25}%`,
                       width:`${cp-0.5}%`, height:`${cp-0.5}%`,
                       borderRadius:'50%',
-                      border:`2px dashed ${myColor ? COLOR_HEX[myColor] : '#fff'}`,
-                      background:`${myColor ? COLOR_HEX[myColor] : '#fff'}28`,
+                      border:`2px dashed ${myPrimaryColor ? COLOR_HEX[myPrimaryColor] : '#fff'}`,
+                      background:`${myPrimaryColor ? COLOR_HEX[myPrimaryColor] : '#fff'}28`,
                       zIndex:9,
                       animation:'dropPulse 1.1s ease-in-out infinite',
                     }}/>
@@ -498,8 +581,8 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
 
               {/* Tokens */}
               {renderTokens.map(({ color, tokenIdx, row, col }) => {
-                const isClickable    = color === myColor && legalTokenIndices.includes(tokenIdx);
-                const isFadedByDrag  = dragging && !(dragging.color===color && dragging.tokenIdx===tokenIdx);
+                const isClickable   = myColors.includes(color) && legalMoves.some(m => m.color === color && m.tokenIdx === tokenIdx);
+                const isFadedByDrag = dragging && !(dragging.color===color && dragging.tokenIdx===tokenIdx);
                 const isDraggingThis = dragging?.color===color && dragging?.tokenIdx===tokenIdx;
                 return (
                   <div
@@ -531,7 +614,6 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
             <div className="absolute inset-0 z-50 flex items-center justify-center rounded-2xl"
               style={{ background:'rgba(0,0,0,0.82)', backdropFilter:'blur(6px)' }}>
 
-              {/* Confetti dots */}
               {[...Array(16)].map((_,i) => {
                 const colors = ['#ef4444','#3b82f6','#22c55e','#eab308','#a855f7','#f97316'];
                 const left   = 10 + (i * 5.5) % 82;
@@ -540,9 +622,7 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                 const size   = 6 + (i % 4) * 3;
                 return (
                   <div key={i} style={{
-                    position:'absolute',
-                    left:`${left}%`,
-                    top: '-10px',
+                    position:'absolute', left:`${left}%`, top: '-10px',
                     width: size, height: size,
                     borderRadius: i % 3 === 0 ? '2px' : '50%',
                     background: colors[i % colors.length],
@@ -552,7 +632,6 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                 );
               })}
 
-              {/* Banner card */}
               <div className="relative flex flex-col items-center gap-4 px-8 py-8 rounded-2xl mx-6 text-center"
                 style={{
                   background:'linear-gradient(135deg,#1e1b4b 0%,#1e3a8a 100%)',
@@ -564,23 +643,15 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
 
                 {winner ? (
                   <>
-                    {/* Trophy */}
-                    <div style={{ fontSize:64, lineHeight:1, animation:'trophySpin 2s ease-in-out infinite' }}>
-                      🏆
-                    </div>
-
-                    {/* Winner avatar */}
+                    <div style={{ fontSize:64, lineHeight:1, animation:'trophySpin 2s ease-in-out infinite' }}>🏆</div>
                     <div className="flex flex-col items-center gap-2">
                       <div className="w-14 h-14 rounded-full overflow-hidden ring-4"
-                        style={{ ringColor: myColor ? COLOR_HEX[myColor] : '#7c3aed',
-                          boxShadow:`0 0 0 4px ${
-                            COLOR_HEX[LUDO_COLORS[players.findIndex(p=>p.user_id===winner.user_id)] || 'red'] || '#7c3aed'
-                          }` }}>
+                        style={{ boxShadow:`0 0 0 4px ${COLOR_HEX[colorsForPlayerIdx(players.findIndex(p=>p.user_id===winner.user_id), players.length)[0]] || '#7c3aed'}` }}>
                         {winner.avatar ? (
                           <img src={winner.avatar} alt={winner.username} className="w-full h-full object-cover"/>
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-xl font-bold text-white"
-                            style={{ background: COLOR_HEX[LUDO_COLORS[players.findIndex(p=>p.user_id===winner.user_id)]] || '#7c3aed' }}>
+                            style={{ background: COLOR_HEX[colorsForPlayerIdx(players.findIndex(p=>p.user_id===winner.user_id), players.length)[0]] || '#7c3aed' }}>
                             {winner.username?.[0]?.toUpperCase()}
                           </div>
                         )}
@@ -593,17 +664,19 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                         )}
                       </div>
                     </div>
-
-                    {/* Winning color badge */}
                     {(() => {
                       const wi = players.findIndex(p => p.user_id === winner.user_id);
-                      const wc = LUDO_COLORS[wi];
-                      return wc ? (
-                        <div className="px-3 py-1 rounded-full text-xs font-bold text-white"
-                          style={{ background: COLOR_HEX[wc] }}>
-                          {wc.charAt(0).toUpperCase() + wc.slice(1)} team
+                      const wColors = colorsForPlayerIdx(wi, players.length);
+                      return (
+                        <div className="flex gap-1.5 items-center">
+                          {wColors.map(c => (
+                            <div key={c} className="px-2 py-0.5 rounded-full text-xs font-bold text-white"
+                              style={{ background: COLOR_HEX[c] }}>
+                              {c.charAt(0).toUpperCase() + c.slice(1)}
+                            </div>
+                          ))}
                         </div>
-                      ) : null;
+                      );
                     })()}
                   </>
                 ) : (
@@ -616,7 +689,6 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                   </>
                 )}
 
-                {/* Close button */}
                 <button
                   onClick={onClose}
                   className="mt-2 w-full py-3 rounded-xl text-white font-bold text-sm transition-all active:scale-95"
@@ -642,12 +714,14 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                   <p className={`text-sm font-bold ${isMyTurn ? 'text-green-400' : 'text-gray-400'}`}>
                     {isMyTurn ? '✨ Your turn' : `${currentPlayer?.username}'s turn`}
                   </p>
-                  {isMyTurn && awaitingMove && (
-                    <p className="text-amber-400 text-[11px] mt-0.5">
-                      {legalTokenIndices.length === 0
-                        ? 'No valid moves — turn passes'
-                        : 'Tap or drag a glowing token'}
-                    </p>
+                  {isMyTurn && awaitingMove && !selectedDieValue && remainingMoves.length > 1 && (
+                    <p className="text-amber-400 text-[11px] mt-0.5">Tap a die to select it</p>
+                  )}
+                  {isMyTurn && awaitingMove && selectedDieValue && legalMoves.length === 0 && (
+                    <p className="text-amber-400 text-[11px] mt-0.5">No valid moves — turn passes</p>
+                  )}
+                  {isMyTurn && awaitingMove && selectedDieValue && legalMoves.length > 0 && (
+                    <p className="text-amber-400 text-[11px] mt-0.5">Tap or drag a glowing token</p>
                   )}
                   {isMyTurn && lastRollWasted && (
                     <p className="text-red-400 text-[11px] mt-0.5">Three 6s — turn forfeited!</p>
@@ -658,12 +732,12 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
 
             {/* Dice section */}
             {isPlayer && !isOver && (
-              <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-                {/* Roll button always reserves its slot; hidden when not needed */}
+              <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+                {/* Roll button */}
                 <button
                   onClick={handleRoll}
                   disabled={!isMyTurn || awaitingMove}
-                  className="px-4 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95 whitespace-nowrap"
+                  className="px-3 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95 whitespace-nowrap"
                   style={{
                     background: isMyTurn && !awaitingMove
                       ? 'linear-gradient(135deg,#7c3aed,#4f46e5)'
@@ -676,12 +750,30 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                   }}>
                   Roll!
                 </button>
-                <div className="flex flex-col items-center gap-1">
-                  <Dice3D value={currentDice} pipColor={myColor ? COLOR_HEX[myColor] : '#1e293b'}/>
-                  {isMyTurn && awaitingMove && currentDice > 0 && (
-                    <span className="text-[10px] text-gray-500">rolled {currentDice}</span>
-                  )}
-                </div>
+
+                {/* Two dice side-by-side */}
+                {diceRolls.length > 0 && (
+                  <div className="flex flex-col items-center gap-1">
+                    <div className="flex gap-2 items-center">
+                      {diceRolls.map((val, i) => (
+                        <Dice3D
+                          key={i}
+                          value={val}
+                          pipColor={myPrimaryColor ? COLOR_HEX[myPrimaryColor] : '#1e293b'}
+                          selected={selectedDieValue === val && !diceConsumed[i]}
+                          consumed={diceConsumed[i]}
+                          onClick={isMyTurn && awaitingMove && !diceConsumed[i] ? () => handleDieClick(i) : null}
+                        />
+                      ))}
+                    </div>
+                    {isMyTurn && awaitingMove && needsDieSelection && (
+                      <span className="text-[9px] text-purple-400">tap a die</span>
+                    )}
+                    {isMyTurn && awaitingMove && selectedDieValue && (
+                      <span className="text-[9px] text-gray-500">using {selectedDieValue}</span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
