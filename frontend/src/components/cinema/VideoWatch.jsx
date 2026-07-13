@@ -5076,6 +5076,10 @@ export default function VideoWatch() {
             sessionStorage.setItem(`pending_rating_${roomId}`, JSON.stringify(sessionData));
           }
           
+          // Close any open game overlay — the game has no session to belong to anymore.
+          setActiveGame(null);
+          setMyHand(null);
+
           // Show toast notification
           const reason = message.data?.reason;
           if (reason === 'host_timeout') {

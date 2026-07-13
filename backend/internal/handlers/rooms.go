@@ -681,6 +681,12 @@ func EndWatchSessionHandler(c *gin.Context) {
 	delete(hub.subtitleContent, session.RoomID)
 	hub.subtitleMu.Unlock()
 
+	// End any active game for this room — removes it from in-memory state so the next
+	// session opener doesn't receive a stale game_started rehydration broadcast.
+	if gameWebSocketHandler != nil {
+		gameWebSocketHandler.CleanupRoomGame(session.RoomID)
+	}
+
 	// All remaining cleanup runs in the background — no longer blocks the response path
 	go func() {
 		log.Printf("🧹 [EndWatchSession cleanup] Starting background cleanup for session %s", sessionID)

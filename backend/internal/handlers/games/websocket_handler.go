@@ -566,6 +566,11 @@ func (h *GameWebSocketHandler) handleGameEnd(client interface{}, data map[string
     log.Printf("🎮 [GameWebSocketHandler] Player %d forfeited game %d in room %d", userID, gameSessionID, roomID)
 }
 
+// CleanupRoomGame ends any active game for the room when the watch session ends.
+func (h *GameWebSocketHandler) CleanupRoomGame(roomID uint) {
+    h.gameManager.CleanupRoomGame(roomID)
+}
+
 func (h *GameWebSocketHandler) CleanupPlayerDisconnect(roomID uint, userID uint) {
     err := h.gameManager.HandlePlayerDisconnect(roomID, userID)
     if err != nil {

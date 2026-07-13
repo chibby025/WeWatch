@@ -441,6 +441,25 @@ func (gm *GameManager) GetActiveGame(roomID uint) (*GameSessionState, bool) {
 	return gameState, exists
 }
 
+// CleanupRoomGame silently removes the active game for a room when the watch session ends.
+// Does NOT broadcast game_ended — the session_ended broadcast handles client navigation.
+func (gm *GameManager) CleanupRoomGame(roomID uint) {
+	gm.mu.Lock()
+	defer gm.mu.Unlock()
+	gameSessionID, exists := gm.roomActiveGames[roomID]
+	if !exists {
+		return
+	}
+	if gs, ok := gm.activeGames[gameSessionID]; ok && gs.GameSession != nil {
+		gm.db.Model(gs.GameSession).Updates(map[string]interface{}{
+			"status":   "completed",
+			"ended_at": time.Now(),
+		})
+	}
+	delete(gm.activeGames, gameSessionID)
+	delete(gm.roomActiveGames, roomID)
+}
+
 // GetPlayerHand returns a copy of the given player's current hand in the room's
 // active game, if that game is a card game and this user is one of its players.
 // Used to build private hand_update messages (websocket_handler.go) — the hand
