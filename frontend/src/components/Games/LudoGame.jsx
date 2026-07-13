@@ -1,108 +1,221 @@
 // src/components/Games/LudoGame.jsx
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
+// ── Palette ───────────────────────────────────────────────────────────────────
 const LUDO_COLORS = ['red', 'blue', 'green', 'yellow'];
-const COLOR_HEX = { red: '#ef4444', blue: '#3b82f6', green: '#22c55e', yellow: '#eab308' };
+const COLOR_HEX   = { red: '#ef4444', blue: '#3b82f6', green: '#22c55e', yellow: '#eab308' };
+const COLOR_LIGHT = { red: '#fca5a5', blue: '#93c5fd', green: '#86efac', yellow: '#fef08a' };
+const COLOR_DARK  = { red: '#991b1b', blue: '#1e3a8a', green: '#14532d', yellow: '#713f12' };
 
-// Classic 15x15 cross-shaped board. Built segment-by-segment (not hand-typed
-// as one 52-tuple list) so each straight run is easy to verify against the
-// backend's ludoEntryOffset spacing (13 cells between each color's entry —
-// confirmed below: segment boundaries land at index 0, 13, 26, 39).
+// ── Board geometry ─────────────────────────────────────────────────────────────
 function buildSharedPath() {
-  const path = [];
-  for (let c = 1; c <= 5; c++) path.push([6, c]);
-  for (let r = 5; r >= 0; r--) path.push([r, 6]);
-  path.push([0, 7]);
-  path.push([0, 8]);
-  for (let r = 1; r <= 5; r++) path.push([r, 8]);
-  for (let c = 9; c <= 14; c++) path.push([6, c]);
-  path.push([7, 14]);
-  path.push([8, 14]);
-  for (let c = 13; c >= 9; c--) path.push([8, c]);
-  for (let r = 9; r <= 14; r++) path.push([r, 8]);
-  path.push([14, 7]);
-  path.push([14, 6]);
-  for (let r = 13; r >= 9; r--) path.push([r, 6]);
-  for (let c = 5; c >= 0; c--) path.push([8, c]);
-  path.push([7, 0]);
-  return path; // 51 cells, relPos 0-50
+  const p = [];
+  for (let c = 1; c <= 5; c++) p.push([6, c]);
+  for (let r = 5; r >= 0; r--) p.push([r, 6]);
+  p.push([0, 7]); p.push([0, 8]);
+  for (let r = 1; r <= 5; r++) p.push([r, 8]);
+  for (let c = 9; c <= 14; c++) p.push([6, c]);
+  p.push([7, 14]); p.push([8, 14]);
+  for (let c = 13; c >= 9; c--) p.push([8, c]);
+  for (let r = 9; r <= 14; r++) p.push([r, 8]);
+  p.push([14, 7]); p.push([14, 6]);
+  for (let r = 13; r >= 9; r--) p.push([r, 6]);
+  for (let c = 5; c >= 0; c--) p.push([8, c]);
+  p.push([7, 0]);
+  return p;
 }
 
 const SHARED_PATH = buildSharedPath();
-
 const HOME_COLUMNS = {
-  red: [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5], [7, 6]],
-  blue: [[1, 7], [2, 7], [3, 7], [4, 7], [5, 7], [6, 7]],
-  green: [[7, 13], [7, 12], [7, 11], [7, 10], [7, 9], [7, 8]],
-  yellow: [[13, 7], [12, 7], [11, 7], [10, 7], [9, 7], [8, 7]],
+  red:    [[7,1],[7,2],[7,3],[7,4],[7,5],[7,6]],
+  blue:   [[1,7],[2,7],[3,7],[4,7],[5,7],[6,7]],
+  green:  [[7,13],[7,12],[7,11],[7,10],[7,9],[7,8]],
+  yellow: [[13,7],[12,7],[11,7],[10,7],[9,7],[8,7]],
 };
+const ENTRY_OFFSET   = { red: 0, blue: 13, green: 26, yellow: 39 };
+const SAFE_SQUARES   = new Set([0, 8, 13, 21, 26, 34, 39, 47]);
+const YARD_RECT      = { red:{top:0,left:0}, blue:{top:0,left:9}, green:{top:9,left:9}, yellow:{top:9,left:0} };
+// Row/col offsets within each 6×6 yard for the 4 token slots
+const YARD_OFFSETS   = [[1.3, 1.3],[1.3, 3.8],[3.8, 1.3],[3.8, 3.8]];
 
-const ENTRY_OFFSET = { red: 0, blue: 13, green: 26, yellow: 39 };
-const SAFE_SQUARES = new Set([0, 8, 13, 21, 26, 34, 39, 47]);
-
-const YARD_RECT = {
-  red: { top: 0, left: 0 },
-  blue: { top: 0, left: 9 },
-  green: { top: 9, left: 9 },
-  yellow: { top: 9, left: 0 },
-};
-const YARD_SLOTS = [[1, 1], [1, 4], [4, 1], [4, 4]];
-
-function globalSquare(color, relPos) {
-  return (ENTRY_OFFSET[color] + relPos) % 52;
-}
-
-// Returns the [row, col] for a token at a given color+relPos, or null if in base.
+function gSq(color, relPos)       { return (ENTRY_OFFSET[color] + relPos) % 52; }
 function cellForToken(color, relPos) {
-  if (relPos < 0) return null;
-  if (relPos <= 50) return SHARED_PATH[globalSquare(color, relPos)];
-  if (relPos <= 56) return HOME_COLUMNS[color][relPos - 51];
+  if (relPos < 0)    return null;
+  if (relPos <= 50)  return SHARED_PATH[gSq(color, relPos)];
+  if (relPos <= 56)  return HOME_COLUMNS[color][relPos - 51];
   return [7, 7];
 }
-
-function isSafeCell(color, relPos) {
-  if (relPos < 0 || relPos > 50) return true; // home column / home are always safe
-  return SAFE_SQUARES.has(globalSquare(color, relPos));
+function isSafe(color, relPos) {
+  if (relPos < 0 || relPos > 50) return true;
+  return SAFE_SQUARES.has(gSq(color, relPos));
 }
 
-export default function LudoGame({ gameState, players = [], currentUserId, onMove, onClose, onEndGame }) {
-  const [rolling, setRolling] = useState(false);
+// ── 3-D Dice ──────────────────────────────────────────────────────────────────
+const PIPS = {
+  1: [[50,50]],
+  2: [[28,28],[72,72]],
+  3: [[28,28],[50,50],[72,72]],
+  4: [[28,28],[72,28],[28,72],[72,72]],
+  5: [[28,28],[72,28],[50,50],[28,72],[72,72]],
+  6: [[28,22],[72,22],[28,50],[72,50],[28,78],[72,78]],
+};
+// [rotX, rotY] to rotate the CUBE so face N faces the viewer
+const FACE_SHOW = { 1:[0,0], 2:[0,-90], 3:[-90,0], 4:[90,0], 5:[0,90], 6:[0,180] };
 
-  const gs = gameState?.game_state || {};
-  const tokensByColor = gs.tokens || {};
-  const currentDice = gs.current_dice || 0;
-  const awaitingMove = !!gs.awaiting_move;
+function DieFace({ n, pipColor }) {
+  return (
+    <div style={{
+      position:'absolute', inset:0,
+      background:'linear-gradient(135deg,#f8fafc 0%,#e2e8f0 100%)',
+      borderRadius:6,
+      border:'1.5px solid #94a3b8',
+      boxShadow:'inset 0 1px 3px rgba(255,255,255,0.9),inset 0 -1px 2px rgba(0,0,0,0.15)',
+    }}>
+      {(PIPS[n]||[]).map(([px,py],i) => (
+        <div key={i} style={{
+          position:'absolute', left:`${px}%`, top:`${py}%`,
+          transform:'translate(-50%,-50%)',
+          width:7, height:7, borderRadius:'50%',
+          backgroundColor: pipColor || '#1e293b',
+          boxShadow:'0 1px 2px rgba(0,0,0,0.6)',
+        }}/>
+      ))}
+    </div>
+  );
+}
+
+function Dice3D({ value, pipColor }) {
+  const S = 46;
+  const H = S / 2;
+  const rotRef    = useRef({ x: 0, y: 0 });
+  const prevVal   = useRef(0);
+  const [tf, setTf]       = useState('rotateX(-20deg) rotateY(20deg)');
+  const [tr, setTr]       = useState('none');
+
+  useEffect(() => {
+    if (!value || value === prevVal.current) return;
+    prevVal.current = value;
+    const [fx, fy] = FACE_SHOW[value];
+    const bx = Math.round(rotRef.current.x / 360) * 360;
+    const by = Math.round(rotRef.current.y / 360) * 360;
+    const nx = bx + (Math.floor(Math.random()*2)+2)*360 + fx;
+    const ny = by + (Math.floor(Math.random()*2)+2)*360 + fy;
+    rotRef.current = { x: nx, y: ny };
+    setTr('transform 0.75s cubic-bezier(0.22,1.5,0.5,1)');
+    setTf(`rotateX(${nx}deg) rotateY(${ny}deg)`);
+  }, [value]);
+
+  const face = (transform, n) => (
+    <div style={{ position:'absolute', width:S, height:S, transform }}>
+      <DieFace n={n} pipColor={pipColor} />
+    </div>
+  );
+
+  return (
+    <div style={{ width:S, height:S, perspective:160, perspectiveOrigin:'50% 40%' }}>
+      <div style={{ width:S, height:S, position:'relative', transformStyle:'preserve-3d', transform:tf, transition:tr }}>
+        {face(`translateZ(${H}px)`, 1)}
+        {face(`rotateY(180deg) translateZ(${H}px)`, 6)}
+        {face(`rotateY(90deg) translateZ(${H}px)`, 2)}
+        {face(`rotateY(-90deg) translateZ(${H}px)`, 5)}
+        {face(`rotateX(-90deg) translateZ(${H}px)`, 3)}
+        {face(`rotateX(90deg) translateZ(${H}px)`, 4)}
+      </div>
+    </div>
+  );
+}
+
+// ── Token (SVG flat token — clean board-game piece) ───────────────────────────
+function Token({ color, isClickable, isFaded }) {
+  const hex  = COLOR_HEX[color];
+  const lite = COLOR_LIGHT[color];
+  const dark = COLOR_DARK[color];
+  return (
+    <svg
+      viewBox="0 0 40 40"
+      style={{
+        width:'100%', height:'100%',
+        overflow:'visible',
+        opacity: isFaded ? 0.3 : 1,
+        transform: isClickable ? 'scale(1.14)' : 'scale(1)',
+        transition:'transform 0.15s ease, opacity 0.12s',
+        cursor: isClickable ? 'grab' : 'default',
+        filter: isClickable
+          ? `drop-shadow(0 0 5px ${hex}bb) drop-shadow(0 3px 6px rgba(0,0,0,0.65))`
+          : 'drop-shadow(0 2px 4px rgba(0,0,0,0.55))',
+      }}
+    >
+      {/* Pulsing ring behind the piece when it's a legal move */}
+      {isClickable && (
+        <circle cx="20" cy="20" r="20" fill="none" stroke={hex} strokeWidth="2.5"
+          style={{ animation:'tokenRing 1.3s ease-out infinite', transformOrigin:'20px 20px' }}/>
+      )}
+      {/* Outer border ring */}
+      <circle cx="20" cy="20" r="18" fill={dark}/>
+      {/* Main coloured disc */}
+      <circle cx="20" cy="20" r="16.5" fill={hex}/>
+      {/* Inner decorative ring */}
+      <circle cx="20" cy="20" r="11" fill="none" stroke={lite} strokeWidth="2" opacity="0.55"/>
+      {/* Center dot — outer dark halo */}
+      <circle cx="20" cy="20" r="5" fill={dark} opacity="0.5"/>
+      {/* Center dot — bright inner */}
+      <circle cx="20" cy="20" r="3.2" fill={lite} opacity="0.8"/>
+    </svg>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+export default function LudoGame({ gameState, players=[], currentUserId, onMove, onClose, onEndGame }) {
+  const boardRef  = useRef(null);
+  const dragInfo  = useRef(null);   // { color, tokenIdx, startX, startY }
+  const [dragging, setDragging]   = useState(null);   // { color, tokenIdx }
+  const [ghostPos, setGhostPos]   = useState({ x:0, y:0 });
+
+  const gs             = gameState?.game_state || {};
+  const tokensByColor  = gs.tokens || {};
+  const currentDice    = gs.current_dice || 0;
+  const awaitingMove   = !!gs.awaiting_move;
   const lastRollWasted = !!gs.last_roll_wasted;
 
-  const currentTurn = gameState?.current_turn ?? 0;
+  const currentTurn   = gameState?.current_turn ?? 0;
   const currentPlayer = players[currentTurn];
-  const myColorIdx = players.findIndex(p => p.user_id === currentUserId);
-  const myColor = myColorIdx >= 0 ? LUDO_COLORS[myColorIdx] : null;
-  const isMyTurn = currentPlayer?.user_id === currentUserId;
-  const isPlayer = myColorIdx >= 0;
-  const winner = gameState?.winner_id ? players.find(p => p.user_id === gameState.winner_id) : null;
-  const isOver = ['finished', 'forfeited', 'completed'].includes(gameState?.status);
+  const myColorIdx    = players.findIndex(p => p.user_id === currentUserId);
+  const myColor       = myColorIdx >= 0 ? LUDO_COLORS[myColorIdx] : null;
+  const isMyTurn      = currentPlayer?.user_id === currentUserId;
+  const isPlayer      = myColorIdx >= 0;
+  const winner        = gameState?.winner_id ? players.find(p => p.user_id === gameState.winner_id) : null;
+  const isOver        = ['finished','forfeited','completed'].includes(gameState?.status);
 
   const legalTokenIndices = useMemo(() => {
-    if (!isMyTurn || !awaitingMove || currentDice === 0 || !myColor) return [];
-    const myTokens = tokensByColor[myColor] || [];
-    return myTokens.reduce((acc, t, i) => {
+    if (!isMyTurn || !awaitingMove || !currentDice || !myColor) return [];
+    return (tokensByColor[myColor]||[]).reduce((acc,t,i) => {
       const pos = t.position ?? -1;
-      if (pos === -1 && currentDice === 6) acc.push(i);
-      else if (pos >= 0 && pos + currentDice <= 57) acc.push(i);
+      if ((pos===-1 && currentDice===6) || (pos>=0 && pos+currentDice<=57)) acc.push(i);
       return acc;
     }, []);
   }, [tokensByColor, myColor, isMyTurn, awaitingMove, currentDice]);
 
+  // Map of "row,col" → tokenIdx for valid drop targets
+  const targetCells = useMemo(() => {
+    const map = new Map();
+    if (!awaitingMove || !myColor || !currentDice) return map;
+    const myTokens = tokensByColor[myColor] || [];
+    legalTokenIndices.forEach(idx => {
+      const pos    = myTokens[idx]?.position ?? -1;
+      const newPos = pos === -1 ? 0 : pos + currentDice;
+      const cell   = cellForToken(myColor, newPos);
+      if (cell) map.set(`${cell[0]},${cell[1]}`, idx);
+    });
+    return map;
+  }, [awaitingMove, myColor, currentDice, tokensByColor, legalTokenIndices]);
+
   const handleRoll = () => {
     if (!isMyTurn || awaitingMove || isOver) return;
-    setRolling(true);
     onMove({ move_type: 'roll_dice' });
-    setTimeout(() => setRolling(false), 400);
   };
 
-  const handleTokenClick = (tokenIdx) => {
+  const handleTokenMove = (tokenIdx) => {
     if (!isMyTurn || !awaitingMove || isOver) return;
     if (!legalTokenIndices.includes(tokenIdx)) return;
     onMove({ move_type: 'move_token', token_index: tokenIdx });
@@ -113,177 +226,468 @@ export default function LudoGame({ gameState, players = [], currentUserId, onMov
     (onEndGame || onClose)();
   };
 
-  // Build a flat list of {color, tokenIdx, row, col} for rendering, grouping
-  // base/yard tokens into fixed slots and on-board tokens at their path cell.
+  // ── Drag-and-drop ───────────────────────────────────────────────────────────
+  const onTokenPointerDown = (e, color, tokenIdx) => {
+    if (color !== myColor || !legalTokenIndices.includes(tokenIdx)) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragInfo.current = { color, tokenIdx, startX: e.clientX, startY: e.clientY };
+    setGhostPos({ x: e.clientX, y: e.clientY });
+  };
+
+  const onTokenPointerMove = (e) => {
+    if (!dragInfo.current) return;
+    const { startX, startY, color, tokenIdx } = dragInfo.current;
+    setGhostPos({ x: e.clientX, y: e.clientY });
+    if (!dragging && Math.hypot(e.clientX - startX, e.clientY - startY) > 7)
+      setDragging({ color, tokenIdx });
+  };
+
+  const onTokenPointerUp = (e) => {
+    if (!dragInfo.current) return;
+    const { tokenIdx, startX, startY } = dragInfo.current;
+    const wasTap = Math.hypot(e.clientX - startX, e.clientY - startY) <= 7;
+
+    if (wasTap) {
+      handleTokenMove(tokenIdx);
+    } else if (dragging && boardRef.current) {
+      const rect = boardRef.current.getBoundingClientRect();
+      const col  = Math.floor(((e.clientX - rect.left) / rect.width)  * 15);
+      const row  = Math.floor(((e.clientY - rect.top)  / rect.height) * 15);
+      const key  = `${row},${col}`;
+      if (targetCells.has(key)) handleTokenMove(targetCells.get(key));
+    }
+
+    dragInfo.current = null;
+    setDragging(null);
+  };
+
+  // ── Flatten tokens for rendering ────────────────────────────────────────────
   const renderTokens = [];
   LUDO_COLORS.slice(0, players.length).forEach((color) => {
-    const tokens = tokensByColor[color] || [];
-    tokens.forEach((t, i) => {
+    (tokensByColor[color]||[]).forEach((t, i) => {
       const pos = t.position ?? -1;
       if (pos === -1) {
-        const yard = YARD_RECT[color];
-        const slot = YARD_SLOTS[i];
-        renderTokens.push({ color, tokenIdx: i, row: yard.top + slot[0], col: yard.left + slot[1], inBase: true });
+        const y = YARD_RECT[color];
+        const [dr, dc] = YARD_OFFSETS[i];
+        renderTokens.push({ color, tokenIdx:i, row: y.top+dr, col: y.left+dc, inBase:true });
       } else {
         const cell = cellForToken(color, pos);
-        renderTokens.push({ color, tokenIdx: i, row: cell[0], col: cell[1], inBase: false, safe: isSafeCell(color, pos) });
+        if (cell) renderTokens.push({ color, tokenIdx:i, row:cell[0], col:cell[1], inBase:false });
       }
     });
   });
 
-  const cellPct = 100 / 15;
+  const cp = 100 / 15;  // cell percentage
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="bg-gray-900 rounded-2xl shadow-2xl w-full max-w-xl mx-4 overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
-          <div>
-            <h2 className="text-white text-xl font-bold">Ludo</h2>
-            <p className="text-gray-400 text-sm">{players.map(p => p.username).join(' vs ')}</p>
-          </div>
-          <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
-            <X className="w-6 h-6" />
-          </button>
-        </div>
+    <>
+      {/* Injected keyframes */}
+      <style>{`
+        @keyframes tokenRing {
+          0%   { transform: scale(1);   opacity: 0.75; }
+          100% { transform: scale(1.5); opacity: 0; }
+        }
+        @keyframes dropPulse {
+          0%,100% { opacity:.55; transform:scale(.9); }
+          50%     { opacity:1;   transform:scale(1); }
+        }
+        @keyframes bannerIn {
+          0%   { opacity:0; transform:scale(0.88); }
+          100% { opacity:1; transform:scale(1); }
+        }
+        @keyframes trophySpin {
+          0%   { transform:rotate(-15deg) scale(1); }
+          50%  { transform:rotate(15deg)  scale(1.15); }
+          100% { transform:rotate(-15deg) scale(1); }
+        }
+        @keyframes confettiFall {
+          0%   { transform:translateY(-20px) rotate(0deg);   opacity:1; }
+          100% { transform:translateY(120px) rotate(720deg); opacity:0; }
+        }
+      `}</style>
 
-        <div className="flex items-center justify-center gap-2 px-4 py-2 flex-wrap">
-          {players.map((p, i) => (
-            <div
-              key={p.user_id}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                currentPlayer?.user_id === p.user_id ? 'ring-2 ring-white/60' : ''
-              }`}
-              style={{ backgroundColor: `${COLOR_HEX[LUDO_COLORS[i]]}33`, color: COLOR_HEX[LUDO_COLORS[i]] }}
-            >
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: COLOR_HEX[LUDO_COLORS[i]] }} />
-              {p.username}
+      {/* Drag ghost */}
+      {dragging && (
+        <div style={{
+          position:'fixed', left:ghostPos.x, top:ghostPos.y,
+          transform:'translate(-50%,-50%)',
+          width:30, height:30, borderRadius:'50%',
+          background:`radial-gradient(circle at 35% 30%,${COLOR_LIGHT[dragging.color]},${COLOR_HEX[dragging.color]} 55%,${COLOR_DARK[dragging.color]})`,
+          border:'2px solid white',
+          boxShadow:'0 8px 24px rgba(0,0,0,0.7)',
+          pointerEvents:'none', zIndex:9999,
+        }}/>
+      )}
+
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
+        <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-[440px] sm:max-w-[600px] lg:max-w-[720px] mx-3 overflow-hidden flex flex-col"
+          style={{ maxHeight:'97vh' }}>
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+            style={{ background:'linear-gradient(135deg,#4c1d95 0%,#1e3a8a 100%)' }}>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">🎲</span>
+              <div>
+                <h2 className="text-white text-base font-bold leading-none">Ludo</h2>
+                <p className="text-purple-300 text-[10px]">{players.length}-player game</p>
+              </div>
             </div>
-          ))}
-        </div>
-
-        <div className="px-4 pb-2">
-          <div className="relative w-full aspect-square mx-auto max-w-md rounded-lg overflow-hidden" style={{ backgroundColor: '#1e293b' }}>
-            {/* Yards */}
-            {LUDO_COLORS.slice(0, players.length).map((color) => {
-              const yard = YARD_RECT[color];
-              return (
-                <div
-                  key={`yard-${color}`}
-                  className="absolute rounded-md"
-                  style={{
-                    top: `${yard.top * cellPct}%`,
-                    left: `${yard.left * cellPct}%`,
-                    width: `${6 * cellPct}%`,
-                    height: `${6 * cellPct}%`,
-                    backgroundColor: `${COLOR_HEX[color]}22`,
-                    border: `2px solid ${COLOR_HEX[color]}55`,
-                  }}
-                />
-              );
-            })}
-
-            {/* Shared track cells */}
-            {SHARED_PATH.map(([r, c], i) => (
-              <div
-                key={`track-${i}`}
-                className="absolute border border-gray-700/40 bg-gray-200/90"
-                style={{
-                  top: `${r * cellPct}%`, left: `${c * cellPct}%`,
-                  width: `${cellPct}%`, height: `${cellPct}%`,
-                  backgroundColor: SAFE_SQUARES.has(i) ? '#fde68a' : undefined,
-                }}
-              />
-            ))}
-
-            {/* Home columns */}
-            {LUDO_COLORS.slice(0, players.length).map((color) =>
-              HOME_COLUMNS[color].map(([r, c], i) => (
-                <div
-                  key={`home-${color}-${i}`}
-                  className="absolute border border-gray-700/40"
-                  style={{
-                    top: `${r * cellPct}%`, left: `${c * cellPct}%`,
-                    width: `${cellPct}%`, height: `${cellPct}%`,
-                    backgroundColor: `${COLOR_HEX[color]}66`,
-                  }}
-                />
-              ))
-            )}
-
-            {/* Center home triangle */}
-            <div
-              className="absolute flex items-center justify-center text-white text-[10px] font-bold bg-gray-700"
-              style={{ top: `${7 * cellPct}%`, left: `${7 * cellPct}%`, width: `${cellPct}%`, height: `${cellPct}%` }}
-            >
-              ★
-            </div>
-
-            {/* Tokens */}
-            {renderTokens.map(({ color, tokenIdx, row, col, inBase, safe }) => {
-              const isMine = color === myColor;
-              const clickable = isMine && legalTokenIndices.includes(tokenIdx);
-              return (
-                <button
-                  key={`${color}-${tokenIdx}`}
-                  onClick={() => isMine && handleTokenClick(tokenIdx)}
-                  disabled={!clickable}
-                  className={`absolute rounded-full flex items-center justify-center transition-transform ${
-                    clickable ? 'cursor-pointer ring-2 ring-white scale-110 animate-pulse' : 'cursor-default'
-                  }`}
-                  style={{
-                    top: `${(row + 0.15) * cellPct}%`,
-                    left: `${(col + 0.15) * cellPct}%`,
-                    width: `${cellPct * 0.7}%`,
-                    height: `${cellPct * 0.7}%`,
-                    backgroundColor: COLOR_HEX[color],
-                    border: !inBase && safe ? '2px solid white' : '2px solid rgba(0,0,0,0.3)',
-                    zIndex: 10,
-                  }}
-                />
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="text-center pb-2">
-          {isOver ? (
-            <p className="text-lg font-semibold text-white">{winner ? `🏆 ${winner.username} wins!` : "🤝 It's a draw!"}</p>
-          ) : (
-            <p className={`text-sm font-medium ${isMyTurn ? 'text-green-400' : 'text-gray-400'}`}>
-              {isMyTurn ? 'Your turn' : `${currentPlayer?.username}'s turn`}
-              {lastRollWasted && isMyTurn ? ' — three 6s in a row, turn forfeited!' : ''}
-            </p>
-          )}
-        </div>
-
-        {isPlayer && !isOver && (
-          <div className="flex flex-col items-center gap-2 pb-5">
-            <div
-              className={`w-14 h-14 rounded-lg bg-white flex items-center justify-center text-2xl font-bold text-gray-900 shadow-md ${
-                rolling ? 'animate-spin' : ''
-              }`}
-            >
-              {currentDice || '?'}
-            </div>
-            {isMyTurn && !awaitingMove && (
-              <button onClick={handleRoll} className="px-5 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium">
-                Roll Dice
+            <div className="flex items-center gap-2">
+              {!isOver && (
+                <button onClick={handleForfeit}
+                  className="px-3 py-1 rounded-lg text-xs font-bold transition-all active:scale-95 text-white"
+                  style={{ background:'#dc2626', boxShadow:'0 2px 6px rgba(220,38,38,0.45)' }}>
+                  Forfeit
+                </button>
+              )}
+              <button onClick={handleForfeit}
+                className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+                <X className="w-4 h-4"/>
               </button>
-            )}
-            {isMyTurn && awaitingMove && (
-              <p className="text-amber-400 text-sm">Pick a highlighted token to move</p>
+            </div>
+          </div>
+
+          {/* Player pills with avatars */}
+          <div className="flex items-center justify-center gap-2 px-3 py-2 flex-wrap flex-shrink-0"
+            style={{ background:'rgba(0,0,0,0.3)' }}>
+            {players.map((p, i) => {
+              const color  = LUDO_COLORS[i];
+              const active = currentPlayer?.user_id === p.user_id;
+              const hex    = COLOR_HEX[color];
+              return (
+                <div key={p.user_id}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-semibold transition-all duration-200 ${active ? 'scale-105' : 'opacity-60'}`}
+                  style={{
+                    background:`${hex}22`,
+                    border:`1.5px solid ${active ? hex : hex+'55'}`,
+                    color: hex,
+                  }}>
+                  {/* Avatar or initial */}
+                  <div className="w-5 h-5 rounded-full overflow-hidden flex-shrink-0 ring-1"
+                    style={{ ringColor: hex }}>
+                    {p.avatar ? (
+                      <img src={p.avatar} alt={p.username} className="w-full h-full object-cover"/>
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-[9px] font-bold text-white"
+                        style={{ background: hex }}>
+                        {p.username?.[0]?.toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <span className="max-w-[60px] truncate">{p.username}</span>
+                  {active && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse flex-shrink-0"/>}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Board */}
+          <div className="px-2 pb-1 flex-shrink-0">
+            <div ref={boardRef}
+              className="relative mx-auto aspect-square select-none"
+              style={{
+                maxWidth: 'min(620px, calc(97vh - 175px))',
+                width:'100%',
+                background:'linear-gradient(135deg,#1a0533 0%,#0f172a 100%)',
+                borderRadius:10,
+                border:'2px solid #6d28d9',
+                boxShadow:'inset 0 2px 8px rgba(0,0,0,0.5), 0 0 20px rgba(109,40,217,0.2)',
+              }}
+            >
+              {/* Yard quadrants */}
+              {LUDO_COLORS.slice(0, players.length).map((color) => {
+                const y   = YARD_RECT[color];
+                const hex = COLOR_HEX[color];
+                return (
+                  <div key={`yard-${color}`} className="absolute"
+                    style={{
+                      top:`${y.top*cp}%`, left:`${y.left*cp}%`,
+                      width:`${6*cp}%`, height:`${6*cp}%`,
+                      background:`linear-gradient(135deg,${hex}28,${hex}14)`,
+                      border:`2px solid ${hex}44`,
+                      borderRadius:8,
+                      overflow:'hidden',
+                    }}>
+                    {/* Color label */}
+                    <div style={{
+                      position:'absolute', bottom:4, right:6,
+                      fontSize:'55%', fontWeight:700, color:`${hex}88`,
+                      textTransform:'uppercase', letterSpacing:1,
+                    }}>{color}</div>
+                  </div>
+                );
+              })}
+
+              {/* Shared track cells */}
+              {SHARED_PATH.map(([r,c], i) => {
+                const safe = SAFE_SQUARES.has(i);
+                return (
+                  <div key={`tr${i}`} className="absolute"
+                    style={{
+                      top:`${r*cp}%`, left:`${c*cp}%`,
+                      width:`${cp}%`, height:`${cp}%`,
+                      background: safe
+                        ? 'linear-gradient(135deg,#fcd34d,#f59e0b)'
+                        : '#f1f5f9',
+                      border:`1px solid ${safe ? '#d97706' : '#cbd5e1'}`,
+                    }}>
+                    {safe && (
+                      <div style={{
+                        position:'absolute', inset:0,
+                        display:'flex', alignItems:'center', justifyContent:'center',
+                        fontSize:'55%', color:'#78350f', fontWeight:900, lineHeight:1,
+                      }}>✦</div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Home columns */}
+              {LUDO_COLORS.slice(0, players.length).map(color =>
+                HOME_COLUMNS[color].map(([r,c], i) => (
+                  <div key={`hc-${color}-${i}`} className="absolute"
+                    style={{
+                      top:`${r*cp}%`, left:`${c*cp}%`,
+                      width:`${cp}%`, height:`${cp}%`,
+                      background:`linear-gradient(135deg,${COLOR_HEX[color]}90,${COLOR_HEX[color]}55)`,
+                      border:`1px solid ${COLOR_HEX[color]}aa`,
+                    }}/>
+                ))
+              )}
+
+              {/* Center 3×3 — 4 colored triangles */}
+              <div className="absolute" style={{
+                top:`${6*cp}%`, left:`${6*cp}%`,
+                width:`${3*cp}%`, height:`${3*cp}%`,
+                overflow:'hidden', borderRadius:3,
+              }}>
+                <div style={{ position:'absolute',inset:0, clipPath:'polygon(0 0,100% 0,50% 50%)',
+                  background:`linear-gradient(135deg,${COLOR_HEX.blue},${COLOR_HEX.blue}aa)` }}/>
+                <div style={{ position:'absolute',inset:0, clipPath:'polygon(100% 0,100% 100%,50% 50%)',
+                  background:`linear-gradient(135deg,${COLOR_HEX.green},${COLOR_HEX.green}aa)` }}/>
+                <div style={{ position:'absolute',inset:0, clipPath:'polygon(100% 100%,0 100%,50% 50%)',
+                  background:`linear-gradient(135deg,${COLOR_HEX.yellow},${COLOR_HEX.yellow}aa)` }}/>
+                <div style={{ position:'absolute',inset:0, clipPath:'polygon(0 100%,0 0,50% 50%)',
+                  background:`linear-gradient(135deg,${COLOR_HEX.red},${COLOR_HEX.red}aa)` }}/>
+                <div style={{
+                  position:'absolute', inset:0,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  fontSize:'80%', color:'white', fontWeight:900,
+                  textShadow:'0 1px 4px rgba(0,0,0,0.8)',
+                }}>★</div>
+              </div>
+
+              {/* Drop-zone overlays (visible when it's my turn + move pending) */}
+              {awaitingMove && Array.from(targetCells.keys()).map(key => {
+                const [row, col] = key.split(',').map(Number);
+                return (
+                  <div key={`dz-${key}`}
+                    className="absolute pointer-events-none"
+                    style={{
+                      top:`${row*cp+0.25}%`, left:`${col*cp+0.25}%`,
+                      width:`${cp-0.5}%`, height:`${cp-0.5}%`,
+                      borderRadius:'50%',
+                      border:`2px dashed ${myColor ? COLOR_HEX[myColor] : '#fff'}`,
+                      background:`${myColor ? COLOR_HEX[myColor] : '#fff'}28`,
+                      zIndex:9,
+                      animation:'dropPulse 1.1s ease-in-out infinite',
+                    }}/>
+                );
+              })}
+
+              {/* Tokens */}
+              {renderTokens.map(({ color, tokenIdx, row, col }) => {
+                const isClickable    = color === myColor && legalTokenIndices.includes(tokenIdx);
+                const isFadedByDrag  = dragging && !(dragging.color===color && dragging.tokenIdx===tokenIdx);
+                const isDraggingThis = dragging?.color===color && dragging?.tokenIdx===tokenIdx;
+                return (
+                  <div
+                    key={`${color}-${tokenIdx}`}
+                    onPointerDown={(e) => onTokenPointerDown(e, color, tokenIdx)}
+                    onPointerMove={onTokenPointerMove}
+                    onPointerUp={onTokenPointerUp}
+                    className="absolute"
+                    style={{
+                      top:`${(row+0.13)*cp}%`, left:`${(col+0.13)*cp}%`,
+                      width:`${cp*0.74}%`, height:`${cp*0.74}%`,
+                      zIndex:10, touchAction:'none',
+                      opacity: isDraggingThis ? 0.25 : 1,
+                    }}
+                  >
+                    <Token
+                      color={color}
+                      isClickable={isClickable}
+                      isFaded={!!isFadedByDrag && !isDraggingThis}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Winner banner overlay ── */}
+          {isOver && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center rounded-2xl"
+              style={{ background:'rgba(0,0,0,0.82)', backdropFilter:'blur(6px)' }}>
+
+              {/* Confetti dots */}
+              {[...Array(16)].map((_,i) => {
+                const colors = ['#ef4444','#3b82f6','#22c55e','#eab308','#a855f7','#f97316'];
+                const left   = 10 + (i * 5.5) % 82;
+                const delay  = (i * 0.18) % 1.6;
+                const dur    = 1.4 + (i % 4) * 0.25;
+                const size   = 6 + (i % 4) * 3;
+                return (
+                  <div key={i} style={{
+                    position:'absolute',
+                    left:`${left}%`,
+                    top: '-10px',
+                    width: size, height: size,
+                    borderRadius: i % 3 === 0 ? '2px' : '50%',
+                    background: colors[i % colors.length],
+                    animation:`confettiFall ${dur}s ${delay}s ease-in infinite`,
+                    pointerEvents:'none',
+                  }}/>
+                );
+              })}
+
+              {/* Banner card */}
+              <div className="relative flex flex-col items-center gap-4 px-8 py-8 rounded-2xl mx-6 text-center"
+                style={{
+                  background:'linear-gradient(135deg,#1e1b4b 0%,#1e3a8a 100%)',
+                  border:'2px solid #6d28d9',
+                  boxShadow:'0 0 40px rgba(109,40,217,0.5), 0 20px 60px rgba(0,0,0,0.7)',
+                  animation:'bannerIn 0.4s cubic-bezier(0.34,1.56,0.64,1) both',
+                  minWidth:240, maxWidth:340,
+                }}>
+
+                {winner ? (
+                  <>
+                    {/* Trophy */}
+                    <div style={{ fontSize:64, lineHeight:1, animation:'trophySpin 2s ease-in-out infinite' }}>
+                      🏆
+                    </div>
+
+                    {/* Winner avatar */}
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-14 h-14 rounded-full overflow-hidden ring-4"
+                        style={{ ringColor: myColor ? COLOR_HEX[myColor] : '#7c3aed',
+                          boxShadow:`0 0 0 4px ${
+                            COLOR_HEX[LUDO_COLORS[players.findIndex(p=>p.user_id===winner.user_id)] || 'red'] || '#7c3aed'
+                          }` }}>
+                        {winner.avatar ? (
+                          <img src={winner.avatar} alt={winner.username} className="w-full h-full object-cover"/>
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-xl font-bold text-white"
+                            style={{ background: COLOR_HEX[LUDO_COLORS[players.findIndex(p=>p.user_id===winner.user_id)]] || '#7c3aed' }}>
+                            {winner.username?.[0]?.toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-white/60 text-xs uppercase tracking-widest mb-0.5">Winner</p>
+                        <p className="text-white text-xl font-black">{winner.username}</p>
+                        {gameState?.status === 'forfeited' && (
+                          <p className="text-purple-300 text-xs mt-0.5">by forfeit</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Winning color badge */}
+                    {(() => {
+                      const wi = players.findIndex(p => p.user_id === winner.user_id);
+                      const wc = LUDO_COLORS[wi];
+                      return wc ? (
+                        <div className="px-3 py-1 rounded-full text-xs font-bold text-white"
+                          style={{ background: COLOR_HEX[wc] }}>
+                          {wc.charAt(0).toUpperCase() + wc.slice(1)} team
+                        </div>
+                      ) : null;
+                    })()}
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize:56, lineHeight:1 }}>🤝</div>
+                    <div>
+                      <p className="text-white text-xl font-black">It's a Draw!</p>
+                      <p className="text-purple-300 text-sm mt-1">Tied scores — no single winner</p>
+                    </div>
+                  </>
+                )}
+
+                {/* Close button */}
+                <button
+                  onClick={onClose}
+                  className="mt-2 w-full py-3 rounded-xl text-white font-bold text-sm transition-all active:scale-95"
+                  style={{
+                    background:'linear-gradient(135deg,#7c3aed,#4f46e5)',
+                    boxShadow:'0 4px 14px rgba(124,58,237,0.5)',
+                  }}>
+                  Close Game
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Status row + Dice */}
+          <div className="flex items-center justify-between px-4 py-2 flex-shrink-0">
+            <div className="flex-1 min-w-0">
+              {isOver ? (
+                <p className="text-base font-bold text-white">
+                  {winner ? `🏆 ${winner.username} wins!` : '🤝 Draw!'}
+                </p>
+              ) : (
+                <>
+                  <p className={`text-sm font-bold ${isMyTurn ? 'text-green-400' : 'text-gray-400'}`}>
+                    {isMyTurn ? '✨ Your turn' : `${currentPlayer?.username}'s turn`}
+                  </p>
+                  {isMyTurn && awaitingMove && (
+                    <p className="text-amber-400 text-[11px] mt-0.5">
+                      {legalTokenIndices.length === 0
+                        ? 'No valid moves — turn passes'
+                        : 'Tap or drag a glowing token'}
+                    </p>
+                  )}
+                  {isMyTurn && lastRollWasted && (
+                    <p className="text-red-400 text-[11px] mt-0.5">Three 6s — turn forfeited!</p>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Dice section */}
+            {isPlayer && !isOver && (
+              <div className="flex items-center gap-3 ml-4 flex-shrink-0">
+                {/* Roll button always reserves its slot; hidden when not needed */}
+                <button
+                  onClick={handleRoll}
+                  disabled={!isMyTurn || awaitingMove}
+                  className="px-4 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95 whitespace-nowrap"
+                  style={{
+                    background: isMyTurn && !awaitingMove
+                      ? 'linear-gradient(135deg,#7c3aed,#4f46e5)'
+                      : 'transparent',
+                    boxShadow: isMyTurn && !awaitingMove
+                      ? '0 2px 10px rgba(124,58,237,0.5)'
+                      : 'none',
+                    visibility: isMyTurn && !awaitingMove ? 'visible' : 'hidden',
+                    pointerEvents: isMyTurn && !awaitingMove ? 'auto' : 'none',
+                  }}>
+                  Roll!
+                </button>
+                <div className="flex flex-col items-center gap-1">
+                  <Dice3D value={currentDice} pipColor={myColor ? COLOR_HEX[myColor] : '#1e293b'}/>
+                  {isMyTurn && awaitingMove && currentDice > 0 && (
+                    <span className="text-[10px] text-gray-500">rolled {currentDice}</span>
+                  )}
+                </div>
+              </div>
             )}
           </div>
-        )}
 
-        <div className="flex justify-end px-5 pb-5">
-          {!isOver && (
-            <button onClick={handleForfeit} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium">
-              Forfeit
-            </button>
-          )}
         </div>
       </div>
-    </div>
+    </>
   );
 }
