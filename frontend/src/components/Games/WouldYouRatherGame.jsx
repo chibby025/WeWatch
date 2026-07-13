@@ -25,11 +25,11 @@ export default function WouldYouRatherGame({ gameState, players, currentUserId, 
   const isOver     = gameState.status === 'finished' || gameState.status === 'completed';
 
   function vote(choice) {
-    onMove({ move_type: 'vote', move_data: { choice } });
+    onMove({ move_type: 'vote', choice });
   }
 
   function next() {
-    onMove({ move_type: 'next', move_data: {} });
+    onMove({ move_type: 'next' });
   }
 
   function pct(n) {

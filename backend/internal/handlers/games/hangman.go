@@ -64,8 +64,49 @@ func hangmanPublicState(data map[string]interface{}) map[string]interface{} {
 	return out
 }
 
+// hangmanInitialStatePC creates the initial state for initializeGameState.
+// Scores are empty (player IDs unknown here); ensureHangmanState fills them on first move.
+func hangmanInitialStatePC(_ int) map[string]interface{} {
+	word := hangmanWordList[rand.Intn(len(hangmanWordList))]
+	display := make([]string, len(word))
+	for i := range display {
+		display[i] = "_"
+	}
+	return map[string]interface{}{
+		"word":          word,
+		"display":       display,
+		"guessed":       []string{},
+		"wrong_letters": []string{},
+		"wrong_count":   0,
+		"max_wrong":     6,
+		"phase":         "guessing",
+		"scores":        map[string]interface{}{},
+		"last_guesser":  nil,
+		"word_length":   len(word),
+	}
+}
+
 func ensureHangmanState(gameState *GameSessionState) {
 	if gameState.GameData["phase"] == nil {
+		// Reuse the word pre-seeded by initializeGameState so display/word_length
+		// match what was broadcast at game_started.
+		if gameState.GameSession != nil {
+			if word, ok := gameState.GameSession.GameState["word"].(string); ok && word != "" {
+				for k, v := range gameState.GameSession.GameState {
+					gameState.GameData[k] = v
+				}
+				scores := hangmanScoreMap(gameState.GameData)
+				for _, p := range gameState.Players {
+					key := fmt.Sprintf("%d", p.UserID)
+					if _, exists := scores[key]; !exists {
+						scores[key] = 0
+					}
+				}
+				gameState.GameData["scores"] = scores
+				return
+			}
+		}
+		// Fallback: pick a fresh word (only if GameSession state was never seeded)
 		for k, v := range hangmanInitialState(gameState.Players) {
 			gameState.GameData[k] = v
 		}

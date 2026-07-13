@@ -146,11 +146,13 @@ func (h *GameWebSocketHandler) GetActiveGameMessage(roomID uint) map[string]inte
         return nil
     }
 
-    // Draw & Guess: strip the secret word so a late-joining guesser rehydrating
-    // mid-round never receives the answer (the drawer gets it via draw_word instead).
+    // Strip hidden state from initial/rehydration broadcasts.
     gameStateOut := map[string]interface{}(gameState.GameSession.GameState)
-    if gameState.GameSession.GameType == "draw_guess" {
+    switch gameState.GameSession.GameType {
+    case "draw_guess":
         gameStateOut = drawGuessPublicState(gameState.GameSession.GameState)
+    case "hangman":
+        gameStateOut = hangmanPublicState(map[string]interface{}(gameState.GameSession.GameState))
     }
 
     return map[string]interface{}{
@@ -423,6 +425,11 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
         h.gameManager.TournamentManager.LinkMatchSession(roomID, players[0].UserID, players[1].UserID, gameSession.ID)
     }
 
+    gameStateBcast := map[string]interface{}(gameSession.GameState)
+    if gameSession.GameType == "hangman" {
+        gameStateBcast = hangmanPublicState(gameStateBcast)
+    }
+
     message := map[string]interface{}{
         "type":   "game",
         "action": "game_started",
@@ -431,7 +438,7 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
             "game_type":       gameSession.GameType,
             "host_id":         hostID,
             "players":         players,
-            "game_state":      gameSession.GameState,
+            "game_state":      gameStateBcast,
         },
     }
 

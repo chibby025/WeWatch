@@ -656,6 +656,16 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 		state["phase"] = "building"
 		state["locked_moves"] = map[string]interface{}{}
 		state["turn"] = 0
+
+	case "would_you_rather":
+		for k, v := range wyrInitialState(playerCount) {
+			state[k] = v
+		}
+
+	case "hangman":
+		for k, v := range hangmanInitialStatePC(playerCount) {
+			state[k] = v
+		}
 	}
 
 	return state
