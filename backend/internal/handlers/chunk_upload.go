@@ -474,8 +474,6 @@ func AbortUploadHandler(c *gin.Context) {
 // ChunkUploadHandler handles chunked file uploads
 // Route: POST /api/rooms/:id/upload?chunked=true
 func ChunkUploadHandler(c *gin.Context) {
-	log.Println("🧩 ChunkUploadHandler CALLED")
-
 	// Authentication check
 	userIDValue, exists := c.Get("user_id")
 	if !exists {
@@ -542,7 +540,9 @@ func ChunkUploadHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("🧩 [Chunk %d/%d] Received for upload_id: %s", chunkIndex+1, totalChunks, uploadID)
+	if chunkIndex == 0 || (chunkIndex+1)%100 == 0 || chunkIndex+1 == totalChunks {
+		log.Printf("📦 [Chunk %d/%d] %s", chunkIndex+1, totalChunks, uploadID)
+	}
 
 	// Get chunk file from form
 	chunkFile, err := c.FormFile("chunk")
@@ -578,7 +578,6 @@ func ChunkUploadHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ [Chunk %d/%d] Saved successfully", chunkIndex+1, totalChunks)
 
 	// Progressive HLS (Phase 2): for temporary video uploads, try to start segmenting
 	// from whatever has landed so far instead of waiting for the last chunk. Scoped to

@@ -594,7 +594,8 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                     style={{
                       top:`${(row+0.13)*cp}%`, left:`${(col+0.13)*cp}%`,
                       width:`${cp*0.74}%`, height:`${cp*0.74}%`,
-                      zIndex:10, touchAction:'none',
+                      zIndex: isDraggingThis ? 30 : isClickable ? 20 : 10,
+                      touchAction:'none',
                       opacity: isDraggingThis ? 0.25 : 1,
                     }}
                   >
@@ -715,7 +716,7 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                     {isMyTurn ? '✨ Your turn' : `${currentPlayer?.username}'s turn`}
                   </p>
                   {isMyTurn && awaitingMove && !selectedDieValue && remainingMoves.length > 1 && (
-                    <p className="text-amber-400 text-[11px] mt-0.5">Tap a die to select it</p>
+                    <p className="text-amber-400 text-[11px] mt-0.5">2 dice rolled →</p>
                   )}
                   {isMyTurn && awaitingMove && selectedDieValue && legalMoves.length === 0 && (
                     <p className="text-amber-400 text-[11px] mt-0.5">No valid moves — turn passes</p>
@@ -733,45 +734,49 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
             {/* Dice section */}
             {isPlayer && !isOver && (
               <div className="flex items-center gap-2 ml-3 flex-shrink-0">
-                {/* Roll button */}
-                <button
-                  onClick={handleRoll}
-                  disabled={!isMyTurn || awaitingMove}
-                  className="px-3 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95 whitespace-nowrap"
-                  style={{
-                    background: isMyTurn && !awaitingMove
-                      ? 'linear-gradient(135deg,#7c3aed,#4f46e5)'
-                      : 'transparent',
-                    boxShadow: isMyTurn && !awaitingMove
-                      ? '0 2px 10px rgba(124,58,237,0.5)'
-                      : 'none',
-                    visibility: isMyTurn && !awaitingMove ? 'visible' : 'hidden',
-                    pointerEvents: isMyTurn && !awaitingMove ? 'auto' : 'none',
+                {/* Left slot: Roll button OR prominent "Tap a die!" hint */}
+                {isMyTurn && awaitingMove && needsDieSelection ? (
+                  <span style={{
+                    fontSize: 14, fontWeight: 900, whiteSpace: 'nowrap',
+                    color: '#fbbf24',
+                    textShadow: '0 0 10px rgba(251,191,36,0.8)',
+                    letterSpacing: '-0.3px',
+                    animation: 'pulse 1.2s ease-in-out infinite',
                   }}>
-                  Roll!
-                </button>
+                    👆 Tap a die!
+                  </span>
+                ) : (
+                  <button
+                    onClick={handleRoll}
+                    disabled={!isMyTurn || awaitingMove}
+                    className="px-3 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95 whitespace-nowrap"
+                    style={{
+                      background: isMyTurn && !awaitingMove
+                        ? 'linear-gradient(135deg,#7c3aed,#4f46e5)'
+                        : 'transparent',
+                      boxShadow: isMyTurn && !awaitingMove
+                        ? '0 2px 10px rgba(124,58,237,0.5)'
+                        : 'none',
+                      opacity: isMyTurn && !awaitingMove ? 1 : 0,
+                      pointerEvents: isMyTurn && !awaitingMove ? 'auto' : 'none',
+                    }}>
+                    Roll!
+                  </button>
+                )}
 
                 {/* Two dice side-by-side */}
                 {diceRolls.length > 0 && (
-                  <div className="flex flex-col items-center gap-1">
-                    <div className="flex gap-2 items-center">
-                      {diceRolls.map((val, i) => (
-                        <Dice3D
-                          key={i}
-                          value={val}
-                          pipColor={myPrimaryColor ? COLOR_HEX[myPrimaryColor] : '#1e293b'}
-                          selected={selectedDieValue === val && !diceConsumed[i]}
-                          consumed={diceConsumed[i]}
-                          onClick={isMyTurn && awaitingMove && !diceConsumed[i] ? () => handleDieClick(i) : null}
-                        />
-                      ))}
-                    </div>
-                    {isMyTurn && awaitingMove && needsDieSelection && (
-                      <span className="text-[9px] text-purple-400">tap a die</span>
-                    )}
-                    {isMyTurn && awaitingMove && selectedDieValue && (
-                      <span className="text-[9px] text-gray-500">using {selectedDieValue}</span>
-                    )}
+                  <div className="flex gap-2 items-center">
+                    {diceRolls.map((val, i) => (
+                      <Dice3D
+                        key={i}
+                        value={val}
+                        pipColor={myPrimaryColor ? COLOR_HEX[myPrimaryColor] : '#1e293b'}
+                        selected={selectedDieValue === val && !diceConsumed[i]}
+                        consumed={diceConsumed[i]}
+                        onClick={isMyTurn && awaitingMove && !diceConsumed[i] ? () => handleDieClick(i) : null}
+                      />
+                    ))}
                   </div>
                 )}
               </div>

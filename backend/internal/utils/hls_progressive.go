@@ -598,7 +598,9 @@ func commitProgressiveMode(uploadID string, state *ProgressiveUploadState, video
 	if isCompatibleAudioCodec(audioCodec) {
 		ffmpegArgs = append(ffmpegArgs, "-c:a", "copy")
 	} else {
-		ffmpegArgs = append(ffmpegArgs, "-c:a", "aac", "-b:a", "128k")
+		// "-ac 2" downmixes multi-channel audio (AC3 5.1 etc.) to stereo before AAC encoding.
+		// Without it, ffmpeg emits AAC PCE for 5.1 channel layouts, which hls.js/browsers cannot decode.
+		ffmpegArgs = append(ffmpegArgs, "-c:a", "aac", "-b:a", "128k", "-ac", "2")
 	}
 	ffmpegArgs = append(ffmpegArgs,
 		"-sn", // drop subtitle streams — see hls.go's SegmentToHLS for why
@@ -1100,6 +1102,8 @@ func generatePreviewMP4FromSegmentWindow(segmentDir, outputPath string, maxSegme
 	scaleFilter := fmt.Sprintf("scale=-2:%d:flags=lanczos", targetHeight)
 
 	cmd := exec.Command("ffmpeg", "-y",
+		"-analyzeduration", "10000000",
+		"-probesize", "50000000",
 		"-f", "mpegts",
 		"-i", concatInput,
 		"-t", "15",
@@ -1107,8 +1111,7 @@ func generatePreviewMP4FromSegmentWindow(segmentDir, outputPath string, maxSegme
 		"-crf", "28",
 		"-preset", "veryfast",
 		"-vf", fmt.Sprintf("fps=24,%s", scaleFilter),
-		"-c:a", "aac",
-		"-b:a", "96k",
+		"-an",
 		"-movflags", "+faststart",
 		"-f", "mp4",
 		outputPath,

@@ -33,14 +33,13 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   const [expandedBox, setExpandedBox] = useState(null); // null | 'screen' | 'camera'
   const [showExpandIcon, setShowExpandIcon] = useState({ screen: false, camera: false });
   const iconTimeoutRef = useRef({ screen: null, camera: null });
-  // Shadow ref for onError — VideoWatch.jsx passes a new function reference on every
-  // render (not wrapped in useCallback), so listing onError directly in an effect's deps
-  // array reloads the player on any unrelated parent re-render. Mirrors the shadow-ref
-  // pattern already used in CinemaScene3DDemo.jsx for the same reason.
+  // Shadow refs for onError / onEnded — VideoWatch.jsx passes new function references on
+  // every render (not wrapped in useCallback). Listing them directly in effect dep arrays
+  // reloads the player on any unrelated parent re-render. Same pattern as CinemaScene3DDemo.
   const onErrorRef = useRef(onError);
-  useEffect(() => {
-    onErrorRef.current = onError;
-  }, [onError]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  const onEndedRef = useRef(onEnded);
+  useEffect(() => { onEndedRef.current = onEnded; }, [onEnded]);
 
   // 🔑 Expose the actual <video> DOM element to parent
   useImperativeHandle(ref, () => videoRef.current, []);
@@ -326,6 +325,21 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         hls.on(Hls.Events.ERROR, (_event, data) => {
           console.error('❌ [CinemaVideoPlayer] hls.js error:', data);
           if (data.fatal) onErrorRef.current?.(data);
+        });
+        // hls.js fires BUFFER_EOS once the last segment is fully appended to the
+        // SourceBuffer. After this the video plays the remaining buffered frames and
+        // should fire the native 'ended' event naturally. However, in practice the
+        // spinner ("buffering") can persist indefinitely instead — either because the
+        // manifest was fetched before #EXT-X-ENDLIST was written (progressive upload)
+        // and hls.js keeps retrying, or because a tiny duration mismatch prevents
+        // video.currentTime from ever reaching video.duration exactly. Fix: give the
+        // native 'ended' event 2s to fire on its own, then call onEnded directly.
+        hls.on(Hls.Events.BUFFER_EOS, () => {
+          if (video.ended) return; // already handled by native event
+          const eosTimer = setTimeout(() => {
+            if (!video.ended) onEndedRef.current?.();
+          }, 2000);
+          video.addEventListener('ended', () => clearTimeout(eosTimer), { once: true });
         });
         hls.loadSource(mediaItem.mediaUrl);
         hls.attachMedia(video);

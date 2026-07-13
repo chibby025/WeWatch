@@ -117,6 +117,28 @@ const _sessionsFp = (arr) => arr.map(s => `${s.session_id}:${s.member_count ?? '
 const _friendsFp = (arr) => arr.map(f => `${f.id}:${f.username || ''}:${f.last_message?.content || ''}:${f.last_message?.created_at || ''}`).join('|');
 const CACHE_TTL = 300_000; // 5 min — WS + 30s poll keep data fresh; back-navigation should always be instant
 
+const isSameDay = (a, b) => {
+  if (!a || !b) return false;
+  const da = new Date(a), db = new Date(b);
+  return da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+};
+
+const formatChatDate = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffDays = Math.round(
+    (new Date(now.getFullYear(), now.getMonth(), now.getDate()) -
+     new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000
+  );
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return d.toLocaleDateString('en-US', { weekday: 'long' });
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+};
+
 const LobbyPage = () => {
   // ✅ Tab State
   // Default to Watching Live if we have cached sessions, otherwise Rooms
@@ -5475,21 +5497,35 @@ const LobbyPage = () => {
                         <p className="text-[10px] sm:text-xs mt-2">Start the group conversation! 👋</p>
                       </div>
                     ) : (
-                      (groupMessages[selectedGroup.id] || []).map((msg, index) => (
-                        <LobbyMessageBubble
-                          key={msg.id || index}
-                          message={msg}
-                          isOwn={msg.sender_id === currentUser?.id}
-                          currentUser={currentUser}
-                          onEdit={() => {}}
-                          onDelete={() => {}}
-                          onVotePoll={() => {}}
-                          onViewUser={() => {}}
-                          liveRooms={liveRooms}
-                          endedSessionIds={endedSessionIds}
-                          showSenderName={true}
-                        />
-                      ))
+                      (groupMessages[selectedGroup.id] || []).flatMap((msg, index, arr) => {
+                        const prevMsg = arr[index - 1];
+                        const result = [];
+                        if (!prevMsg || !isSameDay(msg.created_at, prevMsg.created_at)) {
+                          result.push(
+                            <div key={`date-${index}`} className="flex items-center justify-center sticky top-2 z-10 pointer-events-none py-1">
+                              <span className="bg-gray-300/80 dark:bg-gray-700/80 backdrop-blur-sm text-gray-600 dark:text-gray-300 text-[11px] font-medium px-3 py-0.5 rounded-full shadow-sm select-none">
+                                {formatChatDate(msg.created_at)}
+                              </span>
+                            </div>
+                          );
+                        }
+                        result.push(
+                          <LobbyMessageBubble
+                            key={msg.id || index}
+                            message={msg}
+                            isOwn={msg.sender_id === currentUser?.id}
+                            currentUser={currentUser}
+                            onEdit={() => {}}
+                            onDelete={() => {}}
+                            onVotePoll={() => {}}
+                            onViewUser={() => {}}
+                            liveRooms={liveRooms}
+                            endedSessionIds={endedSessionIds}
+                            showSenderName={true}
+                          />
+                        );
+                        return result;
+                      })
                     )}
                     <div ref={chatMessagesEndRef} />
                   </div>
@@ -6155,21 +6191,35 @@ const LobbyPage = () => {
                           <p className="text-[10px] sm:text-xs mt-2">Say hi to start the conversation! 👋</p>
                         </div>
                       ) : (
-                        chatMessages[selectedChatUser.id]?.map((msg, index) => (
-                          <LobbyMessageBubble
-                            key={msg.id || index}
-                            message={msg}
-                            isOwn={msg.sender_id === currentUser?.id}
-                            currentUser={currentUser}
-                            onEdit={handleEditMessage}
-                            onDelete={handleDeleteMessage}
-                            onVotePoll={handleVotePoll}
-                            onViewUser={() => setLightboxAvatarUser(selectedChatUser)}
-                            onReply={(msg) => { setReplyingTo(msg); setTimeout(() => document.querySelector('textarea[placeholder="What do wanna do today?"]')?.focus(), 50); }}
-                            liveRooms={liveRooms}
-                            endedSessionIds={endedSessionIds}
-                          />
-                        ))
+                        (chatMessages[selectedChatUser.id] || []).flatMap((msg, index, arr) => {
+                          const prevMsg = arr[index - 1];
+                          const result = [];
+                          if (!prevMsg || !isSameDay(msg.created_at, prevMsg.created_at)) {
+                            result.push(
+                              <div key={`date-${index}`} className="flex items-center justify-center sticky top-2 z-10 pointer-events-none py-1">
+                                <span className="bg-gray-300/80 dark:bg-gray-700/80 backdrop-blur-sm text-gray-600 dark:text-gray-300 text-[11px] font-medium px-3 py-0.5 rounded-full shadow-sm select-none">
+                                  {formatChatDate(msg.created_at)}
+                                </span>
+                              </div>
+                            );
+                          }
+                          result.push(
+                            <LobbyMessageBubble
+                              key={msg.id || index}
+                              message={msg}
+                              isOwn={msg.sender_id === currentUser?.id}
+                              currentUser={currentUser}
+                              onEdit={handleEditMessage}
+                              onDelete={handleDeleteMessage}
+                              onVotePoll={handleVotePoll}
+                              onViewUser={() => setLightboxAvatarUser(selectedChatUser)}
+                              onReply={(msg) => { setReplyingTo(msg); setTimeout(() => document.querySelector('textarea[placeholder="What do wanna do today?"]')?.focus(), 50); }}
+                              liveRooms={liveRooms}
+                              endedSessionIds={endedSessionIds}
+                            />
+                          );
+                          return result;
+                        })
                       )}
                       <div ref={chatMessagesEndRef} />
                     </div>

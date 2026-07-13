@@ -230,17 +230,14 @@ func (gm *GameManager) processLudoRoll(gameState *GameSessionState, playerIdx in
 	gameState.GameData["last_capture"] = false
 	gameState.GameData["last_token_home"] = false
 
-	// Filter to only dice values that have at least one legal move.
-	// Values with no legal move are auto-consumed (removed from remaining_moves
-	// immediately — the player never wastes a turn interacting with them).
-	remaining := []int{}
-	for _, dv := range []int{d1, d2} {
-		if ludoHasLegalMove(gameState, playerColors, dv) {
-			remaining = append(remaining, dv)
-		}
-	}
+	// Keep BOTH dice regardless of which ones have an immediate legal move.
+	// The second die may become legal after the first is used — e.g. rolling 6+3
+	// with all tokens in base: the 6 enters a token, and the token now at pos 0
+	// can legally use the 3.  Pre-filtering the 3 out would permanently lose it.
+	// Only pass the turn when NEITHER die can do anything right now.
+	hasAnyLegal := ludoHasLegalMove(gameState, playerColors, d1) || ludoHasLegalMove(gameState, playerColors, d2)
 
-	if len(remaining) == 0 {
+	if !hasAnyLegal {
 		// No moves possible for either die — turn passes.
 		// If doubles, same player gets a bonus roll.
 		gameState.GameData["remaining_moves"] = []interface{}{}
@@ -251,11 +248,7 @@ func (gm *GameManager) processLudoRoll(gameState *GameSessionState, playerIdx in
 		return false, nil, nil
 	}
 
-	rm := make([]interface{}, len(remaining))
-	for i, v := range remaining {
-		rm[i] = v
-	}
-	gameState.GameData["remaining_moves"] = rm
+	gameState.GameData["remaining_moves"] = []interface{}{d1, d2}
 	gameState.GameData["awaiting_move"] = true
 	// Same player acts — cancel the automatic turn-advance.
 	gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n

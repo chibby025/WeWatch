@@ -69,6 +69,28 @@ const ChatMessageText = ({ text, className }) => {
   return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />;
 };
 
+const isSameDay = (a, b) => {
+  if (!a || !b) return false;
+  const da = new Date(a), db = new Date(b);
+  return da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+};
+
+const formatChatDate = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffDays = Math.round(
+    (new Date(now.getFullYear(), now.getMonth(), now.getDate()) -
+     new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000
+  );
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return d.toLocaleDateString('en-US', { weekday: 'long' });
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+};
+
 const RoomPageNew = () => {
   const { id: roomId } = useParams();
   const navigate = useNavigate();
@@ -2690,40 +2712,55 @@ const RoomPageNew = () => {
             const canDelete = isOwnMessage || isHost;
             const isPoll = msg.message_type === 'poll';
 
+            const prevMsg = messages[index - 1];
+            const showDateDivider = !prevMsg || !isSameDay(msg.created_at, prevMsg.created_at);
+            const dateDivider = showDateDivider ? (
+              <div className="flex items-center justify-center sticky top-2 z-10 pointer-events-none py-1">
+                <span className="bg-purple-200/80 dark:bg-gray-700/80 backdrop-blur-sm text-purple-700 dark:text-gray-300 text-[11px] font-medium px-3 py-0.5 rounded-full shadow-sm select-none">
+                  {formatChatDate(msg.created_at)}
+                </span>
+              </div>
+            ) : null;
+
             // System announcements (e.g. VS Battle result)
             if (msg.message_type === 'system') {
               return (
-                <div key={index} className="flex justify-center my-2">
-                  <div className="bg-purple-900/40 border border-purple-700/40 text-purple-200 text-xs px-4 py-1.5 rounded-full text-center max-w-xs">
-                    {msg.message}
+                <React.Fragment key={index}>
+                  {dateDivider}
+                  <div className="flex justify-center my-2">
+                    <div className="bg-purple-900/40 border border-purple-700/40 text-purple-200 text-xs px-4 py-1.5 rounded-full text-center max-w-xs">
+                      {msg.message}
+                    </div>
                   </div>
-                </div>
+                </React.Fragment>
               );
             }
 
             // Poll messages have special rendering
             if (isPoll && msg.poll_data) {
               return (
-                <div
-                  key={index}
-                  data-message-index={index}
-                  className="flex justify-center"
-                >
-                  <PollMessage
-                    poll={{
-                      id: msg.id,
-                      question: msg.poll_data.question,
-                      options: msg.poll_data.options,
-                      allow_multiple: msg.poll_data.allow_multiple,
-                      votes: msg.poll_data.votes || [],
-                      is_closed: msg.poll_data.is_closed || false,
-                      created_by_username: msg.username || 'Anonymous',
-                      created_at: msg.created_at,
-                    }}
-                    currentUserId={currentUser?.id}
-                    roomId={roomId}
-                  />
-                </div>
+                <React.Fragment key={index}>
+                  {dateDivider}
+                  <div
+                    data-message-index={index}
+                    className="flex justify-center"
+                  >
+                    <PollMessage
+                      poll={{
+                        id: msg.id,
+                        question: msg.poll_data.question,
+                        options: msg.poll_data.options,
+                        allow_multiple: msg.poll_data.allow_multiple,
+                        votes: msg.poll_data.votes || [],
+                        is_closed: msg.poll_data.is_closed || false,
+                        created_by_username: msg.username || 'Anonymous',
+                        created_at: msg.created_at,
+                      }}
+                      currentUserId={currentUser?.id}
+                      roomId={roomId}
+                    />
+                  </div>
+                </React.Fragment>
               );
             }
 
@@ -2733,10 +2770,11 @@ const RoomPageNew = () => {
             const replyCount = replyCounts[msg.id] || 0;
 
             return (
-              <div
-                key={index}
-                data-message-index={index}
-                data-message-id={msg.id}
+              <React.Fragment key={index}>
+                {dateDivider}
+                <div
+                  data-message-index={index}
+                  data-message-id={msg.id}
                 className={`flex group relative ${isOwnMessage ? 'justify-end' : 'justify-start'} transition-colors duration-700 rounded-lg ${
                   isHighlighted ? 'bg-purple-500/20' : ''
                 }`}
@@ -2949,6 +2987,7 @@ const RoomPageNew = () => {
 
                 </div>
               </div>
+              </React.Fragment>
             );
           })
         )}

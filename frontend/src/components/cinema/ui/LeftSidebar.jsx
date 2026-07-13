@@ -277,6 +277,16 @@ export default function LeftSidebar({
     return 'WEBVTT\n\n' + vtt;
   };
 
+  // Inject "line:85%" into every VTT cue timing line so subtitles render ~15% above
+  // the absolute bottom edge instead of flush against it. This is the only reliable
+  // cross-browser way to shift cue position — ::cue CSS does not support the line property.
+  // Strips any existing line/position/size/align cue settings first so we don't stack them.
+  const injectCueLine = (vtt) =>
+    vtt.replace(
+      /(\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3})(?:[^\n]*)/g,
+      '$1 line:85%'
+    );
+
   const handleSubtitleSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -287,6 +297,7 @@ export default function LeftSidebar({
       if (file.name.toLowerCase().endsWith('.srt')) {
         content = srtToVtt(content);
       }
+      content = injectCueLine(content);
       sendMessage?.({ type: 'subtitle_added', content });
       onSubtitleAdded?.(content); // Host never receives own WS echo — notify VideoWatch directly
       setHasSubtitles(true);
@@ -1377,6 +1388,22 @@ export default function LeftSidebar({
                       <p className="text-white font-medium truncate text-xs sm:text-sm">{currentMedia.original_name}</p>
                       <p className="text-gray-400 text-[10px] sm:text-xs">{currentMedia.duration || '00:00'}</p>
                     </div>
+                    {isHost && (
+                      <button
+                        className="text-red-400 hover:text-red-600 flex-shrink-0"
+                        title="Delete media"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm('Delete this media file? This stops playback for everyone.')) {
+                            onDeleteMedia(currentMedia);
+                          }
+                        }}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : (

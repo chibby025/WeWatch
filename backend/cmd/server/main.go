@@ -15,6 +15,7 @@ import (
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"wewatch-backend/internal/handlers"
 	"wewatch-backend/internal/handlers/games"
@@ -62,7 +63,16 @@ func main() {
 
 	// Open connection to the database using GORM
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-		DisableForeignKeyConstraintWhenMigrating: true, // Disable FK constraints during AutoMigrate to avoid circular dependency issues
+		DisableForeignKeyConstraintWhenMigrating: true,
+		Logger: gormlogger.New(
+			log.New(os.Stderr, "\r\n", log.LstdFlags),
+			gormlogger.Config{
+				SlowThreshold:             2 * time.Second,
+				LogLevel:                  gormlogger.Error,
+				IgnoreRecordNotFoundError: true,
+				Colorful:                  false,
+			},
+		),
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)

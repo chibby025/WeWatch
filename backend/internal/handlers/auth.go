@@ -711,7 +711,6 @@ func AuthMiddleware() gin.HandlerFunc {
         if c.Request.Method == "GET" && c.GetHeader("Upgrade") == "websocket" {
             if queryToken := c.Query("token"); queryToken != "" {
                 tokenString = queryToken
-                log.Printf("AuthMiddleware: Token from query param (WebSocket)")
             }
         }
 
@@ -722,7 +721,6 @@ func AuthMiddleware() gin.HandlerFunc {
                 const bearerPrefix = "Bearer "
                 if len(authHeader) > len(bearerPrefix) && authHeader[:len(bearerPrefix)] == bearerPrefix {
                     tokenString = authHeader[len(bearerPrefix):]
-                    log.Printf("AuthMiddleware: Token from Authorization header")
                 }
             }
         }
@@ -731,7 +729,6 @@ func AuthMiddleware() gin.HandlerFunc {
         if tokenString == "" {
             if cookie, err := c.Cookie("wewatch_token"); err == nil && cookie != "" {
                 tokenString = cookie
-                log.Printf("AuthMiddleware: Token from wewatch_token cookie")
             }
         }
 

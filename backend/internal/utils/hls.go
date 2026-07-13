@@ -50,13 +50,15 @@ func SegmentToHLS(inputPath, outputDir string, segmentSeconds int, hlsBaseURL st
 			// Source audio (e.g. EC-3/AC-3, common in movie/TV rips) can't be parsed by
 			// hls.js's demuxer if stream-copied as-is — transcode to AAC instead. Cheap
 			// relative to a full video transcode, so this doesn't lose the fast-path benefit.
-			args = append(args, "-c:a", "aac", "-b:a", "128k")
+			// "-ac 2" downmixes multi-channel layouts (5.1 etc.) to stereo — AAC 5.1 uses PCE
+			// encoding which browsers cannot decode in HLS.
+			args = append(args, "-c:a", "aac", "-b:a", "128k", "-ac", "2")
 		}
 	} else {
 		args = []string{
 			"-y", "-i", inputPath,
 			"-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-			"-c:a", "aac", "-b:a", "128k",
+			"-c:a", "aac", "-b:a", "128k", "-ac", "2",
 		}
 	}
 
