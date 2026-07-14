@@ -44,7 +44,7 @@ export default function HangmanGame({ gameState, players, currentUserId, onMove,
   const playerList = players || [];
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 text-white select-none">
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900 text-white select-none overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
         <h2 className="text-lg font-bold text-purple-300">Hangman</h2>

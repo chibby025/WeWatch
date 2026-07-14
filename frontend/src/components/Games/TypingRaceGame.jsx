@@ -150,13 +150,23 @@ export default function TypingRaceGame({ gameState, players, currentUserId, onMo
             </span>
           )}
         </div>
-        <button
-          onClick={endOrLeave}
-          className="text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors"
-          title={isHostUser ? 'End race for everyone' : 'Leave race'}
-        >
-          <X className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          {!finished && isHostUser && onEndGame && (
+            <button
+              onClick={onEndGame}
+              className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs font-semibold rounded-lg transition-colors"
+            >
+              End Race
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors"
+            title="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* Progress bars */}

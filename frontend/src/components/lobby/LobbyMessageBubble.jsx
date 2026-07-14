@@ -555,7 +555,7 @@ const LobbyMessageBubble = ({
             tic_tac_toe: '⭕', rock_paper_scissors: '✊', chess: '♟️',
             trivia: '🧠', othello: '🔵', checkers: '🔴', crazy_eights: '🎴',
             ludo: '🎲', connect_four: '🟡', would_you_rather: '🤔',
-            wordle: '📝', uno: '🃏', quiplash: '💬',
+            wordle: '📝', uno: '🃏',
             typing_race: '⌨️', blackjack: '🂡', battleship: '🚢', draw_guess: '🎨',
           };
           const gameName = (metadata.game_type || '').replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());

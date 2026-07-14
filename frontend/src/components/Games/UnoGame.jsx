@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 
 // ---- Card rendering helpers ----
+// H=Red  D=Yellow  C=Green  S=Blue  (standard Uno colour convention)
 const SUIT_SYMBOLS = { H: '♥', D: '♦', C: '♣', S: '♠' };
-const SUIT_COLORS  = { H: 'text-red-400', D: 'text-red-400', C: 'text-gray-200', S: 'text-gray-200' };
-const BG_COLORS    = { H: 'bg-red-800', D: 'bg-red-800', C: 'bg-gray-800', S: 'bg-gray-800', W: 'bg-gray-900', X: 'bg-gray-900' };
+const SUIT_COLORS  = { H: 'text-red-200',    D: 'text-yellow-200', C: 'text-green-200', S: 'text-blue-200' };
+const BG_COLORS    = { H: 'bg-red-700',       D: 'bg-yellow-600',   C: 'bg-green-700',   S: 'bg-blue-700', W: 'bg-gray-900', X: 'bg-gray-900' };
 
 // card codes: "7H", "SD" (Skip Hearts), "RH" (Reverse Hearts), "D2H" (Draw2), "WC" (Wild, C=placeholder), "W4C" (WildDraw4)
 function parseCard(code) {
@@ -17,30 +18,42 @@ function parseCard(code) {
   return { rank: code.slice(0, -1), suit: code.slice(-1), type: 'number' };
 }
 
-const SUIT_BG = { H: 'from-red-700 to-red-900', D: 'from-red-700 to-red-900', C: 'from-gray-700 to-gray-900', S: 'from-gray-700 to-gray-900' };
+const SUIT_BG = { H: 'from-red-600 to-red-900', D: 'from-yellow-500 to-yellow-800', C: 'from-green-600 to-green-900', S: 'from-blue-600 to-blue-900' };
 
 function CardChip({ code, onClick, selected, playable, small }) {
   const { rank, suit, type } = parseCard(code);
   const isWild = type === 'wild' || type === 'wild4';
   const bg = isWild ? 'from-purple-700 to-purple-900' : (SUIT_BG[suit] || 'from-gray-700 to-gray-900');
-  const border = selected ? 'ring-2 ring-yellow-400 scale-110 -translate-y-3' : playable ? 'ring-1 ring-green-400 hover:-translate-y-2' : 'opacity-60 cursor-default';
-  const size = small ? 'w-9 h-12 text-xs' : 'w-11 h-16 text-sm';
+  const border = selected
+    ? 'ring-2 ring-yellow-400 scale-110 -translate-y-4 shadow-2xl shadow-yellow-400/30'
+    : playable
+      ? 'ring-1 ring-white/60 hover:-translate-y-3 hover:scale-105 hover:shadow-xl cursor-pointer'
+      : 'opacity-50 cursor-default';
+  const size = small ? 'w-9 h-12 text-xs' : 'w-12 h-16 text-sm';
+  const suitColor = SUIT_COLORS[suit] || 'text-white';
 
   return (
     <button
       onClick={onClick}
       disabled={!playable && !selected}
-      className={`relative flex flex-col items-center justify-center rounded-lg bg-gradient-to-br ${bg} transition-all duration-150 ${border} ${size} select-none cursor-pointer shadow-md`}
+      className={`relative flex flex-col items-center justify-center rounded-xl bg-gradient-to-br ${bg} transition-all duration-150 ${border} ${size} select-none shadow-lg border border-white/10`}
     >
-      <span className="font-black leading-none">{rank}</span>
-      {!isWild && <span className="text-xs leading-none mt-0.5">{SUIT_SYMBOLS[suit] || suit}</span>}
+      {/* White oval in center (Uno card style) */}
+      <div className="absolute inset-[20%] rounded-full bg-white/15" />
+      <span className="relative font-black leading-none text-white drop-shadow">{rank}</span>
+      {!isWild && (
+        <span className={`relative text-xs leading-none mt-0.5 font-bold ${suitColor} drop-shadow`}>
+          {SUIT_SYMBOLS[suit] || suit}
+        </span>
+      )}
     </button>
   );
 }
 
 // ---- Color Picker for Wilds ----
-const COLORS = ['H', 'D', 'C', 'S']; // Red, Red, Black, Black → we display as red/yellow/green/blue visually
+const COLORS = ['H', 'D', 'C', 'S'];
 const COLOR_LABELS = { H: '❤️ Red', D: '💛 Yellow', C: '🟢 Green', S: '🔵 Blue' };
+const COLOR_PICKER_BG = { H: 'bg-gradient-to-br from-red-600 to-red-900', D: 'bg-gradient-to-br from-yellow-500 to-yellow-800', C: 'bg-gradient-to-br from-green-600 to-green-900', S: 'bg-gradient-to-br from-blue-600 to-blue-900' };
 
 function ColorPicker({ onPick }) {
   return (
@@ -52,8 +65,7 @@ function ColorPicker({ onPick }) {
             <button
               key={c}
               onClick={() => onPick(c)}
-              className="px-6 py-3 rounded-xl font-semibold text-white hover:scale-105 transition-transform
-                bg-gradient-to-br from-gray-700 to-gray-900 border border-gray-600"
+              className={`px-6 py-3 rounded-xl font-semibold text-white hover:scale-105 transition-transform ${COLOR_PICKER_BG[c]}`}
             >
               {COLOR_LABELS[c]}
             </button>
@@ -80,7 +92,7 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
 
   const hand         = myHand || [];
   const discardTop   = gs.discard_top || '';
-  const currentSuit  = gs.current_suit || '';
+  const currentColor = gs.current_color || '';
   const direction    = gs.direction === -1 ? '↺' : '↻';
   const pendingDraw  = gs.pending_draw || 0;
   const isOver       = ['finished','completed','forfeited'].includes(gameState?.status || '');
@@ -95,8 +107,8 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
     const { rank, suit, type } = parseCard(code);
     if (type === 'wild' || type === 'wild4') return true;
     const { rank: topRank, suit: topSuit } = parseCard(discardTop);
-    const activeSuit = currentSuit || topSuit;
-    return suit === activeSuit || rank === topRank;
+    const activeColor = currentColor || topSuit;
+    return suit === activeColor || rank === topRank;
   }
 
   function playCard(code) {
@@ -107,24 +119,24 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
       setPickingColor(true);
       return;
     }
-    onMove({ move_type: 'play', move_data: { card: code } });
+    onMove({ move_type: 'play', card: code });
     setSelected(null);
   }
 
   function pickColor(color) {
     setPickingColor(false);
-    onMove({ move_type: 'play', move_data: { card: selected, chosen_suit: color } });
+    onMove({ move_type: 'play', card: selected, next_color: color });
     setSelected(null);
   }
 
   function drawCard() {
     if (!isMyTurn) return;
-    onMove({ move_type: 'draw', move_data: {} });
+    onMove({ move_type: 'draw' });
   }
 
   function pressUno() {
     setUnoPressed(true);
-    onMove({ move_type: 'uno', move_data: {} });
+    onMove({ move_type: 'uno' });
     setTimeout(() => setUnoPressed(false), 2000);
   }
 
@@ -133,7 +145,7 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
     : null;
 
   const { suit: topSuit } = parseCard(discardTop);
-  const activeSuit = currentSuit || topSuit;
+  const activeColor = currentColor || topSuit;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-950 overflow-hidden">
@@ -151,7 +163,17 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
             </span>
           )}
         </div>
-        <button onClick={isOver ? onClose : onEndGame} className="text-gray-400 hover:text-white p-1"><X size={18} /></button>
+        <div className="flex items-center gap-2">
+          {!isOver && onEndGame && (
+            <button
+              onClick={onEndGame}
+              className="px-3 py-1 bg-red-700 hover:bg-red-600 text-white text-xs font-semibold rounded-lg transition-colors"
+            >
+              End Game
+            </button>
+          )}
+          <button onClick={onClose} className="text-gray-400 hover:text-white p-1"><X size={18} /></button>
+        </div>
       </div>
 
       {/* Other players' hand counts */}
@@ -191,9 +213,9 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
           <div className="w-14 h-20">
             <CardChip code={discardTop} small={false} />
           </div>
-          {currentSuit && currentSuit !== topSuit && (
+          {currentColor && currentColor !== topSuit && (
             <span className="text-xs text-purple-300 font-semibold">
-              Color: {COLOR_LABELS[currentSuit] || currentSuit}
+              Color: {COLOR_LABELS[currentColor] || currentColor}
             </span>
           )}
         </div>

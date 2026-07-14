@@ -547,6 +547,7 @@ func main() {
 		// --- Room-level persistent chat (new) ---
 		roomGroup.GET("/:id/messages", handlers.GetRoomMessages)                             // GET /api/rooms/:id/messages (Get all room messages)
 		roomGroup.POST("/:id/messages", handlers.CreateRoomMessage)                          // POST /api/rooms/:id/messages (Send room message)
+		roomGroup.POST("/:id/system-message", handlers.CreateRoomSystemMessage)               // POST /api/rooms/:id/system-message (Post system message, e.g. game result)
 		roomGroup.DELETE("/:id/messages/:message_id", handlers.DeleteRoomMessage)            // DELETE /api/rooms/:id/messages/:message_id (Delete room message)
 		roomGroup.PUT("/:id/messages/:message_id", handlers.EditRoomMessage)                 // PUT /api/rooms/:id/messages/:message_id (Edit room message)
 		roomGroup.POST("/:id/messages/voice-note", handlers.UploadVoiceNote)                 // POST /api/rooms/:id/messages/voice-note (Upload voice note)

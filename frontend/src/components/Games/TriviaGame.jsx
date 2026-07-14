@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { X, Clock, Trophy, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
+import GameRulesButton from './GameRulesButton';
 
 const TOTAL_ROUNDS = 10;
 const ROUND_SECONDS = 15;
@@ -561,13 +562,16 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose }
             </span>
           )}
         </div>
-        <button
-          onClick={endOrLeave}
-          className="text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors"
-          title={isHostUser ? 'End game for everyone' : 'Leave game'}
-        >
-          <X className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <GameRulesButton gameType="trivia" />
+          <button
+            onClick={endOrLeave}
+            className="text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors"
+            title={isHostUser ? 'End game for everyone' : 'Leave game'}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* Score strip */}

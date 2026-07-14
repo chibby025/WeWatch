@@ -80,17 +80,24 @@ func isAlpha(s string) bool {
 func wordleInitialState() map[string]interface{} {
 	word := wordlePickWord()
 	return map[string]interface{}{
-		"secret":         word,
-		"guesses":        map[string]interface{}{}, // playerID → []string guesses
-		"results":        map[string]interface{}{}, // playerID → []string feedback sequences
-		"eliminated":     []interface{}{},
-		"winner_id":      nil,
-		"phase":          "playing",
+		"secret":     word,
+		"guesses":    map[string]interface{}{}, // playerID → []string guesses
+		"results":    map[string]interface{}{}, // playerID → []string feedback sequences
+		"eliminated": []interface{}{},
+		"winner_id":  nil,
+		"phase":      "playing",
+		"hints":      map[string]interface{}{}, // playerID → { position, letter }
+		"used_hints": map[string]interface{}{}, // playerID → bool
 	}
 }
 
 func (gm *GameManager) processWordleMove(gameState *GameSessionState, playerID uint, moveData map[string]interface{}) (gameOver bool, winnerID *uint, err error) {
 	ensureWordleState(gameState)
+
+	// move_type is at the top level of moveData (same dict as the WS message)
+	if mt, _ := moveData["move_type"].(string); mt == "hint" {
+		return gm.processWordleHint(gameState, playerID)
+	}
 
 	phase, _ := gameState.GameData["phase"].(string)
 	if phase != "playing" {
@@ -254,6 +261,94 @@ func wordlePlayerGuesses(gameState *GameSessionState, playerKey string) []string
 		return out
 	}
 	return nil
+}
+
+func (gm *GameManager) processWordleHint(gameState *GameSessionState, playerID uint) (bool, *uint, error) {
+	phase, _ := gameState.GameData["phase"].(string)
+	if phase != "playing" {
+		return false, nil, fmt.Errorf("game is not in playing phase")
+	}
+
+	playerKey := fmt.Sprintf("%d", playerID)
+
+	// One hint per player per game.
+	if wordleUsedHints(gameState)[playerKey] {
+		return false, nil, fmt.Errorf("hint already used")
+	}
+
+	// Check not eliminated.
+	for _, id := range wordleEliminated(gameState) {
+		if id == playerKey {
+			return false, nil, fmt.Errorf("you have been eliminated")
+		}
+	}
+
+	secret, _ := gameState.GameData["secret"].(string)
+	results := wordlePlayerResults(gameState, playerKey)
+
+	// Mark positions already correctly guessed (Green).
+	var correctPos [5]bool
+	for _, result := range results {
+		for i := 0; i < 5 && i < len(result); i++ {
+			if result[i] == 'G' {
+				correctPos[i] = true
+			}
+		}
+	}
+
+	// Pick the first unrevealed position.
+	hintPos := -1
+	for i := 0; i < 5; i++ {
+		if !correctPos[i] {
+			hintPos = i
+			break
+		}
+	}
+	if hintPos == -1 {
+		return false, nil, fmt.Errorf("no hint available — all positions already found")
+	}
+
+	// Persist hint and mark used.
+	allHints := wordleAllHints(gameState)
+	allHints[playerKey] = map[string]interface{}{
+		"position": hintPos,
+		"letter":   string(secret[hintPos]),
+	}
+	usedHints := wordleUsedHints(gameState)
+	usedHints[playerKey] = true
+
+	gameState.GameData["hints"] = allHints
+	gameState.GameData["used_hints"] = usedHints
+
+	// Undo automatic turn advance — hints don't consume a turn.
+	gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
+
+	return false, nil, nil
+}
+
+func wordleAllHints(gameState *GameSessionState) map[string]interface{} {
+	raw := gameState.GameData["hints"]
+	if m, ok := raw.(map[string]interface{}); ok {
+		return m
+	}
+	return map[string]interface{}{}
+}
+
+func wordleUsedHints(gameState *GameSessionState) map[string]bool {
+	raw := gameState.GameData["used_hints"]
+	if m, ok := raw.(map[string]bool); ok {
+		return m
+	}
+	if m, ok := raw.(map[string]interface{}); ok {
+		out := make(map[string]bool, len(m))
+		for k, v := range m {
+			if b, ok := v.(bool); ok {
+				out[k] = b
+			}
+		}
+		return out
+	}
+	return map[string]bool{}
 }
 
 func wordlePlayerResults(gameState *GameSessionState, playerKey string) []string {

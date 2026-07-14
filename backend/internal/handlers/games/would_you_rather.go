@@ -110,24 +110,23 @@ func (gm *GameManager) processWouldYouRatherMove(gameState *GameSessionState, pl
 			return false, nil, fmt.Errorf("only the host can advance")
 		}
 
-		orderRaw := gameState.GameData["question_order"].([]interface{})
-		idxF := gameState.GameData["question_index"].(float64)
-		idx := int(idxF) + 1
-		if idx >= len(orderRaw) {
+		order := wyrQuestionOrder(gameState)
+		idx := wyrIntField(gameState.GameData["question_index"]) + 1
+		if idx >= len(order) {
 			// No more questions — game over (no winner, just fun).
 			return true, nil, nil
 		}
 
-		qIdx := int(orderRaw[idx].(float64))
+		qIdx := int(order[idx])
 		q := wyrQuestions[qIdx]
-		gameState.GameData["question_index"] = float64(idx)
+		gameState.GameData["question_index"] = idx
 		gameState.GameData["option_a"] = q.A
 		gameState.GameData["option_b"] = q.B
 		gameState.GameData["phase"] = "presenting"
 		gameState.GameData["votes"] = map[string]interface{}{}
 		gameState.GameData["tally_a"] = 0
 		gameState.GameData["tally_b"] = 0
-		gameState.GameData["round"] = float64(idx + 1)
+		gameState.GameData["round"] = idx + 1
 
 		gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
 		return false, nil, nil
@@ -178,4 +177,37 @@ func floatSlice(ints []int) []float64 {
 		out[i] = float64(v)
 	}
 	return out
+}
+
+// wyrIntField safely reads an integer value from GameData that may be stored as
+// Go int (set directly in-memory) or float64 (after a JSON round-trip).
+func wyrIntField(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	case int64:
+		return int(n)
+	}
+	return 0
+}
+
+// wyrQuestionOrder extracts the shuffled question order from GameData, handling
+// both the in-memory []float64 form (set directly) and the []interface{} form
+// that comes back when GameData is round-tripped through JSON/DB.
+func wyrQuestionOrder(gameState *GameSessionState) []float64 {
+	switch v := gameState.GameData["question_order"].(type) {
+	case []float64:
+		return v
+	case []interface{}:
+		out := make([]float64, len(v))
+		for i, elem := range v {
+			if f, ok := elem.(float64); ok {
+				out[i] = f
+			}
+		}
+		return out
+	}
+	return nil
 }

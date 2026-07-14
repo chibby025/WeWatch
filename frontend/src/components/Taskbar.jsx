@@ -399,10 +399,24 @@ const Taskbar = ({
 
   const handleMinimizeClick = () => {
     if (!minimizedPos) {
-      setMinimizedPos(clampToViewport(window.innerWidth / 2 - MINIMIZED_SIZE / 2, window.innerHeight - 90));
+      setMinimizedPos(clampToViewport(window.innerWidth - MINIMIZED_SIZE - 16, window.innerHeight - 90));
     }
     setIsMinimized(true);
   };
+
+  // Auto-minimize the pill when a game starts so game bottom controls aren't obscured.
+  // Snaps to bottom-right corner on first minimize; preserves any position the user later dragged it to.
+  useEffect(() => {
+    if (!gameSessionId) return;
+    const t = setTimeout(() => {
+      setMinimizedPos(pos => pos ?? {
+        x: Math.min(Math.max(window.innerWidth - 52 - 16, 8), window.innerWidth - 52 - 8),
+        y: Math.min(Math.max(window.innerHeight - 90, 8), window.innerHeight - 52 - 8),
+      });
+      setIsMinimized(true);
+    }, 500);
+    return () => clearTimeout(t);
+  }, [gameSessionId]);
 
   const handleMinimizedPointerDown = (e) => {
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -556,6 +570,8 @@ const Taskbar = ({
 
   if (isMinimized && minimizedPos) {
     return (
+      <>
+        <style>{`@keyframes taskbar-pop-in{from{opacity:0;transform:scale(0.4)}to{opacity:1;transform:scale(1)}}`}</style>
       <div
         onPointerDown={handleMinimizedPointerDown}
         onPointerMove={handleMinimizedPointerMove}
@@ -577,13 +593,18 @@ const Taskbar = ({
           touchAction: 'none',
           cursor: 'grab',
           color: 'white',
+          animation: 'taskbar-pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
         }}
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }}>
-          <polyline points="7 13 12 18 17 13" />
-          <polyline points="7 6 12 11 17 6" />
+        {/* Expand / restore icon — two outward diagonal arrows */}
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }}>
+          <polyline points="15 3 21 3 21 9" />
+          <polyline points="9 21 3 21 3 15" />
+          <line x1="21" y1="3" x2="14" y2="10" />
+          <line x1="3" y1="21" x2="10" y2="14" />
         </svg>
       </div>
+      </>
     );
   }
 
@@ -599,19 +620,23 @@ const Taskbar = ({
         onPointerMove={handlePillPointerMove}
         onPointerUp={handlePillPointerUp}
       >
-        <button
-          onClick={handleMinimizeClick}
-          title="Minimize taskbar"
-          className="absolute top-1/2 left-1 -translate-y-1/2 w-5 h-5 lg:w-6 lg:h-6 rounded-full bg-gray-900 border border-white/30 flex items-center justify-center text-white hover:bg-gray-800 transition-colors !min-w-0 !min-h-0"
+        <div
+          className="absolute top-0 bottom-0 left-1 flex items-center"
           style={{ zIndex: 1001 }}
         >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="lg:hidden">
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="hidden lg:block">
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        </button>
+          <button
+            onClick={handleMinimizeClick}
+            title="Minimize"
+            className="flex flex-col items-center gap-0.5 text-white hover:bg-white/10 rounded-md px-1 py-0.5 transition-colors !min-w-0 !min-h-0"
+          >
+            <div className="rounded-full bg-gray-900 border border-white/30 flex items-center justify-center w-5 h-5 lg:w-6 lg:h-6">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </div>
+            <span className="text-[9px] leading-tight whitespace-nowrap">Min</span>
+          </button>
+        </div>
 
         <TaskbarButton
           buttonRef={leaveCallButtonRef}
@@ -1036,6 +1061,11 @@ const Taskbar = ({
         .scrollbar-hide {
           -ms-overflow-style: none;  /* IE and Edge */
           scrollbar-width: none;  /* Firefox */
+        }
+
+        @keyframes taskbar-pop-in {
+          from { opacity: 0; transform: scale(0.4); }
+          to   { opacity: 1; transform: scale(1); }
         }
         
         /* Portrait mode: slightly tighter side padding on the pill, keep vertical padding intact.

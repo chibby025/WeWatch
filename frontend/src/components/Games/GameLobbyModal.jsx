@@ -172,16 +172,6 @@ const games = [
     type: 'multiplayer'
   },
   {
-    id: 'quiplash',
-    name: 'Quiplash',
-    description: 'Fill in the blank — vote for the funniest answer!',
-    minPlayers: 2,
-    maxPlayers: 8,
-    image: `${GAME_POSTERS_BASE_URL}/quiplash.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
-  {
     id: 'typing_race',
     name: 'Typing Race',
     description: 'Type the passage fastest — WPM battle!',

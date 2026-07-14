@@ -12,7 +12,6 @@ import ConnectFourGame from './ConnectFourGame';
 import WouldYouRatherGame from './WouldYouRatherGame';
 import WordleGame from './WordleGame';
 import UnoGame from './UnoGame';
-import QuiplashGame from './QuiplashGame';
 import TypingRaceGame from './TypingRaceGame';
 import BlackjackGame from './BlackjackGame';
 import BattleshipGame from './BattleshipGame';
@@ -39,7 +38,7 @@ import SudokuGame from './SudokuGame';
 import PingPongGame from './PingPongGame';
 import AirHockeyGame from './AirHockeyGame';
 
-export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore }) {
+export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -59,6 +58,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -73,6 +73,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onClose={onClose}
           onEndGame={onEndGame}
           onPlayAgain={onPlayAgain}
+          onPostResult={onPostResult}
         />
       );
 
@@ -85,6 +86,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -108,6 +110,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -120,6 +123,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -133,6 +137,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -169,6 +174,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -181,6 +187,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -191,18 +198,6 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           players={activeGame.players}
           currentUserId={currentUserId}
           myHand={myHand}
-          onMove={handleMove}
-          onClose={onClose}
-          onEndGame={onEndGame}
-        />
-      );
-
-    case 'quiplash':
-      return (
-        <QuiplashGame
-          gameState={activeGame}
-          players={activeGame.players}
-          currentUserId={currentUserId}
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}

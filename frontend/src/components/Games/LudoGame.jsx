@@ -1,6 +1,7 @@
 // src/components/Games/LudoGame.jsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import GameRulesButton from './GameRulesButton';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const LUDO_COLORS = ['red', 'blue', 'green', 'yellow'];
@@ -411,6 +412,7 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <GameRulesButton gameType="ludo" className="text-white/60 hover:text-white" />
               {!isOver && (
                 <button onClick={handleForfeit}
                   className="px-3 py-1 rounded-lg text-xs font-bold transition-all active:scale-95 text-white"

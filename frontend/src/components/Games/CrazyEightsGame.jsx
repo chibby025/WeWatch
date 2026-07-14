@@ -1,6 +1,8 @@
 // src/components/Games/CrazyEightsGame.jsx
 import { useState } from 'react';
 import { X } from 'lucide-react';
+import GameWinnerBanner from './GameWinnerBanner';
+import GameRulesButton from './GameRulesButton';
 
 const SUIT_SYMBOLS = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const RED_SUITS = ['H', 'D'];
@@ -34,7 +36,7 @@ function Card({ card, faceDown, onClick, dimmed }) {
   );
 }
 
-export default function CrazyEightsGame({ gameState, players = [], currentUserId, myHand, onMove, onClose, onEndGame }) {
+export default function CrazyEightsGame({ gameState, players = [], currentUserId, myHand, onMove, onClose, onEndGame, onPostResult }) {
   const [pendingEight, setPendingEight] = useState(null);
 
   const gs = gameState?.game_state || {};
@@ -88,6 +90,7 @@ export default function CrazyEightsGame({ gameState, players = [], currentUserId
   };
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
@@ -95,9 +98,12 @@ export default function CrazyEightsGame({ gameState, players = [], currentUserId
             <h2 className="text-white text-xl font-bold">Crazy Eights</h2>
             <p className="text-gray-400 text-sm">{players.map(p => p.username).join(' vs ')}</p>
           </div>
-          <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
-            <X className="w-6 h-6" />
-          </button>
+          <div className="flex items-center gap-2">
+            <GameRulesButton gameType="crazy_eights" />
+            <button onClick={handleForfeit} className="text-gray-400 hover:text-white" title={winner || isOver ? 'Close' : 'Forfeit'}>
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center justify-center gap-4 px-5 py-3 flex-wrap">
@@ -132,17 +138,13 @@ export default function CrazyEightsGame({ gameState, players = [], currentUserId
           </div>
         </div>
 
-        <div className="text-center pb-3">
-          {isOver ? (
-            <p className="text-lg font-semibold text-white">
-              {winner ? `🏆 ${winner.username} wins!` : "🤝 It's a draw!"}
-            </p>
-          ) : (
+        {!isOver && (
+          <div className="text-center pb-3">
             <p className={`text-sm font-medium ${isMyTurn ? 'text-green-400' : 'text-gray-400'}`}>
               {isMyTurn ? 'Your turn' : `${currentPlayer?.username}'s turn`}
             </p>
-          )}
-        </div>
+          </div>
+        )}
 
         {isPlayer && (
           <div className="px-5 pb-5">
@@ -193,5 +195,21 @@ export default function CrazyEightsGame({ gameState, players = [], currentUserId
         )}
       </div>
     </div>
+
+    {isOver && (
+      <GameWinnerBanner
+        winner={winner}
+        players={players}
+        gameType="crazy_eights"
+        gameStats={{ lines: [
+          ...players.map(p => ({ label: p.username, value: `${handCounts[String(p.user_id)] ?? '?'} cards` })),
+          { label: 'Draw pile', value: `${drawPileCount} cards` },
+        ]}}
+        isForfeit={gameState?.status === 'forfeited'}
+        onClose={onClose}
+        onPostResult={onPostResult}
+      />
+    )}
+    </>
   );
 }

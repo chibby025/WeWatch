@@ -1,6 +1,8 @@
 // src/components/Games/CheckersGame.jsx
 import { useState, useEffect, useMemo } from 'react';
 import { X as CloseIcon, Users } from 'lucide-react';
+import GameWinnerBanner from './GameWinnerBanner';
+import GameRulesButton from './GameRulesButton';
 
 // Mirrors checkers.go's helpers exactly, so the client can highlight legal
 // destinations and enforce mandatory-capture/multi-jump without a round-trip.
@@ -70,7 +72,7 @@ function destinationsFor(board, from, mandatory) {
   return moves;
 }
 
-export default function CheckersGame({ gameState, players, currentUserId, onMove, onClose, onEndGame }) {
+export default function CheckersGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
   const [board, setBoard] = useState(Array(64).fill(''));
   const [currentTurn, setCurrentTurn] = useState(0);
   const [mustContinueFrom, setMustContinueFrom] = useState(null);
@@ -151,6 +153,7 @@ export default function CheckersGame({ gameState, players, currentUserId, onMove
   const iWon = winner && winner !== 'draw' && winner.user_id === currentUserId;
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="relative bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
         {/* Header */}
@@ -162,24 +165,13 @@ export default function CheckersGame({ gameState, players, currentUserId, onMove
               <span className="text-gray-400">{players.map(p => p.username).join(' vs ')}</span>
             </div>
           </div>
-          <button onClick={winner ? onClose : handleForfeit} className="text-gray-400 hover:text-white transition-colors">
-            <CloseIcon className="w-6 h-6" />
-          </button>
-        </div>
-
-        {/* Winner overlay */}
-        {winner && (
-          <div className={`p-5 border-b border-gray-700 text-center ${
-            isDraw ? 'bg-gradient-to-r from-gray-600/30 to-gray-500/30'
-              : iWon ? 'bg-gradient-to-r from-yellow-500/25 to-green-500/25'
-              : 'bg-gradient-to-r from-red-500/20 to-gray-600/20'
-          }`}>
-            <div className="text-5xl mb-2">{isDraw ? '🤝' : iWon ? '🏆' : '😞'}</div>
-            <div className="text-xl font-bold text-white">
-              {isDraw ? "It's a draw!" : `${winner.username} wins!`}
-            </div>
+          <div className="flex items-center gap-2">
+            <GameRulesButton gameType="checkers" />
+            <button onClick={handleForfeit} className="text-gray-400 hover:text-white transition-colors">
+              <CloseIcon className="w-6 h-6" />
+            </button>
           </div>
-        )}
+        </div>
 
         {/* Turn indicator */}
         {!winner && (
@@ -253,18 +245,30 @@ export default function CheckersGame({ gameState, players, currentUserId, onMove
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-gray-700 flex justify-end">
-          {winner ? (
-            <button onClick={onClose} className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors font-semibold">
-              Close
+        {!winner && (
+          <div className="p-6 border-t border-gray-700 flex justify-end">
+            <button onClick={handleForfeit} className="px-6 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors">
+              End Game
             </button>
-          ) : (
-            <button onClick={handleForfeit} className="px-6 py-2 bg-gray-700 hover:bg-red-700 text-white rounded-lg transition-colors">
-              Forfeit
-            </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
+
+    {winner && (
+      <GameWinnerBanner
+        winner={winner === 'draw' ? null : winner}
+        players={players}
+        gameType="checkers"
+        gameStats={{ lines: [
+          { label: `${players[0]?.username ?? 'Player 1'} (⚫)`, value: `${counts.black} pieces` },
+          { label: `${players[1]?.username ?? 'Player 2'} (🔴)`, value: `${counts.red} pieces` },
+        ]}}
+        isForfeit={gameState?.status === 'forfeited'}
+        onClose={onClose}
+        onPostResult={onPostResult}
+      />
+    )}
+    </>
   );
 }

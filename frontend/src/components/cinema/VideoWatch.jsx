@@ -5,7 +5,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
-import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory } from '../../services/api';
+import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory, postGameResultToRoom } from '../../services/api';
 import apiClient from '../../services/api';
 import { getRoom, getRoomMembers, getActiveSession, postSessionHeartbeat, logSessionJoinAttempt, sendGameChallenge } from '../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
@@ -2619,6 +2619,11 @@ export default function VideoWatch() {
       winner_id: opponentId,
     } : null);
   }, [activeGame, sendMessage, currentUser?.id]);
+
+  const handlePostGameResult = useCallback(async (content) => {
+    if (!roomId || !content) return;
+    try { await postGameResultToRoom(roomId, content); } catch {}
+  }, [roomId]);
 
   // DOOM relay bridge: DOOM's own networking protocol round-trips through
   // WeWatch's WebSocket connection as opaque base64 payloads (this app never
@@ -7986,6 +7991,7 @@ export default function VideoWatch() {
           onClose={handleGameClose}
           onEndGame={handleEndGame}
           onPlayAgain={handlePlayAgain}
+          onPostResult={handlePostGameResult}
           onRelayPacket={handleDoomRelayPacket}
           registerRelayReceiver={
             activeGame.game_type === 'draw_guess' ? registerGameRelayReceiver : registerDoomRelayReceiver

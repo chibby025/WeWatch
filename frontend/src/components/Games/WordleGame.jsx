@@ -1,32 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X } from 'lucide-react';
+import GameWinnerBanner from './GameWinnerBanner';
+import GameRulesButton from './GameRulesButton';
 
 const MAX_GUESSES = 6;
-const WORD_LEN = 5;
-
-// Colour helpers matching the server's G/Y/X encoding.
-function cellColor(ch) {
-  if (ch === 'G') return 'bg-green-600 border-green-500 text-white';
-  if (ch === 'Y') return 'bg-yellow-500 border-yellow-400 text-white';
-  return 'bg-gray-700 border-gray-600 text-gray-300';
-}
-
-function KeyboardKey({ letter, status, onClick }) {
-  const color =
-    status === 'G' ? 'bg-green-600 text-white' :
-    status === 'Y' ? 'bg-yellow-500 text-white' :
-    status === 'X' ? 'bg-gray-700 text-gray-400' :
-    'bg-gray-600 text-white hover:bg-gray-500';
-
-  return (
-    <button
-      onClick={() => onClick(letter)}
-      className={`h-12 min-w-[2.2rem] rounded-lg font-bold text-sm transition-colors ${color} px-1`}
-    >
-      {letter}
-    </button>
-  );
-}
+const WORD_LEN    = 5;
 
 const KEYBOARD_ROWS = [
   ['Q','W','E','R','T','Y','U','I','O','P'],
@@ -34,197 +12,451 @@ const KEYBOARD_ROWS = [
   ['ENTER','Z','X','C','V','B','N','M','⌫'],
 ];
 
-export default function WordleGame({ gameState, players, currentUserId, onMove, onClose, onEndGame }) {
-  const [gs, setGs]             = useState(null);
-  const [currentInput, setInput] = useState('');
-  const [shake, setShake]       = useState(false);
-  const [message, setMessage]   = useState('');
+const TILE_BG = { G: '#538d4e', Y: '#b59f3b', X: '#3a3a3c' };
+const KEY_BG  = { G: '#538d4e', Y: '#b59f3b', X: '#3a3a3c', H: '#0891b2' }; // H = hint (cyan)
 
-  useEffect(() => {
-    if (!gameState?.game_state) return;
-    setGs(gameState.game_state);
-  }, [gameState]);
+const CSS = `
+  @keyframes wdlReveal {
+    0%   { transform: scaleY(1); background: #121213; border-color: #555; }
+    45%  { transform: scaleY(0); background: #121213; border-color: #555; }
+    55%  { transform: scaleY(0); background: var(--tc);  border-color: var(--tc); }
+    100% { transform: scaleY(1); background: var(--tc);  border-color: var(--tc); }
+  }
+  @keyframes wdlPop {
+    0%,100% { transform: scale(1);    }
+    50%     { transform: scale(1.12); }
+  }
+  @keyframes wdlShake {
+    0%,100% { transform: translateX(0);    }
+    20%,60% { transform: translateX(-7px); }
+    40%,80% { transform: translateX(7px);  }
+  }
+  @keyframes wdlBounce {
+    0%,100% { transform: translateY(0);    }
+    40%     { transform: translateY(-18px);}
+  }
+`;
 
-  const myKey = String(currentUserId);
-  const myGuesses = gs?.guesses?.[myKey] || [];
-  const myResults = gs?.results?.[myKey] || [];
-  const eliminated = gs?.eliminated || [];
-  const isEliminated = eliminated.includes(myKey);
-  const isOver = gameState?.status === 'finished' || gameState?.status === 'completed';
-  const phase = gs?.phase || 'playing';
-  const secret = isOver ? (gs?.secret || '') : '';
+// Tile for the main (self) grid
+function BigTile({ letter, feedback, isCurrent, isNew, animDelay, isPop }) {
+  const hasFb = !!feedback;
+  const bg     = hasFb ? TILE_BG[feedback] : '#121213';
+  const border = hasFb
+    ? `2px solid ${TILE_BG[feedback]}`
+    : isCurrent && letter ? '2px solid #999' : '2px solid #3a3a3c';
 
-  // Build keyboard letter statuses from my results.
+  const anim = isNew && hasFb
+    ? `wdlReveal 0.5s ${animDelay}s ease both`
+    : isPop && !hasFb
+    ? 'wdlPop 0.08s ease'
+    : undefined;
+
+  return (
+    <div style={{
+      width: 62, height: 62, background: bg, border,
+      color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontWeight: 'bold', fontSize: 24, borderRadius: 3,
+      userSelect: 'none', transition: 'border-color 0.1s',
+      animation: anim, '--tc': TILE_BG[feedback] || '#3a3a3c',
+    }}>
+      {letter}
+    </div>
+  );
+}
+
+// Compact tile for opponent grids
+function SmallTile({ letter, feedback }) {
+  const hasFb = !!feedback;
+  return (
+    <div style={{
+      width: 26, height: 26,
+      background: hasFb ? TILE_BG[feedback] : '#1e1e20',
+      border: `1.5px solid ${hasFb ? TILE_BG[feedback] : '#3a3a3c'}`,
+      color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontWeight: 'bold', fontSize: 10, borderRadius: 2, userSelect: 'none',
+    }}>
+      {letter}
+    </div>
+  );
+}
+
+function OpponentGrid({ pKey, guesses, results, eliminated, winnerKey, username }) {
+  const elim = eliminated.includes(pKey);
+  const won  = winnerKey === pKey;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+      <p style={{
+        fontSize: 10, fontWeight: 600, marginBottom: 2,
+        color: won ? '#538d4e' : elim ? '#f87171' : '#9ca3af',
+      }}>
+        {username} {won ? '🏆' : elim ? '💀' : ''}
+      </p>
+      {Array.from({ length: MAX_GUESSES }, (_, row) => (
+        <div key={row} style={{ display: 'flex', gap: 2 }}>
+          {Array.from({ length: WORD_LEN }, (_, col) => (
+            <SmallTile
+              key={col}
+              letter={guesses[row]?.[col] || ''}
+              feedback={results[row]?.[col] || ''}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function WordleGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
+  const [currentInput, setInput]   = useState('');
+  const [shake, setShake]          = useState(false);
+  const [message, setMessage]      = useState('');
+  const [animRow, setAnimRow]      = useState(-1);
+  const [bounceRow, setBounceRow]  = useState(-1);
+  const [popSet, setPopSet]        = useState(new Set());
+  const [hintPending, setHintPending] = useState(false);
+
+  // Read directly from props — no useState copy, avoids the one-render-behind bug
+  const gs = gameState?.game_state;
+
+  const myKey     = String(currentUserId);
+  const myGuesses = toStringArray(gs?.guesses?.[myKey]);
+  const myResults = toStringArray(gs?.results?.[myKey]);
+  const eliminated= toStringArray(gs?.eliminated);
+  const isElim    = eliminated.includes(myKey);
+  const isOver    = ['finished','completed','forfeited'].includes(gameState?.status);
+  const phase     = gs?.phase || 'playing';
+  const secret    = isOver ? (gs?.secret || '') : '';
+  const winnerKey = isOver ? String(gs?.winner_id || '') : '';
+  const winner    = winnerKey ? players.find(p => String(p.user_id) === winnerKey) : null;
+
+  // Hint state — derived from game_state so it persists across reconnects
+  const hintRaw  = gs?.hints?.[myKey];
+  const hintData = hintRaw
+    ? { position: Number(hintRaw.position), letter: String(hintRaw.letter) }
+    : null;
+  const hintUsed = !!hintData;
+
+  // Keyboard colour hints
   const letterStatus = {};
-  for (let g = 0; g < myGuesses.length; g++) {
-    const word = myGuesses[g];
+  myGuesses.forEach((word, g) => {
     const res = myResults[g] || '';
     for (let i = 0; i < WORD_LEN; i++) {
-      const ch = word[i];
-      const fb = res[i];
-      const cur = letterStatus[ch];
-      if (cur === 'G') continue;
-      if (fb === 'G' || (!cur && fb === 'Y') || (!cur && fb === 'X')) {
+      const ch = word[i], fb = res[i], cur = letterStatus[ch];
+      if (cur !== 'G' && (fb === 'G' || (!cur && (fb === 'Y' || fb === 'X')))) {
         letterStatus[ch] = fb;
       }
     }
-  }
+  });
 
-  function pressKey(key) {
-    if (isOver || isEliminated || phase !== 'playing') return;
+  // Track previous guess count to detect new submissions
+  const prevLenRef = useRef(-1);
+  useEffect(() => {
+    const len = myGuesses.length;
+    if (prevLenRef.current === -1) {
+      prevLenRef.current = len; // baseline — don't animate existing rows on mount
+      return;
+    }
+    if (len > prevLenRef.current) {
+      const newRow = len - 1;
+      setAnimRow(newRow);
+      prevLenRef.current = len;
+      const t = setTimeout(() => setAnimRow(-1), WORD_LEN * 500 + 300);
+      return () => clearTimeout(t);
+    }
+  }, [myGuesses.length]);
+
+  // Bounce the winning row after its reveal animation finishes
+  useEffect(() => {
+    if (isOver && winnerKey === myKey && myGuesses.length > 0) {
+      const t = setTimeout(() => setBounceRow(myGuesses.length - 1), WORD_LEN * 500 + 250);
+      return () => clearTimeout(t);
+    }
+  }, [isOver]);
+
+  // Keyboard handler via ref to avoid stale closures
+  const inputRef    = useRef(currentInput);
+  const isOverRef   = useRef(isOver);
+  const isElimRef   = useRef(isElim);
+  const phaseRef    = useRef(phase);
+  const onMoveRef   = useRef(onMove);
+  inputRef.current  = currentInput;
+  isOverRef.current = isOver;
+  isElimRef.current = isElim;
+  phaseRef.current  = phase;
+  onMoveRef.current = onMove;
+
+  const pressKey = useCallback((key) => {
+    if (isOverRef.current || isElimRef.current || phaseRef.current !== 'playing') return;
     if (key === '⌫' || key === 'BACKSPACE') {
       setInput(p => p.slice(0, -1));
     } else if (key === 'ENTER') {
-      submitGuess();
-    } else if (/^[A-Z]$/.test(key) && currentInput.length < WORD_LEN) {
-      setInput(p => p + key);
+      const word = inputRef.current;
+      if (word.length !== WORD_LEN) {
+        setMessage('Not enough letters');
+        setShake(true);
+        setTimeout(() => { setShake(false); setMessage(''); }, 700);
+        return;
+      }
+      onMoveRef.current({ move_type: 'guess', word });
+      setInput('');
+    } else if (/^[A-Z]$/.test(key)) {
+      setInput(p => {
+        if (p.length >= WORD_LEN) return p;
+        const col = p.length;
+        setPopSet(prev => {
+          const n = new Set([...prev, col]);
+          setTimeout(() => setPopSet(pp => { const x = new Set(pp); x.delete(col); return x; }), 90);
+          return n;
+        });
+        return p + key;
+      });
     }
-  }
-
-  function submitGuess() {
-    if (currentInput.length !== WORD_LEN) {
-      setMessage('Not enough letters');
-      setShake(true);
-      setTimeout(() => setShake(false), 600);
-      setTimeout(() => setMessage(''), 1500);
-      return;
-    }
-    onMove({ move_type: 'guess', move_data: { word: currentInput } });
-    setInput('');
-  }
+  }, []);
 
   useEffect(() => {
-    function onKey(e) {
-      const k = e.key.toUpperCase();
-      pressKey(k === 'BACKSPACE' ? '⌫' : k);
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [currentInput, isOver, isEliminated, phase]);
+    const handler = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      pressKey(e.key.toUpperCase() === 'BACKSPACE' ? '⌫' : e.key.toUpperCase());
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [pressKey]);
 
-  // Render grid for a player.
-  function PlayerGrid({ playerKey, name, isSelf }) {
-    const guesses = gs?.guesses?.[playerKey] || [];
-    const results = gs?.results?.[playerKey] || [];
-    const elim = eliminated.includes(playerKey);
-    const won = gs?.winner_id === playerKey;
+  const myPlayer = players.find(p => p.user_id === currentUserId);
+  const others   = players.filter(p => p.user_id !== currentUserId);
 
-    return (
-      <div className={`flex flex-col gap-1 items-center ${isSelf ? 'flex-1' : ''}`}>
-        <p className={`text-xs font-semibold mb-1 ${won ? 'text-green-400' : elim ? 'text-red-400' : 'text-gray-400'}`}>
-          {name}{isSelf ? ' (you)' : ''} {won ? '🏆' : elim ? '💀' : ''}
-        </p>
-        {Array.from({ length: MAX_GUESSES }, (_, row) => (
-          <div key={row} className="flex gap-1">
-            {Array.from({ length: WORD_LEN }, (_, col) => {
-              const guess = guesses[row] || '';
-              const result = results[row] || '';
-              const isCurrentRow = isSelf && row === guesses.length && !isOver && !isEliminated;
-              const letter = isCurrentRow ? (currentInput[col] || '') : (guess[col] || '');
-              const fb = result[col] || '';
+  return (
+    <>
+      <style>{CSS}</style>
+
+      {/* Winner/game-over overlay */}
+      {isOver && (
+        <GameWinnerBanner
+          winner={winner}
+          players={players}
+          gameType="wordle"
+          gameStats={{ lines: [
+            { label: 'Guesses used', value: `${myGuesses.length} / ${MAX_GUESSES}` },
+            ...(secret ? [{ label: 'The word was', value: secret }] : []),
+          ]}}
+          onClose={onClose}
+          onPostResult={onPostResult}
+        />
+      )}
+
+      {/* Main game UI — stays mounted so grid colours are visible behind the winner overlay */}
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-start bg-black/90 overflow-y-auto py-3 px-2">
+
+        {/* Header */}
+        <div className="w-full max-w-sm flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🟩</span>
+            <span className="text-white font-bold text-lg tracking-wide">Wordle</span>
+            {players.length > 1 && (
+              <span className="text-gray-500 text-xs">vs</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            <GameRulesButton gameType="wordle" />
+            <button onClick={isOver ? onClose : onEndGame} className="text-gray-400 hover:text-white p-1">
+              <X size={20} />
+            </button>
+          </div>
+        </div>
+
+        {/* Toast message (not enough letters etc.) */}
+        {message && (
+          <div className="bg-white text-gray-900 text-sm font-bold px-4 py-1.5 rounded-full mb-2 shadow-lg">
+            {message}
+          </div>
+        )}
+
+        {/* Grids row */}
+        <div className="flex gap-6 items-start justify-center mb-2">
+
+          {/* My grid */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'center' }}>
+            {myPlayer && (
+              <p className="text-xs text-gray-400 font-semibold mb-0.5">
+                {!isOver
+                  ? (isElim ? '💀 Eliminated' : `Guess ${myGuesses.length + 1} / ${MAX_GUESSES}`)
+                  : winnerKey === myKey ? '🏆 You won!' : ''}
+              </p>
+            )}
+            {Array.from({ length: MAX_GUESSES }, (_, row) => {
+              const guess  = myGuesses[row] || '';
+              const result = myResults[row] || '';
+              const isCurr = row === myGuesses.length && !isOver && !isElim;
+              const isNew  = row === animRow;
+              const isBouncing = row === bounceRow;
+
               return (
                 <div
-                  key={col}
-                  className={`w-9 h-9 border-2 flex items-center justify-center font-bold text-sm rounded transition-all
-                    ${fb ? cellColor(fb) : isCurrentRow && letter ? 'border-gray-400 bg-gray-800 text-white' : 'border-gray-700 bg-gray-800/50 text-gray-500'}
-                    ${shake && isCurrentRow ? 'animate-bounce' : ''}
-                  `}
+                  key={row}
+                  style={{
+                    display: 'flex',
+                    gap: 5,
+                    animation:
+                      shake && isCurr    ? 'wdlShake 0.55s ease' :
+                      isBouncing         ? `wdlBounce 0.8s ease ${0}s` :
+                      undefined,
+                  }}
                 >
-                  {letter}
+                  {Array.from({ length: WORD_LEN }, (_, col) => (
+                    <BigTile
+                      key={col}
+                      letter={isCurr ? (currentInput[col] || '') : (guess[col] || '')}
+                      feedback={result[col] || ''}
+                      isCurrent={isCurr}
+                      isNew={isNew}
+                      animDelay={col * 0.3}
+                      isPop={isCurr && popSet.has(col)}
+                    />
+                  ))}
                 </div>
               );
             })}
           </div>
-        ))}
-      </div>
-    );
-  }
 
-  const myPlayer = players.find(p => p.user_id === currentUserId);
-  const others = players.filter(p => p.user_id !== currentUserId);
-  const winner = isOver && gs?.winner_id
-    ? players.find(p => String(p.user_id) === gs.winner_id)
-    : null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 overflow-y-auto">
-      <div className="bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg flex flex-col gap-4 p-4">
-
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">🟩</span>
-            <span className="text-white font-bold text-lg">Wordle</span>
-            <span className="text-gray-500 text-xs">competitive</span>
-          </div>
-          <button onClick={isOver ? onClose : onEndGame} className="text-gray-400 hover:text-white p-1"><X size={20} /></button>
-        </div>
-
-        {/* Message */}
-        {message && <p className="text-center text-red-400 text-sm font-semibold">{message}</p>}
-
-        {/* Result banner */}
-        {isOver && (
-          <div className="text-center py-2">
-            {winner
-              ? <p className="text-white font-bold text-lg">{winner.user_id === currentUserId ? '🎉 You got it!' : `${winner.username} won!`}</p>
-              : <p className="text-gray-400 font-semibold">No winner — the word was <span className="text-white font-mono font-bold">{secret}</span></p>
-            }
-            {secret && <p className="text-gray-500 text-sm mt-1">The word was <span className="font-mono text-purple-300">{secret}</span></p>}
-          </div>
-        )}
-
-        {/* Grids */}
-        <div className="flex gap-4 justify-center">
-          {myPlayer && (
-            <PlayerGrid
-              playerKey={myKey}
-              name={myPlayer.username}
-              isSelf
-            />
-          )}
+          {/* Opponents */}
           {others.length > 0 && (
-            <div className="flex flex-col gap-4">
-              {others.map(p => (
-                <PlayerGrid key={p.user_id} playerKey={String(p.user_id)} name={p.username} isSelf={false} />
-              ))}
+            <div className="flex flex-col gap-5">
+              {others.map(p => {
+                const pKey = String(p.user_id);
+                return (
+                  <OpponentGrid
+                    key={pKey}
+                    pKey={pKey}
+                    guesses={toStringArray(gs?.guesses?.[pKey])}
+                    results={toStringArray(gs?.results?.[pKey])}
+                    eliminated={eliminated}
+                    winnerKey={winnerKey}
+                    username={p.username}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
 
-        {/* Status */}
-        {!isOver && (
-          <p className="text-center text-sm text-gray-400">
-            {isEliminated
-              ? '💀 You\'re out — watching others finish…'
-              : `Guess ${myGuesses.length + 1} / ${MAX_GUESSES}`}
-          </p>
-        )}
+        {/* Keyboard row — side panel + keys */}
+        {!isOver && !isElim && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
 
-        {/* Keyboard */}
-        {!isOver && !isEliminated && (
-          <div className="flex flex-col gap-1.5 items-center">
-            {KEYBOARD_ROWS.map((row, i) => (
-              <div key={i} className="flex gap-1">
-                {row.map(k => (
-                  <KeyboardKey key={k} letter={k} status={letterStatus[k]} onClick={pressKey} />
-                ))}
-              </div>
-            ))}
+            {/* Left panel: Hint + End Game */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+              {/* Hint button */}
+              <button
+                onPointerDown={e => {
+                  e.preventDefault();
+                  if (!hintUsed && !hintPending) {
+                    setHintPending(true);
+                    onMoveRef.current({ move_type: 'hint' });
+                    setTimeout(() => setHintPending(false), 1500);
+                  }
+                }}
+                disabled={hintUsed || hintPending}
+                style={{
+                  width: 46, height: 58, borderRadius: 4, border: 'none',
+                  background: hintUsed ? '#3a3a3c' : hintPending ? '#0e7490' : '#0891b2',
+                  color: '#fff', fontWeight: 700, fontSize: 10,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  gap: 2, cursor: hintUsed ? 'not-allowed' : 'pointer',
+                  opacity: hintUsed ? 0.55 : 1, userSelect: 'none',
+                }}
+                title={hintUsed ? 'Hint used' : '1 hint available'}
+              >
+                <span style={{ fontSize: 18 }}>💡</span>
+                <span style={{ fontSize: 9 }}>{hintUsed ? 'USED' : 'HINT'}</span>
+              </button>
+
+              {/* End Game button */}
+              <button
+                onPointerDown={e => { e.preventDefault(); onEndGame?.(); }}
+                style={{
+                  width: 46, height: 58, borderRadius: 4, border: 'none',
+                  background: '#7f1d1d',
+                  color: '#fff', fontWeight: 700, fontSize: 10,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  gap: 2, cursor: 'pointer', userSelect: 'none',
+                }}
+                title="End game for everyone"
+              >
+                <X size={15} />
+                <span style={{ fontSize: 9 }}>END</span>
+              </button>
+            </div>
+
+            {/* Keyboard */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+              {/* Hint banner — shown above keyboard once hint is received */}
+              {hintData && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  color: '#22d3ee', fontSize: 11, fontWeight: 600,
+                }}>
+                  <span>💡 Position {hintData.position + 1} is</span>
+                  <span style={{
+                    background: '#0891b2', color: '#fff',
+                    borderRadius: 3, padding: '1px 7px',
+                    fontWeight: 800, fontSize: 13, letterSpacing: 1,
+                  }}>
+                    {hintData.letter}
+                  </span>
+                </div>
+              )}
+
+              {KEYBOARD_ROWS.map((row, ri) => (
+                <div key={ri} style={{ display: 'flex', gap: 4 }}>
+                  {row.map(k => {
+                    const st = letterStatus[k];
+                    // Hint letter: cyan if not already identified as green
+                    let bg = st ? KEY_BG[st] : '#818384';
+                    if (hintData?.letter === k && st !== 'G') bg = KEY_BG.H;
+                    const wide = k.length > 1;
+                    return (
+                      <button
+                        key={k}
+                        onPointerDown={e => { e.preventDefault(); pressKey(k); }}
+                        style={{
+                          background: bg,
+                          height: 56, borderRadius: 4, border: 'none',
+                          color: '#fff', fontWeight: 700,
+                          fontSize: wide ? 11 : 14,
+                          width: wide ? 52 : 36,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          userSelect: 'none', cursor: 'pointer',
+                        }}
+                      >
+                        {k}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
-        {/* Footer */}
-        {isOver ? (
-          <button onClick={onClose} className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-semibold transition-colors">
-            Close
-          </button>
-        ) : (
-          <button onClick={onEndGame} className="w-full py-2 bg-red-800 hover:bg-red-700 text-white rounded-xl text-sm font-semibold transition-colors">
+        {/* End game only when eliminated (no keyboard) */}
+        {!isOver && isElim && (
+          <button
+            onClick={onEndGame}
+            className="mt-3 px-6 py-1.5 bg-red-900 hover:bg-red-700 text-white rounded-xl text-xs font-semibold transition-colors"
+          >
             End Game
           </button>
         )}
       </div>
-    </div>
+    </>
   );
+}
+
+// Normalise the various forms the server can return arrays in
+function toStringArray(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw.map(v => (typeof v === 'string' ? v : String(v)));
+  }
+  return [];
 }

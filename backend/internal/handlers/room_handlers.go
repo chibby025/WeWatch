@@ -276,6 +276,60 @@ func CreateRoomMessage(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": message})
 }
 
+// CreateRoomSystemMessage posts a system message to a room (e.g. game result announcements)
+func CreateRoomSystemMessage(c *gin.Context) {
+	roomIDStr := c.Param("id")
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	userID := userIDValue.(uint)
+
+	var input struct {
+		Content string `json:"content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Content is required"})
+		return
+	}
+
+	message := models.RoomMessage{
+		RoomID:      uint(roomID),
+		UserID:      userID,
+		Message:     input.Content,
+		MessageType: "system",
+		CreatedAt:   time.Now(),
+	}
+	if err := DB.Create(&message).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create system message"})
+		return
+	}
+
+	broadcastMsg := map[string]interface{}{
+		"type": "room_chat",
+		"data": map[string]interface{}{
+			"id":           message.ID,
+			"user_id":      message.UserID,
+			"username":     "",
+			"message":      message.Message,
+			"message_type": "system",
+			"created_at":   message.CreatedAt,
+		},
+	}
+	if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+		hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": message})
+}
+
 // UploadVoiceNote handles voice note uploads for room messages
 func UploadVoiceNote(c *gin.Context) {
 	roomIDStr := c.Param("id")

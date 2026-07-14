@@ -598,6 +598,16 @@ export const deleteChatMessage = async (roomId, messageId) => {
   }
 };
 
+// Post a system message to a room (e.g. game result)
+export const postGameResultToRoom = async (roomId, content) => {
+  try {
+    const response = await apiClient.post(`/api/rooms/${roomId}/system-message`, { content });
+    return response.data;
+  } catch (error) {
+    console.error('Failed to post game result to room:', error);
+  }
+};
+
 // Delete a room message (persistent room chat)
 export const deleteRoomMessage = async (roomId, messageId) => {
   console.log(`➡️ DELETE /api/rooms/${roomId}/messages/${messageId}`);

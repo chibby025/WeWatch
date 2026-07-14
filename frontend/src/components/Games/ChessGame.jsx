@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Chess } from 'chess.js';
 import { defaultPieces } from 'react-chessboard';
+import GameWinnerBanner from './GameWinnerBanner';
+import GameRulesButton from './GameRulesButton';
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
@@ -60,7 +62,7 @@ function PlayerBar({ player, isCurrentUser, colorLabel, isTheirTurn, isGameOver 
   );
 }
 
-export default function ChessGame({ gameState, players, currentUserId, onMove, onClose, onEndGame }) {
+export default function ChessGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
   const [game, setGame] = useState(() => new Chess());
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [legalMoves, setLegalMoves] = useState([]);
@@ -172,6 +174,7 @@ export default function ChessGame({ gameState, players, currentUserId, onMove, o
   const captureTargets = new Set(legalMoves.filter(m => m.isCapture).map(m => m.to));
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
       style={{ touchAction: 'none' }}
@@ -248,23 +251,6 @@ export default function ChessGame({ gameState, players, currentUserId, onMove, o
             )}
           </div>
 
-          {/* Winner overlay */}
-          {isGameOver && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm z-10 gap-4">
-              <div className="text-5xl">{isDraw ? '🤝' : iWon ? '🏆' : '😔'}</div>
-              <div className="text-2xl font-bold text-white text-center px-4">
-                {isDraw ? "It's a Draw!" : iWon ? 'You Win!' : `${winnerName} Wins!`}
-              </div>
-              {serverStatus === 'forfeited' && !iWon && <div className="text-sm text-gray-400">You forfeited</div>}
-              {serverStatus === 'forfeited' && iWon  && <div className="text-sm text-gray-400">Opponent forfeited</div>}
-              <button
-                onClick={onClose}
-                className="mt-2 px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-semibold transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Current user bar (bottom) */}
@@ -276,15 +262,34 @@ export default function ChessGame({ gameState, players, currentUserId, onMove, o
           isGameOver={isGameOver}
         />
 
-        {!isGameOver && (
-          <button
-            onClick={onEndGame || onClose}
-            className="px-5 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors"
-          >
-            Forfeit
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <GameRulesButton gameType="chess" />
+          {!isGameOver && (
+            <button
+              onClick={onEndGame || onClose}
+              className="px-5 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg text-sm transition-colors"
+            >
+              Forfeit
+            </button>
+          )}
+        </div>
       </div>
     </div>
+
+    {isGameOver && (
+      <GameWinnerBanner
+        winner={isDraw ? null : winnerPlayer}
+        players={players}
+        gameType="chess"
+        gameStats={{ lines: [
+          { label: 'End reason', value: serverStatus.charAt(0).toUpperCase() + serverStatus.slice(1) },
+          { label: 'Moves played', value: String(game.history().length) },
+        ]}}
+        isForfeit={serverStatus === 'forfeited'}
+        onClose={onClose}
+        onPostResult={onPostResult}
+      />
+    )}
+  </>
   );
 }

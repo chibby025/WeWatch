@@ -407,17 +407,17 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
 
           {/* 2-column body */}
           <div className="flex flex-row flex-1 overflow-hidden">
-            {/* Left: petals fan */}
-            <div className="w-1/2 flex items-center justify-center p-3 overflow-hidden">
+            {/* Left: petals fan — wider column so the petal has room to breathe */}
+            <div className="w-[60%] flex items-center justify-center p-4 overflow-hidden">
               <WatchTypePicker
                 selectedTypeId={selectedTypeId}
                 onChange={setSelectedTypeId}
                 showDescription={false}
-                maxWidth={330}
+                maxWidth={500}
               />
             </div>
-            {/* Right: description + button — no dividing line */}
-            <div className="w-1/2 flex flex-col justify-center px-6 py-4 gap-4">
+            {/* Right: description + button */}
+            <div className="w-[40%] flex flex-col justify-center px-6 py-4 gap-4">
               <div>
                 <h3 className="text-sm font-bold text-gray-800 dark:text-white mb-1">{selectedType.name}</h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
