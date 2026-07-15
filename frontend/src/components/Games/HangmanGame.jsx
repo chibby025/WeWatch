@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import GameRulesButton from './GameRulesButton';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
@@ -14,13 +15,22 @@ export default function HangmanGame({ gameState, players, currentUserId, onMove,
   const word = gs.word || ''; // only revealed in won/lost phase
   const wordLength = gs.word_length || display.length;
   const lastGuesser = gs.last_guesser;
+  const hintsRemaining = gs.hints_remaining ?? 3;
 
   const [pendingLetter, setPendingLetter] = useState(null);
+  const [hintPending, setHintPending] = useState(false);
 
   function handleGuess(letter) {
     if (phase !== 'guessing') return;
     if (guessed.includes(letter)) return;
     onMove({ move_type: 'guess', letter });
+  }
+
+  function handleHint() {
+    if (phase !== 'guessing' || hintsRemaining <= 0 || hintPending) return;
+    setHintPending(true);
+    onMove({ move_type: 'hint' });
+    setTimeout(() => setHintPending(false), 1500);
   }
 
   const hangmanParts = [
@@ -43,12 +53,32 @@ export default function HangmanGame({ gameState, players, currentUserId, onMove,
 
   const playerList = players || [];
 
+  const isOver = gameState?.status === 'finished' || gameState?.status === 'completed' || gameState?.status === 'forfeited';
+  const winnerId = gameState?.winner_id;
+  const winner = winnerId ? playerList.find(p => String(p.user_id) === String(winnerId)) : null;
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-900 text-white select-none overflow-y-auto">
+      <style>{`
+        @keyframes bannerIn {
+          0%   { opacity:0; transform:scale(0.88); }
+          100% { opacity:1; transform:scale(1); }
+        }
+        @keyframes trophySpin {
+          0%   { transform:rotate(-15deg) scale(1); }
+          50%  { transform:rotate(15deg)  scale(1.15); }
+          100% { transform:rotate(-15deg) scale(1); }
+        }
+        @keyframes confettiFall {
+          0%   { transform:translateY(-10px) rotate(0deg);   opacity:1; }
+          100% { transform:translateY(110vh) rotate(720deg); opacity:0; }
+        }
+      `}</style>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
         <h2 className="text-lg font-bold text-purple-300">Hangman</h2>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <GameRulesButton gameType="hangman" />
           {onEndGame && (
             <button onClick={onEndGame} className="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 rounded-lg">
               End Game
@@ -109,6 +139,18 @@ export default function HangmanGame({ gameState, players, currentUserId, onMove,
           </div>
         )}
 
+        {/* Hint button */}
+        {phase === 'guessing' && (
+          <button
+            onClick={handleHint}
+            disabled={hintsRemaining <= 0 || hintPending}
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-bold transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: hintsRemaining > 0 ? '#7c3aed' : '#374151' }}
+          >
+            💡 Hint ({hintsRemaining} left)
+          </button>
+        )}
+
         {/* Alphabet keyboard */}
         <div className="flex flex-wrap gap-1.5 justify-center max-w-xs">
           {ALPHABET.map(letter => {
@@ -146,6 +188,134 @@ export default function HangmanGame({ gameState, players, currentUserId, onMove,
           </div>
         </div>
       </div>
+
+      {/* ── Winner banner overlay ── */}
+      {isOver && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(6px)' }}>
+
+          {/* Confetti — winner only */}
+          {winner && [...Array(16)].map((_, i) => {
+            const cols = ['#ef4444','#3b82f6','#22c55e','#eab308','#a855f7','#f97316'];
+            return (
+              <div key={i} style={{
+                position: 'absolute', left: `${10 + (i * 5.5) % 82}%`, top: '-10px',
+                width: 6 + (i % 4) * 3, height: 6 + (i % 4) * 3,
+                borderRadius: i % 3 === 0 ? '2px' : '50%',
+                background: cols[i % cols.length],
+                animation: `confettiFall ${1.4 + (i % 4) * 0.25}s ${(i * 0.18) % 1.6}s ease-in infinite`,
+                pointerEvents: 'none',
+              }} />
+            );
+          })}
+
+          <div className="relative flex flex-col items-center gap-4 px-8 py-8 rounded-2xl mx-6 text-center"
+            style={{
+              background: 'linear-gradient(135deg,#1e1b4b 0%,#1e3a8a 100%)',
+              border: '2px solid #6d28d9',
+              boxShadow: '0 0 40px rgba(109,40,217,0.5), 0 20px 60px rgba(0,0,0,0.7)',
+              animation: 'bannerIn 0.4s cubic-bezier(0.34,1.56,0.64,1) both',
+              minWidth: 240, maxWidth: 340,
+            }}>
+
+            {/* Big emoji */}
+            <div style={{
+              fontSize: 56, lineHeight: 1,
+              animation: winner ? 'trophySpin 2s ease-in-out infinite' : undefined,
+            }}>
+              {phase === 'won' ? '🏆' : phase === 'lost' ? '💀' : '🏁'}
+            </div>
+
+            {/* Winner / draw / ended */}
+            {winner ? (
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-14 h-14 rounded-full overflow-hidden"
+                  style={{ boxShadow: '0 0 0 4px #7c3aed' }}>
+                  {winner.avatar ? (
+                    <img src={winner.avatar} alt={winner.username} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-xl font-bold text-white"
+                      style={{ background: '#7c3aed' }}>
+                      {winner.username?.[0]?.toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <p className="text-white/60 text-xs uppercase tracking-widest mb-0.5">Winner</p>
+                  <p className="text-white text-xl font-black">{winner.username}</p>
+                  {gameState?.status === 'forfeited' && (
+                    <p className="text-purple-300 text-xs mt-0.5">by forfeit</p>
+                  )}
+                </div>
+              </div>
+            ) : phase === 'lost' ? (
+              <div>
+                <p className="text-white text-xl font-black">Game Over</p>
+                <p className="text-red-300 text-sm mt-1">The word beat everyone</p>
+              </div>
+            ) : playerList.length > 1 ? (
+              <div>
+                <p className="text-white text-xl font-black">It's a Draw!</p>
+                <p className="text-purple-300 text-sm mt-1">Tied scores — no single winner</p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-white text-xl font-black">Game Ended</p>
+              </div>
+            )}
+
+            {/* Revealed word */}
+            {word && (
+              <div className="px-4 py-2 rounded-xl"
+                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                <p className="text-white/50 text-xs uppercase tracking-widest mb-1">The word was</p>
+                <p className="text-white text-2xl font-black tracking-widest">{word}</p>
+              </div>
+            )}
+
+            {/* Ranked scoreboard */}
+            {playerList.length > 0 && (
+              <div className="w-full">
+                <p className="text-white/50 text-xs uppercase tracking-widest mb-2">Scores</p>
+                <div className="flex flex-col gap-1.5">
+                  {[...playerList]
+                    .sort((a, b) => (scores[String(b.user_id)] || 0) - (scores[String(a.user_id)] || 0))
+                    .map((p, rank) => {
+                      const score = scores[String(p.user_id)] || 0;
+                      const isWinner = String(p.user_id) === String(winnerId);
+                      return (
+                        <div key={p.user_id}
+                          className="flex items-center gap-2 px-3 py-2 rounded-xl"
+                          style={{
+                            background: isWinner ? 'rgba(124,58,237,0.25)' : 'rgba(255,255,255,0.06)',
+                            border: isWinner ? '1px solid rgba(124,58,237,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                          }}>
+                          <span className="text-white/40 text-xs w-4">#{rank + 1}</span>
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                            style={{ background: isWinner ? '#7c3aed' : '#374151' }}>
+                            {p.username?.[0]?.toUpperCase()}
+                          </div>
+                          <span className="text-white text-sm font-semibold flex-1 truncate text-left">{p.username}</span>
+                          <span className="text-yellow-300 font-black text-sm">{score}</span>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={onClose}
+              className="mt-2 w-full py-3 rounded-xl text-white font-bold text-sm transition-all active:scale-95"
+              style={{
+                background: 'linear-gradient(135deg,#7c3aed,#4f46e5)',
+                boxShadow: '0 4px 14px rgba(124,58,237,0.5)',
+              }}>
+              Close Game
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

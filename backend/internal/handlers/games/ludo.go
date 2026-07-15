@@ -15,12 +15,11 @@ import (
 //
 // 2-dice flow:
 //   1. "roll_dice" → rolls d1 and d2, stores dice_rolls:[d1,d2] and
-//      remaining_moves (filtered to only playable values). If doubles,
-//      a bonus roll is earned after the full turn.
-//   2. "move_token" with {color, token_index, die_value} → moves the
-//      token, consumes that die from remaining_moves, checks for further
-//      legal dice. If remaining dice exist, same player continues.
-//      At end of turn: doubles OR capture OR reaching home → bonus turn.
+//      remaining_moves. If neither die has a legal move, turn passes immediately.
+//   2. "move_token" with {color, token_index, die_value} → moves the token,
+//      consumes that die. If the second die still has a legal move, same player
+//      continues. Otherwise turn passes to the next player.
+//      No bonus turns — strict alternation after all dice are used.
 //
 // Position convention: -1=yard, 0-50=shared track (relative to entry),
 // 51-56=home column, 57=finished.
@@ -220,38 +219,30 @@ func (gm *GameManager) processLudoRoll(gameState *GameSessionState, playerIdx in
 
 	d1 := rand.Intn(6) + 1
 	d2 := rand.Intn(6) + 1
-	doubles := d1 == d2
 	n := len(gameState.Players)
 
 	gameState.GameData["dice_rolls"] = []interface{}{d1, d2}
-	gameState.GameData["doubles"] = doubles
-	gameState.GameData["bonus_earned"] = false
-	gameState.GameData["last_roll_wasted"] = false
 	gameState.GameData["last_capture"] = false
 	gameState.GameData["last_token_home"] = false
 
-	// Keep BOTH dice regardless of which ones have an immediate legal move.
-	// The second die may become legal after the first is used — e.g. rolling 6+3
-	// with all tokens in base: the 6 enters a token, and the token now at pos 0
-	// can legally use the 3.  Pre-filtering the 3 out would permanently lose it.
-	// Only pass the turn when NEITHER die can do anything right now.
+	// Keep BOTH dice regardless of immediate legality — the second die may
+	// become legal after the first is used (e.g. 6+3 with tokens in base:
+	// the 6 enters a token, then that token can use the 3).
+	// Only pass the turn when NEITHER die can do anything.
 	hasAnyLegal := ludoHasLegalMove(gameState, playerColors, d1) || ludoHasLegalMove(gameState, playerColors, d2)
 
 	if !hasAnyLegal {
-		// No moves possible for either die — turn passes.
-		// If doubles, same player gets a bonus roll.
+		// No legal move for either die — skip to next player.
 		gameState.GameData["remaining_moves"] = []interface{}{}
 		gameState.GameData["awaiting_move"] = false
-		if doubles {
-			gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n
-		}
+		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % n
 		return false, nil, nil
 	}
 
+	// Player must now choose a token to move.
 	gameState.GameData["remaining_moves"] = []interface{}{d1, d2}
 	gameState.GameData["awaiting_move"] = true
-	// Same player acts — cancel the automatic turn-advance.
-	gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n
+	// CurrentTurn unchanged — same player continues to move_token.
 	return false, nil, nil
 }
 
@@ -366,9 +357,6 @@ func (gm *GameManager) processLudoTokenMove(gameState *GameSessionState, playerI
 
 	gameState.GameData["last_capture"] = captured
 	gameState.GameData["last_token_home"] = reachedHome
-	if captured || reachedHome {
-		gameState.GameData["bonus_earned"] = true
-	}
 
 	// Win check: ALL tokens across ALL of this player's colors are home.
 	allHome := true
@@ -394,10 +382,8 @@ func (gm *GameManager) processLudoTokenMove(gameState *GameSessionState, playerI
 	}
 
 	n := len(gameState.Players)
-	doubles, _ := gameState.GameData["doubles"].(bool)
-	bonusEarned, _ := gameState.GameData["bonus_earned"].(bool)
 
-	// Check if any remaining die has a legal move.
+	// If the second die still has a legal move, same player uses it first.
 	if len(newRemaining) > 0 {
 		legalRemaining := []int{}
 		for _, dv := range newRemaining {
@@ -405,7 +391,6 @@ func (gm *GameManager) processLudoTokenMove(gameState *GameSessionState, playerI
 				legalRemaining = append(legalRemaining, dv)
 			}
 		}
-
 		if len(legalRemaining) > 0 {
 			lrm := make([]interface{}, len(legalRemaining))
 			for i, v := range legalRemaining {
@@ -413,22 +398,14 @@ func (gm *GameManager) processLudoTokenMove(gameState *GameSessionState, playerI
 			}
 			gameState.GameData["remaining_moves"] = lrm
 			gameState.GameData["awaiting_move"] = true
-			// Same player continues with the remaining die.
-			gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n
+			// CurrentTurn unchanged — same player still has a die to play.
 			return false, nil, nil
 		}
-		// Remaining dice have no legal moves — fall through to end-of-turn.
 	}
 
-	// All dice consumed (or none with legal moves).
+	// All dice consumed (or no remaining die has a legal move) — next player's turn.
 	gameState.GameData["remaining_moves"] = []interface{}{}
 	gameState.GameData["awaiting_move"] = false
-
-	if doubles || bonusEarned {
-		// Bonus turn: same player gets a fresh roll.
-		gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n
-	}
-	// else: automatic turn-advance proceeds normally.
-
+	gameState.CurrentTurn = (gameState.CurrentTurn + 1) % n
 	return false, nil, nil
 }

@@ -147,6 +147,11 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	case "blackjack":
 		dealBlackjack(gameState)
 		gameState.GameSession.GameState = gameState.GameData
+	case "ping_pong":
+		for k, v := range pingPongInitialState(players) {
+			gameState.GameData[k] = v
+		}
+		gameState.GameSession.GameState = gameState.GameData
 	}
 
 	gm.activeGames[gameSession.ID] = gameState
@@ -292,6 +297,7 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"vs_battle":           true, // VS Battle phase+turn managed internally
 		"boxing":              true, // Boxing manages attacker/defender swap internally
 		"pool":                true, // Pool stays on same player after a legal pocket
+		"ludo":                true, // Ludo manages its own turn (roll → move two-phase)
 	}
 	if !gameOver && !selfManagedTurn[gameState.GameSession.GameType] {
 		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % len(gameState.Players)

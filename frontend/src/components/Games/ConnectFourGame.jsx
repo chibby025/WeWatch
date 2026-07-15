@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { X } from 'lucide-react';
 
 const COLS = 7;
@@ -86,6 +86,7 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
   const [winner, setWinner]     = useState(null);
   const [isOver, setIsOver]     = useState(false);
   const [hoverCol, setHoverCol] = useState(null);
+  const [selectedCol, setSelectedCol] = useState(3);
 
   useEffect(() => {
     if (!gameState) return;
@@ -109,12 +110,24 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
   const winnerPiece = winnerIdx === 0 ? 'R' : 'Y';
   const winnerHex   = winner ? PIECE_COLOR[winnerPiece] : null;
 
-  function drop(col) {
+  const drop = useCallback((col) => {
     if (!isMyTurn) return;
     const row = legalDrop(board, col);
     if (row === -1) return;
     onMove({ col });
-  }
+  }, [isMyTurn, board, onMove]);
+
+  // Keyboard navigation: ← → to pick column, Enter/Space to drop
+  useEffect(() => {
+    const handler = (e) => {
+      if (!isMyTurn || isOver) return;
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); setSelectedCol(c => Math.max(0, c - 1)); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); setSelectedCol(c => Math.min(COLS - 1, c + 1)); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); drop(selectedCol); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isMyTurn, isOver, selectedCol, drop]);
 
   const p0 = players[0];
   const p1 = players[1];
@@ -138,7 +151,7 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
       `}</style>
 
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-        <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md flex flex-col gap-4 p-5 overflow-hidden">
+        <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-xl flex flex-col gap-4 p-5 overflow-hidden">
 
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -177,15 +190,19 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
             className="bg-blue-700 rounded-xl p-2 select-none"
             onMouseLeave={() => setHoverCol(null)}
           >
-            {/* Drop indicator row */}
+            {/* Drop indicator row — hover col takes priority, then selected col */}
             <div className="grid mb-1" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)`, gap: '4px' }}>
-              {Array.from({ length: COLS }, (_, c) => (
-                <div key={c} className="flex justify-center h-4">
-                  {isMyTurn && hoverCol === c && legalDrop(board, c) !== -1 && (
-                    <div className={`w-4 h-4 rounded-full opacity-70 ${myPiece === 'R' ? 'bg-red-400' : 'bg-yellow-300'}`} />
-                  )}
-                </div>
-              ))}
+              {Array.from({ length: COLS }, (_, c) => {
+                const active = isMyTurn && (hoverCol !== null ? hoverCol === c : selectedCol === c);
+                return (
+                  <div key={c} className="flex justify-center h-4">
+                    {active && legalDrop(board, c) !== -1 && (
+                      <div className={`w-4 h-4 rounded-full ${myPiece === 'R' ? 'bg-red-400' : 'bg-yellow-300'}`}
+                        style={{ opacity: hoverCol !== null ? 0.7 : 1 }} />
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {/* Cells */}
@@ -215,11 +232,38 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
             </div>
           </div>
 
+          {/* Column navigator — always visible on your turn for touch/keyboard users */}
+          {isMyTurn && !isOver && (
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={() => setSelectedCol(c => Math.max(0, c - 1))}
+                disabled={selectedCol === 0}
+                className="w-9 h-9 rounded-lg bg-gray-700 hover:bg-gray-600 active:bg-gray-500 disabled:opacity-25 text-white font-bold text-xl flex items-center justify-center transition-colors select-none"
+                aria-label="Move left"
+              >‹</button>
+              <button
+                onClick={() => drop(selectedCol)}
+                disabled={legalDrop(board, selectedCol) === -1}
+                className="flex-1 max-w-[140px] h-9 rounded-lg font-bold text-sm text-white transition-all active:scale-95 disabled:opacity-40 select-none"
+                style={{
+                  background: legalDrop(board, selectedCol) !== -1 ? PIECE_COLOR[myPiece] : '#374151',
+                  boxShadow: legalDrop(board, selectedCol) !== -1 ? `0 2px 10px ${PIECE_COLOR[myPiece]}55` : 'none',
+                }}
+              >Drop ▼</button>
+              <button
+                onClick={() => setSelectedCol(c => Math.min(COLS - 1, c + 1))}
+                disabled={selectedCol === COLS - 1}
+                className="w-9 h-9 rounded-lg bg-gray-700 hover:bg-gray-600 active:bg-gray-500 disabled:opacity-25 text-white font-bold text-xl flex items-center justify-center transition-colors select-none"
+                aria-label="Move right"
+              >›</button>
+            </div>
+          )}
+
           {/* Status line */}
           <div className="text-center text-sm min-h-[20px]">
             {!isOver && (
               isMyTurn
-                ? <p className="font-semibold" style={{ color: PIECE_COLOR[myPiece] }}>Your turn — click a column</p>
+                ? <p className="text-gray-400 text-xs">Tap a column, use ‹ › to select, or press ← → Enter</p>
                 : <p className="text-gray-400">Waiting for {players[currentTurn]?.username}…</p>
             )}
           </div>

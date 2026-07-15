@@ -7979,6 +7979,9 @@ export default function VideoWatch() {
           onStartGame={handleStartGame}
           onCreateTournament={handleCreateTournament}
           onCreateHotSeatTournament={handleCreateHotSeatTournament}
+          activeGame={activeGame}
+          onEndGame={handleEndGame}
+          isHost={isHost}
         />
       )}
 

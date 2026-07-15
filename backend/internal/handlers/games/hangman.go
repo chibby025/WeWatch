@@ -38,16 +38,17 @@ func hangmanInitialState(players []models.Player) map[string]interface{} {
 		scores[fmt.Sprintf("%d", p.UserID)] = 0
 	}
 	return map[string]interface{}{
-		"word":          word,
-		"display":       display,
-		"guessed":       []string{},
-		"wrong_letters": []string{},
-		"wrong_count":   0,
-		"max_wrong":     6,
-		"phase":         "guessing",
-		"scores":        scores,
-		"last_guesser":  nil,
-		"word_length":   len(word),
+		"word":             word,
+		"display":          display,
+		"guessed":          []string{},
+		"wrong_letters":    []string{},
+		"wrong_count":      0,
+		"max_wrong":        6,
+		"phase":            "guessing",
+		"scores":           scores,
+		"last_guesser":     nil,
+		"word_length":      len(word),
+		"hints_remaining":  3,
 	}
 }
 
@@ -73,16 +74,17 @@ func hangmanInitialStatePC(_ int) map[string]interface{} {
 		display[i] = "_"
 	}
 	return map[string]interface{}{
-		"word":          word,
-		"display":       display,
-		"guessed":       []string{},
-		"wrong_letters": []string{},
-		"wrong_count":   0,
-		"max_wrong":     6,
-		"phase":         "guessing",
-		"scores":        map[string]interface{}{},
-		"last_guesser":  nil,
-		"word_length":   len(word),
+		"word":            word,
+		"display":         display,
+		"guessed":         []string{},
+		"wrong_letters":   []string{},
+		"wrong_count":     0,
+		"max_wrong":       6,
+		"phase":           "guessing",
+		"scores":          map[string]interface{}{},
+		"last_guesser":    nil,
+		"word_length":     len(word),
+		"hints_remaining": 3,
 	}
 }
 
@@ -119,6 +121,10 @@ func (gm *GameManager) processHangmanMove(gameState *GameSessionState, playerID 
 	phase, _ := gameState.GameData["phase"].(string)
 	if phase != "guessing" {
 		return false, nil, fmt.Errorf("game is not in guessing phase")
+	}
+
+	if moveType, _ := moveData["move_type"].(string); moveType == "hint" {
+		return gm.processHangmanHint(gameState, playerID)
 	}
 
 	letterRaw, _ := moveData["letter"].(string)
@@ -191,6 +197,66 @@ func (gm *GameManager) processHangmanMove(gameState *GameSessionState, playerID 
 	// Simultaneous game — cancel turn advance so any player can guess next
 	gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
 	return false, nil, nil
+}
+
+func (gm *GameManager) processHangmanHint(gameState *GameSessionState, playerID uint) (bool, *uint, error) {
+	var hintsRemaining int
+	if hr := gameState.GameData["hints_remaining"]; hr != nil {
+		hintsRemaining = hangmanIntFrom(hr)
+	} else {
+		hintsRemaining = 3 // default matching frontend ?? 3 fallback
+	}
+	if hintsRemaining <= 0 {
+		return false, nil, fmt.Errorf("no hints remaining")
+	}
+
+	word, _ := gameState.GameData["word"].(string)
+	display := hangmanDisplaySlice(gameState.GameData["display"])
+	guessed := hangmanStringSlice(gameState.GameData["guessed"])
+
+	// Collect distinct letters still hidden in the word.
+	seen := map[string]bool{}
+	unrevealed := []string{}
+	for i, ch := range word {
+		letter := string(ch)
+		if display[i] == "_" && !seen[letter] {
+			unrevealed = append(unrevealed, letter)
+			seen[letter] = true
+		}
+	}
+	if len(unrevealed) == 0 {
+		return false, nil, fmt.Errorf("no letters left to reveal")
+	}
+
+	// Pick a random unrevealed letter and reveal all its positions.
+	hintLetter := unrevealed[rand.Intn(len(unrevealed))]
+	for i, ch := range word {
+		if string(ch) == hintLetter {
+			display[i] = hintLetter
+		}
+	}
+	gameState.GameData["display"] = display
+
+	// Mark as guessed so the keyboard key turns green.
+	guessed = append(guessed, hintLetter)
+	gameState.GameData["guessed"] = guessed
+	gameState.GameData["hints_remaining"] = hintsRemaining - 1
+	gameState.GameData["last_guesser"] = fmt.Sprintf("%d", playerID)
+
+	// Cancel turn advance (simultaneous game).
+	n := len(gameState.Players)
+	gameState.CurrentTurn = (gameState.CurrentTurn - 1 + n) % n
+
+	// Check win — all blanks filled.
+	for _, d := range display {
+		if d == "_" {
+			return false, nil, nil
+		}
+	}
+	gameState.GameData["phase"] = "won"
+	scores := hangmanScoreMap(gameState.GameData)
+	winner := hangmanTopScorer(scores, gameState.Players)
+	return true, winner, nil
 }
 
 // --- helpers ---

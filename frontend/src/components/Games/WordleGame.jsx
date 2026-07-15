@@ -38,7 +38,7 @@ const CSS = `
 `;
 
 // Tile for the main (self) grid
-function BigTile({ letter, feedback, isCurrent, isNew, animDelay, isPop }) {
+function BigTile({ letter, feedback, isCurrent, isNew, animDelay, isPop, size = 62, fontSize = 24 }) {
   const hasFb = !!feedback;
   const bg     = hasFb ? TILE_BG[feedback] : '#121213';
   const border = hasFb
@@ -53,11 +53,12 @@ function BigTile({ letter, feedback, isCurrent, isNew, animDelay, isPop }) {
 
   return (
     <div style={{
-      width: 62, height: 62, background: bg, border,
+      width: size, height: size, background: bg, border,
       color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontWeight: 'bold', fontSize: 24, borderRadius: 3,
+      fontWeight: 'bold', fontSize, borderRadius: 3,
       userSelect: 'none', transition: 'border-color 0.1s',
       animation: anim, '--tc': TILE_BG[feedback] || '#3a3a3c',
+      flexShrink: 0,
     }}>
       {letter}
     </div>
@@ -225,6 +226,24 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
   const myPlayer = players.find(p => p.user_id === currentUserId);
   const others   = players.filter(p => p.user_id !== currentUserId);
 
+  // Responsive sizing — computed once per render from current viewport width.
+  // No resize listener needed; game overlays don't reshape after mount.
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 500;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+  const isMobile = vw < 520;
+  const isPortrait = vh > vw;
+  // Tile: fill ~90% of vw ÷ 5.5 (5 tiles + some breathing room), capped at 62
+  const tileSize  = isMobile ? Math.min(62, Math.max(42, Math.floor((vw - 28) / 5.5))) : 62;
+  const tileGap   = isMobile ? 4 : 5;
+  const tileFontS = Math.round(tileSize * 0.38);
+  // Key: tighter gaps and narrower keys on mobile so Q–P all fit in one row.
+  // Subtract 16px (the overlay's px-2 padding on both sides) from vw; no upper cap
+  // so keys scale up naturally on wider phones instead of being artificially capped.
+  const keyGap     = isMobile ? 2 : 4;
+  const narrowKeyW = isMobile ? Math.max(22, Math.floor((vw - 16 - 9 * keyGap) / 10)) : 36;
+  const wideKeyW   = isMobile ? Math.round(narrowKeyW * 1.45) : 52;
+  const keyH       = isMobile ? 44 : 56;
+
   return (
     <>
       <style>{CSS}</style>
@@ -248,7 +267,7 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-start bg-black/90 overflow-y-auto py-3 px-2">
 
         {/* Header */}
-        <div className="w-full max-w-sm flex items-center justify-between mb-2">
+        <div className="w-full flex items-center justify-between mb-2" style={{ maxWidth: isMobile ? '100%' : 384 }}>
           <div className="flex items-center gap-2">
             <span className="text-2xl">🟩</span>
             <span className="text-white font-bold text-lg tracking-wide">Wordle</span>
@@ -258,6 +277,32 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
           </div>
           <div className="flex items-center gap-1">
             <GameRulesButton gameType="wordle" />
+            {/* Hint button in header on mobile (side panel is hidden) */}
+            {isMobile && !isOver && !isElim && (
+              <button
+                onPointerDown={e => {
+                  e.preventDefault();
+                  if (!hintUsed && !hintPending) {
+                    setHintPending(true);
+                    onMoveRef.current({ move_type: 'hint' });
+                    setTimeout(() => setHintPending(false), 1500);
+                  }
+                }}
+                disabled={hintUsed || hintPending}
+                style={{
+                  width: 36, height: 36, borderRadius: 4, border: 'none',
+                  background: hintUsed ? '#3a3a3c' : hintPending ? '#0e7490' : '#0891b2',
+                  color: '#fff', fontWeight: 700, fontSize: 9,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  gap: 1, cursor: hintUsed ? 'not-allowed' : 'pointer',
+                  opacity: hintUsed ? 0.55 : 1, userSelect: 'none',
+                }}
+                title={hintUsed ? 'Hint used' : 'Hint'}
+              >
+                <span style={{ fontSize: 14 }}>💡</span>
+                <span style={{ fontSize: 8 }}>{hintUsed ? 'USED' : 'HINT'}</span>
+              </button>
+            )}
             <button onClick={isOver ? onClose : onEndGame} className="text-gray-400 hover:text-white p-1">
               <X size={20} />
             </button>
@@ -271,11 +316,11 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
           </div>
         )}
 
-        {/* Grids row */}
-        <div className="flex gap-6 items-start justify-center mb-2">
+        {/* Grids row — vertical on mobile, horizontal on desktop */}
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 10 : 24, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
 
           {/* My grid */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: tileGap, alignItems: 'center' }}>
             {myPlayer && (
               <p className="text-xs text-gray-400 font-semibold mb-0.5">
                 {!isOver
@@ -295,7 +340,7 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
                   key={row}
                   style={{
                     display: 'flex',
-                    gap: 5,
+                    gap: tileGap,
                     animation:
                       shake && isCurr    ? 'wdlShake 0.55s ease' :
                       isBouncing         ? `wdlBounce 0.8s ease ${0}s` :
@@ -311,6 +356,8 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
                       isNew={isNew}
                       animDelay={col * 0.3}
                       isPop={isCurr && popSet.has(col)}
+                      size={tileSize}
+                      fontSize={tileFontS}
                     />
                   ))}
                 </div>
@@ -339,12 +386,12 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
           )}
         </div>
 
-        {/* Keyboard row — side panel + keys */}
+        {/* Keyboard row — side panel (desktop) + keys */}
         {!isOver && !isElim && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
 
-            {/* Left panel: Hint + End Game */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+            {/* Left panel: Hint + End Game — hidden on mobile (hint is in header, X ends game) */}
+            {!isMobile && <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
               {/* Hint button */}
               <button
                 onPointerDown={e => {
@@ -385,10 +432,13 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
                 <X size={15} />
                 <span style={{ fontSize: 9 }}>END</span>
               </button>
-            </div>
+            </div>}
 
-            {/* Keyboard */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+            {/* Keyboard — scaled down 10% on mobile portrait so all keys stay visible */}
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center',
+              ...(isMobile && isPortrait ? { transform: 'scale(0.85)', transformOrigin: 'top center' } : {}),
+            }}>
               {/* Hint banner — shown above keyboard once hint is received */}
               {hintData && (
                 <div style={{
@@ -407,7 +457,7 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
               )}
 
               {KEYBOARD_ROWS.map((row, ri) => (
-                <div key={ri} style={{ display: 'flex', gap: 4 }}>
+                <div key={ri} style={{ display: 'flex', gap: keyGap }}>
                   {row.map(k => {
                     const st = letterStatus[k];
                     // Hint letter: cyan if not already identified as green
@@ -420,10 +470,10 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
                         onPointerDown={e => { e.preventDefault(); pressKey(k); }}
                         style={{
                           background: bg,
-                          height: 56, borderRadius: 4, border: 'none',
+                          height: keyH, borderRadius: 4, border: 'none',
                           color: '#fff', fontWeight: 700,
                           fontSize: wide ? 11 : 14,
-                          width: wide ? 52 : 36,
+                          width: wide ? wideKeyW : narrowKeyW,
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                           userSelect: 'none', cursor: 'pointer',
                         }}

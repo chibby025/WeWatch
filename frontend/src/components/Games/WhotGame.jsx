@@ -1,9 +1,21 @@
 // src/components/Games/WhotGame.jsx
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X } from 'lucide-react';
 
 // ── Suit data ─────────────────────────────────────────────────────────────────
 const SUIT_HEX   = { C: '#2563eb', T: '#16a34a', X: '#dc2626', Q: '#d97706', S: '#7c3aed' };
+// Sound files hosted on BunnyCDN so they work on Vercel too.
+// Upload all MP3s to BunnyCDN storage at path:  sounds/whot/<filename>.mp3
+const _CDN = 'https://letswatchout.b-cdn.net/games/sounds/whot/';
+const WHOT_SOUNDS = {
+  pick2:          `${_CDN}pick2.mp3`,
+  pick3:          `${_CDN}pick3.mp3`,
+  general_market: `${_CDN}general_market.mp3`,
+  hold_on:        `${_CDN}hold_on.mp3`,
+  whot:           `${_CDN}whot.mp3`,
+  last_card:      `${_CDN}last_card.mp3`,
+  checkup:        `${_CDN}CheckUp.mp3`,
+};
 const SUIT_NAMES = { C: 'Circle', T: 'Triangle', X: 'Cross', Q: 'Square', S: 'Star' };
 const SPECIAL_LABELS = { '1': 'Hold On', '2': 'Pick Two', '5': 'Pick Three', '8': 'Hold On', '14': 'Gen. Market' };
 const SUIT_ORDER = ['C', 'T', 'X', 'Q', 'S'];
@@ -85,14 +97,17 @@ function CardBack({ width = 64, height = 92 }) {
 function WildFace({ width = 64, height = 92 }) {
   return (
     <svg width={width} height={height} viewBox="0 0 64 92" style={{ display:'block' }}>
-      {/* Card body */}
-      <rect x="0" y="0" width="64" height="92" rx="6" fill="#fff"/>
-      <rect x="1" y="1" width="62" height="90" rx="5.5" fill="none" stroke="#e5e7eb" strokeWidth="1"/>
-      {/* Rainbow gradient border */}
-      <rect x="2" y="2" width="60" height="88" rx="5" fill="none"
-        stroke="url(#wildgrd)" strokeWidth="2"/>
       <defs>
-        <linearGradient id="wildgrd" x1="0%" y1="0%" x2="100%" y2="100%">
+        {/* Dark gold gradient for header/footer bands */}
+        <linearGradient id="wild-bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"    stopColor="#1c1917"/>
+          <stop offset="24%"   stopColor="#1c1917"/>
+          <stop offset="24.5%" stopColor="#fffef8"/>
+          <stop offset="75.5%" stopColor="#fffef8"/>
+          <stop offset="76%"   stopColor="#1c1917"/>
+          <stop offset="100%"  stopColor="#1c1917"/>
+        </linearGradient>
+        <linearGradient id="wild-rainbow" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%"   stopColor="#2563eb"/>
           <stop offset="25%"  stopColor="#16a34a"/>
           <stop offset="50%"  stopColor="#dc2626"/>
@@ -100,70 +115,122 @@ function WildFace({ width = 64, height = 92 }) {
           <stop offset="100%" stopColor="#7c3aed"/>
         </linearGradient>
       </defs>
-      {/* "20" in corners */}
-      <text x="5" y="14" fontSize="9" fontWeight="800" fontFamily="sans-serif" fill="#1f2937">20</text>
-      <text x="59" y="82" fontSize="9" fontWeight="800" fontFamily="sans-serif" fill="#1f2937"
-        textAnchor="end" transform="rotate(180,59,82)">20</text>
-      {/* 5 mini suits arranged around center */}
+
+      {/* Card body */}
+      <rect x="0" y="0" width="64" height="92" rx="6" fill="url(#wild-bg)"/>
+      {/* Outer highlight */}
+      <rect x="0.5" y="0.5" width="63" height="91" rx="5.5" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1"/>
+      {/* Rainbow inner border */}
+      <rect x="2.5" y="2.5" width="59" height="87" rx="4.5" fill="none" stroke="url(#wild-rainbow)" strokeWidth="1.5"/>
+
+      {/* Top header: "W!" + gold star */}
+      <text x="6" y="16" fontSize="12" fontWeight="900" fontFamily="Arial,sans-serif" fill="#f59e0b">W!</text>
+      <text x="47" y="16" fontSize="12" fontWeight="900" fontFamily="Arial,sans-serif" fill="#f59e0b">★</text>
+
+      {/* Separator lines */}
+      <line x1="4" y1="22" x2="60" y2="22" stroke="rgba(245,158,11,0.25)" strokeWidth="0.5"/>
+      <line x1="4" y1="70" x2="60" y2="70" stroke="rgba(245,158,11,0.25)" strokeWidth="0.5"/>
+
+      {/* 5 suit symbols in quincunx pattern in middle area */}
+      {/* Top-left, top-right, center, bottom-left, bottom-right */}
       {[
-        { suit:'C', x:18, y:22 },
-        { suit:'T', x:46, y:22 },
+        { suit:'C', x:16, y:33 },
+        { suit:'T', x:48, y:33 },
         { suit:'X', x:32, y:46 },
-        { suit:'Q', x:18, y:66 },
-        { suit:'S', x:46, y:66 },
+        { suit:'Q', x:16, y:59 },
+        { suit:'S', x:48, y:59 },
       ].map(({ suit, x, y }) => (
         <g key={suit} transform={`translate(${x - 9},${y - 9})`}>
           <SuitShape suit={suit} size={18} />
         </g>
       ))}
-      {/* WHOT! label */}
-      <text x="32" y="47" textAnchor="middle" fontSize="7" fontWeight="900"
-        fontFamily="sans-serif" fill="#1f2937" letterSpacing="1">WHOT!</text>
+
+      {/* WHOT! label centered in middle */}
+      <text x="32" y="48" textAnchor="middle" fontSize="7.5" fontWeight="900"
+        fontFamily="Arial,sans-serif" fill="#1c1917" letterSpacing="1">WHOT!</text>
+
+      {/* Bottom (rotated 180° around card center) */}
+      <g transform="rotate(180,32,46)">
+        <text x="6" y="16" fontSize="12" fontWeight="900" fontFamily="Arial,sans-serif" fill="#f59e0b">W!</text>
+        <text x="47" y="16" fontSize="12" fontWeight="900" fontFamily="Arial,sans-serif" fill="#f59e0b">★</text>
+      </g>
     </svg>
   );
 }
 
 // ── Main card face ─────────────────────────────────────────────────────────────
+// "Blank" card template: two-tone gradient (suit colour top+bottom, cream middle).
+// All card details (number, suit symbol, special label) are placed over this template.
 function CardFace({ card, width = 64, height = 92 }) {
   const { num, suit } = parseCard(card);
   const isWild = num === '20' || card === 'W';
   if (isWild) return <WildFace width={width} height={height}/>;
 
-  const color = SUIT_HEX[suit] || '#888';
+  const color  = SUIT_HEX[suit] || '#888';
   const special = SPECIAL_LABELS[num];
-  const bigNum = num.length > 2 ? '14' : num; // clamp display
+  // Gradient ID is per-suit so same-type cards on screen share the same def (identical colour).
+  const gradId = `wcard-${suit}`;
 
   return (
     <svg width={width} height={height} viewBox="0 0 64 92" style={{ display:'block' }}>
-      {/* Card body */}
-      <rect x="0" y="0" width="64" height="92" rx="6" fill="#fff"/>
-      <rect x="1" y="1" width="62" height="90" rx="5.5" fill="none" stroke="#e5e7eb" strokeWidth="1"/>
-      <rect x="3" y="3" width="58" height="86" rx="4.5" fill="none" stroke={color} strokeWidth="1.5" strokeOpacity="0.4"/>
+      <defs>
+        {/* Two-tone: suit colour at top (0-24%) and bottom (76-100%), cream in the middle */}
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"    stopColor={color}/>
+          <stop offset="24%"   stopColor={color}/>
+          <stop offset="24.5%" stopColor="#fffef8"/>
+          <stop offset="75.5%" stopColor="#fffef8"/>
+          <stop offset="76%"   stopColor={color}/>
+          <stop offset="100%"  stopColor={color}/>
+        </linearGradient>
+      </defs>
 
-      {/* Top-left corner: number + tiny suit */}
-      <text x="5" y="14" fontSize="10" fontWeight="800" fontFamily="sans-serif" fill={color}>{bigNum}</text>
-      <g transform="translate(4,15)"><SuitShapeTiny suit={suit} size={11} color={color}/></g>
+      {/* ── Blank card template ── */}
+      <rect x="0" y="0" width="64" height="92" rx="6" fill={`url(#${gradId})`}/>
+      {/* Outer white highlight ring */}
+      <rect x="0.5" y="0.5" width="63" height="91" rx="5.5" fill="none" stroke="rgba(255,255,255,0.30)" strokeWidth="1"/>
+      {/* Subtle inner border on cream zone */}
+      <rect x="2.5" y="22" width="59" height="48" fill="none" stroke={color} strokeWidth="0.5" strokeOpacity="0.15"/>
+      {/* Band separator lines */}
+      <line x1="4" y1="22" x2="60" y2="22" stroke="rgba(255,255,255,0.20)" strokeWidth="0.5"/>
+      <line x1="4" y1="70" x2="60" y2="70" stroke="rgba(255,255,255,0.20)" strokeWidth="0.5"/>
 
-      {/* Bottom-right corner (rotated 180°) */}
-      <g transform="rotate(180,32,46)">
-        <text x="5" y="14" fontSize="10" fontWeight="800" fontFamily="sans-serif" fill={color}>{bigNum}</text>
-        <g transform="translate(4,15)"><SuitShapeTiny suit={suit} size={11} color={color}/></g>
+      {/* ── Card details ── */}
+
+      {/* Top header: large number (white) + suit icon (white, top-right) */}
+      <text x="6" y="16" fontSize="13" fontWeight="900" fontFamily="Arial,sans-serif"
+        fill="white" letterSpacing="-0.5">{num}</text>
+      <g transform="translate(44,3)">
+        <SuitShape suit={suit} size={15} color="white"/>
       </g>
 
-      {/* Center suit shape */}
-      <g transform="translate(18,28)"><SuitShape suit={suit} size={28} color={color}/></g>
+      {/* Central suit symbol — large, in cream zone */}
+      <g transform="translate(16,29)">
+        <SuitShape suit={suit} size={32} color={color}/>
+      </g>
 
-      {/* Special label */}
+      {/* Special card label just above footer */}
       {special && (
-        <text x="32" y="83" textAnchor="middle" fontSize="6.5" fontWeight="700"
-          fontFamily="sans-serif" fill={color} letterSpacing="0.3">{special.toUpperCase()}</text>
+        <text x="32" y="68" textAnchor="middle" fontSize="6.5" fontWeight="800"
+          fontFamily="Arial,sans-serif" fill={color} letterSpacing="0.4">
+          {special.toUpperCase()}
+        </text>
       )}
+
+      {/* Bottom header: same as top, rotated 180° around card centre */}
+      <g transform="rotate(180,32,46)">
+        <text x="6" y="16" fontSize="13" fontWeight="900" fontFamily="Arial,sans-serif"
+          fill="white" letterSpacing="-0.5">{num}</text>
+        <g transform="translate(44,3)">
+          <SuitShape suit={suit} size={15} color="white"/>
+        </g>
+      </g>
     </svg>
   );
 }
 
 // ── WhotCard wrapper ──────────────────────────────────────────────────────────
-function WhotCard({ card, faceDown, onClick, dimmed, selected, size = 'sm' }) {
+function WhotCard({ card, faceDown, onClick, dimmed, selected, playable, size = 'sm' }) {
   const dims = size === 'lg' ? { w: 72, h: 104 } : { w: 56, h: 80 };
 
   const inner = faceDown
@@ -171,6 +238,13 @@ function WhotCard({ card, faceDown, onClick, dimmed, selected, size = 'sm' }) {
     : <CardFace card={card} width={dims.w} height={dims.h}/>;
 
   const isClickable = !!onClick && !dimmed;
+
+  // Visual priority: selected (white glow) > playable (green glow) > default shadow
+  const filter = selected
+    ? 'drop-shadow(0 0 8px rgba(255,255,255,0.7)) drop-shadow(0 2px 4px rgba(0,0,0,0.5))'
+    : playable
+    ? 'drop-shadow(0 0 7px rgba(34,197,94,0.65)) drop-shadow(0 2px 4px rgba(0,0,0,0.45))'
+    : 'drop-shadow(0 2px 4px rgba(0,0,0,0.45))';
 
   return (
     <div
@@ -180,16 +254,16 @@ function WhotCard({ card, faceDown, onClick, dimmed, selected, size = 'sm' }) {
         borderRadius: 6,
         display: 'inline-block',
         flexShrink: 0,
-        opacity: dimmed ? 0.35 : 1,
-        outline: selected ? '2.5px solid #fff' : 'none',
+        opacity: dimmed ? 0.32 : 1,
+        outline: selected ? '2.5px solid #fff' : playable ? '1.5px solid rgba(34,197,94,0.6)' : 'none',
         outlineOffset: 2,
-        transform: selected ? 'translateY(-8px)' : undefined,
+        transform: selected ? 'translateY(-10px) scale(1.04)' : undefined,
         cursor: isClickable ? 'pointer' : 'default',
-        filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.45))',
-        transition: 'transform 0.15s, opacity 0.15s',
+        filter,
+        transition: 'transform 0.15s, opacity 0.15s, filter 0.15s',
       }}
-      onMouseEnter={e => { if (isClickable) e.currentTarget.style.transform = 'translateY(-6px)'; }}
-      onMouseLeave={e => { if (isClickable && !selected) e.currentTarget.style.transform = ''; }}
+      onMouseEnter={e => { if (isClickable) e.currentTarget.style.transform = selected ? 'translateY(-10px) scale(1.04)' : 'translateY(-6px)'; }}
+      onMouseLeave={e => { if (isClickable) e.currentTarget.style.transform = selected ? 'translateY(-10px) scale(1.04)' : ''; }}
     >
       {inner}
     </div>
@@ -200,6 +274,36 @@ function WhotCard({ card, faceDown, onClick, dimmed, selected, size = 'sm' }) {
 export default function WhotGame({ gameState, players = [], currentUserId, myHand, onMove, onClose, onEndGame }) {
   const [pendingWild, setPendingWild]   = useState(null);
   const [selectedCard, setSelectedCard] = useState(null);
+  const [announcement, setAnnouncement] = useState(null);
+  const soundsRef         = useRef({});
+  const prevDiscardRef    = useRef(null);
+  const firstDiscardRef   = useRef(true);   // skip initial state on mount
+  const prevHandCountsRef = useRef({});
+  const announceTimerRef  = useRef(null);
+  const prevIsOverRef     = useRef(false);
+
+  // Preload ElevenLabs sounds once on mount.
+  // Drop MP3 files in frontend/public/sounds/whot/ matching the keys in WHOT_SOUNDS.
+  useEffect(() => {
+    Object.entries(WHOT_SOUNDS).forEach(([key, src]) => {
+      const a = new Audio(src);
+      a.preload = 'auto';
+      soundsRef.current[key] = a;
+    });
+  }, []);
+
+  const playSound = useCallback((key) => {
+    const a = soundsRef.current[key];
+    if (!a) return;
+    a.currentTime = 0;
+    a.play().catch(() => {});
+  }, []);
+
+  const announce = useCallback((opts) => {
+    clearTimeout(announceTimerRef.current);
+    setAnnouncement({ ...opts, key: Date.now() });
+    announceTimerRef.current = setTimeout(() => setAnnouncement(null), 2800);
+  }, []);
 
   const gs = gameState?.game_state || {};
   const discardTop    = gs.discard_top || null;
@@ -216,6 +320,71 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
   const isOver    = ['finished', 'forfeited', 'completed'].includes(gameState?.status);
 
   const hand = myHand || [];
+
+  // Special card events — sound + on-screen announcement
+  useEffect(() => {
+    if (!discardTop) return;
+    if (firstDiscardRef.current) {
+      firstDiscardRef.current = false;
+      prevDiscardRef.current  = discardTop;
+      return;
+    }
+    if (discardTop === prevDiscardRef.current) return;
+    prevDiscardRef.current = discardTop;
+
+    const num = discardTop === 'W' ? 'W' : discardTop.slice(0, -1);
+
+    if (num === 'W') {
+      playSound('whot');
+      announce({ icon: '🃏', text: 'WHOT!', sub: 'Suit has been changed',
+        bg: 'linear-gradient(135deg,#4f46e5 0%,#7c3aed 50%,#1e1b4b 100%)' });
+    } else if (num === '2') {
+      playSound('pick2');
+      announce({ icon: '⚡', text: `PICK ${Math.max(2, pendingPick)}!`,
+        sub: pendingPick > 2 ? `Stack or draw all ${pendingPick} cards!` : 'Counter or draw 2!',
+        bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' });
+    } else if (num === '5') {
+      playSound('pick3');
+      const total = pendingPick > 0 ? pendingPick : 3;
+      announce({ icon: total > 5 ? '💣' : '⚡', text: `PICK ${total}!`,
+        sub: total > 3 ? `Stack or draw all ${total} cards!` : 'Counter or draw 3!',
+        bg: total > 5 ? 'linear-gradient(135deg,#7f1d1d,#450a0a)' : 'linear-gradient(135deg,#b91c1c,#7f1d1d)' });
+    } else if (num === '14') {
+      playSound('general_market');
+      announce({ icon: '🌍', text: 'GENERAL MARKET!', sub: 'Everyone draws a card',
+        bg: 'linear-gradient(135deg,#15803d,#14532d)' });
+    } else if (num === '1' || num === '8') {
+      playSound('hold_on');
+      announce({ icon: '✋', text: 'HOLD ON!', sub: 'Next player is suspended',
+        bg: 'linear-gradient(135deg,#d97706,#92400e)' });
+    }
+  }, [discardTop, pendingPick, playSound, announce]);
+
+  // "Last Card!" when any player drops to exactly 1 card
+  useEffect(() => {
+    const prev = prevHandCountsRef.current;
+    Object.entries(handCounts).forEach(([uid, rawCount]) => {
+      const count = Number(rawCount);
+      const prevCount = Number(prev[uid] ?? 99);
+      if (count === 1 && prevCount > 1) {
+        playSound('last_card');
+        const player = players.find(p => String(p.user_id) === String(uid));
+        announce({ icon: '🎯', text: 'LAST CARD!',
+          sub: player ? `${player.username} has 1 card left!` : 'One card left!',
+          bg: 'linear-gradient(135deg,#7c3aed,#2e1065)' });
+      }
+    });
+    prevHandCountsRef.current = handCounts;
+  }, [handCounts, players, playSound, announce]);
+
+  // "Checkup!" when the game ends with a winner
+  useEffect(() => {
+    if (!isOver || !winner || prevIsOverRef.current) return;
+    prevIsOverRef.current = true;
+    playSound('checkup');
+    announce({ icon: '🏆', text: 'CHECKUP!', sub: `${winner.username} wins!`,
+      bg: 'linear-gradient(135deg,#ca8a04,#78350f)' });
+  }, [isOver, winner, playSound, announce]);
 
   const canPlay = (card) => {
     if (!discardTop) return true;
@@ -272,11 +441,20 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
           0%   { transform:translateY(-20px) rotate(0deg);   opacity:1; }
           100% { transform:translateY(120px) rotate(720deg); opacity:0; }
         }
+        @keyframes announceIn {
+          0%   { opacity:0; transform:translate(-50%,-50%) scale(0.35) rotate(-8deg); }
+          18%  { opacity:1; transform:translate(-50%,-50%) scale(1.12) rotate(2deg); }
+          28%  { transform:translate(-50%,-50%) scale(0.96) rotate(-0.5deg); }
+          55%  { opacity:1; transform:translate(-50%,-50%) scale(1) rotate(0deg); }
+          78%  { opacity:1; transform:translate(-50%,-50%) scale(1); }
+          92%  { opacity:0; transform:translate(-50%,-50%) scale(0.9); }
+          100% { opacity:0; transform:translate(-50%,-50%) scale(0.75); }
+        }
       `}</style>
 
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-      <div className="relative w-full max-w-2xl mx-3 rounded-2xl overflow-hidden shadow-2xl flex flex-col"
-        style={{ background: 'linear-gradient(160deg,#052e16 0%,#064e3b 60%,#052e16 100%)', minHeight: 520 }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 sm:p-4">
+      <div className="relative w-full max-w-2xl sm:max-w-3xl lg:max-w-5xl mx-auto rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+        style={{ background: 'linear-gradient(160deg,#052e16 0%,#064e3b 60%,#052e16 100%)', minHeight: 'min(90vh, 640px)' }}>
 
         {/* Felt texture overlay */}
         <div className="absolute inset-0 pointer-events-none"
@@ -396,6 +574,7 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
                         card={card}
                         size="sm"
                         dimmed={isMyTurn && !isOver && !canPlay(card)}
+                        playable={playable}
                         selected={selectedCard === `${card}-${i}`}
                         onClick={isMyTurn && !isOver ? () => handleCardClick(card) : undefined}
                       />
@@ -414,6 +593,41 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
               className="px-4 py-1.5 rounded-lg bg-red-700/80 hover:bg-red-600 text-white text-sm font-semibold transition-colors">
               Forfeit
             </button>
+          </div>
+        )}
+
+        {/* ── Event announcement overlay (Pick 2/3, General Market, Hold On, Whot!, Last Card, Checkup) ── */}
+        {announcement && (
+          <div
+            key={announcement.key}
+            style={{
+              position: 'absolute', top: '40%', left: '50%',
+              zIndex: 60, pointerEvents: 'none',
+              animation: 'announceIn 2.8s cubic-bezier(0.34,1.56,0.64,1) forwards',
+            }}
+          >
+            <div style={{
+              background: announcement.bg,
+              borderRadius: 20,
+              padding: '16px 30px',
+              textAlign: 'center',
+              boxShadow: '0 0 56px rgba(0,0,0,0.7), 0 12px 40px rgba(0,0,0,0.5)',
+              border: '1.5px solid rgba(255,255,255,0.2)',
+              minWidth: 190, maxWidth: 290,
+            }}>
+              <div style={{ fontSize: 44, lineHeight: 1, marginBottom: 8 }}>{announcement.icon}</div>
+              <div style={{
+                color: '#fff', fontSize: 26, fontWeight: 900,
+                letterSpacing: 0.5, textShadow: '0 2px 10px rgba(0,0,0,0.5)',
+                lineHeight: 1.1,
+              }}>{announcement.text}</div>
+              {announcement.sub && (
+                <div style={{
+                  color: 'rgba(255,255,255,0.8)', fontSize: 12,
+                  marginTop: 6, fontWeight: 600, letterSpacing: 0.2,
+                }}>{announcement.sub}</div>
+              )}
+            </div>
           </div>
         )}
 

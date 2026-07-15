@@ -114,6 +114,17 @@ const RULES = {
       'In competitive mode, the first player to guess the word wins!',
     ],
   },
+  hangman: {
+    title: 'Hangman',
+    rules: [
+      'A secret word is chosen — you see blanks for each letter.',
+      'All players guess letters at the same time — no waiting for your turn.',
+      'Correct guess: every matching letter in the word is revealed. You score 1 point per letter uncovered.',
+      'Wrong guess: a body part is added to the hangman figure. 6 wrong guesses and the game is lost.',
+      'The word is fully revealed when all blanks are filled — the player who uncovered the most letters wins.',
+      'Letters turn 🟢 green (correct) or 🔴 red (wrong) so you can see what has already been tried.',
+    ],
+  },
   would_you_rather: {
     title: 'Would You Rather',
     rules: [

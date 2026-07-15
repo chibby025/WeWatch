@@ -343,7 +343,7 @@ const HOT_SEAT_GAME_IDS = ['fowl_play', 'penalty_shootout'];
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 
-export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame, onCreateTournament, onCreateHotSeatTournament, allowHeavyGames = true }) {
+export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame, onCreateTournament, onCreateHotSeatTournament, allowHeavyGames = true, activeGame = null, onEndGame, isHost = false }) {
   const [selectedPlayers, setSelectedPlayers] = useState([currentUserId]);
   const [searchQuery, setSearchQuery] = useState('');
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -568,6 +568,97 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
   }, [selectedGame]);
 
   if (!isOpen) return null;
+
+  // ── Active game screen ──────────────────────────────────────────────────────
+  // When a game is already running, show an info/end-game card instead of the
+  // full picker so the host can end the current game from this modal.
+  if (activeGame) {
+    const gameData = games.find(g => g.id === activeGame.game_type);
+    const activePlayers = Array.isArray(activeGame.players) ? activeGame.players : [];
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+        <div className="bg-gray-800 rounded-2xl shadow-2xl w-full max-w-xs sm:max-w-sm mx-4 overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between bg-gradient-to-r from-purple-600 to-blue-600 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Gamepad2 className="w-5 h-5 text-white" />
+              <h2 className="font-bold text-white text-base sm:text-lg">Game in Progress</h2>
+            </div>
+            <button onClick={onClose} className="text-white/80 hover:text-white transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Game info */}
+          <div className="p-6 flex flex-col items-center text-center">
+            {/* Poster with LIVE badge */}
+            <div className="relative mb-4">
+              {gameData?.image ? (
+                <div className="w-28 h-40 sm:w-32 sm:h-48 rounded-xl overflow-hidden shadow-2xl ring-2 ring-purple-500/60">
+                  <img src={gameData.image} alt={gameData.name} className="w-full h-full object-cover" />
+                </div>
+              ) : (
+                <div className="w-28 h-40 sm:w-32 sm:h-48 rounded-xl bg-gray-700 flex items-center justify-center shadow-2xl ring-2 ring-purple-500/60">
+                  <Gamepad2 className="w-12 h-12 text-gray-400" />
+                </div>
+              )}
+              {/* Pulsing LIVE badge */}
+              <div className="absolute -top-2 -right-2 flex items-center gap-1 bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping absolute" />
+                <span className="w-1.5 h-1.5 bg-white rounded-full relative" />
+                <span className="ml-1">LIVE</span>
+              </div>
+            </div>
+
+            <h3 className="text-white font-bold text-lg sm:text-xl mb-1">
+              {gameData?.name || activeGame.game_type?.replace(/_/g, ' ')}
+            </h3>
+            <p className="text-gray-400 text-xs mb-4">A game is currently active in this room</p>
+
+            {/* Players */}
+            {activePlayers.length > 0 && (
+              <div className="flex flex-wrap justify-center gap-2 mb-2">
+                {activePlayers.map((p) => (
+                  <div key={p.user_id} className="flex items-center gap-1.5 bg-gray-700/80 rounded-full px-2.5 py-1">
+                    <div
+                      className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0"
+                      style={{ background: p.color || '#7c3aed' }}
+                    >
+                      <span className="text-[8px] font-bold text-white">
+                        {(p.username || '?')[0].toUpperCase()}
+                      </span>
+                    </div>
+                    <span className="text-xs text-gray-200 font-medium">{p.username}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="border-t border-gray-700 flex items-center justify-end gap-2 px-4 py-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors"
+            >
+              Close
+            </button>
+            {isHost && (
+              <button
+                onClick={() => { onEndGame?.(); onClose(); }}
+                className="px-4 py-1.5 bg-red-700 hover:bg-red-600 text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 transition-colors"
+              >
+                <X className="w-4 h-4" />
+                End Game
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  // ── /Active game screen ─────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">

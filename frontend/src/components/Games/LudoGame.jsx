@@ -24,6 +24,7 @@ function buildSharedPath() {
   for (let r = 13; r >= 9; r--) p.push([r, 6]);
   for (let c = 5; c >= 0; c--) p.push([8, c]);
   p.push([7, 0]);
+  p.push([6, 0]); // 52nd square — completes the outer loop
   return p;
 }
 

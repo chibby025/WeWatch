@@ -131,11 +131,22 @@ func (gm *GameManager) processWhotMove(gameState *GameSessionState, playerID uin
 	switch moveType {
 	case "draw":
 		hand := gameState.Hands[playerID]
-		drawn, newPile, newDiscard := whotDrawOne(gameState.DrawPile, gameState.DiscardPile)
-		hand = append(hand, drawn)
+		pendingPickF, _ := gameState.GameData["pending_pick"].(float64)
+		forcedCount := int(pendingPickF)
+		if forcedCount <= 0 {
+			forcedCount = 1
+		}
+		newPile := gameState.DrawPile
+		newDiscard := gameState.DiscardPile
+		for i := 0; i < forcedCount; i++ {
+			var drawn string
+			drawn, newPile, newDiscard = whotDrawOne(newPile, newDiscard)
+			hand = append(hand, drawn)
+		}
 		gameState.Hands[playerID] = hand
 		gameState.DrawPile = newPile
 		gameState.DiscardPile = newDiscard
+		gameState.GameData["pending_pick"] = 0.0
 		syncWhotPublicState(gameState)
 		return false, nil, nil
 
@@ -206,32 +217,13 @@ func (gm *GameManager) processWhotPlay(gameState *GameSessionState, playerID uin
 		skipNext = true
 
 	case "2":
-		// Pick Two: stack with any prior pending pick, force next player to draw, skip them.
-		newPending := pendingPick + 2
-		nextIdx := (gameState.CurrentTurn + 1) % nPlayers
-		nextID := gameState.Players[nextIdx].UserID
-		for i := 0; i < newPending; i++ {
-			drawn, np, nd := whotDrawOne(gameState.DrawPile, gameState.DiscardPile)
-			gameState.Hands[nextID] = append(gameState.Hands[nextID], drawn)
-			gameState.DrawPile = np
-			gameState.DiscardPile = nd
-		}
-		gameState.GameData["pending_pick"] = 0.0
-		skipNext = true
+		// Pick Two: stack onto any existing pending pick — next player must counter or draw.
+		// Cards are NOT drawn here; the victim draws on their own turn via the "draw" move.
+		gameState.GameData["pending_pick"] = float64(pendingPick + 2)
 
 	case "5":
-		// Pick Three: same stacking logic as Pick Two.
-		newPending := pendingPick + 3
-		nextIdx := (gameState.CurrentTurn + 1) % nPlayers
-		nextID := gameState.Players[nextIdx].UserID
-		for i := 0; i < newPending; i++ {
-			drawn, np, nd := whotDrawOne(gameState.DrawPile, gameState.DiscardPile)
-			gameState.Hands[nextID] = append(gameState.Hands[nextID], drawn)
-			gameState.DrawPile = np
-			gameState.DiscardPile = nd
-		}
-		gameState.GameData["pending_pick"] = 0.0
-		skipNext = true
+		// Pick Three: same stacking logic.
+		gameState.GameData["pending_pick"] = float64(pendingPick + 3)
 
 	case "14":
 		// General Market: every other player draws 1.
