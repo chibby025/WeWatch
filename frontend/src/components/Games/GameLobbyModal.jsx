@@ -332,6 +332,16 @@ const games = [
     type: 'arcade',
     heavy: false
   },
+  {
+    id: 'roulette',
+    name: 'Roulette',
+    description: 'Place your bets, spin the wheel — red, black, or lucky number!',
+    minPlayers: 1,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/roulette.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
 ];
 
 // Games eligible for tournament mode: 2-player, head-to-head games where a

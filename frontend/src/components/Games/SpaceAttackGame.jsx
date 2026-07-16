@@ -46,7 +46,7 @@ function mkGame(W, H) {
     drones: [], droneTimer: 0,
     fireTimer: 0,
     bullets: [], eBullets: [], bBullets: [],
-    enemies: [], pickups: [], effects: [],
+    enemies: [], pickups: [], effects: [], sounds: [],
     boss: null, bossTimer: 0,
     blackholes: [], frozenFrames: 0,
     nextBoss: 400, bossIdx: 0,
@@ -61,6 +61,7 @@ function nearest(g, x, y) {
 }
 
 function explosion(g, x, y, color) {
+  g.sounds.push('explode');
   for (let i = 0; i < 7; i++) {
     const a = (i / 7) * Math.PI * 2;
     g.effects.push({ kind: 'px', x, y, vx: Math.cos(a) * (2 + Math.random() * 2.5), vy: Math.sin(a) * (2 + Math.random() * 2.5), life: 20 + Math.floor(Math.random() * 14), color, r: 2 + Math.random() * 2 });
@@ -70,6 +71,16 @@ function explosion(g, x, y, color) {
 function hitPlayer(g) {
   if (g.invincible > 0) return;
   g.invincible = INVINCIBLE;
+  // Dramatic player-hit explosion: 24 particles in orange/white/red + screen flash
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2 + Math.random() * 0.4;
+    const spd = 2.5 + Math.random() * 5;
+    const palette = ['#ffffff', '#ff8800', '#ff3300', '#ffcc00'];
+    g.effects.push({ kind: 'px', x: g.px, y: g.py, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life: 26 + Math.floor(Math.random() * 20), color: palette[i % palette.length], r: 2.5 + Math.random() * 3 });
+  }
+  g.effects.push({ kind: 'flash', life: 18, color: '#ff4400' });
+  if (typeof navigator.vibrate === 'function') navigator.vibrate([80, 20, 80]);
+  g.sounds.push('hit');
   if (g.boltTier > 1) { g.boltTier--; }
   else { g.lives--; if (g.lives <= 0) { g.lives = 0; g.over = true; } }
   g.special = 'bolt'; g.specialAmmo = 0; g.drones = [];
@@ -107,6 +118,7 @@ function firebolts(g, tier) {
 }
 
 function fireSpecial(g, W, H) {
+  g.sounds.push('shoot');
   const sp = g.special;
   if (sp === 'bolt' || g.specialAmmo <= 0) { firebolts(g, g.boltTier); return; }
 
@@ -511,9 +523,14 @@ function drawGame(ctx, g, W, H) {
     ctx.fillText('Tap or press SPACE to start', W / 2, H / 2 + 24); ctx.textBaseline = 'alphabetic'; return;
   }
 
-  // Flash
+  // Flash (color-aware: yellow for bomb/EMP, red-orange for player hit)
   const flash = g.effects.find(f => f.kind === 'flash');
-  if (flash) { ctx.fillStyle = `rgba(255,255,0,${flash.life / 30 * 0.35})`; ctx.fillRect(0, 0, W, H); }
+  if (flash) {
+    const fc = flash.color || '#ffff00';
+    const alpha = flash.life / 30 * 0.45;
+    ctx.fillStyle = fc.startsWith('#') ? fc + Math.round(alpha * 255).toString(16).padStart(2, '0') : `rgba(255,68,0,${alpha})`;
+    ctx.fillRect(0, 0, W, H);
+  }
 
   // EMP ring
   const emp = g.effects.find(f => f.kind === 'emp');
@@ -618,6 +635,70 @@ function drawGame(ctx, g, W, H) {
   }
 }
 
+// ── Web Audio synthesised sounds ─────────────────────────────────────────────
+// All synthesis is inline — no external audio files needed.
+function playGameSound(type, ctxRef) {
+  try {
+    if (!ctxRef.current) ctxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = ctxRef.current;
+    if (ctx.state === 'suspended') ctx.resume();
+    const now = ctx.currentTime;
+
+    if (type === 'shoot') {
+      // Short laser "pew": sawtooth sweep 900→200 Hz
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.connect(g); g.connect(ctx.destination);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(900, now);
+      osc.frequency.exponentialRampToValueAtTime(200, now + 0.055);
+      g.gain.setValueAtTime(0.14, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+      osc.start(now); osc.stop(now + 0.06);
+
+    } else if (type === 'explode') {
+      // Small noise burst: enemy death
+      const len = Math.round(ctx.sampleRate * 0.12);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const g = ctx.createGain();
+      src.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.2, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      src.start(now); src.stop(now + 0.13);
+
+    } else if (type === 'hit') {
+      // Heavy bass rumble + noise burst: player is hit
+      const osc = ctx.createOscillator();
+      const gOsc = ctx.createGain();
+      osc.connect(gOsc); gOsc.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(110, now);
+      osc.frequency.exponentialRampToValueAtTime(35, now + 0.22);
+      gOsc.gain.setValueAtTime(0.45, now);
+      gOsc.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.start(now); osc.stop(now + 0.23);
+
+      const len = Math.round(ctx.sampleRate * 0.2);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const gN = ctx.createGain();
+      src.connect(gN); gN.connect(ctx.destination);
+      gN.gain.setValueAtTime(0.4, now);
+      gN.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      src.start(now); src.stop(now + 0.21);
+    }
+  } catch (_) {
+    // AudioContext not available (e.g. SSR or locked down browser)
+  }
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function SpaceAttackGame({ gameState, players, currentUserId, onMove, onClose, onEndGame }) {
   const canvasRef = useRef(null);
@@ -627,6 +708,7 @@ export default function SpaceAttackGame({ gameState, players, currentUserId, onM
   const keysRef = useRef({});
   const touchRef = useRef({ y: null, firing: false });
   const dimsRef = useRef({ W: 400, H: 240 });
+  const audioCtxRef = useRef(null);
   const [dims, setDims] = useState({ W: 400, H: 240 });
 
   useEffect(() => { gsRef.current = mkGame(400, 240); }, []);
@@ -638,8 +720,8 @@ export default function SpaceAttackGame({ gameState, players, currentUserId, onM
     const obs = new ResizeObserver(([e]) => {
       const { width, height } = e.contentRect;
       const portrait = height > width;
-      const W = portrait ? Math.min(width, 320) : Math.min(width, 500);
-      const H = portrait ? Math.min(height - 70, 480) : Math.min(height - 70, 290);
+      const W = Math.round(width);
+      const H = Math.max(180, Math.round(height - 70));
       dimsRef.current = { W, H };
       setDims({ W, H });
       const c = canvasRef.current;
@@ -677,6 +759,12 @@ export default function SpaceAttackGame({ gameState, players, currentUserId, onM
       if (canvas.width !== W) canvas.width = W;
       if (canvas.height !== H) canvas.height = H;
       updateGame(g, W, H, keysRef.current, touchRef.current.y, touchRef.current.firing);
+      // Drain sound events queued by game logic — deduplicated so rapid multi-kills
+      // don't stack dozens of AudioNodes in a single frame.
+      if (g.sounds.length) {
+        const seen = new Set();
+        g.sounds.splice(0).forEach(s => { if (!seen.has(s)) { seen.add(s); playGameSound(s, audioCtxRef); } });
+      }
       drawGame(canvas.getContext('2d'), g, W, H);
     }
     rafRef.current = requestAnimationFrame(loop);

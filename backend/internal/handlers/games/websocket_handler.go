@@ -90,6 +90,8 @@ func gamePosterURL(gameType string) string {
         return gamePostersBaseURL + "/air_hockey.webp"
     case "space_attack":
         return gamePostersBaseURL + "/space_attack.webp"
+    case "roulette":
+        return gamePostersBaseURL + "/roulette.webp"
     default:
         return ""
     }
@@ -113,6 +115,7 @@ var arcadeGameTypes = map[string]bool{
 // game like space_shooter that simply also happens to support 1 player.
 var minPlayersOverride = map[string]int{
     "space_shooter":    1,
+    "roulette":         1, // host can spin solo; works best with 2+
     "would_you_rather": 1, // can play solo (host picks for the room as a group activity)
     "wordle":           1, // solo practice is valid
     "quiplash":         2, // needs at least 2 for the voting mechanic to work

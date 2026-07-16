@@ -96,6 +96,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"ping_pong":           true,
 		"air_hockey":          true,
 		"space_attack":        true,
+		"roulette":            true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -157,6 +158,17 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 			gameState.GameData[k] = v
 		}
 		gameState.GameSession.GameState = gameState.GameData
+	case "roulette":
+		// Chips seeded lazily on first move; just set opening state here.
+		gameState.GameData["phase"] = "betting"
+		gameState.GameData["round"] = 1
+		gameState.GameData["result"] = -1
+		gameState.GameData["result_color"] = ""
+		gameState.GameData["bets"] = map[string]interface{}{}
+		gameState.GameData["chips"] = map[string]interface{}{}
+		gameState.GameData["payouts"] = map[string]interface{}{}
+		gameState.GameData["history"] = []interface{}{}
+		gameState.GameSession.GameState = gameState.GameData
 	}
 
 	gm.activeGames[gameSession.ID] = gameState
@@ -195,6 +207,7 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"sudoku":                true, // all players solve same puzzle in parallel
 		"ping_pong":             true, // internal phase validation restricts who acts
 		"air_hockey":            true, // internal phase validation restricts who acts
+		"roulette":              true, // all players bet freely; host-only spin/end enforced inside processRouletteMove
 	}
 	if !simultaneousGames[gameState.GameSession.GameType] {
 		currentPlayer := gameState.Players[gameState.CurrentTurn]
@@ -287,6 +300,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 	case "space_attack":
 		// Arcade iframe — no server-side move logic needed
 		gameOver, winnerID, err = false, nil, nil
+	case "roulette":
+		gameOver, winnerID, err = gm.processRouletteMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}

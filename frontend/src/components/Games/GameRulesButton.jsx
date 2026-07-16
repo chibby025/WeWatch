@@ -158,6 +158,18 @@ const RULES = {
       'Letters turn 🟢 green (correct) or 🔴 red (wrong) so you can see what has already been tried.',
     ],
   },
+  roulette: {
+    title: 'Roulette',
+    rules: [
+      'Everyone starts with 1,000 chips. The host spins when ready.',
+      'Before the spin, choose a bet amount (50 / 100 / 250 / 500) and a bet type.',
+      'Red / Black / Odd / Even pay 1:1 — double your bet if you win.',
+      'A specific number (0–36) pays 35:1 — big risk, big reward!',
+      'Landing on 0 (green) loses all colour and odd/even bets.',
+      'You can place multiple bets per spin. Chips are held until the result.',
+      'The player with the most chips when the host ends the game wins!',
+    ],
+  },
   would_you_rather: {
     title: 'Would You Rather',
     rules: [

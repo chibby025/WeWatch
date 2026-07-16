@@ -29,6 +29,7 @@ const VSBattleGame = lazy(() => import('./VsBattleGame'));
 const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
 const PenaltyGame = lazy(() => import('./PenaltyGame'));
 const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
+const RouletteGame = lazy(() => import('./RouletteGame'));
 
 import HangmanGame from './HangmanGame';
 import GlassBridgeGame from './GlassBridgeGame';
@@ -466,6 +467,20 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             onClose={onClose}
             onEndGame={onEndGame}
             isHost={activeGame.host_id === currentUserId}
+          />
+        </Suspense>
+      );
+
+    case 'roulette':
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-gray-950" />}>
+          <RouletteGame
+            gameState={activeGame}
+            players={activeGame.players}
+            currentUserId={currentUserId}
+            onMove={handleMove}
+            onClose={onClose}
+            onEndGame={onEndGame}
           />
         </Suspense>
       );
