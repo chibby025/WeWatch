@@ -20,6 +20,8 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   layout = 'screen-share', // 'solo-view' | 'screen-share' | 'split-view'
   subtitleUrl = null, // Blob URL to a VTT subtitle track (set by host via WS)
   ducked = false,     // When true, VolumeControl smoothly reduces movie audio (mic active)
+  hlsStartPosition = 0,  // For late-joiners: hls.js startPosition so they don't start from 0
+  onFragChanged = null,   // (sn: number) => void — fires on every segment boundary for drift correction
 }, ref) {
   const videoRef = useRef(null);
   const cameraVideoRef = useRef(null); // 📹 Separate ref for PIP camera
@@ -40,6 +42,8 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
   const onEndedRef = useRef(onEnded);
   useEffect(() => { onEndedRef.current = onEnded; }, [onEnded]);
+  const onFragChangedRef = useRef(onFragChanged);
+  useEffect(() => { onFragChangedRef.current = onFragChanged; }, [onFragChanged]);
 
   // 🔑 Expose the actual <video> DOM element to parent
   useImperativeHandle(ref, () => videoRef.current, []);
@@ -309,7 +313,7 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         // flat fragLoadingMaxRetry/fragLoadingRetryDelay keys this hls.js version marks
         // @deprecated in favor of this.
         const hls = new Hls({
-          startPosition: 0,
+          startPosition: hlsStartPosition,
           maxBufferLength: 300,
           maxBufferSize: 300 * 1000 * 1000,
           fragLoadPolicy: {
@@ -334,6 +338,11 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         // and hls.js keeps retrying, or because a tiny duration mismatch prevents
         // video.currentTime from ever reaching video.duration exactly. Fix: give the
         // native 'ended' event 2s to fire on its own, then call onEnded directly.
+        // Fire segment-boundary notification so VideoWatch can apply rate nudge or
+        // segment jump instead of seeking mid-segment (which causes re-buffering).
+        hls.on(Hls.Events.FRAG_CHANGED, (_event, data) => {
+          onFragChangedRef.current?.(data.frag.sn);
+        });
         hls.on(Hls.Events.BUFFER_EOS, () => {
           if (video.ended) return; // already handled by native event
           const eosTimer = setTimeout(() => {

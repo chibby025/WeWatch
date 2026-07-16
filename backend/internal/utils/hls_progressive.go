@@ -24,10 +24,13 @@ const (
 	modeComplete    progressiveMode = "complete"
 )
 
-// hlsSegmentSeconds is the -hls_time value commitProgressiveMode passes to ffmpeg.
-// Shared with GeneratePreviewMP4FromHLSSegmentsAtPosition so a playback-time-in-seconds
+// HlsSegmentSeconds is the -hls_time value commitProgressiveMode passes to ffmpeg.
+// Exported so websocket.go can compute current_segment_index for late-joiner positioning,
+// and shared with GeneratePreviewMP4FromHLSSegmentsAtPosition so a playback-time-in-seconds
 // can be mapped to a segment index without duplicating the literal in two places.
-const hlsSegmentSeconds = 6
+// Reduced from 6 to 2: max organic drift drops from 6s to 2s, and late-joiner segment
+// positioning becomes accurate to within 2s instead of 6s.
+const HlsSegmentSeconds = 2
 
 // ProgressiveUploadState tracks one in-flight chunked upload's progressive-HLS lifecycle.
 type ProgressiveUploadState struct {
@@ -605,7 +608,7 @@ func commitProgressiveMode(uploadID string, state *ProgressiveUploadState, video
 	ffmpegArgs = append(ffmpegArgs,
 		"-sn", // drop subtitle streams — see hls.go's SegmentToHLS for why
 		"-f", "hls",
-		"-hls_time", fmt.Sprintf("%d", hlsSegmentSeconds),
+		"-hls_time", fmt.Sprintf("%d", HlsSegmentSeconds),
 		"-hls_list_size", "0",
 		// append_list intentionally omitted: -hls_list_size 0 already keeps all segments in the
 		// manifest, and append_list adds a spurious #EXT-X-DISCONTINUITY before the first segment
@@ -1037,7 +1040,7 @@ func GeneratePreviewMP4FromHLSSegments(segmentDir, outputPath string, maxSegment
 // every 30s by VideoWatch.jsx's periodic playback_control "seek" heartbeat — the same
 // field the flat-file preview path already uses for this exact purpose.
 func GeneratePreviewMP4FromHLSSegmentsAtPosition(segmentDir, outputPath string, maxSegments, positionSeconds int) error {
-	return generatePreviewMP4FromSegmentWindow(segmentDir, outputPath, maxSegments, false, positionSeconds/hlsSegmentSeconds)
+	return generatePreviewMP4FromSegmentWindow(segmentDir, outputPath, maxSegments, false, positionSeconds/HlsSegmentSeconds)
 }
 
 // generatePreviewMP4FromSegmentWindow is the shared implementation behind both exported

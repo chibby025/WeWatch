@@ -683,6 +683,9 @@ export default function VideoWatch() {
   const isBufferingRef = useRef(false);           // true while video.waiting; pauses drift corrections
   const lastHostPosRef = useRef(null);            // { expected, timestamp } — updated on each sync_heartbeat
   const [behindSeconds, setBehindSeconds] = useState(0); // > 0 shows "skip to live" banner
+  // Segment-boundary HLS sync (device-stream / progressive upload)
+  const [hlsStartPosition, setHlsStartPosition] = useState(0); // for late-joiner segment-index positioning
+  const currentMemberFragRef = useRef(-1);        // last segment number seen by FRAG_CHANGED
   // Central helper for all member map mutations. Must be declared before any useEffect that calls it.
   // 'add'     → payload is a normalised member object {id, username, avatar_url, user_role}
   // 'remove'  → payload is a userId (number)
@@ -1180,6 +1183,14 @@ export default function VideoWatch() {
       if (ageMs >= 0 && ageMs < 120000) {
         estimatedTime = savedTime + ageMs / 1000;
       }
+    }
+
+    // For HLS streams: position hls.js startPosition at (segmentIndex-1)*2 so the late joiner
+    // loads one segment behind the host's known position rather than always starting from 0
+    // and catching up via sync corrections. Non-HLS URLs are unaffected (startPosition=0).
+    if (url.endsWith('.m3u8') && sessionStatus.currentSegmentIndex > 0) {
+      const startSeg = Math.max(0, sessionStatus.currentSegmentIndex - 1);
+      setHlsStartPosition(startSeg * 2); // 2 = HlsSegmentSeconds on the server
     }
 
     setCurrentMedia({
@@ -2578,6 +2589,40 @@ export default function VideoWatch() {
       sendMessage({ type: 'document_control', command: 'close', timestamp: Date.now() });
     }
   }, [isHost, isConnected, sendMessage]);
+
+  // Fired by CinemaVideoPlayer on every HLS segment boundary (FRAG_CHANGED event).
+  // Applies rate-based catchup or a single clean segment jump rather than seeking
+  // mid-segment, which would cause re-buffering and the self-sustaining drift loop.
+  const handleFragChanged = React.useCallback((sn) => {
+    currentMemberFragRef.current = sn;
+    // Reset the late-joiner start position once the first segment has loaded — it was
+    // consumed by hls.js at init time and is no longer meaningful.
+    if (hlsStartPosition !== 0) setHlsStartPosition(0);
+
+    if (isHost) return;
+    const videoEl = videoPlayerRef.current;
+    if (!videoEl || videoEl.paused) return;
+    if (!lastHostPosRef.current) return;
+
+    const elapsed = (Date.now() - lastHostPosRef.current.timestamp) / 1000;
+    const hostPos = lastHostPosRef.current.expected + elapsed;
+    const hostSeg = Math.floor(hostPos / 2); // matches HlsSegmentSeconds=2 on the server
+    const gap = hostSeg - sn;
+
+    if (gap <= 1) {
+      // On track (or 1 segment behind, which is the desired buffer cushion)
+      if (videoEl.playbackRate !== 1.0) videoEl.playbackRate = 1.0;
+    } else if (gap <= 3) {
+      // 2-3 segments behind: gentle 5% rate nudge — imperceptible, no re-buffering
+      videoEl.playbackRate = 1.05;
+    } else if (gap < 30) {
+      // Significantly behind: single clean segment jump to 1 segment behind host
+      const targetTime = Math.max(0, (hostSeg - 1) * 2);
+      videoEl.currentTime = targetTime;
+      videoEl.playbackRate = 1.0;
+      console.log(`⏭️ [FragSync] Jumped from seg ${sn} to ${hostSeg - 1} (host at seg ${hostSeg})`);
+    }
+  }, [isHost, hlsStartPosition]);
 
   const handleSkipToLive = useCallback(() => {
     if (!lastHostPosRef.current) return;
@@ -4143,8 +4188,17 @@ export default function VideoWatch() {
             // Skip correction while buffering — seeking destroys what little buffer exists.
             if (isBufferingRef.current) break;
             if (_drift > 0.5 && _drift < 30) {
-              console.log(`🔄 [Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
-              _videoEl.currentTime = _expected;
+              const _isHls = currentMedia?.mediaUrl?.endsWith('.m3u8');
+              if (_isHls) {
+                // HLS: correction is driven by FRAG_CHANGED → handleFragChanged (rate nudge or
+                // segment jump at natural boundaries). Seeking here mid-segment re-buffers the
+                // video, causing the self-sustaining 2.5s correction loop described in CLAUDE.md.
+                // Just update lastHostPosRef (already done above) so handleFragChanged always
+                // has fresh host position data — no currentTime assignment here.
+              } else {
+                console.log(`🔄 [Sync] Correcting ${_drift.toFixed(2)}s drift → ${_expected.toFixed(2)}s`);
+                _videoEl.currentTime = _expected;
+              }
             }
           }
           break;
@@ -4724,16 +4778,17 @@ export default function VideoWatch() {
               newCommand: message.command
             });
 
-            if (!isSameMedia || isPlaying !== (message.command === "play")) {
-              // ✅ Construct full URL for uploaded media
+            const now = Date.now();
+            // Always use message.timestamp (host browser Date.now()) — server_ts has
+            // WSL clock skew of ~700ms which makes latency negative and breaks adjustedTime.
+            const latency = Math.max(0, now - message.timestamp);
+            const adjustedTime = message.seek_time + (latency / 1000);
+
+            if (!isSameMedia) {
+              // Different media — full reload via setCurrentMedia (triggers CinemaVideoPlayer re-init)
               const fileUrl = message.file_url || message.file_path;
               const mediaUrl = resolveMediaUrl(fileUrl);
-
-              console.log('✅ [VideoWatch] MEMBER loading media:', {
-                mediaUrl,
-                original_name: message.original_name
-              });
-
+              console.log('✅ [VideoWatch] MEMBER loading new media:', { mediaUrl, original_name: message.original_name });
               setCurrentMedia({
                 ID: message.media_item_id,
                 type: 'upload',
@@ -4741,7 +4796,6 @@ export default function VideoWatch() {
                 mediaUrl: mediaUrl,
                 original_name: message.original_name || 'Unknown Media',
               });
-
               // Stall watchdog: if video hasn't fired 'playing' within 9s, surface the reconnect button
               if (message.command === "play") {
                 setVideoStalled(false);
@@ -4751,30 +4805,29 @@ export default function VideoWatch() {
                   if (v && v.paused) setVideoStalled(true);
                 }, 9000);
               }
-
-              const now = Date.now();
-              // Always use message.timestamp (host browser Date.now()) — server_ts has
-              // WSL clock skew of ~700ms which makes latency negative and breaks adjustedTime.
-              const latency = Math.max(0, now - message.timestamp);
-              const adjustedTime = message.seek_time + (latency / 1000);
-              console.log('⏱️ [VideoWatch] Latency compensation:', {
-                latency_ms: latency,
-                seek_time: message.seek_time,
-                adjusted_time: adjustedTime,
-                command: message.command,
-                current_isPlaying: isPlaying,
-                will_change_playState: message.command === "play" || message.command === "pause"
-              });
-              setPendingSeekTime(adjustedTime); // ✅ Use state instead of ref
-
-              // 🎯 FIX: Only update play/pause for explicit play/pause commands, not seek-only
+              setPendingSeekTime(adjustedTime);
               if (message.command === "play" || message.command === "pause") {
                 setIsPlaying(message.command === "play");
-                console.log(`🎬 [VideoWatch] ${message.command === "play" ? "Playing" : "Pausing"} video from playback_control`);
               }
-              // For "seek" commands, maintain current play state
             } else {
-              console.log('⏭️ [VideoWatch] Skipping - same media and state');
+              // Same media — never call setCurrentMedia (avoids HLS teardown/reload = the glitch).
+              // For HLS streams FRAG_CHANGED handles segment-boundary corrections; for seek/play
+              // commands we still apply the position directly but skip the full reload.
+              if (message.command === "play" || message.command === "pause") {
+                setIsPlaying(message.command === "play");
+              }
+              const videoEl = videoPlayerRef.current;
+              if (videoEl && (message.command === "seek" || message.command === "play")) {
+                const drift = Math.abs(videoEl.currentTime - adjustedTime);
+                if (drift > 2.0) {
+                  // Only hard-seek if meaningfully off — sub-2s differences are closed
+                  // by the FRAG_CHANGED rate nudge without causing re-buffering.
+                  videoEl.currentTime = adjustedTime;
+                }
+              }
+              console.log('⏭️ [VideoWatch] Same media — direct op (no reload):', {
+                command: message.command, adjustedTime: adjustedTime.toFixed(2)
+              });
             }
           } else {
             console.warn('⚠️ [VideoWatch] playback_control missing file_path and media_url!');
@@ -6959,6 +7012,8 @@ export default function VideoWatch() {
                       onTimeUpdate={handleTimeUpdate}
                       subtitleUrl={subtitleUrl}
                       ducked={isAudioActive}
+                      hlsStartPosition={hlsStartPosition}
+                      onFragChanged={handleFragChanged}
                     />
                   )}
                 </div>

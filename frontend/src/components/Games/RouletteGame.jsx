@@ -273,8 +273,9 @@ export default function RouletteGame({ gameState, players, currentUserId, onMove
 
   const endGame = useCallback(() => {
     onMove({ move_type: 'roulette_end' });
-    setTimeout(() => { onEndGame?.(); onClose?.(); }, 400);
-  }, [onMove, onEndGame, onClose]);
+    // Don't call onEndGame/onClose here — the backend broadcasts game_ended which
+    // updates gameState.game_state.phase to 'ended', rendering the Game Over screen.
+  }, [onMove]);
 
   // ── Summary stats for Game Over screen ─────────────────────────────────────
   const sortedPlayers = [...(players || [])].sort((a, b) => {
@@ -304,7 +305,11 @@ export default function RouletteGame({ gameState, players, currentUserId, onMove
               End Game
             </button>
           )}
-          <button onClick={onClose} className="px-3 py-1 text-xs bg-white/20 hover:bg-white/30 rounded-lg">✕</button>
+          <button
+            onClick={phase === 'ended' ? onClose : (isHostUser ? endGame : onClose)}
+            title={phase !== 'ended' && isHostUser ? 'End game for everyone' : 'Close'}
+            className="px-3 py-1 text-xs bg-white/20 hover:bg-white/30 rounded-lg"
+          >✕</button>
         </div>
       </div>
 

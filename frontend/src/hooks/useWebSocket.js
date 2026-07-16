@@ -403,6 +403,7 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
               posterUrl: data.poster_url || null,
               currentPlaybackTime: data.current_playback_time || 0,
               playbackTimeUpdatedAt: data.playback_time_updated_at || null,
+              currentSegmentIndex: data.current_segment_index || 0,
               currentDocUrl: data.current_doc_url || null,
               currentDocType: data.current_doc_type || null,
               currentDocPage: data.current_doc_page || 1,

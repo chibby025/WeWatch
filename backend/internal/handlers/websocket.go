@@ -917,6 +917,11 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                 "current_media_type":       session.CurrentMediaType,
                 "current_playback_time":    joinPlaybackTime,
                 "playback_time_updated_at": joinPlaybackUpdatedAt,
+                // current_segment_index: which HLS segment the host is on, so a late-joiner
+                // can pass hls.startPosition = (index-1)*2 and land 1 segment behind host
+                // rather than starting from 0 and catching up via sync corrections.
+                // Matches utils.HlsSegmentSeconds=2 — update both if the segment duration changes.
+                "current_segment_index":    int(joinPlaybackTime / 2),
                 "current_doc_url":          joinDocURL,
                 "current_doc_type":         joinDocType,
                 "current_doc_page":         joinDocPage,

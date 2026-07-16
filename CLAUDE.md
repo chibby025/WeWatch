@@ -1203,6 +1203,70 @@ User asked two forward-looking questions before more real testing: (1) does the 
 
 Media-switch fix: LiveKit isn't available in this dev environment, so `handleStartLiveShare`'s real UI button can't be exercised (it returns early on the `!localParticipant || !room` guard before ever reaching the new code) — verified instead by sending the *exact* `update_media_state` payload the new code constructs over a raw WebSocket connection to a session whose ticker had been confirmed actively firing every ~60-65s for 18+ minutes straight (item 468, "Stream preview refreshed" recurring on schedule). Backend log confirmed, in order: message received verbatim, `Type change detected: upload → liveshare`, `Clearing old upload preview`, session `switched to liveshare`, lobby broadcast sent. The next naturally-due tick (~65s after the prior one, which would have landed *after* this message was processed) never fired, and none fired in the 75 seconds watched afterward — confirming the ticker was genuinely stopped, not just coincidentally delayed.
 
+### HLS progressive-upload sync — glitch eliminated, drift reduced to 1-2s (fixed 2026-07-16)
+
+Users complained of repeated play/pause glitches during "Browse Files" / device-stream sessions under decent network. Firefox late-joiners saw "failed to play video" then an unusable "skip to live" button. Root-caused to three compounding bugs confirmed via log analysis and direct code reading — all fixed in this session.
+
+**Bug 1 (primary — full HLS reload every 30s):** `VideoWatch.jsx`'s `playback_control` switch case at the "regular file path" branch had the condition `!isSameMedia || isPlaying !== (message.command === "play")`. For `command:"seek"` + `isSameMedia:true` + `isPlaying:true`, this evaluates `true !== false` = true — calling `setCurrentMedia(...)` (full hls.js teardown and reload) every time the host's 30s periodic `playback_control seek` heartbeat arrived. Confirmed by two log lines 30s apart both showing `✅ MEMBER loading media` despite `isSameMedia:true`. Fixed by splitting the condition: `!isSameMedia` triggers full reload; `isSameMedia` handles play/pause/seek directly on `videoEl.currentTime` without reloading, with a 2s drift guard to avoid re-buffering for sub-2s differences.
+
+**Bug 2 (self-sustaining correction loop):** `sync_heartbeat` fires every **2500ms** (line ~5821) with `_drift > 0.5` threshold triggering `_videoEl.currentTime = _expected`. On HLS, any `currentTime` assignment causes re-buffering (~0.5-1s). During buffering the member is frozen while the host advances. By the next 2.5s heartbeat the drift is >0.5s again → correction fires again → permanent loop. Member could never be in sync; "skip to live" had the same problem (Bug 1 undid the seek 30s later). Fixed by skipping the `currentTime` assignment for HLS streams entirely in `sync_heartbeat` — HLS correction is now driven only by `FRAG_CHANGED` events (see below).
+
+**Bug 3 (skip to live ineffective):** Was a downstream consequence of Bugs 1+2 — the skip itself was correct but Bug 1's next 30s reload undid it, and Bug 2's correction loop fought any position change.
+
+**Segment-boundary sync (replaces continuous correction for HLS):**
+- New `handleFragChanged(sn)` callback in `VideoWatch.jsx`, fires on `Hls.Events.FRAG_CHANGED` from `CinemaVideoPlayer.jsx`.
+- Computes `hostSeg = Math.floor(hostPos / 2)` from `lastHostPosRef` (kept fresh by `sync_heartbeat`).
+- `gap ≤ 1` → reset rate to 1.0 (on track); `gap 2-3` → `playbackRate = 1.05` (imperceptible 5% catchup); `gap ≥ 4` → single clean segment jump to `hostSeg - 1` (1 segment behind host for buffer).
+- Corrections only happen at natural segment boundaries — never mid-segment, so no re-buffering.
+
+**Segment duration halved (6s → 2s):** `HlsSegmentSeconds` constant in `backend/internal/utils/hls_progressive.go` reduced from 6 to 2 (also exported, was lowercase). Max organic drift drops from 6s to 2s. Segment-index math in `websocket.go` (`current_segment_index = int(joinPlaybackTime / 2)`) and `handleFragChanged`'s `Math.floor(hostPos / 2)` both match.
+
+**Late-joiner segment positioning:** `session_status` WS payload now includes `current_segment_index: int(joinPlaybackTime / 2)`. The late-join restoration effect in `VideoWatch.jsx` sets `hlsStartPosition = (segmentIndex - 1) * 2` before calling `setCurrentMedia`, so `CinemaVideoPlayer` passes it to `new Hls({ startPosition: hlsStartPosition })` — the late joiner starts 1 segment behind the host's known position instead of from 0. `handleFragChanged` resets `hlsStartPosition` to 0 after the first segment loads (it was consumed by hls.js at init time).
+
+**Files changed:**
+- `backend/internal/utils/hls_progressive.go`: `hlsSegmentSeconds = 6` → `HlsSegmentSeconds = 2` (exported, 3 internal uses updated)
+- `backend/internal/handlers/websocket.go`: added `"current_segment_index": int(joinPlaybackTime / 2)` to `session_status` payload
+- `frontend/src/components/cinema/ui/CinemaVideoPlayer.jsx`: new `hlsStartPosition`/`onFragChanged` props; shadow ref `onFragChangedRef` for the callback; `startPosition: hlsStartPosition` in `new Hls()`; `FRAG_CHANGED` listener wired via `onFragChangedRef`
+- `frontend/src/components/cinema/VideoWatch.jsx`: `hlsStartPosition` state + `currentMemberFragRef`; Bug 1 fix (same/different media split); Bug 2 fix (HLS skips `currentTime` in `sync_heartbeat`); new `handleFragChanged`; late-join uses `setHlsStartPosition`; `<CinemaVideoPlayer>` receives both new props
+
+### Browse Files & WebSocket pipeline — review findings (2026-07-16)
+
+**tl;dr — the pipeline is solid and late-joiner support is correctly wired.** No structural fixes needed; this is a record of what was confirmed, plus the Google Drive assessment.
+
+**Core upload flow** (`LeftSidebar.jsx` + `useMediaUploadManager.js` — all the Phase 10-18 fixes are in place):
+- `pendingAutoPlayRef` set before picker opens; `wasUploadingRef` idempotency guard (`currentMedia?.ID !== latestId`) prevents redundant reload when upload completes (Phase 10/11).
+- Progress bar hides early on `isUploadReady` — background chunk transfer continues, bar clears the moment `device_stream_ready` arrives (Phase 11).
+- `isPreparing` spinner covers the client-capture window so the UI isn't silent before chunks start (Phase 10).
+- Token expiry: `uploadChunk` uses `apiClient` with the auto-refresh interceptor — silently refreshes an expired JWT and retries, never fails outright (Phase 16).
+- `device_stream_ready` message-loss race: `clearMessages` uses functional-updater slice, not `setMessages([])` direct reset (Phase 17).
+- Redundant reload on upload finish: `CinemaVideoPlayer` depends on specific fields (`mediaUrl`, `type`, `stream`, `cameraStream`), not the whole `mediaItem` object by reference (Phase 18).
+
+**Late-joiner support for device streams** (`websocket.go` + `VideoWatch.jsx`):
+- `session_status` (sent by `JoinWatchSession` directly into `client.send` before the client registers in `hub.rooms`) includes `current_media_url` — populated by `startSessionPreviewRefresh` (Phase 15) for both progressive and fallback HLS uploads.
+- Phase 19 fixed the critical gap: relative paths like `/uploads/hls/...` were resolved against the *frontend* origin (guaranteed 404 on Vercel) instead of the backend. `resolveMediaUrl()` handles this at all 5 call sites in `VideoWatch.jsx`.
+- Late-join effect seeks to estimated position via `pendingSeekTime`; hls.js selects the right segment — works correctly.
+- Known inherent limit: if the late joiner seeks beyond segments not yet generated (still-uploading progressive stream), hls.js stalls until the segment arrives — not a bug, expected streaming behaviour.
+
+**Debug logging note**: `JoinWatchSession` in `websocket.go` has extensive `🔍`-prefixed debug logging (full member list dumps on every join). Safe for dev, noisy in production — consider gating on an env var before shipping.
+
+**Google Drive as a browse source:**
+- **URL-paste path already works today.** `validateStreamUrl` in `LeftSidebar.jsx` includes `drive.google.com` in `embedPlatforms`. Pasting a Drive share URL calls `POST /api/rooms/:id/media/stream`, creates a `TemporaryMediaItem` with `is_embed: true, embed_platform: 'google_drive'`, and the playlist renders the GDrive logo icon + "Google Drive" label (lines ~1495-1524 of `LeftSidebar.jsx`). Members load the file independently from Drive (no server relay, no upload cost) — this already solves the "avoid bad-network upload" goal for the host.
+- **File picker (avoid manually copying the share URL) is a UX nicety, not a capability gap.** Implementation: Google Picker API (`gapi.load('picker')` + `PickerBuilder` popup), one new env var `VITE_GOOGLE_PICKER_API_KEY`, `drive.readonly` OAuth scope added. Zero backend changes — the selected file's shareable URL feeds into the existing `handleStreamFromUrl` path. Estimated effort: ~2-3 hours.
+- **Hard architectural limit that persists regardless of picker**: Google Drive video URLs don't yield a raw stream hls.js or `<video>` can decode. The embed always uses Drive's own player in an iframe — Drive handles streaming internally. This means Drive files always go through the `is_embed: true` iframe path, no seek/sync via `playback_control`. A file picker doesn't change this.
+- **Recommendation**: implement the picker when there's real user friction around "find the file → copy share link → paste." Not before then.
+
+### Roulette — End Game and winner banner fix (2026-07-16)
+
+User reported "End Game" did nothing and the winner banner never appeared.
+
+**Root cause**: `endGame` in `RouletteGame.jsx` called `onMove({ move_type: 'roulette_end' })` then immediately scheduled `setTimeout(() => { onEndGame?.(); onClose?.(); }, 400)`. The overlay closed 400ms after the move was sent — before the backend's `game_ended` WS broadcast (which sets `phase: 'ended'` and `winner_id` on `activeGame` in `VideoWatch.jsx`) could arrive. The Game Over screen (gated on `phase === 'ended'`, lines 312-370 of `RouletteGame.jsx`) never had a chance to render.
+
+**Fix**: removed the `setTimeout`/`onEndGame`/`onClose` calls from `endGame`. The WS flow now drives the transition: `roulette_end` move → backend `processRouletteMove` sets `phase: 'ended'`, returns `gameOver: true` → `endGameLocked` → `game_ended` broadcast → `VideoWatch.jsx` updates `activeGame` → `phase === 'ended'` → Game Over screen renders → user clicks "Close".
+
+**Header ✕ button** was also always calling `onClose` regardless of role or phase. Changed to: `phase === 'ended'` → `onClose` (just dismisses the finished screen); active game + host → `endGame` (ends for everyone); active game + non-host → `onClose` (leaves locally, host's game continues). Mirrors `TriviaGame.jsx`'s established pattern.
+
+**Backend** (`roulette.go`): `roulette_end` case (lines 279-305) already correctly computed the winner by max chips with tie detection and returned `gameOver: true` — no backend changes needed.
+
 ## Follow Model
 
 ### Known issue — orphaned `TemporaryMediaItem` rows from manual disk cleanup during testing (found 2026-06-22)
