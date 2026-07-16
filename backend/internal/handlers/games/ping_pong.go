@@ -6,185 +6,133 @@ import (
 	"wewatch-backend/internal/models"
 )
 
-// Ping Pong — turn-based tactical pong.
-//
-// Zones: the court is divided into 9 aim zones (3×3 grid), and 3 block zones
-// (left / center / right thirds). A block zone covers 3 aim columns.
-//
-// Flow:
-//   Phase "attacking": the attacker picks an aim zone (row 0-2, col 0-2).
-//     → stored as hidden_shot; phase changes to "defending".
-//   Phase "defending": the defender picks a block zone ("left"|"center"|"right").
-//     → reveal both; block covers aim columns [0,1,2]/[0,1,2]/[3,4,5]/[6,7,8] — wait,
-//       left = cols 0-2, center = cols 3-5, right = cols 6-8 of a 9-col grid.
-//       Actually: left = cols 0-2, center = cols 3-5, right = cols 6-8 (mapped to 9 zones).
-//     → if defended: score +0 for attacker; if not: score +1.
-//     → swap attacker/defender, reset to "attacking".
-//
-// Win: first to 7 points (or host sends "end_game" for a mid-match exit).
-// Players: exactly 2. Player 0 attacks first.
+// Shared canvas logical dimensions — must match frontend constants.
+const rtW = 400.0
+const rtH = 600.0
 
-const pingPongWinScore = 7
-
-// Zone mapping: aim_col 0-2 → left, 3-5 → center, 6-8 → right
-// We encode aim zones as a single 0-8 index (row*3 + col in a 3×3 grid)
-// but for blocking we only care about the column.
-
+// pingPongInitialState seeds ball, paddle positions, scores, and phase.
 func pingPongInitialState(players []models.Player) map[string]interface{} {
-	scores := map[string]interface{}{}
-	for _, p := range players {
-		scores[fmt.Sprintf("%d", p.UserID)] = 0
-	}
-	attackerID := uint(0)
-	defenderID := uint(0)
-	if len(players) >= 1 {
-		attackerID = players[0].UserID
-	}
-	if len(players) >= 2 {
-		defenderID = players[1].UserID
-	}
+	p1ID := fmt.Sprintf("%d", players[0].UserID)
+	p2ID := fmt.Sprintf("%d", players[1].UserID)
 	return map[string]interface{}{
-		"phase":       "attacking",
-		"attacker_id": fmt.Sprintf("%d", attackerID),
-		"defender_id": fmt.Sprintf("%d", defenderID),
-		"scores":      scores,
-		"hidden_shot": nil, // set during defending phase, stripped from broadcast
-		"last_shot":   nil, // revealed after each exchange
-		"last_block":  nil,
-		"last_result": "",  // "scored" | "blocked"
-		"rally":       0,
-		"win_score":   pingPongWinScore,
-	}
-}
-
-// pingPongPublicState strips hidden_shot during the defending phase.
-func pingPongPublicState(data map[string]interface{}) map[string]interface{} {
-	out := make(map[string]interface{}, len(data))
-	for k, v := range data {
-		out[k] = v
-	}
-	phase, _ := data["phase"].(string)
-	if phase == "defending" {
-		delete(out, "hidden_shot")
-	}
-	return out
-}
-
-func ensurePingPongState(gameState *GameSessionState) {
-	if gameState.GameData["phase"] == nil {
-		for k, v := range pingPongInitialState(gameState.Players) {
-			gameState.GameData[k] = v
-		}
+		"p1_id":     p1ID,
+		"p2_id":     p2ID,
+		"ball_x":    rtW / 2,
+		"ball_y":    rtH / 2,
+		"ball_vx":   50.0,
+		"ball_vy":   260.0,
+		"p1x":       rtW / 2,
+		"p2x":       rtW / 2,
+		"scores":    map[string]interface{}{p1ID: 0, p2ID: 0},
+		"rally":     0,
+		"phase":     "playing",
+		"win_score": 7,
+		"no_walls":  false,
 	}
 }
 
 func (gm *GameManager) processPingPongMove(gameState *GameSessionState, playerID uint, moveData map[string]interface{}) (bool, *uint, error) {
-	ensurePingPongState(gameState)
-
-	phase, _ := gameState.GameData["phase"].(string)
-	attackerID, _ := gameState.GameData["attacker_id"].(string)
-	defenderID, _ := gameState.GameData["defender_id"].(string)
-	playerKey := fmt.Sprintf("%d", playerID)
-
-	switch phase {
-	case "attacking":
-		if playerKey != attackerID {
-			return false, nil, fmt.Errorf("it's not your turn to attack")
+	moveType, _ := moveData["move_type"].(string)
+	switch moveType {
+	case "state_sync":
+		// Real-time relay from P1 (physics authority). In-memory only; no DB write (volatile).
+		if v, ok := ppFloat(moveData["ball_x"]); ok {
+			gameState.GameData["ball_x"] = v
 		}
-		// Expect move_data.zone: 0-8
-		zoneRaw, ok := moveData["zone"]
-		if !ok {
-			return false, nil, fmt.Errorf("missing zone (0-8)")
+		if v, ok := ppFloat(moveData["ball_y"]); ok {
+			gameState.GameData["ball_y"] = v
 		}
-		zone := ppInt(zoneRaw)
-		if zone < 0 || zone > 8 {
-			return false, nil, fmt.Errorf("zone must be 0-8")
+		if v, ok := ppFloat(moveData["ball_vx"]); ok {
+			gameState.GameData["ball_vx"] = v
 		}
-		gameState.GameData["hidden_shot"] = zone
-		gameState.GameData["phase"] = "defending"
-		// Cancel auto-advance — same "exchange" isn't done yet
-		gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
+		if v, ok := ppFloat(moveData["ball_vy"]); ok {
+			gameState.GameData["ball_vy"] = v
+		}
+		if v, ok := ppFloat(moveData["p1x"]); ok {
+			gameState.GameData["p1x"] = v
+		}
 		return false, nil, nil
 
-	case "defending":
-		if playerKey != defenderID {
-			return false, nil, fmt.Errorf("it's not your turn to defend")
+	case "paddle_move":
+		// P2 sends their paddle X. Relay to everyone. No DB write (volatile).
+		if v, ok := ppFloat(moveData["p2x"]); ok {
+			gameState.GameData["p2x"] = v
 		}
-		// Expect move_data.block: "left"|"center"|"right"
-		block, _ := moveData["block"].(string)
-		if block != "left" && block != "center" && block != "right" {
-			return false, nil, fmt.Errorf("block must be 'left', 'center', or 'right'")
-		}
-
-		shot := ppInt(gameState.GameData["hidden_shot"])
-		shotCol := shot % 3 // col 0,1,2 within the 3×3 aim grid
-
-		// Map block zones to aim columns:
-		// left → col 0, center → col 1, right → col 2
-		blocked := false
-		switch block {
-		case "left":
-			blocked = shotCol == 0
-		case "center":
-			blocked = shotCol == 1
-		case "right":
-			blocked = shotCol == 2
-		}
-
-		gameState.GameData["last_shot"] = shot
-		gameState.GameData["last_block"] = block
-
-		scores := ppScoreMap(gameState.GameData)
-		rally := ppInt(gameState.GameData["rally"]) + 1
-		gameState.GameData["rally"] = rally
-		winScore := ppInt(gameState.GameData["win_score"])
-
-		var result string
-		if !blocked {
-			scores[attackerID] = ppInt(scores[attackerID]) + 1
-			result = "scored"
-		} else {
-			result = "blocked"
-		}
-		gameState.GameData["scores"] = scores
-		gameState.GameData["last_result"] = result
-
-		// Check win
-		if ppInt(scores[attackerID]) >= winScore {
-			gameState.GameData["phase"] = "ended"
-			uid := ppParseUID(attackerID)
-			gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
-			return true, &uid, nil
-		}
-		if ppInt(scores[defenderID]) >= winScore {
-			gameState.GameData["phase"] = "ended"
-			uid := ppParseUID(defenderID)
-			gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
-			return true, &uid, nil
-		}
-
-		// Swap roles for next exchange
-		gameState.GameData["attacker_id"] = defenderID
-		gameState.GameData["defender_id"] = attackerID
-		gameState.GameData["phase"] = "attacking"
-		gameState.GameData["hidden_shot"] = nil
-
-		gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
 		return false, nil, nil
 
-	default:
-		return false, nil, fmt.Errorf("game is not in an active phase")
+	case "goal":
+		return rtGoalHandler(gameState, moveData, 7)
+
+	case "rt_end":
+		return rtEndHandler(gameState)
 	}
+
+	return false, nil, fmt.Errorf("unknown ping_pong move type: %s", moveType)
 }
 
-// --- helpers ---
+// rtGoalHandler is shared between ping_pong and air_hockey.
+// Increments the scorer's score, resets ball to center, checks win.
+func rtGoalHandler(gameState *GameSessionState, moveData map[string]interface{}, defaultWinScore int) (bool, *uint, error) {
+	scorerStr, _ := moveData["scorer_id"].(string)
+	if scorerStr == "" {
+		return false, nil, fmt.Errorf("goal missing scorer_id")
+	}
 
-func ppInt(v interface{}) int {
-	switch val := v.(type) {
-	case int:
-		return val
+	winScore := ppIntFrom(gameState.GameData["win_score"])
+	if winScore == 0 {
+		winScore = defaultWinScore
+	}
+
+	scores := ppScoreMap(gameState.GameData)
+	newScore := ppIntFrom(scores[scorerStr]) + 1
+	scores[scorerStr] = newScore
+	gameState.GameData["scores"] = scores
+	gameState.GameData["rally"] = ppIntFrom(gameState.GameData["rally"]) + 1
+
+	if newScore >= winScore {
+		gameState.GameData["phase"] = "ended"
+		for _, p := range gameState.Players {
+			if fmt.Sprintf("%d", p.UserID) == scorerStr {
+				uid := p.UserID
+				return true, &uid, nil
+			}
+		}
+		return true, nil, nil
+	}
+
+	// Reset ball/puck to center. Ball goes toward the scorer (they serve next).
+	p1ID, _ := gameState.GameData["p1_id"].(string)
+	gameState.GameData["ball_x"] = rtW / 2
+	gameState.GameData["ball_y"] = rtH / 2
+	gameState.GameData["ball_vx"] = 50.0
+	if scorerStr == p1ID {
+		gameState.GameData["ball_vy"] = -260.0 // scored → serve toward P1's side (upward)
+	} else {
+		gameState.GameData["ball_vy"] = 260.0 // P2 scored → serve downward toward P2's side
+	}
+	return false, nil, nil
+}
+
+// --- helpers (shared across real-time game files in this package) ---
+
+func ppFloat(v interface{}) (float64, bool) {
+	switch n := v.(type) {
 	case float64:
-		return int(val)
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+func ppIntFrom(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
 	}
 	return 0
 }
@@ -202,4 +150,47 @@ func ppParseUID(s string) uint {
 	var uid uint
 	fmt.Sscanf(s, "%d", &uid)
 	return uid
+}
+
+// ppInt kept for backward compatibility with any residual callers in this package.
+func ppInt(v interface{}) int { return ppIntFrom(v) }
+
+// pingPongPublicState returns the full game data — all state is public in this real-time game.
+func pingPongPublicState(data map[string]interface{}) map[string]interface{} { return data }
+
+// airHockeyPublicState returns the full game data — all state is public in this real-time game.
+func airHockeyPublicState(data map[string]interface{}) map[string]interface{} { return data }
+
+// rtEndHandler ends a real-time game immediately, determining the winner from current scores.
+// Idempotent: a second call while already ended is a no-op.
+func rtEndHandler(gameState *GameSessionState) (bool, *uint, error) {
+	if gameState.GameData["phase"] == "ended" {
+		return false, nil, nil
+	}
+
+	scores := ppScoreMap(gameState.GameData)
+
+	topScore := -1
+	var winnerUID *uint
+	tied := false
+
+	for _, p := range gameState.Players {
+		idStr := fmt.Sprintf("%d", p.UserID)
+		s := ppIntFrom(scores[idStr])
+		if s > topScore {
+			topScore = s
+			uid := p.UserID
+			winnerUID = &uid
+			tied = false
+		} else if topScore >= 0 && s == topScore {
+			tied = true
+			winnerUID = nil
+		}
+	}
+	if tied {
+		winnerUID = nil
+	}
+
+	gameState.GameData["phase"] = "ended"
+	return true, winnerUID, nil
 }

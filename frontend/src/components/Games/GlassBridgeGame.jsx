@@ -38,7 +38,7 @@ export default function GlassBridgeGame({ gameState, players, currentUserId, onM
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 text-white select-none">
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900 text-white select-none overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
         <div>
@@ -51,7 +51,7 @@ export default function GlassBridgeGame({ gameState, players, currentUserId, onM
         </div>
         <div className="flex gap-2">
           {onEndGame && (
-            <button onClick={onEndGame} className="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 rounded-lg">
+            <button onClick={() => { onEndGame?.(); onClose?.(); }} className="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 rounded-lg">
               End
             </button>
           )}
@@ -118,12 +118,28 @@ export default function GlassBridgeGame({ gameState, players, currentUserId, onM
         </div>
 
         {/* Game Over */}
-        {phase === 'ended' && (
+        {(phase === 'ended' || gameState?.status === 'forfeited' || gameState?.status === 'finished') && (
           <div className="text-center bg-purple-900/40 border border-purple-500 rounded-xl p-4 mb-4">
-            <p className="text-2xl mb-1">🏆</p>
-            <p className="text-purple-200 font-bold">
-              {(players || []).find(p => (positions[String(p.user_id)] ?? -1) === slots - 1)?.username || 'Someone'} crossed first!
-            </p>
+            {gameState?.status === 'forfeited' ? (
+              <>
+                <p className="text-2xl mb-1">{gameState?.winner_id === currentUserId ? '🏆' : '💀'}</p>
+                <p className="text-purple-200 font-bold">
+                  {gameState?.winner_id === currentUserId
+                    ? 'You win — opponent forfeited!'
+                    : 'You forfeited'}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-2xl mb-1">🏆</p>
+                <p className="text-purple-200 font-bold">
+                  {(players || []).find(p => (positions[String(p.user_id)] ?? -1) === slots - 1)?.username || 'Someone'} crossed first!
+                </p>
+              </>
+            )}
+            <button onClick={onClose} className="mt-3 px-5 py-1.5 bg-purple-700 hover:bg-purple-600 rounded-lg text-sm font-bold">
+              Close
+            </button>
           </div>
         )}
 

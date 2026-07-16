@@ -152,6 +152,11 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 			gameState.GameData[k] = v
 		}
 		gameState.GameSession.GameState = gameState.GameData
+	case "air_hockey":
+		for k, v := range airHockeyInitialState(players) {
+			gameState.GameData[k] = v
+		}
+		gameState.GameSession.GameState = gameState.GameData
 	}
 
 	gm.activeGames[gameSession.ID] = gameState
@@ -198,6 +203,12 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		}
 	}
 
+	// Real-time relay messages from ping_pong / air_hockey arrive at ~20-30 Hz.
+	// Skip DB writes for these volatile moves to avoid thousands of writes per minute.
+	volatileRT := map[string]bool{"state_sync": true, "paddle_move": true, "mallet_move": true}
+	isVolatile := volatileRT[moveType] &&
+		(gameState.GameSession.GameType == "ping_pong" || gameState.GameSession.GameType == "air_hockey")
+
 	gameMove := &models.GameMove{
 		GameSessionID: gameSessionID,
 		PlayerID:      playerID,
@@ -206,8 +217,10 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		CreatedAt:     time.Now(),
 	}
 
-	if err := gm.db.Create(gameMove).Error; err != nil {
-		return fmt.Errorf("failed to record move: %w", err)
+	if !isVolatile {
+		if err := gm.db.Create(gameMove).Error; err != nil {
+			return fmt.Errorf("failed to record move: %w", err)
+		}
 	}
 
 	var gameOver bool
@@ -282,9 +295,11 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		return err
 	}
 
-	gameState.GameSession.GameState = gameState.GameData
-	if err := gm.db.Model(&models.GameSession{}).Where("id = ?", gameSessionID).Update("game_state", gameState.GameSession.GameState).Error; err != nil {
-		log.Printf("⚠️ [GameManager] Failed to update game state: %v", err)
+	if !isVolatile {
+		gameState.GameSession.GameState = gameState.GameData
+		if err := gm.db.Model(&models.GameSession{}).Where("id = ?", gameSessionID).Update("game_state", gameState.GameSession.GameState).Error; err != nil {
+			log.Printf("⚠️ [GameManager] Failed to update game state: %v", err)
+		}
 	}
 
 	// Blackjack and battleship manage their own turn pointer internally (a bust may
@@ -294,10 +309,12 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"rock_paper_scissors": true,
 		"blackjack":           true,
 		"battleship":          true,
-		"vs_battle":           true, // VS Battle phase+turn managed internally
-		"boxing":              true, // Boxing manages attacker/defender swap internally
-		"pool":                true, // Pool stays on same player after a legal pocket
-		"ludo":                true, // Ludo manages its own turn (roll → move two-phase)
+		"vs_battle":           true,   // VS Battle phase+turn managed internally
+		"boxing":              true,   // Boxing manages attacker/defender swap internally
+		"pool":                true,   // Pool stays on same player after a legal pocket
+		"ludo":                true,   // Ludo manages its own turn (roll → move two-phase)
+		"ping_pong":           true,   // Real-time; no CurrentTurn pointer used
+		"air_hockey":          true,   // Real-time; no CurrentTurn pointer used
 	}
 	if !gameOver && !selfManagedTurn[gameState.GameSession.GameType] {
 		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % len(gameState.Players)

@@ -430,6 +430,19 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
         gameStateBcast = hangmanPublicState(gameStateBcast)
     }
 
+    // Apply per-game options from the start_game payload into the live in-memory
+    // state so move handlers can read them. Also reflected in the initial broadcast
+    // so every client sees the option immediately in game_state.
+    if gameType == "ping_pong" {
+        if noWalls, _ := data["no_walls"].(bool); noWalls {
+            if gs, exists := h.gameManager.GetActiveGame(roomID); exists {
+                gs.GameData["no_walls"] = true
+                gs.GameSession.GameState["no_walls"] = true
+            }
+            gameStateBcast["no_walls"] = true
+        }
+    }
+
     message := map[string]interface{}{
         "type":   "game",
         "action": "game_started",

@@ -93,6 +93,18 @@ const RULES = {
       'Last player standing or highest score when time runs out wins!',
     ],
   },
+  space_attack: {
+    title: 'Space Attack',
+    rules: [
+      'Side-scrolling shooter — your cyan ship is on the left, enemies fly in from the right.',
+      'Use ↑ ↓ (or W/S) to move. Press SPACE or Z to fire. On mobile, touch and drag to aim.',
+      'Collect glowing pickups for weapon upgrades: Missiles, Heat-seeking, Laser, Bomb, Sonic, EMP, and Black Hole.',
+      'Bolt upgrades (▲) boost your spread from 1 to 3 beams. You keep upgrades until you\'re hit — then drop one tier.',
+      'Every ~400 points an alien boss appears. Bosses have unique attack patterns and tentacle animations.',
+      'Defeating a boss restores a life (up to 3) and drops a weapon pickup. Enemies reaching the left edge vanish harmlessly.',
+      'Waves speed up the longer you survive — how high can you score?',
+    ],
+  },
   doom: {
     title: 'DOOM',
     rules: [
@@ -101,6 +113,27 @@ const RULES = {
       'Interact with doors/switches: E. Run: hold Shift.',
       'Switch weapons: number keys 1–7. Map: Tab.',
       'Find the exit to complete the level. Survive!',
+    ],
+  },
+  ping_pong: {
+    title: 'Ping Pong',
+    rules: [
+      'Move your paddle left and right by dragging or moving your mouse/finger across the screen.',
+      'Player 1 (blue, top) and Player 2 (red, bottom) take turns rallying the ball.',
+      'The first player to reach 7 points wins!',
+      'The ball speeds up slightly with each hit — keep your reflexes sharp.',
+      'After a point the ball resets and the scorer serves next.',
+      'Optional — No Walls mode: side edges are open instead of bouncing. If you hit the ball and it exits through a side, you lose that point. Classic table-tennis rules!',
+    ],
+  },
+  air_hockey: {
+    title: 'Air Hockey',
+    rules: [
+      'Drag your mallet anywhere in your half of the rink to hit the puck.',
+      'Player 1 (red) defends the top goal; Player 2 (blue) defends the bottom goal.',
+      'Knock the puck into the opponent\'s goal — the narrow zone at their end of the rink.',
+      'First to 5 goals wins!',
+      'The puck speeds up slightly with each mallet strike, so keep it moving.',
     ],
   },
   wordle: {

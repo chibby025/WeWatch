@@ -80,7 +80,7 @@ export default function TugOfWarGame({ gameState, players, currentUserId, onMove
   const team2Color = myTeam === 2 ? 'text-purple-400' : 'text-gray-400';
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 text-white select-none">
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900 text-white select-none overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
         <div>
@@ -89,7 +89,7 @@ export default function TugOfWarGame({ gameState, players, currentUserId, onMove
         </div>
         <div className="flex gap-2">
           {onEndGame && (
-            <button onClick={onEndGame} className="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 rounded-lg">
+            <button onClick={() => { onEndGame?.(); onClose?.(); }} className="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 rounded-lg">
               End
             </button>
           )}
@@ -137,13 +137,27 @@ export default function TugOfWarGame({ gameState, players, currentUserId, onMove
         </div>
 
         {/* Phase overlay */}
-        {phase === 'ended' ? (
+        {(phase === 'ended' || gameState?.status === 'forfeited' || gameState?.status === 'finished') ? (
           <div className="text-center bg-purple-900/40 border border-purple-500 rounded-xl p-4 w-full max-w-sm">
-            <p className="text-3xl mb-1">{team1Wins > team2Wins ? '🥇' : team2Wins > team1Wins ? '🥇' : '🤝'}</p>
-            <p className="text-white font-bold text-xl">
-              {team1Wins > team2Wins ? getTeamName(1) : team2Wins > team1Wins ? getTeamName(2) : "It's a Draw!"}
-            </p>
-            <p className="text-gray-400 text-sm mt-1">{team1Wins} – {team2Wins} rounds</p>
+            {gameState?.status === 'forfeited' && phase !== 'ended' ? (
+              <>
+                <p className="text-3xl mb-1">{gameState?.winner_id === currentUserId ? '🏆' : '💀'}</p>
+                <p className="text-white font-bold text-xl">
+                  {gameState?.winner_id === currentUserId ? 'You win — opponent forfeited!' : 'You forfeited'}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-3xl mb-1">{team1Wins > team2Wins ? '🥇' : team2Wins > team1Wins ? '🥇' : '🤝'}</p>
+                <p className="text-white font-bold text-xl">
+                  {team1Wins > team2Wins ? getTeamName(1) : team2Wins > team1Wins ? getTeamName(2) : "It's a Draw!"}
+                </p>
+                <p className="text-gray-400 text-sm mt-1">{team1Wins} – {team2Wins} rounds</p>
+              </>
+            )}
+            <button onClick={onClose} className="mt-3 px-5 py-1.5 bg-purple-700 hover:bg-purple-600 rounded-lg text-sm font-bold">
+              Close
+            </button>
           </div>
         ) : (
           <>

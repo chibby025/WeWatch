@@ -2438,22 +2438,23 @@ export default function VideoWatch() {
     }
   }, [isHost]);
 
-  const handleStartGame = useCallback((gameType, playersData) => {
+  const handleStartGame = useCallback((gameType, playersData, gameOptions = {}) => {
     if (!sendMessage) {
       console.error('❌ [VideoWatch] sendMessage not available');
       return;
     }
-    
+
     console.log('🎮 [VideoWatch] Starting game:', gameType, playersData);
-    
+
     sendMessage({
       type: 'start_game',
       data: {
         game_type: gameType,
-        players: playersData
+        players: playersData,
+        ...gameOptions,
       }
     });
-    
+
     setIsGameLobbyOpen(false);
   }, [sendMessage]);
 

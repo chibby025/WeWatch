@@ -324,7 +324,7 @@ const games = [
   {
     id: 'space_attack',
     name: 'Space Attack',
-    description: 'Classic vertical space shooter — solo arcade!',
+    description: 'Nokia Space Impact-style side-scroller — dodge and blast enemies flying in from the right!',
     minPlayers: 1,
     maxPlayers: 1,
     image: `${GAME_POSTERS_BASE_URL}/space_attack.webp`,
@@ -348,6 +348,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
   const [searchQuery, setSearchQuery] = useState('');
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [isTournamentMode, setIsTournamentMode] = useState(false);
+  const [noWalls, setNoWalls] = useState(false);
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== 'undefined' ? window.matchMedia('(orientation: landscape)').matches : false
   );
@@ -557,7 +558,8 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
       return;
     }
 
-    onStartGame(selectedGame, buildPlayersData());
+    const gameOptions = selectedGame === 'ping_pong' ? { no_walls: noWalls } : {};
+    onStartGame(selectedGame, buildPlayersData(), gameOptions);
     onClose();
   };
 
@@ -816,6 +818,19 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                         ? 'Hot-seat — each player takes a turn'
                         : `${selectedGameData.minPlayers}–${selectedGameData.maxPlayers} players`}
                   </p>
+                  {selectedGame === 'ping_pong' && (
+                    <div className="mt-2 flex items-center justify-center gap-2">
+                      <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={noWalls}
+                          onChange={e => setNoWalls(e.target.checked)}
+                          className="w-4 h-4 rounded accent-purple-500"
+                        />
+                        <span className="text-xs text-gray-300 font-medium">No walls (classic table-tennis rules)</span>
+                      </label>
+                    </div>
+                  )}
                   {(TOURNAMENT_GAME_IDS.includes(selectedGame) || HOT_SEAT_GAME_IDS.includes(selectedGame)) && (
                     <div className="mt-2 flex items-center justify-center gap-2">
                       <button
