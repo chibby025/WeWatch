@@ -3203,12 +3203,7 @@ export default function VideoWatch() {
     setIsPlaying(true);
     playbackPositionRef.current = 0;
     
-    console.log('🎬 [VideoWatch] Host about to send playback_control:', {
-      isHost,
-      isConnected,
-      mediaUrl: normalizedMediaItem.mediaUrl,
-      currentUserId: currentUser?.id
-    });
+    console.log(`[HOST-PLAY] sending playback_control for ${normalizedMediaItem.mediaUrl?.split('/').pop()}`);
     
     if (isHost && isConnected) {
       const playbackMsg = {
@@ -4710,19 +4705,8 @@ export default function VideoWatch() {
           break;
         }
         case "playback_control":
-          console.log('📥 [VideoWatch] RECEIVED playback_control:', {
-            sender_id: message.sender_id,
-            currentUserId: currentUser?.id,
-            command: message.command,
-            file_path: message.file_path,
-            file_url: message.file_url,
-            timestamp: message.timestamp
-          });
-          
-          if (message.sender_id && message.sender_id === currentUser?.id) {
-            console.log('⏭️ [VideoWatch] Ignoring own playback_control message');
-            break;
-          }
+          if (message.sender_id && message.sender_id === currentUser?.id) break;
+          console.log(`[PC] cmd=${message.command} seek=${message.seek_time?.toFixed(2)} latency=${Math.max(0,Date.now()-message.timestamp)}ms file=${message.file_path?.split('/').pop()||message.media_url?.split('/').pop()||'?'}`);
 
           // ── Host rebuffer pause/resume (useStreamBufferHealth) ───────────────
           // A struggling host's own upload can't feed ffmpeg fast enough for real-time
@@ -4796,13 +4780,6 @@ export default function VideoWatch() {
           // ── Regular file path ────────────────────────────────────────────────
           if (message.file_path) {
             const isSameMedia = currentMedia && currentMedia.file_path === message.file_path;
-            console.log('🔍 [VideoWatch] Playback control check:', {
-              isSameMedia,
-              currentMediaPath: currentMedia?.file_path,
-              newMediaPath: message.file_path,
-              isPlaying,
-              newCommand: message.command
-            });
 
             const now = Date.now();
             // Always use message.timestamp (host browser Date.now()) — server_ts has
@@ -4814,7 +4791,7 @@ export default function VideoWatch() {
               // Different media — full reload via setCurrentMedia (triggers CinemaVideoPlayer re-init)
               const fileUrl = message.file_url || message.file_path;
               const mediaUrl = resolveMediaUrl(fileUrl);
-              console.log('✅ [VideoWatch] MEMBER loading new media:', { mediaUrl, original_name: message.original_name });
+              console.log(`[PC-NEW] loading ${mediaUrl?.split('/').pop()} isSameMedia=false`);
               setCurrentMedia({
                 ID: message.media_item_id,
                 type: 'upload',
