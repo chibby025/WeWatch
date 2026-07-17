@@ -211,16 +211,17 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
-  {
-    id: 'boxing',
-    name: 'Boxing',
-    description: 'Punch-Out style 1v1 — read the tell, pick your defense!',
-    minPlayers: 2,
-    maxPlayers: 2,
-    image: `${GAME_POSTERS_BASE_URL}/boxing.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
+  // boxing temporarily removed — being redesigned as Phaser 3 + Colyseus real-time game
+  // {
+  //   id: 'boxing',
+  //   name: 'Boxing',
+  //   description: 'Punch-Out style 1v1 — read the tell, pick your defense!',
+  //   minPlayers: 2,
+  //   maxPlayers: 2,
+  //   image: `${GAME_POSTERS_BASE_URL}/boxing.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer'
+  // },
   {
     id: 'pool',
     name: 'Pool',
@@ -231,16 +232,17 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
-  {
-    id: 'penalty_shootout',
-    name: 'Penalty Shootout',
-    description: 'Take 5 penalties against an AI keeper — hot-seat tournament mode!',
-    minPlayers: 1,
-    maxPlayers: 10,
-    image: `${GAME_POSTERS_BASE_URL}/penalty_shootout.webp`,
-    disabled: false,
-    type: 'arcade'
-  },
+  // penalty_shootout temporarily removed
+  // {
+  //   id: 'penalty_shootout',
+  //   name: 'Penalty Shootout',
+  //   description: 'Take 5 penalties against an AI keeper — hot-seat tournament mode!',
+  //   minPlayers: 1,
+  //   maxPlayers: 10,
+  //   image: `${GAME_POSTERS_BASE_URL}/penalty_shootout.webp`,
+  //   disabled: false,
+  //   type: 'arcade'
+  // },
   {
     id: 'whot',
     name: 'Whot!',
@@ -291,16 +293,17 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
-  {
-    id: 'red_light_green_light',
-    name: 'Red Light Green Light',
-    description: 'Move on green, freeze on red — reach the finish!',
-    minPlayers: 2,
-    maxPlayers: 10,
-    image: `${GAME_POSTERS_BASE_URL}/red_light_green_light.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
+  // red_light_green_light temporarily removed
+  // {
+  //   id: 'red_light_green_light',
+  //   name: 'Red Light Green Light',
+  //   description: 'Move on green, freeze on red — reach the finish!',
+  //   minPlayers: 2,
+  //   maxPlayers: 10,
+  //   image: `${GAME_POSTERS_BASE_URL}/red_light_green_light.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer'
+  // },
   {
     id: 'glass_bridge',
     name: 'Glass Bridge',
@@ -332,24 +335,25 @@ const games = [
     type: 'arcade',
     heavy: false
   },
-  {
-    id: 'roulette',
-    name: 'Roulette',
-    description: 'Place your bets, spin the wheel — red, black, or lucky number!',
-    minPlayers: 1,
-    maxPlayers: 8,
-    image: `${GAME_POSTERS_BASE_URL}/roulette.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
+  // roulette temporarily removed
+  // {
+  //   id: 'roulette',
+  //   name: 'Roulette',
+  //   description: 'Place your bets, spin the wheel — red, black, or lucky number!',
+  //   minPlayers: 1,
+  //   maxPlayers: 8,
+  //   image: `${GAME_POSTERS_BASE_URL}/roulette.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer'
+  // },
 ];
 
 // Games eligible for tournament mode: 2-player, head-to-head games where a
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
-const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'boxing', 'pool'];
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool'];
 // Hot-seat tournament: each player takes a solo turn; highest score wins.
-const HOT_SEAT_GAME_IDS = ['fowl_play', 'penalty_shootout'];
+const HOT_SEAT_GAME_IDS = ['fowl_play'];
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 

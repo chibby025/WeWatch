@@ -589,6 +589,13 @@ function BlackboardWithMedia({ position, dimensions, media, onClose, isHost, sen
           });
           hlsRef.current = hls;
           hls.on(Hls.Events.ERROR, (_e, data) => {
+            if (data.details === 'bufferAddCodecError') {
+              const isFirefox = /Firefox/.test(navigator.userAgent);
+              toast.error(isFirefox
+                ? 'This video uses a codec Firefox cannot play. Try Chrome or Edge for full playback support.'
+                : 'Your browser cannot decode this video format. Try Chrome for full playback support.');
+              return;
+            }
             if (data.fatal) console.error('❌ [LH HLS] Fatal:', data.type, data.details);
           });
           hls.loadSource(videoUrl);

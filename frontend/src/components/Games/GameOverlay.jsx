@@ -16,7 +16,7 @@ import TypingRaceGame from './TypingRaceGame';
 import BlackjackGame from './BlackjackGame';
 import BattleshipGame from './BattleshipGame';
 import DrawGuessGame from './DrawGuessGame';
-import BoxingGame from './BoxingGame';
+// import BoxingGame from './BoxingGame'; // temporarily removed — being redesigned as Phaser 3 + Colyseus real-time game
 import PoolGame from './PoolGame';
 import WhotGame from './WhotGame';
 
@@ -27,14 +27,14 @@ const DoomGame = lazy(() => import('./DoomGame'));
 const ShooterGame = lazy(() => import('./ShooterGame'));
 const VSBattleGame = lazy(() => import('./VsBattleGame'));
 const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
-const PenaltyGame = lazy(() => import('./PenaltyGame'));
+// const PenaltyGame = lazy(() => import('./PenaltyGame')); // temporarily removed
 const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
-const RouletteGame = lazy(() => import('./RouletteGame'));
+// const RouletteGame = lazy(() => import('./RouletteGame')); // temporarily removed
 
 import HangmanGame from './HangmanGame';
 import GlassBridgeGame from './GlassBridgeGame';
 import TugOfWarGame from './TugOfWarGame';
-import RedLightGreenLightGame from './RedLightGreenLightGame';
+// import RedLightGreenLightGame from './RedLightGreenLightGame'; // temporarily removed
 import SudokuGame from './SudokuGame';
 import PingPongGame from './PingPongGame';
 import AirHockeyGame from './AirHockeyGame';
@@ -309,17 +309,17 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
         </Suspense>
       );
 
-    case 'boxing':
-      return (
-        <BoxingGame
-          gameState={activeGame}
-          players={activeGame.players}
-          currentUserId={currentUserId}
-          onMove={handleMove}
-          onClose={onClose}
-          onEndGame={onEndGame}
-        />
-      );
+    // case 'boxing': temporarily removed — being redesigned as Phaser 3 + Colyseus real-time game
+    // return (
+    //   <BoxingGame
+    //     gameState={activeGame}
+    //     players={activeGame.players}
+    //     currentUserId={currentUserId}
+    //     onMove={handleMove}
+    //     onClose={onClose}
+    //     onEndGame={onEndGame}
+    //   />
+    // );
 
     case 'pool':
       return (
@@ -362,19 +362,19 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
         />
       );
 
-    case 'penalty_shootout':
-      return (
-        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
-          <PenaltyGame
-            onClose={onClose}
-            onEndGame={onEndGame}
-            isHost={activeGame.host_id === currentUserId}
-            hotSeatTournament={hotSeatTournament}
-            currentUserId={currentUserId}
-            onTournamentScore={onTournamentScore}
-          />
-        </Suspense>
-      );
+    // case 'penalty_shootout': temporarily removed
+    // return (
+    //   <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+    //     <PenaltyGame
+    //       onClose={onClose}
+    //       onEndGame={onEndGame}
+    //       isHost={activeGame.host_id === currentUserId}
+    //       hotSeatTournament={hotSeatTournament}
+    //       currentUserId={currentUserId}
+    //       onTournamentScore={onTournamentScore}
+    //     />
+    //   </Suspense>
+    // );
 
     case 'hangman':
       return (
@@ -412,17 +412,17 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
         />
       );
 
-    case 'red_light_green_light':
-      return (
-        <RedLightGreenLightGame
-          gameState={activeGame}
-          players={activeGame.players}
-          currentUserId={currentUserId}
-          onMove={handleMove}
-          onClose={onClose}
-          onEndGame={onEndGame}
-        />
-      );
+    // case 'red_light_green_light': temporarily removed
+    // return (
+    //   <RedLightGreenLightGame
+    //     gameState={activeGame}
+    //     players={activeGame.players}
+    //     currentUserId={currentUserId}
+    //     onMove={handleMove}
+    //     onClose={onClose}
+    //     onEndGame={onEndGame}
+    //   />
+    // );
 
     case 'sudoku':
       return (
@@ -471,19 +471,19 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
         </Suspense>
       );
 
-    case 'roulette':
-      return (
-        <Suspense fallback={<div className="fixed inset-0 bg-gray-950" />}>
-          <RouletteGame
-            gameState={activeGame}
-            players={activeGame.players}
-            currentUserId={currentUserId}
-            onMove={handleMove}
-            onClose={onClose}
-            onEndGame={onEndGame}
-          />
-        </Suspense>
-      );
+    // case 'roulette': temporarily removed
+    // return (
+    //   <Suspense fallback={<div className="fixed inset-0 bg-gray-950" />}>
+    //     <RouletteGame
+    //       gameState={activeGame}
+    //       players={activeGame.players}
+    //       currentUserId={currentUserId}
+    //       onMove={handleMove}
+    //       onClose={onClose}
+    //       onEndGame={onEndGame}
+    //     />
+    //   </Suspense>
+    // );
 
     default:
       return null;

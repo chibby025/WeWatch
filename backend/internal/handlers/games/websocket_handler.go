@@ -66,12 +66,10 @@ func gamePosterURL(gameType string) string {
         return gamePostersBaseURL + "/vs_battle.webp"
     case "fowl_play":
         return gamePostersBaseURL + "/fowl_play_v2.webp"
-    case "boxing":
-        return gamePostersBaseURL + "/boxing.webp"
+    // case "boxing": temporarily removed
     case "pool":
         return gamePostersBaseURL + "/pool.webp"
-    case "penalty_shootout":
-        return gamePostersBaseURL + "/penalty_shootout.webp"
+    // case "penalty_shootout": temporarily removed
     case "whot":
         return gamePostersBaseURL + "/whot.webp"
     case "hangman":
@@ -80,8 +78,7 @@ func gamePosterURL(gameType string) string {
         return gamePostersBaseURL + "/glass_bridge.webp"
     case "tug_of_war":
         return gamePostersBaseURL + "/tug_of_war.webp"
-    case "red_light_green_light":
-        return gamePostersBaseURL + "/red_light_green_light.webp"
+    // case "red_light_green_light": temporarily removed
     case "sudoku":
         return gamePostersBaseURL + "/sudoku.webp"
     case "ping_pong":
@@ -90,8 +87,7 @@ func gamePosterURL(gameType string) string {
         return gamePostersBaseURL + "/air_hockey.webp"
     case "space_attack":
         return gamePostersBaseURL + "/space_attack.webp"
-    case "roulette":
-        return gamePostersBaseURL + "/roulette.webp"
+    // case "roulette": temporarily removed
     default:
         return ""
     }
@@ -102,10 +98,10 @@ func gamePosterURL(gameType string) string {
 // single `if`) so the next arcade game added doesn't need another inline
 // special case.
 var arcadeGameTypes = map[string]bool{
-    "doom":             true,
-    "fowl_play":        true,
-    "penalty_shootout": true,
-    "space_attack":     true,
+    "doom":        true,
+    "fowl_play":   true,
+    // "penalty_shootout": true, // temporarily removed
+    "space_attack": true,
 }
 
 // minPlayersOverride lets a genuinely multiplayer game still be launched
@@ -115,7 +111,7 @@ var arcadeGameTypes = map[string]bool{
 // game like space_shooter that simply also happens to support 1 player.
 var minPlayersOverride = map[string]int{
     "space_shooter":    1,
-    "roulette":         1, // host can spin solo; works best with 2+
+    // "roulette": 1, // temporarily removed
     "would_you_rather": 1, // can play solo (host picks for the room as a group activity)
     "wordle":           1, // solo practice is valid
     "quiplash":         2, // needs at least 2 for the voting mechanic to work

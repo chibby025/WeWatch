@@ -328,6 +328,17 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
         hlsRef.current = hls;
         hls.on(Hls.Events.ERROR, (_event, data) => {
           console.error('❌ [CinemaVideoPlayer] hls.js error:', data);
+          if (data.details === 'bufferAddCodecError') {
+            // Codec incompatible with this browser's MSE implementation (e.g. H.264
+            // High 10 / High 4:2:2 in Firefox). Don't spin through hls.js's full retry
+            // budget — surface a clear browser-specific message immediately instead.
+            const isFirefox = /Firefox/.test(navigator.userAgent);
+            const compatMsg = isFirefox
+              ? 'This video uses a codec Firefox cannot play. Try Chrome or Edge for full playback support.'
+              : 'Your browser cannot decode this video format. Try Chrome for full playback support.';
+            onErrorRef.current?.({ ...data, message: compatMsg, browserIncompatible: true });
+            return;
+          }
           if (data.fatal) onErrorRef.current?.(data);
         });
         // hls.js fires BUFFER_EOS once the last segment is fully appended to the

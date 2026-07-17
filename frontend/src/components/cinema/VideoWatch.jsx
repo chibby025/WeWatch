@@ -2752,6 +2752,13 @@ export default function VideoWatch() {
       return;
     }
 
+    if (err?.browserIncompatible) {
+      // Codec incompatible with this browser — already carries a specific, helpful message
+      // from CinemaVideoPlayer (e.g. "try Chrome"). A toast is less disruptive than an alert.
+      toast.error(err.message || 'Your browser cannot decode this video format. Try Chrome.');
+      return;
+    }
+
     alert("❌ Failed to play video.");
   }, [currentMedia, isHost, roomId]);
 

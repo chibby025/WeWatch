@@ -83,20 +83,20 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"uno": true, "quiplash": true,
 		"typing_race": true, "blackjack": true, "battleship": true, "draw_guess": true,
 		"vs_battle": true, "fowl_play": true,
-		"boxing": true,
-		"pool":   true,
-		"penalty_shootout": true,
+		// "boxing": true, // temporarily removed — being redesigned as Phaser 3 + Colyseus real-time game
+		"pool": true,
+		// "penalty_shootout": true, // temporarily removed
 		"whot": true,
 		// New games
-		"hangman":             true,
-		"glass_bridge":        true,
-		"tug_of_war":          true,
-		"red_light_green_light": true,
-		"sudoku":              true,
-		"ping_pong":           true,
-		"air_hockey":          true,
-		"space_attack":        true,
-		"roulette":            true,
+		"hangman":      true,
+		"glass_bridge": true,
+		"tug_of_war":   true,
+		// "red_light_green_light": true, // temporarily removed
+		"sudoku":      true,
+		"ping_pong":   true,
+		"air_hockey":  true,
+		"space_attack": true,
+		// "roulette": true, // temporarily removed
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)

@@ -1493,6 +1493,13 @@ export default function CinemaScene3DDemo() {
         // ────────────────────────────────────────────────────────────────────
         let mediaErrorRecoveryCount = 0;
         hls.on(Hls.Events.ERROR, (_evt, data) => {
+          if (data.details === 'bufferAddCodecError') {
+            const isFirefox = /Firefox/.test(navigator.userAgent);
+            toast.error(isFirefox
+              ? 'This video uses a codec Firefox cannot play. Try Chrome or Edge for full playback support.'
+              : 'Your browser cannot decode this video format. Try Chrome for full playback support.');
+            return;
+          }
           if (!data.fatal) return;
           console.error('❌ [3D Cinema] hls.js fatal error:', data.type, data.details, data);
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {

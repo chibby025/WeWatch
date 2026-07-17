@@ -34,9 +34,10 @@ const MAX_SANE_MOOV_SIZE = 50 * 1024 * 1024;
 /**
  * Returns a File (same name/type as the input, so callers relying on those — chunk
  * upload tracking, resume-by-filename matching — keep working unmodified) with
- * `moov` relocated to immediately follow `ftyp` and every affected stco/co64
- * chunk-offset rewritten accordingly — or the original `file` unchanged if
- * relocation isn't applicable, isn't needed, or can't be done safely. Never throws.
+ * `moov` relocated to the front (immediately after `ftyp` if present, otherwise at
+ * file start) and every affected stco/co64 chunk-offset rewritten accordingly — or
+ * the original `file` unchanged if relocation isn't applicable, isn't needed, or
+ * can't be done safely. Never throws.
  */
 export async function maybeRelocateMoov(file) {
   try {
@@ -52,7 +53,7 @@ async function relocateMoovInternal(file) {
   if (!ISO_BMFF_EXTENSIONS.includes(ext)) return file;
 
   const boxes = await walkTopLevelBoxes(file);
-  if (!boxes.length || boxes[0].type !== 'ftyp') return file; // non-standard layout — bail
+  if (!boxes.length) return file;
 
   const moovIndex = boxes.findIndex((b) => b.type === 'moov');
   if (moovIndex === -1) return file; // no moov found at all (truncated probe, fragmented file, etc.)
@@ -68,13 +69,20 @@ async function relocateMoovInternal(file) {
 
   if (!shiftChunkOffsets(moovView, moovBox.size)) return file; // mvex (fragmented), overflow, or malformed table — bail
 
-  const ftypBox = boxes[0];
-  const parts = [
-    file.slice(ftypBox.offset, ftypBox.offset + ftypBox.size),
-    moovBuf,
-  ];
+  // ftyp may be absent or not be the first box (some encoders place `free`/`wide`
+  // padding before ftyp, or omit ftyp entirely in older formats). Find it wherever
+  // it sits rather than bailing. The shift amount is always +moovBox.size regardless
+  // of where ftyp was: inserting moov before mdat shifts mdat's absolute offset by
+  // exactly moov.size, irrespective of how other boxes are reordered.
+  const ftypIndex = boxes.findIndex((b) => b.type === 'ftyp');
+  const parts = [];
+  if (ftypIndex !== -1) {
+    const ftypBox = boxes[ftypIndex];
+    parts.push(file.slice(ftypBox.offset, ftypBox.offset + ftypBox.size));
+  }
+  parts.push(moovBuf);
   for (let i = 0; i < boxes.length; i++) {
-    if (i === 0 || i === moovIndex) continue; // ftyp and the original moov already placed
+    if (i === ftypIndex || i === moovIndex) continue; // already placed
     const b = boxes[i];
     parts.push(file.slice(b.offset, b.offset + b.size));
   }
