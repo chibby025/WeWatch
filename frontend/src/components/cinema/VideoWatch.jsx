@@ -175,21 +175,25 @@ export default function VideoWatch() {
     const originalError = console.error;
     const originalInfo = console.info;
     
-    // Intercept console methods and store logs
+    // Intercept console methods and store logs (capped at 5000 entries)
+    const pushLog = (entry) => {
+      window.capturedLogs.push(entry);
+      if (window.capturedLogs.length > 5000) window.capturedLogs.splice(0, 1000);
+    };
     console.log = (...args) => {
-      window.capturedLogs.push({ type: 'log', time: Date.now(), args });
+      pushLog({ type: 'log', time: Date.now(), args });
       originalLog(...args);
     };
     console.warn = (...args) => {
-      window.capturedLogs.push({ type: 'warn', time: Date.now(), args });
+      pushLog({ type: 'warn', time: Date.now(), args });
       originalWarn(...args);
     };
     console.error = (...args) => {
-      window.capturedLogs.push({ type: 'error', time: Date.now(), args });
+      pushLog({ type: 'error', time: Date.now(), args });
       originalError(...args);
     };
     console.info = (...args) => {
-      window.capturedLogs.push({ type: 'info', time: Date.now(), args });
+      pushLog({ type: 'info', time: Date.now(), args });
       originalInfo(...args);
     };
     
@@ -686,6 +690,7 @@ export default function VideoWatch() {
   // Segment-boundary HLS sync (device-stream / progressive upload)
   const [hlsStartPosition, setHlsStartPosition] = useState(0); // for late-joiner segment-index positioning
   const currentMemberFragRef = useRef(-1);        // last segment number seen by FRAG_CHANGED
+  const lastJumpTimeRef = useRef(0);              // ms timestamp of last HLS JUMP — blocks re-entry for 3s
   // After a video ends locally, suppress playback_control reloads for the same file for 10s.
   // Guards the race where a member finishes slightly ahead of the host and an in-flight
   // heartbeat arrives after currentMedia=null, incorrectly triggering a replay via !isSameMedia.
@@ -724,7 +729,7 @@ export default function VideoWatch() {
   
   // 📋 Copy all captured logs to clipboard for sharing
   const handleExportLogs = useCallback(() => {
-    const logs = (window.capturedLogs || []).slice(-300);
+    const logs = (window.capturedLogs || []).slice(-2000);
     if (logs.length === 0) { toast.warn('No logs captured yet'); return; }
     const text = logs.map(l => {
       const t = new Date(l.time).toISOString().slice(11, 23);
@@ -2638,6 +2643,14 @@ export default function VideoWatch() {
     // cascade and "fast-forward/replay" glitch.
     const timeDrift = memberPos - hostPos; // negative = member behind host
 
+    // Post-JUMP cooldown: after a seek correction, hls.js fires FRAG_CHANGED for the first
+    // segment at the new position before the video has fully buffered there. Without this guard
+    // a subsequent FRAG_CHANGED (fired 10–200ms after the JUMP) could compute the same large
+    // negative drift (if video.currentTime hasn't advanced yet) and trigger another JUMP,
+    // creating a cascade of seeks that produces the fast-forward/replay glitch.
+    const now = Date.now();
+    const msSinceLastJump = now - lastJumpTimeRef.current;
+
     let action;
     if (timeDrift >= -1.5) {
       // Within 1.5s — on track
@@ -2648,13 +2661,20 @@ export default function VideoWatch() {
       videoEl.playbackRate = 1.05;
       action = 'rate+5%';
     } else if (timeDrift >= -30) {
-      // 6–30s behind: jump to 1s before host's current position.
-      // Jumping to hostPos-1 is always safe: the host has already played past that point,
-      // so that segment is guaranteed to be available on CDN.
-      const targetTime = Math.max(0, hostPos - 1);
-      videoEl.currentTime = targetTime;
-      videoEl.playbackRate = 1.0;
-      action = `JUMP→${targetTime.toFixed(1)}s`;
+      if (msSinceLastJump < 3000) {
+        // Still inside the post-JUMP cooldown window — rate nudge only, no new seek
+        videoEl.playbackRate = 1.05;
+        action = `cooldown(${(msSinceLastJump / 1000).toFixed(1)}s) rate+5%`;
+      } else {
+        // 6–30s behind: jump to 1s before host's current position.
+        // Jumping to hostPos-1 is always safe: the host has already played past that point,
+        // so that segment is guaranteed to be available on CDN.
+        const targetTime = Math.max(0, hostPos - 1);
+        videoEl.currentTime = targetTime;
+        videoEl.playbackRate = 1.0;
+        lastJumpTimeRef.current = now;
+        action = `JUMP→${targetTime.toFixed(1)}s`;
+      }
     } else {
       action = 'drift>=30s skip';
     }
