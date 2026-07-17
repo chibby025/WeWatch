@@ -718,11 +718,20 @@ export default function VideoWatch() {
   // 📱 Responsive state for LiveShare graphics
   const [screenSize, setScreenSize] = useState('desktop'); // 'mobile' | 'tablet' | 'desktop'
   
-  // 🔍 Debug: Log roomMembers changes
-  useEffect(() => {
-    console.log('👥 [VideoWatch] roomMembers state changed:', roomMembers);
-    console.log('👥 [VideoWatch] roomMembers count:', roomMembers?.length);
-  }, [roomMembers]);
+  // 📋 Copy all captured logs to clipboard for sharing
+  const handleExportLogs = useCallback(() => {
+    const logs = (window.capturedLogs || []).slice(-300);
+    if (logs.length === 0) { toast.warn('No logs captured yet'); return; }
+    const text = logs.map(l => {
+      const t = new Date(l.time).toISOString().slice(11, 23);
+      const msg = l.args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+      return `[${t}] [${l.type.toUpperCase()}] ${msg}`;
+    }).join('\n');
+    navigator.clipboard.writeText(text).then(
+      () => toast.success(`✅ Copied ${logs.length} logs to clipboard`),
+      () => toast.error('Failed to copy logs'),
+    );
+  }, []);
   
   // 📱 Detect screen size for responsive LiveShare graphics
   useEffect(() => {
@@ -2605,23 +2614,34 @@ export default function VideoWatch() {
     if (!lastHostPosRef.current) return;
 
     const elapsed = (Date.now() - lastHostPosRef.current.timestamp) / 1000;
+    // Stale guard: if last heartbeat was > 8s ago the extrapolation is unreliable — skip
+    if (elapsed > 8) {
+      console.log(`[HLS-SYNC] stale heartbeat (${elapsed.toFixed(1)}s ago) — skip correction`);
+      return;
+    }
     const hostPos = lastHostPosRef.current.expected + elapsed;
     const hostSeg = Math.floor(hostPos / 2); // matches HlsSegmentSeconds=2 on the server
     const gap = hostSeg - sn;
 
+    let action;
     if (gap <= 1) {
       // On track (or 1 segment behind, which is the desired buffer cushion)
       if (videoEl.playbackRate !== 1.0) videoEl.playbackRate = 1.0;
+      action = 'ok';
     } else if (gap <= 3) {
       // 2-3 segments behind: gentle 5% rate nudge — imperceptible, no re-buffering
       videoEl.playbackRate = 1.05;
+      action = 'rate+5%';
     } else if (gap < 30) {
       // Significantly behind: single clean segment jump to 1 segment behind host
       const targetTime = Math.max(0, (hostSeg - 1) * 2);
       videoEl.currentTime = targetTime;
       videoEl.playbackRate = 1.0;
-      console.log(`⏭️ [FragSync] Jumped from seg ${sn} to ${hostSeg - 1} (host at seg ${hostSeg})`);
+      action = `JUMP→${hostSeg - 1}`;
+    } else {
+      action = 'gap>=30 skip';
     }
+    console.log(`[HLS-SYNC] frag=${sn} hostSeg=${hostSeg} gap=${gap} hostPos=${hostPos.toFixed(1)}s hbAge=${elapsed.toFixed(1)}s action=${action} rate=${videoEl.playbackRate}`);
   }, [isHost, hlsStartPosition]);
 
   const handleSkipToLive = useCallback(() => {
@@ -4194,8 +4214,9 @@ export default function VideoWatch() {
             }
             // Skip correction while buffering — seeking destroys what little buffer exists.
             if (isBufferingRef.current) break;
+            const _isHls = currentMedia?.mediaUrl?.endsWith('.m3u8');
+            console.log(`[HLS-HB] hostPos=${_expected.toFixed(2)}s memberPos=${_videoEl.currentTime.toFixed(2)}s drift=${(_videoEl.currentTime - _expected).toFixed(2)}s latency=${_latency}ms isHls=${_isHls}`);
             if (_drift > 0.5 && _drift < 30) {
-              const _isHls = currentMedia?.mediaUrl?.endsWith('.m3u8');
               if (_isHls) {
                 // HLS: correction is driven by FRAG_CHANGED → handleFragChanged (rate nudge or
                 // segment jump at natural boundaries). Seeking here mid-segment re-buffers the
@@ -4213,9 +4234,7 @@ export default function VideoWatch() {
 
         case "session_status":
           const data = message.data;
-          console.log('📊 [VideoWatch] session_status received - FULL DATA:', data);
-      console.log('📊 [VideoWatch] ✨ is_private flag:', data.is_private ? 'TRUE (Ghost Mode should be enforced) ✅' : 'FALSE (Ghost Mode is optional) ❌');
-          console.log('📊 [VideoWatch] session_status members type:', typeof data.members, 'isArray:', Array.isArray(data.members));
+          console.log('📊 [session_status] received:', { session_id: data?.id, media_type: data?.current_media_type, member_count: data?.members?.length });
 
           // ✅ SESSION MEMBERS from WebSocket unicast — initialise our local map.
           if (Array.isArray(data.members)) {
@@ -4826,15 +4845,18 @@ export default function VideoWatch() {
               const videoEl = videoPlayerRef.current;
               if (videoEl && (message.command === "seek" || message.command === "play")) {
                 const drift = Math.abs(videoEl.currentTime - adjustedTime);
+                const _isHlsSame = currentMedia?.mediaUrl?.endsWith('.m3u8');
                 if (drift > 2.0) {
                   // Only hard-seek if meaningfully off — sub-2s differences are closed
                   // by the FRAG_CHANGED rate nudge without causing re-buffering.
                   videoEl.currentTime = adjustedTime;
+                  console.log(`[PC-SAME] cmd=${message.command} memberTime=${videoEl.currentTime.toFixed(2)}s adjustedTime=${adjustedTime.toFixed(2)}s drift=${drift.toFixed(2)}s isHls=${_isHlsSame} →SEEK latency=${latency}ms`);
+                } else {
+                  console.log(`[PC-SAME] cmd=${message.command} memberTime=${videoEl.currentTime.toFixed(2)}s adjustedTime=${adjustedTime.toFixed(2)}s drift=${drift.toFixed(2)}s isHls=${_isHlsSame} →skip latency=${latency}ms`);
                 }
+              } else {
+                console.log(`[PC-SAME] cmd=${message.command} adjustedTime=${adjustedTime.toFixed(2)}s`);
               }
-              console.log('⏭️ [VideoWatch] Same media — direct op (no reload):', {
-                command: message.command, adjustedTime: adjustedTime.toFixed(2)
-              });
             }
           } else {
             console.warn('⚠️ [VideoWatch] playback_control missing file_path and media_url!');
@@ -6813,6 +6835,15 @@ export default function VideoWatch() {
     <div className="relative w-full bg-[#0a0a0a] text-white overflow-hidden" style={{ height: '100dvh' }}>
       {/* ✅ Toast Notifications */}
       <Toaster position="top-center" />
+
+      {/* 📋 Copy-logs button — tap to copy recent console logs to clipboard for debugging */}
+      <button
+        onClick={handleExportLogs}
+        className="fixed bottom-20 right-2 z-[9999] w-8 h-8 bg-green-600 hover:bg-green-500 active:scale-95 rounded-full flex items-center justify-center text-white text-sm shadow-lg transition-all opacity-70 hover:opacity-100"
+        title="Copy logs to clipboard"
+      >
+        📋
+      </button>
 
       {/* Session Ended Overlay */}
       {sessionEndedInfo && (
