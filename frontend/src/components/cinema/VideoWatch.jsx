@@ -686,6 +686,10 @@ export default function VideoWatch() {
   // Segment-boundary HLS sync (device-stream / progressive upload)
   const [hlsStartPosition, setHlsStartPosition] = useState(0); // for late-joiner segment-index positioning
   const currentMemberFragRef = useRef(-1);        // last segment number seen by FRAG_CHANGED
+  // After a video ends locally, suppress playback_control reloads for the same file for 10s.
+  // Guards the race where a member finishes slightly ahead of the host and an in-flight
+  // heartbeat arrives after currentMedia=null, incorrectly triggering a replay via !isSameMedia.
+  const lastEndedMediaRef = useRef(null); // { filePath, endedAt }
   // Central helper for all member map mutations. Must be declared before any useEffect that calls it.
   // 'add'     → payload is a normalised member object {id, username, avatar_url, user_role}
   // 'remove'  → payload is a userId (number)
@@ -1194,12 +1198,17 @@ export default function VideoWatch() {
       }
     }
 
-    // For HLS streams: position hls.js startPosition at (segmentIndex-1)*2 so the late joiner
-    // loads one segment behind the host's known position rather than always starting from 0
-    // and catching up via sync corrections. Non-HLS URLs are unaffected (startPosition=0).
-    if (url.endsWith('.m3u8') && sessionStatus.currentSegmentIndex > 0) {
-      const startSeg = Math.max(0, sessionStatus.currentSegmentIndex - 1);
-      setHlsStartPosition(startSeg * 2); // 2 = HlsSegmentSeconds on the server
+    // For HLS streams: start hls.js 2s behind the estimated host position so the first
+    // frag boundary is already close to the host rather than drifting from 0.
+    // Non-HLS URLs are unaffected (startPosition stays 0).
+    if (url.endsWith('.m3u8') && estimatedTime > 2) {
+      setHlsStartPosition(Math.max(0, estimatedTime - 2));
+    }
+
+    // Seed lastHostPosRef immediately so handleFragChanged can make corrections from the
+    // very first segment boundary, without waiting up to 2.5s for the first sync_heartbeat.
+    if (estimatedTime > 0) {
+      lastHostPosRef.current = { expected: estimatedTime, timestamp: Date.now() };
     }
 
     setCurrentMedia({
@@ -2620,28 +2629,36 @@ export default function VideoWatch() {
       return;
     }
     const hostPos = lastHostPosRef.current.expected + elapsed;
-    const hostSeg = Math.floor(hostPos / 2); // matches HlsSegmentSeconds=2 on the server
-    const gap = hostSeg - sn;
+    const memberPos = videoEl.currentTime;
+    // Work in TIME not segment counts. Segment durations are variable (ffmpeg only targets
+    // 2s per segment but cuts at keyframe boundaries, so real durations are 1–8s). Computing
+    // hostSeg = floor(hostPos/2) produces values 3–4× larger than the actual segment index,
+    // which was causing JUMP targets like (hostSeg-1)*2 = 60s when the host was only at 30s.
+    // That sent hls.js to buffer segments that aren't yet uploaded to CDN, causing the 404
+    // cascade and "fast-forward/replay" glitch.
+    const timeDrift = memberPos - hostPos; // negative = member behind host
 
     let action;
-    if (gap <= 1) {
-      // On track (or 1 segment behind, which is the desired buffer cushion)
+    if (timeDrift >= -1.5) {
+      // Within 1.5s — on track
       if (videoEl.playbackRate !== 1.0) videoEl.playbackRate = 1.0;
       action = 'ok';
-    } else if (gap <= 3) {
-      // 2-3 segments behind: gentle 5% rate nudge — imperceptible, no re-buffering
+    } else if (timeDrift >= -6) {
+      // 1.5–6s behind: gentle rate nudge — imperceptible, no re-buffering
       videoEl.playbackRate = 1.05;
       action = 'rate+5%';
-    } else if (gap < 30) {
-      // Significantly behind: single clean segment jump to 1 segment behind host
-      const targetTime = Math.max(0, (hostSeg - 1) * 2);
+    } else if (timeDrift >= -30) {
+      // 6–30s behind: jump to 1s before host's current position.
+      // Jumping to hostPos-1 is always safe: the host has already played past that point,
+      // so that segment is guaranteed to be available on CDN.
+      const targetTime = Math.max(0, hostPos - 1);
       videoEl.currentTime = targetTime;
       videoEl.playbackRate = 1.0;
-      action = `JUMP→${hostSeg - 1}`;
+      action = `JUMP→${targetTime.toFixed(1)}s`;
     } else {
-      action = 'gap>=30 skip';
+      action = 'drift>=30s skip';
     }
-    console.log(`[HLS-SYNC] frag=${sn} hostSeg=${hostSeg} gap=${gap} hostPos=${hostPos.toFixed(1)}s hbAge=${elapsed.toFixed(1)}s action=${action} rate=${videoEl.playbackRate}`);
+    console.log(`[HLS-SYNC] frag=${sn} memberPos=${memberPos.toFixed(1)}s hostPos=${hostPos.toFixed(1)}s drift=${timeDrift.toFixed(1)}s hbAge=${elapsed.toFixed(1)}s action=${action}`);
   }, [isHost, hlsStartPosition]);
 
   const handleSkipToLive = useCallback(() => {
@@ -4788,7 +4805,15 @@ export default function VideoWatch() {
             const adjustedTime = message.seek_time + (latency / 1000);
 
             if (!isSameMedia) {
-              // Different media — full reload via setCurrentMedia (triggers CinemaVideoPlayer re-init)
+              // If this is the file that just finished naturally on this client, ignore the
+              // stale in-flight heartbeat for 10s so it doesn't replay the ended video.
+              const ended = lastEndedMediaRef.current;
+              if (ended && ended.filePath === message.file_path && Date.now() - ended.endedAt < 10000) break;
+              // Different media — full reload via setCurrentMedia (triggers CinemaVideoPlayer re-init).
+              // Clear the ended-media cooldown so a future replay of this file isn't blocked.
+              if (lastEndedMediaRef.current?.filePath !== message.file_path) {
+                lastEndedMediaRef.current = null;
+              }
               const fileUrl = message.file_url || message.file_path;
               const mediaUrl = resolveMediaUrl(fileUrl);
               console.log(`[PC-NEW] loading ${mediaUrl?.split('/').pop()} isSameMedia=false`);
@@ -6008,6 +6033,11 @@ export default function VideoWatch() {
     }
     // Clear subtitle when media actually ends (not a loop)
     clearSubtitle(isHost);
+    // Record which file just ended so the playback_control handler can ignore stale
+    // in-flight heartbeats that would otherwise reload the video via the !isSameMedia path.
+    if (currentMedia?.file_path) {
+      lastEndedMediaRef.current = { filePath: currentMedia.file_path, endedAt: Date.now() };
+    }
     const currentIndex = playlist.findIndex(item => item.ID === currentMedia?.ID);
     if (currentIndex === -1) {
       setCurrentMedia(null);
