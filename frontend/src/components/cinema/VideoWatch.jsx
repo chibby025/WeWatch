@@ -1064,6 +1064,12 @@ export default function VideoWatch() {
   const graphicsCanvasRef = useRef(null);
   const graphicsRendererRef = useRef(null);
   const renderLoopRef = useRef(null);
+  // Holds session_status LiveShare graphics data that arrived before the renderer
+  // was initialized (graphicsRendererRef is set by a useEffect that fires after
+  // the first render triggered by setLiveShareContentMode — by definition after
+  // the synchronous session_status handler has already run and found the ref null).
+  // Flushed and cleared the first time the renderer init effect sees it.
+  const pendingLiveShareGraphicsRef = useRef(null);
 
   // 📝 QUIZ SYSTEM STATE
   const [quizzes, setQuizzes] = useState([]); // All quizzes in this session
@@ -1349,7 +1355,38 @@ export default function VideoWatch() {
     const renderer = new GraphicsRenderer(graphicsCanvasRef.current);
     renderer.init(1920, 1080); // Standard HD resolution
     graphicsRendererRef.current = renderer;
-    
+
+    // Flush any pending LiveShare graphics that arrived (via session_status) before
+    // this useEffect had a chance to run.  This happens for every late joiner: the
+    // session_status handler sets liveShareContentMode state (which schedules this
+    // effect to re-run) and simultaneously checks graphicsRendererRef — but the ref
+    // is still null at that synchronous moment because this effect hasn't run yet.
+    // The handler therefore stores the raw data object in pendingLiveShareGraphicsRef;
+    // we pick it up here, apply every layer, and clear the ref.
+    const pendingData = pendingLiveShareGraphicsRef.current;
+    if (pendingData) {
+      pendingLiveShareGraphicsRef.current = null;
+      let pendingRestored = false;
+      const tryAddLayer = (field, layerType) => {
+        if (!pendingData[field]) return;
+        try {
+          renderer.addLayer(layerType, JSON.parse(pendingData[field]));
+          pendingRestored = true;
+        } catch (e) {
+          console.error(`❌ [VideoWatch] Pending graphics flush: failed to parse ${field}:`, e);
+        }
+      };
+      tryAddLayer('liveshare_banner_text', 'banner');
+      tryAddLayer('liveshare_ticker_items', 'ticker');
+      tryAddLayer('liveshare_lower_third', 'lower_third');
+      tryAddLayer('liveshare_logo_bug', 'logo_bug');
+      tryAddLayer('liveshare_break_screen', 'break_screen');
+      if (pendingRestored) {
+        renderer.render();
+        console.log('✅ [VideoWatch] Pending LiveShare graphics flushed after renderer init');
+      }
+    }
+
     // Start render loop
     const renderLoop = () => {
       renderer.render();
@@ -4396,7 +4433,12 @@ export default function VideoWatch() {
                 console.log('✅ [VideoWatch] LiveShare graphics state restored for late joiner');
               }
             } else {
-              console.warn('⚠️ [VideoWatch] GraphicsRenderer not initialized yet - graphics will be restored after initialization');
+              // Renderer isn't ready yet — setLiveShareContentMode above schedules a
+              // re-render that will trigger the graphicsRenderer init useEffect, but
+              // that effect runs AFTER this synchronous handler returns. Store the raw
+              // session_status data so the init effect can flush it once ready.
+              pendingLiveShareGraphicsRef.current = data;
+              console.log('⏳ [VideoWatch] GraphicsRenderer not ready yet — graphics queued for post-init flush');
             }
           }
 
@@ -4408,7 +4450,9 @@ export default function VideoWatch() {
           // forever once it set currentMedia first.
 
           // Screen share restoration
-          if (data.is_screen_sharing && data.screen_share_host_id) {
+          // Field is is_screen_sharing_active (not is_screen_sharing) to match
+          // the backend's WatchSession model field name.
+          if (data.is_screen_sharing_active && data.screen_share_host_id) {
             const sharerId = data.screen_share_host_id;
             setCurrentMedia({ type: 'screen_share', userId: sharerId, title: 'Live Screen Share', original_name: 'Live Screen Share' });
             setIsPlaying(true);
@@ -4557,8 +4601,15 @@ export default function VideoWatch() {
           setSelectedLiveShareLayout(null);
           setLiveShareContentMode(null);
           setPodcastConfig(null);
+          // Clear any stale buffering overlay — the host's buffer-health signals
+          // (reason:"buffering" playback_control) only ever arrive a "play" resume if
+          // everything went well, but if LiveShare ended while the host was still in a
+          // buffering-pause state, members never receive the matching "play" and
+          // remoteBufferingActive stays true indefinitely.
+          setRemoteBufferingActive(false);
+          isBufferingRef.current = false;
           console.log('[VideoWatch MEMBER] LiveShare layout and media cleared on host End Live');
-          
+
           showNotification('Screen sharing ended', 'info');
           break;
         
@@ -4718,6 +4769,12 @@ export default function VideoWatch() {
           // own, so without this a brand new stream could inherit a stale position.
           playbackPositionRef.current = 0;
           setIsPreparingStream(false);
+          // Clear any leftover buffering overlay from a previous LiveShare session —
+          // the buffering-pause signal only clears via a matching "play" resume message
+          // from the same host upload, which never arrives if the user switches from
+          // LiveShare to Browse Files while the host was mid-buffer-pause.
+          setRemoteBufferingActive(false);
+          isBufferingRef.current = false;
           setCurrentMedia({
             ID: message.media_item_id,
             type: 'upload',
@@ -4726,6 +4783,9 @@ export default function VideoWatch() {
             original_name: message.original_name || 'Now Playing',
             mime_type: message.mime_type,
           });
+          // Mark that media was established via a WS broadcast so the late-join
+          // restoration effect doesn't re-trigger when the video ends naturally.
+          mediaRestoredFromJoinRef.current = true;
           setPendingSeekTime(0);
           // Non-host: no upload-throughput signal to evaluate, start immediately as
           // before. Host: deferred to useStreamBufferHealth's one-shot Tier 2 check
@@ -4844,6 +4904,9 @@ export default function VideoWatch() {
                 mediaUrl: mediaUrl,
                 original_name: message.original_name || 'Unknown Media',
               });
+              // Mark that media was established via a WS broadcast so the late-join
+              // restoration effect doesn't re-trigger when the video ends naturally.
+              mediaRestoredFromJoinRef.current = true;
               // Stall watchdog: if video hasn't fired 'playing' within 9s, surface the reconnect button
               if (message.command === "play") {
                 setVideoStalled(false);

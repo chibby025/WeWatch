@@ -925,8 +925,15 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                 "current_doc_url":          joinDocURL,
                 "current_doc_type":         joinDocType,
                 "current_doc_page":         joinDocPage,
-                "is_screen_sharing_active": session.IsScreenSharingActive,
-                "sharing_source":           session.SharingSource,
+                // Use watchSession (fresh DB read) for screen-sharing state so it
+                // reflects the latest value — the in-memory session copy is never
+                // mutated after session start and may be stale.
+                "is_screen_sharing_active": watchSession.IsScreenSharingActive,
+                "sharing_source":           watchSession.SharingSource,
+                // screen_share_host_id: for simplicity the host is always the sharer
+                // in the current LiveShare model — frontend uses this to set up the
+                // screen_share media type on the late joiner's player.
+                "screen_share_host_id":     watchSession.HostID,
                 "session_title":            session.SessionTitle,
                 "poster_url":              session.PosterURL,
                 "is_private":              watchSession.IsPrivate,
@@ -937,6 +944,19 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                 "watch_type":              watchSession.WatchType,
                 "class_type":              watchSession.ClassType,
                 "current_subtitle":         joinSubtitle,
+                // LiveShare state — all persisted in watch_sessions by liveshare_handler.go.
+                // Needed so a late joiner sees the correct mode, layout, and overlays
+                // without requiring a separate rehydration broadcast.
+                "liveshare_mode":           watchSession.LiveshareMode,
+                "liveshare_layout":         watchSession.LiveShareLayout,
+                "liveshare_banner_text":    watchSession.LiveShareBannerText,
+                "liveshare_ticker_items":   watchSession.LiveShareTickerItems,
+                "liveshare_lower_third":    watchSession.LiveShareLowerThird,
+                "liveshare_logo_bug":       watchSession.LiveShareLogoBug,
+                "liveshare_break_screen":   watchSession.LiveShareBreakScreen,
+                "podcast_title":            watchSession.PodcastTitle,
+                "podcast_logo_url":         watchSession.PodcastLogoURL,
+                "podcast_guest_user_id":    watchSession.PodcastGuestUserID,
             },
         }
         if statusBytes, err := json.Marshal(statusMsg); err == nil {

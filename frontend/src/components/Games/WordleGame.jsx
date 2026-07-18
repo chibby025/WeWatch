@@ -115,6 +115,8 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
   const [bounceRow, setBounceRow]  = useState(-1);
   const [popSet, setPopSet]        = useState(new Set());
   const [hintPending, setHintPending] = useState(false);
+  // Mobile: keyboard collapsed by default — users type with native keyboard, only need ⌫ + ENTER
+  const [keypadOpen, setKeypadOpen] = useState(false);
 
   // Read directly from props — no useState copy, avoids the one-render-behind bug
   const gs = gameState?.game_state;
@@ -386,105 +388,164 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
           )}
         </div>
 
-        {/* Keyboard row — side panel (desktop) + keys */}
+        {/* Keyboard + controls */}
         {!isOver && !isElim && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
 
-            {/* Left panel: Hint + End Game — hidden on mobile (hint is in header, X ends game) */}
-            {!isMobile && <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
-              {/* Hint button */}
-              <button
-                onPointerDown={e => {
-                  e.preventDefault();
-                  if (!hintUsed && !hintPending) {
-                    setHintPending(true);
-                    onMoveRef.current({ move_type: 'hint' });
-                    setTimeout(() => setHintPending(false), 1500);
-                  }
-                }}
-                disabled={hintUsed || hintPending}
-                style={{
-                  width: 46, height: 58, borderRadius: 4, border: 'none',
-                  background: hintUsed ? '#3a3a3c' : hintPending ? '#0e7490' : '#0891b2',
-                  color: '#fff', fontWeight: 700, fontSize: 10,
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  gap: 2, cursor: hintUsed ? 'not-allowed' : 'pointer',
-                  opacity: hintUsed ? 0.55 : 1, userSelect: 'none',
-                }}
-                title={hintUsed ? 'Hint used' : '1 hint available'}
-              >
-                <span style={{ fontSize: 18 }}>💡</span>
-                <span style={{ fontSize: 9 }}>{hintUsed ? 'USED' : 'HINT'}</span>
-              </button>
+            {/* Left panel: Hint + End Game — desktop only */}
+            {!isMobile && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+                <button
+                  onPointerDown={e => {
+                    e.preventDefault();
+                    if (!hintUsed && !hintPending) {
+                      setHintPending(true);
+                      onMoveRef.current({ move_type: 'hint' });
+                      setTimeout(() => setHintPending(false), 1500);
+                    }
+                  }}
+                  disabled={hintUsed || hintPending}
+                  style={{
+                    width: 46, height: 58, borderRadius: 4, border: 'none',
+                    background: hintUsed ? '#3a3a3c' : hintPending ? '#0e7490' : '#0891b2',
+                    color: '#fff', fontWeight: 700, fontSize: 10,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: 2, cursor: hintUsed ? 'not-allowed' : 'pointer',
+                    opacity: hintUsed ? 0.55 : 1, userSelect: 'none',
+                  }}
+                  title={hintUsed ? 'Hint used' : '1 hint available'}
+                >
+                  <span style={{ fontSize: 18 }}>💡</span>
+                  <span style={{ fontSize: 9 }}>{hintUsed ? 'USED' : 'HINT'}</span>
+                </button>
+                <button
+                  onPointerDown={e => { e.preventDefault(); onEndGame?.(); }}
+                  style={{
+                    width: 46, height: 58, borderRadius: 4, border: 'none',
+                    background: '#7f1d1d', color: '#fff', fontWeight: 700, fontSize: 10,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: 2, cursor: 'pointer', userSelect: 'none',
+                  }}
+                  title="End game for everyone"
+                >
+                  <X size={15} />
+                  <span style={{ fontSize: 9 }}>END</span>
+                </button>
+              </div>
+            )}
 
-              {/* End Game button */}
-              <button
-                onPointerDown={e => { e.preventDefault(); onEndGame?.(); }}
-                style={{
-                  width: 46, height: 58, borderRadius: 4, border: 'none',
-                  background: '#7f1d1d',
-                  color: '#fff', fontWeight: 700, fontSize: 10,
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  gap: 2, cursor: 'pointer', userSelect: 'none',
-                }}
-                title="End game for everyone"
-              >
-                <X size={15} />
-                <span style={{ fontSize: 9 }}>END</span>
-              </button>
-            </div>}
-
-            {/* Keyboard — scaled down 10% on mobile portrait so all keys stay visible */}
-            <div style={{
-              display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center',
-              ...(isMobile && isPortrait ? { transform: 'scale(0.85)', transformOrigin: 'top center' } : {}),
-            }}>
-              {/* Hint banner — shown above keyboard once hint is received */}
-              {hintData && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  color: '#22d3ee', fontSize: 11, fontWeight: 600,
-                }}>
-                  <span>💡 Position {hintData.position + 1} is</span>
-                  <span style={{
-                    background: '#0891b2', color: '#fff',
-                    borderRadius: 3, padding: '1px 7px',
-                    fontWeight: 800, fontSize: 13, letterSpacing: 1,
-                  }}>
-                    {hintData.letter}
-                  </span>
+            {/* Keyboard — collapsible on mobile, always visible on desktop */}
+            {isMobile ? (
+              keypadOpen ? (
+                /* Mobile expanded: full keyboard at 75% scale + collapse strip */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+                  <button
+                    onPointerDown={e => { e.preventDefault(); setKeypadOpen(false); }}
+                    style={{
+                      background: 'none', border: 'none', color: '#555', fontSize: 11,
+                      cursor: 'pointer', userSelect: 'none', padding: '2px 8px',
+                      display: 'flex', alignItems: 'center', gap: 3,
+                    }}
+                  >▼ close keyboard</button>
+                  {hintData && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#22d3ee', fontSize: 11, fontWeight: 600 }}>
+                      <span>💡 Position {hintData.position + 1} is</span>
+                      <span style={{ background: '#0891b2', color: '#fff', borderRadius: 3, padding: '1px 7px', fontWeight: 800, fontSize: 13, letterSpacing: 1 }}>
+                        {hintData.letter}
+                      </span>
+                    </div>
+                  )}
+                  <div style={{ transform: 'scale(0.75)', transformOrigin: 'top center', display: 'flex', flexDirection: 'column', gap: keyGap }}>
+                    {KEYBOARD_ROWS.map((row, ri) => (
+                      <div key={ri} style={{ display: 'flex', gap: keyGap }}>
+                        {row.map(k => {
+                          const st = letterStatus[k];
+                          let bg = st ? KEY_BG[st] : '#818384';
+                          if (hintData?.letter === k && st !== 'G') bg = KEY_BG.H;
+                          const wide = k.length > 1;
+                          return (
+                            <button
+                              key={k}
+                              onPointerDown={e => { e.preventDefault(); pressKey(k); }}
+                              style={{
+                                background: bg, height: keyH, borderRadius: 4, border: 'none',
+                                color: '#fff', fontWeight: 700, fontSize: wide ? 11 : 14,
+                                width: wide ? wideKeyW : narrowKeyW,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                userSelect: 'none', cursor: 'pointer',
+                              }}
+                            >{k}</button>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              )}
-
-              {KEYBOARD_ROWS.map((row, ri) => (
-                <div key={ri} style={{ display: 'flex', gap: keyGap }}>
-                  {row.map(k => {
-                    const st = letterStatus[k];
-                    // Hint letter: cyan if not already identified as green
-                    let bg = st ? KEY_BG[st] : '#818384';
-                    if (hintData?.letter === k && st !== 'G') bg = KEY_BG.H;
-                    const wide = k.length > 1;
-                    return (
-                      <button
-                        key={k}
-                        onPointerDown={e => { e.preventDefault(); pressKey(k); }}
-                        style={{
-                          background: bg,
-                          height: keyH, borderRadius: 4, border: 'none',
-                          color: '#fff', fontWeight: 700,
-                          fontSize: wide ? 11 : 14,
-                          width: wide ? wideKeyW : narrowKeyW,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          userSelect: 'none', cursor: 'pointer',
-                        }}
-                      >
-                        {k}
-                      </button>
-                    );
-                  })}
+              ) : (
+                /* Mobile collapsed: ⌫ | Open Keypad | ENTER — use native phone keyboard for letters */
+                <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'stretch', width: '100%', maxWidth: 340, padding: '0 4px' }}>
+                  <button
+                    onPointerDown={e => { e.preventDefault(); pressKey('⌫'); }}
+                    style={{
+                      width: 64, height: 48, background: '#818384', borderRadius: 6, border: 'none',
+                      color: '#fff', fontWeight: 700, fontSize: 20, cursor: 'pointer', userSelect: 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >⌫</button>
+                  <button
+                    onPointerDown={e => { e.preventDefault(); setKeypadOpen(true); }}
+                    style={{
+                      flex: 1, height: 48, background: '#2a2a2c', borderRadius: 6, border: '1px solid #444',
+                      color: '#9ca3af', fontWeight: 600, fontSize: 12, cursor: 'pointer', userSelect: 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                    }}
+                  ><span>⌨️</span><span>Open Keypad</span></button>
+                  <button
+                    onPointerDown={e => { e.preventDefault(); pressKey('ENTER'); }}
+                    style={{
+                      width: 64, height: 48, background: '#538d4e', borderRadius: 6, border: 'none',
+                      color: '#fff', fontWeight: 700, fontSize: 11, cursor: 'pointer', userSelect: 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >↵ ENTER</button>
                 </div>
-              ))}
-            </div>
+              )
+            ) : (
+              /* Desktop: always full keyboard, no collapse */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+                {hintData && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#22d3ee', fontSize: 11, fontWeight: 600 }}>
+                    <span>💡 Position {hintData.position + 1} is</span>
+                    <span style={{ background: '#0891b2', color: '#fff', borderRadius: 3, padding: '1px 7px', fontWeight: 800, fontSize: 13, letterSpacing: 1 }}>
+                      {hintData.letter}
+                    </span>
+                  </div>
+                )}
+                {KEYBOARD_ROWS.map((row, ri) => (
+                  <div key={ri} style={{ display: 'flex', gap: keyGap }}>
+                    {row.map(k => {
+                      const st = letterStatus[k];
+                      let bg = st ? KEY_BG[st] : '#818384';
+                      if (hintData?.letter === k && st !== 'G') bg = KEY_BG.H;
+                      const wide = k.length > 1;
+                      return (
+                        <button
+                          key={k}
+                          onPointerDown={e => { e.preventDefault(); pressKey(k); }}
+                          style={{
+                            background: bg, height: keyH, borderRadius: 4, border: 'none',
+                            color: '#fff', fontWeight: 700, fontSize: wide ? 11 : 14,
+                            width: wide ? wideKeyW : narrowKeyW,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            userSelect: 'none', cursor: 'pointer',
+                          }}
+                        >{k}</button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
