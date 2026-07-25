@@ -665,6 +665,9 @@ func EndWatchSessionHandler(c *gin.Context) {
 	hub.BroadcastToRoom(session.RoomID, OutgoingMessage{Data: sessionEndedBytes, IsBinary: false}, nil)
 	log.Printf("✅ [EndWatchSessionHandler] session_ended message broadcasted")
 
+	// Free in-memory LiveShare overlay state — no longer needed after session ends.
+	hub.ClearLiveGraphics(sessionID)
+
 	// Lobby broadcast for real-time session list updates
 	lobbyBroadcastData := map[string]interface{}{
 		"type":       "session_ended",
@@ -1141,7 +1144,8 @@ func AutoEndSession(sessionID string) error {
 		}
 		hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)
 		log.Printf("📡 Broadcast session_ended (host timeout) to room %d", session.RoomID)
-		
+		hub.ClearLiveGraphics(sessionID)
+
 		// Disconnect all WebSocket clients
 		time.Sleep(500 * time.Millisecond)
 		hub.DisconnectRoomClients(session.RoomID)

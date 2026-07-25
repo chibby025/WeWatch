@@ -51,6 +51,7 @@ export default function UserProfileModal({
   const [showFollowingList, setShowFollowingList] = useState(false);
   const [followingList, setFollowingList] = useState([]);
   const [loadingFollowingList, setLoadingFollowingList] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
   const { currentUser, roomMemberships } = useAuth();
   const navigate = useNavigate();
 
@@ -58,6 +59,7 @@ export default function UserProfileModal({
     if (user) {
       setEditedUsername(user.username || '');
       setEditedBio(user.bio || '');
+      setAvatarError(false);
     }
   }, [user]);
 
@@ -225,6 +227,7 @@ export default function UserProfileModal({
   if (!isOpen || !user) return null;
 
   const currentAvatar = previewImage || user.avatar_url || '/icons/user1avatar.svg';
+  const isUsingFallback = avatarError || (!previewImage && !user?.avatar_url);
 
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-2 sm:p-4">
@@ -247,11 +250,11 @@ export default function UserProfileModal({
         <div className="overflow-y-auto max-h-[95vh] sm:max-h-[90vh]">
 
           {/* Hero avatar */}
-          <div className="relative w-full h-44 sm:h-56 bg-gradient-to-br from-purple-900/30 to-blue-900/30 flex-shrink-0">
+          <div className={`relative w-full h-44 sm:h-56 flex-shrink-0 ${isUsingFallback ? 'bg-white' : 'bg-gradient-to-br from-purple-900/30 to-blue-900/30'}`}>
             <img
               src={currentAvatar}
               alt={user.username}
-              onError={(e) => { e.target.onerror = null; e.target.src = '/avatars/default.png'; }}
+              onError={(e) => { e.target.onerror = null; e.target.src = '/avatars/default.png'; setAvatarError(true); }}
               onClick={() => setIsAvatarExpanded(true)}
               className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
               title="Click to view full size"

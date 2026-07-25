@@ -33,6 +33,7 @@ import PresentationControl from '../../liveshare/PresentationControl';
 import HymnsControl from '../../liveshare/HymnsControl';
 import SermonControl from '../../liveshare/SermonControl';
 import { calculateAge } from '../../../utils/ageUtils';
+import { apiClient } from '../../../services/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
@@ -681,23 +682,13 @@ export default function LiveShareManager({
       formData.append('logo', podcastLogo);
       
       try {
-        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/podcast-logo`, {
-          method: 'POST',
-          credentials: 'include', // Use cookies instead of Bearer token
-          body: formData
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          logoUrl = data.logo_url;
-        } else {
-          console.error('Failed to upload logo:', response.status, await response.text());
-        }
+        const { data } = await apiClient.post(`/api/sessions/${sessionId}/podcast-logo`, formData, { headers: { 'Content-Type': undefined } });
+        logoUrl = data.logo_url;
       } catch (err) {
         console.error('Failed to upload logo:', err);
       }
     }
-    
+
     // Call mode selection handler with all config
     if (onLiveShareModeSelect) {
       onLiveShareModeSelect(selectedMode, {
@@ -766,23 +757,12 @@ export default function LiveShareManager({
         formData.append('logo', setup.logoFile);
 
         try {
-          const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/podcast-logo`, {
-            method: 'POST',
-            credentials: 'include',
-            body: formData
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            logoUrl = data.logo_url;
-            console.log('✅ [LiveShareManager] Logo uploaded successfully:', logoUrl);
-          } else {
-            console.error('❌ [LiveShareManager] Logo upload failed:', response.status);
-            // Fall back to data URL so the host still sees their logo
-            logoUrl = setup.logoPreview || null;
-          }
+          const { data } = await apiClient.post(`/api/sessions/${sessionId}/podcast-logo`, formData, { headers: { 'Content-Type': undefined } });
+          logoUrl = data.logo_url;
+          console.log('✅ [LiveShareManager] Logo uploaded successfully:', logoUrl);
         } catch (err) {
           console.error('❌ [LiveShareManager] Logo upload error:', err);
+          // Fall back to data URL so the host still sees their logo
           logoUrl = setup.logoPreview || null;
         }
       } else if (setup.logoPreview) {
@@ -856,46 +836,24 @@ export default function LiveShareManager({
     formData.append('logo', file);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/logo-bug`, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        toast.success('Logo uploaded successfully');
-        
-        // Graphics data for both API and WebSocket
-        const graphicData = {
-          type: 'logo_bug',
-          content: { imageUrl: data.logo_url },
-          position: 'top-right',
-          active: true,
-          z_index: 5
-        };
-        
-        // Update graphics state to show logo
-        await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(graphicData)
-        });
-        
-        // Broadcast to all viewers via WebSocket
-        if (sendMessage) {
-          sendMessage({
-            type: 'liveshare_graphics_update',
-            data: { graphic: graphicData }
-          });
-        }
-        
-        setLogoBugActive(true);
-        console.log('🎨 [LiveShareManager] Logo bug update broadcast:', graphicData);
-      } else {
-        toast.error('Failed to upload logo');
+      const { data } = await apiClient.post(`/api/sessions/${sessionId}/logo-bug`, formData, { headers: { 'Content-Type': undefined } });
+      toast.success('Logo uploaded successfully');
+
+      const graphicData = {
+        type: 'logo_bug',
+        content: { imageUrl: data.logo_url },
+        position: 'top-right',
+        active: true,
+        z_index: 5
+      };
+
+      // Broadcast via WebSocket — backend stores in memory and relays to room.
+      if (sendMessage) {
+        sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
       }
+
+      setLogoBugActive(true);
+      console.log('🎨 [LiveShareManager] Logo bug update broadcast:', graphicData);
     } catch (error) {
       console.error('Logo upload error:', error);
       toast.error('Failed to upload logo');
@@ -926,35 +884,22 @@ export default function LiveShareManager({
       formData.append('media', file);
       
       try {
-        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/media-queue`, {
-          method: 'POST',
-          credentials: 'include',
-          body: formData
-        });
-        
-        if (response.ok) {
-          const queueItem = await response.json();
-          console.log('✅ [MediaQueue] Upload successful:', { itemId: queueItem.id, fileName: file.name, mediaUrl: queueItem.media_url });
-          setMediaQueue(prev => [...prev, {
-            ...queueItem,
-            file,
-            preview: URL.createObjectURL(file)
-          }]);
-          toast.success(`${file.name} added to queue`);
-        } else {
-          // Get error message from backend
-          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-          console.error('❌ [MediaQueue] Upload failed:', {
-            status: response.status,
-            error: errorData.error || errorData.message,
-            sessionId,
-            fileName: file.name
-          });
-          toast.error(`Failed to upload ${file.name}: ${errorData.error || 'Unknown error'}`);
-        }
+        const queueItem = await apiClient.post(
+          `/api/sessions/${sessionId}/media-queue`,
+          formData,
+          { headers: { 'Content-Type': undefined } }
+        ).then(r => r.data);
+        console.log('✅ [MediaQueue] Upload successful:', { itemId: queueItem.id, fileName: file.name, mediaUrl: queueItem.media_url });
+        setMediaQueue(prev => [...prev, {
+          ...queueItem,
+          file,
+          preview: URL.createObjectURL(file)
+        }]);
+        toast.success(`${file.name} added to queue`);
       } catch (error) {
-        console.error('Media upload error:', error);
-        toast.error(`Failed to upload ${file.name}`);
+        const errMsg = error.response?.data?.error || error.response?.data?.message || 'Unknown error';
+        console.error('❌ [MediaQueue] Upload failed:', { error: errMsg, sessionId, fileName: file.name });
+        toast.error(`Failed to upload ${file.name}: ${errMsg}`);
       }
     }
   };
@@ -1033,22 +978,11 @@ export default function LiveShareManager({
       z_index: 9
     };
     
-    // Save to backend
-    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(graphicData)
-    }).catch(err => console.error('Ticker save error:', err));
-    
-    // Broadcast via WebSocket
+    // Broadcast via WebSocket — backend stores in hub memory and relays to room.
     if (sendMessage) {
-      sendMessage({
-        type: 'liveshare_graphics_update',
-        data: { graphic: graphicData }
-      });
+      sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
     }
-    
+
     toast.success('Ticker item added');
     console.log('🎨 [LiveShareManager] Ticker update broadcast:', graphicData);
   };
@@ -1071,22 +1005,9 @@ export default function LiveShareManager({
       z_index: 9
     };
     
-    // Save to backend
-    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(graphicData)
-    }).catch(err => console.error('Ticker toggle error:', err));
-    
-    // Broadcast via WebSocket
     if (sendMessage) {
-      sendMessage({
-        type: 'liveshare_graphics_update',
-        data: { graphic: graphicData }
-      });
+      sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
     }
-    
     console.log('🎨 [LiveShareManager] Ticker toggle broadcast:', graphicData);
   };
   
@@ -1145,20 +1066,8 @@ export default function LiveShareManager({
       logoBugPreviewAvailable: !!logoBugPreview
     });
     
-    // Save to backend
-    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(graphicData)
-    }).catch(err => console.error('Banner toggle error:', err));
-    
-    // Broadcast via WebSocket
     if (sendMessage) {
-      sendMessage({
-        type: 'liveshare_graphics_update',
-        data: { graphic: graphicData }
-      });
+      sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
     }
     
     toast.success(newActive ? 'Banner activated' : 'Banner hidden');
@@ -1193,12 +1102,6 @@ export default function LiveShareManager({
       active: true,
       z_index: 11,
     };
-    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(graphicData),
-    }).catch(err => console.error('Banner rebroadcast error:', err));
     if (sendMessage) {
       sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
     }
@@ -1220,13 +1123,8 @@ export default function LiveShareManager({
       });
     }
     
-    // Save to backend (persist current verse)
-    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/bible-verse`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ verse: verseData })
-    }).catch(err => console.error('Bible verse save error:', err));
+    // Persist current verse on backend (feeds late-joiner session_status).
+    apiClient.post(`/api/sessions/${sessionId}/bible-verse`, { verse: verseData }).catch(err => console.error('Bible verse save error:', err));
     
     toast.success(`Displaying ${verseData.reference}`);
   };
@@ -1246,11 +1144,7 @@ export default function LiveShareManager({
       });
     }
     
-    // Clear from backend
-    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/bible-verse`, {
-      method: 'DELETE',
-      credentials: 'include',
-    }).catch(err => console.error('Bible verse clear error:', err));
+    apiClient.delete(`/api/sessions/${sessionId}/bible-verse`).catch(err => console.error('Bible verse clear error:', err));
     
     toast.success('Bible verse hidden');
   };
@@ -1459,18 +1353,10 @@ export default function LiveShareManager({
         handleStopMedia();
       }
       
-      const response = await fetch(`${API_BASE_URL}/api/sessions/media-queue/${itemId}`, {
-        method: 'DELETE',
-        credentials: 'include'
-      });
-      
-      if (response.ok) {
-        setMediaQueue(prev => prev.filter(item => item.id !== itemId));
-        toast.success('Media removed from queue');
-        console.log('✅ [MediaQueue] Item deleted from queue');
-      } else {
-        toast.error('Failed to delete media');
-      }
+      await apiClient.delete(`/api/sessions/media-queue/${itemId}`);
+      setMediaQueue(prev => prev.filter(item => item.id !== itemId));
+      toast.success('Media removed from queue');
+      console.log('✅ [MediaQueue] Item deleted from queue');
     } catch (error) {
       console.error('Delete media error:', error);
       toast.error('Failed to delete media');
@@ -1496,28 +1382,13 @@ export default function LiveShareManager({
       z_index: 10
     };
     
-    try {
-      // Save to database via REST API
-      await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(graphicData)
+    if (sendMessage) {
+      sendMessage({
+        type: 'liveshare_graphics_update',
+        data: { graphic: graphicData }
       });
-      
-      // Broadcast to all viewers via WebSocket
-      if (sendMessage) {
-        sendMessage({
-          type: 'liveshare_graphics_update',
-          data: { graphic: graphicData }
-        });
-      }
-      
-      console.log('🎨 [LiveShareManager] Lower third update broadcast:', graphicData);
-    } catch (error) {
-      console.error('Lower third update error:', error);
-      toast.error('Failed to update lower third');
     }
+    console.log('🎨 [LiveShareManager] Lower third update broadcast:', graphicData);
   };
   
   // Color change handlers that re-broadcast graphics
@@ -1530,11 +1401,6 @@ export default function LiveShareManager({
           content: { items: tickerItems, style: { bgColor: newColor, timeBoxColor: timeBoxColor } },
           position: 'bottom', active: true, z_index: 9
         };
-        fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(graphicData)
-        }).catch(err => console.error('Ticker color update error:', err));
         if (sendMessage) sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
       });
     }
@@ -1563,13 +1429,6 @@ export default function LiveShareManager({
       
       console.log('🎨 [LiveShareManager] Broadcasting ticker with new time box color:', graphicData);
       
-      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(graphicData)
-      }).catch(err => console.error('Time box color update error:', err));
-      
       if (sendMessage) {
         sendMessage({
           type: 'liveshare_graphics_update',
@@ -1593,11 +1452,6 @@ export default function LiveShareManager({
           content: { text: bannerText, style: { bgColor: newColor }, logoUrl: podcastConfig?.logoUrl || logoBugPreview, podcastLogoSize, podcastLogoX, podcastLogoY, layout: bannerLayout },
           position: 'bottom', active: true, z_index: 11
         };
-        fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(graphicData)
-        }).catch(err => console.error('Banner color update error:', err));
         if (sendMessage) sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
       });
     }
@@ -1617,11 +1471,6 @@ export default function LiveShareManager({
           content: { text: bannerText, style: { bgColor: bannerColor, textColor: newColor }, layout: bannerLayout, podcastLogo: { size: podcastLogoSize, x: podcastLogoX, y: podcastLogoY } },
           position: 'bottom', active: true, z_index: 11
         };
-        fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(graphicData)
-        }).catch(err => console.error('Banner text color update error:', err));
         if (sendMessage) sendMessage({ type: 'liveshare_graphics_update', data: { graphic: graphicData } });
       });
     }
@@ -1753,12 +1602,7 @@ export default function LiveShareManager({
     }
     
     // Save to backend
-    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/break`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(breakData)
-    }).catch(err => console.error('Break start error:', err));
+    apiClient.post(`/api/sessions/${sessionId}/break`, breakData).catch(err => console.error('Break start error:', err));
     
     toast.success(`Taking a ${breakDuration}-minute break`, {
       icon: '⏸️',
@@ -1777,16 +1621,11 @@ export default function LiveShareManager({
     // Track ad impression if ad was shown
     if (breakScreenSource === 'ad' && breakAdData) {
       try {
-        await fetch(`${API_BASE_URL}/api/ads/campaigns/${breakAdData.id}/track`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: sessionId,
-            room_id: parseInt(window.location.pathname.split('/')[2]), // Extract room ID from URL
-            clicked: false,
-            view_duration: breakAdData.duration || 0
-          })
+        await apiClient.post(`/api/ads/campaigns/${breakAdData.id}/track`, {
+          session_id: sessionId,
+          room_id: parseInt(window.location.pathname.split('/')[2]),
+          clicked: false,
+          view_duration: breakAdData.duration || 0
         });
         console.log('✅ [LiveShareManager] Ad impression tracked');
       } catch (error) {
@@ -1826,10 +1665,7 @@ export default function LiveShareManager({
     }
     
     // Save to backend
-    fetch(`${API_BASE_URL}/api/sessions/${sessionId}/break`, {
-      method: 'DELETE',
-      credentials: 'include'
-    }).catch(err => console.error('Break end error:', err));
+    apiClient.delete(`/api/sessions/${sessionId}/break`).catch(err => console.error('Break end error:', err));
     
     toast.success('Welcome back! Stream resumed', {
       icon: '▶️',
@@ -1882,13 +1718,6 @@ export default function LiveShareManager({
         z_index: 10
       };
       
-      fetch(`${API_BASE_URL}/api/sessions/${sessionId}/graphics`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(graphicData)
-      }).catch(err => console.error('Lower third color update error:', err));
-      
       if (sendMessage) {
         sendMessage({
           type: 'liveshare_graphics_update',
@@ -1905,36 +1734,20 @@ export default function LiveShareManager({
     const fetchGraphics = async () => {
       try {
         // Fetch graphics state
-        const graphicsResponse = await fetch(
-          `${API_BASE_URL}/api/sessions/${sessionId}/graphics`,
-          { credentials: 'include' }
-        );
-        
-        if (graphicsResponse.ok) {
-          const graphics = await graphicsResponse.json();
-          
-          // Apply graphics state
-          graphics.forEach(graphic => {
-            if (graphic.type === 'lower_third' && graphic.active) {
-              setLowerThirdName(graphic.content.name || '');
-              setLowerThirdTitle(graphic.content.title || '');
-              setLowerThirdActive(true);
-            } else if (graphic.type === 'theme' && graphic.content) {
-              setThemeColors(graphic.content);
-            }
-          });
-        }
-        
+        const graphics = await apiClient.get(`/api/sessions/${sessionId}/graphics`).then(r => r.data);
+        graphics.forEach(graphic => {
+          if (graphic.type === 'lower_third' && graphic.active) {
+            setLowerThirdName(graphic.content.name || '');
+            setLowerThirdTitle(graphic.content.title || '');
+            setLowerThirdActive(true);
+          } else if (graphic.type === 'theme' && graphic.content) {
+            setThemeColors(graphic.content);
+          }
+        });
+
         // Fetch media queue
-        const queueResponse = await fetch(
-          `${API_BASE_URL}/api/sessions/${sessionId}/media-queue`,
-          { credentials: 'include' }
-        );
-        
-        if (queueResponse.ok) {
-          const queue = await queueResponse.json();
-          setMediaQueue(queue);
-        }
+        const queue = await apiClient.get(`/api/sessions/${sessionId}/media-queue`).then(r => r.data);
+        setMediaQueue(queue);
       } catch (error) {
         console.error('Failed to fetch graphics:', error);
       }

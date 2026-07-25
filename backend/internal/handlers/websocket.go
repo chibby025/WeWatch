@@ -176,6 +176,14 @@ type Hub struct {
     subtitleContent map[uint]string
     subtitleMu      sync.RWMutex
 
+    // In-memory LiveShare graphics (sessionID → field → JSON string value).
+    // Keys: "banner", "ticker", "lower_third", "logo_bug", "break_screen", "podcast_logo_url".
+    // Replaces DB writes for volatile session overlays — late joiners receive
+    // these via session_status which reads this map rather than DB columns.
+    // Cleared by ClearLiveGraphics when the session ends.
+    liveGraphics   map[string]map[string]interface{}
+    liveGraphicsMu sync.RWMutex
+
     // ── Phase 3 observability counters ──────────────────────────────────────
     // Incremented wherever a channel-full "default: drop" branch already existed.
     // Lets /api/admin/hub-stats answer "is the Hub falling behind?" without
@@ -262,6 +270,7 @@ func NewHub() *Hub {
 		docStateMu:          sync.RWMutex{},
 		subtitleContent:     make(map[uint]string),
 		subtitleMu:          sync.RWMutex{},
+		liveGraphics:        make(map[string]map[string]interface{}),
 	}
 }
 
@@ -358,6 +367,10 @@ func (lw *liveShareHubWrapper) BroadcastToLobby(message liveshare.OutgoingMessag
 		Data:     message.Data,
 		IsBinary: message.IsBinary,
 	})
+}
+
+func (lw *liveShareHubWrapper) SetLiveGraphic(sessionID, field string, value interface{}) {
+	lw.hub.SetLiveGraphic(sessionID, field, value)
 }
 
 // hubWrapper adapts Hub to services.WebSocketHub interface
@@ -904,6 +917,20 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
         joinSubtitle = hub.subtitleContent[session.RoomID]
         hub.subtitleMu.RUnlock()
 
+        // Fetch volatile live graphics from memory (no DB read — these are never persisted).
+        liveG := h.GetLiveGraphics(sessionID)
+        getLiveStr := func(field string) string {
+            if liveG == nil {
+                return ""
+            }
+            if v, ok := liveG[field]; ok {
+                if s, ok := v.(string); ok {
+                    return s
+                }
+            }
+            return ""
+        }
+
         statusMsg := WebSocketMessage{
             Type: "session_status",
             Data: map[string]interface{}{
@@ -944,19 +971,19 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
                 "watch_type":              watchSession.WatchType,
                 "class_type":              watchSession.ClassType,
                 "current_subtitle":         joinSubtitle,
-                // LiveShare state — all persisted in watch_sessions by liveshare_handler.go.
-                // Needed so a late joiner sees the correct mode, layout, and overlays
-                // without requiring a separate rehydration broadcast.
+                // LiveShare structural state — persisted in DB (survives server restart).
                 "liveshare_mode":           watchSession.LiveshareMode,
                 "liveshare_layout":         watchSession.LiveShareLayout,
-                "liveshare_banner_text":    watchSession.LiveShareBannerText,
-                "liveshare_ticker_items":   watchSession.LiveShareTickerItems,
-                "liveshare_lower_third":    watchSession.LiveShareLowerThird,
-                "liveshare_logo_bug":       watchSession.LiveShareLogoBug,
-                "liveshare_break_screen":   watchSession.LiveShareBreakScreen,
                 "podcast_title":            watchSession.PodcastTitle,
-                "podcast_logo_url":         watchSession.PodcastLogoURL,
                 "podcast_guest_user_id":    watchSession.PodcastGuestUserID,
+                // LiveShare volatile graphics — kept in hub memory only (no DB write).
+                // These are session-scoped overlays that don't need to survive a restart.
+                "liveshare_banner_text":    getLiveStr("banner"),
+                "liveshare_ticker_items":   getLiveStr("ticker"),
+                "liveshare_lower_third":    getLiveStr("lower_third"),
+                "liveshare_logo_bug":       getLiveStr("logo_bug"),
+                "liveshare_break_screen":   getLiveStr("break_screen"),
+                "podcast_logo_url":         getLiveStr("podcast_logo_url"),
             },
         }
         if statusBytes, err := json.Marshal(statusMsg); err == nil {
@@ -1614,6 +1641,46 @@ func (h *Hub) GetDocState(roomID uint) (docState, bool) {
     return ds, ok
 }
 
+// SetLiveGraphic stores a live overlay value for a session in memory.
+// field is one of: "banner", "ticker", "lower_third", "logo_bug",
+// "break_screen", "podcast_logo_url". Pass nil to clear the field.
+func (h *Hub) SetLiveGraphic(sessionID, field string, value interface{}) {
+    h.liveGraphicsMu.Lock()
+    defer h.liveGraphicsMu.Unlock()
+    if _, ok := h.liveGraphics[sessionID]; !ok {
+        h.liveGraphics[sessionID] = make(map[string]interface{})
+    }
+    if value == nil {
+        delete(h.liveGraphics[sessionID], field)
+    } else {
+        h.liveGraphics[sessionID][field] = value
+    }
+}
+
+// GetLiveGraphics returns a shallow copy of all live overlay data for a session.
+// Returns nil if no graphics have been set for that session.
+func (h *Hub) GetLiveGraphics(sessionID string) map[string]interface{} {
+    h.liveGraphicsMu.RLock()
+    defer h.liveGraphicsMu.RUnlock()
+    g, ok := h.liveGraphics[sessionID]
+    if !ok || len(g) == 0 {
+        return nil
+    }
+    out := make(map[string]interface{}, len(g))
+    for k, v := range g {
+        out[k] = v
+    }
+    return out
+}
+
+// ClearLiveGraphics removes all in-memory overlay data for a session.
+// Called when a session ends to prevent memory leaks.
+func (h *Hub) ClearLiveGraphics(sessionID string) {
+    h.liveGraphicsMu.Lock()
+    delete(h.liveGraphics, sessionID)
+    h.liveGraphicsMu.Unlock()
+}
+
 // GetPlaybackPosition returns the in-memory playback position for a room, if known.
 func (h *Hub) GetPlaybackPosition(roomID uint) (playbackPos, bool) {
     h.playbackPosMutex.RLock()
@@ -1830,6 +1897,14 @@ func LobbyWebSocketHandler(c *gin.Context) {
 	}
 	hub.rooms[0][client] = true
 	hub.mutex.Unlock()
+
+	// Also register in clientRegistry so BroadcastToUsers (friend requests, DM messages, etc.) reaches lobby clients
+	hub.registryMutex.Lock()
+	if _, exists := hub.clientRegistry[authenticatedUserID]; !exists {
+		hub.clientRegistry[authenticatedUserID] = make(map[uint]*Client)
+	}
+	hub.clientRegistry[authenticatedUserID][0] = client
+	hub.registryMutex.Unlock()
 
 	log.Printf("✅ [LobbyWebSocketHandler] Lobby client registered for user %d", authenticatedUserID)
 
