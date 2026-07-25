@@ -66,7 +66,34 @@ Thumbs.db
 # Database / Uploads
 # ======================
 *.db
+uploads/
+backend/server
+
+# ======================
+# Compiled binaries (Go)
+# ======================
+backend/wewatch-backend
+backend/wewatch-backend-*
+
+# ======================
+# Backup / temp files
+# ======================
+*.backup
+*.backup2
+*.bak
+*.tmp
+
+# ======================
+# Installer packages
+# ======================
+*.deb
+*.rpm
+*.pkg
+*.dmg
+
+# ======================
+# Specific ignored docs (already in documentation/)
+# ======================
 uploads/WITHDRAWAL_ISSUES_ANALYSIS.md
 documentation/PAYMENT_FLOW_EXPLAINED.md
 documentation/PAYSTACK_TRANSFER_SETUP.md
-backend/server
