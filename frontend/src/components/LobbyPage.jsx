@@ -272,6 +272,7 @@ const LobbyPage = () => {
   const [activeCall, setActiveCall] = useState(null); // { user, room, roomName }
   const [callRoom, setCallRoom] = useState(null); // LiveKit Room instance
   const callTimeoutRef = React.useRef(null);
+  const callRingtoneRef = React.useRef(null);
   
   // ✅ Group Chat State
   const [groupsList, setGroupsList] = useState([]);
@@ -2633,7 +2634,50 @@ const LobbyPage = () => {
       communityEventsTuneRef.current = null;
     };
   }, [showCommunityEventsView, communityCardVisible]);
-  
+
+  // Ringtone: plays while waiting (outgoing or incoming), stops when call connects/ends
+  useEffect(() => {
+    const isRinging = !!(outgoingCall || incomingCall);
+    if (!isRinging) return;
+
+    let stopped = false;
+    let loopTimeout;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const ringBurst = (startTime, freq) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, startTime);
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(0.18, startTime + 0.01);
+      gain.gain.linearRampToValueAtTime(0.18, startTime + 0.28);
+      gain.gain.linearRampToValueAtTime(0, startTime + 0.32);
+      osc.start(startTime);
+      osc.stop(startTime + 0.33);
+    };
+
+    const scheduleRingCycle = (baseTime) => {
+      if (stopped) return;
+      // Two-tone ring: 400 Hz + 450 Hz, two bursts then ~2 s silence = 3 s total
+      ringBurst(baseTime,       400); ringBurst(baseTime,       450);
+      ringBurst(baseTime + 0.4, 400); ringBurst(baseTime + 0.4, 450);
+      loopTimeout = setTimeout(() => scheduleRingCycle(ctx.currentTime), 3000);
+    };
+
+    scheduleRingCycle(ctx.currentTime);
+    callRingtoneRef.current = ctx;
+
+    return () => {
+      stopped = true;
+      clearTimeout(loopTimeout);
+      try { ctx.close(); } catch (_) {}
+      callRingtoneRef.current = null;
+    };
+  }, [!!outgoingCall, !!incomingCall]);
+
   // ✅ STEP 4: Infinite scroll - Intersection Observer for load trigger
   useEffect(() => {
     if (!loadMoreTriggerRef.current || activeTab !== 'watching') return;
@@ -5413,7 +5457,7 @@ const LobbyPage = () => {
       
       {/* ✅ CHATS TAB CONTENT */}
       {activeTab === 'chats' && (
-        <div className={selectedChatUser ? "fixed inset-0 z-50 bg-gray-50 dark:bg-gray-900" : "max-w-5xl mx-auto"} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+        <div className={selectedChatUser ? "fixed inset-0 z-50 bg-gray-50 dark:bg-gray-900" : ""} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
           {chatsLoading ? (
             <div className={selectedChatUser ? "flex justify-center items-center h-full" : "flex justify-center items-center h-96"}>
               <p className="text-lg text-gray-700 dark:text-gray-300">Loading chats...</p>
@@ -7092,7 +7136,7 @@ const LobbyPage = () => {
 
       {/* ✅ FEED TAB CONTENT */}
       {activeTab === 'feed' && (
-        <div className="pt-2">
+        <div className="container mx-auto px-4 pt-2">
           <DiscoverFeed
             ref={discoverFeedRef}
             searchQuery={discoverSearch}

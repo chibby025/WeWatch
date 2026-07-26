@@ -18,11 +18,6 @@ const SHIP_STYLES = {
   destroyer:  { hull: '#78350f', deck: '#b45309', accent: '#fcd34d' },
 };
 
-const SHIP_LIST_COLORS = {
-  carrier: 'bg-violet-700', battleship: 'bg-blue-700',
-  cruiser: 'bg-teal-700',   submarine:  'bg-green-700', destroyer: 'bg-amber-700',
-};
-
 const COL_LABELS = ['A','B','C','D','E','F','G','H','I','J'];
 const ROW_LABELS = ['1','2','3','4','5','6','7','8','9','10'];
 const GRID_SIZE  = 10;
@@ -104,14 +99,100 @@ function computeSunkCells(ships, board) {
   return sunk;
 }
 
+// ── Ship section inner shapes (shared by board renderer and fleet thumbnail) ────
+// Renders SVG shapes for one 28×28 section; no outer <svg> wrapper, no damage state.
+function ShipSectionInner({ name, position }) {
+  const s = SHIP_STYLES[name] || SHIP_STYLES.carrier;
+  const isSub = name === 'submarine';
+  return (
+    <>
+      {position === 'stern' && !isSub && (
+        <>
+          <rect x="4" y="10" width="24" height="8" fill={s.deck} />
+          <rect x="3" y="10" width="3.5" height="8" rx="1.5" fill={s.hull} />
+          <circle cx="4" cy="12.5" r="1.2" fill={s.accent} opacity="0.95" />
+          <circle cx="4" cy="15.5" r="1.2" fill={s.accent} opacity="0.95" />
+          <line x1="3" y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.8" opacity="0.4" />
+          <line x1="3" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.8" opacity="0.4" />
+        </>
+      )}
+      {position === 'stern' && isSub && (
+        <>
+          <rect x="8" y="10.5" width="20" height="7" fill={s.deck} />
+          <ellipse cx="8" cy="14" rx="5.5" ry="3.5" fill={s.deck} />
+          <circle cx="5" cy="14" r="2" fill={s.hull} opacity="0.8" />
+          <line x1="5" y1="11.5" x2="5" y2="16.5" stroke={s.accent} strokeWidth="1" opacity="0.7" />
+          <line x1="2.5" y1="14" x2="7.5" y2="14" stroke={s.accent} strokeWidth="1" opacity="0.7" />
+        </>
+      )}
+      {position === 'middle' && name === 'carrier' && (
+        <>
+          <rect x="0" y="10" width="28" height="8" fill={s.deck} />
+          <line x1="0" y1="10.8" x2="28" y2="10.8" stroke={s.accent} strokeWidth="1.4" opacity="0.55" />
+          <rect x="6" y="10" width="9" height="4.5" rx="0.8" fill={s.hull} opacity="0.95" />
+          <rect x="9" y="8.5" width="3.5" height="2" rx="0.5" fill={s.accent} opacity="0.7" />
+          <line x1="0" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
+        </>
+      )}
+      {position === 'middle' && name === 'battleship' && (
+        <>
+          <rect x="0" y="10" width="28" height="8" fill={s.deck} />
+          <circle cx="14" cy="14" r="3.2" fill={s.hull} />
+          <circle cx="14" cy="14" r="1.8" fill={s.accent} opacity="0.85" />
+          <line x1="14" y1="11" x2="11" y2="6.5" stroke={s.accent} strokeWidth="1.4" opacity="0.8" />
+          <line x1="14" y1="11" x2="17" y2="6.5" stroke={s.accent} strokeWidth="1.4" opacity="0.8" />
+          <line x1="0"  y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.7" opacity="0.3" />
+          <line x1="0"  y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.3" />
+        </>
+      )}
+      {position === 'middle' && name === 'cruiser' && (
+        <>
+          <rect x="0" y="10" width="28" height="8" fill={s.deck} />
+          <rect x="8" y="9.5" width="12" height="5" rx="1.2" fill={s.hull} opacity="0.92" />
+          <rect x="11" y="8" width="6" height="2.5" rx="0.6" fill={s.accent} opacity="0.75" />
+          <line x1="0" y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
+          <line x1="0" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
+        </>
+      )}
+      {position === 'middle' && name === 'submarine' && (
+        <>
+          <rect x="0" y="10.5" width="28" height="7" fill={s.deck} />
+          <rect x="9" y="8.5" width="10" height="6.5" rx="2" fill={s.hull} />
+          <rect x="12" y="6.5" width="4" height="3" rx="0.8" fill={s.accent} opacity="0.8" />
+        </>
+      )}
+      {position === 'middle' && name === 'destroyer' && (
+        <>
+          <rect x="0" y="11" width="28" height="6" fill={s.deck} />
+          <circle cx="14" cy="14" r="2.2" fill={s.hull} />
+          <line x1="14" y1="12" x2="14" y2="7" stroke={s.accent} strokeWidth="1.3" opacity="0.75" />
+          <line x1="0"  y1="11" x2="28" y2="11" stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
+          <line x1="0"  y1="17" x2="28" y2="17" stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
+        </>
+      )}
+      {position === 'bow' && !isSub && (
+        <>
+          <polygon points="0,10 21,10 27,14 21,18 0,18" fill={s.deck} />
+          <polygon points="19,10 27,14 19,18" fill={s.accent} opacity="0.3" />
+          <line x1="0" y1="10" x2="23" y2="10" stroke={s.accent} strokeWidth="0.8" opacity="0.35" />
+          <line x1="0" y1="18" x2="23" y2="18" stroke={s.accent} strokeWidth="0.8" opacity="0.35" />
+        </>
+      )}
+      {position === 'bow' && isSub && (
+        <>
+          <rect x="0" y="10.5" width="18" height="7" fill={s.deck} />
+          <ellipse cx="18" cy="14" rx="9" ry="3.5" fill={s.deck} />
+        </>
+      )}
+    </>
+  );
+}
+
 // ── Top-down ship section SVG ─────────────────────────────────────────────────
 // All shapes are designed for horizontal orientation (bow pointing RIGHT).
 // Vertical ships apply rotate(90deg) via CSS; the centered 28×28 viewBox means
 // the hull strip (y 10–18) maps cleanly to x 10–18 after rotation — still centered.
 function ShipSectionSVG({ name, position, horizontal, damaged, sunk }) {
-  const s = SHIP_STYLES[name] || SHIP_STYLES.carrier;
-  const isSub = name === 'submarine';
-
   const rotStyle = horizontal ? {} : {
     transform: 'rotate(90deg)',
     transformOrigin: `${CELL_PX / 2}px ${CELL_PX / 2}px`,
@@ -124,121 +205,14 @@ function ShipSectionSVG({ name, position, horizontal, damaged, sunk }) {
       viewBox="0 0 28 28"
       style={{ position: 'absolute', inset: 0, opacity, pointerEvents: 'none', ...rotStyle }}
     >
-      {/* ── Stern (left end, bow points RIGHT) ── */}
-      {position === 'stern' && !isSub && (
-        <>
-          {/* hull body */}
-          <rect x="4" y="10" width="24" height="8" fill={s.deck} />
-          {/* stern plate */}
-          <rect x="3" y="10" width="3.5" height="8" rx="1.5" fill={s.hull} />
-          {/* engine vents */}
-          <circle cx="4" cy="12.5" r="1.2" fill={s.accent} opacity="0.95" />
-          <circle cx="4" cy="15.5" r="1.2" fill={s.accent} opacity="0.95" />
-          {/* deck edge highlights */}
-          <line x1="3" y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.8" opacity="0.4" />
-          <line x1="3" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.8" opacity="0.4" />
-        </>
-      )}
+      <ShipSectionInner name={name} position={position} />
 
-      {position === 'stern' && isSub && (
-        <>
-          {/* submarine oval hull — stern (left) */}
-          <rect x="8" y="10.5" width="20" height="7" fill={s.deck} />
-          <ellipse cx="8" cy="14" rx="5.5" ry="3.5" fill={s.deck} />
-          {/* propeller hint */}
-          <circle cx="5" cy="14" r="2" fill={s.hull} opacity="0.8" />
-          <line x1="5" y1="11.5" x2="5" y2="16.5" stroke={s.accent} strokeWidth="1" opacity="0.7" />
-          <line x1="2.5" y1="14" x2="7.5" y2="14" stroke={s.accent} strokeWidth="1" opacity="0.7" />
-        </>
-      )}
-
-      {/* ── Middle sections ── */}
-      {position === 'middle' && name === 'carrier' && (
-        <>
-          <rect x="0" y="10" width="28" height="8" fill={s.deck} />
-          {/* flight deck edge stripe */}
-          <line x1="0" y1="10.8" x2="28" y2="10.8" stroke={s.accent} strokeWidth="1.4" opacity="0.55" />
-          {/* island superstructure */}
-          <rect x="6" y="10" width="9" height="4.5" rx="0.8" fill={s.hull} opacity="0.95" />
-          <rect x="9" y="8.5" width="3.5" height="2" rx="0.5" fill={s.accent} opacity="0.7" />
-          <line x1="0" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
-        </>
-      )}
-
-      {position === 'middle' && name === 'battleship' && (
-        <>
-          <rect x="0" y="10" width="28" height="8" fill={s.deck} />
-          {/* gun turret */}
-          <circle cx="14" cy="14" r="3.2" fill={s.hull} />
-          <circle cx="14" cy="14" r="1.8" fill={s.accent} opacity="0.85" />
-          {/* barrels */}
-          <line x1="14" y1="11" x2="11" y2="6.5" stroke={s.accent} strokeWidth="1.4" opacity="0.8" />
-          <line x1="14" y1="11" x2="17" y2="6.5" stroke={s.accent} strokeWidth="1.4" opacity="0.8" />
-          <line x1="0"  y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.7" opacity="0.3" />
-          <line x1="0"  y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.3" />
-        </>
-      )}
-
-      {position === 'middle' && name === 'cruiser' && (
-        <>
-          <rect x="0" y="10" width="28" height="8" fill={s.deck} />
-          {/* bridge structure */}
-          <rect x="8" y="9.5" width="12" height="5" rx="1.2" fill={s.hull} opacity="0.92" />
-          <rect x="11" y="8" width="6" height="2.5" rx="0.6" fill={s.accent} opacity="0.75" />
-          <line x1="0" y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
-          <line x1="0" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
-        </>
-      )}
-
-      {position === 'middle' && name === 'submarine' && (
-        <>
-          {/* oval sub hull body */}
-          <rect x="0" y="10.5" width="28" height="7" fill={s.deck} />
-          {/* conning tower */}
-          <rect x="9" y="8.5" width="10" height="6.5" rx="2" fill={s.hull} />
-          <rect x="12" y="6.5" width="4" height="3" rx="0.8" fill={s.accent} opacity="0.8" />
-        </>
-      )}
-
-      {position === 'middle' && name === 'destroyer' && (
-        <>
-          <rect x="0" y="11" width="28" height="6" fill={s.deck} />
-          {/* single small gun mount */}
-          <circle cx="14" cy="14" r="2.2" fill={s.hull} />
-          <line x1="14" y1="12" x2="14" y2="7" stroke={s.accent} strokeWidth="1.3" opacity="0.75" />
-          <line x1="0"  y1="11" x2="28" y2="11" stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
-          <line x1="0"  y1="17" x2="28" y2="17" stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
-        </>
-      )}
-
-      {/* ── Bow (right end, pointed) ── */}
-      {position === 'bow' && !isSub && (
-        <>
-          <polygon points="0,10 21,10 27,14 21,18 0,18" fill={s.deck} />
-          {/* bow tip highlight */}
-          <polygon points="19,10 27,14 19,18" fill={s.accent} opacity="0.3" />
-          {/* keel line */}
-          <line x1="0" y1="10" x2="23" y2="10" stroke={s.accent} strokeWidth="0.8" opacity="0.35" />
-          <line x1="0" y1="18" x2="23" y2="18" stroke={s.accent} strokeWidth="0.8" opacity="0.35" />
-        </>
-      )}
-
-      {position === 'bow' && isSub && (
-        <>
-          <rect x="0" y="10.5" width="18" height="7" fill={s.deck} />
-          <ellipse cx="18" cy="14" rx="9" ry="3.5" fill={s.deck} />
-        </>
-      )}
-
-      {/* ── Sunk overlay (dark X) ── */}
       {sunk && (
         <>
           <line x1="6"  y1="9"  x2="22" y2="19" stroke="rgba(160,30,0,0.75)" strokeWidth="1.8" />
           <line x1="22" y1="9"  x2="6"  y2="19" stroke="rgba(160,30,0,0.75)" strokeWidth="1.8" />
         </>
       )}
-
-      {/* ── Damage (static core, behind animated FireDamage in React) ── */}
       {damaged && !sunk && (
         <>
           <circle cx="14" cy="14" r="5.5" fill="rgba(200,40,0,0.55)" />
@@ -246,6 +220,31 @@ function ShipSectionSVG({ name, position, horizontal, damaged, sunk }) {
           <circle cx="14" cy="14" r="1.2" fill="rgba(255,230,60,1)" />
         </>
       )}
+    </svg>
+  );
+}
+
+// ── Fleet list thumbnail — composites all sections into one fixed-height SVG ──
+// Height is 11px; width scales with ship size so carrier is wider than destroyer.
+function ShipThumbnailSVG({ name, size }) {
+  const sections = Array.from({ length: size }, (_, i) => {
+    if (i === 0) return 'stern';
+    if (i === size - 1) return 'bow';
+    return 'middle';
+  });
+  const thumbH = 11;
+  const thumbW = thumbH * size; // preserves aspect ratio: each section is 28×28
+  return (
+    <svg
+      width={thumbW} height={thumbH}
+      viewBox={`0 0 ${size * 28} 28`}
+      style={{ flexShrink: 0, display: 'block' }}
+    >
+      {sections.map((position, i) => (
+        <g key={i} transform={`translate(${i * 28}, 0)`}>
+          <ShipSectionInner name={name} position={position} />
+        </g>
+      ))}
     </svg>
   );
 }
@@ -347,13 +346,30 @@ function FireDamage() {
   );
 }
 
+// ── Ghost ship overlay — renders all sections as one connected element ────────
+// Used during placement to show the full ship shape at the hovered position.
+function GhostShipOverlay({ name, size, horizontal }) {
+  const sections = Array.from({ length: size }, (_, i) =>
+    i === 0 ? 'stern' : i === size - 1 ? 'bow' : 'middle'
+  );
+  return (
+    <div style={{ display: 'flex', flexDirection: horizontal ? 'row' : 'column', pointerEvents: 'none' }}>
+      {sections.map((position, i) => (
+        <div key={i} style={{ position: 'relative', width: CELL_PX, height: CELL_PX, flexShrink: 0 }}>
+          <ShipSectionSVG name={name} position={position} horizontal={horizontal} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Grid cell wrapper ─────────────────────────────────────────────────────────
 function Cell({ className = '', onClick, children }) {
   const Tag = onClick ? 'button' : 'div';
   return (
     <Tag
       onClick={onClick}
-      style={{ position: 'relative' }}
+      style={{ position: 'relative', touchAction: 'manipulation' }}
       className={`w-7 h-7 border border-slate-700/70 flex items-center justify-center text-[10px] leading-none transition-colors overflow-hidden ${className}`}
     >
       {children}
@@ -375,10 +391,18 @@ function GridLabels() {
 
 // ── Placement grid ────────────────────────────────────────────────────────────
 // previewOccupancy: same shape as occupancyMap but for hover preview cells.
-function PlacementGrid({ occupancyMap, previewOccupancy, previewValid, onCellClick, onCellHover, onLeave }) {
+// ghostShip: { r, c, name, size, horizontal } — drives the floating ghost overlay.
+const ROW_LABEL_W = 24; // w-6 = 24px
+function PlacementGrid({ occupancyMap, previewOccupancy, previewValid, onCellClick, onCellHover, onLeave, ghostShip }) {
+  const labelsRef = useRef(null);
+  const [labelH, setLabelH] = useState(16);
+  useEffect(() => {
+    if (labelsRef.current) setLabelH(labelsRef.current.offsetHeight);
+  }, []);
+
   return (
-    <div className="select-none" onMouseLeave={onLeave}>
-      <GridLabels />
+    <div className="select-none relative" onMouseLeave={onLeave}>
+      <div ref={labelsRef}><GridLabels /></div>
       {ROW_LABELS.map((rowLabel, r) => (
         <div key={r} className="flex">
           <div className="w-6 shrink-0 text-[10px] text-slate-500 flex items-center justify-center select-none">
@@ -412,20 +436,10 @@ function PlacementGrid({ occupancyMap, previewOccupancy, previewValid, onCellCli
                     sunk={false}
                   />
                 )}
-                {/* Preview ship section (valid = tinted, shown as ghost) */}
+                {/* Preview tint only — ghost overlay (below) supplies the ship shape */}
                 {previewData && previewValid && (
-                  <>
-                    <ShipSectionSVG
-                      name={previewData.name}
-                      position={previewData.position}
-                      horizontal={previewData.horizontal}
-                      damaged={false}
-                      sunk={false}
-                    />
-                    <div className="absolute inset-0 bg-cyan-400/25 pointer-events-none" />
-                  </>
+                  <div className="absolute inset-0 bg-cyan-400/20 pointer-events-none" />
                 )}
-                {/* Invalid placement highlight */}
                 {previewData && !previewValid && (
                   <div className="absolute inset-0 bg-red-500/35 pointer-events-none" />
                 )}
@@ -434,6 +448,22 @@ function PlacementGrid({ occupancyMap, previewOccupancy, previewValid, onCellCli
           })}
         </div>
       ))}
+
+      {/* Ghost ship overlay — a connected image of the full ship at the hovered cell */}
+      {ghostShip && (
+        <div
+          style={{
+            position: 'absolute',
+            top: labelH + ghostShip.r * CELL_PX,
+            left: ROW_LABEL_W + ghostShip.c * CELL_PX,
+            opacity: previewValid ? 0.8 : 0.45,
+            pointerEvents: 'none',
+            zIndex: 15,
+          }}
+        >
+          <GhostShipOverlay name={ghostShip.name} size={ghostShip.size} horizontal={ghostShip.horizontal} />
+        </div>
+      )}
     </div>
   );
 }
@@ -573,6 +603,12 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
   const previewCells = hoverCell && !iHavePlaced
     ? shipCells(hoverCell.r, hoverCell.c, currentFleet.size, horizontal)
     : null;
+
+  // Ghost ship: only when cells are in-bounds (previewCells not null).
+  const ghostShip = previewCells ? {
+    r: hoverCell.r, c: hoverCell.c,
+    name: currentFleet.name, size: currentFleet.size, horizontal,
+  } : null;
 
   const previewValid = useMemo(() => {
     if (!previewCells) return false;
@@ -788,11 +824,8 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
                           ? 'bg-cyan-700 text-white ring-1 ring-cyan-400'
                           : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
                     >
-                      <span className={`shrink-0 w-3 h-3 rounded-sm ${SHIP_LIST_COLORS[ship.name]}`} />
+                      <ShipThumbnailSVG name={ship.name} size={ship.size} />
                       <span className="flex-1 capitalize font-medium">{ship.label}</span>
-                      <span className="text-slate-400 tracking-tighter text-[10px]">
-                        {'▪'.repeat(ship.size)}
-                      </span>
                       {isPlaced && <span className="text-green-400 text-xs">✓</span>}
                     </button>
                   );
@@ -831,6 +864,7 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
                   onCellClick={handlePlaceCell}
                   onCellHover={handleCellHover}
                   onLeave={handleCellLeave}
+                  ghostShip={ghostShip}
                 />
               </div>
             </div>

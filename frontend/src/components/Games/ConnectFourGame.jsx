@@ -150,8 +150,9 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
         }
       `}</style>
 
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-        <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-xl flex flex-col gap-4 p-5 overflow-hidden">
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm">
+        <div className="flex min-h-full items-center justify-center p-3 sm:p-4">
+        <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-xl flex flex-col gap-2 sm:gap-4 p-3 sm:p-5 overflow-hidden">
 
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -187,11 +188,11 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
 
           {/* Board */}
           <div
-            className="bg-blue-700 rounded-xl p-2 select-none"
+            className="bg-blue-700 rounded-xl p-1.5 sm:p-2 select-none"
             onMouseLeave={() => setHoverCol(null)}
           >
             {/* Drop indicator row — hover col takes priority, then selected col */}
-            <div className="grid mb-1" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)`, gap: '4px' }}>
+            <div className="grid mb-1" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)`, gap: '3px' }}>
               {Array.from({ length: COLS }, (_, c) => {
                 const active = isMyTurn && (hoverCol !== null ? hoverCol === c : selectedCol === c);
                 return (
@@ -206,7 +207,7 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
             </div>
 
             {/* Cells */}
-            <div className="grid" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)`, gap: '4px' }}>
+            <div className="grid" style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)`, gap: '3px' }}>
               {board.map((cell, idx) => {
                 const col = idx % COLS;
                 const isWinCell = wins?.has(idx);
@@ -214,11 +215,13 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
                 return (
                   <button
                     key={idx}
-                    className={`aspect-square rounded-full transition-all duration-100
+                    className={`w-full aspect-square !min-w-0 !min-h-0 rounded-full transition-all duration-100
                       ${isMyTurn && legalDrop(board, col) !== -1 ? 'cursor-pointer' : 'cursor-default'}
                       ${isWinCell ? 'ring-2 ring-white scale-105' : ''}
                     `}
                     style={{
+                      minWidth: 0,
+                      minHeight: 0,
                       background: hex
                         ? `radial-gradient(circle at 35% 30%, ${hex}ff, ${hex}cc)`
                         : 'rgba(17,24,39,0.7)',
@@ -354,6 +357,7 @@ export default function ConnectFourGame({ gameState, players = [], currentUserId
             </div>
           )}
 
+        </div>
         </div>
       </div>
     </>

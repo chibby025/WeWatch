@@ -695,7 +695,7 @@ export default function ExplorePage() {
 
       {/* FEED */}
       {activeTab === 'feed' && (
-        <div className="flex-1 overflow-y-auto bg-white dark:bg-gray-900 pt-2">
+        <div className="flex-1 overflow-y-auto bg-white dark:bg-gray-900 pt-2 px-4">
           <DiscoverFeed onPostClick={promptAuth} />
         </div>
       )}

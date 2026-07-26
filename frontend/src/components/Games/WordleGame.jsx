@@ -129,7 +129,7 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
   const isOver    = ['finished','completed','forfeited'].includes(gameState?.status);
   const phase     = gs?.phase || 'playing';
   const secret    = isOver ? (gs?.secret || '') : '';
-  const winnerKey = isOver ? String(gs?.winner_id || '') : '';
+  const winnerKey = isOver ? String(gs?.winner_id || gameState?.winner_id || '') : '';
   const winner    = winnerKey ? players.find(p => String(p.user_id) === winnerKey) : null;
 
   // Hint state — derived from game_state so it persists across reconnects

@@ -754,7 +754,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   const isSearching = searchQuery && searchQuery.trim().length > 0;
 
   return (
-    <div className="w-full px-0 sm:px-4 pb-8">
+    <div className="w-full pb-8">
       <style>{LIKE_CSS}</style>
       <div className={isSearching ? "grid grid-cols-2 gap-2" : "md:grid md:grid-cols-2 md:gap-4"}>
         {posts.map((post, index) => {
