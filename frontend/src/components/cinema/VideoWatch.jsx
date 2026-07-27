@@ -5811,7 +5811,7 @@ export default function VideoWatch() {
               toast.success("It's a draw!", { duration: 3000, icon: '🤝' });
             }
             // Capture result for the "Challenge Friends" flow (only for games the current
-            // user actually played — spectating hosts of DOOM/Stellar Swarm excluded).
+            // user actually played — spectating hosts of DOOM excluded).
             const myEntry = plyrs.find(p => p.user_id === currentUser?.id);
             if (myEntry) {
               const myResult = winnerId === currentUser?.id ? 'won' : plyrs.length > 1 ? 'drew' : null;

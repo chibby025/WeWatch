@@ -104,86 +104,121 @@ function computeSunkCells(ships, board) {
 function ShipSectionInner({ name, position }) {
   const s = SHIP_STYLES[name] || SHIP_STYLES.carrier;
   const isSub = name === 'submarine';
+
+  // BOW — pointed nose facing RIGHT (horizontal) or DOWN after 90° rotation
+  if (position === 'bow') {
+    if (isSub) return (
+      <>
+        <rect x="0" y="10" width="16" height="8" fill={s.deck} />
+        <ellipse cx="16" cy="14" rx="10" ry="4" fill={s.deck} />
+        <ellipse cx="21" cy="14" rx="5.5" ry="2.5" fill={s.hull} opacity="0.45" />
+      </>
+    );
+    return (
+      <>
+        <polygon points="0,8 22,8 28,14 22,20 0,20" fill={s.deck} />
+        <polygon points="21,8 28,14 21,20" fill={s.accent} opacity="0.22" />
+        <line x1="0" y1="8"  x2="22" y2="8"  stroke={s.accent} strokeWidth="0.9" opacity="0.45" />
+        <line x1="0" y1="20" x2="22" y2="20" stroke={s.accent} strokeWidth="0.9" opacity="0.45" />
+      </>
+    );
+  }
+
+  // STERN — blunt rear facing LEFT (horizontal) with port lights + propeller mark
+  if (position === 'stern') {
+    if (isSub) return (
+      <>
+        <rect x="6" y="10" width="22" height="8" fill={s.deck} />
+        <ellipse cx="6" cy="14" rx="5.5" ry="4" fill={s.deck} />
+        <circle cx="4" cy="14" r="2.5" fill={s.hull} opacity="0.6" />
+        <line x1="4" y1="11.5" x2="4" y2="16.5" stroke={s.accent} strokeWidth="1.2" opacity="0.8" />
+        <line x1="2"  y1="14"  x2="6"  y2="14"  stroke={s.accent} strokeWidth="1.2" opacity="0.8" />
+        <rect x="5" y="7.5"  width="6" height="2" rx="0.5" fill={s.hull} opacity="0.7" />
+        <rect x="5" y="18.5" width="6" height="2" rx="0.5" fill={s.hull} opacity="0.7" />
+      </>
+    );
+    return (
+      <>
+        <rect x="4" y="8" width="24" height="12" fill={s.deck} />
+        <rect x="3" y="8" width="3.5" height="12" rx="1.8" fill={s.hull} />
+        <circle cx="4.3" cy="11"  r="1.5" fill={s.accent} opacity="0.9" />
+        <circle cx="4.3" cy="17"  r="1.5" fill={s.accent} opacity="0.9" />
+        <line x1="4" y1="8"  x2="28" y2="8"  stroke={s.accent} strokeWidth="0.8" opacity="0.4" />
+        <line x1="4" y1="20" x2="28" y2="20" stroke={s.accent} strokeWidth="0.8" opacity="0.4" />
+      </>
+    );
+  }
+
+  // MIDDLE — ship-specific superstructures
+  if (name === 'carrier') return (
+    <>
+      <rect x="0" y="8" width="28" height="12" fill={s.deck} />
+      {/* Island structure on starboard (top) side */}
+      <rect x="5" y="8"   width="13" height="5" rx="1"   fill={s.hull}   opacity="0.95" />
+      <rect x="8" y="5.5" width="5"  height="3.5" rx="0.7" fill={s.accent} opacity="0.75" />
+      {/* Flight-deck centre stripe */}
+      <line x1="0" y1="14" x2="28" y2="14" stroke={s.accent} strokeWidth="0.7" strokeDasharray="3,2.5" opacity="0.55" />
+      <line x1="0" y1="8"  x2="28" y2="8"  stroke={s.accent} strokeWidth="1.3" opacity="0.55" />
+      <line x1="0" y1="20" x2="28" y2="20" stroke={s.accent} strokeWidth="0.8" opacity="0.35" />
+    </>
+  );
+
+  if (name === 'battleship') return (
+    <>
+      <rect x="0" y="8" width="28" height="12" fill={s.deck} />
+      {/* Twin-gun turret */}
+      <circle cx="10" cy="14" r="3.8" fill={s.hull} />
+      <circle cx="10" cy="14" r="2.1" fill={s.accent} opacity="0.85" />
+      <line x1="10" y1="11"  x2="7"  y2="5.5"  stroke={s.accent} strokeWidth="1.6" opacity="0.85" />
+      <line x1="10" y1="11"  x2="13" y2="5.5"  stroke={s.accent} strokeWidth="1.6" opacity="0.85" />
+      {/* Bridge */}
+      <rect x="14" y="10" width="7" height="8" rx="1.2" fill={s.hull} opacity="0.88" />
+      <line x1="0" y1="8"  x2="28" y2="8"  stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
+      <line x1="0" y1="20" x2="28" y2="20" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
+    </>
+  );
+
+  if (name === 'cruiser') return (
+    <>
+      <rect x="0" y="9" width="28" height="10" fill={s.deck} />
+      {/* Bridge */}
+      <rect x="8"  y="9"   width="12" height="5.5" rx="1.2" fill={s.hull}   opacity="0.92" />
+      <rect x="11" y="7"   width="6"  height="3"   rx="0.7" fill={s.accent} opacity="0.75" />
+      {/* VLS cells either side */}
+      <rect x="1"  y="11.5" width="4" height="5" rx="0.6" fill={s.hull} opacity="0.55" />
+      <rect x="23" y="11.5" width="4" height="5" rx="0.6" fill={s.hull} opacity="0.55" />
+      <line x1="0" y1="9"  x2="28" y2="9"  stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
+      <line x1="0" y1="19" x2="28" y2="19" stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
+    </>
+  );
+
+  if (name === 'submarine') return (
+    <>
+      <rect x="0" y="10" width="28" height="8" fill={s.deck} />
+      {/* Sail / conning tower */}
+      <rect x="9"  y="7"   width="10" height="8"   rx="2"   fill={s.hull}   />
+      <rect x="12" y="5"   width="4.5" height="3.5" rx="0.9" fill={s.accent} opacity="0.8" />
+      {/* Periscope */}
+      <line x1="14" y1="5"   x2="14" y2="3"   stroke={s.accent} strokeWidth="1.2" opacity="0.9" />
+      <circle cx="14" cy="2.5" r="1.1" fill={s.accent} opacity="0.9" />
+    </>
+  );
+
+  // Destroyer (default middle)
   return (
     <>
-      {position === 'stern' && !isSub && (
-        <>
-          <rect x="4" y="10" width="24" height="8" fill={s.deck} />
-          <rect x="3" y="10" width="3.5" height="8" rx="1.5" fill={s.hull} />
-          <circle cx="4" cy="12.5" r="1.2" fill={s.accent} opacity="0.95" />
-          <circle cx="4" cy="15.5" r="1.2" fill={s.accent} opacity="0.95" />
-          <line x1="3" y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.8" opacity="0.4" />
-          <line x1="3" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.8" opacity="0.4" />
-        </>
-      )}
-      {position === 'stern' && isSub && (
-        <>
-          <rect x="8" y="10.5" width="20" height="7" fill={s.deck} />
-          <ellipse cx="8" cy="14" rx="5.5" ry="3.5" fill={s.deck} />
-          <circle cx="5" cy="14" r="2" fill={s.hull} opacity="0.8" />
-          <line x1="5" y1="11.5" x2="5" y2="16.5" stroke={s.accent} strokeWidth="1" opacity="0.7" />
-          <line x1="2.5" y1="14" x2="7.5" y2="14" stroke={s.accent} strokeWidth="1" opacity="0.7" />
-        </>
-      )}
-      {position === 'middle' && name === 'carrier' && (
-        <>
-          <rect x="0" y="10" width="28" height="8" fill={s.deck} />
-          <line x1="0" y1="10.8" x2="28" y2="10.8" stroke={s.accent} strokeWidth="1.4" opacity="0.55" />
-          <rect x="6" y="10" width="9" height="4.5" rx="0.8" fill={s.hull} opacity="0.95" />
-          <rect x="9" y="8.5" width="3.5" height="2" rx="0.5" fill={s.accent} opacity="0.7" />
-          <line x1="0" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
-        </>
-      )}
-      {position === 'middle' && name === 'battleship' && (
-        <>
-          <rect x="0" y="10" width="28" height="8" fill={s.deck} />
-          <circle cx="14" cy="14" r="3.2" fill={s.hull} />
-          <circle cx="14" cy="14" r="1.8" fill={s.accent} opacity="0.85" />
-          <line x1="14" y1="11" x2="11" y2="6.5" stroke={s.accent} strokeWidth="1.4" opacity="0.8" />
-          <line x1="14" y1="11" x2="17" y2="6.5" stroke={s.accent} strokeWidth="1.4" opacity="0.8" />
-          <line x1="0"  y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.7" opacity="0.3" />
-          <line x1="0"  y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.3" />
-        </>
-      )}
-      {position === 'middle' && name === 'cruiser' && (
-        <>
-          <rect x="0" y="10" width="28" height="8" fill={s.deck} />
-          <rect x="8" y="9.5" width="12" height="5" rx="1.2" fill={s.hull} opacity="0.92" />
-          <rect x="11" y="8" width="6" height="2.5" rx="0.6" fill={s.accent} opacity="0.75" />
-          <line x1="0" y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
-          <line x1="0" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.35" />
-        </>
-      )}
-      {position === 'middle' && name === 'submarine' && (
-        <>
-          <rect x="0" y="10.5" width="28" height="7" fill={s.deck} />
-          <rect x="9" y="8.5" width="10" height="6.5" rx="2" fill={s.hull} />
-          <rect x="12" y="6.5" width="4" height="3" rx="0.8" fill={s.accent} opacity="0.8" />
-        </>
-      )}
-      {position === 'middle' && name === 'destroyer' && (
-        <>
-          <rect x="0" y="11" width="28" height="6" fill={s.deck} />
-          <circle cx="14" cy="14" r="2.2" fill={s.hull} />
-          <line x1="14" y1="12" x2="14" y2="7" stroke={s.accent} strokeWidth="1.3" opacity="0.75" />
-          <line x1="0"  y1="11" x2="28" y2="11" stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
-          <line x1="0"  y1="17" x2="28" y2="17" stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
-        </>
-      )}
-      {position === 'bow' && !isSub && (
-        <>
-          <polygon points="0,10 21,10 27,14 21,18 0,18" fill={s.deck} />
-          <polygon points="19,10 27,14 19,18" fill={s.accent} opacity="0.3" />
-          <line x1="0" y1="10" x2="23" y2="10" stroke={s.accent} strokeWidth="0.8" opacity="0.35" />
-          <line x1="0" y1="18" x2="23" y2="18" stroke={s.accent} strokeWidth="0.8" opacity="0.35" />
-        </>
-      )}
-      {position === 'bow' && isSub && (
-        <>
-          <rect x="0" y="10.5" width="18" height="7" fill={s.deck} />
-          <ellipse cx="18" cy="14" rx="9" ry="3.5" fill={s.deck} />
-        </>
-      )}
+      <rect x="0" y="10" width="28" height="8" fill={s.deck} />
+      {/* Gun turret */}
+      <circle cx="14" cy="14" r="3.2" fill={s.hull} />
+      <circle cx="14" cy="14" r="1.7" fill={s.accent} opacity="0.85" />
+      <line x1="14" y1="11.5" x2="14" y2="6"   stroke={s.accent} strokeWidth="1.5" opacity="0.8" />
+      {/* Torpedo tubes */}
+      <rect x="4"  y="11"  width="3" height="2.5" rx="0.4" fill={s.hull} opacity="0.6" />
+      <rect x="4"  y="14.5" width="3" height="2.5" rx="0.4" fill={s.hull} opacity="0.6" />
+      <rect x="21" y="11"  width="3" height="2.5" rx="0.4" fill={s.hull} opacity="0.6" />
+      <rect x="21" y="14.5" width="3" height="2.5" rx="0.4" fill={s.hull} opacity="0.6" />
+      <line x1="0" y1="10" x2="28" y2="10" stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
+      <line x1="0" y1="18" x2="28" y2="18" stroke={s.accent} strokeWidth="0.7" opacity="0.4" />
     </>
   );
 }
@@ -364,11 +399,12 @@ function GhostShipOverlay({ name, size, horizontal }) {
 }
 
 // ── Grid cell wrapper ─────────────────────────────────────────────────────────
-function Cell({ className = '', onClick, children }) {
+function Cell({ className = '', onClick, onMouseEnter, children }) {
   const Tag = onClick ? 'button' : 'div';
   return (
     <Tag
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
       style={{ position: 'relative', touchAction: 'manipulation' }}
       className={`w-7 h-7 border border-slate-700/70 flex items-center justify-center text-[10px] leading-none transition-colors overflow-hidden ${className}`}
     >
@@ -644,6 +680,12 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
 
   const handlePlaceCell = useCallback((r, c) => {
     if (iHavePlaced) return;
+    // Click on an already-placed different ship → select it for repositioning
+    const clickedEntry = occupancyMap[idx(r, c)];
+    if (clickedEntry && clickedEntry.name !== selectedShip) {
+      setSelectedShip(clickedEntry.name);
+      return;
+    }
     const cells = shipCells(r, c, currentFleet.size, horizontal);
     if (!cells) return;
     const othersOccupied = new Set(
@@ -657,7 +699,7 @@ export default function BattleshipGame({ gameState, players, currentUserId, onMo
     setPlacedShips(next);
     const nextUnplaced = FLEET.find(f => !next.find(s => s.name === f.name));
     if (nextUnplaced) setSelectedShip(nextUnplaced.name);
-  }, [iHavePlaced, currentFleet, horizontal, placedShips, selectedShip]);
+  }, [iHavePlaced, currentFleet, horizontal, placedShips, selectedShip, occupancyMap]);
 
   const allPlaced = FLEET.every(f => placedShips.find(s => s.name === f.name));
 

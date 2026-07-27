@@ -24,7 +24,6 @@ import WhotGame from './WhotGame';
 // pattern for any future heavy/rarely-used game: don't pay its bundle cost
 // until a user actually opens it. First use of React.lazy in this codebase.
 const DoomGame = lazy(() => import('./DoomGame'));
-const ShooterGame = lazy(() => import('./ShooterGame'));
 const VSBattleGame = lazy(() => import('./VsBattleGame'));
 const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
 // const PenaltyGame = lazy(() => import('./PenaltyGame')); // temporarily removed
@@ -273,22 +272,6 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             isHost={activeGame.host_id === currentUserId}
             onRelayPacket={onRelayPacket}
             registerRelayReceiver={registerRelayReceiver}
-          />
-        </Suspense>
-      );
-
-    case 'space_shooter':
-      // Genuine simultaneous multiplayer (not host+spectator like DOOM) --
-      // the Railway-hosted server is its own authoritative match; every
-      // selected player gets a real ship. roomId routes everyone from this
-      // WeWatch room into the same isolated match server-side.
-      return (
-        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
-          <ShooterGame
-            onClose={onClose}
-            onEndGame={onEndGame}
-            isHost={activeGame.host_id === currentUserId}
-            roomId={roomId}
           />
         </Suspense>
       );

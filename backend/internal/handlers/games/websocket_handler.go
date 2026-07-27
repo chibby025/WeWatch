@@ -11,8 +11,8 @@ import (
     "gorm.io/gorm"
 )
 
-// gamePostersBaseURL is the same BunnyCDN origin DoomGame.jsx/ShooterGame.jsx already
-// hardcode for their own assets — game posters live there too now, not bundled into
+// gamePostersBaseURL is the same BunnyCDN origin DoomGame.jsx already
+// hardcodes for its own assets — game posters live there too now, not bundled into
 // the frontend package. The frontend's resolvePreviewUrl already passes any
 // "starts with http" poster URL through unchanged, so this needs no frontend changes
 // beyond GameLobbyModal.jsx's own (already-updated) image paths.
@@ -34,8 +34,6 @@ func gamePosterURL(gameType string) string {
         return gamePostersBaseURL + "/trivia.webp"
     case "doom":
         return gamePostersBaseURL + "/doom.webp"
-    case "space_shooter":
-        return gamePostersBaseURL + "/stellarswarm.webp"
     case "othello":
         return gamePostersBaseURL + "/othello.webp"
     case "checkers":
@@ -108,9 +106,8 @@ var arcadeGameTypes = map[string]bool{
 // solo (e.g. for testing, or a quick practice run) without being grouped
 // into arcadeGameTypes -- that map has its own separate meaning ("host is
 // the only participant ever") which doesn't apply to a true multiplayer
-// game like space_shooter that simply also happens to support 1 player.
+// game that simply also happens to support 1 player.
 var minPlayersOverride = map[string]int{
-    "space_shooter":    1,
     // "roulette": 1, // temporarily removed
     "would_you_rather": 1, // can play solo (host picks for the room as a group activity)
     "wordle":           1, // solo practice is valid
@@ -390,7 +387,7 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
     }
 
     // ✅ Arcade games (single-player) allow 1 player, multiplayer games require 2+
-    // unless explicitly overridden (space_shooter: also playable solo).
+    // unless explicitly overridden via minPlayersOverride.
     minPlayers := 2
     if arcadeGameTypes[gameType] {
         minPlayers = 1

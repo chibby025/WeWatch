@@ -84,15 +84,6 @@ const RULES = {
       'If scores are tied at the end, it\'s a draw.',
     ],
   },
-  space_shooter: {
-    title: 'Stellar Swarm',
-    rules: [
-      'Navigate your spaceship and shoot opponents to score points.',
-      'Desktop — move: EDSF, aim: mouse, fire: left-click, boost: Shift.',
-      'Mobile — move: left joystick, aim: right joystick, fire: FIRE button.',
-      'Last player standing or highest score when time runs out wins!',
-    ],
-  },
   space_attack: {
     title: 'Space Attack',
     rules: [

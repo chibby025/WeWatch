@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { X, Gamepad2, Users, ChevronLeft, ChevronRight, Search, Trophy, AlertTriangle } from 'lucide-react';
 
 // Posters live on BunnyCDN, not bundled into the frontend package — same CDN origin
-// DoomGame.jsx/ShooterGame.jsx already hardcode for their own assets. Keeps the
+// DoomGame.jsx already hardcodes for its own assets. Keeps the
 // (growing) game-poster collection out of the deployed frontend bundle entirely.
 const GAME_POSTERS_BASE_URL = 'https://letswatchout.b-cdn.net/games/posters';
 
@@ -79,17 +79,6 @@ const games = [
     disabled: false,
     type: 'arcade',
     heavy: false
-  },
-  {
-    id: 'space_shooter',
-    name: 'Stellar Swarm',
-    description: 'Real-time 3D dogfights — everyone\'s a real pilot',
-    minPlayers: 1,
-    maxPlayers: 8,
-    image: `${GAME_POSTERS_BASE_URL}/stellarswarm.webp`,
-    disabled: false,
-    type: 'multiplayer',
-    heavy: true
   },
   {
     id: 'othello',
@@ -383,7 +372,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
   // True 2-column layout: landscape on desktop/tablet. Mobile landscape stays fullscreen.
   const isWideLayout = isLandscape && isDesktop;
 
-  // Heavy 3D games (DOOM, Space Shooter) are VideoWatch-exclusive -- 3D Cinema
+  // Heavy 3D games (DOOM) are VideoWatch-exclusive -- 3D Cinema
   // and Lecture Hall pass allowHeavyGames={false} to keep them out of the
   // picker entirely, rather than showing them disabled/broken.
   const visibleGames = allowHeavyGames ? games : games.filter(g => !g.heavy);

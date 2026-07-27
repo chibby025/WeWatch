@@ -77,7 +77,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 
 	validGameTypes := map[string]bool{
 		"tic_tac_toe": true, "rock_paper_scissors": true, "chess": true,
-		"trivia": true, "doom": true, "space_shooter": true,
+		"trivia": true, "doom": true,
 		"othello": true, "checkers": true, "crazy_eights": true, "ludo": true,
 		"connect_four": true, "would_you_rather": true, "wordle": true,
 		"uno": true, "quiplash": true,
