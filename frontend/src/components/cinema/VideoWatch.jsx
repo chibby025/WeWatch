@@ -4814,6 +4814,14 @@ export default function VideoWatch() {
           // isBufferingRef, which sync_heartbeat's drift-correction already checks.
           if (message.reason === 'buffering') {
             const bufferingVideoEl = videoPlayerRef.current;
+            const fileMismatch = message.file_path && currentMedia?.file_path && message.file_path !== currentMedia.file_path;
+            console.log(`[BUFFER-HEALTH-RX] reason=buffering cmd=${message.command} msgFile=${message.file_path?.split('/').pop()} currentMediaFile=${currentMedia?.file_path?.split('/').pop()} FILE_MISMATCH=${fileMismatch} videoEnded=${bufferingVideoEl?.ended} videoCurrentTime=${bufferingVideoEl?.currentTime?.toFixed(1)}s videoDuration=${bufferingVideoEl?.duration?.toFixed(1)}s`);
+            if (fileMismatch) {
+              console.warn(`[BUFFER-HEALTH-RX] ⚠️ acting on a buffering command for a DIFFERENT file than currentMedia — this is the suspected stale-replay bug`);
+            }
+            if (bufferingVideoEl?.ended && message.command === 'play') {
+              console.warn(`[BUFFER-HEALTH-RX] ⚠️ about to call .play() on a video that already fired 'ended' — this is the suspected stale-replay bug`);
+            }
             if (message.command === 'pause') {
               isBufferingRef.current = true;
               setRemoteBufferingActive(true);
@@ -6141,6 +6149,28 @@ export default function VideoWatch() {
     } else {
       setCurrentMedia(null);
       setIsPlaying(false);
+      // Tell the backend the stream genuinely ended. Without this, watch_sessions'
+      // current_media_id/current_media_url stay frozen on the just-finished item
+      // forever (nothing else clears them on a natural end), and the 60s heartbeat
+      // reconciliation further up this file periodically "corrects" every member back
+      // onto that stale DB truth — briefly replaying the already-finished clip every
+      // ~2 minutes. Host-only: this is authoritative session state, not something
+      // every member's own video-end event should race to write. Mirrors the exact
+      // symmetric pattern handleEndScreenShare already uses for LiveShare/Watch-From
+      // stopping (HandleMediaStop server-side clears the same columns).
+      const endedSessionId = sessionStatus?.id || urlSessionId;
+      if (isHost && endedSessionId) {
+        sendMessage({
+          type: "update_media_state",
+          data: {
+            session_id: endedSessionId,
+            current_media_url: "",
+            current_media_type: "none",
+            is_screen_sharing_active: false,
+            sharing_source: "",
+          }
+        });
+      }
     }
   };
 

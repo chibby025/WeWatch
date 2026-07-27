@@ -85,6 +85,9 @@ export default function useStreamBufferHealth({
 
   const sendBufferingSignal = (command) => {
     if (!currentMedia || !currentUser?.id) return;
+    const v = videoRef.current;
+    const remaining = v?.duration ? (v.duration - (v.currentTime || 0)) : null;
+    console.log(`[BUFFER-HEALTH] sendBufferingSignal cmd=${command} tier=${tierRef.current} file=${currentMedia.file_path?.split('/').pop()} currentTime=${v?.currentTime?.toFixed(1)}s duration=${v?.duration?.toFixed(1)}s remaining=${remaining !== null ? remaining.toFixed(1) + 's' : '?'} ended=${v?.ended}`);
     sendMessage({
       type: 'playback_control',
       command,
@@ -104,6 +107,8 @@ export default function useStreamBufferHealth({
   useEffect(() => {
     const id = currentMedia?.ID || currentMedia?.file_path || null;
     if (id === mediaIdentityRef.current) return;
+    const hadPendingResume = !!resumeIntervalRef.current;
+    console.log(`[BUFFER-HEALTH] media identity changed ${mediaIdentityRef.current} → ${id} — resetting tier state${hadPendingResume ? ' (had a PENDING resume interval, clearing it)' : ''}`);
     mediaIdentityRef.current = id;
     tierRef.current = 1;
     pauseLogRef.current = [];
@@ -132,18 +137,28 @@ export default function useStreamBufferHealth({
     const pauseEntry = { start: Date.now(), end: null };
     pauseLogRef.current.push(pauseEntry);
 
+    const v = videoRef.current;
+    const remaining = v?.duration ? (v.duration - (v.currentTime || 0)) : null;
+    console.log(`[BUFFER-HEALTH] engagePause tier=${tierRef.current} targetCushion=${targetCushion}s remainingInVideo=${remaining !== null ? remaining.toFixed(1) + 's' : '?'} — ${remaining !== null && remaining < targetCushion ? '⚠️ target cushion EXCEEDS what is left in the video — resume may be unreachable via the cushion path' : 'ok'}`);
+
     setBufferState(uiState);
     setIsPlaying(false);
     sendBufferingSignal('pause');
 
+    let pollCount = 0;
     resumeIntervalRef.current = setInterval(() => {
+      pollCount++;
       const cushion = getCushionSeconds(videoRef.current);
       const uploadDone = tierRef.current === '3b' && mediaUploadManager?.uploading === false;
+      if (pollCount % 5 === 0) {
+        console.log(`[BUFFER-HEALTH] resume-wait poll#${pollCount} tier=${tierRef.current} cushion=${cushion.toFixed(1)}s target=${targetCushion}s uploadDone=${uploadDone} videoEnded=${videoRef.current?.ended}`);
+      }
       if (cushion < targetCushion && !uploadDone) return;
 
       clearInterval(resumeIntervalRef.current);
       resumeIntervalRef.current = null;
       pauseEntry.end = Date.now();
+      console.log(`[BUFFER-HEALTH] resume FIRING after ${pollCount}s wait — reason=${uploadDone && cushion < targetCushion ? 'uploadDone-shortcut' : 'cushion-reached'} cushion=${cushion.toFixed(1)}s videoEnded=${videoRef.current?.ended}`);
 
       // Escalation check: has this pattern (within the trailing window) kept recurring
       // despite resuming? If so, the *next* dip gets handled one tier up.
@@ -233,6 +248,8 @@ export default function useStreamBufferHealth({
       const cushion = getCushionSeconds(video);
       if (cushion < TIER1_LOW_CUSHION_S) {
         lowCushionStrikesRef.current += 1;
+        const remaining = video.duration ? (video.duration - video.currentTime) : null;
+        console.log(`[BUFFER-HEALTH] low-cushion strike ${lowCushionStrikesRef.current}/${LOW_CUSHION_STRIKES_REQUIRED} cushion=${cushion.toFixed(1)}s remainingInVideo=${remaining !== null ? remaining.toFixed(1) + 's' : '?'}`);
         if (lowCushionStrikesRef.current >= LOW_CUSHION_STRIKES_REQUIRED) {
           engagePause();
         }
