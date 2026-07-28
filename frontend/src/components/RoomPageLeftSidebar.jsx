@@ -46,7 +46,7 @@ const RoomPageLeftSidebar = ({
   return (
     <div
       ref={sidebarRef}
-      className={`w-16 sm:w-20 md:w-24 lg:w-28 bg-violet-100/60 dark:bg-gray-900/50 border-r border-violet-200/80 dark:border-gray-700/50 flex flex-col items-center gap-2 overflow-y-auto overflow-x-hidden flex-shrink-0 min-h-0 h-full ${
+      className={`w-16 sm:w-20 md:w-24 lg:w-28 bg-gray-100/60 dark:bg-gray-900/50 border-r border-gray-200/80 dark:border-gray-700/50 flex flex-col items-center gap-2 overflow-y-auto overflow-x-hidden flex-shrink-0 min-h-0 h-full ${
         isMobile ? '' : 'pt-4 pb-4'
       }`}
       style={{
@@ -65,7 +65,7 @@ const RoomPageLeftSidebar = ({
           className={`relative w-11 h-11 sm:w-12 sm:h-12 md:w-14 md:h-14 rounded-2xl flex items-center justify-center transition-all group overflow-hidden ${
             selectedGroupId === null 
               ? 'bg-purple-600 shadow-lg shadow-purple-500/50' 
-              : 'bg-violet-200/70 dark:bg-gray-800 hover:bg-violet-300/70 dark:hover:bg-gray-700 hover:rounded-xl active:scale-95'
+              : 'bg-gray-200/70 dark:bg-gray-800 hover:bg-gray-300/70 dark:hover:bg-gray-700 hover:rounded-xl active:scale-95'
           }`}
           title="Main Chat"
         >
@@ -78,11 +78,11 @@ const RoomPageLeftSidebar = ({
             <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-8 bg-white rounded-r-full" />
           )}
         </button>
-          <span className="text-[10px] sm:text-xs text-gray-400 text-center px-1 max-w-[70px] sm:max-w-[80px] md:max-w-[90px] truncate">Main Chat</span>
+          <span className="text-[10px] sm:text-xs text-gray-600 dark:text-gray-400 text-center px-1 max-w-[70px] sm:max-w-[80px] md:max-w-[90px] truncate">Main Chat</span>
       </div>
 
       {/* Divider */}
-      <div className="w-6 sm:w-8 h-px bg-violet-300/60 dark:bg-gray-700/50 my-1" />
+      <div className="w-6 sm:w-8 h-px bg-gray-300/60 dark:bg-gray-700/50 my-1" />
 
       {/* Room Groups */}
       {groups.map((group) => (
@@ -96,7 +96,7 @@ const RoomPageLeftSidebar = ({
             className={`relative w-11 h-11 sm:w-12 sm:h-12 md:w-14 md:h-14 rounded-2xl flex items-center justify-center transition-all overflow-hidden ${
               selectedGroupId === group.ID 
                 ? 'bg-purple-600 shadow-lg shadow-purple-500/50' 
-                : 'bg-violet-200/70 dark:bg-gray-800 hover:bg-violet-300/70 dark:hover:bg-gray-700 hover:rounded-xl active:scale-95'
+                : 'bg-gray-200/70 dark:bg-gray-800 hover:bg-gray-300/70 dark:hover:bg-gray-700 hover:rounded-xl active:scale-95'
             }`}
             title={group.name}
           >
@@ -110,7 +110,7 @@ const RoomPageLeftSidebar = ({
             )}
           </button>
           <span 
-            className="text-[10px] sm:text-xs text-gray-400 text-center px-1 max-w-[60px] sm:max-w-[80px] md:max-w-[100px] truncate cursor-pointer hover:text-white transition-colors"
+            className="text-[10px] sm:text-xs text-gray-600 dark:text-gray-400 text-center px-1 max-w-[60px] sm:max-w-[80px] md:max-w-[100px] truncate cursor-pointer hover:text-white transition-colors"
             onClick={() => { if (onGroupEdit) onGroupEdit(group); }}
           >
             {group.name}

@@ -5,6 +5,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import StickerPicker from './StickerPicker';
 import MentionDropdown from './MentionDropdown';
+import VoiceWaveformIcon from './VoiceWaveformIcon';
 import logger from '../utils/logger';
 import { hasTicketCache } from '../utils/ticketCache';
 import {
@@ -158,6 +159,13 @@ const RoomPageNew = () => {
   const [audioBlob, setAudioBlob] = useState(null);
   const mediaRecorderRef = useRef(null);
   const recordingTimerRef = useRef(null);
+  // mediaRecorder.onstop is assigned once, inside startRecording(), at the moment a
+  // recording begins — it never gets reassigned as recordingDuration ticks upward on
+  // later renders. Reading the recordingDuration *state* from inside that stale closure
+  // always sees whatever it was at recording-start (0), so uploadVoiceNote always sent
+  // duration: 0 regardless of actual length. A ref is always current regardless of which
+  // render's closure reads it — kept in sync by the same interval that ticks the state.
+  const recordingDurationRef = useRef(0);
   const audioChunksRef = useRef([]);
   const [playingAudioId, setPlayingAudioId] = useState(null);
   const [audioProgress, setAudioProgress] = useState({});
@@ -1641,11 +1649,13 @@ const RoomPageNew = () => {
       mediaRecorder.start();
       setIsRecording(true);
       setRecordingDuration(0);
-      
+      recordingDurationRef.current = 0;
+
       // Start timer (1 minute max)
       recordingTimerRef.current = setInterval(() => {
         setRecordingDuration(prev => {
           const newDuration = prev + 1;
+          recordingDurationRef.current = newDuration;
           if (newDuration >= 60) {
             stopRecording(); // Auto-stop at 1 minute
           }
@@ -1699,7 +1709,7 @@ const RoomPageNew = () => {
       const formData = new FormData();
       const fileName = `voice_note_${Date.now()}.webm`;
       formData.append('audio', blob, fileName);
-      formData.append('duration', recordingDuration);
+      formData.append('duration', recordingDurationRef.current);
       
       // Never set Content-Type manually for FormData — it drops the boundary param;
       // 'Content-Type': undefined lets the browser fill in the correct
@@ -2329,7 +2339,7 @@ const RoomPageNew = () => {
   const membersInSessionCount = membersInSession.length;
 
   return (
-    <div className="h-screen flex flex-col bg-violet-50 dark:bg-gray-900 text-gray-900 dark:text-white overflow-hidden relative">
+    <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white overflow-hidden relative">
       <Toaster position="top-center" />
 
       {/* ✅ Recording Watermark - Bottom Right */}
@@ -2340,7 +2350,7 @@ const RoomPageNew = () => {
       )}
 
       {/* ✅ Sticky Header - Compact layout */}
-      <header ref={headerRef} className={`bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700/50 ${isMobile ? 'fixed top-0 left-0 right-0 z-50' : 'flex-none'}`}>
+      <header ref={headerRef} className={`bg-gradient-to-r from-purple-600 to-blue-600 border-b border-gray-200 dark:border-gray-700/50 ${isMobile ? 'fixed top-0 left-0 right-0 z-50' : 'flex-none'}`}>
         <div className="py-2 px-0 md:px-3 lg:px-4">
           {isMobile ? (
             /* Mobile Layout */
@@ -2355,7 +2365,7 @@ const RoomPageNew = () => {
                     e.stopPropagation();
                     navigate('/lobby');
                   }}
-                  className="h-7 w-7 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 ml-3 invert dark:invert-0"
+                  className="h-7 w-7 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 ml-3"
                 />
 
                 {/* Middle section: Image + Name with info below */}
@@ -2393,7 +2403,7 @@ const RoomPageNew = () => {
                   
                   {/* Room/Group Name + Info Column */}
                   <div className="flex-1 min-w-0">
-                    <h1 className={`font-bold text-gray-900 dark:text-white truncate ${
+                    <h1 className={`font-bold text-white truncate ${
                       (() => {
                         const displayName = selectedGroupId ? (roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name) : room.name;
                         const length = displayName.length;
@@ -2510,7 +2520,7 @@ const RoomPageNew = () => {
                     src="/icons/backIcon.svg" 
                     alt="Back" 
                     onClick={() => navigate('/lobby')}
-                    className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0 invert dark:invert-0"
+                    className="h-10 w-10 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
                   />
                   
                   <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center ring-2 ring-gray-600 flex-shrink-0">
@@ -2536,7 +2546,7 @@ const RoomPageNew = () => {
                   {/* Room/Group Name + Info Column */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                      <h1 className="text-2xl font-bold text-white">
                         {selectedGroupId ? roomGroups.find(g => g.ID === selectedGroupId)?.name || room.name : room.name}
                       </h1>
                       {wsConnected && (
@@ -2547,19 +2557,19 @@ const RoomPageNew = () => {
                     {/* Host/Member Info below name (only when no session) */}
                     {!activeSession && (
                       <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-300">
+                        <div className="flex items-center gap-4 text-sm text-white">
                           {!selectedGroupId && room.show_host !== false && (
                             <span className="flex items-center gap-1">
-                              <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4 brightness-0 dark:brightness-100" />
+                              <img src="/icons/hostIcon.svg" alt="" className="h-4 w-4 brightness-0 invert" />
                               Host: {room.host_username || `User ${room.host_id}`}
                             </span>
                           )}
-                          <span 
+                          <span
                             className="flex items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity"
                             onClick={() => setIsMembersModalOpen(true)}
                             title="View members"
                           >
-                            <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4 brightness-0 dark:brightness-100" />
+                            <img src="/icons/roomMembersIcon.svg" alt="" className="h-4 w-4 brightness-0 invert" />
                             {selectedGroupId ? (
                               `${roomGroups.find(g => g.ID === selectedGroupId)?.member_count || 0} in group`
                             ) : (
@@ -2716,7 +2726,7 @@ const RoomPageNew = () => {
             const showDateDivider = !prevMsg || !isSameDay(msg.created_at, prevMsg.created_at);
             const dateDivider = showDateDivider ? (
               <div className="flex items-center justify-center sticky top-2 z-10 pointer-events-none py-1">
-                <span className="bg-purple-200/80 dark:bg-gray-700/80 backdrop-blur-sm text-purple-700 dark:text-gray-300 text-[11px] font-medium px-3 py-0.5 rounded-full shadow-sm select-none">
+                <span className="bg-gray-300/80 dark:bg-gray-700/80 backdrop-blur-sm text-gray-600 dark:text-gray-300 text-[11px] font-medium px-3 py-0.5 rounded-full shadow-sm select-none">
                   {formatChatDate(msg.created_at)}
                 </span>
               </div>
@@ -2728,7 +2738,7 @@ const RoomPageNew = () => {
                 <React.Fragment key={index}>
                   {dateDivider}
                   <div className="flex justify-center my-2">
-                    <div className="bg-purple-900/40 border border-purple-700/40 text-purple-200 text-xs px-4 py-1.5 rounded-full text-center max-w-xs">
+                    <div className="bg-gray-100 dark:bg-gray-800/50 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-xs px-4 py-1.5 rounded-full text-center max-w-xs">
                       {msg.message}
                     </div>
                   </div>
@@ -2853,10 +2863,14 @@ const RoomPageNew = () => {
 
                   {/* Main message bubble — tap to reveal icon pill */}
                   <div
-                    className={`relative px-3 py-1.5 rounded-lg shadow-sm cursor-pointer select-none ${
-                      isOwnMessage
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-violet-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100'
+                    className={`relative cursor-pointer select-none ${
+                      msg.audio_url
+                        ? ''
+                        : `px-3 py-1.5 rounded-lg shadow-sm ${
+                            isOwnMessage
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-violet-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100'
+                          }`
                     } ${openMenuIndex === index ? 'opacity-90 scale-[0.98]' : ''} transition-all duration-100`}
                     onClick={(e) => {
                       if (isEditing) return;
@@ -2904,8 +2918,8 @@ const RoomPageNew = () => {
                     ) : (
                       <>
                         {msg.audio_url ? (
-                          <div className="w-full">
-                            <div className="flex items-center justify-between gap-3 text-xs opacity-75 mb-2">
+                          <div className="w-full min-w-[220px] sm:min-w-[260px] rounded-xl shadow-md shadow-gray-800/40 p-2">
+                            <div className="flex items-center justify-between gap-3 text-xs opacity-75 mb-2 text-gray-700 dark:text-gray-300">
                               <span className="font-medium">{msg.username || 'Anonymous'}</span>
                               <span className="text-[10px]">
                                 {new Date(msg.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
@@ -2914,19 +2928,19 @@ const RoomPageNew = () => {
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => toggleAudioPlayback(msg.id, msg.audio_url)}
-                                className="flex-shrink-0 w-6 h-6 hover:opacity-70 transition-opacity flex items-center justify-center"
+                                className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 active:scale-90 transition-all flex items-center justify-center shadow-md"
                               >
                                 {playingAudioId === msg.id ? (
-                                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z" /></svg>
+                                  <VoiceWaveformIcon className="w-5 h-5" />
                                 ) : (
-                                  <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" /></svg>
+                                  <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" /></svg>
                                 )}
                               </button>
-                              <div className="flex-1 h-1 bg-white/20 rounded-full overflow-hidden max-w-[140px]">
-                                <div className="h-full bg-white transition-all duration-100" style={{ width: `${audioProgress[msg.id] || 0}%` }} />
+                              <div className="flex-1 h-1 bg-gray-300 dark:bg-white/20 rounded-full overflow-hidden">
+                                <div className="h-full bg-gradient-to-r from-purple-500 to-blue-500 transition-all duration-100" style={{ width: `${audioProgress[msg.id] || 0}%` }} />
                               </div>
                               {msg.duration > 0 && (
-                                <span className="text-xs opacity-60 flex-shrink-0 min-w-[32px] text-right">
+                                <span className="text-xs opacity-60 flex-shrink-0 min-w-[32px] text-right text-gray-700 dark:text-gray-300">
                                   {Math.floor(msg.duration / 60)}:{String(msg.duration % 60).padStart(2, '0')}
                                 </span>
                               )}

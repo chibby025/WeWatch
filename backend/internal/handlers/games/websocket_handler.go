@@ -86,6 +86,10 @@ func gamePosterURL(gameType string) string {
     case "space_attack":
         return gamePostersBaseURL + "/space_attack.webp"
     // case "roulette": temporarily removed
+    case "snakes_ladders":
+        return gamePostersBaseURL + "/snakes_ladders.webp"
+    case "mancala":
+        return gamePostersBaseURL + "/mancala.webp"
     default:
         return ""
     }

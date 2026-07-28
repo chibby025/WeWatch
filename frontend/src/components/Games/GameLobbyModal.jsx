@@ -191,6 +191,26 @@ const games = [
     type: 'multiplayer'
   },
   {
+    id: 'snakes_ladders',
+    name: 'Snakes & Ladders',
+    description: 'Roll the dice — climb ladders, dodge snakes, race to 100!',
+    minPlayers: 2,
+    maxPlayers: 4,
+    image: `${GAME_POSTERS_BASE_URL}/snakes_ladders.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'mancala',
+    name: 'Mancala',
+    description: "Sow your seeds, capture your opponent's — fill your store to win!",
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/mancala.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
     id: 'draw_guess',
     name: 'Draw & Guess',
     description: 'One draws, everyone guesses — race the clock!',
@@ -340,7 +360,7 @@ const games = [
 // Games eligible for tournament mode: 2-player, head-to-head games where a
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
-const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool'];
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala'];
 // Hot-seat tournament: each player takes a solo turn; highest score wins.
 const HOT_SEAT_GAME_IDS = ['fowl_play'];
 

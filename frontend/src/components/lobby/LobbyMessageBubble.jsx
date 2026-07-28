@@ -9,6 +9,7 @@ import {
 import { ArrowUturnLeftIcon } from '@heroicons/react/24/outline';
 import { toggleRoomFavourite, joinRoom } from '../../services/api';
 import TwemojiText from '../TwemojiText';
+import VoiceWaveformIcon from '../VoiceWaveformIcon';
 
 const LobbyMessageBubble = ({
   message,
@@ -335,7 +336,7 @@ const LobbyMessageBubble = ({
                 }`}
               >
                 {isPlaying
-                  ? <PauseIcon className="w-5 h-5 text-white" />
+                  ? <VoiceWaveformIcon className="w-5 h-5" />
                   : <PlayIcon className="w-5 h-5 text-white ml-0.5" />}
               </button>
               <div className="flex-1">

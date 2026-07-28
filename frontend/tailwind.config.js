@@ -70,6 +70,7 @@ module.exports = {
         'glow-pulse': 'glow-pulse 1.5s ease-in-out infinite',
         'slide-up': 'slide-up 0.3s ease-out forwards',
         'slide-down': 'slide-down 0.3s ease-in forwards',
+        'voice-wave': 'voiceWave 0.9s ease-in-out infinite',
       },
       keyframes: {
         float: {
@@ -112,6 +113,10 @@ module.exports = {
         'slide-down': {
           '0%': { transform: 'translateY(0)' },
           '100%': { transform: 'translateY(60px)' },
+        },
+        voiceWave: {
+          '0%, 100%': { transform: 'scaleY(0.3)' },
+          '50%': { transform: 'scaleY(1)' },
         },
       }
     },

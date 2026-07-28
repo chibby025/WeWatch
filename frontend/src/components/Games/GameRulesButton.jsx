@@ -161,6 +161,26 @@ const RULES = {
       'The player with the most chips when the host ends the game wins!',
     ],
   },
+  snakes_ladders: {
+    title: 'Snakes & Ladders',
+    rules: [
+      'Take turns rolling the dice and moving your token forward that many squares.',
+      'Land on a ladder bottom 🪜 and climb straight up to the top.',
+      'Land on a snake head 🐍 and slide straight down to its tail.',
+      'You must land exactly on square 100 to win — an overshoot forfeits that move.',
+      'Roll a 6 and you get an extra turn!',
+    ],
+  },
+  mancala: {
+    title: 'Mancala',
+    rules: [
+      'Each turn, pick one of your own 6 pits and sow its seeds one-by-one into each pit going counter-clockwise — skipping your opponent\'s store.',
+      'Land your last seed in your own store and you get another turn!',
+      'Land your last seed in an empty pit on your own side, and its seeds plus everything in the directly opposite pit are captured into your store.',
+      'When one side\'s pits are all empty, the round ends — the other player sweeps their remaining seeds into their own store.',
+      'Whoever has the most seeds in their store wins!',
+    ],
+  },
   would_you_rather: {
     title: 'Would You Rather',
     rules: [

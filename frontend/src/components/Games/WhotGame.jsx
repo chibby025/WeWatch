@@ -321,6 +321,33 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
 
   const hand = myHand || [];
 
+  const canPlay = (card) => {
+    if (!discardTop) return true;
+    if (card === 'W') return true;
+    const { num, suit } = parseCard(card);
+    if (pendingPick > 0) return num === '2' || num === '5';
+    const topNum = discardTop === 'W' ? '' : discardTop.slice(0, -1);
+    return suit === currentSuit || (topNum && num === topNum);
+  };
+
+  // True when it's genuinely my turn and none of my cards are playable — covers both
+  // the ordinary "nothing matches" case and being stuck under a pending pick-2/pick-3
+  // with no 2/5 to counter it, since canPlay already handles both via the same logic
+  // the server enforces in whotCardPlayable.
+  const noPlayableCard = isMyTurn && !isOver && hand.length > 0 && !hand.some(canPlay);
+
+  // One-time announcement on the false→true transition only — not on every render
+  // while the state holds, same pattern as the Pick-2/Hold-On/Last-Card announcements
+  // above. Resets when the condition clears so it can fire again on a later turn.
+  const prevNoPlayableRef = useRef(false);
+  useEffect(() => {
+    if (noPlayableCard && !prevNoPlayableRef.current) {
+      announce({ icon: '🚫', text: 'NO PLAYABLE CARD', sub: 'Draw from the pile to continue',
+        bg: 'linear-gradient(135deg,#c2410c,#7c2d12)' });
+    }
+    prevNoPlayableRef.current = noPlayableCard;
+  }, [noPlayableCard, announce]);
+
   // Special card events — sound + on-screen announcement
   useEffect(() => {
     if (!discardTop) return;
@@ -385,15 +412,6 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
     announce({ icon: '🏆', text: 'CHECKUP!', sub: `${winner.username} wins!`,
       bg: 'linear-gradient(135deg,#ca8a04,#78350f)' });
   }, [isOver, winner, playSound, announce]);
-
-  const canPlay = (card) => {
-    if (!discardTop) return true;
-    if (card === 'W') return true;
-    const { num, suit } = parseCard(card);
-    if (pendingPick > 0) return num === '2' || num === '5';
-    const topNum = discardTop === 'W' ? '' : discardTop.slice(0, -1);
-    return suit === currentSuit || (topNum && num === topNum);
-  };
 
   const handleCardClick = (card) => {
     if (!isMyTurn || isOver) return;
@@ -512,13 +530,22 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
           {/* Draw pile */}
           <div className="flex flex-col items-center gap-2">
             <button onClick={handleDraw} disabled={!isMyTurn || isOver}
-              className={`rounded-lg transition-transform ${isMyTurn && !isOver ? 'hover:-translate-y-1 active:scale-95 cursor-pointer' : 'cursor-default'}`}
-              style={{ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.6))' }}>
+              className={`rounded-lg transition-transform ${isMyTurn && !isOver ? 'hover:-translate-y-1 active:scale-95 cursor-pointer' : 'cursor-default'} ${noPlayableCard ? 'animate-pulse' : ''}`}
+              style={{
+                filter: noPlayableCard
+                  ? 'drop-shadow(0 0 10px rgba(251,146,60,0.9)) drop-shadow(0 4px 10px rgba(0,0,0,0.6))'
+                  : 'drop-shadow(0 4px 10px rgba(0,0,0,0.6))',
+                outline: noPlayableCard ? '2.5px solid rgba(251,146,60,0.85)' : 'none',
+                outlineOffset: 3,
+                borderRadius: 8,
+              }}>
               <CardBack width={64} height={92}/>
             </button>
             <span className="text-white/60 text-xs font-medium">{drawPileCount} left</span>
             {isMyTurn && !isOver && (
-              <span className="text-green-400 text-[10px] font-semibold animate-pulse">Draw</span>
+              noPlayableCard
+                ? <span className="text-orange-400 text-[11px] font-bold animate-pulse">No card — Draw!</span>
+                : <span className="text-green-400 text-[10px] font-semibold animate-pulse">Draw</span>
             )}
           </div>
 
@@ -552,8 +579,10 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
               {winner ? `🏆 ${winner.username} wins!` : "🤝 It's a draw!"}
             </p>
           ) : (
-            <p className={`text-sm font-semibold ${isMyTurn ? 'text-yellow-300' : 'text-white/50'}`}>
-              {isMyTurn ? '✦ Your turn' : `${currentPlayer?.username}'s turn…`}
+            <p className={`text-sm font-semibold ${isMyTurn ? (noPlayableCard ? 'text-orange-300 animate-pulse' : 'text-yellow-300') : 'text-white/50'}`}>
+              {isMyTurn
+                ? (noPlayableCard ? '🚫 No playable card — draw from the pile!' : '✦ Your turn')
+                : `${currentPlayer?.username}'s turn…`}
             </p>
           )}
         </div>

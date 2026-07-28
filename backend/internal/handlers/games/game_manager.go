@@ -97,6 +97,8 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"air_hockey":  true,
 		"space_attack": true,
 		// "roulette": true, // temporarily removed
+		"snakes_ladders": true,
+		"mancala":        true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -108,6 +110,18 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	// check is ludo-specific.
 	if gameType == "ludo" && len(players) > 4 {
 		return nil, fmt.Errorf("ludo supports at most 4 players")
+	}
+	// snakes_ladders positions are sized to len(players) with no hard cap in the
+	// move logic, but 4 tokens is the realistic ceiling for a physical board —
+	// same reasoning as ludo's cap above.
+	if gameType == "snakes_ladders" && len(players) > 4 {
+		return nil, fmt.Errorf("snakes and ladders supports at most 4 players")
+	}
+	// mancala's 14-pit board is hardcoded to exactly two sides (0-5/6 and
+	// 7-12/13) — unlike ludo/snakes_ladders there's no way to generalize this
+	// to more players, so it's a hard requirement, not just a sane ceiling.
+	if gameType == "mancala" && len(players) != 2 {
+		return nil, fmt.Errorf("mancala is a 2-player game")
 	}
 
 	gameSession := &models.GameSession{
@@ -302,6 +316,10 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = false, nil, nil
 	case "roulette":
 		gameOver, winnerID, err = gm.processRouletteMove(gameState, playerID, moveType, moveData)
+	case "snakes_ladders":
+		gameOver, winnerID, err = gm.processSnakesLaddersMove(gameState, playerID, moveData)
+	case "mancala":
+		gameOver, winnerID, err = gm.processMancalaMove(gameState, playerID, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -723,6 +741,12 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 		for k, v := range hangmanInitialStatePC(playerCount) {
 			state[k] = v
 		}
+
+	case "snakes_ladders":
+		state["positions"] = snakesLaddersInitialPositions(playerCount)
+
+	case "mancala":
+		state["board"] = mancalaInitialBoard()
 	}
 
 	return state
