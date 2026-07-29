@@ -92,13 +92,14 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"glass_bridge": true,
 		"tug_of_war":   true,
 		// "red_light_green_light": true, // temporarily removed
-		"sudoku":      true,
-		"ping_pong":   true,
-		"air_hockey":  true,
+		"sudoku":       true,
+		"ping_pong":    true,
+		"air_hockey":   true,
 		"space_attack": true,
 		// "roulette": true, // temporarily removed
 		"snakes_ladders": true,
 		"mancala":        true,
+		"jigsaw":         true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -212,8 +213,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"quiplash":            true,
 		"typing_race":         true,
 		"draw_guess":          true,
-		"vs_battle":           true,   // both players lock moves simultaneously each turn
-		"battleship":          true,   // placement phase: both players place freely; combat turn enforced internally via GameData["current_turn"]
+		"vs_battle":           true, // both players lock moves simultaneously each turn
+		"battleship":          true, // placement phase: both players place freely; combat turn enforced internally via GameData["current_turn"]
 		// New simultaneous games
 		"hangman":               true, // any player can guess any letter
 		"tug_of_war":            true, // all players pull; host ends round
@@ -222,6 +223,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"ping_pong":             true, // internal phase validation restricts who acts
 		"air_hockey":            true, // internal phase validation restricts who acts
 		"roulette":              true, // all players bet freely; host-only spin/end enforced inside processRouletteMove
+		"uno":                   true, // catch_uno can be sent by any player at any time; play/draw/uno enforced internally
+		"jigsaw":                true, // fully cooperative — any player can pick up/place any unclaimed piece at any time
 	}
 	if !simultaneousGames[gameState.GameSession.GameType] {
 		currentPlayer := gameState.Players[gameState.CurrentTurn]
@@ -320,6 +323,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processSnakesLaddersMove(gameState, playerID, moveData)
 	case "mancala":
 		gameOver, winnerID, err = gm.processMancalaMove(gameState, playerID, moveData)
+	case "jigsaw":
+		gameOver, winnerID, err = gm.processJigsawMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -342,12 +347,12 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"rock_paper_scissors": true,
 		"blackjack":           true,
 		"battleship":          true,
-		"vs_battle":           true,   // VS Battle phase+turn managed internally
-		"boxing":              true,   // Boxing manages attacker/defender swap internally
-		"pool":                true,   // Pool stays on same player after a legal pocket
-		"ludo":                true,   // Ludo manages its own turn (roll → move two-phase)
-		"ping_pong":           true,   // Real-time; no CurrentTurn pointer used
-		"air_hockey":          true,   // Real-time; no CurrentTurn pointer used
+		"vs_battle":           true, // VS Battle phase+turn managed internally
+		"boxing":              true, // Boxing manages attacker/defender swap internally
+		"pool":                true, // Pool stays on same player after a legal pocket
+		"ludo":                true, // Ludo manages its own turn (roll → move two-phase)
+		"ping_pong":           true, // Real-time; no CurrentTurn pointer used
+		"air_hockey":          true, // Real-time; no CurrentTurn pointer used
 	}
 	if !gameOver && !selfManagedTurn[gameState.GameSession.GameType] {
 		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % len(gameState.Players)
@@ -393,7 +398,9 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 
 	// Broadcast the final board state then game_ended before removing from active maps,
 	// so all clients see the winning position and can display the result.
-	if hub, ok := gm.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+	if hub, ok := gm.hub.(interface {
+		BroadcastJSON(uint, map[string]interface{})
+	}); ok {
 		pub := publicGameData(gameState)
 		hub.BroadcastJSON(roomID, map[string]interface{}{
 			"type":            "game",
@@ -423,7 +430,9 @@ func (gm *GameManager) endGameLocked(gameSessionID uint, winnerID *uint, status 
 
 	// Announce VS Battle winner to the whole room so RoomPageNew can display it.
 	if gameState.GameSession.GameType == "vs_battle" && winnerID != nil {
-		if hub, ok := gm.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+		if hub, ok := gm.hub.(interface {
+			BroadcastJSON(uint, map[string]interface{})
+		}); ok {
 			charNames := VSWinnerCharNames(gameState, *winnerID)
 			var winner models.User
 			winnerName := "Unknown"
@@ -635,7 +644,9 @@ func (gm *GameManager) BroadcastGameState(roomID uint) error {
 		"game_state":      publicGameData(gameState),
 	}
 
-	if hub, ok := gm.hub.(interface{ BroadcastJSON(uint, map[string]interface{}) }); ok {
+	if hub, ok := gm.hub.(interface {
+		BroadcastJSON(uint, map[string]interface{})
+	}); ok {
 		hub.BroadcastJSON(roomID, message)
 	}
 	return nil
@@ -663,6 +674,8 @@ func publicGameData(gameState *GameSessionState) map[string]interface{} {
 			return pingPongPublicState(gameState.GameData)
 		case "air_hockey":
 			return airHockeyPublicState(gameState.GameData)
+		case "blackjack":
+			return blackjackPublicState(gameState.GameData)
 		}
 	}
 	return gameState.GameData

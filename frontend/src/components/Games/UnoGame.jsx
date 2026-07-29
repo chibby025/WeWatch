@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { X } from 'lucide-react';
+import GameWinnerBanner from './GameWinnerBanner';
+import GameRulesButton from './GameRulesButton';
 
 // ---- Card rendering helpers ----
 // H=Red  D=Yellow  C=Green  S=Blue  (standard Uno colour convention)
@@ -76,17 +78,53 @@ function ColorPicker({ onPick }) {
   );
 }
 
-export default function UnoGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame }) {
+export default function UnoGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame, onPostResult }) {
   const [gs, setGs]           = useState(null);
   const [selected, setSelected] = useState(null);
   const [pickingColor, setPickingColor] = useState(false);
   const [unoPressed, setUnoPressed]   = useState(false);
+  const [announcement, setAnnouncement] = useState(null);
+  const announceTimerRef = useRef(null);
+  const prevEventSeqRef = useRef(0);
+
+  const announce = useCallback((opts) => {
+    clearTimeout(announceTimerRef.current);
+    setAnnouncement({ ...opts, key: Date.now() });
+    announceTimerRef.current = setTimeout(() => setAnnouncement(null), 2600);
+  }, []);
+
+  useEffect(() => () => clearTimeout(announceTimerRef.current), []);
 
   useEffect(() => {
     if (!gameState?.game_state) return;
     setGs(gameState.game_state);
     setSelected(null);
   }, [gameState]);
+
+  // Edge-detect a new event via the monotonic event_seq — fires the correct
+  // banner for every connected client, not just whoever triggered it.
+  useEffect(() => {
+    const seq = gs?.event_seq ?? 0;
+    if (seq <= prevEventSeqRef.current) {
+      prevEventSeqRef.current = seq;
+      return;
+    }
+    prevEventSeqRef.current = seq;
+
+    const event = gs?.last_event;
+    if (!event) return;
+    const actorName = players.find(p => p.user_id === gs.last_event_actor)?.username || 'Someone';
+    const targetName = players.find(p => p.user_id === gs.last_event_target)?.username || 'Someone';
+
+    const banners = {
+      skip:    { icon: '⊘',  text: 'SKIPPED!',        sub: `${actorName} skipped ${targetName}!`, bg: 'linear-gradient(135deg,#7c3aed,#4f46e5)' },
+      reverse: { icon: '⟳',  text: 'REVERSED!',       sub: `${actorName} reversed the direction!`, bg: 'linear-gradient(135deg,#7c3aed,#4f46e5)' },
+      draw2:   { icon: '+2', text: 'DRAW TWO!',       sub: `${targetName} must draw 2 (or stack another D2)!`, bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' },
+      wild4:   { icon: '+4', text: 'WILD DRAW FOUR!', sub: `${targetName} must draw 4 (or stack a W4)!`, bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' },
+      caught:  { icon: '🎯', text: 'CAUGHT!',          sub: `${actorName} caught ${targetName} without UNO — +2 cards!`, bg: 'linear-gradient(135deg,#f59e0b,#b45309)' },
+    };
+    if (banners[event]) announce(banners[event]);
+  }, [gs?.event_seq, gs?.last_event, gs?.last_event_actor, gs?.last_event_target, players, announce]);
 
   if (!gs) return null;
 
@@ -100,15 +138,39 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
   const isMyTurn     = !isOver && players[myTurnIdx]?.user_id === currentUserId;
   const drawCount    = gs.draw_pile_count || 0;
   const handCounts   = gs.hand_counts || {};
+  const unoDeclared  = gs.uno_declared || {};
 
-  // Work out which hand cards are playable.
+  function hasMatchingColor(color) {
+    return hand.some(c => {
+      const { type, suit } = parseCard(c);
+      return type !== 'wild' && type !== 'wild4' && suit === color;
+    });
+  }
+
+  // Work out which hand cards are playable — mirrors unoCardPlayable /
+  // processUnoPlay's legality rules exactly so the UI never offers a move
+  // the backend would reject.
   function isPlayable(code) {
     if (!isMyTurn) return false;
     const { rank, suit, type } = parseCard(code);
-    if (type === 'wild' || type === 'wild4') return true;
     const { rank: topRank, suit: topSuit } = parseCard(discardTop);
     const activeColor = currentColor || topSuit;
+    if (pendingDraw > 0) {
+      // Facing a stacked Draw 2 / Wild Draw 4 — only another D2 or W4 can
+      // counter it. W4's own color restriction still applies on top of that.
+      if (type === 'draw2') return true;
+      if (type === 'wild4') return !hasMatchingColor(activeColor);
+      return false;
+    }
+    if (type === 'wild') return true;
+    // Wild Draw Four is only legal with no matching-color card in hand —
+    // mirrors the backend's restriction so the UI doesn't offer an illegal play.
+    if (type === 'wild4') return !hasMatchingColor(activeColor);
     return suit === activeColor || rank === topRank;
+  }
+
+  function catchPlayer(targetId) {
+    onMove({ move_type: 'catch_uno', target_id: targetId });
   }
 
   function playCard(code) {
@@ -140,14 +202,29 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
     setTimeout(() => setUnoPressed(false), 2000);
   }
 
-  const winner = isOver && gameState?.winner_id
-    ? players.find(p => p.user_id === gameState.winner_id)
-    : null;
+  const winner = gameState?.winner_id
+    ? (players.find(p => p.user_id === gameState.winner_id) || 'draw')
+    : 'draw';
+  const gameStats = {
+    lines: players.map(p => {
+      const count = p.user_id === currentUserId ? hand.length : (handCounts[String(p.user_id)] ?? 0);
+      return { label: p.username, value: `${count} card${count === 1 ? '' : 's'} left` };
+    }),
+  };
 
   const { suit: topSuit } = parseCard(discardTop);
-  const activeColor = currentColor || topSuit;
 
   return (
+    <>
+    <style>{`
+      @keyframes unoBannerIn {
+        0%   { opacity: 0; transform: translate(-50%,-50%) scale(0.8); }
+        15%  { opacity: 1; transform: translate(-50%,-50%) scale(1.06); }
+        25%  { transform: translate(-50%,-50%) scale(1); }
+        80%  { opacity: 1; }
+        100% { opacity: 0; transform: translate(-50%,-50%) scale(0.94); }
+      }
+    `}</style>
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-950 overflow-hidden">
       {pickingColor && <ColorPicker onPick={pickColor} />}
 
@@ -164,6 +241,7 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
           )}
         </div>
         <div className="flex items-center gap-2">
+          <GameRulesButton gameType="uno" className="text-gray-400 hover:text-white" />
           {!isOver && onEndGame && (
             <button
               onClick={onEndGame}
@@ -181,12 +259,20 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
         {players.filter(p => p.user_id !== currentUserId).map(p => {
           const count = handCounts[String(p.user_id)] || 0;
           const isTheirTurn = players[myTurnIdx]?.user_id === p.user_id;
+          const catchable = count === 1 && !unoDeclared[String(p.user_id)];
           return (
             <div key={p.user_id} className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs
               ${isTheirTurn ? 'bg-purple-800/60 ring-1 ring-purple-400' : 'bg-gray-800/50'}`}>
               <span className="text-gray-300 font-semibold">{p.username}</span>
               <span className="text-white font-bold">{count}🃏</span>
-              {count === 1 && <span className="text-red-400 font-bold">UNO!</span>}
+              {catchable && (
+                <button
+                  onClick={() => catchPlayer(p.user_id)}
+                  className="bg-red-600 hover:bg-red-500 text-white font-bold px-1.5 py-0.5 rounded transition-colors animate-pulse"
+                >
+                  Catch!
+                </button>
+              )}
             </div>
           );
         })}
@@ -222,16 +308,14 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
       </div>
 
       {/* Status line */}
-      <div className="text-center pb-2 text-sm text-gray-400">
-        {isOver
-          ? winner
-            ? <span className="text-white font-bold">{winner.user_id === currentUserId ? '🎉 You won!' : `${winner.username} wins!`}</span>
-            : <span className="text-gray-400">Game over</span>
-          : isMyTurn
+      {!isOver && (
+        <div className="text-center pb-2 text-sm text-gray-400">
+          {isMyTurn
             ? <span className="text-green-400 font-semibold">Your turn — play a card or draw</span>
             : <span>Waiting for {players[myTurnIdx]?.username}…</span>
-        }
-      </div>
+          }
+        </div>
+      )}
 
       {/* My hand */}
       <div className="bg-gray-900/80 border-t border-gray-800 px-3 py-3">
@@ -239,15 +323,21 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
           <>
             <div className="flex items-center justify-between mb-2">
               <span className="text-gray-400 text-xs font-semibold">Your hand ({hand.length} cards)</span>
-              {hand.length <= 1 && hand.length > 0 && (
-                <button
-                  onClick={pressUno}
-                  disabled={unoPressed}
-                  className={`px-4 py-1 rounded-full font-black text-sm transition-all
-                    ${unoPressed ? 'bg-yellow-700 text-yellow-200' : 'bg-yellow-500 text-black hover:bg-yellow-400'}`}
-                >
-                  {unoPressed ? 'UNO! 🎉' : 'UNO!'}
-                </button>
+              {hand.length === 1 && (
+                unoDeclared[String(currentUserId)] ? (
+                  <span className="px-4 py-1 rounded-full font-bold text-sm bg-green-700/40 text-green-300 border border-green-500/40">
+                    ✓ Declared
+                  </span>
+                ) : (
+                  <button
+                    onClick={pressUno}
+                    disabled={unoPressed}
+                    className={`px-4 py-1 rounded-full font-black text-sm transition-all
+                      ${unoPressed ? 'bg-yellow-700 text-yellow-200' : 'bg-yellow-500 text-black hover:bg-yellow-400 animate-pulse'}`}
+                  >
+                    {unoPressed ? 'UNO! 🎉' : 'UNO!'}
+                  </button>
+                )
               )}
             </div>
             <div className="flex gap-1 overflow-x-auto pb-1 justify-start">
@@ -265,12 +355,31 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
             </div>
           </>
         )}
-        {isOver && (
-          <button onClick={onClose} className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-semibold transition-colors">
-            Close
-          </button>
-        )}
       </div>
     </div>
+
+    {announcement && (
+      <div key={announcement.key} className="fixed z-[70] pointer-events-none"
+        style={{ top: '30%', left: '50%', animation: 'unoBannerIn 2.6s ease-out forwards' }}>
+        <div className="px-6 py-3 rounded-2xl text-center shadow-2xl" style={{ background: announcement.bg }}>
+          <div className="text-3xl mb-0.5 font-black">{announcement.icon}</div>
+          <div className="text-white font-black text-lg tracking-wide">{announcement.text}</div>
+          {announcement.sub && <div className="text-white/85 text-xs mt-0.5">{announcement.sub}</div>}
+        </div>
+      </div>
+    )}
+
+    {isOver && (
+      <GameWinnerBanner
+        winner={winner === 'draw' ? null : winner}
+        players={players}
+        gameType="uno"
+        gameStats={gameStats}
+        isForfeit={gameState?.status === 'forfeited'}
+        onClose={onClose}
+        onPostResult={onPostResult}
+      />
+    )}
+    </>
   );
 }

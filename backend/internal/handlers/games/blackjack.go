@@ -79,18 +79,66 @@ func dealBlackjack(gameState *GameSessionState) {
 
 	gameState.Hands = hands
 	gameState.DrawPile = deck
-	gameState.GameData["dealer_hand"] = dealer          // full hand, kept out of broadcast until reveal
-	gameState.GameData["dealer_visible"] = dealer[0]    // the one up-card everyone can see
+	gameState.GameData["dealer_hand"] = dealer       // full hand — see blackjackPublicState for how the hole card actually stays hidden
+	gameState.GameData["dealer_visible"] = dealer[0] // the one up-card everyone can see
 	gameState.GameData["phase"] = "player_turns"
 
-	// Per-player status: everyone starts "playing".
+	blackjackApplyDealResults(gameState)
+}
+
+// blackjackApplyDealResults computes each player's starting status (a natural
+// blackjack — 21 on the first two cards — is locked in immediately, since
+// real rules never let a player hit past an already-maximum hand), picks the
+// correct starting turn, and settles the round right away in the rare case
+// nobody can act. Split out from dealBlackjack so it's testable without
+// needing a real shuffled deal — gameState.Hands/dealer_hand just need to
+// already be set.
+func blackjackApplyDealResults(gameState *GameSessionState) {
+	// A natural gets a distinct "blackjack" status (not "playing") and is
+	// excluded from turn order by the same status check
+	// allPlayersDone/advanceToNextActivePlayer already use for stood/bust.
 	statuses := make(map[string]interface{}, len(gameState.Players))
-	for _, p := range gameState.Players {
-		statuses[fmt.Sprintf("%d", p.UserID)] = "playing"
+	gameState.CurrentTurn = -1
+	for i, p := range gameState.Players {
+		key := fmt.Sprintf("%d", p.UserID)
+		if blackjackIsNatural(gameState.Hands[p.UserID]) {
+			statuses[key] = "blackjack"
+			continue
+		}
+		statuses[key] = "playing"
+		if gameState.CurrentTurn == -1 {
+			gameState.CurrentTurn = i
+		}
+	}
+	if gameState.CurrentTurn == -1 {
+		gameState.CurrentTurn = 0 // nobody can act — settled immediately below
 	}
 	gameState.GameData["player_statuses"] = statuses
 
 	syncBlackjackPublicState(gameState)
+
+	// Extremely rare (requires every single player to independently draw a
+	// natural), but must be handled: without this the game would sit in
+	// "player_turns" forever with nobody able to act. Known, accepted gap:
+	// this settles the round's state directly without going through
+	// endGameLocked (which broadcasts game_ended and expects to run after
+	// the initial game_started broadcast has already gone out — calling it
+	// from inside StartGame, before that first broadcast, risks an
+	// out-of-order game_ended-before-game_started on the wire). The room
+	// will correctly show this game as finished but stays marked as "has an
+	// active game" until the host explicitly ends it — not worth that risk
+	// for a case this unlikely.
+	if allPlayersDone(gameState) {
+		runDealerTurnAndSettle(gameState)
+	}
+}
+
+// blackjackIsNatural reports whether a 2-card hand is a natural blackjack
+// (21 on the deal). Note this can only be true with exactly one Ace and one
+// 10-value card, which is also why no separate "was the up-card an Ace or
+// 10" pre-check is needed anywhere this is used.
+func blackjackIsNatural(hand []string) bool {
+	return len(hand) == 2 && blackjackHandValue(hand) == 21
 }
 
 func ensureBlackjackDealt(gameState *GameSessionState) {
@@ -100,8 +148,10 @@ func ensureBlackjackDealt(gameState *GameSessionState) {
 }
 
 // syncBlackjackPublicState mirrors the shareable derivatives into GameData. Player
-// hand contents ARE public in blackjack, so we expose player_hands too; only the
-// dealer's hole card stays hidden (dealer_hand isn't broadcast until dealer_turn).
+// hand contents ARE public in blackjack, so we expose player_hands too. The dealer's
+// hole card is stripped from the actual broadcast by blackjackPublicState below
+// (registered in game_manager.go's publicGameData) — GameData itself still holds the
+// full dealer_hand for the server's own use (settling the round).
 func syncBlackjackPublicState(gameState *GameSessionState) {
 	handCounts := make(map[string]int, len(gameState.Players))
 	handValues := make(map[string]int, len(gameState.Players))
@@ -127,6 +177,26 @@ func syncBlackjackPublicState(gameState *GameSessionState) {
 		visible, _ := gameState.GameData["dealer_visible"].(string)
 		gameState.GameData["dealer_value"] = blackjackCardValue(visible)
 	}
+}
+
+// blackjackPublicState strips the dealer's hole card from the broadcast
+// payload until the reveal. Before this function existed, blackjack had no
+// entry in game_manager.go's publicGameData switch at all, so the full
+// dealer_hand (including the hole card) was sent to every client from the
+// moment the game started — the comments elsewhere in this file describing
+// it as "hidden until dealer_turn" were describing the intent, not what was
+// actually happening on the wire. GameData itself is untouched; only the
+// broadcast copy has it removed.
+func blackjackPublicState(data map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		out[k] = v
+	}
+	phase, _ := data["phase"].(string)
+	if phase != "dealer_turn" && phase != "results" {
+		delete(out, "dealer_hand")
+	}
+	return out
 }
 
 func blackjackDealerHand(gameState *GameSessionState) []string {
@@ -294,6 +364,12 @@ func (gm *GameManager) processBlackjackMove(gameState *GameSessionState, playerI
 		syncBlackjackPublicState(gameState)
 
 	case "double":
+		// Real blackjack only allows doubling down on your original two cards —
+		// never after you've already hit. Nothing enforced this before, so a
+		// player could hit repeatedly and still double at any point.
+		if len(gameState.Hands[playerID]) != 2 {
+			return false, nil, fmt.Errorf("can only double down on your first two cards")
+		}
 		card, drawErr := blackjackDrawCard(gameState)
 		if drawErr != nil {
 			return false, nil, drawErr

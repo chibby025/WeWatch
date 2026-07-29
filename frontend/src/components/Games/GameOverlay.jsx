@@ -21,6 +21,7 @@ import PoolGame from './PoolGame';
 import WhotGame from './WhotGame';
 import SnakesAndLaddersGame from './SnakesAndLaddersGame';
 import MancalaGame from './MancalaGame';
+import JigsawGame from './JigsawGame';
 
 // Lazy-loaded — DOOM's iframe wrapper is tiny, but this establishes the
 // pattern for any future heavy/rarely-used game: don't pay its bundle cost
@@ -203,6 +204,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -227,6 +229,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -382,6 +385,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -449,6 +453,19 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
     case 'mancala':
       return (
         <MancalaGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'jigsaw':
+      return (
+        <JigsawGame
           gameState={activeGame}
           players={activeGame.players}
           currentUserId={currentUserId}

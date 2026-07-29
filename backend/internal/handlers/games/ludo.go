@@ -225,6 +225,20 @@ func (gm *GameManager) processLudoRoll(gameState *GameSessionState, playerIdx in
 	gameState.GameData["last_capture"] = false
 	gameState.GameData["last_token_home"] = false
 
+	// Double-six bonus (1/36 odds): rewards the same player with another full
+	// roll once both dice from this roll are spent, instead of passing the turn.
+	// Stacks indefinitely — a second consecutive double-six (1/1296) grants
+	// another bonus on top; no cap, the odds alone keep this from being abusable.
+	// Only ever SET here — never touched by move_token until the turn actually
+	// ends (see processLudoTokenMove), so it stays true across this roll's own
+	// move_token calls without needing to be re-detected, then cleared exactly
+	// once the turn would otherwise pass. This is what lets the frontend
+	// edge-detect it cleanly even across back-to-back double-six rolls, which
+	// would otherwise both broadcast "true" with nothing in between to
+	// transition from.
+	isDoubleSix := d1 == 6 && d2 == 6
+	gameState.GameData["double_six_bonus"] = isDoubleSix
+
 	// Keep BOTH dice regardless of immediate legality — the second die may
 	// become legal after the first is used (e.g. 6+3 with tokens in base:
 	// the 6 enters a token, then that token can use the 3).
@@ -232,10 +246,14 @@ func (gm *GameManager) processLudoRoll(gameState *GameSessionState, playerIdx in
 	hasAnyLegal := ludoHasLegalMove(gameState, playerColors, d1) || ludoHasLegalMove(gameState, playerColors, d2)
 
 	if !hasAnyLegal {
-		// No legal move for either die — skip to next player.
+		// No legal move for either die. A double-six still keeps the same player
+		// (the reward is for the rare roll itself, not for having a usable move) —
+		// every other roll passes the turn as before.
 		gameState.GameData["remaining_moves"] = []interface{}{}
 		gameState.GameData["awaiting_move"] = false
-		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % n
+		if !isDoubleSix {
+			gameState.CurrentTurn = (gameState.CurrentTurn + 1) % n
+		}
 		return false, nil, nil
 	}
 
@@ -323,6 +341,7 @@ func (gm *GameManager) processLudoTokenMove(gameState *GameSessionState, playerI
 
 	// Capture: check every opponent token on the same global square.
 	captured := false
+	capturedColor := ""
 	if newPos >= 0 && newPos <= 50 {
 		globalSq := ludoGlobalSquare(color, newPos)
 		if !ludoSafeSquares[globalSq] {
@@ -346,17 +365,35 @@ func (gm *GameManager) processLudoTokenMove(gameState *GameSessionState, playerI
 					if otPos >= 0 && otPos <= 50 && ludoGlobalSquare(otherColor, otPos) == globalSq {
 						ot["position"] = -1
 						captured = true
+						capturedColor = otherColor
 					}
 				}
 			}
 		}
 	}
 
-	token["position"] = newPos
-	reachedHome := newPos == 57
+	// Nigerian Ludo house rule: capturing an opponent's token instantly sends your
+	// OWN token all the way home (57), not just to the square where the capture
+	// happened — a real, deliberately powerful reward for landing a capture,
+	// bigger than the classic rules' "just send them back."
+	finalPos := newPos
+	if captured {
+		finalPos = 57
+	}
+	token["position"] = finalPos
+	reachedHome := finalPos == 57
 
 	gameState.GameData["last_capture"] = captured
 	gameState.GameData["last_token_home"] = reachedHome
+	if captured {
+		gameState.GameData["last_captured_color"] = capturedColor
+		gameState.GameData["last_capturer_color"] = color
+		// Monotonic, never reset — unlike last_capture (which a later non-capturing
+		// move in the same turn would overwrite back to false), this lets the
+		// frontend edge-detect two captures happening within the same turn's two
+		// dice as two distinct events instead of missing the second one.
+		gameState.GameData["capture_seq"] = ludoIntField(gameState.GameData, "capture_seq") + 1
+	}
 
 	// Win check: ALL tokens across ALL of this player's colors are home.
 	allHome := true
@@ -403,9 +440,17 @@ func (gm *GameManager) processLudoTokenMove(gameState *GameSessionState, playerI
 		}
 	}
 
-	// All dice consumed (or no remaining die has a legal move) — next player's turn.
+	// All dice consumed (or no remaining die has a legal move) — next player's
+	// turn, unless this turn's roll was a double-six, in which case the same
+	// player goes again (see the comment in processLudoRoll). Consume the flag
+	// here so it doesn't linger into a future turn.
+	isDoubleSix, _ := gameState.GameData["double_six_bonus"].(bool)
 	gameState.GameData["remaining_moves"] = []interface{}{}
 	gameState.GameData["awaiting_move"] = false
-	gameState.CurrentTurn = (gameState.CurrentTurn + 1) % n
+	if isDoubleSix {
+		gameState.GameData["double_six_bonus"] = false
+	} else {
+		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % n
+	}
 	return false, nil, nil
 }

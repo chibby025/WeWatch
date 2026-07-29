@@ -11,6 +11,10 @@ const GAME_LABELS = {
   checkers: 'Checkers',
   crazy_eights: 'Crazy Eights',
   ludo: 'Ludo',
+  glass_bridge: 'Glass Bridge',
+  uno: 'UNO',
+  blackjack: 'Blackjack',
+  jigsaw: 'Jigsaw Puzzle',
   wordle: 'Wordle',
   would_you_rather: 'Would You Rather',
 };

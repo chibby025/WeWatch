@@ -51,6 +51,10 @@ func setRemainingMoves(gs *GameSessionState, moves ...int) {
 // TestCaptureToken: red token (pos 8) rolls 6, lands on global square 14
 // which is the same global square as blue token (pos 1, entry=13 → 14).
 // Square 14 is NOT safe → capture should happen.
+//
+// Nigerian house rule: a capture instantly teleports the CAPTURING token
+// all the way Home (position 57), not just to the square it landed on —
+// so red should end at 57, not 14, and the victim (blue) goes to base (-1).
 func TestCaptureToken(t *testing.T) {
 	gs := makeTestLudoState(2)
 	gm := &GameManager{}
@@ -76,8 +80,8 @@ func TestCaptureToken(t *testing.T) {
 	if winnerID != nil {
 		t.Errorf("expected no winner, got %d", *winnerID)
 	}
-	if pos := getPos(gs, "red", 0); pos != 14 {
-		t.Errorf("red token should be at 14, got %d", pos)
+	if pos := getPos(gs, "red", 0); pos != 57 {
+		t.Errorf("red token should teleport Home (57) on capture, got %d", pos)
 	}
 	if pos := getPos(gs, "blue", 0); pos != -1 {
 		t.Errorf("blue token should be at base (-1), got %d (CAPTURE FAILED)", pos)
@@ -85,8 +89,17 @@ func TestCaptureToken(t *testing.T) {
 	if captured, _ := gs.GameData["last_capture"].(bool); !captured {
 		t.Error("last_capture should be true")
 	}
-	if bonus, _ := gs.GameData["bonus_earned"].(bool); !bonus {
-		t.Error("bonus_earned should be true after capture")
+	if reachedHome, _ := gs.GameData["last_token_home"].(bool); !reachedHome {
+		t.Error("last_token_home should be true — the capture-teleport lands exactly on 57")
+	}
+	if capturedColor, _ := gs.GameData["last_captured_color"].(string); capturedColor != "blue" {
+		t.Errorf("last_captured_color should be 'blue', got %q", capturedColor)
+	}
+	if capturerColor, _ := gs.GameData["last_capturer_color"].(string); capturerColor != "red" {
+		t.Errorf("last_capturer_color should be 'red', got %q", capturerColor)
+	}
+	if seq, _ := gs.GameData["capture_seq"].(int); seq != 1 {
+		t.Errorf("capture_seq should be 1 after the first capture, got %d", seq)
 	}
 }
 

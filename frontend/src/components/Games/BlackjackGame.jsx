@@ -1,4 +1,6 @@
-import { X, Trophy } from 'lucide-react';
+import { X } from 'lucide-react';
+import GameWinnerBanner from './GameWinnerBanner';
+import GameRulesButton from './GameRulesButton';
 
 // Blackjack — each player plays their own hand against a shared dealer. No betting.
 // Card contents are public (matches how it's played at a table); only the dealer's
@@ -31,19 +33,20 @@ function Card({ card, faceDown }) {
 }
 
 const STATUS_CHIP = {
-  playing: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
-  stood:   'bg-gray-500/20 text-gray-300 border-gray-500/40',
-  bust:    'bg-red-500/20 text-red-300 border-red-500/40',
-  won:     'bg-green-500/20 text-green-300 border-green-500/40',
-  lost:    'bg-red-500/20 text-red-300 border-red-500/40',
-  push:    'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+  playing:   'bg-blue-500/20 text-blue-300 border-blue-500/40',
+  stood:     'bg-gray-500/20 text-gray-300 border-gray-500/40',
+  bust:      'bg-red-500/20 text-red-300 border-red-500/40',
+  won:       'bg-green-500/20 text-green-300 border-green-500/40',
+  lost:      'bg-red-500/20 text-red-300 border-red-500/40',
+  push:      'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+  blackjack: 'bg-amber-400/20 text-amber-300 border-amber-400/50',
 };
 const STATUS_LABEL = {
   playing: 'Playing', stood: 'Stood', bust: 'Bust',
-  won: 'Won', lost: 'Lost', push: 'Push',
+  won: 'Won', lost: 'Lost', push: 'Push', blackjack: 'Blackjack! 🂡',
 };
 
-export default function BlackjackGame({ gameState, players, currentUserId, onMove, onClose, onEndGame }) {
+export default function BlackjackGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
   const gs = gameState?.game_state || {};
   const phase = gs.phase || 'player_turns';
   const playerHands = gs.player_hands || {};
@@ -63,10 +66,20 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
   const isMyTurn = phase === 'player_turns' && currentTurnPlayer?.user_id === currentUserId;
 
   const myStatus = statuses[String(currentUserId)] || 'playing';
+  const myHandCards = playerHands[String(currentUserId)] || [];
+  // Doubling down is only legal on your original two cards, never after a hit.
+  const canDouble = myHandCards.length === 2;
 
-  const winner = gameState?.winner_id != null
-    ? (players || []).find(p => p.user_id === gameState.winner_id)
-    : null;
+  const winner = gameState?.winner_id
+    ? ((players || []).find(p => p.user_id === gameState.winner_id) || 'draw')
+    : 'draw';
+  const gameStats = {
+    lines: (players || []).map(p => {
+      const value = handValues[String(p.user_id)] ?? 0;
+      const status = STATUS_LABEL[statuses[String(p.user_id)]] || 'Playing';
+      return { label: p.username, value: `${value} — ${status}` };
+    }),
+  };
 
   const endOrLeave = () => {
     if (isHostUser && onEndGame) onEndGame();
@@ -79,6 +92,7 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
   const renderHand = (userId) => (playerHands[String(userId)] || []).map((c, i) => <Card key={i} card={c} />);
 
   return (
+    <>
     <div className="fixed inset-0 z-[60] bg-green-950/98 flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between pl-20 pr-5 py-4 border-b border-green-800/60 flex-shrink-0">
@@ -86,13 +100,16 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
           <span className="text-2xl">🃏</span>
           <span className="text-white font-bold text-xl">Blackjack</span>
         </div>
-        <button
-          onClick={endOrLeave}
-          className="text-gray-300 hover:text-white hover:bg-green-800/60 p-1.5 rounded-lg transition-colors"
-          title={isHostUser ? 'End game for everyone' : 'Leave game'}
-        >
-          <X className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <GameRulesButton gameType="blackjack" className="text-gray-300 hover:text-white" />
+          <button
+            onClick={endOrLeave}
+            className="text-gray-300 hover:text-white hover:bg-green-800/60 p-1.5 rounded-lg transition-colors"
+            title={isHostUser ? 'End game for everyone' : 'Leave game'}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-6 flex flex-col items-center">
@@ -115,16 +132,6 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
               )}
           </div>
         </div>
-
-        {/* Results banner */}
-        {finished && (
-          <div className="text-center mb-6">
-            <div className="text-5xl mb-2">{winner ? '🏆' : '🤝'}</div>
-            <h2 className="text-2xl font-bold text-white">
-              {winner ? `${winner.username} beats the dealer!` : 'No single winner'}
-            </h2>
-          </div>
-        )}
 
         {/* My hand */}
         {me && (
@@ -158,13 +165,15 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
                 >
                   Stand
                 </button>
-                <button
-                  onClick={() => onMove({ move_type: 'double' })}
-                  className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl transition-colors"
-                  title="Take exactly one more card, then stand"
-                >
-                  Double
-                </button>
+                {canDouble && (
+                  <button
+                    onClick={() => onMove({ move_type: 'double' })}
+                    className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl transition-colors"
+                    title="Take exactly one more card, then stand"
+                  >
+                    Double
+                  </button>
+                )}
               </div>
             )}
             {!isMyTurn && phase === 'player_turns' && myStatus === 'playing' && (
@@ -206,27 +215,30 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
         )}
       </div>
 
-      {/* Footer for host / finished */}
-      {(finished || isHostUser) && (
+      {/* Footer — End Game only; the finished/Close state is now owned by GameWinnerBanner */}
+      {isHostUser && !finished && (
         <div className="px-5 py-3 border-t border-green-800/60 flex justify-between flex-shrink-0">
-          {isHostUser && !finished ? (
-            <button
-              onClick={onEndGame}
-              className="px-4 py-2 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-400 rounded-xl text-sm font-semibold transition-colors"
-            >
-              End Game
-            </button>
-          ) : <span />}
-          {finished && (
-            <button
-              onClick={onClose}
-              className="px-6 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-bold rounded-xl text-sm transition-all flex items-center gap-2"
-            >
-              <Trophy className="w-4 h-4" /> Close
-            </button>
-          )}
+          <button
+            onClick={onEndGame}
+            className="px-4 py-2 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-400 rounded-xl text-sm font-semibold transition-colors"
+          >
+            End Game
+          </button>
         </div>
       )}
     </div>
+
+    {finished && (
+      <GameWinnerBanner
+        winner={winner === 'draw' ? null : winner}
+        players={players}
+        gameType="blackjack"
+        gameStats={gameStats}
+        isForfeit={gameState?.status === 'forfeited'}
+        onClose={onClose}
+        onPostResult={onPostResult}
+      />
+    )}
+    </>
   );
 }

@@ -1,5 +1,5 @@
 // src/components/Games/LudoGame.jsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import GameRulesButton from './GameRulesButton';
 
@@ -195,6 +195,16 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
   const [dragging, setDragging]         = useState(null);
   const [ghostPos, setGhostPos]         = useState({ x:0, y:0 });
   const [selectedDieValue, setSelectedDieValue] = useState(null);
+  const [announcement, setAnnouncement] = useState(null);
+  const announceTimerRef = useRef(null);
+  const prevDoubleSixRef = useRef(false);
+  const prevCaptureSeqRef = useRef(0);
+
+  const announce = useCallback((opts) => {
+    clearTimeout(announceTimerRef.current);
+    setAnnouncement({ ...opts, key: Date.now() });
+    announceTimerRef.current = setTimeout(() => setAnnouncement(null), 2800);
+  }, []);
 
   const gs             = gameState?.game_state || {};
   const tokensByColor  = gs.tokens || {};
@@ -202,6 +212,10 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
   const remainingMoves = gs.remaining_moves || [];   // subset still playable
   const awaitingMove   = !!gs.awaiting_move;
   const lastRollWasted = !!gs.last_roll_wasted;
+  const doubleSixBonus = !!gs.double_six_bonus;
+  const captureSeq     = gs.capture_seq ?? 0;
+  const lastCapturedColor = gs.last_captured_color || null;
+  const lastCapturerColor = gs.last_capturer_color || null;
 
   const currentTurn   = gameState?.current_turn ?? 0;
   const currentPlayer = players[currentTurn];
@@ -249,6 +263,48 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
     // If 2+ remain, wait for player to tap a die.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rmKey, awaitingMove, isMyTurn]);
+
+  // "Extra Roll" banner on the false→true transition only — not on every render
+  // while the flag holds (it stays true across this roll's own move_token calls),
+  // and correctly re-fires for a second consecutive double-six since the backend
+  // clears the flag to false right when the turn would otherwise pass, before the
+  // next roll_dice sets it fresh. Same one-shot pattern WhotGame.jsx uses for its
+  // Pick 2/Pick 3/Hold On announcements.
+  useEffect(() => {
+    if (doubleSixBonus && !prevDoubleSixRef.current) {
+      announce({ icon: '🎲🎲', text: 'EXTRA ROLL!', sub: 'Double six bonus — go again!',
+        bg: 'linear-gradient(135deg,#7c3aed,#4f46e5)' });
+    }
+    prevDoubleSixRef.current = doubleSixBonus;
+  }, [doubleSixBonus, announce]);
+
+  // "Knocked Out!" banner — capture_seq is monotonic (never reset, unlike
+  // last_capture which a later non-capturing move in the same turn would
+  // overwrite back to false), so this correctly fires once per capture even
+  // when both dice in one turn each capture a different token.
+  useEffect(() => {
+    if (captureSeq > prevCaptureSeqRef.current && lastCapturedColor) {
+      const victimIdx = players.findIndex((_, idx) => colorsForPlayerIdx(idx, players.length).includes(lastCapturedColor));
+      const victim = players[victimIdx];
+      const victimLabel = lastCapturedColor.charAt(0).toUpperCase() + lastCapturedColor.slice(1);
+
+      const capturerIdx = lastCapturerColor
+        ? players.findIndex((_, idx) => colorsForPlayerIdx(idx, players.length).includes(lastCapturerColor))
+        : -1;
+      const capturer = players[capturerIdx];
+      const capturerLabel = lastCapturerColor ? lastCapturerColor.charAt(0).toUpperCase() + lastCapturerColor.slice(1) : null;
+
+      const victimText = victim ? `${victim.username}'s ${victimLabel}` : victimLabel;
+      const capturerText = capturer ? `${capturer.username}'s ${capturerLabel}` : capturerLabel;
+
+      announce({ icon: '🎯', text: 'KNOCKED OUT!',
+        sub: capturerText
+          ? `${victimText} sent to base — ${capturerText} races Home!`
+          : `${victimText} sent back to base!`,
+        bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' });
+    }
+    prevCaptureSeqRef.current = captureSeq;
+  }, [captureSeq, lastCapturedColor, lastCapturerColor, players, announce]);
 
   // Legal moves: { color, tokenIdx } pairs for the currently selected die value.
   const legalMoves = useMemo(() => {
@@ -383,6 +439,19 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
           0%   { transform:translateY(-20px) rotate(0deg);   opacity:1; }
           100% { transform:translateY(120px) rotate(720deg); opacity:0; }
         }
+        @keyframes announceIn {
+          0%   { opacity:0; transform:translate(-50%,-50%) scale(0.35) rotate(-8deg); }
+          18%  { opacity:1; transform:translate(-50%,-50%) scale(1.12) rotate(2deg); }
+          28%  { transform:translate(-50%,-50%) scale(0.96) rotate(-0.5deg); }
+          55%  { opacity:1; transform:translate(-50%,-50%) scale(1) rotate(0deg); }
+          78%  { opacity:1; transform:translate(-50%,-50%) scale(1); }
+          92%  { opacity:0; transform:translate(-50%,-50%) scale(0.9); }
+          100% { opacity:0; transform:translate(-50%,-50%) scale(0.75); }
+        }
+        @keyframes tapPulse {
+          0%,100% { transform:scale(1);    opacity:1; }
+          50%     { transform:scale(1.14); opacity:0.6; }
+        }
       `}</style>
 
       {/* Drag ghost */}
@@ -510,6 +579,7 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                 const safe = SAFE_SQUARES.has(i);
                 return (
                   <div key={`tr${i}`} className="absolute"
+                    title={safe ? "Safe Zone — tokens here can't be captured" : undefined}
                     style={{
                       top:`${r*cp}%`, left:`${c*cp}%`,
                       width:`${cp}%`, height:`${cp}%`,
@@ -612,6 +682,41 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
               })}
             </div>
           </div>
+
+          {/* ── Event announcement overlay (Extra Roll — Double Six Bonus) ── */}
+          {announcement && (
+            <div
+              key={announcement.key}
+              style={{
+                position: 'absolute', top: '40%', left: '50%',
+                zIndex: 60, pointerEvents: 'none',
+                animation: 'announceIn 2.8s cubic-bezier(0.34,1.56,0.64,1) forwards',
+              }}
+            >
+              <div style={{
+                background: announcement.bg,
+                borderRadius: 20,
+                padding: '16px 30px',
+                textAlign: 'center',
+                boxShadow: '0 0 56px rgba(0,0,0,0.7), 0 12px 40px rgba(0,0,0,0.5)',
+                border: '1.5px solid rgba(255,255,255,0.2)',
+                minWidth: 190, maxWidth: 290,
+              }}>
+                <div style={{ fontSize: 44, lineHeight: 1, marginBottom: 8 }}>{announcement.icon}</div>
+                <div style={{
+                  color: '#fff', fontSize: 26, fontWeight: 900,
+                  letterSpacing: 0.5, textShadow: '0 2px 10px rgba(0,0,0,0.5)',
+                  lineHeight: 1.1,
+                }}>{announcement.text}</div>
+                {announcement.sub && (
+                  <div style={{
+                    color: 'rgba(255,255,255,0.8)', fontSize: 12,
+                    marginTop: 6, fontWeight: 600, letterSpacing: 0.2,
+                  }}>{announcement.sub}</div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* ── Winner banner overlay ── */}
           {isOver && (
@@ -740,11 +845,12 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                 {/* Left slot: Roll button OR prominent "Tap a die!" hint */}
                 {isMyTurn && awaitingMove && needsDieSelection ? (
                   <span style={{
+                    display: 'inline-block',
                     fontSize: 14, fontWeight: 900, whiteSpace: 'nowrap',
                     color: '#fbbf24',
                     textShadow: '0 0 10px rgba(251,191,36,0.8)',
                     letterSpacing: '-0.3px',
-                    animation: 'pulse 1.2s ease-in-out infinite',
+                    animation: 'tapPulse 0.9s ease-in-out infinite',
                   }}>
                     👆 Tap a die!
                   </span>

@@ -66,12 +66,59 @@ const RULES = {
   ludo: {
     title: 'Ludo',
     rules: [
-      'Roll the dice to move your tokens around the board towards Home.',
+      'Each turn you roll two dice — move a token using either die\'s value (one after another) if it has a legal move.',
       'You must roll a 6 to move a token out of Base onto the starting square.',
-      'Rolling a 6 earns you a bonus roll.',
-      'Land on an opponent\'s token on a non-safe square to send it back to their Base.',
-      'Starred squares ⭐ are safe — tokens there cannot be captured.',
-      'Get all 4 of your tokens to the centre Home triangle to win!',
+      'Roll double sixes (6-6) and you get a full bonus roll afterward — go again!',
+      'Land on an opponent\'s token on a non-safe square to send it back to their Base — and your own token instantly races all the way Home as a reward!',
+      'Get all 4 of your tokens Home to win!',
+    ],
+    legend: [
+      { swatch: true, label: 'Safe Zone — tokens here cannot be captured' },
+    ],
+  },
+  jigsaw: {
+    title: 'Jigsaw Puzzle',
+    rules: [
+      'Fully cooperative — everyone works on the same puzzle at the same time, no turns.',
+      'The host picks an image and a difficulty to start.',
+      'Tap and drag any unclaimed piece — while you\'re holding it, nobody else can pick it up.',
+      'Drop a piece near its correct spot and it snaps into place and locks. Drop it elsewhere and it just stays where you left it — try again!',
+      'The faint image outline in the background shows what you\'re building toward.',
+      'The puzzle is solved once every piece is placed — everyone wins together!',
+    ],
+  },
+  blackjack: {
+    title: 'Blackjack',
+    rules: [
+      'Each player plays their own hand against the shared dealer — get closer to 21 than the dealer without going over.',
+      'Number cards are worth their face value. J/Q/K are worth 10. Aces count as 11, or 1 if 11 would bust your hand.',
+      'Hit to take another card, Stand to keep your current total, or Double to take exactly one more card and lock in.',
+      'Double is only available on your first two cards — not after you\'ve already hit.',
+      'Go over 21 and you bust — an automatic loss regardless of what the dealer gets.',
+      'The dealer reveals their hidden card once everyone is done, then must hit until reaching at least 17.',
+      'Beat the dealer\'s total to win, tie it for a push (no winner), or fall short to lose. Player cards are visible to everyone at the table — only the dealer\'s second card stays hidden until the reveal.',
+    ],
+  },
+  uno: {
+    title: 'UNO',
+    rules: [
+      'Match the top discard card by color, number, or symbol — or play a Wild card any time.',
+      'Skip ⊘ skips the next player. Reverse ⟳ flips turn order (acts as a Skip in 2-player games).',
+      'Draw Two forces the next player to draw 2 cards and lose their turn. Wild Draw Four does the same for 4, and also lets you choose the new color.',
+      'Can\'t play a card? Draw one from the pile instead.',
+      'Down to your last card? Hit UNO! before it\'s your only one left.',
+      'First to empty their hand wins!',
+    ],
+  },
+  glass_bridge: {
+    title: 'Glass Bridge',
+    rules: [
+      'Take turns picking the LEFT or RIGHT glass tile on the row directly ahead of you.',
+      'One side is safe, the other shatters — you don\'t know which until you step.',
+      'Pick correctly and you advance, then go again. Pick wrong and you fall back to the start — the tile is revealed for everyone, and it\'s the next player\'s turn.',
+      'A tile\'s safe side stays the same all game once revealed — remember what breaks!',
+      'An amber glow marks the furthest anyone has safely reached, even after a fall.',
+      'First player to cross every platform wins!',
     ],
   },
   trivia: {
@@ -238,6 +285,23 @@ export default function GameRulesButton({ gameType, className = '' }) {
                 </li>
               ))}
             </ol>
+            {data.legend && (
+              <div className="mt-4 pt-4 border-t border-gray-700 space-y-2">
+                {data.legend.map((item, i) => (
+                  <div key={i} className="flex items-center gap-2.5">
+                    {item.swatch && (
+                      <span style={{
+                        display:'inline-flex', flexShrink:0, alignItems:'center', justifyContent:'center',
+                        width:16, height:16, borderRadius:3,
+                        background:'linear-gradient(135deg,#fcd34d,#f59e0b)',
+                        color:'#78350f', fontSize:10, fontWeight:900,
+                      }}>✦</span>
+                    )}
+                    <span className="text-xs text-gray-400">{item.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

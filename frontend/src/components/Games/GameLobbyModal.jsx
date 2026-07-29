@@ -211,6 +211,16 @@ const games = [
     type: 'multiplayer'
   },
   {
+    id: 'jigsaw',
+    name: 'Jigsaw Puzzle',
+    description: 'Fully cooperative — everyone works the same puzzle together in real time!',
+    minPlayers: 1,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/jigsaw.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
     id: 'draw_guess',
     name: 'Draw & Guess',
     description: 'One draws, everyone guesses — race the clock!',

@@ -12,13 +12,14 @@ import (
 // First to cross all platforms wins.
 
 func glassBridgeInitialState(playerCount int) map[string]interface{} {
-	// More platforms for more players so the game lasts long enough
-	slots := 6
-	if playerCount >= 3 {
-		slots = 7
+	// Base length is 10 slots for 2 players, +3 per player beyond that, capped
+	// at 22 so a large group doesn't turn into an unreasonably long slog.
+	slots := 10 + (playerCount-2)*3
+	if slots < 10 {
+		slots = 10
 	}
-	if playerCount >= 4 {
-		slots = 8
+	if slots > 22 {
+		slots = 22
 	}
 
 	solutions := make([]string, slots)
@@ -35,13 +36,29 @@ func glassBridgeInitialState(playerCount int) map[string]interface{} {
 	_ = eliminated
 
 	return map[string]interface{}{
-		"slots":        slots,
-		"solutions":    solutions, // hidden, stripped from public broadcast
-		"revealed":     make([]bool, slots),
-		"safe_sides":   make([]string, slots), // "" until revealed
-		"positions":    positions,              // player_id → slot they're currently at (-1 = at start, 0-based)
-		"phase":        "playing",
-		"attempts":     map[string]interface{}{}, // player_id → total wrong attempts
+		"slots":      slots,
+		"solutions":  solutions, // hidden, stripped from public broadcast
+		"revealed":   make([]bool, slots),
+		"safe_sides": make([]string, slots), // "" until revealed
+		"positions":  positions,             // player_id → slot they're currently at (-1 = at start, 0-based)
+		"phase":      "playing",
+		"attempts":   map[string]interface{}{}, // player_id → total wrong attempts
+		// Move-event tracking so every connected client (not just the mover) can
+		// reliably animate "what just happened" in real time. move_seq is
+		// monotonic and never reset, so two moves in quick succession are always
+		// distinguishable — the same edge-detection pattern used for Ludo captures.
+		"move_seq":      0,
+		"last_actor_id": nil,
+		"last_result":   "", // "advanced" | "fell" | "crossed"
+		"last_slot":     -1,
+		"last_side":     "",
+		// Furthest position ANY player has ever successfully reached, updated
+		// only on a successful advance and never decreased by a later fall —
+		// this is what lets the frontend show a persistent "furthest confirmed
+		// safe point" marker even after whoever reached it falls back to start.
+		// Deriving this from `revealed` alone isn't reliable: a row can become
+		// revealed from a *failed* first attempt, not just a successful pass.
+		"frontier_position": -1,
 	}
 }
 
@@ -110,14 +127,26 @@ func (gm *GameManager) processGlassBridgeMove(gameState *GameSessionState, playe
 		gameState.GameData["safe_sides"] = safeSides
 	}
 
+	// Move-event tracking, monotonic — lets every connected client (mover or
+	// spectator) edge-detect and animate this exact move exactly once, even if
+	// this player's next move lands before a slower client has re-rendered.
+	gameState.GameData["move_seq"] = gbInt(gameState.GameData["move_seq"]) + 1
+	gameState.GameData["last_actor_id"] = playerID
+	gameState.GameData["last_slot"] = nextSlot
+	gameState.GameData["last_side"] = side
+
 	if correct {
 		newPos := nextSlot
 		positions[playerKey] = newPos
 		gameState.GameData["positions"] = positions
+		if newPos > gbInt(gameState.GameData["frontier_position"]) {
+			gameState.GameData["frontier_position"] = newPos
+		}
 
 		if newPos == slots-1 {
 			// Crossed! This player wins.
 			gameState.GameData["phase"] = "ended"
+			gameState.GameData["last_result"] = "crossed"
 			// Cancel auto-advance (same player "wins" this exchange)
 			gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
 			uid := playerID
@@ -125,6 +154,7 @@ func (gm *GameManager) processGlassBridgeMove(gameState *GameSessionState, playe
 		}
 
 		// Correct but not done — same player goes again (cancel auto-advance)
+		gameState.GameData["last_result"] = "advanced"
 		gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
 		return false, nil, nil
 	}
@@ -132,6 +162,7 @@ func (gm *GameManager) processGlassBridgeMove(gameState *GameSessionState, playe
 	// Wrong — reset player back to start
 	positions[playerKey] = -1
 	gameState.GameData["positions"] = positions
+	gameState.GameData["last_result"] = "fell"
 
 	// Track attempts
 	attempts := gbAttempts(gameState.GameData)
