@@ -4,8 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { XMarkIcon, ChatBubbleLeftIcon } from '@heroicons/react/24/outline';
 import axios from 'axios';
 import Avatar from './Avatar';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+import { API_BASE_URL } from '../services/api';
 
 const SessionChatPreviewModal = ({ isOpen, onClose, sessionId, sessionTitle }) => {
   const [messages, setMessages] = useState([]);

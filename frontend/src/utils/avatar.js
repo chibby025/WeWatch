@@ -8,7 +8,9 @@
 //   anything else     -> frontend default (catches legacy values like
 //                        '/avatars/default.png' that no origin actually serves)
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+import { API_BASE_URL } from '../services/api';
+
+const API_BASE = API_BASE_URL || '';
 const FRONTEND_DEFAULT = '/icons/user1avatar.svg';
 
 export function resolveAvatarUrl(rawAvatarUrl) {

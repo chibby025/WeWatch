@@ -282,6 +282,10 @@ func runDealerTurnAndSettle(gameState *GameSessionState) (bool, *uint, error) {
 	gameState.GameData["dealer_hand"] = dealer
 	dealerVal := blackjackHandValue(dealer)
 	dealerBust := dealerVal > 21
+	// A natural dealer hand (21 on the first 2 cards) never enters the hit
+	// loop above (its value is already >= 17), so `dealer` here is still the
+	// original 2 cards either way — safe to check naturalness post-loop.
+	dealerNatural := blackjackIsNatural(dealer)
 
 	statuses := blackjackStatuses(gameState)
 	var winners []uint
@@ -290,22 +294,33 @@ func runDealerTurnAndSettle(gameState *GameSessionState) (bool, *uint, error) {
 
 	for _, p := range gameState.Players {
 		key := fmt.Sprintf("%d", p.UserID)
-		playerVal := blackjackHandValue(gameState.Hands[p.UserID])
+		hand := gameState.Hands[p.UserID]
+		playerVal := blackjackHandValue(hand)
+		playerNatural := blackjackIsNatural(hand)
 		var result string
-		if playerVal > 21 {
+		switch {
+		case playerVal > 21:
 			result = "lost" // player busted earlier
-		} else if dealerBust || playerVal > dealerVal {
+		case playerNatural && dealerNatural:
+			result = "push" // both naturals — genuine tie
+		case playerNatural:
+			result = "won" // natural blackjack beats any non-natural dealer total, including a built 21
+		case dealerNatural:
+			result = "lost" // dealer's natural beats any non-natural player total, including a built 21
+		case dealerBust || playerVal > dealerVal:
 			result = "won"
+		case playerVal == dealerVal:
+			result = "push"
+		default:
+			result = "lost"
+		}
+		if result == "won" {
 			winners = append(winners, p.UserID)
 			if playerVal > bestWinnerScore {
 				bestWinnerScore = playerVal
 				id := p.UserID
 				bestWinnerID = &id
 			}
-		} else if playerVal == dealerVal {
-			result = "push"
-		} else {
-			result = "lost"
 		}
 		statuses[key] = result
 	}

@@ -97,6 +97,7 @@ const RULES = {
       'Go over 21 and you bust — an automatic loss regardless of what the dealer gets.',
       'The dealer reveals their hidden card once everyone is done, then must hit until reaching at least 17.',
       'Beat the dealer\'s total to win, tie it for a push (no winner), or fall short to lose. Player cards are visible to everyone at the table — only the dealer\'s second card stays hidden until the reveal.',
+      'A natural Blackjack (21 on your first 2 cards) beats any total the dealer builds up to by hitting, even a built 21 — only two naturals facing each other is a push.',
     ],
   },
   uno: {
@@ -228,6 +229,44 @@ const RULES = {
       'Whoever has the most seeds in their store wins!',
     ],
   },
+  property_tycoon: {
+    title: 'Property Tycoon',
+    rules: [
+      'Roll the dice, move around the board, and buy any unowned property, railroad, or utility you land on.',
+      "Land on someone else's property and you owe rent — more if they own every property in that color group, and much more once they've built houses or a hotel on it.",
+      'Own every property in a color group? You can build houses on them (up to 4), then a hotel — pushing rent way up.',
+      'Landing on Fortune or City Fund draws a card — could be a windfall, a bill, a trip to Jail, or a Get Out of Jail Free card.',
+      "In Jail? Pay a $50 fine, use a Get Out of Jail Free card, or try to roll doubles to escape — 3 failed attempts forces the fine.",
+      "Roll doubles and you go again — but 3 doubles in a row sends you straight to Jail instead.",
+      "Can't cover a debt? You go bankrupt and you're out — your properties pass to whoever you owed, or back to the bank if it was a tax or card.",
+      'Last player left standing wins!',
+    ],
+  },
+  backgammon: {
+    title: 'Backgammon',
+    rules: [
+      'Race all 15 of your checkers around the board and off before your opponent does.',
+      'Roll two dice each turn and move that many pips per die — you can move one checker twice or two different checkers. Rolling doubles gives you 4 moves of that value instead of 2.',
+      'You can move onto an empty point, a point with your own checkers, or a point with exactly one opponent checker (this "hits" it, sending it to the bar). A point with 2+ opponent checkers is blocked.',
+      'If you have a checker on the bar, you must re-enter it into the board before making any other move.',
+      'Once all 15 of your checkers are in your home board (no checkers outside it or on the bar), you can start bearing them off.',
+      'No legal move for a die? That die (or your whole turn) is skipped — you can also choose to stop your turn early with Pass even if a move is still available.',
+      'First player to bear off all 15 checkers wins!',
+    ],
+  },
+  wordsmith: {
+    title: 'Wordsmith',
+    rules: [
+      'Build words on the shared 15x15 board, one turn at a time — like a classic tile-word game.',
+      'The first word of the game must cross the center star. Every word after that must connect to a tile already on the board.',
+      'Place tiles in a single row or column to spell a word — any new word formed in the other direction (crossing an existing tile) counts too and must also be a real word.',
+      'Colored squares are bonuses: light blue doubles a letter, dark blue triples it, pink doubles the whole word, red triples the whole word — but only for tiles you place that turn.',
+      'Blank tiles can stand in for any letter, but always score 0 points.',
+      'No valid move? Exchange some tiles for new ones from the bag (ends your turn, scores nothing), or just Pass.',
+      'Play all 7 of your tiles in a single turn for a 50-point bonus!',
+      'The game ends when someone empties their rack with an empty bag, or everyone passes/exchanges for 2 rounds straight. Highest score wins!',
+    ],
+  },
   would_you_rather: {
     title: 'Would You Rather',
     rules: [
@@ -236,6 +275,18 @@ const RULES = {
       'After everyone votes, the results are revealed showing how the group split.',
       'The host advances to the next question when ready.',
       'There\'s no single winner — it\'s all about seeing how your friends think! 🎉',
+    ],
+  },
+  texas_holdem: {
+    title: "Texas Hold'em",
+    rules: [
+      'Everyone starts with the same symbolic chip stack — no real money or platform tokens are involved.',
+      'Each hand, you get 2 private hole cards. Five community cards are dealt face-up in the middle over four rounds: the Flop (3), Turn (1), and River (1).',
+      'On your turn: Check (pass, only if no bet is on the table), Call (match the current bet), Raise (increase it), or Fold (give up the hand).',
+      'Two seats post forced bets before cards are dealt — the small and big blind — so there\'s always something to play for. Blinds double every few hands to keep things moving.',
+      'Best 5-card hand using any combination of your 2 hole cards and the 5 community cards wins the pot. Standard ranking from highest to lowest: Straight Flush, Four of a Kind, Full House, Flush, Straight, Three of a Kind, Two Pair, Pair, High Card.',
+      'If everyone folds but one player, that player wins the pot without needing to show their cards. If it goes to a showdown, remaining players reveal their hands to determine the winner.',
+      'Run out of chips and you\'re eliminated. Last player standing wins the tournament!',
     ],
   },
 };

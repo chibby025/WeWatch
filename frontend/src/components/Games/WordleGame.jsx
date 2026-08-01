@@ -115,8 +115,6 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
   const [bounceRow, setBounceRow]  = useState(-1);
   const [popSet, setPopSet]        = useState(new Set());
   const [hintPending, setHintPending] = useState(false);
-  // Mobile: keyboard collapsed by default — users type with native keyboard, only need ⌫ + ENTER
-  const [keypadOpen, setKeypadOpen] = useState(false);
 
   // Read directly from props — no useState copy, avoids the one-render-behind bug
   const gs = gameState?.game_state;
@@ -246,9 +244,84 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
   const wideKeyW   = isMobile ? Math.round(narrowKeyW * 1.45) : 52;
   const keyH       = isMobile ? 44 : 56;
 
+  // Native mobile keyboard: a visually-hidden, fully controlled input whose
+  // value mirrors currentInput. Reading the browser's own resolved value via
+  // onChange is the standard robust approach for mobile letter-grid games —
+  // it sidesteps the well-known unreliability of raw keydown events on many
+  // Android software keyboards (autocorrect/predictive keyboards frequently
+  // don't fire clean per-letter keydown events for A-Z).
+  const nativeInputRef = useRef(null);
+
+  const focusNativeInput = useCallback(() => {
+    nativeInputRef.current?.focus();
+  }, []);
+
+  // Best-effort auto-open: Android Chrome generally allows a mount-time
+  // .focus() to raise the keyboard; iOS Safari blocks .focus() outside a
+  // direct user gesture, so this silently no-ops there — iOS users get the
+  // keyboard via the tap-to-type affordance on the grid/controls instead.
+  useEffect(() => {
+    if (isMobile && !isOver && !isElim && phase === 'playing') {
+      focusNativeInput();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile]);
+
+  const handleNativeInputChange = useCallback((e) => {
+    if (isOverRef.current || isElimRef.current || phaseRef.current !== 'playing') return;
+    const clean = e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, WORD_LEN);
+    setInput(prev => {
+      if (clean.length > prev.length) {
+        const added = [];
+        for (let i = prev.length; i < clean.length; i++) added.push(i);
+        setPopSet(p => {
+          const n = new Set([...p, ...added]);
+          setTimeout(() => setPopSet(pp => {
+            const x = new Set(pp);
+            added.forEach(i => x.delete(i));
+            return x;
+          }), 90);
+          return n;
+        });
+      }
+      return clean;
+    });
+  }, []);
+
+  const handleNativeSubmit = useCallback((e) => {
+    e.preventDefault();
+    pressKey('ENTER');
+  }, [pressKey]);
+
   return (
     <>
       <style>{CSS}</style>
+
+      {/* Hidden native-keyboard trigger (mobile). Visually invisible, but a
+          real, focusable, controlled <input> — focusing it opens the
+          device's own keyboard, and its value is mirrored into currentInput
+          via handleNativeInputChange. Kept mounted at all times (not just on
+          mobile) so the ref is stable and focus calls never race a mount. */}
+      <form onSubmit={handleNativeSubmit} style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}>
+        <input
+          ref={nativeInputRef}
+          type="text"
+          inputMode="text"
+          autoCapitalize="characters"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck="false"
+          maxLength={WORD_LEN}
+          enterKeyHint="done"
+          value={currentInput}
+          onChange={handleNativeInputChange}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); pressKey('ENTER'); } }}
+          disabled={isOver || isElim || phase !== 'playing'}
+          aria-hidden="true"
+          tabIndex={-1}
+          style={{ opacity: 0, position: 'absolute', border: 'none', padding: 0 }}
+        />
+      </form>
 
       {/* Winner/game-over overlay */}
       {isOver && (
@@ -321,8 +394,16 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
         {/* Grids row — vertical on mobile, horizontal on desktop */}
         <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 10 : 24, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
 
-          {/* My grid */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: tileGap, alignItems: 'center' }}>
+          {/* My grid — tappable on mobile to (re)open the native keyboard,
+              e.g. if it was dismissed or auto-focus was blocked by the
+              browser (iOS Safari requires a direct tap, not a mount effect). */}
+          <div
+            onClick={isMobile && !isOver && !isElim ? focusNativeInput : undefined}
+            style={{
+              display: 'flex', flexDirection: 'column', gap: tileGap, alignItems: 'center',
+              cursor: isMobile && !isOver && !isElim ? 'text' : 'default',
+            }}
+          >
             {myPlayer && (
               <p className="text-xs text-gray-400 font-semibold mb-0.5">
                 {!isOver
@@ -434,56 +515,23 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
               </div>
             )}
 
-            {/* Keyboard — collapsible on mobile, always visible on desktop */}
+            {/* Keyboard — native device keyboard on mobile (letter grid
+                removed to reclaim vertical space); always-visible on-screen
+                keyboard unchanged on desktop */}
             {isMobile ? (
-              keypadOpen ? (
-                /* Mobile expanded: full keyboard at 75% scale + collapse strip */
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
-                  <button
-                    onPointerDown={e => { e.preventDefault(); setKeypadOpen(false); }}
-                    style={{
-                      background: 'none', border: 'none', color: '#555', fontSize: 11,
-                      cursor: 'pointer', userSelect: 'none', padding: '2px 8px',
-                      display: 'flex', alignItems: 'center', gap: 3,
-                    }}
-                  >▼ close keyboard</button>
-                  {hintData && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#22d3ee', fontSize: 11, fontWeight: 600 }}>
-                      <span>💡 Position {hintData.position + 1} is</span>
-                      <span style={{ background: '#0891b2', color: '#fff', borderRadius: 3, padding: '1px 7px', fontWeight: 800, fontSize: 13, letterSpacing: 1 }}>
-                        {hintData.letter}
-                      </span>
-                    </div>
-                  )}
-                  <div style={{ transform: 'scale(0.75)', transformOrigin: 'top center', display: 'flex', flexDirection: 'column', gap: keyGap }}>
-                    {KEYBOARD_ROWS.map((row, ri) => (
-                      <div key={ri} style={{ display: 'flex', gap: keyGap }}>
-                        {row.map(k => {
-                          const st = letterStatus[k];
-                          let bg = st ? KEY_BG[st] : '#818384';
-                          if (hintData?.letter === k && st !== 'G') bg = KEY_BG.H;
-                          const wide = k.length > 1;
-                          return (
-                            <button
-                              key={k}
-                              onPointerDown={e => { e.preventDefault(); pressKey(k); }}
-                              style={{
-                                background: bg, height: keyH, borderRadius: 4, border: 'none',
-                                color: '#fff', fontWeight: 700, fontSize: wide ? 11 : 14,
-                                width: wide ? wideKeyW : narrowKeyW,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                userSelect: 'none', cursor: 'pointer',
-                              }}
-                            >{k}</button>
-                          );
-                        })}
-                      </div>
-                    ))}
+              /* Mobile: Delete | tap-to-type | Enter — letters come from the
+                 device's own keyboard (auto-opened on mount where the browser
+                 allows it, or via tapping the grid/this strip otherwise). */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center', width: '100%', maxWidth: 340, padding: '0 4px' }}>
+                {hintData && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#22d3ee', fontSize: 11, fontWeight: 600 }}>
+                    <span>💡 Position {hintData.position + 1} is</span>
+                    <span style={{ background: '#0891b2', color: '#fff', borderRadius: 3, padding: '1px 7px', fontWeight: 800, fontSize: 13, letterSpacing: 1 }}>
+                      {hintData.letter}
+                    </span>
                   </div>
-                </div>
-              ) : (
-                /* Mobile collapsed: ⌫ | Open Keypad | ENTER — use native phone keyboard for letters */
-                <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'stretch', width: '100%', maxWidth: 340, padding: '0 4px' }}>
+                )}
+                <div style={{ display: 'flex', gap: 6, alignItems: 'stretch', width: '100%' }}>
                   <button
                     onPointerDown={e => { e.preventDefault(); pressKey('⌫'); }}
                     style={{
@@ -493,13 +541,13 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
                     }}
                   >⌫</button>
                   <button
-                    onPointerDown={e => { e.preventDefault(); setKeypadOpen(true); }}
+                    onPointerDown={e => { e.preventDefault(); focusNativeInput(); }}
                     style={{
                       flex: 1, height: 48, background: '#2a2a2c', borderRadius: 6, border: '1px solid #444',
                       color: '#9ca3af', fontWeight: 600, fontSize: 12, cursor: 'pointer', userSelect: 'none',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
                     }}
-                  ><span>⌨️</span><span>Open Keypad</span></button>
+                  ><span>⌨️</span><span>Tap to type</span></button>
                   <button
                     onPointerDown={e => { e.preventDefault(); pressKey('ENTER'); }}
                     style={{
@@ -509,7 +557,7 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
                     }}
                   >↵ ENTER</button>
                 </div>
-              )
+              </div>
             ) : (
               /* Desktop: always full keyboard, no collapse */
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>

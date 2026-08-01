@@ -22,6 +22,10 @@ import WhotGame from './WhotGame';
 import SnakesAndLaddersGame from './SnakesAndLaddersGame';
 import MancalaGame from './MancalaGame';
 import JigsawGame from './JigsawGame';
+import WordsmithGame from './WordsmithGame';
+import BackgammonGame from './BackgammonGame';
+import PropertyTycoonGame from './PropertyTycoonGame';
+import TexasHoldemGame from './TexasHoldemGame';
 
 // Lazy-loaded — DOOM's iframe wrapper is tiny, but this establishes the
 // pattern for any future heavy/rarely-used game: don't pay its bundle cost
@@ -469,6 +473,60 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           gameState={activeGame}
           players={activeGame.players}
           currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'wordsmith':
+      return (
+        <WordsmithGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          myHand={myHand}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'backgammon':
+      return (
+        <BackgammonGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'property_tycoon':
+      return (
+        <PropertyTycoonGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onEndGame={onEndGame}
+          onPostResult={onPostResult}
+        />
+      );
+
+    case 'texas_holdem':
+      return (
+        <TexasHoldemGame
+          gameState={activeGame}
+          players={activeGame.players}
+          currentUserId={currentUserId}
+          myHand={myHand}
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}

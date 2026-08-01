@@ -1,7 +1,7 @@
 // frontend/src/hooks/useWebSocket.js
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import logger from '../utils/logger';
-import { verifySessionExists } from '../services/api';
+import { verifySessionExists, API_BASE_URL } from '../services/api';
 
 // ✅ GLOBAL CONNECTION POOL: Prevents duplicate connections across component remounts
 const activeConnections = new Map(); // Key: "roomId-sessionId", Value: { ws, refCount, subscribers }
@@ -213,7 +213,7 @@ export default function useWebSocket(roomId, wsToken = null, sessionId = null) {
     const queryString = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
 
     // ✅ Use backend URL from environment variable (Railway production URL)
-    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    const apiBaseUrl = API_BASE_URL || 'http://localhost:8080';
     const apiUrl = new URL(apiBaseUrl);
     const protocol = apiUrl.protocol === 'https:' ? 'wss' : 'ws';
     const host = apiUrl.hostname;

@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { X, Sparkles } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
 
@@ -17,9 +17,12 @@ function cardParts(card) {
 
 function Card({ card, faceDown }) {
   if (faceDown || !card) {
+    // Clean CSS card-back (nested rounded rectangle) instead of the 🂠
+    // Unicode card-back glyph, which renders inconsistently/emoji-style
+    // across platforms — same reasoning as the Uno card redesign.
     return (
-      <div className="w-12 h-16 sm:w-14 sm:h-20 rounded-lg bg-gradient-to-br from-blue-800 to-indigo-900 border border-blue-600 flex items-center justify-center text-2xl text-blue-300 shadow-md">
-        🂠
+      <div className="w-12 h-16 sm:w-14 sm:h-20 rounded-lg bg-gradient-to-br from-blue-800 to-indigo-900 border border-blue-600 shadow-md relative overflow-hidden flex items-center justify-center">
+        <div className="w-6 h-8 sm:w-7 sm:h-9 rounded-md border-2 border-blue-400/40" />
       </div>
     );
   }
@@ -43,8 +46,18 @@ const STATUS_CHIP = {
 };
 const STATUS_LABEL = {
   playing: 'Playing', stood: 'Stood', bust: 'Bust',
-  won: 'Won', lost: 'Lost', push: 'Push', blackjack: 'Blackjack! 🂡',
+  won: 'Won', lost: 'Lost', push: 'Push', blackjack: 'Blackjack!',
 };
+
+function StatusLabel({ status }) {
+  const text = STATUS_LABEL[status] || status;
+  if (status !== 'blackjack') return text;
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <Sparkles size={11} strokeWidth={2.5} /> {text}
+    </span>
+  );
+}
 
 export default function BlackjackGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
   const gs = gameState?.game_state || {};
@@ -143,7 +156,7 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
                 <span className="text-yellow-300 text-sm font-bold">{handValues[String(currentUserId)] ?? 0}</span>
               </div>
               <span className={`text-xs px-2 py-0.5 rounded-full border ${STATUS_CHIP[myStatus] || STATUS_CHIP.playing}`}>
-                {STATUS_LABEL[myStatus] || myStatus}
+                <StatusLabel status={myStatus} />
               </span>
             </div>
             <div className="flex gap-2 flex-wrap bg-green-900/40 rounded-xl p-3">
@@ -202,7 +215,7 @@ export default function BlackjackGame({ gameState, players, currentUserId, onMov
                       <span className="text-yellow-300 text-xs font-bold flex-shrink-0">{handValues[String(p.user_id)] ?? 0}</span>
                     </div>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${STATUS_CHIP[st] || STATUS_CHIP.playing}`}>
-                      {STATUS_LABEL[st] || st}
+                      <StatusLabel status={st} />
                     </span>
                   </div>
                   <div className="flex gap-1 flex-wrap scale-90 origin-left">

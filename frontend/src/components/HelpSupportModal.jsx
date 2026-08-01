@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { XMarkIcon, PaperAirplaneIcon, ChevronDownIcon, ChevronUpIcon, MegaphoneIcon } from '@heroicons/react/24/outline';
 import AdInquiryForm from './AdInquiryForm';
+import { API_BASE_URL } from '../services/api';
 
 const HelpSupportModal = ({ isOpen, onClose, currentUser }) => {
   const [subject, setSubject] = useState('');
@@ -134,7 +135,6 @@ const HelpSupportModal = ({ isOpen, onClose, currentUser }) => {
     setIsLoading(true);
 
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
       const response = await fetch(`${API_BASE_URL}/api/support/send`, {
         method: 'POST',
         headers: {

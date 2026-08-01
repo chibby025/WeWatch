@@ -6,7 +6,7 @@ import toast, { Toaster } from 'react-hot-toast';
 import useAuth from '../../hooks/useAuth';
 import useWebSocket from '../../hooks/useWebSocket';
 import { getTemporaryMediaItemsForRoom, deleteSingleTemporaryMediaItem, getChatHistory, postGameResultToRoom } from '../../services/api';
-import apiClient from '../../services/api';
+import apiClient, { API_BASE_URL } from '../../services/api';
 import { getRoom, getRoomMembers, getActiveSession, postSessionHeartbeat, logSessionJoinAttempt, sendGameChallenge } from '../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../utils/ticketCache';
 import { prefetchRoom } from '../../utils/prefetchCache';
@@ -74,7 +74,7 @@ const AUDIO_URL_RE = /\.(mp3|m4a|wav|ogg|flac|aac)(\?|$)/i;
 // path into a value passed straight to <video>/hls.js.
 function resolveMediaUrl(url) {
   if (!url) return url;
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+  const baseUrl = API_BASE_URL || 'http://localhost:8080';
   return url.startsWith('http') ? url : `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
@@ -6415,7 +6415,7 @@ export default function VideoWatch() {
     // Toggle enabled state
     audioTrack.enabled = newAudioState;
     setIsAudioActive(newAudioState);
-    if (newAudioState) { new Audio('/sounds/audio.mp3').play().catch(() => {}); }
+    if (newAudioState) { playMicOnSound(); }
 
     console.log('✅ [toggleAudio] AFTER toggle - Track state:', {
       trackEnabled: audioTrack.enabled,
@@ -7450,7 +7450,7 @@ export default function VideoWatch() {
                         height: `${bannerHeight * 3 * (screenSize === 'mobile' ? 0.80 : 1)}px` // 20% smaller on mobile only
                       }}>
                         <img 
-                          src="/icons/BN.png" 
+                          src="/icons/Breakin.webp"
                           alt="Breaking News"
                           className="object-contain"
                           style={{ 
@@ -7537,7 +7537,7 @@ export default function VideoWatch() {
                         height: `${bannerHeight * 3.15}px` // Another 50% larger (2.1 * 1.5)
                       }}>
                         <img 
-                          src="/icons/Breakin.png" 
+                          src="/icons/Breakin.webp" 
                           alt="Breaking"
                           className="object-contain"
                           style={{ 

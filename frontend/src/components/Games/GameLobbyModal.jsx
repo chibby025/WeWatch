@@ -216,7 +216,37 @@ const games = [
     description: 'Fully cooperative — everyone works the same puzzle together in real time!',
     minPlayers: 1,
     maxPlayers: 8,
-    image: `${GAME_POSTERS_BASE_URL}/jigsaw.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/jigsaw_v2.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'wordsmith',
+    name: 'Wordsmith',
+    description: 'Build words on a shared board — premium squares score big!',
+    minPlayers: 2,
+    maxPlayers: 4,
+    image: `${GAME_POSTERS_BASE_URL}/scrabble_v2.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'backgammon',
+    name: 'Backgammon',
+    description: 'Race your checkers home — roll, hit, and bear off first!',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/backgammon.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'texas_holdem',
+    name: "Texas Hold'em",
+    description: 'Symbolic-chip poker tournament — last player standing wins!',
+    minPlayers: 2,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/texas_holdem.webp`,
     disabled: false,
     type: 'multiplayer'
   },
@@ -370,7 +400,7 @@ const games = [
 // Games eligible for tournament mode: 2-player, head-to-head games where a
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
-const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala'];
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon'];
 // Hot-seat tournament: each player takes a solo turn; highest score wins.
 const HOT_SEAT_GAME_IDS = ['fowl_play'];
 

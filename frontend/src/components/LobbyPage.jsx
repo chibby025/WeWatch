@@ -2738,7 +2738,7 @@ const LobbyPage = () => {
     const connectWebSocket = () => {
       try {
         // ✅ FIX: Use API backend URL (Railway/localhost) instead of window.location (Vercel)
-        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+        const apiBaseUrl = API_BASE_URL;
         const apiUrl = new URL(apiBaseUrl);
         const protocol = apiUrl.protocol === 'https:' ? 'wss' : 'ws';
         const host = apiUrl.hostname;

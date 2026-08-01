@@ -2,7 +2,7 @@
 // YouTube-style fullscreen post viewer with auto-hide footer
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Heart, MessageCircle, Share2, Send, Trash2, Download, Loader2 } from 'lucide-react';
-import apiClient from '../services/api';
+import apiClient, { API_BASE_URL } from '../services/api';
 import toast from 'react-hot-toast';
 import { formatCount } from '../utils/formatCount';
 import { useAuth } from '../contexts/AuthContext';
@@ -264,7 +264,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
     if (!url) return '';
     if (url.startsWith('http')) return url;
     const cleanUrl = url.startsWith('/') ? url.slice(1) : url;
-    return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
+    return `${API_BASE_URL}/${cleanUrl}`;
   };
 
   if (!isOpen || !post) {
@@ -389,7 +389,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
                 {post.post_type === 'recording' && post.Room ? (
                   post.Room.image_url ? (
                     <img
-                      src={post.Room.image_url.startsWith('http') ? post.Room.image_url : `${import.meta.env.VITE_API_BASE_URL}/${post.Room.image_url.startsWith('/') ? post.Room.image_url.slice(1) : post.Room.image_url}`}
+                      src={post.Room.image_url.startsWith('http') ? post.Room.image_url : `${API_BASE_URL}/${post.Room.image_url.startsWith('/') ? post.Room.image_url.slice(1) : post.Room.image_url}`}
                       alt={post.Room.name}
                       className="w-12 h-12 rounded-full object-cover border-2 border-purple-500"
                     />

@@ -97,9 +97,13 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"air_hockey":   true,
 		"space_attack": true,
 		// "roulette": true, // temporarily removed
-		"snakes_ladders": true,
-		"mancala":        true,
-		"jigsaw":         true,
+		"snakes_ladders":  true,
+		"mancala":         true,
+		"jigsaw":          true,
+		"wordsmith":       true,
+		"backgammon":      true,
+		"property_tycoon": true,
+		"texas_holdem":    true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -123,6 +127,22 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	// to more players, so it's a hard requirement, not just a sane ceiling.
 	if gameType == "mancala" && len(players) != 2 {
 		return nil, fmt.Errorf("mancala is a 2-player game")
+	}
+	// wordsmith's 15x15 board and 100-tile bag are only tuned/tested for the
+	// classic 2-4 player range — same reasoning as ludo's cap above.
+	if gameType == "wordsmith" && (len(players) < 2 || len(players) > 4) {
+		return nil, fmt.Errorf("wordsmith supports 2-4 players")
+	}
+	// Backgammon's board/direction logic hardcodes player index 0 = White,
+	// index 1 = Black — same hard 2-player requirement as mancala.
+	if gameType == "backgammon" && len(players) != 2 {
+		return nil, fmt.Errorf("backgammon is a 2-player game")
+	}
+	if gameType == "property_tycoon" && (len(players) < 2 || len(players) > 6) {
+		return nil, fmt.Errorf("property tycoon supports 2-6 players")
+	}
+	if gameType == "texas_holdem" && (len(players) < 2 || len(players) > 8) {
+		return nil, fmt.Errorf("texas hold'em supports 2-8 players")
 	}
 
 	gameSession := &models.GameSession{
@@ -162,6 +182,12 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		gameState.GameSession.GameState = gameState.GameData
 	case "blackjack":
 		dealBlackjack(gameState)
+		gameState.GameSession.GameState = gameState.GameData
+	case "wordsmith":
+		dealWordsmith(gameState)
+		gameState.GameSession.GameState = gameState.GameData
+	case "texas_holdem":
+		ensureTexasHoldemState(gameState)
 		gameState.GameSession.GameState = gameState.GameData
 	case "ping_pong":
 		for k, v := range pingPongInitialState(players) {
@@ -325,6 +351,14 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processMancalaMove(gameState, playerID, moveData)
 	case "jigsaw":
 		gameOver, winnerID, err = gm.processJigsawMove(gameState, playerID, moveType, moveData)
+	case "wordsmith":
+		gameOver, winnerID, err = gm.processWordsmithMove(gameState, playerID, moveType, moveData)
+	case "backgammon":
+		gameOver, winnerID, err = gm.processBackgammonMove(gameState, playerID, moveType, moveData)
+	case "property_tycoon":
+		gameOver, winnerID, err = gm.processPropertyTycoonMove(gameState, playerID, moveType, moveData)
+	case "texas_holdem":
+		gameOver, winnerID, err = gm.processTexasHoldemMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -353,6 +387,9 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"ludo":                true, // Ludo manages its own turn (roll → move two-phase)
 		"ping_pong":           true, // Real-time; no CurrentTurn pointer used
 		"air_hockey":          true, // Real-time; no CurrentTurn pointer used
+		"backgammon":          true, // roll → move(s) → (auto-)pass; turn only advances when the backend decides dice are exhausted/unusable
+		"property_tycoon":     true, // roll → land/resolve → (auto-)advance; doubles grant another roll, a pending buy/decline defers the advance
+		"texas_holdem":        true, // action_on is managed directly (skips folded/all-in/busted players, reopens on a raise); never a simple +1 mod N
 	}
 	if !gameOver && !selfManagedTurn[gameState.GameSession.GameType] {
 		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % len(gameState.Players)
@@ -760,6 +797,40 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 
 	case "mancala":
 		state["board"] = mancalaInitialBoard()
+
+	case "backgammon":
+		state["board"] = backgammonInitialBoard()
+		state["bar"] = map[string]interface{}{"0": 0, "1": 0}
+		state["borne_off"] = map[string]interface{}{"0": 0, "1": 0}
+		state["dice"] = []interface{}{}
+		state["remaining_dice"] = []interface{}{}
+		state["awaiting_roll"] = true
+
+	case "property_tycoon":
+		cash := map[string]interface{}{}
+		positions := map[string]interface{}{}
+		jail := map[string]interface{}{}
+		getOutFree := map[string]interface{}{}
+		bankrupt := map[string]interface{}{}
+		for i := 0; i < playerCount; i++ {
+			key := fmt.Sprintf("%d", i)
+			cash[key] = ptStartingCash
+			positions[key] = 0
+			jail[key] = map[string]interface{}{"in_jail": false, "turns": 0}
+			getOutFree[key] = 0
+			bankrupt[key] = false
+		}
+		state["cash"] = cash
+		state["positions"] = positions
+		state["properties"] = map[string]interface{}{}
+		state["jail"] = jail
+		state["get_out_free"] = getOutFree
+		state["bankrupt"] = bankrupt
+		state["dice"] = []interface{}{}
+		state["awaiting_roll"] = true
+		state["pending_purchase"] = nil
+		state["doubles_count"] = 0
+		state["last_event"] = ""
 	}
 
 	return state

@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Room, RoomEvent } from 'livekit-client';
 import logger from '../utils/logger';
+import { API_BASE_URL } from '../services/api';
 
 export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true) {
   const [room, setRoom] = useState(null);
@@ -34,7 +35,7 @@ export default function useLiveKitRoom(roomId, currentUser, autoSubscribe = true
         sessionStorage.setItem('livekit_tab_id', tabId);
       }
 
-      const backendUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+      const backendUrl = API_BASE_URL || 'http://localhost:8080';
       const tokenUrl = `${backendUrl}/api/rooms/${roomId}/livekit-token?tab_id=${tabId}`;
       
       logger.debug('🌐 [LiveKit DEBUG] About to fetch:', tokenUrl);

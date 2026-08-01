@@ -2,7 +2,7 @@
 // Instagram/TikTok-style discover feed with infinite scroll grid
 import React, { useState, useEffect, useRef, useReducer, forwardRef, useImperativeHandle } from 'react';
 import { Eye, Heart, MessageCircle, MoreVertical, Trash2, X, Reply, Edit, Trash, Lock, Flag, Gift, Paperclip } from 'lucide-react';
-import apiClient, { getFollowersCount, joinRoom, leaveRoom, tipPost } from '../services/api';
+import apiClient, { API_BASE_URL, getFollowersCount, joinRoom, leaveRoom, tipPost } from '../services/api';
 import { formatCount } from '../utils/formatCount';
 import AdBanner from './AdBanner';
 import Avatar from './Avatar';
@@ -307,7 +307,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     if (url.startsWith('http')) return url; // CDN URL
     // Remove leading slash to avoid double slash
     const cleanUrl = url.startsWith('/') ? url.slice(1) : url;
-    return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
+    return `${API_BASE_URL}/${cleanUrl}`;
   };
 
   // Get thumbnail URL
@@ -320,7 +320,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
         return post.video_url; // Bunny CDN URL
       }
       const cleanUrl = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
-      return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
+      return `${API_BASE_URL}/${cleanUrl}`;
     }
     
     // 🎥 Priority 2: For VIDEO posts, use thumbnail_url ONLY if it's a valid CDN URL
@@ -332,7 +332,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
     if (post.media_type === 'video' && post.video_url) {
       const videoUrl = post.video_url.startsWith('http') 
         ? post.video_url
-        : `${import.meta.env.VITE_API_BASE_URL}/${post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url}`;
+        : `${API_BASE_URL}/${post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url}`;
       return `${videoUrl}#t=1`;
     }
     
@@ -342,7 +342,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
         return post.video_url;
       }
       const cleanUrl = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
-      return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
+      return `${API_BASE_URL}/${cleanUrl}`;
     }
     
     // ❌ Fallback placeholder

@@ -21,9 +21,11 @@ const getApiBaseUrl = () => {
     return url;
   }
 
-  // True local development — only place localhost:8080 fallback is safe
+  // True local development — always the local backend, regardless of
+  // VITE_API_BASE_URL. That var is populated by `vercel env pull` with the
+  // production Railway URL, which must never leak into local dev requests.
   if (currentHostname === 'localhost' || currentHostname === '127.0.0.1') {
-    const url = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    const url = 'http://localhost:8080';
     console.log('🏠 [API Config] localhost → backend:', url);
     return url;
   }

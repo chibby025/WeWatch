@@ -11,7 +11,7 @@ const formatCommentTime = (dateStr) => {
   if (isToday) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
   return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
 };
-import apiClient, { getFollowersCount, joinRoom, leaveRoom, tipPost } from '../services/api';
+import apiClient, { API_BASE_URL, getFollowersCount, joinRoom, leaveRoom, tipPost } from '../services/api';
 import toast from 'react-hot-toast';
 import { formatCount } from '../utils/formatCount';
 import { useAuth } from '../contexts/AuthContext'; // ✅ Use auth context instead of JWT decode
@@ -479,7 +479,7 @@ const PostViewModal = ({ isOpen, onClose, post, onLikeToggle, onCommentAdded }) 
     if (url.startsWith('http')) return url; // CDN URL
     // Remove leading slash to avoid double slash when combining with base URL
     const cleanUrl = url.startsWith('/') ? url.slice(1) : url;
-    return `${import.meta.env.VITE_API_BASE_URL}/${cleanUrl}`;
+    return `${API_BASE_URL}/${cleanUrl}`;
   };
 
   if (!isOpen || !post) {

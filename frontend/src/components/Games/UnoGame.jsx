@@ -1,26 +1,47 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X } from 'lucide-react';
+import { X, Ban, Repeat, RotateCw, RotateCcw, Target, Check } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
 
 // ---- Card rendering helpers ----
-// H=Red  D=Yellow  C=Green  S=Blue  (standard Uno colour convention)
-const SUIT_SYMBOLS = { H: '♥', D: '♦', C: '♣', S: '♠' };
-const SUIT_COLORS  = { H: 'text-red-200',    D: 'text-yellow-200', C: 'text-green-200', S: 'text-blue-200' };
-const BG_COLORS    = { H: 'bg-red-700',       D: 'bg-yellow-600',   C: 'bg-green-700',   S: 'bg-blue-700', W: 'bg-gray-900', X: 'bg-gray-900' };
+// H=Red  D=Yellow  C=Green  S=Blue — the 4 UNO colors. These letters are just
+// internal codes borrowed from a standard deck's suit letters; real UNO cards
+// have no suit symbols at all, just a solid color + rank, so nothing
+// suit-shaped is ever rendered here (a heart/diamond/club/spade glyph on an
+// UNO card was never actually correct — this was the source of most of the
+// "looks like a generic emoji playing card" feel).
+const COLOR_HEX   = { H: '#dc2626', D: '#eab308', C: '#16a34a', S: '#2563eb' };
+const COLOR_NAMES = { H: 'Red', D: 'Yellow', C: 'Green', S: 'Blue' };
+const SUIT_BG     = { H: 'from-red-600 to-red-900', D: 'from-yellow-500 to-yellow-800', C: 'from-green-600 to-green-900', S: 'from-blue-600 to-blue-900' };
 
 // card codes: "7H", "SD" (Skip Hearts), "RH" (Reverse Hearts), "D2H" (Draw2), "WC" (Wild, C=placeholder), "W4C" (WildDraw4)
+// `rank` is a stable internal code used purely for match-legality comparisons
+// (mirrors the backend's own rank codes, e.g. "S"/"R"/"D2"). What actually
+// gets displayed is decided separately in CardChip, driven by `type` — so
+// changing an icon here never risks touching game-legality logic.
 function parseCard(code) {
-  if (!code) return { rank: '?', suit: '?', type: 'number', color: 'gray' };
-  if (code.startsWith('W4')) return { rank: '+4', suit: code.slice(2), type: 'wild4' };
-  if (code.startsWith('W'))  return { rank: '🃏', suit: code.slice(1), type: 'wild' };
-  if (code.startsWith('D2')) return { rank: '+2', suit: code.slice(2), type: 'draw2' };
-  if (code.startsWith('S'))  return { rank: '⊘', suit: code.slice(1), type: 'skip' };
-  if (code.startsWith('R'))  return { rank: '⟳', suit: code.slice(1), type: 'reverse' };
+  if (!code) return { rank: '?', suit: '?', type: 'number' };
+  if (code.startsWith('W4')) return { rank: 'W4', suit: code.slice(2), type: 'wild4' };
+  if (code.startsWith('W'))  return { rank: 'W',  suit: code.slice(1), type: 'wild' };
+  if (code.startsWith('D2')) return { rank: 'D2', suit: code.slice(2), type: 'draw2' };
+  if (code.startsWith('S'))  return { rank: 'S',  suit: code.slice(1), type: 'skip' };
+  if (code.startsWith('R'))  return { rank: 'R',  suit: code.slice(1), type: 'reverse' };
   return { rank: code.slice(0, -1), suit: code.slice(-1), type: 'number' };
 }
 
-const SUIT_BG = { H: 'from-red-600 to-red-900', D: 'from-yellow-500 to-yellow-800', C: 'from-green-600 to-green-900', S: 'from-blue-600 to-blue-900' };
+// Classic UNO wild-card badge — 4 color quadrants forming a circle. Same
+// clip-path-quadrant technique already used for Ludo's center piece
+// elsewhere in this app, kept consistent rather than reinventing it.
+function WildBadge({ size = 22 }) {
+  return (
+    <div style={{ position: 'relative', width: size, height: size, borderRadius: '50%', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.5)', flexShrink: 0 }}>
+      <div style={{ position: 'absolute', inset: 0, clipPath: 'polygon(0 0,100% 0,50% 50%)', background: COLOR_HEX.H }} />
+      <div style={{ position: 'absolute', inset: 0, clipPath: 'polygon(100% 0,100% 100%,50% 50%)', background: COLOR_HEX.C }} />
+      <div style={{ position: 'absolute', inset: 0, clipPath: 'polygon(100% 100%,0 100%,50% 50%)', background: COLOR_HEX.S }} />
+      <div style={{ position: 'absolute', inset: 0, clipPath: 'polygon(0 100%,0 0,50% 50%)', background: COLOR_HEX.D }} />
+    </div>
+  );
+}
 
 function CardChip({ code, onClick, selected, playable, small }) {
   const { rank, suit, type } = parseCard(code);
@@ -32,7 +53,7 @@ function CardChip({ code, onClick, selected, playable, small }) {
       ? 'ring-1 ring-white/60 hover:-translate-y-3 hover:scale-105 hover:shadow-xl cursor-pointer'
       : 'opacity-50 cursor-default';
   const size = small ? 'w-9 h-12 text-xs' : 'w-12 h-16 text-sm';
-  const suitColor = SUIT_COLORS[suit] || 'text-white';
+  const iconSize = small ? 16 : 22;
 
   return (
     <button
@@ -40,36 +61,39 @@ function CardChip({ code, onClick, selected, playable, small }) {
       disabled={!playable && !selected}
       className={`relative flex flex-col items-center justify-center rounded-xl bg-gradient-to-br ${bg} transition-all duration-150 ${border} ${size} select-none shadow-lg border border-white/10`}
     >
-      {/* White oval in center (Uno card style) */}
+      {/* White oval in center (authentic Uno card style) */}
       <div className="absolute inset-[20%] rounded-full bg-white/15" />
-      <span className="relative font-black leading-none text-white drop-shadow">{rank}</span>
-      {!isWild && (
-        <span className={`relative text-xs leading-none mt-0.5 font-bold ${suitColor} drop-shadow`}>
-          {SUIT_SYMBOLS[suit] || suit}
-        </span>
+      {type === 'wild' && <WildBadge size={iconSize} />}
+      {type === 'wild4' && (
+        <div className="relative flex flex-col items-center gap-0.5">
+          <WildBadge size={iconSize} />
+          <span className="font-black leading-none text-white drop-shadow" style={{ fontSize: small ? 10 : 13 }}>+4</span>
+        </div>
       )}
+      {type === 'skip' && <Ban className="relative text-white drop-shadow" size={iconSize} strokeWidth={2.75} />}
+      {type === 'reverse' && <Repeat className="relative text-white drop-shadow" size={iconSize} strokeWidth={2.75} />}
+      {type === 'draw2' && <span className="relative font-black leading-none text-white drop-shadow">+2</span>}
+      {type === 'number' && <span className="relative font-black leading-none text-white drop-shadow">{rank}</span>}
     </button>
   );
 }
 
 // ---- Color Picker for Wilds ----
-const COLORS = ['H', 'D', 'C', 'S'];
-const COLOR_LABELS = { H: '❤️ Red', D: '💛 Yellow', C: '🟢 Green', S: '🔵 Blue' };
-const COLOR_PICKER_BG = { H: 'bg-gradient-to-br from-red-600 to-red-900', D: 'bg-gradient-to-br from-yellow-500 to-yellow-800', C: 'bg-gradient-to-br from-green-600 to-green-900', S: 'bg-gradient-to-br from-blue-600 to-blue-900' };
-
 function ColorPicker({ onPick }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
       <div className="bg-gray-900 rounded-2xl p-6 flex flex-col gap-4 items-center shadow-2xl">
         <p className="text-white font-bold">Choose a color</p>
         <div className="grid grid-cols-2 gap-3">
-          {COLORS.map(c => (
+          {['H', 'D', 'C', 'S'].map(c => (
             <button
               key={c}
               onClick={() => onPick(c)}
-              className={`px-6 py-3 rounded-xl font-semibold text-white hover:scale-105 transition-transform ${COLOR_PICKER_BG[c]}`}
+              className="flex items-center gap-2.5 px-6 py-3 rounded-xl font-semibold text-white hover:scale-105 transition-transform"
+              style={{ background: `linear-gradient(135deg, ${COLOR_HEX[c]}, ${COLOR_HEX[c]}cc)` }}
             >
-              {COLOR_LABELS[c]}
+              <span className="w-4 h-4 rounded-full bg-white/90 border border-white/40 flex-shrink-0" />
+              {COLOR_NAMES[c]}
             </button>
           ))}
         </div>
@@ -117,11 +141,11 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
     const targetName = players.find(p => p.user_id === gs.last_event_target)?.username || 'Someone';
 
     const banners = {
-      skip:    { icon: '⊘',  text: 'SKIPPED!',        sub: `${actorName} skipped ${targetName}!`, bg: 'linear-gradient(135deg,#7c3aed,#4f46e5)' },
-      reverse: { icon: '⟳',  text: 'REVERSED!',       sub: `${actorName} reversed the direction!`, bg: 'linear-gradient(135deg,#7c3aed,#4f46e5)' },
-      draw2:   { icon: '+2', text: 'DRAW TWO!',       sub: `${targetName} must draw 2 (or stack another D2)!`, bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' },
-      wild4:   { icon: '+4', text: 'WILD DRAW FOUR!', sub: `${targetName} must draw 4 (or stack a W4)!`, bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' },
-      caught:  { icon: '🎯', text: 'CAUGHT!',          sub: `${actorName} caught ${targetName} without UNO — +2 cards!`, bg: 'linear-gradient(135deg,#f59e0b,#b45309)' },
+      skip:    { Icon: Ban,    text: 'SKIPPED!',        sub: `${actorName} skipped ${targetName}!`, bg: 'linear-gradient(135deg,#7c3aed,#4f46e5)' },
+      reverse: { Icon: Repeat, text: 'REVERSED!',       sub: `${actorName} reversed the direction!`, bg: 'linear-gradient(135deg,#7c3aed,#4f46e5)' },
+      draw2:   { icon: '+2',   text: 'DRAW TWO!',       sub: `${targetName} must draw 2 (or stack another D2)!`, bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' },
+      wild4:   { icon: '+4',   text: 'WILD DRAW FOUR!', sub: `${targetName} must draw 4 (or stack a W4)!`, bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' },
+      caught:  { Icon: Target, text: 'CAUGHT!',         sub: `${actorName} caught ${targetName} without UNO — +2 cards!`, bg: 'linear-gradient(135deg,#f59e0b,#b45309)' },
     };
     if (banners[event]) announce(banners[event]);
   }, [gs?.event_seq, gs?.last_event, gs?.last_event_actor, gs?.last_event_target, players, announce]);
@@ -131,7 +155,7 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
   const hand         = myHand || [];
   const discardTop   = gs.discard_top || '';
   const currentColor = gs.current_color || '';
-  const direction    = gs.direction === -1 ? '↺' : '↻';
+  const isReversed   = gs.direction === -1;
   const pendingDraw  = gs.pending_draw || 0;
   const isOver       = ['finished','completed','forfeited'].includes(gameState?.status || '');
   const myTurnIdx    = gameState?.current_turn ?? 0;
@@ -231,9 +255,11 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800">
         <div className="flex items-center gap-2">
-          <span className="text-xl">🃏</span>
+          <WildBadge size={22} />
           <span className="text-white font-bold">UNO</span>
-          <span className="text-gray-500 text-xs ml-2">{direction}</span>
+          {isReversed
+            ? <RotateCcw className="text-gray-500 ml-1" size={14} />
+            : <RotateCw className="text-gray-500 ml-1" size={14} />}
           {pendingDraw > 0 && (
             <span className="bg-red-700 text-white text-xs font-bold px-2 py-0.5 rounded-full">
               +{pendingDraw} pending
@@ -264,7 +290,9 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
             <div key={p.user_id} className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs
               ${isTheirTurn ? 'bg-purple-800/60 ring-1 ring-purple-400' : 'bg-gray-800/50'}`}>
               <span className="text-gray-300 font-semibold">{p.username}</span>
-              <span className="text-white font-bold">{count}🃏</span>
+              <span className="flex items-center gap-1 text-white font-bold">
+                {count} <WildBadge size={10} />
+              </span>
               {catchable && (
                 <button
                   onClick={() => catchPlayer(p.user_id)}
@@ -286,10 +314,10 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
             onClick={drawCard}
             disabled={!isMyTurn}
             className={`w-14 h-20 rounded-xl bg-gradient-to-br from-purple-700 to-purple-900 flex items-center justify-center
-              font-bold text-white text-lg shadow-xl transition-all
+              shadow-xl transition-all
               ${isMyTurn ? 'hover:scale-105 cursor-pointer ring-1 ring-purple-400' : 'opacity-60 cursor-default'}`}
           >
-            🃏
+            <WildBadge size={28} />
           </button>
           <span className="text-gray-500 text-xs">{drawCount} left</span>
         </div>
@@ -301,7 +329,7 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
           </div>
           {currentColor && currentColor !== topSuit && (
             <span className="text-xs text-purple-300 font-semibold">
-              Color: {COLOR_LABELS[currentColor] || currentColor}
+              Color: {COLOR_NAMES[currentColor] || currentColor}
             </span>
           )}
         </div>
@@ -325,8 +353,8 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
               <span className="text-gray-400 text-xs font-semibold">Your hand ({hand.length} cards)</span>
               {hand.length === 1 && (
                 unoDeclared[String(currentUserId)] ? (
-                  <span className="px-4 py-1 rounded-full font-bold text-sm bg-green-700/40 text-green-300 border border-green-500/40">
-                    ✓ Declared
+                  <span className="flex items-center gap-1 px-4 py-1 rounded-full font-bold text-sm bg-green-700/40 text-green-300 border border-green-500/40">
+                    <Check size={14} strokeWidth={3} /> Declared
                   </span>
                 ) : (
                   <button
@@ -362,7 +390,11 @@ export default function UnoGame({ gameState, players, currentUserId, myHand, onM
       <div key={announcement.key} className="fixed z-[70] pointer-events-none"
         style={{ top: '30%', left: '50%', animation: 'unoBannerIn 2.6s ease-out forwards' }}>
         <div className="px-6 py-3 rounded-2xl text-center shadow-2xl" style={{ background: announcement.bg }}>
-          <div className="text-3xl mb-0.5 font-black">{announcement.icon}</div>
+          <div className="flex justify-center mb-0.5">
+            {announcement.Icon
+              ? <announcement.Icon className="text-white" size={34} strokeWidth={2.5} />
+              : <span className="text-3xl font-black text-white">{announcement.icon}</span>}
+          </div>
           <div className="text-white font-black text-lg tracking-wide">{announcement.text}</div>
           {announcement.sub && <div className="text-white/85 text-xs mt-0.5">{announcement.sub}</div>}
         </div>

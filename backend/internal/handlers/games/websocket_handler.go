@@ -91,7 +91,13 @@ func gamePosterURL(gameType string) string {
 	case "mancala":
 		return gamePostersBaseURL + "/mancala.webp"
 	case "jigsaw":
-		return gamePostersBaseURL + "/jigsaw.webp"
+		return gamePostersBaseURL + "/jigsaw_v2.webp"
+	case "wordsmith":
+		return gamePostersBaseURL + "/scrabble_v2.webp"
+	case "backgammon":
+		return gamePostersBaseURL + "/backgammon.webp"
+	case "texas_holdem":
+		return gamePostersBaseURL + "/texas_holdem.webp"
 	default:
 		return ""
 	}

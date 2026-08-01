@@ -268,3 +268,50 @@ func TestBlackjackNaturalPushesAgainstDealerNatural(t *testing.T) {
 		t.Errorf("player 2's 17 should lose to the dealer's 21, got %q", s)
 	}
 }
+
+// TestBlackjackNaturalBeatsDealerBuilt21: a player's natural blackjack must
+// beat a dealer hand that only reaches 21 by hitting (a "built" 21) — this is
+// the actual bug that was fixed. Before the fix, the settle logic compared
+// raw integer totals only, so a natural (21) vs a built 21 was wrongly
+// treated the same as natural-vs-natural and scored as a push instead of a
+// win.
+func TestBlackjackNaturalBeatsDealerBuilt21(t *testing.T) {
+	gs := makeTestBlackjackState(1)
+	gs.Hands[1] = []string{"AH", "KC"}                // natural, locked at 21
+	gs.GameData["dealer_hand"] = []string{"6C", "6D"} // 12 — must hit (< 17)
+	gs.DrawPile = []string{"9C"}                      // pops from the end: 12+9=21, a built (non-natural) 21
+
+	blackjackApplyDealResults(gs) // sole player is natural -> settles immediately
+
+	statuses := blackjackStatuses(gs)
+	if s, _ := statuses["1"].(string); s != "won" {
+		t.Errorf("player 1's natural should beat the dealer's built (non-natural) 21, got %q", s)
+	}
+}
+
+// TestBlackjackDealerNaturalBeatsPlayerBuilt21: the mirror case — a dealer's
+// natural blackjack must beat a player hand that only reaches 21 by hitting.
+func TestBlackjackDealerNaturalBeatsPlayerBuilt21(t *testing.T) {
+	gs := makeTestBlackjackState(1)
+	gm := &GameManager{}
+	gs.Hands[1] = []string{"6H", "5C"}                // 11 — will hit to build to 21
+	gs.GameData["dealer_hand"] = []string{"AC", "KD"} // dealer natural, locked at 21
+	gs.DrawPile = []string{"10S"}                     // player's hit card: 11+10=21, a built (non-natural) 21
+
+	blackjackApplyDealResults(gs) // player 1 status "playing", turn starts on them
+	if _, _, err := gm.processBlackjackMove(gs, 1, "hit", map[string]interface{}{}); err != nil {
+		t.Fatalf("player hit: %v", err)
+	}
+	gameOver, _, err := gm.processBlackjackMove(gs, 1, "stand", map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("player stand: %v", err)
+	}
+	if !gameOver {
+		t.Fatal("expected game to be over once the sole player finished")
+	}
+
+	statuses := blackjackStatuses(gs)
+	if s, _ := statuses["1"].(string); s != "lost" {
+		t.Errorf("player's built 21 should lose to the dealer's natural, got %q", s)
+	}
+}

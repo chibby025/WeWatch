@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import useAuth from '../../../hooks/useAuth';
 import useWebSocket from '../../../hooks/useWebSocket';
 import { getChatHistory, getActiveSession } from '../../../services/api';
-import apiClient from '../../../services/api';
+import apiClient, { API_BASE_URL } from '../../../services/api';
 import { hasTicketCache, clearTicketCache } from '../../../utils/ticketCache';
 import CinemaScene3D from './CinemaScene3D';
 import Taskbar from '../../Taskbar';
@@ -1790,7 +1790,7 @@ export default function CinemaScene3DDemo() {
       if (msg.sender_id && msg.sender_id === currentUser?.id) return true;
       if (msg.command !== 'seek' || !msg.file_path) return false;
 
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+      const baseUrl = API_BASE_URL || 'http://localhost:8080';
       const fileUrl = msg.file_url || msg.file_path;
       const mediaUrl = fileUrl.startsWith('http')
         ? fileUrl
@@ -4045,7 +4045,7 @@ export default function CinemaScene3DDemo() {
               const latency = now - (msg.timestamp || now);
               const adjustedTime = (msg.seek_time || 0) + (latency / 1000);
 
-              const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+              const baseUrl = API_BASE_URL || 'http://localhost:8080';
               const mediaUrl = resolvedFileUrl.startsWith('http')
                 ? resolvedFileUrl
                 : `${baseUrl}${resolvedFileUrl.startsWith('/') ? '' : '/'}${resolvedFileUrl}`;
@@ -4195,7 +4195,7 @@ export default function CinemaScene3DDemo() {
             const ssUrl = msg.data.current_media_url;
             const isDemoOrCDN = msg.data.is_demo_session || ssUrl?.startsWith('http');
             if (ssUrl && !currentMediaRef.current && !mediaRestoredFromJoinRef.current && (!isHost || isDemoOrCDN)) {
-              const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+              const baseUrl = API_BASE_URL || 'http://localhost:8080';
               const mediaUrl = ssUrl.startsWith('http') ? ssUrl : `${baseUrl}${ssUrl.startsWith('/') ? '' : '/'}${ssUrl}`;
               mediaRestoredFromJoinRef.current = true;
               setPendingSeekTime(msg.data.current_playback_time || 0);
@@ -4744,7 +4744,7 @@ export default function CinemaScene3DDemo() {
           const readyUrl = msg.file_url || msg.file_path;
           console.log(`🎬 [STREAM] device_stream_ready at ${new Date().toISOString()} — url=${readyUrl} upload_id=${msg.upload_id}`);
           if (!readyUrl) { console.warn('⚠️ [3D Cinema] device_stream_ready: no URL in message', msg); break; }
-          const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+          const baseUrl = API_BASE_URL || 'http://localhost:8080';
           const readyMediaUrl = readyUrl.startsWith('http')
             ? readyUrl
             : `${baseUrl}${readyUrl.startsWith('/') ? '' : '/'}${readyUrl}`;
@@ -5754,7 +5754,7 @@ export default function CinemaScene3DDemo() {
 
   const handleSaveProfile = async ({ username, bio, avatarFile }) => {
     try {
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+      const baseUrl = API_BASE_URL || 'http://localhost:8080';
       const formData = new FormData();
       
       if (username) formData.append('username', username);
@@ -6182,7 +6182,7 @@ export default function CinemaScene3DDemo() {
               console.log('▶️ [Resume] Resuming media:', media.original_name, 'at', savedSeekTime, 's');
               
               // ✅ Construct full mediaUrl
-              const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+              const baseUrl = API_BASE_URL || 'http://localhost:8080';
               const fileUrl = media.file_url || media.file_path;
               const mediaUrl = fileUrl.startsWith('http')
                 ? fileUrl
@@ -6237,7 +6237,7 @@ export default function CinemaScene3DDemo() {
                 console.log('🔄 [Resume] Cleared saved state - starting from beginning');
 
                 // ✅ Construct full mediaUrl like VideoWatch does
-                const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+                const baseUrl = API_BASE_URL || 'http://localhost:8080';
                 const fileUrl = media.file_url || media.file_path || `/uploads/temp/${media.file_name}`;
                 const mediaUrl = fileUrl.startsWith('http')
                   ? fileUrl

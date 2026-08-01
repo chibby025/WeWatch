@@ -2,7 +2,7 @@
 // Instagram-style grid for displaying user/room posts
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Eye, Heart } from 'lucide-react';
-import apiClient from '../services/api';
+import apiClient, { API_BASE_URL } from '../services/api';
 import { formatCount } from '../utils/formatCount';
 
 const PostsGrid = ({ userId, roomId, onPostClick, isOwnProfile = false, onPublish }) => {
@@ -105,13 +105,13 @@ const PostsGrid = ({ userId, roomId, onPostClick, isOwnProfile = false, onPublis
     if (post.thumbnail_url && !isVideoThumbnail) {
       if (post.thumbnail_url.startsWith('http')) return post.thumbnail_url;
       const cleanPath = post.thumbnail_url.startsWith('/') ? post.thumbnail_url.slice(1) : post.thumbnail_url;
-      return `${import.meta.env.VITE_API_BASE_URL}/${cleanPath}`;
+      return `${API_BASE_URL}/${cleanPath}`;
     }
 
     if (post.media_type === 'image' && post.video_url) {
       if (post.video_url.startsWith('http')) return post.video_url;
       const cleanPath = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
-      return `${import.meta.env.VITE_API_BASE_URL}/${cleanPath}`;
+      return `${API_BASE_URL}/${cleanPath}`;
     }
 
     if (post.media_type === 'video' && post.video_url) {
@@ -120,7 +120,7 @@ const PostsGrid = ({ userId, roomId, onPostClick, isOwnProfile = false, onPublis
         videoUrl = post.video_url;
       } else {
         const cleanPath = post.video_url.startsWith('/') ? post.video_url.slice(1) : post.video_url;
-        videoUrl = `${import.meta.env.VITE_API_BASE_URL}/${cleanPath}`;
+        videoUrl = `${API_BASE_URL}/${cleanPath}`;
       }
       return `${videoUrl}#t=1`;
     }

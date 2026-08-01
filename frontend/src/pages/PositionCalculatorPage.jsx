@@ -5,7 +5,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import toast from 'react-hot-toast';
-import { sendFriendRequest, getFriendshipStatus, apiClient } from '../services/api';
+import { sendFriendRequest, getFriendshipStatus, apiClient, API_BASE_URL } from '../services/api';
 import Taskbar from '../components/Taskbar';
 import FlatUserIcon from '../components/cinema/3d-cinema/avatars/FlatUserIcon';
 import LectureHallAvatarManager from '../components/cinema/3d-cinema/avatars/LectureHallAvatarManager';
@@ -44,7 +44,6 @@ import VolumeControl from '../components/VolumeControl';
 const EMPTY_LECTURE_HALL_SEATS = [];
 
 // ✅ API base URL for quiz fetches
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
 // ✅ SessionStorage keys for quiz persistence
 const STORAGE_KEYS = {
@@ -4461,8 +4460,7 @@ const PositionCalculatorPage = () => {
         // ✅ Ensure absolute URL (safety net)
         let mediaUrl = data.url || data.file_url;
         if (mediaUrl && !mediaUrl.startsWith('http')) {
-          const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-          mediaUrl = `${API_BASE_URL}/${mediaUrl}`;
+                    mediaUrl = `${API_BASE_URL}/${mediaUrl}`;
           console.log('🎬 [PositionCalculator] Converted to absolute URL:', mediaUrl);
         }
         
@@ -4526,7 +4524,7 @@ const PositionCalculatorPage = () => {
             will_change_playState: playbackData.command === "play" || playbackData.command === "pause"
           });
           
-          const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+          const baseUrl = API_BASE_URL || 'http://localhost:8080';
           const fileUrl = playbackData.file_url || playbackData.file_path;
           const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
           

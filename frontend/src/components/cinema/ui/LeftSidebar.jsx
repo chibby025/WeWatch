@@ -1,6 +1,6 @@
 // src/components/cinema/ui/LeftSidebar.jsx
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { apiClient } from '../../../services/api';
+import { apiClient, API_BASE_URL } from '../../../services/api';
 import { Gamepad2, Video, BookOpen, Music, FileText } from 'lucide-react'; // Game, Video, Bible, Hymn, Sermon icons
 import toast from 'react-hot-toast';
 import BibleControl from '../../liveshare/BibleControl';
@@ -1471,7 +1471,6 @@ export default function LeftSidebar({
                             // ✅ Construct absolute URL for WebSocket broadcast
                             let fileUrl = item.file_path || item.file_url;
                             if (fileUrl && !fileUrl.startsWith('http')) {
-                              const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
                               fileUrl = `${API_BASE_URL}/${fileUrl}`;
                             }
                             

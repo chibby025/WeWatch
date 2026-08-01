@@ -33,9 +33,7 @@ import PresentationControl from '../../liveshare/PresentationControl';
 import HymnsControl from '../../liveshare/HymnsControl';
 import SermonControl from '../../liveshare/SermonControl';
 import { calculateAge } from '../../../utils/ageUtils';
-import { apiClient } from '../../../services/api';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+import { apiClient, API_BASE_URL } from '../../../services/api';
 
 // ✅ Auto-layout calculation based on stream count
 // Note: When guest is selected, host cannot use 'both' (screen+camera) since split-view only supports 2 streams

@@ -23,7 +23,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
 import { useMobile } from '../hooks/useMobile';
-import apiClient, { editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup, getAssetUrl, uploadRoomChatAttachment, sendRoomChatSticker } from '../services/api';
+import apiClient, { API_BASE_URL, editRoomMessage, deleteRoomMessage, getRoomTVContent, createRoomTVContent, deleteRoomTVContent, joinRoom, endWatchSession, getUserAverageWatchers, getRoomGroups, deleteRoomGroup, getAssetUrl, uploadRoomChatAttachment, sendRoomChatSticker } from '../services/api';
 import { consumePrefetchedRoom, consumePrefetchedMembers } from '../utils/prefetchCache';
 import WatchTypeModal from './WatchTypeModal';
 import WatchTypeInfoModal from './WatchTypeInfoModal';
@@ -959,7 +959,7 @@ const RoomPageNew = () => {
     console.log(`📊 [RoomPageNew] Token length: ${wsToken.length} chars`);
 
     // ✅ FIX: Use API backend URL (Railway/localhost) instead of window.location (Vercel)
-    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+    const apiBaseUrl = API_BASE_URL;
     const apiUrl = new URL(apiBaseUrl);
     const protocol = apiUrl.protocol === 'https:' ? 'wss' : 'ws';
     const host = apiUrl.hostname;

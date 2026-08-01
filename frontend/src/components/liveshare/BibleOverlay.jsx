@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
+import { API_BASE_URL } from '../../services/api';
 
 export default function BibleOverlay({ verse, isActive, onDismiss, sendMessage, sessionId }) {
   const [isVisible, setIsVisible] = useState(false);
@@ -33,7 +34,6 @@ export default function BibleOverlay({ verse, isActive, onDismiss, sendMessage, 
     
     // Clear from backend
     if (sessionId) {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
       fetch(`${API_BASE_URL}/api/sessions/${sessionId}/bible-verse`, {
         method: 'DELETE',
         credentials: 'include',

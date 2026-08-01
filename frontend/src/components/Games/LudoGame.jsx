@@ -321,28 +321,71 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
     return moves;
   }, [tokensByColor, myColors, isMyTurn, awaitingMove, selectedDieValue]);
 
-  // Drop-zone map: "row,col" → { color, tokenIdx }
+  // Solo-token auto-highlight: when 2+ dice are still unselected but only ONE
+  // token can legally use any of them (e.g. 3 tokens still in Base needing a 6,
+  // 1 token already out — both dice apply only to that one token), skip the
+  // "tap a die first" requirement entirely and surface every remaining die's
+  // destination for that token directly. Returns one entry per distinct
+  // remaining die value that legally moves the (single) eligible token.
+  const soloTokenMoves = useMemo(() => {
+    if (!isMyTurn || !awaitingMove || selectedDieValue || myColors.length === 0 || remainingMoves.length < 2) return [];
+    const candidates = [];
+    remainingMoves.forEach((dieValue) => {
+      for (const color of myColors) {
+        (tokensByColor[color] || []).forEach((t, i) => {
+          const pos = t.position ?? -1;
+          if ((pos === -1 && dieValue === 6) || (pos >= 0 && pos + dieValue <= 57)) {
+            candidates.push({ dieValue, color, tokenIdx: i });
+          }
+        });
+      }
+    });
+    const uniqueTokenKeys = new Set(candidates.map(c => `${c.color}-${c.tokenIdx}`));
+    if (uniqueTokenKeys.size !== 1) return [];
+    const seenDie = new Set();
+    const deduped = [];
+    candidates.forEach(c => {
+      if (!seenDie.has(c.dieValue)) { seenDie.add(c.dieValue); deduped.push(c); }
+    });
+    return deduped;
+  }, [isMyTurn, awaitingMove, selectedDieValue, myColors, remainingMoves, tokensByColor]);
+
+  const soloMode = soloTokenMoves.length > 0;
+
+  // Drop-zone map: "row,col" → { color, tokenIdx, dieValue }
   const targetCells = useMemo(() => {
     const map = new Map();
-    if (!awaitingMove || !selectedDieValue) return map;
-    legalMoves.forEach(({ color, tokenIdx }) => {
-      const pos = (tokensByColor[color] || [])[tokenIdx]?.position ?? -1;
-      const newPos = pos === -1 ? 0 : pos + selectedDieValue;
-      const cell  = cellForToken(color, newPos);
-      if (cell) map.set(`${cell[0]},${cell[1]}`, { color, tokenIdx });
-    });
+    if (awaitingMove && selectedDieValue) {
+      legalMoves.forEach(({ color, tokenIdx }) => {
+        const pos = (tokensByColor[color] || [])[tokenIdx]?.position ?? -1;
+        const newPos = pos === -1 ? 0 : pos + selectedDieValue;
+        const cell  = cellForToken(color, newPos);
+        if (cell) map.set(`${cell[0]},${cell[1]}`, { color, tokenIdx, dieValue: selectedDieValue });
+      });
+    } else if (soloMode) {
+      soloTokenMoves.forEach(({ color, tokenIdx, dieValue }) => {
+        const pos = (tokensByColor[color] || [])[tokenIdx]?.position ?? -1;
+        const newPos = pos === -1 ? 0 : pos + dieValue;
+        const cell  = cellForToken(color, newPos);
+        if (cell) map.set(`${cell[0]},${cell[1]}`, { color, tokenIdx, dieValue });
+      });
+    }
     return map;
-  }, [awaitingMove, selectedDieValue, tokensByColor, legalMoves]);
+  }, [awaitingMove, selectedDieValue, tokensByColor, legalMoves, soloMode, soloTokenMoves]);
 
   const handleRoll = () => {
     if (!isMyTurn || awaitingMove || isOver) return;
     onMove({ move_type: 'roll_dice' });
   };
 
-  const handleTokenMove = (color, tokenIdx) => {
-    if (!isMyTurn || !awaitingMove || isOver || !selectedDieValue) return;
-    if (!legalMoves.some(m => m.color === color && m.tokenIdx === tokenIdx)) return;
-    onMove({ move_type: 'move_token', token_index: tokenIdx, color, die_value: selectedDieValue });
+  const handleTokenMove = (color, tokenIdx, dieValueOverride) => {
+    if (!isMyTurn || !awaitingMove || isOver) return;
+    const dieValue = dieValueOverride ?? selectedDieValue;
+    if (!dieValue) return;
+    const validForSelected = selectedDieValue && legalMoves.some(m => m.color === color && m.tokenIdx === tokenIdx);
+    const validForSolo = !selectedDieValue && soloTokenMoves.some(m => m.color === color && m.tokenIdx === tokenIdx && m.dieValue === dieValue);
+    if (!validForSelected && !validForSolo) return;
+    onMove({ move_type: 'move_token', token_index: tokenIdx, color, die_value: dieValue });
     setSelectedDieValue(null);
   };
 
@@ -358,7 +401,10 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
 
   // ── Drag-and-drop ───────────────────────────────────────────────────────────
   const onTokenPointerDown = (e, color, tokenIdx) => {
-    if (!myColors.includes(color) || !legalMoves.some(m => m.color === color && m.tokenIdx === tokenIdx)) return;
+    const eligible = selectedDieValue
+      ? legalMoves.some(m => m.color === color && m.tokenIdx === tokenIdx)
+      : soloMode && soloTokenMoves.some(m => m.color === color && m.tokenIdx === tokenIdx);
+    if (!myColors.includes(color) || !eligible) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     dragInfo.current = { color, tokenIdx, startX: e.clientX, startY: e.clientY };
     setGhostPos({ x: e.clientX, y: e.clientY });
@@ -378,7 +424,15 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
     const wasTap = Math.hypot(e.clientX - startX, e.clientY - startY) <= 7;
 
     if (wasTap) {
-      handleTokenMove(color, tokenIdx);
+      if (selectedDieValue) {
+        handleTokenMove(color, tokenIdx);
+      } else if (soloMode && soloTokenMoves.length === 1) {
+        // Only one die value legally moves this token — unambiguous, move it.
+        handleTokenMove(color, tokenIdx, soloTokenMoves[0].dieValue);
+      }
+      // else: soloMode with 2 distinct destinations — a plain tap on the token
+      // itself is ambiguous (which die?). The player taps/drags to one of the
+      // two highlighted destination squares instead (see drop-zone onClick).
     } else if (dragging && boardRef.current) {
       const rect = boardRef.current.getBoundingClientRect();
       const col  = Math.floor(((e.clientX - rect.left) / rect.width)  * 15);
@@ -386,7 +440,7 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
       const key  = `${row},${col}`;
       if (targetCells.has(key)) {
         const target = targetCells.get(key);
-        handleTokenMove(target.color, target.tokenIdx);
+        handleTokenMove(target.color, target.tokenIdx, target.dieValue);
       }
     }
 
@@ -412,8 +466,9 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
 
   const cp = 100 / 15;
 
-  // Is any die selectable (helps hint the player to tap one)?
-  const needsDieSelection = isMyTurn && awaitingMove && remainingMoves.length >= 2 && !selectedDieValue;
+  // Is any die selectable (helps hint the player to tap one)? Not needed when
+  // soloMode already resolved which token to move without a die tap.
+  const needsDieSelection = isMyTurn && awaitingMove && remainingMoves.length >= 2 && !selectedDieValue && !soloMode;
 
   return (
     <>
@@ -634,12 +689,18 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                 }}>★</div>
               </div>
 
-              {/* Drop-zone overlays */}
-              {awaitingMove && selectedDieValue && Array.from(targetCells.keys()).map(key => {
+              {/* Drop-zone overlays — clickable so a tap on the destination itself
+                  moves the token (needed in soloMode, where 2 destinations can
+                  be shown at once and there's no single "selected die" to fall
+                  back on). Shows a small die-value badge only in soloMode, since
+                  that's the only case with more than one destination on screen
+                  at a time and needing disambiguation. */}
+              {awaitingMove && (selectedDieValue || soloMode) && Array.from(targetCells.entries()).map(([key, target]) => {
                 const [row, col] = key.split(',').map(Number);
                 return (
                   <div key={`dz-${key}`}
-                    className="absolute pointer-events-none"
+                    onClick={() => handleTokenMove(target.color, target.tokenIdx, target.dieValue)}
+                    className="absolute"
                     style={{
                       top:`${row*cp+0.25}%`, left:`${col*cp+0.25}%`,
                       width:`${cp-0.5}%`, height:`${cp-0.5}%`,
@@ -647,14 +708,27 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                       border:`2px dashed ${myPrimaryColor ? COLOR_HEX[myPrimaryColor] : '#fff'}`,
                       background:`${myPrimaryColor ? COLOR_HEX[myPrimaryColor] : '#fff'}28`,
                       zIndex:9,
+                      cursor:'pointer',
+                      display:'flex', alignItems:'center', justifyContent:'center',
                       animation:'dropPulse 1.1s ease-in-out infinite',
-                    }}/>
+                    }}>
+                    {soloMode && !selectedDieValue && (
+                      <span style={{
+                        fontSize:'50%', fontWeight:900, color:'#fff',
+                        textShadow:'0 1px 3px rgba(0,0,0,0.9)',
+                        pointerEvents:'none',
+                      }}>{target.dieValue}</span>
+                    )}
+                  </div>
                 );
               })}
 
               {/* Tokens */}
               {renderTokens.map(({ color, tokenIdx, row, col }) => {
-                const isClickable   = myColors.includes(color) && legalMoves.some(m => m.color === color && m.tokenIdx === tokenIdx);
+                const isClickable   = myColors.includes(color) && (
+                  legalMoves.some(m => m.color === color && m.tokenIdx === tokenIdx) ||
+                  (soloMode && soloTokenMoves.some(m => m.color === color && m.tokenIdx === tokenIdx))
+                );
                 const isFadedByDrag = dragging && !(dragging.color===color && dragging.tokenIdx===tokenIdx);
                 const isDraggingThis = dragging?.color===color && dragging?.tokenIdx===tokenIdx;
                 return (
@@ -823,7 +897,10 @@ export default function LudoGame({ gameState, players=[], currentUserId, onMove,
                   <p className={`text-sm font-bold ${isMyTurn ? 'text-green-400' : 'text-gray-400'}`}>
                     {isMyTurn ? '✨ Your turn' : `${currentPlayer?.username}'s turn`}
                   </p>
-                  {isMyTurn && awaitingMove && !selectedDieValue && remainingMoves.length > 1 && (
+                  {isMyTurn && awaitingMove && !selectedDieValue && soloMode && (
+                    <p className="text-amber-400 text-[11px] mt-0.5">Only one token can move — tap it or a glowing square</p>
+                  )}
+                  {isMyTurn && awaitingMove && !selectedDieValue && !soloMode && remainingMoves.length > 1 && (
                     <p className="text-amber-400 text-[11px] mt-0.5">2 dice rolled →</p>
                   )}
                   {isMyTurn && awaitingMove && selectedDieValue && legalMoves.length === 0 && (

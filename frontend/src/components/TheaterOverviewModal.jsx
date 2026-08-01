@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
+import { API_BASE_URL } from '../services/api';
 
 export default function TheaterOverviewModal({ 
   isOpen, 
@@ -24,7 +25,7 @@ export default function TheaterOverviewModal({
     setLoading(true);
     try {
       const response = await axios.get(
-        `${import.meta.env.VITE_API_BASE_URL}/api/sessions/${sessionId}/theaters`,
+        `${API_BASE_URL}/api/sessions/${sessionId}/theaters`,
         { withCredentials: true }
       );
       setTheaters(response.data || []);
@@ -44,7 +45,7 @@ export default function TheaterOverviewModal({
 
     try {
       await axios.put(
-        `${import.meta.env.VITE_API_BASE_URL}/api/theaters/${theaterId}/name`,
+        `${API_BASE_URL}/api/theaters/${theaterId}/name`,
         { name: newName },
         { withCredentials: true }
       );

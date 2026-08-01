@@ -6,7 +6,7 @@ import { OrbitControls, useGLTF, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { SRGBColorSpace } from 'three'; // Import new color space constant
 import toast from 'react-hot-toast';
-import { sendFriendRequest, getFriendshipStatus, apiClient } from '../services/api';
+import { sendFriendRequest, getFriendshipStatus, apiClient, API_BASE_URL } from '../services/api';
 import Taskbar from '../components/Taskbar';
 import AppSplash from '../components/AppSplash';
 import FlatUserIcon from '../components/cinema/3d-cinema/avatars/FlatUserIcon';
@@ -95,7 +95,6 @@ class LectureHallErrorBoundary extends React.Component {
 }
 
 // ✅ API base URL for quiz fetches
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
 // ✅ SessionStorage keys for quiz persistence
 const STORAGE_KEYS = {
@@ -4820,8 +4819,7 @@ const PositionCalculatorPage = () => {
         // ✅ Ensure absolute URL (safety net)
         let mediaUrl = data.url || data.file_url;
         if (mediaUrl && !mediaUrl.startsWith('http')) {
-          const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
-          mediaUrl = `${API_BASE_URL}/${mediaUrl.replace(/^\//, '')}`;
+                    mediaUrl = `${API_BASE_URL}/${mediaUrl.replace(/^\//, '')}`;
           console.log('🎬 [PositionCalculator] Converted to absolute URL:', mediaUrl);
         }
         
@@ -4885,7 +4883,7 @@ const PositionCalculatorPage = () => {
             will_change_playState: playbackData.command === "play" || playbackData.command === "pause"
           });
           
-          const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+          const baseUrl = API_BASE_URL || 'http://localhost:8080';
           const fileUrl = playbackData.file_url || playbackData.file_path;
           const mediaUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
           
@@ -4951,8 +4949,7 @@ const PositionCalculatorPage = () => {
 
       case 'device_stream_ready': {
         // Progressive HLS upload is ready — start playing immediately (upload may still be in progress).
-        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-        const rawPath = message.file_path;
+                const rawPath = message.file_path;
         const readyUrl = rawPath?.startsWith('http') ? rawPath : `${API_BASE_URL}/${rawPath?.replace(/^\//, '')}`;
         console.log('🎬 [LH device_stream_ready] Starting HLS stream:', readyUrl);
         setBlackboardMedia({
@@ -6038,7 +6035,7 @@ const PositionCalculatorPage = () => {
       
       // Ensure the URL is absolute (points to backend server)
       if (fileUrl && !fileUrl.startsWith('http')) {
-        const base = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
+        const base = (API_BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
         fileUrl = `${base}/${fileUrl.replace(/^\//, '')}`;
       }
       
