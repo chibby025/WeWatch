@@ -162,6 +162,8 @@ func (h *GameWebSocketHandler) GetActiveGameMessage(roomID uint) map[string]inte
 		gameStateOut = drawGuessPublicState(gameState.GameSession.GameState)
 	case "hangman":
 		gameStateOut = hangmanPublicState(map[string]interface{}(gameState.GameSession.GameState))
+	case "sudoku":
+		gameStateOut = sudokuPublicState(map[string]interface{}(gameState.GameSession.GameState))
 	}
 
 	return map[string]interface{}{
@@ -437,6 +439,10 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
 	gameStateBcast := map[string]interface{}(gameSession.GameState)
 	if gameSession.GameType == "hangman" {
 		gameStateBcast = hangmanPublicState(gameStateBcast)
+	} else if gameSession.GameType == "sudoku" {
+		// Without this, the puzzle-seeding fix above would broadcast the full
+		// solved grid to every player the instant the game starts.
+		gameStateBcast = sudokuPublicState(gameStateBcast)
 	}
 
 	// Apply per-game options from the start_game payload into the live in-memory

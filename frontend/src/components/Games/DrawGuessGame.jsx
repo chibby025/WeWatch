@@ -29,6 +29,12 @@ export default function DrawGuessGame({
   const wordLength = Number(gs.word_length) || 0;
   const correctGuessers = gs.correct_guessers || {};
   const roundStartMs = Number(gs.round_start_ms) || 0;
+  const guessFeed = gs.guess_feed || [];
+  // The word is stripped from the public state while a round is live (so
+  // guessers can't peek), but the backend includes it again once phase is
+  // "reveal"/"ended" — that's the public, room-wide answer everyone (not just
+  // the drawer, who already knows it) should see at reveal time.
+  const revealWord = gs.current_word || drawerWord;
 
   const isHostUser = (gameState?.host_id ?? players?.[0]?.user_id) === currentUserId;
   const isDrawer = currentDrawer === currentUserId;
@@ -38,6 +44,7 @@ export default function DrawGuessGame({
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef(null);
+  const guessFeedRef = useRef(null);
   const [color, setColor] = useState('#000000');
   const [brush, setBrush] = useState(6);
   const [isEraser, setIsEraser] = useState(false);
@@ -99,6 +106,12 @@ export default function DrawGuessGame({
     });
     return () => registerRelayReceiver(null);
   }, [registerRelayReceiver, drawSegment, clearCanvas]);
+
+  // Auto-scroll the guess feed to the newest entry as new guesses land.
+  useEffect(() => {
+    const el = guessFeedRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [guessFeed.length]);
 
   // Round timer.
   useEffect(() => {
@@ -275,7 +288,7 @@ export default function DrawGuessGame({
                   <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-xl">
                     <div className="text-center">
                       <p className="text-gray-300 text-sm mb-1">The word was</p>
-                      <p className="text-white text-3xl font-bold">{drawerWord || '???'}</p>
+                      <p className="text-white text-3xl font-bold">{revealWord || '???'}</p>
                     </div>
                   </div>
                 )}
@@ -377,29 +390,64 @@ export default function DrawGuessGame({
           )}
         </div>
 
-        {/* Score sidebar */}
-        <div className="w-40 sm:w-52 border-l border-gray-800 bg-gray-900/60 p-3 overflow-y-auto flex-shrink-0">
-          <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-3">Scores</p>
-          <div className="space-y-2">
-            {sortedPlayers.map((p, i) => {
-              const isThisDrawer = p.user_id === currentDrawer;
-              const guessedRight = !!correctGuessers[String(p.user_id)];
-              return (
-                <div key={p.user_id} className="flex items-center gap-2">
-                  {i === 0 && <Trophy className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />}
-                  <div className="w-3 h-3 rounded-full border border-white/30 flex-shrink-0" style={{ backgroundColor: p.color }} />
-                  <span className="text-white text-xs truncate flex-1">{p.username}</span>
-                  {isThisDrawer && <span title="Drawing" className="text-xs">✏️</span>}
-                  {guessedRight && !isThisDrawer && <span title="Guessed it" className="text-xs">✅</span>}
-                  <span className="text-yellow-400 text-xs font-bold flex-shrink-0">{Math.round(Number(scores[String(p.user_id)]) || 0)}</span>
-                </div>
-              );
-            })}
+        {/* Score + guess feed sidebar */}
+        <div className="w-44 sm:w-60 border-l border-gray-800 bg-gray-900/60 flex flex-col flex-shrink-0">
+          <div className="p-3 flex-shrink-0">
+            <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-3">Scores</p>
+            <div className="space-y-2">
+              {sortedPlayers.map((p, i) => {
+                const isThisDrawer = p.user_id === currentDrawer;
+                const guessedRight = !!correctGuessers[String(p.user_id)];
+                return (
+                  <div key={p.user_id} className="flex items-center gap-2">
+                    {i === 0 && <Trophy className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />}
+                    <div className="w-3 h-3 rounded-full border border-white/30 flex-shrink-0" style={{ backgroundColor: p.color }} />
+                    <span className="text-white text-xs truncate flex-1">{p.username}</span>
+                    {isThisDrawer && <span title="Drawing" className="text-xs">✏️</span>}
+                    {guessedRight && !isThisDrawer && <span title="Guessed it" className="text-xs">✅</span>}
+                    <span className="text-yellow-400 text-xs font-bold flex-shrink-0">{Math.round(Number(scores[String(p.user_id)]) || 0)}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {phase === 'drawing' && drawerPlayer && (
+              <p className="text-gray-500 text-[11px] mt-4">
+                {drawerPlayer.username} is drawing
+              </p>
+            )}
           </div>
-          {phase === 'drawing' && drawerPlayer && (
-            <p className="text-gray-500 text-[11px] mt-4">
-              {drawerPlayer.username} is drawing
-            </p>
+
+          {/* Live guess feed — right/wrong guesses as they happen. A correct
+              entry never carries the guessed text itself (the backend omits
+              it entirely, since it would equal the secret word), only the
+              fact that this player got it. */}
+          {(phase === 'drawing' || phase === 'reveal') && (
+            <div className="flex-1 min-h-0 border-t border-gray-800 flex flex-col">
+              <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider px-3 pt-3 pb-2 flex-shrink-0">
+                Guesses
+              </p>
+              <div ref={guessFeedRef} className="flex-1 overflow-y-auto px-3 pb-3 space-y-1.5">
+                {guessFeed.length === 0 && (
+                  <p className="text-gray-600 text-xs italic">No guesses yet…</p>
+                )}
+                {guessFeed.map((g, i) => (
+                  <div
+                    key={i}
+                    className={`text-xs rounded-lg px-2 py-1.5 ${
+                      g.correct
+                        ? 'bg-green-600/20 border border-green-500/30 text-green-300'
+                        : 'bg-gray-800/60 text-gray-300'
+                    }`}
+                  >
+                    {g.correct ? (
+                      <span>🎉 <span className="font-semibold">{g.username}</span> guessed it!</span>
+                    ) : (
+                      <span><span className="font-semibold text-gray-400">{g.username}:</span> {g.text}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>

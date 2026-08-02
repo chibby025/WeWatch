@@ -79,6 +79,33 @@ func drawGuessCorrectGuessers(gameState *GameSessionState) map[string]interface{
 	return m
 }
 
+// drawGuessFeedMax caps the shared, room-visible guess feed so it can't grow
+// unbounded over a long game — only the most recent entries matter to anyone
+// watching live.
+const drawGuessFeedMax = 40
+
+// drawGuessAppendFeed records one guess attempt for the whole room to see —
+// safe by construction: a WRONG guess's raw text can't leak the answer (it's
+// wrong), and a CORRECT entry never carries the guessed text at all (it would
+// equal the secret word by definition), only the fact that this player got it.
+func drawGuessAppendFeed(gameState *GameSessionState, entry map[string]interface{}) {
+	feed, _ := gameState.GameData["guess_feed"].([]interface{})
+	feed = append(feed, entry)
+	if len(feed) > drawGuessFeedMax {
+		feed = feed[len(feed)-drawGuessFeedMax:]
+	}
+	gameState.GameData["guess_feed"] = feed
+}
+
+func drawGuessPlayerName(gameState *GameSessionState, userID uint) string {
+	for _, p := range gameState.Players {
+		if p.UserID == userID {
+			return p.Username
+		}
+	}
+	return ""
+}
+
 // drawGuessNextDrawerIndex rotates through players by round index (0-based round in
 // GameData drives player index).
 func drawGuessNextDrawerIndex(gameState *GameSessionState) int {
@@ -105,6 +132,7 @@ func (gm *GameManager) processDrawGuessMove(gameState *GameSessionState, playerI
 		gameState.GameData["phase"] = "drawing"
 		gameState.GameData["guesses"] = map[string]interface{}{}
 		gameState.GameData["correct_guessers"] = map[string]interface{}{}
+		gameState.GameData["guess_feed"] = []interface{}{}
 		gameState.GameData["round_start_ms"] = float64(time.Now().UnixMilli())
 
 		// The private word delivery to the drawer is handled by the caller
@@ -146,15 +174,30 @@ func (gm *GameManager) processDrawGuessMove(gameState *GameSessionState, playerI
 			correctGuessers[guesserKey] = true
 			gameState.GameData["correct_guessers"] = correctGuessers
 
+			drawGuessAppendFeed(gameState, map[string]interface{}{
+				"user_id":  float64(playerID),
+				"username": drawGuessPlayerName(gameState, playerID),
+				"correct":  true,
+				"ts":       float64(time.Now().UnixMilli()),
+			})
+
 			// Auto-advance to reveal once every non-drawer has guessed correctly.
 			nonDrawers := len(gameState.Players) - 1
 			if len(correctGuessers) >= nonDrawers && nonDrawers > 0 {
 				gameState.GameData["phase"] = "reveal"
 			}
+		} else if trimmed := strings.TrimSpace(text); trimmed != "" {
+			// Safe to show the raw text here — it's wrong, so by definition it
+			// isn't the secret word and can't leak the answer to anyone else
+			// still guessing.
+			drawGuessAppendFeed(gameState, map[string]interface{}{
+				"user_id":  float64(playerID),
+				"username": drawGuessPlayerName(gameState, playerID),
+				"text":     trimmed,
+				"correct":  false,
+				"ts":       float64(time.Now().UnixMilli()),
+			})
 		}
-		// The raw text isn't stored publicly (would leak partial hints / spam) —
-		// only the correct/incorrect outcome affects state. The frontend shows the
-		// guesser their own result locally.
 		return false, nil, nil
 
 	case "end_round":
@@ -206,11 +249,17 @@ func (gm *GameManager) processDrawGuessMove(gameState *GameSessionState, playerI
 
 // drawGuessPublicState returns a copy of GameData with the secret current_word
 // stripped — used when broadcasting to the whole room so guessers never receive the
-// answer. The drawer gets the word separately via sendDrawerWord.
+// answer while the round is still live. The drawer gets the word separately via
+// sendDrawerWord during "drawing". Once the round moves to "reveal" (or the game
+// ends mid-reveal), the word is safe to include for everyone — that's the whole
+// point of a reveal — so it's no longer stripped in those phases.
 func drawGuessPublicState(gameData map[string]interface{}) map[string]interface{} {
+	phase, _ := gameData["phase"].(string)
+	wordIsSafe := phase == "reveal" || phase == "ended"
+
 	out := make(map[string]interface{}, len(gameData))
 	for k, v := range gameData {
-		if k == "current_word" {
+		if k == "current_word" && !wordIsSafe {
 			continue
 		}
 		out[k] = v

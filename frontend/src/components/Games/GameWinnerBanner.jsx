@@ -17,12 +17,12 @@ const GAME_LABELS = {
   jigsaw: 'Jigsaw Puzzle',
   wordle: 'Wordle',
   would_you_rather: 'Would You Rather',
+  ping_pong: 'Ping Pong',
 };
 
 /**
  * Props:
  *   winner        – player object {user_id, username, avatar, color} | null (draw) | 'draw' string
- *   players       – full players array
  *   gameType      – 'tic_tac_toe' | 'chess' | etc.
  *   gameStats     – { lines: [{ label, value }] }  (empty array = no stats)
  *   isForfeit     – bool
@@ -32,7 +32,6 @@ const GAME_LABELS = {
  */
 export default function GameWinnerBanner({
   winner,
-  players = [],
   gameType = '',
   gameStats = { lines: [] },
   isForfeit = false,

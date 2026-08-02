@@ -19,12 +19,21 @@ import (
 //   last_foul       string  — reason for the most recent foul ("" if clean)
 //   last_pocketed   []int   — balls pocketed on the most recent shot
 //   cue_pos_x/y     float64 — cue ball position after the shot (from client)
+//   ball_positions  map[string]{x,y} — fractional (0-1) resting position of every
+//                   ball still on the table after the shot, keyed by ball ID as a
+//                   string. This is the single source of truth non-shooting clients
+//                   use to redraw the table — without it, only pocketed-ball IDs and
+//                   the cue ball were ever synced, so every other ball silently kept
+//                   whatever position it happened to be at locally, drifting further
+//                   from the real table every shot. A ball absent from this map (and
+//                   not newly pocketed either) means "off table, not yet placed" —
+//                   used for the cue ball during ball-in-hand.
 //
 // Ball IDs: 1-7 = solids, 8 = eight-ball, 9-15 = stripes, 0 = cue ball.
 //
 // Move types sent by the frontend:
 //   shot  — { pocketed: [id,...], cue_scratched: bool, cue_x: float, cue_y: float,
-//             first_contact: id }
+//             first_contact: id, ball_positions: {"id": {x,y}, ...} }
 //         The client runs physics and reports what happened; server validates
 //         and advances state. Perfect for a social game — no authoritative
 //         physics server needed.
@@ -42,6 +51,7 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 		gameState.GameData["last_pocketed"] = []interface{}{}
 		gameState.GameData["cue_pos_x"] = 0.25
 		gameState.GameData["cue_pos_y"] = 0.5
+		gameState.GameData["ball_positions"] = map[string]interface{}{}
 	}
 
 	if moveType != "shot" {
@@ -59,6 +69,28 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 	cueY, _ := moveData["cue_y"].(float64)
 	firstContactF, _ := moveData["first_contact"].(float64)
 	firstContact := int(firstContactF)
+
+	// Every ball still active on the shooter's table after their simulation
+	// settled — the authoritative position data every other client applies.
+	// Malformed/missing entries are simply skipped (that ball just won't be
+	// repositioned this round rather than erroring the whole shot out).
+	ballPositionsRaw, _ := moveData["ball_positions"].(map[string]interface{})
+	ballPositions := map[string]interface{}{}
+	for idStr, posRaw := range ballPositionsRaw {
+		posMap, ok := posRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		px, okX := posMap["x"].(float64)
+		py, okY := posMap["y"].(float64)
+		if !okX || !okY {
+			continue
+		}
+		ballPositions[idStr] = map[string]interface{}{
+			"x": math.Max(0, math.Min(1, px)),
+			"y": math.Max(0, math.Min(1, py)),
+		}
+	}
 
 	var pocketedIDs []int
 	for _, v := range pocketedRaw {
@@ -213,6 +245,7 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 	gameState.GameData["breaking"] = false
 	gameState.GameData["cue_pos_x"] = math.Max(0, math.Min(1, cueX))
 	gameState.GameData["cue_pos_y"] = math.Max(0, math.Min(1, cueY))
+	gameState.GameData["ball_positions"] = ballPositions
 
 	// Turn logic: player keeps the table on a legal pocket; otherwise turn passes.
 	// pool is in selfManagedTurn — game_manager does NOT apply the +1 advance.

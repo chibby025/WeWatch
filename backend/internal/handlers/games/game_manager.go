@@ -199,6 +199,9 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 			gameState.GameData[k] = v
 		}
 		gameState.GameSession.GameState = gameState.GameData
+	case "sudoku":
+		ensureSudokuState(gameState)
+		gameState.GameSession.GameState = gameState.GameData
 	case "roulette":
 		// Chips seeded lazily on first move; just set opening state here.
 		gameState.GameData["phase"] = "betting"

@@ -6,7 +6,7 @@ const SPRITE_BASE = 'https://letswatchout.b-cdn.net/games/sprites/glass_bridge';
 const SOUND_BASE = 'https://letswatchout.b-cdn.net/games/sounds/glass_bridge';
 const SOUNDS = {
   strain: `${SOUND_BASE}/glass_strain.mp3`,
-  glassbreak: `${SOUND_BASE}/glassbreak.mp3`,
+  glassbreak: `${SOUND_BASE}/glassbreak_v2.mp3`,
 };
 
 function playSound(url) {

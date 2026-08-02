@@ -1,4 +1,5 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
+import { Volume2, VolumeX } from 'lucide-react';
 
 // Canvas logical dimensions — same as Ping Pong (400 × 600).
 const W = 400, H = 600;
@@ -14,7 +15,36 @@ const MALLET_SEND_MS = 40;  // throttle mallet_move to 25 Hz
 const P1_Y_MIN = MALLET_R, P1_Y_MAX = H / 2 - MALLET_R;
 const P2_Y_MIN = H / 2 + MALLET_R, P2_Y_MAX = H - MALLET_R;
 
-export default function AirHockeyGame({ gameState, players, currentUserId, onMove, onClose, onEndGame }) {
+// Sound effects — synthesized WAVs (no external samples), same technique and
+// hosting convention as Ping Pong's SOUND_FILES.
+const SOUND_BASE = 'https://letswatchout.b-cdn.net/games/sounds/air_hockey';
+const SOUND_FILES = {
+  mallet_hit: `${SOUND_BASE}/mallet_hit.wav`,
+  wall_bounce: `${SOUND_BASE}/wall_bounce.wav`,
+  goal: `${SOUND_BASE}/goal.wav`,
+  serve: `${SOUND_BASE}/serve.wav`,
+};
+let airHockeySoundEnabled = true;
+function playAirHockeySound(name, { volume = 0.5, rate = 1 } = {}) {
+  if (!airHockeySoundEnabled) return;
+  const url = SOUND_FILES[name];
+  if (!url) return;
+  const audio = new Audio(url);
+  audio.volume = Math.max(0, Math.min(1, volume));
+  audio.playbackRate = rate;
+  audio.play().catch(() => {});
+}
+// A mallet hit is the ONLY event that increases puck speed (SPEED_UP each
+// hit); every wall bounce (side, or top/bottom outside the goal strip)
+// preserves speed exactly, just flipping one velocity component's sign. That
+// makes "did speed increase" a clean, physically-grounded way for
+// P2/spectators to distinguish a mallet hit from a wall bounce purely from
+// consecutive relayed states — not a fuzzy heuristic, the exact rule the
+// physics itself already follows. 1.008 sits safely below SPEED_UP's 1.025
+// and comfortably above floating-point noise.
+const MALLET_HIT_SPEED_RATIO = 1.008;
+
+export default function AirHockeyGame({ gameState, players, currentUserId, onMove, onClose }) {
   const gs = gameState?.game_state || {};
   const p1Id = String(gs.p1_id || '');
   const p2Id = String(gs.p2_id || '');
@@ -24,25 +54,44 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
   const scores = gs.scores || {};
   const rally = gs.rally || 0;
   const winScore = gs.win_score || 5;
-  const isEnded = gs.phase === 'ended';
+  const phase = gs.phase || 'serving';
+  const isEnded = phase === 'ended';
+  const isServing = phase === 'serving';
+  const serveBy = String(gs.serve_by || '');
 
   const p1Name = players?.find(p => String(p.user_id) === p1Id)?.username || 'Player 1';
   const p2Name = players?.find(p => String(p.user_id) === p2Id)?.username || 'Player 2';
+  const serverName = serveBy === p1Id ? p1Name : serveBy === p2Id ? p2Name : '';
+  const isMyServe = isServing && ((isP1 && serveBy === p1Id) || (isP2 && serveBy === p2Id));
 
   const canvasRef = useRef(null);
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    try { return localStorage.getItem('air_hockey_sound_enabled') !== 'false'; } catch { return true; }
+  });
+  useEffect(() => {
+    airHockeySoundEnabled = soundEnabled;
+    try { localStorage.setItem('air_hockey_sound_enabled', String(soundEnabled)); } catch { /* ignore */ }
+  }, [soundEnabled]);
 
   // All mutable state in one ref — no re-renders from physics.
   const S = useRef({
-    puck: { x: W / 2, y: H / 2, vx: 80, vy: 220 },
+    puck: { x: W / 2, y: H / 2, vx: 0, vy: 0 },
     // My own mallet (2D, clamped to my half)
     myMallet: { x: W / 2, y: isP2 ? P2_Y_MIN + 80 : P1_Y_MAX - 80 },
     // Remote mallet (from WS relay)
     remoteMallet: { x: W / 2, y: isP2 ? P1_Y_MAX - 80 : P2_Y_MIN + 80 },
-    awaitingGoal: false,
-    syncAnchor: { x: W / 2, y: H / 2, vx: 80, vy: 220, t: Date.now() },
+    // Local latch: set the instant a goal is detected locally (P1 only, the
+    // physics authority), cleared once the server confirms via a phase
+    // transition. Same purpose as ping_pong's pendingGoal — bridges the
+    // round-trip gap so the next frame doesn't see the puck still past the
+    // goal line and re-fire the same goal event again.
+    pendingGoal: false,
+    lastKnownPhase: phase,
+    syncAnchor: { x: W / 2, y: H / 2, vx: 0, vy: 0, t: Date.now() },
     frameCount: 0,
     lastTime: 0,
     lastMalletSend: 0,
+    justServedLocally: false, // set in handleServeTap, consumed once in the sync effect so whoever tapped never hears their own serve sound twice
     p1Id, p2Id, myId, isP1, isP2,
   });
 
@@ -51,27 +100,68 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     gsRef.current = gameState?.game_state || {};
     const gsCurrent = gsRef.current;
     const s = S.current;
+    const prevPhase = s.lastKnownPhase;
+    s.lastKnownPhase = gsCurrent.phase;
+    const justEnteredPlaying = prevPhase !== 'playing' && gsCurrent.phase === 'playing';
+    const justEnteredServing = prevPhase !== 'serving' && gsCurrent.phase === 'serving';
 
     if (isP1) {
       if (gsCurrent.p2x != null) s.remoteMallet.x = gsCurrent.p2x;
       if (gsCurrent.p2y != null) s.remoteMallet.y = gsCurrent.p2y;
-      if (s.awaitingGoal && gsCurrent.phase === 'playing') {
+      // Just served — adopt the server-authoritative launched puck exactly
+      // once, at the transition edge. Replaces the old "optimistic local
+      // reset, then a second server-confirmed reset" race.
+      if (justEnteredPlaying) {
         s.puck.x = gsCurrent.ball_x ?? W / 2;
         s.puck.y = gsCurrent.ball_y ?? H / 2;
-        s.puck.vx = gsCurrent.ball_vx ?? 80;
-        s.puck.vy = gsCurrent.ball_vy ?? 220;
-        s.awaitingGoal = false;
+        s.puck.vx = gsCurrent.ball_vx ?? 0;
+        s.puck.vy = gsCurrent.ball_vy ?? 0;
+        s.pendingGoal = false;
       }
     } else {
+      // P2 / spectator: update extrapolation anchor from relayed state.
+      // Goal sound: P1 always plays it directly, the instant it detects a
+      // goal in its own physics loop — this branch is the ONLY place it
+      // fires for everyone else, so no double-play guard is needed here.
+      if (justEnteredServing) {
+        playAirHockeySound('goal', { volume: 0.55 });
+        s.syncAnchor = { x: W / 2, y: H / 2, vx: 0, vy: 0, t: Date.now() };
+      }
+
       if (gsCurrent.p1x != null) s.remoteMallet.x = gsCurrent.p1x;
       if (gsCurrent.p1y != null) s.remoteMallet.y = gsCurrent.p1y;
-      s.syncAnchor = {
-        x: gsCurrent.ball_x ?? W / 2,
-        y: gsCurrent.ball_y ?? H / 2,
-        vx: gsCurrent.ball_vx ?? 80,
-        vy: gsCurrent.ball_vy ?? 220,
-        t: Date.now(),
-      };
+      if (gsCurrent.phase === 'playing') {
+        const now = Date.now();
+        const newVx = gsCurrent.ball_vx ?? s.syncAnchor.vx;
+        const newVy = gsCurrent.ball_vy ?? s.syncAnchor.vy;
+        // Skip inference on the very first playing-phase frame after a serve
+        // — that frame is just adopting the served velocity, not a
+        // collision, and the 'serve' sound below already covers it. Without
+        // this guard the stale pre-rally syncAnchor (left over from
+        // whatever the puck was doing right before the last goal) could
+        // produce a spurious hit/bounce sound here.
+        if (!justEnteredPlaying) {
+          const prevSpeed = Math.sqrt(s.syncAnchor.vx * s.syncAnchor.vx + s.syncAnchor.vy * s.syncAnchor.vy);
+          const newSpeed = Math.sqrt(newVx * newVx + newVy * newVy);
+          if (prevSpeed > 0) {
+            if (newSpeed > prevSpeed * MALLET_HIT_SPEED_RATIO) {
+              playAirHockeySound('mallet_hit', { volume: 0.5, rate: 0.95 + Math.random() * 0.1 });
+            } else if (Math.sign(newVx) !== Math.sign(s.syncAnchor.vx) || Math.sign(newVy) !== Math.sign(s.syncAnchor.vy)) {
+              playAirHockeySound('wall_bounce', { volume: 0.35, rate: 0.95 + Math.random() * 0.1 });
+            }
+          }
+        }
+        s.syncAnchor = { x: gsCurrent.ball_x ?? W / 2, y: gsCurrent.ball_y ?? H / 2, vx: newVx, vy: newVy, t: now };
+      }
+    }
+
+    // Serve sound — shared: either role can hold serve. Whoever actually
+    // tapped already heard it instantly via handleServeTap's optimistic
+    // play; this only needs to cover the OTHER player hearing the confirmed
+    // serve arrive over the network.
+    if (justEnteredPlaying) {
+      if (s.justServedLocally) s.justServedLocally = false;
+      else playAirHockeySound('serve', { volume: 0.4 });
     }
   }, [gameState, isP1]);
 
@@ -149,15 +239,6 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     ctx.strokeStyle = '#93c5fd'; ctx.lineWidth = 2; ctx.stroke();
     ctx.beginPath(); ctx.arc(m2x, m2y, MALLET_R * 0.4, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fill();
-
-    // Goal flash
-    if (s.awaitingGoal) {
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillRect(0, 0, W, H);
-      ctx.font = 'bold 32px system-ui'; ctx.textAlign = 'center';
-      ctx.fillStyle = '#fde047';
-      ctx.fillText('⚡ GOAL!', W / 2, H / 2 - 12);
-    }
   }, []);
 
   // P1 physics loop
@@ -174,14 +255,14 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
       s.frameCount++;
       const gsCurrent = gsRef.current;
 
-      if (gsCurrent.phase === 'playing' && !s.awaitingGoal) {
+      if (gsCurrent.phase === 'playing' && !s.pendingGoal) {
         const p = s.puck;
         p.x += p.vx * dt;
         p.y += p.vy * dt;
 
         // Wall bounces (left/right only; top/bottom are goal areas)
-        if (p.x < PUCK_R) { p.x = PUCK_R; p.vx = Math.abs(p.vx); }
-        if (p.x > W - PUCK_R) { p.x = W - PUCK_R; p.vx = -Math.abs(p.vx); }
+        if (p.x < PUCK_R) { p.x = PUCK_R; p.vx = Math.abs(p.vx); playAirHockeySound('wall_bounce', { volume: 0.35, rate: 0.95 + Math.random() * 0.1 }); }
+        if (p.x > W - PUCK_R) { p.x = W - PUCK_R; p.vx = -Math.abs(p.vx); playAirHockeySound('wall_bounce', { volume: 0.35, rate: 0.95 + Math.random() * 0.1 }); }
 
         // Mallet-puck collision check (circle vs circle)
         function checkMallet(mx, my) {
@@ -202,6 +283,7 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
               const mag = Math.sqrt(p.vx * p.vx + p.vy * p.vy) || 1;
               p.vx = (p.vx / mag) * speed;
               p.vy = (p.vy / mag) * speed;
+              playAirHockeySound('mallet_hit', { volume: 0.5, rate: 0.95 + Math.random() * 0.1 });
             }
           }
         }
@@ -209,34 +291,44 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
         checkMallet(s.myMallet.x, s.myMallet.y);         // P1's own mallet
         checkMallet(s.remoteMallet.x, s.remoteMallet.y);  // P2's mallet
 
-        // Goal detection
+        // Goal detection — no local puck reset here; it just stops updating
+        // (frozen wherever it exited) since the "serving" phase's UI takes
+        // over the visual entirely once the server confirms. Same pattern
+        // as ping_pong's goal handling — see the comment there for why.
         const GOAL_W = 100;
         const goalLeft = (W - GOAL_W) / 2;
         const goalRight = goalLeft + GOAL_W;
+        let goalScorer = null;
         if (p.y < PUCK_R && p.x > goalLeft && p.x < goalRight) {
-          // Puck entered top goal → P2 scores
-          s.awaitingGoal = true;
-          p.x = W / 2; p.y = H / 2; p.vx = 80; p.vy = 220;
-          onMove({ move_type: 'goal', scorer_id: s.p2Id });
+          goalScorer = s.p2Id; // Puck entered top goal → P2 scores
         } else if (p.y > H - PUCK_R && p.x > goalLeft && p.x < goalRight) {
-          // Puck entered bottom goal → P1 scores
-          s.awaitingGoal = true;
-          p.x = W / 2; p.y = H / 2; p.vx = 80; p.vy = 220;
-          onMove({ move_type: 'goal', scorer_id: s.p1Id });
+          goalScorer = s.p1Id; // Puck entered bottom goal → P1 scores
         } else {
           // Bounce puck off top/bottom walls outside goal area
-          if (p.y < PUCK_R) { p.y = PUCK_R; p.vy = Math.abs(p.vy); }
-          if (p.y > H - PUCK_R) { p.y = H - PUCK_R; p.vy = -Math.abs(p.vy); }
+          if (p.y < PUCK_R) { p.y = PUCK_R; p.vy = Math.abs(p.vy); playAirHockeySound('wall_bounce', { volume: 0.35, rate: 0.95 + Math.random() * 0.1 }); }
+          if (p.y > H - PUCK_R) { p.y = H - PUCK_R; p.vy = -Math.abs(p.vy); playAirHockeySound('wall_bounce', { volume: 0.35, rate: 0.95 + Math.random() * 0.1 }); }
         }
 
-        // State sync to P2
-        if (s.frameCount % SYNC_EVERY === 0 && !s.awaitingGoal) {
+        if (goalScorer) {
+          s.pendingGoal = true;
+          playAirHockeySound('goal', { volume: 0.55 });
+          onMove({ move_type: 'goal', scorer_id: goalScorer });
+        } else if (s.frameCount % SYNC_EVERY === 0) {
+          // Throttled state sync to P2
           onMove({
             move_type: 'state_sync',
             ball_x: p.x, ball_y: p.y, ball_vx: p.vx, ball_vy: p.vy,
             p1x: s.myMallet.x, p1y: s.myMallet.y,
           });
         }
+      } else if (gsCurrent.phase === 'serving' && s.frameCount % SYNC_EVERY === 0) {
+        // Still relay mallet position during the serving pause, so the
+        // other player can see P1 lining up before the point starts.
+        onMove({
+          move_type: 'state_sync',
+          ball_x: s.puck.x, ball_y: s.puck.y, ball_vx: 0, ball_vy: 0,
+          p1x: s.myMallet.x, p1y: s.myMallet.y,
+        });
       }
 
       draw();
@@ -291,6 +383,27 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     }
   }, [isP1, isP2, onMove]);
 
+  // Tap-to-serve — tapping the serving overlay serves when it's your turn.
+  const handleServeTap = useCallback(() => {
+    if (!isMyServe) return;
+    const s = S.current;
+    // Instant local feedback for whoever actually tapped — the sync effect's
+    // `justServedLocally` guard is what stops this same player from hearing
+    // the confirmed round-trip play a second copy of the same sound.
+    s.justServedLocally = true;
+    playAirHockeySound('serve', { volume: 0.5 });
+    if (isP1) {
+      // Optimistic local launch — P1 is the physics authority, so don't make
+      // them wait on their own round-trip before the rally visibly starts.
+      // isMyServe already guarantees this is P1's own serve, so the puck
+      // always launches upward, toward P1's own side.
+      s.puck = { x: W / 2, y: H / 2, vx: 80, vy: -220 };
+      s.lastKnownPhase = 'playing';
+      s.pendingGoal = false;
+    }
+    onMove({ move_type: 'serve' });
+  }, [isMyServe, isP1, onMove]);
+
   const p1Score = scores[p1Id] || 0;
   const p2Score = scores[p2Id] || 0;
 
@@ -320,6 +433,13 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
             <span className="text-gray-500 text-sm">vs</span>
             <span className="text-blue-400">{p2Score}</span>
           </div>
+          <button
+            onClick={() => setSoundEnabled(v => !v)}
+            className="p-1 hover:text-gray-300 text-gray-500"
+            title={soundEnabled ? 'Mute sounds' : 'Unmute sounds'}
+          >
+            {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          </button>
           {(isP1 || isP2) && !isEnded && (
             <button onClick={handleEndGame} className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 rounded font-medium">End Game</button>
           )}
@@ -334,7 +454,7 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
       </div>
 
       {/* Canvas */}
-      <div className="flex-1 flex items-center justify-center overflow-hidden px-2 py-1">
+      <div className="flex-1 relative flex items-center justify-center overflow-hidden px-2 py-1">
         <canvas
           ref={canvasRef}
           width={W}
@@ -343,6 +463,33 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
           onTouchMove={handlePointerMove}
           style={{ width: '100%', maxWidth: `${W}px`, height: 'auto', cursor: 'none', touchAction: 'none', display: 'block' }}
         />
+
+        {/* Serving pause — mirrors Ping Pong's tap-to-serve overlay. Covers
+            the whole canvas, so the handler lives on this outer div rather
+            than the canvas's own (unreachable while this shows) handlers. */}
+        {isServing && !isEnded && (
+          <div
+            className={`absolute inset-0 z-10 flex items-center justify-center bg-black/50 ${isMyServe ? 'cursor-pointer' : ''}`}
+            onClick={isMyServe ? handleServeTap : undefined}
+            onTouchStart={isMyServe ? (e) => { e.preventDefault(); handleServeTap(); } : undefined}
+          >
+            <div className="bg-gray-900/95 border border-gray-700 rounded-2xl px-6 py-5 text-center shadow-2xl mx-4">
+              {rally > 0 ? (
+                <p className="text-yellow-300 font-black text-xl mb-1">⚡ Goal! {serverName} scores</p>
+              ) : (
+                <p className="text-cyan-300 font-black text-xl mb-1">🏒 Get Ready!</p>
+              )}
+              <p className="text-gray-300 text-lg font-bold mb-3">{p1Score} – {p2Score}</p>
+              {isMyServe ? (
+                <button className="px-6 py-3 bg-cyan-600 hover:bg-cyan-500 rounded-xl font-bold text-white animate-pulse pointer-events-none">
+                  Tap to Serve
+                </button>
+              ) : (
+                <p className="text-gray-400 text-sm">Waiting for {serverName} to serve…</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Game over */}

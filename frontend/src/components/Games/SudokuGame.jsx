@@ -1,11 +1,24 @@
 import React, { useState, useEffect } from 'react';
+import GameWinnerBanner from './GameWinnerBanner';
+import GameRulesButton from './GameRulesButton';
 
-export default function SudokuGame({ gameState, players, currentUserId, onMove, onClose, onEndGame }) {
+export default function SudokuGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
   const gs = gameState?.game_state || {};
   const puzzle = gs.puzzle || Array(81).fill(0);
   const phase = gs.phase || 'playing';
   const submissions = gs.submissions || {};
   const startTime = gs.start_time || Date.now();
+
+  const isHostUser = (gameState?.host_id ?? players?.[0]?.user_id) === currentUserId;
+  const isOver = phase === 'ended' || gameState?.status === 'finished' || gameState?.status === 'forfeited';
+  const winner = gameState?.winner_id
+    ? (players || []).find(p => p.user_id === gameState.winner_id)
+    : null;
+
+  const endOrLeave = () => {
+    if (isHostUser && onEndGame) onEndGame();
+    else onClose();
+  };
 
   // Local grid state: null = blank, number = player entry
   const [grid, setGrid] = useState(() => puzzle.map(v => v || null));
@@ -29,6 +42,17 @@ export default function SudokuGame({ gameState, players, currentUserId, onMove, 
 
   const myResult = submissions[String(currentUserId)];
   const isGiven = (i) => puzzle[i] !== 0;
+  // Only present once phase is "ended" — sudokuPublicState on the backend
+  // keeps this stripped for the whole "playing" phase so nobody can peek.
+  const solution = gs.solution || null;
+
+  const resultLabel = { correct: 'Solved it!', incorrect: 'Didn\'t solve it' };
+  const gameStats = {
+    lines: (players || []).map(p => ({
+      label: p.username,
+      value: resultLabel[submissions[String(p.user_id)]] || 'No submission',
+    })),
+  };
 
   function handleCellClick(i) {
     if (isGiven(i) || phase !== 'playing' || submitted) return;
@@ -74,6 +98,18 @@ export default function SudokuGame({ gameState, players, currentUserId, onMove, 
   const selectedBox = selected !== null ? (Math.floor(selected / 27) * 3 + Math.floor((selected % 9) / 3)) : -1;
 
   return (
+    <>
+      {isOver && (
+        <GameWinnerBanner
+          winner={winner}
+          players={players}
+          gameType="sudoku"
+          gameStats={gameStats}
+          isForfeit={gameState?.status === 'forfeited'}
+          onClose={onClose}
+          onPostResult={onPostResult}
+        />
+      )}
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-900 text-white select-none overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
@@ -83,8 +119,15 @@ export default function SudokuGame({ gameState, players, currentUserId, onMove, 
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-yellow-300 font-mono">{formatTime(elapsed)}</span>
-          {onEndGame && (
-            <button onClick={onEndGame} className="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 rounded-lg">End</button>
+          <GameRulesButton gameType="sudoku" className="text-gray-400 hover:text-white" />
+          {!isOver && (
+            <button
+              onClick={endOrLeave}
+              className="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 rounded-lg"
+              title={isHostUser ? 'End game for everyone' : 'Leave game'}
+            >
+              End
+            </button>
           )}
           <button onClick={onClose} className="px-3 py-1 text-sm bg-gray-600 hover:bg-gray-700 rounded-lg">✕</button>
         </div>
@@ -120,6 +163,12 @@ export default function SudokuGame({ gameState, players, currentUserId, onMove, 
             const sameCol = selected !== null && selected % 9 === col;
             const isHighlighted = !isSelected && (sameRow || sameCol || sameBox);
 
+            // Once the round is over, the backend includes the real solution
+            // in the public state (see sudokuPublicState) — reveal it here
+            // instead of leaving everyone's grid frozen wherever they left it.
+            const revealed = isOver && solution;
+            const displayVal = revealed ? solution[i] : val;
+
             const rightBorder = (col + 1) % 3 === 0 && col !== 8 ? 'border-r-2 border-r-gray-500' : 'border-r border-r-gray-700';
             const bottomBorder = (row + 1) % 3 === 0 && row !== 8 ? 'border-b-2 border-b-gray-500' : 'border-b border-b-gray-700';
 
@@ -133,10 +182,10 @@ export default function SudokuGame({ gameState, players, currentUserId, onMove, 
                     sameDigit ? 'bg-blue-900 text-blue-200' :
                     isHighlighted ? 'bg-gray-700/60' :
                     'bg-gray-900'}
-                  ${given ? 'text-gray-200 cursor-default' : 'text-purple-300 cursor-pointer'}
-                  ${!given && !given && phase === 'playing' && !submitted ? 'hover:bg-gray-700' : ''}`}
+                  ${revealed && !given ? 'text-green-400' : given ? 'text-gray-200 cursor-default' : 'text-purple-300 cursor-pointer'}
+                  ${!given && phase === 'playing' && !submitted ? 'hover:bg-gray-700' : ''}`}
               >
-                {val || ''}
+                {displayVal || ''}
               </button>
             );
           })}
@@ -190,5 +239,6 @@ export default function SudokuGame({ gameState, players, currentUserId, onMove, 
         </div>
       </div>
     </div>
+    </>
   );
 }

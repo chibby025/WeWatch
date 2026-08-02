@@ -45,7 +45,7 @@ func sudokuGeneratePuzzle() (puzzle []int, solution []int) {
 
 	// Row swaps within bands (3 bands of 3 rows each)
 	for band := 0; band < 3; band++ {
-		rows := []int{band*3, band*3 + 1, band*3 + 2}
+		rows := []int{band * 3, band*3 + 1, band*3 + 2}
 		rand.Shuffle(len(rows), func(i, j int) { rows[i], rows[j] = rows[j], rows[i] })
 		newGrid := make([]int, 81)
 		copy(newGrid, grid)
@@ -59,7 +59,7 @@ func sudokuGeneratePuzzle() (puzzle []int, solution []int) {
 
 	// Column swaps within bands
 	for band := 0; band < 3; band++ {
-		cols := []int{band*3, band*3 + 1, band*3 + 2}
+		cols := []int{band * 3, band*3 + 1, band*3 + 2}
 		rand.Shuffle(len(cols), func(i, j int) { cols[i], cols[j] = cols[j], cols[i] })
 		newGrid := make([]int, 81)
 		copy(newGrid, grid)
@@ -93,7 +93,6 @@ func sudokuInitialState(players []models.Player) map[string]interface{} {
 	solutionIF := make([]interface{}, len(solution))
 	for i, v := range puzzle {
 		puzzleIF[i] = v
-		solutionIF[i] = v
 	}
 	for i, v := range solution {
 		solutionIF[i] = v
@@ -106,8 +105,8 @@ func sudokuInitialState(players []models.Player) map[string]interface{} {
 
 	return map[string]interface{}{
 		"phase":       "playing",
-		"puzzle":      puzzleIF,   // 81 ints, 0 = blank
-		"solution":    solutionIF, // hidden, stripped from public broadcast
+		"puzzle":      puzzleIF,    // 81 ints, 0 = blank
+		"solution":    solutionIF,  // hidden, stripped from public broadcast
 		"submissions": submissions, // player_id → "correct"|"incorrect"|nil
 		"start_time":  time.Now().UnixMilli(),
 	}
@@ -173,18 +172,14 @@ func (gm *GameManager) processSudokuMove(gameState *GameSessionState, playerID u
 	if correct {
 		submissions[playerKey] = "correct"
 		gameState.GameData["submissions"] = submissions
-		gameState.GameData["phase"] = "ended"
+		gameState.GameData["phase"] = "ended" // sudokuPublicState stops stripping the solution once phase is "ended" — that's the reveal
 
-		// Reveal solution in ended state
-		gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
 		uid := playerID
 		return true, &uid, nil
 	}
 
 	submissions[playerKey] = "incorrect"
 	gameState.GameData["submissions"] = submissions
-
-	gameState.CurrentTurn = (gameState.CurrentTurn - 1 + len(gameState.Players)) % len(gameState.Players)
 	return false, nil, nil
 }
 

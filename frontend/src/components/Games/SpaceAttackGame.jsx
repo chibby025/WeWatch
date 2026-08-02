@@ -700,7 +700,17 @@ function playGameSound(type, ctxRef) {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function SpaceAttackGame({ gameState, players, currentUserId, onMove, onClose, onEndGame }) {
+// Arcade: single-player only (minPlayers/maxPlayers both 1 in GameLobbyModal,
+// space_attack is in the backend's arcadeGameTypes — see game_manager.go).
+// Non-host room members see a placeholder below (mirrors FowlPlayGame's
+// established pattern) instead of independently running their own copy of
+// the game — there is no shared game state or netcode here at all, so two
+// simultaneously-playable instances would just be two disconnected games
+// that happen to share a GameSession id, and ending one would never affect
+// the other. All hooks below stay unconditional regardless of isHost (Rules
+// of Hooks) — they simply never find their target DOM nodes and stay inert
+// when the placeholder branch renders instead of the canvas.
+export default function SpaceAttackGame({ onClose, onEndGame, isHost = true }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const rafRef = useRef(null);
@@ -795,6 +805,26 @@ export default function SpaceAttackGame({ gameState, players, currentUserId, onM
     if (!g.started) { g.started = true; return; }
     if (g.over) { gsRef.current = mkGame(dimsRef.current.W, dimsRef.current.H); gsRef.current.started = true; }
   }, []);
+
+  // Non-host: spectator placeholder only — no canvas, no RAF loop, no
+  // simulation of any kind runs for this client. Ending the game is a
+  // host-only action (the header "End" button below); Close here just
+  // leaves this viewer's own overlay, matching FowlPlayGame's precedent.
+  if (!isHost) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
+        <span className="text-6xl">🚀</span>
+        <p className="text-lg font-semibold">Someone's playing Space Attack!</p>
+        <p className="text-sm text-gray-400">Sit back and cheer them on.</p>
+        <button
+          onClick={onClose}
+          className="mt-2 px-5 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors"
+        >
+          Close
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black select-none">

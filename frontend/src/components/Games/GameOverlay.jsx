@@ -426,6 +426,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 
@@ -438,6 +439,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 

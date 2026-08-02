@@ -157,12 +157,13 @@ const RULES = {
   ping_pong: {
     title: 'Ping Pong',
     rules: [
-      'Move your paddle left and right by dragging or moving your mouse/finger across the screen.',
-      'Player 1 (blue, top) and Player 2 (red, bottom) take turns rallying the ball.',
+      'Move your paddle by dragging or moving your mouse/finger — or use the ◀ ▶ buttons on mobile.',
+      'Player 1 (blue, top) and Player 2 (red, bottom) rally the ball back and forth.',
       'The first player to reach 7 points wins!',
       'The ball speeds up slightly with each hit — keep your reflexes sharp.',
-      'After a point the ball resets and the scorer serves next.',
+      'After a point, the scorer gets serve — tap the ball (or the "Tap to Serve" button) to launch the next rally whenever you\'re ready.',
       'Optional — No Walls mode: side edges are open instead of bouncing. If you hit the ball and it exits through a side, you lose that point. Classic table-tennis rules!',
+      'Power-ups occasionally appear on the table — hit the ball through one to trigger it on your opponent: ❄️ Freeze (their paddle locks up), 🐌 Slow (their paddle moves at a crawl), or 👻 Ghost Ball (they can\'t see the ball at all). Only one power-up is active at a time, and a new one always replaces the last.',
     ],
   },
   air_hockey: {
@@ -275,6 +276,16 @@ const RULES = {
       'After everyone votes, the results are revealed showing how the group split.',
       'The host advances to the next question when ready.',
       'There\'s no single winner — it\'s all about seeing how your friends think! 🎉',
+    ],
+  },
+  sudoku: {
+    title: 'Sudoku Race',
+    rules: [
+      'Everyone gets the exact same puzzle at the same time — it\'s a race, not a turn-based game.',
+      'Fill every empty cell so each row, column, and 3×3 box contains the digits 1-9 exactly once.',
+      'Given (pre-filled) numbers can\'t be changed — only blank cells are editable.',
+      'Tap a cell then a digit to fill it in, or use your keyboard (1-9, arrow keys to move, Backspace/Delete to clear).',
+      'Submit as soon as you think the grid is complete. First correct submission wins instantly — an incorrect submission just tells you to keep trying, it doesn\'t end your turn.',
     ],
   },
   texas_holdem: {
