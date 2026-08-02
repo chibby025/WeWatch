@@ -62,6 +62,7 @@ const PADDLE_BTN_SPEED = 340; // px/sec — directional-button paddle movement
 const PICKUP_TYPES = ['freeze', 'slow', 'invisible'];
 const PICKUP_EMOJI = { freeze: '❄️', slow: '🐌', invisible: '👻' }; // used only in the small JSX status banner text, not the canvas
 const PICKUP_COLOR = { freeze: '#60a5fa', slow: '#a3e635', invisible: '#c084fc' };
+const PICKUP_LABEL = { freeze: 'FREEZE', slow: 'SLOW', invisible: 'GHOST BALL' }; // canvas label under each pickup — same "Ghost Ball" player-facing name as EFFECT_MESSAGE/PICKUP_EMOJI below
 const EFFECT_MESSAGE = {
   freeze:    { mine: "You're Frozen!",              opp: 'Opponent is Frozen!' },
   slow:      { mine: "You're Slowed!",               opp: 'Opponent is Slowed!' },
@@ -429,15 +430,45 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
     // draws whatever was last relayed (no local timer needed on their end).
     const pickupsToRender = curPhase === 'playing' ? (s.isP1 ? s.pickups : (gsCurrent.pickups || [])) : [];
     for (const p of pickupsToRender) {
-      const pulse = 1 + 0.15 * Math.sin(Date.now() / 180 + p.x);
+      // Phase-offset by p.x so multiple pickups on screen at once don't all
+      // pulse in lockstep — same trick already used for the glow ring below.
+      const t = Date.now() / 180 + p.x;
+      const pulse = 1 + 0.15 * Math.sin(t);
+      const glowAlpha = 0.28 + 0.24 * (0.5 + 0.5 * Math.sin(t)); // breathes between ~0.16 and ~0.52
+      const color = PICKUP_COLOR[p.type] || '#fff';
+
       ctx.beginPath();
       ctx.arc(p.x, p.y, PICKUP_R * pulse, 0, Math.PI * 2);
-      ctx.fillStyle = (PICKUP_COLOR[p.type] || '#fff') + '33';
+      ctx.fillStyle = color;
+      ctx.globalAlpha = glowAlpha;
       ctx.fill();
-      ctx.strokeStyle = PICKUP_COLOR[p.type] || '#fff';
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
       ctx.stroke();
+
+      // Icon itself scales with the same pulse (previously only the outer
+      // glow ring pulsed — the icon sat at a fixed size, making the effect
+      // easy to miss).
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.scale(pulse, pulse);
+      ctx.translate(-p.x, -p.y);
       drawPickupIcon(ctx, p.type, p.x, p.y, PICKUP_R);
+      ctx.restore();
+
+      // Name label underneath, so players don't need to already know what
+      // each icon means at a glance.
+      const label = PICKUP_LABEL[p.type];
+      if (label) {
+        ctx.font = 'bold 9px system-ui';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+        ctx.strokeText(label, p.x, p.y + PICKUP_R * pulse + 12);
+        ctx.fillStyle = color;
+        ctx.fillText(label, p.x, p.y + PICKUP_R * pulse + 12);
+      }
     }
 
     // Invisible-ball effect: skip drawing the ball entirely for whichever

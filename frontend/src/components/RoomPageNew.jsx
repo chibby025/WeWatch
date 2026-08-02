@@ -1238,7 +1238,10 @@ const RoomPageNew = () => {
             setSessionToRate({
               sessionId: message.data.session_id,
               hostId: message.data.host_id,
-              hostName: message.data.host_name || room?.host?.username || 'Unknown Host',
+              // room?.host?.username was always undefined — the Room model has no
+              // nested Host relation, only host_id. GetRoomHandler actually returns
+              // it as a flat `host_username` field (see fetchRoomData above).
+              hostName: message.data.host_name || room?.host_username || 'Unknown Host',
               sessionTitle: message.data.session_title || activeSession?.title || 'Untitled Session',
               watchType: message.data.watch_type,
               isTemporary: message.data.is_temporary, // Store for future use (e.g., redirect after rating)

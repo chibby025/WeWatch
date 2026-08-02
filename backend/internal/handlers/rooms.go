@@ -646,8 +646,20 @@ func EndWatchSessionHandler(c *gin.Context) {
 	log.Printf("✅ EndWatchSessionHandler: Session %s marked as ended in DB", sessionID)
 
 	// Broadcast session_ended immediately — clients start navigating away now.
-	// Host username lookup is intentionally omitted here (violates "no slow ops before broadcast").
-	// The frontend already has the host's username from auth context / room data.
+	// A single by-primary-key username lookup is a sub-millisecond indexed
+	// SELECT, not remotely comparable to the genuinely slow ops (media/CDN
+	// deletes, LiveKit teardown, quiz cleanup) deferred to the background
+	// goroutine below — safe to do inline before broadcasting. Previously
+	// omitted here on the assumption the frontend already had the host's
+	// username from room data, which wasn't actually true: the Room model
+	// has no nested Host relation (only HostID), so every frontend fallback
+	// that tried room.host.username was silently always undefined — this
+	// surfaced as "Unknown Host" in SessionRatingModal for every session end.
+	var hostUser models.User
+	hostName := ""
+	if err := DB.Select("username").First(&hostUser, room.HostID).Error; err == nil {
+		hostName = hostUser.Username
+	}
 	log.Printf("📡 [EndWatchSessionHandler] Broadcasting session_ended to room %d", session.RoomID)
 	sessionEndedData := map[string]interface{}{
 		"type": "session_ended",
@@ -657,6 +669,7 @@ func EndWatchSessionHandler(c *gin.Context) {
 			"was_paid_session": session.TicketingEnabled,
 			"session_title":    session.SessionTitle,
 			"host_id":          room.HostID,
+			"host_name":        hostName,
 			"watch_type":       session.WatchType,
 			"is_temporary":     room.IsTemporary,
 		},
@@ -1138,8 +1151,30 @@ func AutoEndSession(sessionID string) error {
 	
 	// ✅ BROADCAST SESSION_ENDED TO ALL PARTICIPANTS
 	if hub != nil {
+		// host_id/host_name were previously omitted from this broadcast entirely
+		// (unlike EndWatchSessionHandler's manual-end path) — meant every client's
+		// SessionRatingModal showed "Unknown Host" on a host-timeout auto-end, and
+		// the host themself could incorrectly be shown the rating prompt for their
+		// own session (isCurrentUserHost checks compare against message.data.host_id).
+		var hostUser models.User
+		hostName := ""
+		if err := DB.Select("username").First(&hostUser, room.HostID).Error; err == nil {
+			hostName = hostUser.Username
+		}
+		autoEndData := map[string]interface{}{
+			"type": "session_ended",
+			"data": map[string]interface{}{
+				"session_id":   sessionID,
+				"room_id":      session.RoomID,
+				"reason":       "host_timeout",
+				"is_temporary": room.IsTemporary,
+				"host_id":      room.HostID,
+				"host_name":    hostName,
+			},
+		}
+		autoEndBytes, _ := json.Marshal(autoEndData)
 		broadcastMsg := OutgoingMessage{
-			Data:     []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d,"reason":"host_timeout","is_temporary":%t}}`, sessionID, session.RoomID, room.IsTemporary)),
+			Data:     autoEndBytes,
 			IsBinary: false,
 		}
 		hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)

@@ -250,6 +250,7 @@ const Taskbar = ({
   const membersButtonRef = useRef(null);
   const chatButtonRef = useRef(null);
   const leaveCallButtonRef = useRef(null);
+  const minimizeButtonRef = useRef(null);
   const [showTaskbarTour, setShowTaskbarTour] = useState(false);
   const showTaskbarTourRef = useRef(false);
   useEffect(() => { showTaskbarTourRef.current = showTaskbarTour; }, [showTaskbarTour]);
@@ -318,6 +319,9 @@ const Taskbar = ({
   // idle-hide window to 1s while a game is up keeps "tap to reveal, then mute/etc."
   // working without leaving it sitting on top of game buttons for long.
   const hideDelayMs = currentGame ? 1000 : 2000;
+  // How long the pill stays visible on first mount (a fresh session join),
+  // before the normal short idle-hide timers above take over.
+  const INITIAL_VISIBLE_MS = 60000;
 
   // Minimize-while-gaming: a game's own bottom controls sit in the same
   // screen region as the pill, so while a game is active the user can shrink
@@ -443,18 +447,21 @@ const Taskbar = ({
     if (!drag?.moved) setIsMinimized(false); // a tap (no real drag) restores the full pill
   };
 
-  // Initial 3s grace period when a user first joins — shown once on mount only.
-  // Shares hideTimerRef with the tap-activity effect below, so if the user taps
-  // during (or right after) this window, that tap's own 1s timer simply replaces
-  // this one — i.e. continued tapping keeps it visible indefinitely, it doesn't
-  // get force-hidden at the 3s mark regardless of what the user is doing.
+  // Initial grace period when a user first joins — shown once on mount only,
+  // for up to a full minute so a newly-joined user has real time to notice
+  // the controls (and the one-time tour below, if it's their first visit)
+  // before it fades. Shares hideTimerRef with the tap-activity effect below,
+  // so if the user taps during (or right after) this window, that tap's own
+  // shorter idle timer simply replaces this one — i.e. continued tapping
+  // keeps it visible indefinitely, it doesn't get force-hidden at the 1-minute
+  // mark regardless of what the user is doing.
   useEffect(() => {
     if (isSuppressed) return; // don't auto-show into an already-suppressed state
     setIsVisible(true);
     hideTimerRef.current = setTimeout(() => {
       if (!showTaskbarTourRef.current && !isHoveringRef.current) setIsVisible(false);
       hideTimerRef.current = null;
-    }, 3000);
+    }, INITIAL_VISIBLE_MS);
     return () => {
       if (hideTimerRef.current) {
         clearTimeout(hideTimerRef.current);
@@ -625,6 +632,7 @@ const Taskbar = ({
           style={{ zIndex: 1001 }}
         >
           <button
+            ref={minimizeButtonRef}
             onClick={handleMinimizeClick}
             title="Minimize"
             className="flex flex-col items-center gap-0.5 text-white hover:bg-white/10 rounded-md px-1 py-0.5 transition-colors !min-w-0 !min-h-0"
@@ -1079,10 +1087,11 @@ const Taskbar = ({
 
       `}</style>
 
-      {/* One-time coach-mark: Leave Call, Chat, Audio, and Members controls */}
+      {/* One-time coach-mark: Minimize, Leave Call, Chat, Audio, and Members controls */}
       {showTaskbarTour && (
         <Coachmark
           steps={[
+            { ref: minimizeButtonRef, title: 'Minimize', description: 'Shrink this bar into a small draggable dot you can move out of the way — tap it again to bring the full bar back.' },
             { ref: leaveCallButtonRef, title: 'Leave Call', description: 'Exit the watch session whenever you\'re done.' },
             { ref: chatButtonRef, title: 'Chat', description: 'Open the chat panel to talk with everyone in the session.' },
             { ref: audioButtonRef, title: 'Audio', description: 'Mute or unmute your mic. Right-click (or long-press) for audio device settings.' },
