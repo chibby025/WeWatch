@@ -242,6 +242,89 @@ func TestJigsawCompletionDeclaresTopPlacer(t *testing.T) {
 	}
 }
 
+func TestJigsawDragRelaysPositionWhileHeld(t *testing.T) {
+	gs := configuredJigsaw(t, 2)
+	gm := &GameManager{}
+
+	if _, _, err := gm.processJigsawMove(gs, 1, "pickup", map[string]interface{}{"piece_id": "1-2"}); err != nil {
+		t.Fatalf("pickup: %v", err)
+	}
+	if _, _, err := gm.processJigsawMove(gs, 1, "piece_drag", map[string]interface{}{
+		"piece_id": "1-2", "x": 0.33, "y": 0.44,
+	}); err != nil {
+		t.Fatalf("piece_drag: %v", err)
+	}
+	pieces := jigsawPiecesMap(gs.GameData)
+	piece := pieces["1-2"].(map[string]interface{})
+	if x, _ := piece["x"].(float64); x != 0.33 {
+		t.Errorf("expected live x=0.33, got %v", x)
+	}
+	if y, _ := piece["y"].(float64); y != 0.44 {
+		t.Errorf("expected live y=0.44, got %v", y)
+	}
+	// Dragging must not place the piece or touch placed_count — it's purely
+	// a position update, snapping only happens on release.
+	if placed, _ := piece["placed"].(bool); placed {
+		t.Error("piece_drag should never place a piece")
+	}
+	if count := gbInt(gs.GameData["placed_count"]); count != 0 {
+		t.Errorf("expected placed_count=0 after a drag, got %d", count)
+	}
+}
+
+func TestJigsawDragRejectedWhenNotHolding(t *testing.T) {
+	gs := configuredJigsaw(t, 2)
+	gm := &GameManager{}
+
+	if _, _, err := gm.processJigsawMove(gs, 1, "pickup", map[string]interface{}{"piece_id": "0-1"}); err != nil {
+		t.Fatalf("pickup: %v", err)
+	}
+	if _, _, err := gm.processJigsawMove(gs, 2, "piece_drag", map[string]interface{}{
+		"piece_id": "0-1", "x": 0.2, "y": 0.2,
+	}); err == nil {
+		t.Fatal("expected error: player 2 should not be able to drag a piece player 1 is holding")
+	}
+}
+
+func TestJigsawDragRejectedOnUnheldPiece(t *testing.T) {
+	gs := configuredJigsaw(t, 2)
+	gm := &GameManager{}
+
+	if _, _, err := gm.processJigsawMove(gs, 1, "piece_drag", map[string]interface{}{
+		"piece_id": "0-1", "x": 0.2, "y": 0.2,
+	}); err == nil {
+		t.Fatal("expected error: cannot drag a piece nobody has picked up")
+	}
+}
+
+// TestJigsawScatterGroupsEdgeAndInteriorPieces: edge pieces (border of the
+// grid) should land in the left half of the tray, interior pieces in the
+// right half — the "sort edge pieces first" starting-layout convenience.
+func TestJigsawScatterGroupsEdgeAndInteriorPieces(t *testing.T) {
+	gs := configuredJigsaw(t, 1) // 4x4 grid
+	pieces := jigsawPiecesMap(gs.GameData)
+
+	checkHalf := func(pieceID string, wantLeft bool) {
+		t.Helper()
+		piece := pieces[pieceID].(map[string]interface{})
+		x, _ := piece["x"].(float64)
+		if wantLeft && x >= 0.40 {
+			t.Errorf("piece %s: expected left-half scatter (x<0.40), got x=%v", pieceID, x)
+		}
+		if !wantLeft && x < 0.55 {
+			t.Errorf("piece %s: expected right-half scatter (x>=0.55), got x=%v", pieceID, x)
+		}
+	}
+	// Corners and border pieces are all edge pieces on a 4x4 grid.
+	checkHalf("0-0", true)
+	checkHalf("0-3", true)
+	checkHalf("3-0", true)
+	checkHalf("0-2", true) // top row, interior column — still an edge piece
+	// (1,1) and (1,2) etc are the only fully-interior pieces on a 4x4 grid.
+	checkHalf("1-1", false)
+	checkHalf("2-2", false)
+}
+
 func TestJigsawTopPlacerTieIsDraw(t *testing.T) {
 	placedBy := map[string]interface{}{"1": 5, "2": 5}
 	if winner := jigsawTopPlacer(placedBy); winner != nil {

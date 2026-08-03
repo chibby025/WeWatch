@@ -264,9 +264,12 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 
 	// Real-time relay messages from ping_pong / air_hockey arrive at ~20-30 Hz.
 	// Skip DB writes for these volatile moves to avoid thousands of writes per minute.
-	volatileRT := map[string]bool{"state_sync": true, "paddle_move": true, "mallet_move": true}
+	// jigsaw's piece_drag is the same idea at a much lower rate (~10-12 Hz,
+	// only while a piece is actively being dragged) — a live position update,
+	// not a discrete game action worth persisting to the move history.
+	volatileRT := map[string]bool{"state_sync": true, "paddle_move": true, "mallet_move": true, "piece_drag": true}
 	isVolatile := volatileRT[moveType] &&
-		(gameState.GameSession.GameType == "ping_pong" || gameState.GameSession.GameType == "air_hockey")
+		(gameState.GameSession.GameType == "ping_pong" || gameState.GameSession.GameType == "air_hockey" || gameState.GameSession.GameType == "jigsaw")
 
 	gameMove := &models.GameMove{
 		GameSessionID: gameSessionID,

@@ -45,7 +45,7 @@ import SudokuGame from './SudokuGame';
 import PingPongGame from './PingPongGame';
 import AirHockeyGame from './AirHockeyGame';
 
-export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore }) {
+export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore, gameErrorMsg, gameErrorKey }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -326,17 +326,21 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
       );
 
     case 'fowl_play':
-      // Arcade: single-player or hot-seat tournament. Non-playing members see
-      // a placeholder inside FowlPlayGame itself (no spectator iframe load).
+      // Arcade: single-player or hot-seat tournament. Non-playing members get
+      // a live spectator view inside FowlPlayGame itself, driven by relayed
+      // duck/score snapshots from the host's game — not a second iframe load.
       return (
         <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
           <FowlPlayGame
+            gameState={activeGame}
             onClose={onClose}
             onEndGame={onEndGame}
             isHost={activeGame.host_id === currentUserId}
             hotSeatTournament={hotSeatTournament}
             currentUserId={currentUserId}
             onTournamentScore={onTournamentScore}
+            onRelayPacket={onRelayPacket}
+            registerRelayReceiver={registerRelayReceiver}
           />
         </Suspense>
       );
@@ -493,6 +497,8 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onClose={onClose}
           onEndGame={onEndGame}
           onPostResult={onPostResult}
+          gameErrorMsg={gameErrorMsg}
+          gameErrorKey={gameErrorKey}
         />
       );
 

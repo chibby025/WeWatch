@@ -1,18 +1,23 @@
 // src/components/Games/SnakesAndLaddersGame.jsx
-import { useState, useEffect } from 'react';
-import { X as CloseIcon, Users } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { X as CloseIcon } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
 
-// Mirrors snakes_ladders.go's snakeLadders map exactly — used only for the
-// board's visual labeling (🐍/🪜 icons), never for move validation, which the
-// server owns entirely.
+// Mirrors snakes_ladders.go's snakeLadders map exactly — used for the
+// board's visual labeling AND for deriving client-side event banners
+// (ladder/snake/overshoot), never for move validation, which the server
+// owns entirely.
 const SNAKES_LADDERS = {
   4: 14, 9: 31, 20: 38, 28: 84, 40: 59, 51: 67, 63: 81, 71: 91, // ladders (up)
   17: 7, 54: 34, 62: 19, 64: 60, 87: 24, 93: 73, 95: 75, 99: 78, // snakes (down)
 };
 
-const TOKEN_EMOJI = ['🔴', '🔵', '🟢', '🟡'];
+// ── Palette (reuses LudoGame.jsx's exact values for visual consistency
+// across the app's game family) ─────────────────────────────────────────
+const PLAYER_COLOR_HEX   = ['#ef4444', '#3b82f6', '#22c55e', '#eab308'];
+const PLAYER_COLOR_LIGHT = ['#fca5a5', '#93c5fd', '#86efac', '#fef08a'];
+const PLAYER_COLOR_DARK  = ['#991b1b', '#1e3a8a', '#14532d', '#713f12'];
 
 // Standard zigzag ("boustrophedon") board numbering: bottom row is 1-10
 // left-to-right, next row up is 20-11 right-to-left, and so on. gridRow is
@@ -26,30 +31,255 @@ const CELLS = Array.from({ length: 10 }, (_, gridRow) =>
   Array.from({ length: 10 }, (_, col) => squareAt(gridRow, col))
 ).flat();
 
+// Reverse lookup: square number (1-100) -> {row, col}. Both the static
+// board cells and the animated token overlay below are positioned from
+// this exact same coordinate math (percentage-based, no CSS grid gaps
+// involved anywhere) so the two layers always align pixel-for-pixel and a
+// token's CSS transition between squares is always accurate — the same
+// technique LudoGame.jsx's board uses.
+const SQUARE_TO_POS = {};
+for (let gridRow = 0; gridRow < 10; gridRow++) {
+  for (let col = 0; col < 10; col++) {
+    SQUARE_TO_POS[squareAt(gridRow, col)] = { row: gridRow, col };
+  }
+}
+
+// ── 3-D Dice (adapted from LudoGame.jsx's Dice3D — self-contained, no
+// Ludo-specific logic; duplicated rather than shared, matching this
+// codebase's convention of each game file owning its own small visual
+// components) ────────────────────────────────────────────────────────────
+const PIPS = {
+  1: [[50,50]],
+  2: [[28,28],[72,72]],
+  3: [[28,28],[50,50],[72,72]],
+  4: [[28,28],[72,28],[28,72],[72,72]],
+  5: [[28,28],[72,28],[50,50],[28,72],[72,72]],
+  6: [[28,22],[72,22],[28,50],[72,50],[28,78],[72,78]],
+};
+// [rotX, rotY] to bring face N to face the viewer
+const FACE_SHOW = { 1:[0,0], 2:[0,-90], 3:[-90,0], 4:[90,0], 5:[0,90], 6:[0,180] };
+
+function DieFace({ n, pipColor }) {
+  return (
+    <div style={{
+      position:'absolute', inset:0,
+      background:'linear-gradient(135deg,#f8fafc 0%,#e2e8f0 100%)',
+      borderRadius:8,
+      border:'1.5px solid #94a3b8',
+      boxShadow:'inset 0 1px 3px rgba(255,255,255,0.9),inset 0 -1px 2px rgba(0,0,0,0.15)',
+    }}>
+      {(PIPS[n]||[]).map(([px,py],i) => (
+        <div key={i} style={{
+          position:'absolute', left:`${px}%`, top:`${py}%`,
+          transform:'translate(-50%,-50%)',
+          width:9, height:9, borderRadius:'50%',
+          backgroundColor: pipColor || '#1e293b',
+          boxShadow:'0 1px 2px rgba(0,0,0,0.6)',
+        }}/>
+      ))}
+    </div>
+  );
+}
+
+// Single die (this game rolls once per turn, unlike Ludo's two) — sized a
+// bit larger than Ludo's 44px since it's the sole centerpiece here.
+function Dice3D({ value, pipColor }) {
+  const S = 56;
+  const H = S / 2;
+  const rotRef  = useRef({ x: 0, y: 0 });
+  const prevVal = useRef(0);
+  const [tf, setTf] = useState('rotateX(-20deg) rotateY(20deg)');
+  const [tr, setTr] = useState('none');
+
+  useEffect(() => {
+    if (!value || value === prevVal.current) return;
+    prevVal.current = value;
+    const [fx, fy] = FACE_SHOW[value];
+    const bx = Math.round(rotRef.current.x / 360) * 360;
+    const by = Math.round(rotRef.current.y / 360) * 360;
+    const nx = bx + (Math.floor(Math.random()*2)+2)*360 + fx;
+    const ny = by + (Math.floor(Math.random()*2)+2)*360 + fy;
+    rotRef.current = { x: nx, y: ny };
+    setTr('transform 0.75s cubic-bezier(0.22,1.5,0.5,1)');
+    setTf(`rotateX(${nx}deg) rotateY(${ny}deg)`);
+  }, [value]);
+
+  const face = (transform, n) => (
+    <div style={{ position:'absolute', width:S, height:S, transform }}>
+      <DieFace n={n} pipColor={pipColor} />
+    </div>
+  );
+
+  return (
+    <div style={{ width:S, height:S, perspective:200, perspectiveOrigin:'50% 40%' }}>
+      <div style={{ width:S, height:S, position:'relative', transformStyle:'preserve-3d', transform:tf, transition:tr }}>
+        {face(`translateZ(${H}px)`, 1)}
+        {face(`rotateY(180deg) translateZ(${H}px)`, 6)}
+        {face(`rotateY(90deg) translateZ(${H}px)`, 2)}
+        {face(`rotateY(-90deg) translateZ(${H}px)`, 5)}
+        {face(`rotateX(-90deg) translateZ(${H}px)`, 4)}
+        {face(`rotateX(90deg) translateZ(${H}px)`, 3)}
+      </div>
+    </div>
+  );
+}
+
+// ── Token (SVG puck, adapted from LudoGame.jsx's Token — the pulsing ring
+// here marks whose TURN it is, not "clickable", since moves in this game
+// are fully automatic once rolled) ────────────────────────────────────────
+function Token({ colorIdx, isCurrentTurn }) {
+  const hex  = PLAYER_COLOR_HEX[colorIdx];
+  const lite = PLAYER_COLOR_LIGHT[colorIdx];
+  const dark = PLAYER_COLOR_DARK[colorIdx];
+  return (
+    <svg viewBox="0 0 40 40" style={{
+      width:'100%', height:'100%', overflow:'visible',
+      filter: isCurrentTurn
+        ? `drop-shadow(0 0 5px ${hex}bb) drop-shadow(0 3px 6px rgba(0,0,0,0.65))`
+        : 'drop-shadow(0 2px 4px rgba(0,0,0,0.55))',
+    }}>
+      {isCurrentTurn && (
+        <circle cx="20" cy="20" r="20" fill="none" stroke={hex} strokeWidth="2.5"
+          style={{ animation:'slTokenRing 1.3s ease-out infinite', transformOrigin:'20px 20px' }}/>
+      )}
+      <circle cx="20" cy="20" r="18" fill={dark}/>
+      <circle cx="20" cy="20" r="16.5" fill={hex}/>
+      <circle cx="20" cy="20" r="11" fill="none" stroke={lite} strokeWidth="2" opacity="0.55"/>
+      <circle cx="20" cy="20" r="5" fill={dark} opacity="0.5"/>
+      <circle cx="20" cy="20" r="3.2" fill={lite} opacity="0.8"/>
+    </svg>
+  );
+}
+
+// ── Ladder / snake board icons (replace the old 🪜/🐍 emoji for a cleaner,
+// more "designed" look consistent with the custom-SVG Token above) ───────
+function LadderIcon() {
+  return (
+    <svg viewBox="0 0 24 24" style={{ width:'68%', height:'68%' }}>
+      <line x1="6" y1="2" x2="6" y2="22" stroke="#a16207" strokeWidth="2.2" strokeLinecap="round"/>
+      <line x1="18" y1="2" x2="18" y2="22" stroke="#a16207" strokeWidth="2.2" strokeLinecap="round"/>
+      {[4, 8.5, 13, 17.5].map((y, i) => (
+        <line key={i} x1="6" y1={y} x2="18" y2={y} stroke="#ca8a04" strokeWidth="2" strokeLinecap="round"/>
+      ))}
+    </svg>
+  );
+}
+
+function SnakeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" style={{ width:'72%', height:'72%' }}>
+      <path d="M 4 21 Q 4 14 12 14 Q 20 14 20 8 Q 20 3 14 3"
+        fill="none" stroke="#16a34a" strokeWidth="2.6" strokeLinecap="round"/>
+      <circle cx="14" cy="3" r="2.6" fill="#15803d"/>
+      <circle cx="14.9" cy="2.3" r="0.55" fill="#0f172a"/>
+    </svg>
+  );
+}
+
+const BOARD_CP = 10; // percent per cell (100 / 10)
+
 export default function SnakesAndLaddersGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
-  const [positions, setPositions] = useState([]);
+  const [positions, setPositions] = useState([]);               // authoritative, from server
+  const [displayPositions, setDisplayPositions] = useState([]); // what's actually rendered (animated)
   const [currentTurn, setCurrentTurn] = useState(0);
   const [lastRoll, setLastRoll] = useState(null);
+  const [lastPlayerIdx, setLastPlayerIdx] = useState(null);
   const [winner, setWinner] = useState(null);
   const [isOver, setIsOver] = useState(false);
   const [rolling, setRolling] = useState(false);
+  const [announcement, setAnnouncement] = useState(null);
+
+  const animTimerRef = useRef(null);
+  const announceTimerRef = useRef(null);
+  // Shadow ref so the sync effect below always diffs against the latest
+  // *displayed* value (not a stale closure) without needing displayPositions
+  // itself as an effect dependency.
+  const displayPositionsRef = useRef([]);
+  displayPositionsRef.current = displayPositions;
+
+  const announce = useCallback((opts) => {
+    clearTimeout(announceTimerRef.current);
+    setAnnouncement({ ...opts, key: Date.now() });
+    announceTimerRef.current = setTimeout(() => setAnnouncement(null), 2800);
+  }, []);
 
   useEffect(() => {
     if (!gameState) return;
     const gs = gameState.game_state || {};
-    setPositions(gs.positions || players.map(() => 0));
+    const newPositions = gs.positions || players.map(() => 0);
+    const roll = typeof gs.last_roll === 'number' ? gs.last_roll : null;
+    const lastPlayer = typeof gs.last_player === 'number' ? gs.last_player : null;
+
+    setPositions(newPositions);
     setCurrentTurn(gameState.current_turn ?? 0);
-    setLastRoll(typeof gs.last_roll === 'number' ? gs.last_roll : null);
+    setLastRoll(roll);
+    setLastPlayerIdx(lastPlayer);
     setRolling(false);
 
     const over = gameState.status === 'finished' || gameState.status === 'completed' || gameState.status === 'forfeited';
     setIsOver(over);
-    if (over) {
-      setWinner(gameState.winner_id ? (players.find(p => p.user_id === gameState.winner_id) || 'draw') : 'draw');
-    } else {
-      setWinner(null);
+    setWinner(over ? (gameState.winner_id ? (players.find(p => p.user_id === gameState.winner_id) || 'draw') : 'draw') : null);
+
+    clearTimeout(animTimerRef.current);
+
+    const prevDisplay = displayPositionsRef.current;
+    if (lastPlayer === null || roll === null || prevDisplay.length === 0) {
+      // First render / rehydration — snap directly, nothing to animate from yet.
+      setDisplayPositions(newPositions);
+      return;
     }
+
+    const oldPos = prevDisplay[lastPlayer] ?? 0;
+    const finalPos = newPositions[lastPlayer] ?? 0;
+    const overshoot = oldPos + roll > 100;
+    const landedSquare = overshoot ? oldPos : oldPos + roll;
+
+    if (landedSquare === finalPos) {
+      // Ordinary move (or a forfeited overshoot, or a landing with no
+      // snake/ladder) — a single CSS-transition slide is enough.
+      setDisplayPositions(newPositions);
+    } else {
+      // Landed on a snake/ladder square: slide to the landed-on square
+      // first (normal roll motion)...
+      setDisplayPositions(prev => {
+        const next = [...prev];
+        next[lastPlayer] = landedSquare;
+        return next;
+      });
+      // ...then, once that slide has visibly finished, climb/slide the rest
+      // of the way to the real destination.
+      animTimerRef.current = setTimeout(() => {
+        setDisplayPositions(newPositions);
+      }, 480);
+    }
+
+    // ── Event banner — mutually-exclusive priority: ladder/snake > overshoot > extra roll ──
+    const dest = SNAKES_LADDERS[landedSquare];
+    const playerName = players[lastPlayer]?.username || 'Someone';
+    if (!overshoot && dest !== undefined && dest === finalPos) {
+      if (dest > landedSquare) {
+        announce({ icon: '🪜', text: 'LADDER CLIMB!', sub: `${playerName} climbs to ${dest}!`,
+          bg: 'linear-gradient(135deg,#16a34a,#14532d)' });
+      } else {
+        announce({ icon: '🐍', text: 'SNAKE BITE!', sub: `${playerName} slides down to ${dest}!`,
+          bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' });
+      }
+    } else if (overshoot) {
+      announce({ icon: '🚫', text: 'TOO FAR!', sub: 'Need an exact roll to reach 100',
+        bg: 'linear-gradient(135deg,#b45309,#78350f)' });
+    } else if (roll === 6 && finalPos !== 100) {
+      announce({ icon: '🎲', text: 'EXTRA ROLL!', sub: `${playerName} goes again!`,
+        bg: 'linear-gradient(135deg,#7c3aed,#4f46e5)' });
+    }
+    // gameState/players fully capture what varies here; announce is a stable
+    // useCallback, same pattern LudoGame.jsx already uses for its own sync effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState, players]);
+
+  useEffect(() => () => {
+    clearTimeout(animTimerRef.current);
+    clearTimeout(announceTimerRef.current);
+  }, []);
 
   const currentPlayer = players[currentTurn];
   const isMyTurn = currentPlayer?.user_id === currentUserId && !isOver;
@@ -65,120 +295,246 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
     else onClose();
   };
 
-  // Group tokens sharing a square so they render stacked, not overlapping.
-  const tokensBySquare = {};
-  positions.forEach((pos, idx) => {
-    if (pos <= 0) return;
-    (tokensBySquare[pos] = tokensBySquare[pos] || []).push(idx);
-  });
+  // Group on-board tokens sharing a square so they render stacked, not
+  // fully overlapping; off-board (position 0) tokens go to a waiting tray.
+  const tokensBySquare = useMemo(() => {
+    const map = {};
+    displayPositions.forEach((pos, idx) => {
+      if (pos <= 0) return;
+      (map[pos] = map[pos] || []).push(idx);
+    });
+    return map;
+  }, [displayPositions]);
+
+  const offBoardIdxs = useMemo(
+    () => displayPositions.map((pos, idx) => ({ pos, idx })).filter(t => t.pos <= 0).map(t => t.idx),
+    [displayPositions]
+  );
+
+  const diePipColor = PLAYER_COLOR_HEX[lastPlayerIdx ?? currentTurn] || '#1e293b';
 
   return (
     <>
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="relative bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-700">
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-1">Snakes &amp; Ladders</h2>
-            <div className="flex items-center gap-2 text-sm">
-              <Users className="w-4 h-4 text-gray-400" />
-              <span className="text-gray-400">{players.map(p => p.username).join(', ')}</span>
+      <style>{`
+        @keyframes slTokenRing {
+          0%   { transform: scale(1);   opacity: 0.75; }
+          100% { transform: scale(1.6); opacity: 0; }
+        }
+        @keyframes slAnnounceIn {
+          0%   { opacity:0; transform:translate(-50%,-50%) scale(0.35) rotate(-8deg); }
+          18%  { opacity:1; transform:translate(-50%,-50%) scale(1.12) rotate(2deg); }
+          28%  { transform:translate(-50%,-50%) scale(0.96) rotate(-0.5deg); }
+          55%  { opacity:1; transform:translate(-50%,-50%) scale(1) rotate(0deg); }
+          78%  { opacity:1; transform:translate(-50%,-50%) scale(1); }
+          92%  { opacity:0; transform:translate(-50%,-50%) scale(0.9); }
+          100% { opacity:0; transform:translate(-50%,-50%) scale(0.75); }
+        }
+      `}</style>
+
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
+        <div className="relative bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3"
+            style={{ background: 'linear-gradient(135deg,#4c1d95 0%,#1e3a8a 100%)' }}>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">🎲</span>
+              <div>
+                <h2 className="text-white text-base font-bold leading-none">Snakes &amp; Ladders</h2>
+                <p className="text-purple-300 text-[10px]">{players.length}-player game</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <GameRulesButton gameType="snakes_ladders" className="text-white/60 hover:text-white" />
+              {!isOver && (
+                <button onClick={handleForfeit}
+                  className="px-3 py-1 rounded-lg text-xs font-bold transition-all active:scale-95 text-white"
+                  style={{ background: '#dc2626', boxShadow: '0 2px 6px rgba(220,38,38,0.45)' }}>
+                  End Game
+                </button>
+              )}
+              <button onClick={handleForfeit}
+                className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+                <CloseIcon className="w-4 h-4" />
+              </button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <GameRulesButton gameType="snakes_ladders" />
-            <button onClick={handleForfeit} className="text-gray-400 hover:text-white transition-colors">
-              <CloseIcon className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
 
-        {/* Turn indicator + roll */}
-        {!winner && (
-          <div className="p-4 bg-gray-700/50 border-b border-gray-700">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                {players.map((player, index) => (
-                  <div
-                    key={player.user_id}
-                    className={`px-3 py-1.5 rounded-lg border-2 transition-all ${
-                      currentTurn === index ? 'border-purple-500 bg-purple-500/20 scale-105' : 'border-gray-600 bg-gray-800/50'
-                    }`}
-                  >
-                    <div className="text-white font-semibold text-xs flex items-center gap-1">
-                      <span>{TOKEN_EMOJI[index]}</span>{player.username}
-                    </div>
-                    <div className="text-gray-300 text-[11px]">Square {positions[index] || 0}</div>
+          {/* Player pills */}
+          {!isOver && (
+            <div className="flex items-center justify-center gap-2 px-3 py-2 flex-wrap" style={{ background: 'rgba(0,0,0,0.3)' }}>
+              {players.map((p, idx) => {
+                const hex = PLAYER_COLOR_HEX[idx];
+                const active = currentTurn === idx;
+                return (
+                  <div key={p.user_id}
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-semibold transition-all duration-200 ${active ? 'scale-105' : 'opacity-60'}`}
+                    style={{ background: `${hex}22`, border: `1.5px solid ${active ? hex : hex + '55'}`, color: hex }}>
+                    <div className="w-5 h-5 flex-shrink-0"><Token colorIdx={idx} isCurrentTurn={false} /></div>
+                    <span className="max-w-[70px] truncate">{p.username}</span>
+                    <span className="font-normal opacity-70">#{positions[idx] || 0}</span>
+                    {active && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse flex-shrink-0"/>}
                   </div>
-                ))}
-              </div>
-              {isMyTurn && (
+                );
+              })}
+            </div>
+          )}
+
+          {/* Dice + Roll */}
+          {!isOver && (
+            <div className="flex items-center justify-center gap-3 py-2.5 px-3" style={{ background: 'rgba(0,0,0,0.15)' }}>
+              {lastRoll !== null ? (
+                <Dice3D value={lastRoll} pipColor={diePipColor} />
+              ) : (
+                <div style={{ width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, opacity: 0.4 }}>🎲</div>
+              )}
+              {isMyTurn ? (
                 <button
                   onClick={handleRoll}
                   disabled={rolling}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg font-semibold animate-pulse"
+                  className="px-4 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95 disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg,#7c3aed,#4f46e5)', boxShadow: '0 2px 10px rgba(124,58,237,0.5)' }}
                 >
                   {rolling ? 'Rolling…' : '🎲 Roll Dice'}
                 </button>
-              )}
-              {!isMyTurn && lastRoll !== null && (
-                <div className="text-gray-400 text-sm">Last roll: 🎲 {lastRoll}</div>
+              ) : (
+                <p className="text-gray-400 text-sm font-semibold">{currentPlayer?.username}'s turn</p>
               )}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Board */}
-        <div className="p-4">
-          <div className="grid grid-cols-10 gap-0.5 mx-auto rounded-lg overflow-hidden border border-gray-600" style={{ maxWidth: 420 }}>
-            {CELLS.map((square) => {
-              const dest = SNAKES_LADDERS[square];
-              const isLadder = dest !== undefined && dest > square;
-              const isSnake = dest !== undefined && dest < square;
-              const occupants = tokensBySquare[square] || [];
-              const shade = Math.floor((square - 1) / 10) % 2 === 0 ? '#2d3548' : '#242b3d';
-              return (
-                <div
-                  key={square}
-                  className="aspect-square flex flex-col items-center justify-center relative text-[9px] text-gray-400"
-                  style={{ background: shade }}
-                >
-                  <span className="absolute top-0.5 left-0.5">{square}</span>
-                  {isLadder && <span className="text-sm" title={`Ladder to ${dest}`}>🪜</span>}
-                  {isSnake && <span className="text-sm" title={`Snake to ${dest}`}>🐍</span>}
-                  {occupants.length > 0 && (
-                    <div className="absolute bottom-0.5 flex gap-0.5">
-                      {occupants.map(idx => <span key={idx} className="text-xs">{TOKEN_EMOJI[idx]}</span>)}
+          {/* Board */}
+          <div className="p-3">
+            <div className="relative mx-auto aspect-square select-none" style={{
+              maxWidth: 460, width: '100%',
+              background: 'linear-gradient(135deg,#1a0533 0%,#0f172a 100%)',
+              border: '2px solid #6d28d9',
+              borderRadius: 10,
+              boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.5), 0 0 20px rgba(109,40,217,0.2)',
+            }}>
+              {/* Static cells */}
+              {CELLS.map((square) => {
+                const { row, col } = SQUARE_TO_POS[square];
+                const dest = SNAKES_LADDERS[square];
+                const isLadder = dest !== undefined && dest > square;
+                const isSnake = dest !== undefined && dest < square;
+                const isStart = square === 1;
+                const isFinish = square === 100;
+                const rowIsEven = Math.floor((square - 1) / 10) % 2 === 0;
+                const baseShade = rowIsEven
+                  ? 'linear-gradient(135deg,#2d3548,#242b3d)'
+                  : 'linear-gradient(135deg,#242b3d,#1c2333)';
+                const bg = isFinish
+                  ? 'linear-gradient(135deg,#fbbf24,#b45309)'
+                  : isStart
+                    ? 'linear-gradient(135deg,#1e3a8a,#1e293b)'
+                    : isLadder
+                      ? 'linear-gradient(135deg,#14532d99,#16653488)'
+                      : isSnake
+                        ? 'linear-gradient(135deg,#7f1d1d99,#99182888)'
+                        : baseShade;
+                return (
+                  <div key={square} className="absolute flex items-center justify-center"
+                    title={isLadder ? `Ladder to ${dest}` : isSnake ? `Snake to ${dest}` : undefined}
+                    style={{
+                      top: `${row * BOARD_CP}%`, left: `${col * BOARD_CP}%`,
+                      width: `${BOARD_CP}%`, height: `${BOARD_CP}%`,
+                      background: bg,
+                      border: '1px solid rgba(255,255,255,0.06)',
+                    }}>
+                    <span className="absolute top-0.5 left-0.5 text-[8px] font-semibold"
+                      style={{ color: isFinish ? '#78350f' : 'rgba(255,255,255,0.35)' }}>
+                      {square}
+                    </span>
+                    {isLadder && <LadderIcon />}
+                    {isSnake && <SnakeIcon />}
+                    {isFinish && <span className="text-sm">🏁</span>}
+                    {isStart && <span className="text-[6.5px] font-bold text-blue-300 tracking-wide">START</span>}
+                  </div>
+                );
+              })}
+
+              {/* Token overlay — same coordinate system as the cells above, so
+                  the CSS top/left transition below animates a real slide. */}
+              {Object.entries(tokensBySquare).map(([sq, idxs]) => {
+                const { row, col } = SQUARE_TO_POS[Number(sq)];
+                return idxs.map((idx, i) => {
+                  const stagger = idxs.length > 1 ? (i - (idxs.length - 1) / 2) * 5.5 : 0;
+                  return (
+                    <div key={idx} className="absolute"
+                      style={{
+                        top: `${row * BOARD_CP + 1.2}%`, left: `${col * BOARD_CP + 1.2}%`,
+                        width: `${BOARD_CP - 2.4}%`, height: `${BOARD_CP - 2.4}%`,
+                        transform: `translate(${stagger}%, ${stagger}%)`,
+                        transition: 'top 480ms ease, left 480ms ease',
+                        zIndex: !isOver && currentTurn === idx ? 15 : 10,
+                      }}>
+                      <Token colorIdx={idx} isCurrentTurn={!isOver && currentTurn === idx} />
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                });
+              })}
+            </div>
+
+            {/* Waiting-to-start tray */}
+            {!isOver && offBoardIdxs.length > 0 && (
+              <div className="flex items-center justify-center gap-2 mt-2">
+                <span className="text-[10px] text-gray-500 uppercase tracking-wide">Waiting to start:</span>
+                {offBoardIdxs.map(idx => (
+                  <div key={idx} className="w-5 h-5"><Token colorIdx={idx} isCurrentTurn={currentTurn === idx} /></div>
+                ))}
+              </div>
+            )}
           </div>
+
+          {/* ── Event announcement overlay (Ladder/Snake/Overshoot/Extra Roll) ── */}
+          {announcement && (
+            <div
+              key={announcement.key}
+              style={{
+                position: 'absolute', top: '38%', left: '50%',
+                zIndex: 60, pointerEvents: 'none',
+                animation: 'slAnnounceIn 2.8s cubic-bezier(0.34,1.56,0.64,1) forwards',
+              }}
+            >
+              <div style={{
+                background: announcement.bg,
+                borderRadius: 20,
+                padding: '16px 30px',
+                textAlign: 'center',
+                boxShadow: '0 0 56px rgba(0,0,0,0.7), 0 12px 40px rgba(0,0,0,0.5)',
+                border: '1.5px solid rgba(255,255,255,0.2)',
+                minWidth: 190, maxWidth: 300,
+              }}>
+                <div style={{ fontSize: 44, lineHeight: 1, marginBottom: 8 }}>{announcement.icon}</div>
+                <div style={{
+                  color: '#fff', fontSize: 24, fontWeight: 900,
+                  letterSpacing: 0.5, textShadow: '0 2px 10px rgba(0,0,0,0.5)',
+                  lineHeight: 1.1,
+                }}>{announcement.text}</div>
+                {announcement.sub && (
+                  <div style={{
+                    color: 'rgba(255,255,255,0.8)', fontSize: 12,
+                    marginTop: 6, fontWeight: 600, letterSpacing: 0.2,
+                  }}>{announcement.sub}</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
-
-        {/* Footer */}
-        {!winner && (
-          <div className="p-6 border-t border-gray-700 flex justify-end">
-            <button onClick={handleForfeit} className="px-6 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors">
-              End Game
-            </button>
-          </div>
-        )}
       </div>
-    </div>
 
-    {winner && (
-      <GameWinnerBanner
-        winner={winner === 'draw' ? null : winner}
-        players={players}
-        gameType="snakes_ladders"
-        gameStats={{ lines: players.map((p, i) => ({ label: p.username, value: `Square ${positions[i] || 0}` })) }}
-        isForfeit={gameState?.status === 'forfeited'}
-        onClose={onClose}
-        onPostResult={onPostResult}
-      />
-    )}
+      {winner && (
+        <GameWinnerBanner
+          winner={winner === 'draw' ? null : winner}
+          players={players}
+          gameType="snakes_ladders"
+          gameStats={{ lines: players.map((p, i) => ({ label: p.username, value: `Square ${positions[i] || 0}` })) }}
+          isForfeit={gameState?.status === 'forfeited'}
+          onClose={onClose}
+          onPostResult={onPostResult}
+        />
+      )}
     </>
   );
 }

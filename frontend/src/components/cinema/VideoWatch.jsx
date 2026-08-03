@@ -1091,6 +1091,12 @@ export default function VideoWatch() {
   // message (never broadcast in game_state — every other player's hand and the
   // draw pile order must stay server-side-only). Reset whenever activeGame clears.
   const [myHand, setMyHand] = useState(null);
+  // Raw server-rejected-move error text + a bump key (so a textually-identical
+  // rejection is still recognized as a fresh occurrence). Currently only
+  // consumed by WordsmithGame's invalid-move banner — every other game keeps
+  // its existing toast-only behavior below, untouched.
+  const [gameErrorMsg, setGameErrorMsg] = useState(null);
+  const [gameErrorKey, setGameErrorKey] = useState(0);
   // Tournament mode (in-memory bracket). activeTournament holds the full bracket;
   // activeTournamentMatch is the pending match the host is prompted to start.
   const [activeTournament, setActiveTournament] = useState(null);
@@ -5858,9 +5864,10 @@ export default function VideoWatch() {
           }
           if (_gAction === 'relay_packet') {
             // Real-time opaque payloads. A non-DOOM game (Draw & Guess canvas
-            // strokes) registers its own receiver via registerGameRelayReceiver
-            // and takes priority; DOOM's handler is the fallback. Both bypass
-            // setState/re-renders — see the relay handler refs above.
+            // strokes, Fowl Play's live duck/score state) registers its own
+            // receiver via registerGameRelayReceiver and takes priority;
+            // DOOM's handler is the fallback. Both bypass setState/re-renders
+            // — see the relay handler refs above.
             if (gameRelayHandlerRef.current) {
               gameRelayHandlerRef.current(message.data?.payload);
             } else if (doomRelayHandlerRef.current) {
@@ -5956,6 +5963,8 @@ export default function VideoWatch() {
           if (message.error) {
             console.error('❌ [VideoWatch] Game error:', message.error);
             toast.error(message.error);
+            setGameErrorMsg(message.error);
+            setGameErrorKey(k => k + 1);
           }
           break;
         }
@@ -8211,12 +8220,23 @@ export default function VideoWatch() {
           onPostResult={handlePostGameResult}
           onRelayPacket={handleDoomRelayPacket}
           registerRelayReceiver={
-            activeGame.game_type === 'draw_guess' ? registerGameRelayReceiver : registerDoomRelayReceiver
+            // registerGameRelayReceiver is the generic relay path — shared by
+            // any game that just needs a plain one-way JSON snapshot stream
+            // (Draw & Guess's strokes, Fowl Play's live duck/score state).
+            // DOOM keeps its own dedicated ref (registerDoomRelayReceiver)
+            // since its raw-byte netcode is a different shape entirely. Safe
+            // to share the generic ref across multiple game_types here since
+            // only one game is ever active per room at a time.
+            ['draw_guess', 'fowl_play'].includes(activeGame.game_type)
+              ? registerGameRelayReceiver
+              : registerDoomRelayReceiver
           }
           myHand={myHand}
           drawerWord={drawerWord}
           hotSeatTournament={activeHotSeatTournament}
           onTournamentScore={handleHotSeatScore}
+          gameErrorMsg={gameErrorMsg}
+          gameErrorKey={gameErrorKey}
         />
       )}
 

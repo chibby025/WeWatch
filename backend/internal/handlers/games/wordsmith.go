@@ -4,7 +4,10 @@ import (
 	_ "embed"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Wordsmith: a Scrabble-style tile game. Named "Wordsmith" rather than
@@ -67,6 +70,100 @@ func init() {
 
 func wordsmithIsValidWord(word string) bool {
 	return wordsmithDictionary[strings.ToUpper(word)]
+}
+
+// wordsmithExternalCheckTimeout matches hymns_proxy.go's own requestTimeout
+// constant for the same kind of ad-hoc external REST call — the established
+// idiom in this codebase for a bare `net/http` hit against a third-party API.
+const wordsmithExternalCheckTimeout = 10 * time.Second
+
+// wordsmithExternallyConfirmedWords caches words confirmed via the external
+// dictionary check (wordsmithValidateWord below) — server-wide, in-memory,
+// for the lifetime of the process. A word confirmed once by any player in
+// any game session never needs a second network round-trip; deliberately
+// not scoped per-game-session since a real word is a real word regardless
+// of which puzzle/session encountered it first.
+var (
+	wordsmithExternallyConfirmedWords   = map[string]bool{}
+	wordsmithExternallyConfirmedWordsMu sync.Mutex
+)
+
+// wordsmithExternalWordChecker is swappable in tests so the suite never
+// needs live network access to pass.
+var wordsmithExternalWordChecker = defaultWordsmithExternalCheck
+
+// defaultWordsmithExternalCheck queries the free, keyless Free Dictionary
+// API. A 200 response means the word is real; anything else (404, network
+// error, timeout) means "couldn't confirm it" — treated as invalid, same as
+// not finding it in the embedded list.
+// wordsmithExternalCheckMaxAttempts and wordsmithExternalCheckRetryDelay
+// exist because the Free Dictionary API is meaningfully flaky in practice —
+// confirmed via direct repeated testing that roughly half of all requests,
+// even for common, definitely-real words ("dog"), return a transient 502
+// with no relation to the word itself, while a genuine "not found" reliably
+// comes back as a clean 404. Treating a single non-200 as "not a word"
+// would wrongly reject real words on nothing but bad luck against a flaky
+// third party — so only a 200 (found) or a 404 (genuinely not found) is
+// treated as a definitive answer; anything else is retried a few times.
+const (
+	wordsmithExternalCheckMaxAttempts = 3
+	wordsmithExternalCheckRetryDelay  = 400 * time.Millisecond
+)
+
+func defaultWordsmithExternalCheck(word string) bool {
+	client := &http.Client{Timeout: wordsmithExternalCheckTimeout}
+	url := "https://api.dictionaryapi.dev/api/v2/entries/en/" + strings.ToLower(word)
+
+	for attempt := 0; attempt < wordsmithExternalCheckMaxAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(wordsmithExternalCheckRetryDelay)
+		}
+		resp, err := client.Get(url)
+		if err != nil {
+			continue // network error — transient, retry
+		}
+		status := resp.StatusCode
+		resp.Body.Close()
+		if status == http.StatusOK {
+			return true
+		}
+		if status == http.StatusNotFound {
+			return false
+		}
+		// Anything else (5xx, rate limiting, ...) — transient, retry.
+	}
+	return false
+}
+
+// wordsmithValidateWord is the single entry point for "is this a real
+// word" — used by the ordinary "place" move (allowExternal=false, the fast
+// embedded-list-only path, unchanged behavior) and the "insist" move
+// (allowExternal=true — a real-dictionary appeal for a word the embedded
+// ENABLE list doesn't happen to contain).
+func wordsmithValidateWord(word string, allowExternal bool) bool {
+	if wordsmithIsValidWord(word) {
+		return true
+	}
+	if !allowExternal {
+		return false
+	}
+
+	upper := strings.ToUpper(word)
+	wordsmithExternallyConfirmedWordsMu.Lock()
+	if wordsmithExternallyConfirmedWords[upper] {
+		wordsmithExternallyConfirmedWordsMu.Unlock()
+		return true
+	}
+	wordsmithExternallyConfirmedWordsMu.Unlock()
+
+	if !wordsmithExternalWordChecker(word) {
+		return false
+	}
+
+	wordsmithExternallyConfirmedWordsMu.Lock()
+	wordsmithExternallyConfirmedWords[upper] = true
+	wordsmithExternallyConfirmedWordsMu.Unlock()
+	return true
 }
 
 // wordsmithBoardLayout: '.' = normal, '2' = double letter, '3' = triple letter,
@@ -207,7 +304,12 @@ func wordsmithCellEmpty(board []interface{}, row, col int) bool {
 func (gm *GameManager) processWordsmithMove(gameState *GameSessionState, playerID uint, moveType string, moveData map[string]interface{}) (gameOver bool, winnerID *uint, err error) {
 	switch moveType {
 	case "place":
-		return gm.processWordsmithPlace(gameState, playerID, moveData)
+		return gm.processWordsmithPlace(gameState, playerID, moveData, false)
+	case "insist":
+		// Same placements payload as "place" — retries the identical
+		// placement, this time allowed to appeal to a real external
+		// dictionary for any word the embedded ENABLE list rejected.
+		return gm.processWordsmithPlace(gameState, playerID, moveData, true)
 	case "exchange":
 		return gm.processWordsmithExchange(gameState, playerID, moveData)
 	case "pass":
@@ -224,7 +326,7 @@ type wordsmithPlacement struct {
 	isBlank  bool
 }
 
-func (gm *GameManager) processWordsmithPlace(gameState *GameSessionState, playerID uint, moveData map[string]interface{}) (bool, *uint, error) {
+func (gm *GameManager) processWordsmithPlace(gameState *GameSessionState, playerID uint, moveData map[string]interface{}, allowExternalCheck bool) (bool, *uint, error) {
 	rawPlacements, ok := moveData["placements"].([]interface{})
 	if !ok || len(rawPlacements) == 0 {
 		return false, nil, fmt.Errorf("placements required")
@@ -453,7 +555,7 @@ func (gm *GameManager) processWordsmithPlace(gameState *GameSessionState, player
 		return false, nil, fmt.Errorf("placement doesn't form a word")
 	}
 	for _, w := range words {
-		if !wordsmithIsValidWord(w.word) {
+		if !wordsmithValidateWord(w.word, allowExternalCheck) {
 			return false, nil, fmt.Errorf("%q is not a valid word", w.word)
 		}
 	}

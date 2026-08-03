@@ -119,7 +119,7 @@ export default function Coachmark({ steps, onComplete }) {
       >
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[10px] text-gray-500 font-medium">{stepIdx + 1} / {steps.length}</span>
-          <button onClick={onComplete} className="text-[10px] text-gray-500 hover:text-gray-300 font-medium">
+          <button onClick={onComplete} className="text-[11px] text-white font-bold hover:text-gray-200">
             Skip
           </button>
         </div>

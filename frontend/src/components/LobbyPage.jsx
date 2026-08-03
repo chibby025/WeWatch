@@ -733,10 +733,11 @@ const LobbyPage = () => {
       const postId = location.state.openPost;
       const autoPlay = location.state.autoPlay || false;
       
-      // Switch to watching tab and discover sub-tab
-      setActiveTab('watching');
-      setWatchingSubTab('discover');
-      
+      // Switch to the Feed tab (its own top-level tab — 'watching'/'discover'
+      // was the old sub-tab structure before Feed was promoted out of it;
+      // setting those no longer lands anywhere near the real feed).
+      setActiveTab('feed');
+
       // Fetch and open the post
       apiClient.get(`/api/posts/${postId}`)
         .then(response => {
@@ -2504,8 +2505,19 @@ const LobbyPage = () => {
     if (roomTypes.includes(nType)) {
       navigate(`/rooms/${n.entity_id}`);
     } else if (postTypes.includes(nType)) {
-      setActiveTab('watching');
-      setWatchingSubTab('discover');
+      // entity_id is a post ID for all three types (post_like, post_comment,
+      // and reply — the latter fixed backend-side to point at the post
+      // rather than the parent comment) — open the actual post instead of
+      // just landing on a tab. 'watching'/'discover' below used to be the
+      // right target back when Feed was a sub-tab of "watching"; Feed is now
+      // its own top-level tab, so that combo silently went nowhere near it.
+      setActiveTab('feed');
+      apiClient.get(`/api/posts/${n.entity_id}`)
+        .then(res => {
+          setSelectedPost(res.data.post);
+          setIsPostViewModalOpen(true);
+        })
+        .catch(() => toast.error('Failed to load post'));
     } else if (nType === 'dm_received' || nType === 'missed_call') {
       setActiveTab('chats');
       const friend = friendsList.find(f => (f.id || f.ID) === n.entity_id);

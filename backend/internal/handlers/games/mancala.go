@@ -88,6 +88,13 @@ func (gm *GameManager) processMancalaMove(gameState *GameSessionState, playerID 
 		return false, nil, fmt.Errorf("that pit is empty")
 	}
 
+	// Persisted purely so every connected client (not just the mover, who
+	// already knows locally what it clicked) can replay the exact sowing
+	// sequence for animation — same convention snakes_ladders.go already
+	// uses for last_roll/last_player.
+	gameState.GameData["last_pit"] = pit
+	gameState.GameData["last_player"] = playerIdx
+
 	seeds := board[pit]
 	board[pit] = 0
 	idx := pit

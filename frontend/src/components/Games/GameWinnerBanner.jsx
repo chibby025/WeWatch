@@ -18,6 +18,8 @@ const GAME_LABELS = {
   wordle: 'Wordle',
   would_you_rather: 'Would You Rather',
   ping_pong: 'Ping Pong',
+  snakes_ladders: 'Snakes & Ladders',
+  mancala: 'Mancala',
 };
 
 /**

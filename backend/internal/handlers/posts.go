@@ -1027,7 +1027,10 @@ func CreatePostComment(c *gin.Context) {
 			if len(body) > 80 {
 				body = body[:80] + "…"
 			}
-			go CreateNotification(parentComment.UserID, "reply", "New reply to your comment", body, "post_comment", *req.ParentCommentID)
+			// entity points at the post (not the parent comment) so the
+			// frontend can resolve every post_like/post_comment/reply
+			// notification the same uniform way — GET /api/posts/:id.
+			go CreateNotification(parentComment.UserID, "reply", "New reply to your comment", body, "post", post.ID)
 		}
 	}
 

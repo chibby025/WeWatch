@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { X, Shuffle, RotateCcw, Send } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
@@ -89,7 +89,7 @@ function RackTile({ tile, selected, onClick, disabled }) {
   );
 }
 
-export default function WordsmithGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame, onPostResult }) {
+export default function WordsmithGame({ gameState, players, currentUserId, myHand, onMove, onClose, onEndGame, onPostResult, gameErrorMsg, gameErrorKey }) {
   const gs = gameState?.game_state || {};
   const board = gs.board || [];
   const scores = gs.scores || {};
@@ -109,6 +109,50 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
   const [pending, setPending] = useState([]); // [{row, col, tile, letter?, rackIdx}]
   const [blankPromptFor, setBlankPromptFor] = useState(null); // {row, col} awaiting a letter
 
+  // ── Invalid-move banner + "Insist Upon Word" ──────────────────────────────
+  // `pending` is deliberately NOT cleared the moment a placement is submitted
+  // (unlike the old behavior) — it now stays on the board until the server
+  // actually confirms acceptance, so a rejected word's tiles stay visible for
+  // the player to either insist on or recall, instead of vanishing on submit.
+  const [submitting, setSubmitting]         = useState(false);
+  const [insisting, setInsisting]           = useState(false);
+  const [insistAttempted, setInsistAttempted] = useState(false);
+  const [errorBanner, setErrorBanner]       = useState(null); // { message, canInsist }
+  const lastSubmittedRef    = useRef(null); // placements array of the most recent place/insist attempt
+  const pendingRef          = useRef(pending);
+  pendingRef.current = pending;
+  const insistAttemptedRef  = useRef(insistAttempted);
+  insistAttemptedRef.current = insistAttempted;
+  const lastHandledErrorKeyRef = useRef(gameErrorKey);
+  const lastSuccessRef = useRef({ word: lastWord, playerId: lastPlayerId });
+
+  // A fresh server-rejected-move error arrives → if it's plausibly about my
+  // own in-flight placement (I have pending tiles down), surface the banner.
+  useEffect(() => {
+    if (gameErrorKey === lastHandledErrorKeyRef.current) return;
+    lastHandledErrorKeyRef.current = gameErrorKey;
+    setSubmitting(false);
+    setInsisting(false);
+    if (pendingRef.current.length === 0) return;
+    const canInsist = !insistAttemptedRef.current && /is not a valid word/i.test(gameErrorMsg || '');
+    setErrorBanner({ message: gameErrorMsg, canInsist });
+  }, [gameErrorKey, gameErrorMsg]);
+
+  // My own placement (or insist) was actually accepted the moment last_word/
+  // last_player_id change to reflect a move by me — clear pending + banner.
+  useEffect(() => {
+    if (lastWord === lastSuccessRef.current.word && lastPlayerId === lastSuccessRef.current.playerId) return;
+    lastSuccessRef.current = { word: lastWord, playerId: lastPlayerId };
+    if (lastPlayerId !== currentUserId) return;
+    setPending([]);
+    setSelectedRackIdx(null);
+    setSubmitting(false);
+    setInsisting(false);
+    setInsistAttempted(false);
+    setErrorBanner(null);
+    lastSubmittedRef.current = null;
+  }, [lastWord, lastPlayerId, currentUserId]);
+
   const pendingByCell = useMemo(() => {
     const m = new Map();
     pending.forEach(p => m.set(cellIdx(p.row, p.col), p));
@@ -122,6 +166,13 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
     setSelectedRackIdx(prev => (prev === idx ? null : idx));
   };
 
+  // Editing the placement after a rejection invalidates whatever banner/
+  // insist state was tied to the old attempt.
+  const clearBannerState = () => {
+    if (errorBanner) setErrorBanner(null);
+    setInsistAttempted(false);
+  };
+
   const handleCellClick = (row, col) => {
     if (!isMyTurn) return;
     const idx = cellIdx(row, col);
@@ -131,6 +182,7 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
     if (pendingHere) {
       // Tap an already-pending cell to pick it back up.
       setPending(prev => prev.filter(p => cellIdx(p.row, p.col) !== idx));
+      clearBannerState();
       return;
     }
     if (boardOccupied) return;
@@ -143,6 +195,7 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
     }
     setPending(prev => [...prev, { row, col, tile, rackIdx: selectedRackIdx }]);
     setSelectedRackIdx(null);
+    clearBannerState();
   };
 
   const confirmBlankLetter = (letter) => {
@@ -150,24 +203,38 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
     setPending(prev => [...prev, { ...blankPromptFor, letter }]);
     setBlankPromptFor(null);
     setSelectedRackIdx(null);
+    clearBannerState();
   };
 
   const recallAll = () => {
     setPending([]);
     setSelectedRackIdx(null);
+    setErrorBanner(null);
+    setInsistAttempted(false);
+    setInsisting(false);
+    setSubmitting(false);
+    lastSubmittedRef.current = null;
   };
 
   const submitWord = () => {
-    if (pending.length === 0) return;
-    onMove({
-      move_type: 'place',
-      placements: pending.map(p => ({
-        row: p.row, col: p.col, tile: p.tile,
-        ...(p.tile === '?' ? { letter: p.letter } : {}),
-      })),
-    });
-    setPending([]);
-    setSelectedRackIdx(null);
+    if (pending.length === 0 || submitting) return;
+    const placements = pending.map(p => ({
+      row: p.row, col: p.col, tile: p.tile,
+      ...(p.tile === '?' ? { letter: p.letter } : {}),
+    }));
+    lastSubmittedRef.current = placements;
+    setInsistAttempted(false);
+    setErrorBanner(null);
+    setSubmitting(true);
+    onMove({ move_type: 'place', placements });
+  };
+
+  const handleInsist = () => {
+    if (!lastSubmittedRef.current || insisting) return;
+    setInsisting(true);
+    setInsistAttempted(true);
+    setErrorBanner(null);
+    onMove({ move_type: 'insist', placements: lastSubmittedRef.current });
   };
 
   const passTurn = () => {
@@ -222,8 +289,70 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
       )}
 
       <div className="fixed inset-0 z-50 flex flex-col bg-gray-950">
+        <style>{`
+          @keyframes wordsmithBannerIn {
+            0%   { opacity:0; transform:translate(-50%,-50%) scale(0.82); }
+            100% { opacity:1; transform:translate(-50%,-50%) scale(1); }
+          }
+        `}</style>
+
         {blankPromptFor && (
           <BlankLetterPicker onPick={confirmBlankLetter} onCancel={() => setBlankPromptFor(null)} />
+        )}
+
+        {/* ── Invalid-move banner — mirrors WhotGame's Pick-2/Pick-3 event
+            announcements visually, but stays open (real actions attached)
+            instead of auto-dismissing. ── */}
+        {errorBanner && (
+          <div
+            style={{
+              position: 'absolute', top: '38%', left: '50%',
+              zIndex: 65,
+              animation: 'wordsmithBannerIn 0.4s cubic-bezier(0.34,1.56,0.64,1) forwards',
+            }}
+          >
+            <div style={{
+              background: 'linear-gradient(135deg,#b91c1c,#7f1d1d)',
+              borderRadius: 20,
+              padding: '18px 26px',
+              textAlign: 'center',
+              boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+              border: '1.5px solid rgba(255,255,255,0.2)',
+              minWidth: 240, maxWidth: 320,
+            }}>
+              <div style={{ fontSize: 40, lineHeight: 1, marginBottom: 8 }}>⚠️</div>
+              <div style={{
+                color: '#fff', fontSize: 18, fontWeight: 900,
+                letterSpacing: 0.3, lineHeight: 1.25,
+                textShadow: '0 2px 10px rgba(0,0,0,0.5)',
+              }}>
+                Invalid Move
+              </div>
+              <div style={{
+                color: 'rgba(255,255,255,0.85)', fontSize: 12.5,
+                marginTop: 6, fontWeight: 600, lineHeight: 1.4,
+              }}>
+                {errorBanner.message}
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 14, flexWrap: 'wrap' }}>
+                {errorBanner.canInsist && (
+                  <button
+                    onClick={handleInsist}
+                    disabled={insisting}
+                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-black text-xs font-bold rounded-lg transition-colors"
+                  >
+                    {insisting ? 'Checking dictionary…' : 'Insist Upon Word'}
+                  </button>
+                )}
+                <button
+                  onClick={recallAll}
+                  className="px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-xs font-semibold rounded-lg transition-colors"
+                >
+                  Recall
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Header */}
@@ -375,10 +504,10 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
                   <div className="flex items-center justify-center gap-2 flex-wrap">
                     <button
                       onClick={submitWord}
-                      disabled={pending.length === 0}
+                      disabled={pending.length === 0 || submitting}
                       className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-colors"
                     >
-                      <Send size={15} /> Play Word
+                      <Send size={15} /> {submitting ? 'Playing…' : 'Play Word'}
                     </button>
                     <button
                       onClick={recallAll}

@@ -56,7 +56,7 @@ func TestWordsmithFirstMoveMustCoverCenter(t *testing.T) {
 	// CAT at row 3, nowhere near the center (7,7).
 	_, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(3, 3, "C"), placement(3, 4, "A"), placement(3, 5, "T"),
-	))
+	), false)
 	if err == nil {
 		t.Fatal("expected error: first move must cover center")
 	}
@@ -73,7 +73,7 @@ func TestWordsmithFirstMoveScoresWithCenterDoubleWord(t *testing.T) {
 
 	gameOver, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "C"), placement(7, 7, "A"), placement(7, 8, "T"),
-	))
+	), false)
 	if err != nil {
 		t.Fatalf("place CAT: %v", err)
 	}
@@ -107,14 +107,14 @@ func TestWordsmithSecondMoveMustConnect(t *testing.T) {
 
 	if _, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "C"), placement(7, 7, "A"), placement(7, 8, "T"),
-	)); err != nil {
+	), false); err != nil {
 		t.Fatalf("place CAT: %v", err)
 	}
 
 	// DOG placed far away, touching nothing.
 	_, _, err := gm.processWordsmithPlace(gs, 2, placementsData(
 		placement(0, 0, "D"), placement(0, 1, "O"), placement(0, 2, "G"),
-	))
+	), false)
 	if err == nil {
 		t.Fatal("expected error: disconnected placement should be rejected")
 	}
@@ -135,7 +135,7 @@ func TestWordsmithCrossWordFormedAndScored(t *testing.T) {
 
 	if _, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "C"), placement(7, 7, "A"), placement(7, 8, "T"),
-	)); err != nil {
+	), false); err != nil {
 		t.Fatalf("place CAT: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestWordsmithCrossWordFormedAndScored(t *testing.T) {
 	// connects via extending the vertical run upward into the existing A.
 	gameOver, _, err := gm.processWordsmithPlace(gs, 2, placementsData(
 		placement(8, 7, "S"),
-	))
+	), false)
 	if err != nil {
 		t.Fatalf("place S under A (forms AS): %v", err)
 	}
@@ -172,7 +172,7 @@ func TestWordsmithInvalidWordRejected(t *testing.T) {
 
 	_, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "Q"), placement(7, 7, "Z"), placement(7, 8, "X"),
-	))
+	), false)
 	if err == nil {
 		t.Fatal("expected error: QZX is not a real word")
 	}
@@ -195,7 +195,7 @@ func TestWordsmithGapRejected(t *testing.T) {
 	// C at col6, T at col8, nothing at col7 — a real gap on the first move.
 	_, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "C"), placement(7, 8, "T"),
-	))
+	), false)
 	if err == nil {
 		t.Fatal("expected error: gap between placed tiles")
 	}
@@ -210,7 +210,7 @@ func TestWordsmithRackValidation(t *testing.T) {
 
 	_, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "C"), placement(7, 7, "A"), placement(7, 8, "T"),
-	))
+	), false)
 	if err == nil {
 		t.Fatal("expected error: T is not in the rack")
 	}
@@ -225,7 +225,7 @@ func TestWordsmithCannotReuseSameRackTileTwice(t *testing.T) {
 
 	_, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "A"), placement(7, 7, "A"), placement(7, 8, "T"),
-	))
+	), false)
 	if err == nil {
 		t.Fatal("expected error: only one A is held, can't place two")
 	}
@@ -241,7 +241,7 @@ func TestWordsmithBlankTileScoresZero(t *testing.T) {
 
 	_, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		blankPlacement(7, 6, "C"), placement(7, 7, "A"), placement(7, 8, "T"),
-	))
+	), false)
 	if err != nil {
 		t.Fatalf("place blank-C-A-T: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestWordsmithBingoBonus(t *testing.T) {
 	_, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 4, "S"), placement(7, 5, "T"), placement(7, 6, "A"),
 		placement(7, 7, "R"), placement(7, 8, "I"), placement(7, 9, "N"), placement(7, 10, "G"),
-	))
+	), false)
 	if err != nil {
 		t.Fatalf("place STARING (bingo): %v", err)
 	}
@@ -386,7 +386,7 @@ func TestWordsmithEmptyRackEndsGameWithScoreAdjustment(t *testing.T) {
 
 	gameOver, winnerID, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "C"), placement(7, 7, "A"), placement(7, 8, "T"),
-	))
+	), false)
 	if err != nil {
 		t.Fatalf("place CAT: %v", err)
 	}
@@ -437,18 +437,130 @@ func TestWordsmithSingleTileOrientationInference(t *testing.T) {
 
 	if _, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "C"), placement(7, 7, "A"), placement(7, 8, "T"),
-	)); err != nil {
+	), false); err != nil {
 		t.Fatalf("place CAT: %v", err)
 	}
 
 	// A single "S" placed right after the T (7,9) — horizontal neighbor only
 	// (nothing above/below) — should infer horizontal and extend "CAT" to "CATS".
-	_, _, err := gm.processWordsmithPlace(gs, 2, placementsData(placement(7, 9, "S")))
+	_, _, err := gm.processWordsmithPlace(gs, 2, placementsData(placement(7, 9, "S")), false)
 	if err != nil {
 		t.Fatalf("place S after CAT (forms CATS): %v", err)
 	}
 	if gs.GameData["last_word"] != "CATS" {
 		// last_word only reflects the main word if it has >=2 cells, which it does here.
 		t.Errorf("expected CATS to be recognized as the extended word, got %v", gs.GameData["last_word"])
+	}
+}
+
+// ── Insist Upon Word — external dictionary appeal ──────────────────────────
+
+// TestWordsmithInsistAcceptsWordConfirmedExternally: a word rejected by the
+// embedded list is accepted via "insist" once the (stubbed) external checker
+// confirms it.
+func TestWordsmithInsistAcceptsWordConfirmedExternally(t *testing.T) {
+	gs := makeTestWordsmithState(2)
+	gm := &GameManager{}
+	gs.Hands[1] = []string{"Q", "Z", "X"}
+
+	orig := wordsmithExternalWordChecker
+	defer func() { wordsmithExternalWordChecker = orig }()
+	wordsmithExternalWordChecker = func(word string) bool { return true }
+
+	_, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
+		placement(7, 6, "Q"), placement(7, 7, "Z"), placement(7, 8, "X"),
+	), true)
+	if err != nil {
+		t.Fatalf("insist should accept a word the external checker confirms: %v", err)
+	}
+	board := wordsmithBoard(gs)
+	if wordsmithCellLetter(board, 7, 7) != "Z" {
+		t.Error("expected the placement to actually land on the board once accepted")
+	}
+}
+
+// TestWordsmithInsistStillRejectsWhenExternalCheckerSaysNo: the external
+// checker returning false means insist rejects the word too, same as an
+// ordinary "place" — insist is an appeal, not an automatic override.
+func TestWordsmithInsistStillRejectsWhenExternalCheckerSaysNo(t *testing.T) {
+	gs := makeTestWordsmithState(2)
+	gm := &GameManager{}
+	// Deliberately a different nonsense word than the "accepts" test above —
+	// the confirmed-words cache is package-level/global, so reusing "QZX"
+	// here would spuriously pass thanks to that test's own caching, not
+	// because this test's (rejecting) stub was actually consulted.
+	gs.Hands[1] = []string{"J", "V", "K"}
+
+	orig := wordsmithExternalWordChecker
+	defer func() { wordsmithExternalWordChecker = orig }()
+	wordsmithExternalWordChecker = func(word string) bool { return false }
+
+	_, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
+		placement(7, 6, "J"), placement(7, 7, "V"), placement(7, 8, "K"),
+	), true)
+	if err == nil {
+		t.Fatal("expected insist to still reject a word the external checker also rejects")
+	}
+}
+
+// TestWordsmithInsistCachesConfirmedWordAcrossCalls: once a word is
+// confirmed externally, a second insist attempt for the exact same word
+// (fresh game state, simulating a different session) must not hit the
+// external checker again — the confirmed-words cache is server-wide.
+func TestWordsmithInsistCachesConfirmedWordAcrossCalls(t *testing.T) {
+	orig := wordsmithExternalWordChecker
+	defer func() { wordsmithExternalWordChecker = orig }()
+	callCount := 0
+	wordsmithExternalWordChecker = func(word string) bool {
+		callCount++
+		return true
+	}
+
+	// Use a made-up word unlikely to already be cached from another test in
+	// this same process run (tests share the package-level cache).
+	const testWord = "ZQXVJK"
+
+	gs1 := makeTestWordsmithState(2)
+	gm := &GameManager{}
+	gs1.Hands[1] = []string{"Z", "Q", "X", "V", "J", "K"}
+	if _, _, err := gm.processWordsmithPlace(gs1, 1, placementsData(
+		placement(7, 4, "Z"), placement(7, 5, "Q"), placement(7, 6, "X"),
+		placement(7, 7, "V"), placement(7, 8, "J"), placement(7, 9, "K"),
+	), true); err != nil {
+		t.Fatalf("first insist for %s: %v", testWord, err)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected exactly 1 external check call after the first insist, got %d", callCount)
+	}
+
+	gs2 := makeTestWordsmithState(2)
+	gs2.Hands[1] = []string{"Z", "Q", "X", "V", "J", "K"}
+	if _, _, err := gm.processWordsmithPlace(gs2, 1, placementsData(
+		placement(7, 4, "Z"), placement(7, 5, "Q"), placement(7, 6, "X"),
+		placement(7, 7, "V"), placement(7, 8, "J"), placement(7, 9, "K"),
+	), true); err != nil {
+		t.Fatalf("second insist for the same word %s: %v", testWord, err)
+	}
+	if callCount != 1 {
+		t.Errorf("expected the external checker to NOT be called again for an already-confirmed word, call count is now %d", callCount)
+	}
+}
+
+// TestWordsmithInsistMoveType: the "insist" move_type routes through
+// processWordsmithMove with external checking enabled, end to end.
+func TestWordsmithInsistMoveType(t *testing.T) {
+	gs := makeTestWordsmithState(2)
+	gm := &GameManager{}
+	gs.Hands[1] = []string{"Y", "W", "B"}
+
+	orig := wordsmithExternalWordChecker
+	defer func() { wordsmithExternalWordChecker = orig }()
+	wordsmithExternalWordChecker = func(word string) bool { return true }
+
+	_, _, err := gm.processWordsmithMove(gs, 1, "insist", placementsData(
+		placement(7, 6, "Y"), placement(7, 7, "W"), placement(7, 8, "B"),
+	))
+	if err != nil {
+		t.Fatalf("insist move_type: %v", err)
 	}
 }

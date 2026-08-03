@@ -21,9 +21,12 @@ import (
 // randomness involved.
 //
 // move_types:
-//   configure { image_url, cols, rows }  (host only, phase must be "setup")
-//   pickup    { piece_id }               (claim an unclaimed piece)
-//   release   { piece_id, x, y }         (drop it — snaps into place if close
+//   configure  { image_url, cols, rows }  (host only, phase must be "setup")
+//   pickup     { piece_id }               (claim an unclaimed piece)
+//   piece_drag { piece_id, x, y }         (live position while dragging —
+//                                          volatile, no DB write, see
+//                                          game_manager.go's volatileRT)
+//   release    { piece_id, x, y }         (drop it — snaps into place if close
 //                                          enough to its correct spot)
 //
 // "Winner" for GameWinnerBanner purposes is whoever placed the most pieces
@@ -68,6 +71,8 @@ func (gm *GameManager) processJigsawMove(gameState *GameSessionState, playerID u
 		return false, nil, gm.processJigsawConfigure(gameState, playerID, moveData)
 	case "pickup":
 		return false, nil, processJigsawPickup(gameState, playerID, moveData)
+	case "piece_drag":
+		return false, nil, processJigsawDrag(gameState, playerID, moveData)
 	case "release":
 		return processJigsawRelease(gameState, playerID, moveData)
 	default:
@@ -118,13 +123,20 @@ func (gm *GameManager) processJigsawConfigure(gameState *GameSessionState, playe
 		hEdges[r] = row
 	}
 
+	// Tray scatter: edge pieces (border of the grid — the classic "sort
+	// these first" starting move for a real jigsaw) land in the left half of
+	// the tray, interior pieces in the right half. Purely a starting-layout
+	// convenience — nothing else about a piece's identity or behavior
+	// depends on which group it's in, and pieces move freely between the
+	// halves once picked up.
 	pieces := make(map[string]interface{}, rows*cols)
 	for r := 0; r < rows; r++ {
 		for c := 0; c < cols; c++ {
+			isEdge := r == 0 || r == rows-1 || c == 0 || c == cols-1
 			pieces[jigsawPieceID(r, c)] = map[string]interface{}{
 				"row":       r,
 				"col":       c,
-				"x":         rand.Float64()*0.9 - 0.05, // scattered into a tray below the board
+				"x":         jigsawScatterX(isEdge),
 				"y":         1.05 + rand.Float64()*0.75,
 				"placed":    false,
 				"holder_id": 0.0,
@@ -163,6 +175,37 @@ func processJigsawPickup(gameState *GameSessionState, playerID uint, moveData ma
 		return fmt.Errorf("piece is already held by another player")
 	}
 	piece["holder_id"] = float64(playerID)
+	pieces[pieceID] = piece
+	gameState.GameData["pieces"] = pieces
+	return nil
+}
+
+// processJigsawDrag relays a piece's live position while someone is actively
+// dragging it (volatile, no DB write — see game_manager.go's volatileRT).
+// Only the current holder may move it, same ownership check as release —
+// this is purely a "where is it right now" update, no snap/placement logic
+// at all, so every other client just sees the shared piece.x/y animate
+// smoothly toward wherever the dragger currently is (the existing render
+// already reads piece.x/y for any piece that isn't the local client's own
+// active drag — this is the only backend piece needed to make that live).
+func processJigsawDrag(gameState *GameSessionState, playerID uint, moveData map[string]interface{}) error {
+	phase, _ := gameState.GameData["phase"].(string)
+	if phase != "playing" {
+		return fmt.Errorf("puzzle is not in progress")
+	}
+	pieceID, _ := moveData["piece_id"].(string)
+	pieces := jigsawPiecesMap(gameState.GameData)
+	piece, ok := pieces[pieceID].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("unknown piece")
+	}
+	if jigsawHolderID(piece) != playerID {
+		return fmt.Errorf("you are not holding this piece")
+	}
+	x, _ := moveData["x"].(float64)
+	y, _ := moveData["y"].(float64)
+	piece["x"] = x
+	piece["y"] = y
 	pieces[pieceID] = piece
 	gameState.GameData["pieces"] = pieces
 	return nil
@@ -257,6 +300,16 @@ func jigsawTopPlacer(placedBy map[string]interface{}) *uint {
 
 func jigsawPieceID(row, col int) string {
 	return fmt.Sprintf("%d-%d", row, col)
+}
+
+// jigsawScatterX picks a starting tray x-position: edge pieces scatter into
+// the left half [-0.05, 0.40), interior pieces into the right half
+// [0.55, 1.00) — see the comment at the call site in processJigsawConfigure.
+func jigsawScatterX(isEdge bool) float64 {
+	if isEdge {
+		return rand.Float64()*0.45 - 0.05
+	}
+	return 0.55 + rand.Float64()*0.45
 }
 
 func jigsawPiecesMap(data map[string]interface{}) map[string]interface{} {
