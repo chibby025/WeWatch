@@ -5904,8 +5904,12 @@ const LobbyPage = () => {
                                       onClick={() => handleOpenGroup(group)}
                                       className="flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700/50"
                                     >
-                                      <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative">
-                                        <UsersIcon className="w-6 h-6 text-white" />
+                                      <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                                        {group.icon ? (
+                                          <img src={group.icon} alt={group.name} className="w-full h-full object-cover" />
+                                        ) : (
+                                          <UsersIcon className="w-6 h-6 text-white" />
+                                        )}
                                         {unread > 0 && (
                                           <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
                                             {unread > 9 ? '9+' : unread}
@@ -5965,8 +5969,12 @@ const LobbyPage = () => {
                                     onClick={() => handleOpenGroup(group)}
                                     className="flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700/50"
                                   >
-                                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative">
-                                      <UsersIcon className="w-6 h-6 text-white" />
+                                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                                      {group.icon ? (
+                                        <img src={group.icon} alt={group.name} className="w-full h-full object-cover" />
+                                      ) : (
+                                        <UsersIcon className="w-6 h-6 text-white" />
+                                      )}
                                       {unread > 0 && (
                                         <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
                                           {unread > 9 ? '9+' : unread}
