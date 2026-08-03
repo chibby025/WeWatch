@@ -2032,6 +2032,15 @@ export const getLobbyGroupMessages = (groupId) =>
 export const sendLobbyGroupMessage = (groupId, message) =>
   apiClient.post(`/api/lobby-groups/${groupId}/messages`, { message }).then(r => r.data);
 
+export const uploadLobbyGroupIcon = (groupId, formData) =>
+  apiClient.post(`/api/lobby-groups/${groupId}/icon`, formData, {
+    // Leave Content-Type unset so the browser fills in the correct
+    // multipart/form-data; boundary=... value itself — an explicit
+    // 'multipart/form-data' string (as the sibling upload helpers below
+    // still use) drops the boundary and the server gets a 400.
+    headers: { 'Content-Type': undefined },
+  }).then(r => r.data);
+
 export const uploadLobbyGroupImage = (groupId, formData) =>
   apiClient.post(`/api/lobby-groups/${groupId}/image`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },

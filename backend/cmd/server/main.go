@@ -1060,6 +1060,7 @@ func main() {
 		lobbyGroupsGroup.GET("", handlers.GetLobbyGroupsHandler)                            // GET    /api/lobby-groups
 		lobbyGroupsGroup.GET("/:id/messages", handlers.GetLobbyGroupMessagesHandler)        // GET    /api/lobby-groups/:id/messages
 		lobbyGroupsGroup.POST("/:id/messages", handlers.SendLobbyGroupMessageHandler)       // POST   /api/lobby-groups/:id/messages
+		lobbyGroupsGroup.POST("/:id/icon", handlers.UploadLobbyGroupIconHandler)            // POST   /api/lobby-groups/:id/icon
 		lobbyGroupsGroup.POST("/:id/image", handlers.UploadLobbyGroupImageHandler)          // POST   /api/lobby-groups/:id/image
 		lobbyGroupsGroup.POST("/:id/video", handlers.UploadLobbyGroupVideoHandler)          // POST   /api/lobby-groups/:id/video
 		lobbyGroupsGroup.POST("/:id/document", handlers.UploadLobbyGroupDocumentHandler)    // POST   /api/lobby-groups/:id/document

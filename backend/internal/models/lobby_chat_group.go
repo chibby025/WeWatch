@@ -11,6 +11,7 @@ import (
 type LobbyGroup struct {
 	ID          uint           `gorm:"primarykey" json:"id"`
 	Name        string         `gorm:"type:varchar(100);not null" json:"name"`
+	Icon        string         `gorm:"type:varchar(500);default:''" json:"icon"`
 	CreatedByID uint           `gorm:"not null;index" json:"created_by_id"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`

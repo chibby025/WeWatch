@@ -762,7 +762,7 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
           <React.Fragment key={`post-${post.id}`}>
             {/* Post Card */}
             <div
-              className="flex flex-col bg-white dark:bg-gray-950 cursor-pointer rounded-xl border border-white/25 mb-3 sm:mb-4 md:mb-0 overflow-hidden"
+              className="flex flex-col bg-white dark:bg-gray-950 cursor-pointer rounded-xl shadow-lg hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-200 mb-3 sm:mb-4 md:mb-0 overflow-hidden"
               onClick={() => handlePostClick(post)}
             >
               {/* ── Card Header: Avatar · Username · Follow · ··· ── */}

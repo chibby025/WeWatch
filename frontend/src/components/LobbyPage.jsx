@@ -16,6 +16,7 @@ import Avatar from './Avatar';
 import LobbyLeftSidebar from './LobbyLeftSidebar';
 import CallHistoryModal from './CallHistoryModal';
 import UserProfileModal from './UserProfileModal';
+import LobbyGroupInfoModal from './LobbyGroupInfoModal';
 import SettingsModal from './SettingsModal';
 import CreateNewModal from './CreateNewModal';
 import OnboardingTour from './OnboardingTour';
@@ -287,6 +288,7 @@ const LobbyPage = () => {
   const [groupCallRoom, setGroupCallRoom] = useState(null);
   const [newGroupChatMessage, setNewGroupChatMessage] = useState('');
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const [isGroupInfoModalOpen, setIsGroupInfoModalOpen] = useState(false);
 
   // ✅ Friend Request State
   const [pendingRequests, setPendingRequests] = useState([]); // Friend requests received
@@ -1752,6 +1754,24 @@ const LobbyPage = () => {
     }
   };
 
+  // Keeps the currently-open group's header in sync with groupsList — fixes
+  // a real gap where a rename/icon change by ANOTHER member (WS-triggered
+  // fetchGroupsList()) updated groupsList but never touched selectedGroup,
+  // so the open header silently never reflected the edit.
+  useEffect(() => {
+    if (!selectedGroup) return;
+    const fresh = groupsList.find(g => g.id === selectedGroup.id);
+    if (fresh && fresh !== selectedGroup) setSelectedGroup(fresh);
+  }, [groupsList, selectedGroup]);
+
+  // Applied immediately by the editor's own LobbyGroupInfoModal mutation, so
+  // the header/list update without waiting on the WS round-trip (the WS
+  // handler above still re-fetches for every OTHER connected member).
+  const handleGroupUpdated = (patchedGroup) => {
+    setSelectedGroup(patchedGroup);
+    setGroupsList(prev => prev.map(g => g.id === patchedGroup.id ? { ...g, ...patchedGroup } : g));
+  };
+
   const handleOpenGroup = async (group) => {
     setSelectedGroup(group);
     setChatView('group_messages');
@@ -3206,6 +3226,7 @@ const LobbyPage = () => {
               case 'group_created':
               case 'group_member_added':
               case 'group_renamed':
+              case 'group_icon_updated':
                 fetchGroupsList();
                 break;
 
@@ -3911,6 +3932,18 @@ const LobbyPage = () => {
         />
       )}
 
+      {/* ✅ Lobby Group Info Modal */}
+      {isGroupInfoModalOpen && selectedGroup && (
+        <LobbyGroupInfoModal
+          isOpen={isGroupInfoModalOpen}
+          onClose={() => setIsGroupInfoModalOpen(false)}
+          group={selectedGroup}
+          currentUser={currentUser}
+          friendsList={friendsList}
+          onGroupUpdated={handleGroupUpdated}
+        />
+      )}
+
       {/* ✅ Settings Modal */}
       <SettingsModal
         isOpen={isSettingsModalOpen}
@@ -4261,7 +4294,7 @@ const LobbyPage = () => {
                 const RoomCard = (room) => (
                   <div
                     key={`card-${room.id}`}
-                    className={`group bg-gray-200 dark:bg-gray-800 shadow-md rounded-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 relative cursor-pointer ${
+                    className={`group bg-gradient-to-br from-purple-50 to-blue-50 dark:bg-gray-800 shadow-lg rounded-lg hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-200 relative cursor-pointer ${
                       room.host_id === authenticatedUserID
                         ? 'ring-2 ring-purple-500 dark:ring-purple-400'
                         : room.is_member
@@ -5489,8 +5522,12 @@ const LobbyPage = () => {
                       <img src="/icons/backIcon.svg" alt="Back" className="w-6 h-6" />
                     </button>
                     {/* Group icon */}
-                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
-                      <UsersIcon className="w-5 h-5 text-white" />
+                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      {selectedGroup.icon ? (
+                        <img src={selectedGroup.icon} alt={selectedGroup.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <UsersIcon className="w-5 h-5 text-white" />
+                      )}
                     </div>
                     {/* Group info */}
                     <div className="flex-1 min-w-0">
@@ -5526,6 +5563,12 @@ const LobbyPage = () => {
                       </button>
                       {groupMenuOpen && (
                         <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-[160px]">
+                          <button
+                            onClick={() => { setGroupMenuOpen(false); setIsGroupInfoModalOpen(true); }}
+                            className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          >
+                            ℹ️ Group Info
+                          </button>
                           <button
                             onClick={handleLeaveGroup}
                             className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"

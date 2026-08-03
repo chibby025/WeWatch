@@ -449,6 +449,95 @@ func uploadGroupAttachment(c *gin.Context, attachmentType, uploadFolder string, 
 }
 
 // ────────────────────────────────────────────
+// POST /api/lobby-groups/:id/icon   — upload/replace group icon
+// ────────────────────────────────────────────
+
+func UploadLobbyGroupIconHandler(c *gin.Context) {
+	userIDVal, _ := c.Get("user_id")
+	userID := userIDVal.(uint)
+	db := c.MustGet("db").(*gorm.DB)
+
+	groupIDStr := c.Param("id")
+	groupID64, err := strconv.ParseUint(groupIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid group ID"})
+		return
+	}
+	groupID := uint(groupID64)
+
+	if !isMemberOfGroup(db, groupID, userID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not a member of this group"})
+		return
+	}
+
+	var group models.LobbyGroup
+	if err := db.First(&group, groupID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Group not found"})
+		return
+	}
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file provided"})
+		return
+	}
+
+	if fileHeader.Size > MaxImageSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("File too large (max %dMB)", MaxImageSize/(1024*1024))})
+		return
+	}
+
+	contentType := fileHeader.Header.Get("Content-Type")
+	if !AllowedImageTypes[contentType] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File type not allowed"})
+		return
+	}
+
+	// Deterministic, single filename per group — always overwritten in place,
+	// unlike per-message chat attachments (uploadGroupAttachment above) which
+	// deliberately accumulate one file per upload. If the extension changes
+	// between uploads, the old file (a different name) is removed explicitly
+	// so it doesn't linger as an orphan.
+	ext := filepath.Ext(fileHeader.Filename)
+	uploadDir := filepath.Join("uploads", "lobby-group-icons")
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+		return
+	}
+	newFilename := fmt.Sprintf("%d%s", groupID, ext)
+	filePath := filepath.Join(uploadDir, newFilename)
+
+	if group.Icon != "" && strings.HasPrefix(group.Icon, "/uploads/") {
+		oldPath := strings.TrimPrefix(group.Icon, "/")
+		if oldPath != filePath {
+			os.Remove(oldPath)
+		}
+	}
+
+	if err := c.SaveUploadedFile(fileHeader, filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+		return
+	}
+
+	iconURL := fmt.Sprintf("/uploads/lobby-group-icons/%s", newFilename)
+	if err := db.Model(&models.LobbyGroup{}).Where("id = ?", groupID).Update("icon", iconURL).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update group icon"})
+		return
+	}
+
+	broadcastToGroup(db, groupID, map[string]interface{}{
+		"type": "group_icon_updated",
+		"data": map[string]interface{}{
+			"group_id": groupID,
+			"icon":     iconURL,
+		},
+	})
+
+	log.Printf("✅ [LobbyGroups] Icon updated for group %d by user %d", groupID, userID)
+	c.JSON(http.StatusOK, gin.H{"icon": iconURL})
+}
+
+// ────────────────────────────────────────────
 // POST /api/lobby-groups/:id/watch-out   — share live room to group
 // ────────────────────────────────────────────
 
