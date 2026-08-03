@@ -396,7 +396,22 @@ func uploadGroupAttachment(c *gin.Context, attachmentType, uploadFolder string, 
 		return
 	}
 
-	attachURL := fmt.Sprintf("/uploads/%s/%d/%s", uploadFolder, senderID, newFilename)
+	// Push to BunnyCDN in production — a bare relative URL here resolves against
+	// the frontend's own origin in the browser (Vercel), not the backend's,
+	// silently breaking display there even though it works locally via Vite's
+	// dev proxy. Same fix already applied to lobby DM voice notes
+	// (lobby_chat_voice_notes.go) for the identical reason.
+	remotePath := fmt.Sprintf("%s/%d/%s", uploadFolder, senderID, newFilename)
+	attachURL, err := utils.UploadLocalFileToBunnyCDN(filePath, remotePath, contentType)
+	if err != nil {
+		log.Printf("❌ [LobbyGroups] Failed to upload %s to BunnyCDN: %v", attachmentType, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store file"})
+		os.Remove(filePath)
+		return
+	}
+	if strings.HasPrefix(attachURL, "http") {
+		os.Remove(filePath)
+	}
 	name := fileHeader.Filename
 	size := fileHeader.Size
 
@@ -519,7 +534,22 @@ func UploadLobbyGroupIconHandler(c *gin.Context) {
 		return
 	}
 
-	iconURL := fmt.Sprintf("/uploads/lobby-group-icons/%s", newFilename)
+	// Push to BunnyCDN in production — same reasoning as uploadGroupAttachment
+	// above and lobby_chat_voice_notes.go: a bare relative URL resolves against
+	// the frontend's own origin on Vercel, not the backend's, so the icon would
+	// silently never display there even though it works locally.
+	remotePath := fmt.Sprintf("lobby-group-icons/%s", newFilename)
+	iconURL, err := utils.UploadLocalFileToBunnyCDN(filePath, remotePath, contentType)
+	if err != nil {
+		log.Printf("❌ [LobbyGroups] Failed to upload icon to BunnyCDN: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store icon"})
+		os.Remove(filePath)
+		return
+	}
+	if strings.HasPrefix(iconURL, "http") {
+		os.Remove(filePath)
+	}
+
 	if err := db.Model(&models.LobbyGroup{}).Where("id = ?", groupID).Update("icon", iconURL).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update group icon"})
 		return

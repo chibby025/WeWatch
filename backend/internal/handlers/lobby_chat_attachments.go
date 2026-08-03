@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"wewatch-backend/internal/models"
+	"wewatch-backend/internal/utils"
 )
 
 const (
@@ -173,8 +174,22 @@ func uploadAttachment(c *gin.Context, attachmentType, uploadFolder string, maxSi
 		return
 	}
 
-	// Create relative URL for serving
-	attachmentURL := fmt.Sprintf("/uploads/%s/%d/%s", uploadFolder, senderID, newFilename)
+	// Push to BunnyCDN in production — a bare relative URL here resolves against
+	// the frontend's own origin in the browser (Vercel), not the backend's,
+	// silently breaking display there even though it works locally via Vite's
+	// dev proxy. Same fix already applied to lobby DM voice notes
+	// (lobby_chat_voice_notes.go) and lobby group attachments (lobby_groups.go).
+	remotePath := fmt.Sprintf("%s/%d/%s", uploadFolder, senderID, newFilename)
+	attachmentURL, err := utils.UploadLocalFileToBunnyCDN(filePath, remotePath, contentType)
+	if err != nil {
+		log.Printf("uploadAttachment(%s): Failed to upload to BunnyCDN: %v", attachmentType, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store file"})
+		os.Remove(filePath)
+		return
+	}
+	if strings.HasPrefix(attachmentURL, "http") {
+		os.Remove(filePath)
+	}
 	originalFilename := file.Filename
 
 	// Determine message text based on type
