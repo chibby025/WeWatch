@@ -122,6 +122,49 @@ func ValidateJWT(tokenString string) (uint, error) {
 	return claims.UserId, nil
 }
 
+// OAuth state CSRF protection — self-verifying instead of cookie-based.
+//
+// The original implementation stored a random state value in a cookie set by
+// GoogleLoginHandler (a cross-site XHR response, since the Vercel frontend
+// calls the Railway backend) and compared it against the state query param
+// GoogleCallbackHandler received back from Google. iOS Safari's Intelligent
+// Tracking Prevention blocks third-party cookies set this way — the exact
+// same class of bug already fixed for the refresh-token cookie (see
+// RefreshTokenHandler's own comment on this) — so the cookie was silently
+// never set on iPhone, and every callback failed with "State cookie not
+// found". A signed, self-verifying state value needs no cookie at all: it
+// survives the redirect round-trip purely because Google itself echoes back
+// whatever state string it was given.
+type oauthStateClaims struct {
+	jwt.RegisteredClaims
+}
+
+// GenerateOAuthState returns a short-lived signed token to use as the OAuth
+// "state" parameter — verifiable on callback with no server-side storage.
+func GenerateOAuthState() (string, error) {
+	claims := &oauthStateClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(10 * time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtSecret)
+}
+
+// ValidateOAuthState reports whether a state value returned from Google was
+// genuinely issued by GenerateOAuthState and hasn't expired.
+func ValidateOAuthState(state string) bool {
+	claims := &oauthStateClaims{}
+	token, err := jwt.ParseWithClaims(state, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return jwtSecret, nil
+	})
+	return err == nil && token.Valid
+}
+
 // ParseJWT extracts claims from a JWT token without full validation
 // Used for getting expiration time when blacklisting tokens
 func ParseJWT(tokenString string) (jwt.MapClaims, error) {

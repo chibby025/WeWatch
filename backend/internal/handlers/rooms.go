@@ -306,15 +306,20 @@ func UpdateRoomHandler(c *gin.Context) {
 	}
 
 	// Bind update data
+	// Description is a *string (not string) so an explicit "" can be told apart
+	// from the key being absent entirely — a plain string can't distinguish
+	// "clear the description" from "this request didn't touch description",
+	// which previously made clearing it silently impossible (see the `!= ""`
+	// check below).
 	var input struct {
-		Name                string `json:"name"`
-		Description         string `json:"description"`
-		ShowHost            *bool  `json:"show_host"`
-		ShowDescription     *bool  `json:"show_description"`
-		Handle              string `json:"handle"`
-		HostOnlyChat        *bool  `json:"host_only_chat"`
-		AutoInviteFollowers *bool  `json:"auto_invite_followers"`
-		IsPublic            *bool  `json:"is_public"`
+		Name                string  `json:"name"`
+		Description         *string `json:"description"`
+		ShowHost            *bool   `json:"show_host"`
+		ShowDescription     *bool   `json:"show_description"`
+		Handle              string  `json:"handle"`
+		HostOnlyChat        *bool   `json:"host_only_chat"`
+		AutoInviteFollowers *bool   `json:"auto_invite_followers"`
+		IsPublic            *bool   `json:"is_public"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -332,8 +337,8 @@ func UpdateRoomHandler(c *gin.Context) {
 	if input.Name != "" {
 		updates["name"] = input.Name
 	}
-	if input.Description != "" {
-		updates["description"] = input.Description
+	if input.Description != nil {
+		updates["description"] = *input.Description
 	}
 	if input.ShowHost != nil {
 		log.Printf("UpdateRoomHandler: Setting ShowHost to %v", *input.ShowHost)
@@ -3183,6 +3188,55 @@ func GetRoomHandler(c *gin.Context) {
 			"currently_playing":  roomData.Room.CurrentlyPlaying,
 			"coming_next":        roomData.Room.ComingNext,
 			"is_screen_sharing":  roomData.Room.IsScreenSharing,
+		},
+	})
+}
+
+// GetRoomByHandleHandler handles GET /api/public/rooms/by-handle/:handle
+// Resolves a room's shareable handle (e.g. "cinemahouse_108") to its numeric
+// ID. Deliberately public/unauthenticated (share links must work for a
+// logged-out visitor) and deliberately thin — unlike GetRoomHandler above,
+// this never returns playback state or other live room internals, only
+// enough to redirect and show a brief "taking you to <room>" transition.
+// Real access control still happens at the existing protected /rooms/:id
+// page this hands off to.
+func GetRoomByHandleHandler(c *gin.Context) {
+	handleParam := c.Param("handle")
+	if handleParam == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Handle is required"})
+		return
+	}
+
+	// Same sanitization already applied at write time (CreateRoomHandler/
+	// UpdateRoomHandler) — a read should be just as forgiving of case/stray
+	// characters as a write already is, since the stored value is always
+	// already lowercased/stripped.
+	handle := sanitizeHandle(handleParam)
+
+	var roomData models.Room
+	result := DB.Table("rooms").
+		Where("rooms.handle = ? AND rooms.deleted_at IS NULL", handle).
+		Scan(&roomData)
+
+	if result.Error != nil {
+		log.Printf("GetRoomByHandleHandler: Database error fetching handle %q: %v", handle, result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	if roomData.ID == 0 {
+		log.Printf("GetRoomByHandleHandler: No room found for handle %q", handle)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"room": gin.H{
+			"id":        roomData.ID,
+			"name":      roomData.Name,
+			"handle":    roomData.Handle,
+			"is_public": roomData.IsPublic,
+			"image_url": roomData.ImageURL,
 		},
 	})
 }

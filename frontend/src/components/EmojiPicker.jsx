@@ -3,7 +3,12 @@
 import React, { useEffect, useRef } from 'react';
 import 'emoji-picker-element';
 
-const EmojiPicker = ({ onEmojiSelect, className = '' }) => {
+// `height` defaults to a fixed 400px — every caller except StickerPicker just
+// drops this in a plain <div> with no definite height of its own, so a
+// percentage height would collapse to nothing there. StickerPicker's own
+// wrapper *does* provide a definite, responsive height (see its maxHeight),
+// so it explicitly passes height="100%" to adapt to smaller viewports there.
+const EmojiPicker = ({ onEmojiSelect, className = '', height = '400px' }) => {
   const pickerRef = useRef(null);
 
   useEffect(() => {
@@ -25,12 +30,15 @@ const EmojiPicker = ({ onEmojiSelect, className = '' }) => {
   }, [onEmojiSelect]);
 
   return (
-    <div className={className}>
-      <emoji-picker ref={pickerRef} class="light"></emoji-picker>
+    <div className={`${className} h-full`}>
+      {/* width/height set inline (per-instance) rather than in the shared <style>
+          block below — that block uses a bare `emoji-picker` tag selector, which
+          would apply to every mounted instance at once. Harmless for the theme
+          custom-properties (always the same value everywhere), but would leak
+          one instance's size onto another's now that height varies by caller. */}
+      <emoji-picker ref={pickerRef} class="light" style={{ width: '100%', height }}></emoji-picker>
       <style>{`
         emoji-picker {
-          width: 100%;
-          height: 400px;
           --background: rgb(17 24 39);
           --border-color: rgb(55 65 81);
           --indicator-color: rgb(168 85 247);

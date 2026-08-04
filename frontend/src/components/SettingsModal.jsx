@@ -212,78 +212,80 @@ const SettingsModal = ({ isOpen, onClose, onReplayAppTour }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="bg-gray-800 rounded-xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-700 flex justify-between items-center">
-          <h3 className="text-white font-semibold text-lg">Settings</h3>
-          <button 
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-700 flex justify-between items-center">
+          <h3 className="text-white font-semibold text-base sm:text-lg">Settings</h3>
+          <button
             onClick={onClose}
             className="text-gray-400 hover:text-white transition-colors"
             aria-label="Close settings"
           >
-            <XMarkIcon className="h-6 w-6" />
+            <XMarkIcon className="h-5 w-5 sm:h-6 sm:w-6" />
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-gray-700 bg-gray-900/50 px-4">
+        {/* Tabs — each takes an equal share of the width so all 4 stay evenly
+            spaced instead of overflowing on mobile; scrollbar-hide is a safety
+            net for very narrow screens where they still can't all fit. */}
+        <div className="flex flex-shrink-0 border-b border-gray-700 bg-gray-900/50 px-1 sm:px-4 overflow-x-auto overflow-y-visible scrollbar-hide">
           <button
             onClick={() => setActiveTab('appearance')}
-            className={`px-6 py-3 font-semibold transition-all relative ${
+            className={`flex-1 sm:flex-initial min-w-0 px-2 sm:px-6 py-2.5 sm:py-3 font-semibold transition-all relative ${
               activeTab === 'appearance'
                 ? 'text-blue-400 border-b-2 border-blue-400'
                 : 'text-gray-400 hover:text-gray-300'
             }`}
           >
-            <div className="flex items-center gap-2">
-              <SunIcon className="h-4 w-4" />
-              Appearance
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-2 text-[10px] sm:text-base leading-tight text-center">
+              <SunIcon className="h-4 w-4 flex-shrink-0" />
+              <span>Appearance</span>
             </div>
           </button>
           <button
             onClick={() => setActiveTab('notifications')}
-            className={`px-6 py-3 font-semibold transition-all relative ${
+            className={`flex-1 sm:flex-initial min-w-0 px-2 sm:px-6 py-2.5 sm:py-3 font-semibold transition-all relative ${
               activeTab === 'notifications'
                 ? 'text-blue-400 border-b-2 border-blue-400'
                 : 'text-gray-400 hover:text-gray-300'
             }`}
           >
-            <div className="flex items-center gap-2">
-              <BellIcon className="h-4 w-4" />
-              Notifications
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-2 text-[10px] sm:text-base leading-tight text-center">
+              <BellIcon className="h-4 w-4 flex-shrink-0" />
+              <span>Notifications</span>
             </div>
           </button>
           <button
             onClick={() => setActiveTab('privacy')}
-            className={`px-6 py-3 font-semibold transition-all relative ${
+            className={`flex-1 sm:flex-initial min-w-0 px-2 sm:px-6 py-2.5 sm:py-3 font-semibold transition-all relative ${
               activeTab === 'privacy'
                 ? 'text-blue-400 border-b-2 border-blue-400'
                 : 'text-gray-400 hover:text-gray-300'
             }`}
           >
-            <div className="flex items-center gap-2">
-              <ShieldCheckIcon className="h-4 w-4" />
-              Privacy
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-2 text-[10px] sm:text-base leading-tight text-center">
+              <ShieldCheckIcon className="h-4 w-4 flex-shrink-0" />
+              <span>Privacy</span>
             </div>
           </button>
           <button
             onClick={() => setActiveTab('help')}
-            className={`px-6 py-3 font-semibold transition-all relative ${
+            className={`flex-1 sm:flex-initial min-w-0 px-2 sm:px-6 py-2.5 sm:py-3 font-semibold transition-all relative ${
               activeTab === 'help'
                 ? 'text-blue-400 border-b-2 border-blue-400'
                 : 'text-gray-400 hover:text-gray-300'
             }`}
           >
-            <div className="flex items-center gap-2">
-              <QuestionMarkCircleIcon className="h-4 w-4" />
-              Help
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-2 text-[10px] sm:text-base leading-tight text-center">
+              <QuestionMarkCircleIcon className="h-4 w-4 flex-shrink-0" />
+              <span>Help</span>
             </div>
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+        <div className="px-4 pt-6 pb-4 sm:p-6 space-y-6 overflow-y-auto flex-1">
           {/* Appearance Tab */}
           {activeTab === 'appearance' && (
             <div>
@@ -599,10 +601,10 @@ const SettingsModal = ({ isOpen, onClose, onReplayAppTour }) => {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-700 flex justify-end">
-          <button 
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-700 flex justify-end">
+          <button
             onClick={onClose}
-            className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-medium transition-colors"
+            className="bg-blue-600 hover:bg-blue-700 px-5 sm:px-6 py-2 rounded-lg text-white text-sm sm:text-base font-medium transition-colors"
           >
             Done
           </button>
@@ -613,28 +615,42 @@ const SettingsModal = ({ isOpen, onClose, onReplayAppTour }) => {
 };
 
 // Toggle Item Component
+// Uses a <label> + visually-hidden checkbox instead of a <button> for the
+// track/thumb — a global mobile rule (`button { min-height/width: 44px }` in
+// index.css, meant for touch-target sizing) forces any <button> up to a 44px
+// square on screens <=640px, turning a 44x24 pill into a circle. <label>/
+// <input> aren't matched by that selector, so the pill shape survives on
+// mobile. Same pattern already used for the toggles in RoomPageEditModal.jsx.
 const ToggleItem = ({ label, description, enabled, onChange, disabled = false }) => (
   <div className={`flex items-center justify-between py-3 ${disabled ? 'opacity-50' : ''}`}>
     <div className="flex-1">
       <p className="text-white font-medium">{label}</p>
       <p className="text-gray-400 text-sm">{description}</p>
     </div>
-    <button
-      onClick={onChange}
-      disabled={disabled}
-      className={`
-        relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-        ${enabled ? 'bg-blue-600' : 'bg-gray-600'}
-        ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}
-      `}
+    <label
+      className={`relative ml-4 flex-shrink-0 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+      style={{ display: 'inline-block', width: '44px', height: '24px' }}
     >
-      <span
-        className={`
-          inline-block h-4 w-4 transform rounded-full bg-white transition-transform
-          ${enabled ? 'translate-x-6' : 'translate-x-1'}
-        `}
+      <input
+        type="checkbox"
+        className="sr-only"
+        checked={!!enabled}
+        disabled={disabled}
+        onChange={onChange}
       />
-    </button>
+      <span
+        className="absolute inset-0 rounded-full transition-colors duration-200"
+        style={{ backgroundColor: enabled ? '#2563eb' : '#4b5563' }}
+      />
+      <span
+        className="absolute rounded-full bg-white shadow transition-transform duration-200"
+        style={{
+          width: '20px', height: '20px',
+          top: '2px', left: '2px',
+          transform: enabled ? 'translateX(20px)' : 'translateX(0)',
+        }}
+      />
+    </label>
   </div>
 );
 

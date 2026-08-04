@@ -2,6 +2,7 @@
 // 2-player simultaneous-lock card battle: build 1-3 custom characters, then fight.
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { apiClient } from '../../services/api';
+import GameRulesButton from './GameRulesButton';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -1992,9 +1993,9 @@ function CounterOverlay({ counterState, myChars, myId, myName, onCounter, durati
       />
 
       {/* ── Modal ── */}
-      <div className="absolute inset-0 flex items-center justify-center z-50">
+      <div className="absolute inset-0 flex items-center justify-center z-50 px-4">
         <div
-          className="bg-gray-900/95 border border-yellow-500/60 rounded-2xl p-6 w-80 relative overflow-hidden"
+          className="bg-gray-900/95 border border-yellow-500/60 rounded-2xl p-6 w-80 max-w-full relative overflow-hidden"
           style={{ animation: 'cw-border-glow 1.6s ease-in-out infinite' }}
         >
           {/* Top edge shine */}
@@ -2620,7 +2621,11 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-purple-700 to-blue-700 border-b border-purple-900 flex-shrink-0">
         <div className="flex items-center gap-8">
-          <img src="/icons/versusIcon.webp" alt="VS" className="h-9 w-auto flex-shrink-0" style={{ transform: 'scale(2.2)', transformOrigin: 'left center' }} />
+          {/* Sized directly rather than via transform:scale() — a CSS transform is
+              paint-only and doesn't reserve layout space, so the visually-2.2x-bigger
+              icon was overflowing past its own unscaled box into the "BATTLE" text's
+              gap-8 spacing (computed off the small box, not what actually renders). */}
+          <img src="/icons/versusIcon.webp" alt="VS" className="h-14 w-auto flex-shrink-0" />
           <span
             className="text-white font-black text-3xl leading-none"
             style={{ fontFamily: 'Bangers, cursive', letterSpacing: '0.06em' }}
@@ -2629,6 +2634,7 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <GameRulesButton gameType="vs_battle" className="text-white/70 hover:text-white" />
           {isPlayer && (phase === 'battle' || phase === 'counter_window' || phase === 'dice_roll') && !gameOver && (
             <button
               onClick={handleEndGame}

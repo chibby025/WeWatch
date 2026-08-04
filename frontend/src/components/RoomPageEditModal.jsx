@@ -1,6 +1,6 @@
 // WeWatch/frontend/src/components/RoomPageEditModal.jsx
 // Modal for editing room settings and preferences
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { XMarkIcon, FilmIcon, PhotoIcon, TrashIcon, PencilIcon, PlusIcon, UserPlusIcon } from '@heroicons/react/24/outline';
 import { InformationCircleIcon, Squares2X2Icon, UsersIcon, UserGroupIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/solid';
 import apiClient, { createRoomGroup, getRoomGroups, updateRoomGroup, deleteRoomGroup, searchUsers, inviteUserToRoom } from '../services/api';
@@ -40,6 +40,15 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
   const [isHostProfileModalOpen, setIsHostProfileModalOpen] = useState(false);
   const [expandedMemberAvatar, setExpandedMemberAvatar] = useState(null);
 
+  // When Enter/Escape explicitly close an inline editor, they set the matching
+  // ref before the state update unmounts the input. If the browser also fires a
+  // native `blur` on that now-detached input (it does, in most browsers, since
+  // focus can't remain on a removed node), onBlur checks the ref and skips —
+  // otherwise Enter's save (or Escape's revert) would be redundantly re-run.
+  const nameEditCloseRef = useRef(false);
+  const handleEditCloseRef = useRef(false);
+  const descriptionEditCloseRef = useRef(false);
+
   // Groups state
   const [groups, setGroups] = useState([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
@@ -71,16 +80,21 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
       
       const autoInviteFollowers = room.auto_invite_followers !== undefined ? room.auto_invite_followers : true;
 
-      setFormData({
-        name: room.name || room.Name || '',
-        description: room.description || room.Description || '',
-        handle: room.handle || '',
+      // Never stomp a field the host is actively typing into — Name/Handle/
+      // Description each save independently on Enter/blur now, but the moment
+      // between opening the inline editor and that save landing, this effect
+      // could still fire (e.g. a genuine concurrent room update) and would
+      // otherwise overwrite the in-progress keystrokes with the pre-edit value.
+      setFormData(prev => ({
+        name: isEditingName ? prev.name : (room.name || room.Name || ''),
+        description: isEditingDescription ? prev.description : (room.description || room.Description || ''),
+        handle: isEditingHandle ? prev.handle : (room.handle || ''),
         show_host: showHost,
         show_description: showDescription,
         host_only_chat: hostOnlyChat,
         auto_invite_followers: autoInviteFollowers,
         is_public: room.is_public !== undefined ? room.is_public : true,
-      });
+      }));
       
       // Only reset image preview if the user hasn't already selected a new file.
       // Without this guard, a room prop change from a WS update wipes a pending
@@ -92,7 +106,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
         return prev;
       });
     }
-  }, [room]);
+  }, [room, isEditingName, isEditingHandle, isEditingDescription]);
 
   // Fetch groups when modal opens and Groups tab is active
   useEffect(() => {
@@ -374,6 +388,37 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
     }
   };
 
+  // Saves a single inline-edited field (Name/Handle/Description) immediately,
+  // independent of the "Save Changes" form below. Skips the request entirely if
+  // the value already matches what's persisted — this is what makes the
+  // Escape-then-blur sequence a safe no-op (see the *EditCloseRef guards below).
+  const saveRoomField = async (field, value) => {
+    const roomId = room?.id || room?.ID;
+    if (!roomId) return;
+
+    const persistedValue =
+      field === 'name' ? (room?.name || room?.Name || '') :
+      field === 'handle' ? (room?.handle || '') :
+      (room?.description || room?.Description || '');
+
+    if (value === persistedValue) return;
+
+    if (field === 'name' && !value.trim()) {
+      toast.error('Room name is required');
+      setFormData(prev => ({ ...prev, name: persistedValue }));
+      return;
+    }
+
+    try {
+      const response = await apiClient.put(`/api/rooms/${roomId}`, { [field]: value });
+      onUpdate(response.data);
+    } catch (error) {
+      console.error(`Error saving room ${field}:`, error);
+      toast.error(error.response?.data?.error || `Failed to update ${field}`);
+      setFormData(prev => ({ ...prev, [field]: persistedValue }));
+    }
+  };
+
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     setFormData(prev => ({
@@ -417,7 +462,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
       <div className="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 rounded-2xl shadow-2xl w-full max-w-lg max-h-[95vh] sm:max-h-[90vh] flex flex-col border border-gray-700/50">
         {/* Header with Room Image */}
         <div className="p-4 sm:p-6 border-b border-gray-700/50">
-          <div className="flex items-start gap-4">
+          <div className="flex items-start gap-2 sm:gap-4">
             {/* Room Image */}
             <div className="relative flex-shrink-0 group">
               <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden bg-gradient-to-br from-purple-600 via-blue-600 to-purple-600 p-[3px] cursor-pointer"
@@ -458,10 +503,10 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                     handleImageDelete();
                   }}
                   disabled={uploadingImage}
-                  className="absolute -top-1 left-1/2 -translate-x-1/2 flex items-center justify-center bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 rounded-full p-2 shadow-xl transition-all transform hover:scale-110 disabled:opacity-50"
+                  className="absolute -top-1 left-1/2 -translate-x-1/2 flex items-center justify-center bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 rounded-full p-1 sm:p-2 shadow-xl transition-all transform hover:scale-110 disabled:opacity-50"
                   title="Remove image"
                 >
-                  <TrashIcon className="w-4 h-4 text-white" />
+                  <TrashIcon className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
                 </button>
               )}
 
@@ -502,23 +547,43 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   placeholder="Room name..."
                   className="w-full text-lg sm:text-xl font-bold bg-gray-800/50 border border-gray-600 rounded-lg px-3 py-1 text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
                   autoFocus
-                  onBlur={() => setIsEditingName(false)}
+                  onBlur={() => {
+                    if (nameEditCloseRef.current) { nameEditCloseRef.current = false; return; }
+                    setIsEditingName(false);
+                    saveRoomField('name', formData.name);
+                  }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') setIsEditingName(false);
+                    if (e.key === 'Enter') {
+                      nameEditCloseRef.current = true;
+                      setIsEditingName(false);
+                      saveRoomField('name', formData.name);
+                    }
                     if (e.key === 'Escape') {
+                      nameEditCloseRef.current = true;
                       setFormData(prev => ({ ...prev, name: room?.name || room?.Name || '' }));
                       setIsEditingName(false);
                     }
                   }}
                 />
               ) : (
-                <h2
-                  className={`text-base sm:text-xl font-bold text-white truncate mb-0.5 ${isHost ? 'cursor-pointer hover:text-purple-400 transition-colors' : ''}`}
-                  onClick={() => isHost && setIsEditingName(true)}
-                  title={isHost ? 'Click to edit' : ''}
-                >
-                  {formData.name || 'Untitled Room'}
-                </h2>
+                <div className="flex items-center gap-1.5 mb-0 sm:mb-0.5 group">
+                  <h2
+                    className={`text-base sm:text-xl font-bold text-white truncate ${isHost ? 'cursor-pointer hover:text-purple-400 transition-colors' : ''}`}
+                    onClick={() => isHost && setIsEditingName(true)}
+                    title={isHost ? 'Click to edit' : ''}
+                  >
+                    {formData.name || 'Untitled Room'}
+                  </h2>
+                  {isHost && (
+                    <button
+                      onClick={() => setIsEditingName(true)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700/50 rounded flex-shrink-0"
+                      title="Edit room name"
+                    >
+                      <PencilIcon className="w-3.5 h-3.5 text-gray-400" />
+                    </button>
+                  )}
+                </div>
               )}
               
               {/* Handle */}
@@ -532,10 +597,19 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                     placeholder="handle"
                     className="w-full px-2 py-0.5 text-xs bg-gray-800/50 border border-gray-600 rounded text-gray-300 focus:outline-none focus:ring-1 focus:ring-purple-500"
                     autoFocus
-                    onBlur={() => setIsEditingHandle(false)}
+                    onBlur={() => {
+                      if (handleEditCloseRef.current) { handleEditCloseRef.current = false; return; }
+                      setIsEditingHandle(false);
+                      saveRoomField('handle', formData.handle);
+                    }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') setIsEditingHandle(false);
+                      if (e.key === 'Enter') {
+                        handleEditCloseRef.current = true;
+                        setIsEditingHandle(false);
+                        saveRoomField('handle', formData.handle);
+                      }
                       if (e.key === 'Escape') {
+                        handleEditCloseRef.current = true;
                         setFormData(prev => ({ ...prev, handle: room?.handle || '' }));
                         setIsEditingHandle(false);
                       }
@@ -544,7 +618,11 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 </div>
               ) : (
                 <div className="flex items-center gap-1 mt-0 group">
-                  <p className="text-[10px] text-gray-500 font-medium">
+                  <p
+                    className={`text-[10px] text-gray-500 font-medium ${isHost ? 'cursor-pointer hover:text-gray-300 transition-colors' : ''}`}
+                    onClick={() => isHost && setIsEditingHandle(true)}
+                    title={isHost ? 'Click to edit' : ''}
+                  >
                     {formData.handle ? `@${formData.handle}` : (isHost ? '@handle' : '')}
                   </p>
                   {isHost && (
@@ -570,10 +648,19 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                     placeholder="Add a description..."
                     className="flex-1 px-3 py-1.5 text-sm bg-gray-800/50 border border-gray-600 rounded-lg text-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
                     autoFocus
-                    onBlur={() => setIsEditingDescription(false)}
+                    onBlur={() => {
+                      if (descriptionEditCloseRef.current) { descriptionEditCloseRef.current = false; return; }
+                      setIsEditingDescription(false);
+                      saveRoomField('description', formData.description);
+                    }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') setIsEditingDescription(false);
+                      if (e.key === 'Enter') {
+                        descriptionEditCloseRef.current = true;
+                        setIsEditingDescription(false);
+                        saveRoomField('description', formData.description);
+                      }
                       if (e.key === 'Escape') {
+                        descriptionEditCloseRef.current = true;
                         setFormData(prev => ({ ...prev, description: room?.description || room?.Description || '' }));
                         setIsEditingDescription(false);
                       }
@@ -582,7 +669,11 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 </div>
               ) : (
                 <div className="flex items-start gap-2 mt-1.5 group">
-                  <p className="text-xs sm:text-sm text-gray-400 line-clamp-2 flex-1">
+                  <p
+                    className={`text-xs sm:text-sm text-gray-400 line-clamp-2 flex-1 ${isHost ? 'cursor-pointer hover:text-gray-300 transition-colors' : ''}`}
+                    onClick={() => isHost && setIsEditingDescription(true)}
+                    title={isHost ? 'Click to edit' : ''}
+                  >
                     {formData.description || 'No description'}
                   </p>
                   {isHost && (
@@ -599,23 +690,23 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
             </div>
 
             {/* Actions */}
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
               {onShare && (
                 <button
                   onClick={onShare}
-                  className="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-white transition-colors"
+                  className="p-1.5 sm:p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-white transition-colors"
                   title="Share room"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-5 w-5">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-4 w-4 sm:h-5 sm:w-5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
                   </svg>
                 </button>
               )}
               <button
                 onClick={onClose}
-                className="p-2 rounded-lg bg-gray-700/50 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+                className="p-1.5 sm:p-2 rounded-lg bg-gray-700/50 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
               >
-                <XMarkIcon className="h-5 w-5" />
+                <XMarkIcon className="h-4 w-4 sm:h-5 sm:w-5" />
               </button>
             </div>
           </div>

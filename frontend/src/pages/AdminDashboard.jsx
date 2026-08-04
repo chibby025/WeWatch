@@ -265,14 +265,14 @@ const AdminDashboard = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 text-white p-6">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 text-white p-4 sm:p-6">
       <Toaster position="top-center" />
 
       {/* Header */}
       <div className="max-w-7xl mx-auto mb-8">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h1 className="text-4xl font-bold mb-2">🎯 Admin Dashboard</h1>
+            <h1 className="text-2xl sm:text-4xl font-bold mb-2">🎯 Admin Dashboard</h1>
             <p className="text-gray-300">
               Last updated: {lastUpdated?.toLocaleTimeString()} •
               <span className={`ml-2 ${autoRefresh ? 'text-green-400' : 'text-gray-400'}`}>
@@ -280,20 +280,20 @@ const AdminDashboard = () => {
               </span>
             </p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-2 sm:gap-3 w-full sm:w-auto">
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`px-4 py-2 rounded-lg font-semibold transition-colors ${autoRefresh ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 hover:bg-gray-700'}`}
+              className={`px-3 sm:px-4 py-2 rounded-lg font-semibold text-sm sm:text-base transition-colors ${autoRefresh ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 hover:bg-gray-700'}`}
             >
               {autoRefresh ? '⏸️ Pause' : '▶️ Resume'}
             </button>
-            <button onClick={fetchAnalytics} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold flex items-center gap-2">
+            <button onClick={fetchAnalytics} className="px-3 sm:px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-sm sm:text-base flex items-center gap-2">
               <ArrowPathIcon className="h-5 w-5" />Refresh
             </button>
-            <button onClick={exportToCSV} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold flex items-center gap-2">
+            <button onClick={exportToCSV} className="px-3 sm:px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold text-sm sm:text-base flex items-center gap-2">
               <ArrowDownTrayIcon className="h-5 w-5" />Export CSV
             </button>
-            <button onClick={() => navigate('/lobby')} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-semibold flex items-center gap-2">
+            <button onClick={() => navigate('/lobby')} className="px-3 sm:px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-semibold text-sm sm:text-base flex items-center gap-2">
               <XMarkIcon className="h-5 w-5" />Close
             </button>
           </div>
@@ -556,7 +556,7 @@ const AdminDashboard = () => {
         {/* Token Flow */}
         <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 border border-white/20">
           <h2 className="text-2xl font-bold mb-4">🪙 Token Flow</h2>
-          <div className="mb-4 grid grid-cols-3 gap-4 text-sm">
+          <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
             <div className="bg-green-600/20 rounded-lg p-3 border border-green-500/30">
               <div className="text-gray-300">Total Minted</div>
               <div className="text-2xl font-bold text-green-400">{formatTokens(analytics.tokens.total_minted)} 🪙</div>
@@ -1093,6 +1093,7 @@ const AdminDashboard = () => {
                 <div className="px-4 py-3 border-b border-white/10">
                   <h3 className="font-semibold text-white">🏆 Most Upvoted Requests</h3>
                 </div>
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10 text-left">
@@ -1123,6 +1124,7 @@ const AdminDashboard = () => {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             )}
 
@@ -1175,6 +1177,7 @@ const AdminDashboard = () => {
                 </Card>
               </div>
               <div className="bg-white/5 rounded-lg overflow-hidden">
+                <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-white/10">
                     <tr>
@@ -1212,6 +1215,7 @@ const AdminDashboard = () => {
                     )}
                   </tbody>
                 </table>
+                </div>
               </div>
             </>
           ) : (

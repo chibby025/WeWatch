@@ -1,6 +1,6 @@
 // WeWatch/frontend/src/components/RoomPageNew.jsx
 // Redesigned RoomPage - Hub for room with persistent chat (no video player)
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import StickerPicker from './StickerPicker';
@@ -35,6 +35,7 @@ import ScheduleEventModal from './ScheduleEventModal';
 import RoomPageEditModal from './RoomPageEditModal';
 import RoomMembersModal from './RoomMembersModal';
 import ShareModal from './ShareModal';
+import { buildRoomShareUrl } from '../utils/roomShare';
 import RoomTV from './RoomTV';
 import CreateTVContentModal from './CreateTVContentModal';
 import RoomAttachModal from './RoomAttachModal';
@@ -136,6 +137,8 @@ const RoomPageNew = () => {
   const [openMenuIndex, setOpenMenuIndex] = useState(null);
   const [openMenuPos, setOpenMenuPos] = useState(null);
   const [pillCopied, setPillCopied] = useState(false);
+  const [showQuickReact, setShowQuickReact] = useState(false);
+  const pillRef = React.useRef(null);
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editText, setEditText] = useState('');
   const [showChatPicker, setShowChatPicker] = useState(false);
@@ -228,6 +231,16 @@ const RoomPageNew = () => {
   // Host stats state
   const [hostAverageWatchers, setHostAverageWatchers] = useState(0);
   const [loadingHostStats, setLoadingHostStats] = useState(false);
+
+  // Stable object reference for RoomPageEditModal's `room` prop — without this,
+  // `{ ...room, average_watchers: hostAverageWatchers }` created a brand-new object
+  // on every render (this page re-renders constantly from WS traffic), which made
+  // the modal's own room-resync effect fire almost continuously and silently
+  // overwrite any in-progress, unsaved edit in its inline Name/Handle/Description fields.
+  const roomForEditModal = useMemo(
+    () => (room ? { ...room, average_watchers: hostAverageWatchers } : room),
+    [room, hostAverageWatchers]
+  );
   
   // ✅ Date of Birth state (for age verification)
   const [showDOBModal, setShowDOBModal] = useState(false);
@@ -1189,6 +1202,20 @@ const RoomPageNew = () => {
             scrollToBottom();
           }
           break;
+        case 'reaction': {
+          const { message_id: reactedMessageId, emoji: reactedEmoji, user_id: reactorUserId } = message.data || {};
+          if (!reactedMessageId || !reactedEmoji) break;
+          setMessages(prev => prev.map(m => {
+            if ((m.id || m.ID) !== reactedMessageId) return m;
+            const existing = m.reactions || [];
+            // Dedupe by user+emoji — a reconnect replay or a double-tap before
+            // the first echo lands should never double the count.
+            const alreadyHas = existing.some(r => r.user_id === reactorUserId && r.emoji === reactedEmoji);
+            if (alreadyHas) return m;
+            return { ...m, reactions: [...existing, { emoji: reactedEmoji, user_id: reactorUserId }] };
+          }));
+          break;
+        }
         case 'user_joined':
           toast.success(`${message.data.username} joined the room`);
           fetchMembers();
@@ -1463,6 +1490,50 @@ const RoomPageNew = () => {
     setNewMessage(prev => prev + emoji);
   };
 
+  // Backend's valid-emoji whitelist (see SendReactionHandler/websocket.go's
+  // reaction handler) — only these are accepted, so the quick-react row is
+  // restricted to a subset of it rather than a free emoji picker.
+  const QUICK_REACT_EMOJIS = ['👍', '❤️', '😂', '🔥', '😢', '🙌'];
+
+  // Reactions are sent over the room WebSocket, not REST — the REST
+  // `/api/rooms/:id/reactions` endpoint saves but deliberately never
+  // broadcasts (see its own comments in reaction.go); the WS path is the one
+  // that both persists AND broadcasts live to everyone in the room,
+  // including this client's own echo, which is what actually paints the
+  // badge for the sender — no separate optimistic-update path needed.
+  const handleSendReaction = (msg, emoji) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      toast.error('Not connected — try again in a moment');
+      return;
+    }
+    wsRef.current.send(JSON.stringify({
+      type: 'reaction',
+      data: {
+        message_id: msg.id,
+        emoji,
+        user_id: currentUser?.id,
+        timestamp: Date.now(),
+      },
+    }));
+    setOpenMenuIndex(null);
+    setOpenMenuPos(null);
+    setShowQuickReact(false);
+  };
+
+  // Groups a message's raw reaction rows into {emoji, count, mine} for badge
+  // rendering, sorted most-popular-first.
+  const groupMessageReactions = (reactions) => {
+    if (!reactions || reactions.length === 0) return [];
+    const byEmoji = new Map();
+    reactions.forEach(r => {
+      const entry = byEmoji.get(r.emoji) || { emoji: r.emoji, count: 0, mine: false };
+      entry.count += 1;
+      if (r.user_id === currentUser?.id || r.UserID === currentUser?.id) entry.mine = true;
+      byEmoji.set(r.emoji, entry);
+    });
+    return [...byEmoji.values()].sort((a, b) => b.count - a.count);
+  };
+
   // Close combined chat picker when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -1481,10 +1552,30 @@ const RoomPageNew = () => {
   // Close chat message icon pill on outside click
   useEffect(() => {
     if (openMenuIndex === null) return;
-    const close = () => { setOpenMenuIndex(null); setOpenMenuPos(null); setPillCopied(false); };
+    const close = () => { setOpenMenuIndex(null); setOpenMenuPos(null); setPillCopied(false); setShowQuickReact(false); };
     document.addEventListener('click', close);
     return () => document.removeEventListener('click', close);
   }, [openMenuIndex]);
+
+  // Clamp the pill horizontally so it never overflows the viewport edge. The
+  // pill is centered on the tapped bubble's midpoint (left + translateX(-50%)),
+  // which pushes it off-screen for any bubble near an edge — own messages are
+  // right-aligned, so this hits them constantly on mobile. Measuring the
+  // actual rendered width (rather than guessing from button count, which
+  // varies with showQuickReact) and correcting in a layout effect keeps this
+  // accurate regardless of which buttons are showing, with no visible flash
+  // since layout effects run before paint.
+  useLayoutEffect(() => {
+    if (!openMenuPos || !pillRef.current) return;
+    const rect = pillRef.current.getBoundingClientRect();
+    const margin = 8;
+    let delta = 0;
+    if (rect.left < margin) delta = margin - rect.left;
+    else if (rect.right > window.innerWidth - margin) delta = (window.innerWidth - margin) - rect.right;
+    if (Math.abs(delta) > 0.5) {
+      setOpenMenuPos(prev => (prev ? { ...prev, left: prev.left + delta } : prev));
+    }
+  }, [openMenuPos, showQuickReact]);
 
   const handleSendSticker = async (gif) => {
     setShowChatPicker(false);
@@ -2781,6 +2872,7 @@ const RoomPageNew = () => {
             const currentSwipeX = isSwiping ? swipeX : 0;
             const isHighlighted = highlightedMessageId === msg.id;
             const replyCount = replyCounts[msg.id] || 0;
+            const reactionGroups = groupMessageReactions(msg.reactions);
 
             return (
               <React.Fragment key={index}>
@@ -2881,10 +2973,12 @@ const RoomPageNew = () => {
                       if (openMenuIndex === index) {
                         setOpenMenuIndex(null);
                         setOpenMenuPos(null);
+                        setShowQuickReact(false);
                         return;
                       }
                       const rect = e.currentTarget.getBoundingClientRect();
                       const showBelow = rect.top < 80;
+                      setShowQuickReact(false);
                       setOpenMenuIndex(index);
                       setOpenMenuPos({
                         top: showBelow ? rect.bottom + 6 : rect.top - 50,
@@ -2986,6 +3080,26 @@ const RoomPageNew = () => {
                       </>
                     )}
                   </div>
+
+                  {/* Reaction badges — grouped by emoji, tap to add/pile onto the same reaction */}
+                  {reactionGroups.length > 0 && !isEditing && (
+                    <div className={`mt-0.5 flex flex-wrap gap-1 ${isOwnMessage ? 'justify-end' : 'justify-start'}`}>
+                      {reactionGroups.map(group => (
+                        <button
+                          key={group.emoji}
+                          onClick={(e) => { e.stopPropagation(); handleSendReaction(msg, group.emoji); }}
+                          className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs border transition-colors ${
+                            group.mine
+                              ? 'bg-purple-600/20 border-purple-500 text-purple-300'
+                              : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-purple-400'
+                          }`}
+                        >
+                          <span>{group.emoji}</span>
+                          <span className="font-medium">{group.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Reply count badge */}
                   {replyCount > 0 && !isEditing && (
@@ -3395,7 +3509,7 @@ const RoomPageNew = () => {
       <RoomPageEditModal
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
-        room={{ ...room, average_watchers: hostAverageWatchers }}
+        room={roomForEditModal}
         onUpdate={(updatedRoom) => {
           setRoom(updatedRoom);
           toast.success('Room updated successfully');
@@ -3472,6 +3586,7 @@ const RoomPageNew = () => {
         onClose={() => setIsShareModalOpen(false)}
         roomId={roomId}
         roomName={room?.name || room?.Name}
+        shareUrl={room ? buildRoomShareUrl(room) : undefined}
       />
 
       {/* ✅ Create TV Content Modal (Host Only) */}
@@ -3593,10 +3708,46 @@ const RoomPageNew = () => {
         const canDeleteMsg = isOwnMsg || isHost;
         return (
           <div
-            className="fixed z-[500] flex items-center gap-0.5 bg-gray-900 rounded-full px-1.5 py-1 shadow-2xl border border-gray-700/60 animate-[fadeScaleIn_0.15s_ease-out]"
+            ref={pillRef}
+            className="fixed z-[500] flex items-center gap-0 sm:gap-0.5 bg-gray-900 rounded-full px-1 py-0.5 sm:px-1.5 sm:py-1 shadow-2xl border border-gray-700/60 animate-[fadeScaleIn_0.15s_ease-out] max-w-[calc(100vw-16px)]"
             style={{ top: openMenuPos.top, left: openMenuPos.left, transform: 'translateX(-50%)' }}
             onClick={e => e.stopPropagation()}
           >
+            {showQuickReact ? (
+              <>
+                {/* Back to the normal action row */}
+                <button
+                  onClick={() => setShowQuickReact(false)}
+                  title="Back"
+                  className="p-1 sm:p-1.5 text-gray-400 hover:text-white active:scale-90 transition-all !min-h-0 !min-w-0"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                {QUICK_REACT_EMOJIS.map(emoji => (
+                  <button
+                    key={emoji}
+                    onClick={() => handleSendReaction(msg, emoji)}
+                    title={emoji}
+                    className="p-0.5 sm:p-1 text-base sm:text-lg hover:scale-125 active:scale-90 transition-transform !min-h-0 !min-w-0"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </>
+            ) : (
+              <>
+            {/* React */}
+            <button
+              onClick={() => setShowQuickReact(true)}
+              title="React"
+              className="p-1 sm:p-1.5 text-white hover:text-yellow-300 active:scale-90 transition-all !min-h-0 !min-w-0"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
             {/* Copy */}
             {!msg.audio_url && (
               <button
@@ -3606,7 +3757,7 @@ const RoomPageNew = () => {
                   setTimeout(() => { setPillCopied(false); setOpenMenuIndex(null); setOpenMenuPos(null); }, 1200);
                 }}
                 title="Copy"
-                className="p-1.5 text-white hover:text-green-300 active:scale-90 transition-all"
+                className="p-1 sm:p-1.5 text-white hover:text-green-300 active:scale-90 transition-all !min-h-0 !min-w-0"
               >
                 {pillCopied
                   ? <svg className="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 24 24"><path fillRule="evenodd" d="M19.916 4.626a.75.75 0 01.208 1.04l-9 13.5a.75.75 0 01-1.154.114l-6-6a.75.75 0 011.06-1.06l5.353 5.353 8.493-12.739a.75.75 0 011.04-.208z" clipRule="evenodd"/></svg>
@@ -3619,7 +3770,7 @@ const RoomPageNew = () => {
               <button
                 onClick={() => { startEditing(msg); setOpenMenuIndex(null); setOpenMenuPos(null); }}
                 title="Edit"
-                className="p-1.5 text-white hover:text-blue-300 active:scale-90 transition-all"
+                className="p-1 sm:p-1.5 text-white hover:text-blue-300 active:scale-90 transition-all !min-h-0 !min-w-0"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
@@ -3631,7 +3782,7 @@ const RoomPageNew = () => {
               <button
                 onClick={() => { handleDeleteMessage(msg.id); setOpenMenuIndex(null); setOpenMenuPos(null); }}
                 title="Delete"
-                className="p-1.5 text-white hover:text-red-400 active:scale-90 transition-all"
+                className="p-1 sm:p-1.5 text-white hover:text-red-400 active:scale-90 transition-all !min-h-0 !min-w-0"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -3642,12 +3793,14 @@ const RoomPageNew = () => {
             <button
               onClick={() => { startReply(msg); setOpenMenuIndex(null); setOpenMenuPos(null); }}
               title="Reply"
-              className="p-1.5 text-white hover:text-purple-300 active:scale-90 transition-all"
+              className="p-1 sm:p-1.5 text-white hover:text-purple-300 active:scale-90 transition-all !min-h-0 !min-w-0"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
               </svg>
             </button>
+              </>
+            )}
           </div>
         );
       })()}

@@ -672,6 +672,7 @@ func main() {
 	// --- PUBLIC (no-auth) routes for the /explore browse page ---
 	r.GET("/api/public/live-sessions", handlers.GetPublicLiveSessionsHandler)
 	r.GET("/api/public/rooms", handlers.GetRoomsHandler)                                                  // Guest room browsing — returns only public rooms
+	r.GET("/api/public/rooms/by-handle/:handle", handlers.GetRoomByHandleHandler)                         // Share-link resolution (/r/:handle) — works logged-out
 	r.GET("/api/community-events", handlers.OptionalAuthMiddleware(), handlers.GetCommunityEventsHandler) // Guest-accessible; user_id injected if token present
 
 	// --- GUEST VIEW ROUTES (no auth — public sessions only) ---

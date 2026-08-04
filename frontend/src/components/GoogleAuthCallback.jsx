@@ -16,6 +16,10 @@ const GoogleAuthCallback = () => {
         if (token) {
           localStorage.setItem('wewatch_token', token);
         }
+        const refreshToken = params.get('refresh_token');
+        if (refreshToken) {
+          localStorage.setItem('wewatch_refresh', refreshToken);
+        }
         if (params.get('new_user') === 'true') {
           // Flag for the Lobby to show the one-time onboarding tour right after this fresh signup
           localStorage.setItem('wewatch_show_onboarding_tour', '1');

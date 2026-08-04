@@ -17,6 +17,7 @@ import LobbyLeftSidebar from './LobbyLeftSidebar';
 import CallHistoryModal from './CallHistoryModal';
 import UserProfileModal from './UserProfileModal';
 import LobbyGroupInfoModal from './LobbyGroupInfoModal';
+import { buildRoomShareUrl } from '../utils/roomShare';
 import SettingsModal from './SettingsModal';
 import CreateNewModal from './CreateNewModal';
 import OnboardingTour from './OnboardingTour';
@@ -225,13 +226,22 @@ const LobbyPage = () => {
   const [showStatusPrivacy, setShowStatusPrivacy] = useState(false);
 
   // ✅ Lobby Chat State
-  const [friendsList, setFriendsList] = useState([]); // Users to chat with
+  const [friendsList, setFriendsList] = useState(() => _lobbyCache.friends || []); // Users to chat with
   const [selectedChatUser, setSelectedChatUser] = useState(null); // Currently open chat
   const [lightboxAvatarUser, setLightboxAvatarUser] = useState(null); // Avatar lightbox target (clicked avatar in chat tab)
   const [chatMessages, setChatMessages] = useState({}); // { userId: [messages] }
   const [newChatMessage, setNewChatMessage] = useState('');
   const [replyingTo, setReplyingTo] = useState(null); // message being replied to
   const [chatsLoading, setChatsLoading] = useState(false);
+  // Windowed rendering for the merged groups+friends chat list — the full list
+  // is already fetched (friendsList/groupsList are needed complete elsewhere,
+  // e.g. "already a friend?" checks and group member pickers), this just caps
+  // how many rows render at once, revealing more as the user scrolls near the
+  // bottom. Resets to the initial page whenever the list is (re-)entered or
+  // filtered, so a stale scroll position doesn't leave it stuck expanded/short.
+  const CHAT_LIST_PAGE_SIZE = 10;
+  const [visibleChatItemCount, setVisibleChatItemCount] = useState(CHAT_LIST_PAGE_SIZE);
+  const chatItemsTotalRef = React.useRef(0); // total merged item count from the latest render, read by the scroll handler
   const [unreadCounts, setUnreadCounts] = useState({}); // { userId: count }
   const [friendsSearchTerm, setFriendsSearchTerm] = useState(''); // Search friends
   const [chatView, setChatView] = useState('friends'); // 'friends' or 'messages'
@@ -289,6 +299,7 @@ const LobbyPage = () => {
   const [newGroupChatMessage, setNewGroupChatMessage] = useState('');
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
   const [isGroupInfoModalOpen, setIsGroupInfoModalOpen] = useState(false);
+  const [expandedGroupIcon, setExpandedGroupIcon] = useState(null); // { url, name } | null
 
   // ✅ Friend Request State
   const [pendingRequests, setPendingRequests] = useState([]); // Friend requests received
@@ -1019,7 +1030,7 @@ const LobbyPage = () => {
 
   // Fetch rooms function (moved outside useEffect so it can be reused)
   // Fetch rooms function with pagination support
-  const fetchRoomsData = async (page = 0, append = false) => {
+  const fetchRoomsData = async (page = 0, append = false, retriesLeft = 1) => {
     // Cancel any in-flight rooms fetch
     if (fetchAbortRef.current.rooms) fetchAbortRef.current.rooms.abort();
     const controller = new AbortController();
@@ -1028,12 +1039,12 @@ const LobbyPage = () => {
     // Serve stale cache instantly on first page (non-append) while revalidating
     if (!append && page === 0 && _lobbyCache.rooms && Date.now() - _lobbyCache.roomsTs < CACHE_TTL) {
       setRooms(_lobbyCache.rooms);
-    } else if (!append) {
+    } else if (!append && retriesLeft === 1) {
       setLoading(true);
-    } else {
+    } else if (append && retriesLeft === 1) {
       setLoadingMoreRooms(true);
     }
-    setError(null);
+    if (retriesLeft === 1) setError(null);
 
     try {
       const limit = 20;
@@ -1091,15 +1102,30 @@ const LobbyPage = () => {
       // Update pagination state
       setHasMoreRooms(data.has_more || false);
       setRoomsPage(page);
-      
+      setLoading(false);
+      setLoadingMoreRooms(false);
+
     } catch (err) {
       if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
-      console.error("❌ [LobbyPage] Error fetching rooms:", err);
-      setError('Failed to load rooms. Please try again later.');
-      if (!append) {
-        setRooms([]);
+
+      if (retriesLeft > 0) {
+        console.warn('⚠️ [LobbyPage] Rooms fetch failed, retrying once…', err);
+        setTimeout(() => fetchRoomsData(page, append, retriesLeft - 1), 1500);
+        return; // keep loading/loadingMore as-is until the retry itself settles
       }
-    } finally {
+
+      console.error("❌ [LobbyPage] Error fetching rooms:", err);
+      // Never wipe an already-loaded list (cache-instant-paint or a prior
+      // successful fetch) just because this attempt failed after retrying —
+      // only show the error banner (which replaces the whole list, see the
+      // `!loading && !error` render gate below) when there's genuinely
+      // nothing already on screen to fall back on.
+      if (!append) {
+        setRooms(prev => {
+          if (prev.length === 0) setError('Failed to load rooms. Please try again later.');
+          return prev;
+        });
+      }
       setLoading(false);
       setLoadingMoreRooms(false);
     }
@@ -1202,12 +1228,18 @@ const LobbyPage = () => {
     } catch {}
   };
 
-  // ✅ Fetch friends list for chat — stale-while-revalidate from _lobbyCache
-  const fetchFriendsList = async () => {
+  // ✅ Fetch friends list for chat — stale-while-revalidate from _lobbyCache.
+  // Retries once on failure (network blip, WS-reconnect contention right after
+  // leaving a room, etc.) since this is the ONLY thing that ever repopulates
+  // friendsList after a fresh mount — a single failed attempt with no retry
+  // previously meant an empty Friends tab for the rest of the session.
+  const fetchFriendsList = async (retriesLeft = 1) => {
     // Serve cache instantly so the chat tab feels immediate
     if (_lobbyCache.friends && Date.now() - _lobbyCache.friendsTs < CACHE_TTL) {
       setFriendsList(_lobbyCache.friends);
-    } else {
+    } else if (retriesLeft === 1) {
+      // Only show the loading state on the first attempt — a silent retry
+      // shouldn't flicker the UI back into a loading state.
       setChatsLoading(true);
     }
     try {
@@ -1241,9 +1273,15 @@ const LobbyPage = () => {
       if (Object.keys(previews).length > 0) {
         setLastMessagePreviews(prev => ({ ...prev, ...previews }));
       }
+      setChatsLoading(false);
     } catch (err) {
+      const isCanceled = err.code === 'ERR_CANCELED' || err.name === 'CanceledError' || err.name === 'AbortError';
+      if (retriesLeft > 0 && !isCanceled) {
+        console.warn('⚠️ [Lobby] Friends list fetch failed, retrying once…', err);
+        setTimeout(() => fetchFriendsList(retriesLeft - 1), 1500);
+        return; // keep chatsLoading as-is until the retry itself settles
+      }
       console.error('❌ [Lobby] Failed to fetch friends list:', err);
-    } finally {
       setChatsLoading(false);
     }
   };
@@ -1621,6 +1659,55 @@ const LobbyPage = () => {
   useEffect(() => {
     if (activeTab === 'chats') fetchLiveRooms();
   }, [activeTab]);
+
+  // Safety net: if the Friends tab is opened and somehow ended up empty (the
+  // one mount-time fetch failed/raced and had no cache to fall back on), try
+  // again. fetchFriendsList's own cache check keeps this a no-op whenever the
+  // list is already populated/fresh, so this is cheap to call liberally.
+  useEffect(() => {
+    if (activeTab === 'chats' && friendsList.length === 0) {
+      fetchFriendsList();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Same safety net for the Rooms tab — covers the same "the one background
+  // fetch failed/raced and there's no cache to fall back on" gap.
+  useEffect(() => {
+    if (activeTab === 'rooms' && rooms.length === 0) {
+      fetchRoomsData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Refresh rooms + friends whenever the tab/window regains focus — covers
+  // "left the tab open in the background for a while" the same way the
+  // mount-time fetch covers "came back from a room". Cheap either way:
+  // fetchFriendsList/fetchRoomsData both no-op their network call whenever
+  // their own cache is still fresh.
+  useEffect(() => {
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (currentUser) {
+        fetchFriendsList();
+        fetchRoomsData();
+      }
+    };
+    window.addEventListener('focus', onFocusOrVisible);
+    document.addEventListener('visibilitychange', onFocusOrVisible);
+    return () => {
+      window.removeEventListener('focus', onFocusOrVisible);
+      document.removeEventListener('visibilitychange', onFocusOrVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
+
+  // Reset the windowed chat-list reveal count whenever the Friends tab is
+  // (re-)entered or the search term changes, so it always starts back at the
+  // first page instead of staying expanded from a previous scroll session.
+  useEffect(() => {
+    setVisibleChatItemCount(CHAT_LIST_PAGE_SIZE);
+  }, [activeTab, activeRequestsTab, friendsSearchTerm]);
 
   // Tab hint text: show briefly, then fade
   useEffect(() => {
@@ -3447,8 +3534,8 @@ const LobbyPage = () => {
   };
 
   // Handle share room link
-  const handleShareRoom = async (roomId, roomName) => {
-    const url = `${window.location.origin}/rooms/${roomId}`;
+  const handleShareRoom = async (roomId, roomName, roomHandle) => {
+    const url = buildRoomShareUrl({ id: roomId, handle: roomHandle });
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(url);
@@ -3944,6 +4031,29 @@ const LobbyPage = () => {
         />
       )}
 
+      {/* Expanded group icon (from the friends-list row) */}
+      {expandedGroupIcon && (
+        <div
+          className="fixed inset-0 bg-black/90 z-[70] flex items-center justify-center p-4"
+          onClick={() => setExpandedGroupIcon(null)}
+        >
+          <div className="relative">
+            <button
+              onClick={() => setExpandedGroupIcon(null)}
+              className="absolute -top-12 right-0 text-white hover:text-gray-300 text-3xl leading-none"
+            >
+              ×
+            </button>
+            <img
+              src={expandedGroupIcon.url}
+              alt={expandedGroupIcon.name}
+              className="max-w-[600px] max-h-[600px] w-auto h-auto object-contain rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
+
       {/* ✅ Settings Modal */}
       <SettingsModal
         isOpen={isSettingsModalOpen}
@@ -4383,6 +4493,15 @@ const LobbyPage = () => {
                             {room.member_count || 0}
                           </span>
                         </div>
+                        {/* Last chat message — its own row (3rd row), not floated beside the name */}
+                        {room.last_chat_message && (
+                          <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 truncate mb-1 pr-10 sm:pr-12">
+                            💬 {room.last_chat_message.length > 50 ? room.last_chat_message.slice(0, 50) + '…' : room.last_chat_message}
+                            {room.last_chat_at && (
+                              <span className="text-gray-400 dark:text-gray-500"> · {new Date(room.last_chat_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            )}
+                          </p>
+                        )}
                         {(room.show_description === true || room.ShowDescription === true) && room.description && room.description.trim() !== '' && (
                           <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-1.5 sm:mb-2 pr-10 sm:pr-12 leading-relaxed">{room.description}</p>
                         )}
@@ -4410,20 +4529,6 @@ const LobbyPage = () => {
                           )}
                         </button>
                       )}
-
-                      {/* Last chat message preview */}
-                      {room.last_chat_message && (
-                        <div className="flex-shrink-0 flex flex-col items-end justify-center gap-1 ml-2 max-w-[100px] sm:max-w-[130px]">
-                          <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate w-full text-right leading-snug">
-                            {room.last_chat_message.length > 35 ? room.last_chat_message.slice(0, 35) + '…' : room.last_chat_message}
-                          </p>
-                          {room.last_chat_at && (
-                            <span className="text-[9px] text-gray-400 dark:text-gray-500 flex-shrink-0">
-                              {new Date(room.last_chat_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          )}
-                        </div>
-                      )}
                     </div>
                   </div>
                 );
@@ -4448,7 +4553,7 @@ const LobbyPage = () => {
                       </button>
                       <button
                         className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2.5 transition-colors"
-                        onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); setShareSheetRoom({ id: room.id, name: room.name }); }}
+                        onClick={() => { setOpenMenuRoomId(null); setOpenMenuPosition(null); setShareSheetRoom({ id: room.id, name: room.name, handle: room.handle }); }}
                       >
                         <ShareIcon className="w-4 h-4" /> Share
                       </button>
@@ -4495,7 +4600,7 @@ const LobbyPage = () => {
                       <div className="grid grid-cols-4 gap-3">
                         {/* Copy Link */}
                         <button
-                          onClick={async () => { await handleShareRoom(shareSheetRoom.id, shareSheetRoom.name); setShareSheetRoom(null); }}
+                          onClick={async () => { await handleShareRoom(shareSheetRoom.id, shareSheetRoom.name, shareSheetRoom.handle); setShareSheetRoom(null); }}
                           className="flex flex-col items-center gap-1.5"
                         >
                           <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
@@ -4505,7 +4610,7 @@ const LobbyPage = () => {
                         </button>
                         {/* WhatsApp */}
                         <a
-                          href={`https://wa.me/?text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on LetsWatchOut! ${window.location.origin}/rooms/${shareSheetRoom.id}`)}`}
+                          href={`https://wa.me/?text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on LetsWatchOut! ${buildRoomShareUrl(shareSheetRoom)}`)}`}
                           target="_blank" rel="noopener noreferrer"
                           onClick={() => setShareSheetRoom(null)}
                           className="flex flex-col items-center gap-1.5"
@@ -4517,7 +4622,7 @@ const LobbyPage = () => {
                         </a>
                         {/* Twitter / X */}
                         <a
-                          href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`Watching "${shareSheetRoom.name}" on LetsWatchOut — join me! ${window.location.origin}/rooms/${shareSheetRoom.id}`)}`}
+                          href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`Watching "${shareSheetRoom.name}" on LetsWatchOut — join me! ${buildRoomShareUrl(shareSheetRoom)}`)}`}
                           target="_blank" rel="noopener noreferrer"
                           onClick={() => setShareSheetRoom(null)}
                           className="flex flex-col items-center gap-1.5"
@@ -4529,7 +4634,7 @@ const LobbyPage = () => {
                         </a>
                         {/* Telegram */}
                         <a
-                          href={`https://t.me/share/url?url=${encodeURIComponent(`${window.location.origin}/rooms/${shareSheetRoom.id}`)}&text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on LetsWatchOut!`)}`}
+                          href={`https://t.me/share/url?url=${encodeURIComponent(buildRoomShareUrl(shareSheetRoom))}&text=${encodeURIComponent(`Join me in "${shareSheetRoom.name}" on LetsWatchOut!`)}`}
                           target="_blank" rel="noopener noreferrer"
                           onClick={() => setShareSheetRoom(null)}
                           className="flex flex-col items-center gap-1.5"
@@ -4543,7 +4648,7 @@ const LobbyPage = () => {
                       {/* Native share if supported */}
                       {navigator.share && (
                         <button
-                          onClick={async () => { try { await navigator.share({ title: shareSheetRoom.name, url: `${window.location.origin}/rooms/${shareSheetRoom.id}` }); } catch {} setShareSheetRoom(null); }}
+                          onClick={async () => { try { await navigator.share({ title: shareSheetRoom.name, url: buildRoomShareUrl(shareSheetRoom) }); } catch {} setShareSheetRoom(null); }}
                           className="mt-4 w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors"
                         >
                           Share via…
@@ -4889,17 +4994,6 @@ const LobbyPage = () => {
 
                   {/* Right-side icon stack */}
                   <div className="absolute bottom-28 right-4 flex flex-col items-center gap-5 pointer-events-auto">
-                    {session.content_rating && (
-                      session.content_rating === 'Educational' ? (
-                        <img src="/icons/E.webp" alt="Educational" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
-                      ) : session.content_rating === 'Religious' ? (
-                        <img src="/icons/R.png" alt="Religious" className="w-9 h-9 object-contain" style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.9))' }} />
-                      ) : (
-                        <span className="text-white font-black text-3xl leading-none" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7)' }}>
-                          {session.content_rating === 'Mature' ? 'M' : session.content_rating}
-                        </span>
-                      )
-                    )}
                     <button onClick={(e) => { e.stopPropagation(); handleSessionLike(session.session_id, e); }} className="flex flex-col items-center gap-1 transition-transform active:scale-90">
                       <HeartIcon
                         key={`heart-tiktok-${session.session_id}-${!!sessionLikes[session.session_id]?.isLiked}`}
@@ -4960,10 +5054,21 @@ const LobbyPage = () => {
                         </div>
                       )}
                     </div>
-                    <h3 className="text-base font-bold leading-tight line-clamp-2 mb-1" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}>
+                    <h3 className="text-white text-base font-bold leading-tight line-clamp-2 mb-1" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}>
                       {session.session_title || session.currently_playing || 'Live Session'}
                     </h3>
                     <div className="flex items-center gap-2 text-xs text-gray-300">
+                      {session.content_rating && (
+                        session.content_rating === 'Educational' ? (
+                          <img src="/icons/E.webp" alt="Educational" className="w-5 h-5 object-contain flex-shrink-0" />
+                        ) : session.content_rating === 'Religious' ? (
+                          <img src="/icons/R.png" alt="Religious" className="w-5 h-5 object-contain flex-shrink-0" />
+                        ) : (
+                          <span className="text-white text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/20 backdrop-blur-sm border border-white/30 flex-shrink-0">
+                            {session.content_rating === 'Mature' ? 'M' : session.content_rating}
+                          </span>
+                        )
+                      )}
                       {session.ticketing_enabled && session.ticket_price_tokens > 0 && (
                         <span className="text-yellow-300 font-semibold">🪙 {session.early_bird_active && session.early_bird_enabled ? session.early_bird_price_tokens : session.ticket_price_tokens} tokens</span>
                       )}
@@ -5286,8 +5391,8 @@ const LobbyPage = () => {
                       {/* Row 2: Title */}
                       <div className="mb-2">
                         {/* Title */}
-                        <h3 
-                          className="text-lg font-bold leading-tight line-clamp-2"
+                        <h3
+                          className="text-white text-lg font-bold leading-tight line-clamp-2"
                           style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}
                         >
                           {session.session_title || session.currently_playing || 'Live Session'}
@@ -5521,19 +5626,24 @@ const LobbyPage = () => {
                     >
                       <img src="/icons/backIcon.svg" alt="Back" className="w-6 h-6" />
                     </button>
-                    {/* Group icon */}
-                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      {selectedGroup.icon ? (
-                        <img src={selectedGroup.icon} alt={selectedGroup.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <UsersIcon className="w-5 h-5 text-white" />
-                      )}
-                    </div>
-                    {/* Group info */}
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-white font-bold text-base sm:text-lg truncate">{selectedGroup.name}</h3>
-                      <p className="text-white/70 text-xs">{selectedGroup.members?.length || 0} members</p>
-                    </div>
+                    {/* Icon + name/subtitle — tap to open Group Info, mirrors the ⋮ menu's "Group Info" entry */}
+                    <button
+                      onClick={() => setIsGroupInfoModalOpen(true)}
+                      className="flex items-center gap-3 flex-1 min-w-0 text-left hover:bg-white/10 rounded-lg -mx-1 px-1 py-0.5 transition-colors"
+                      title="Group info"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                        {selectedGroup.icon ? (
+                          <img src={selectedGroup.icon} alt={selectedGroup.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <UsersIcon className="w-5 h-5 text-white" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-white font-bold text-base sm:text-lg truncate">{selectedGroup.name}</h3>
+                        <p className="text-white/70 text-xs">{selectedGroup.members?.length || 0} members</p>
+                      </div>
+                    </button>
                     {/* Group call button */}
                     {activeGroupCall?.groupId === selectedGroup.id ? (
                       <button
@@ -5832,6 +5942,14 @@ const LobbyPage = () => {
                     <div
                       className="overflow-y-auto flex-1 custom-sleek-scrollbar"
                       style={{ scrollbarWidth: 'thin', scrollbarColor: '#10b981 #1f2937' }}
+                      onScroll={(e) => {
+                        const el = e.currentTarget;
+                        if (el.scrollHeight - el.scrollTop - el.clientHeight < 150) {
+                          setVisibleChatItemCount(prev =>
+                            prev < chatItemsTotalRef.current ? prev + CHAT_LIST_PAGE_SIZE : prev
+                          );
+                        }
+                      }}
                     >
                       {(() => {
                         const searchTerm = friendsSearchTerm.toLowerCase();
@@ -5867,6 +5985,13 @@ const LobbyPage = () => {
                         items.sort((a, b) => b.lastActivity - a.lastActivity);
 
                         const isEmpty = items.length === 0 && (!collapseGroups || groupsList.length === 0);
+
+                        // Windowed reveal — the full merged list is already in memory (needed
+                        // elsewhere for correctness), this just caps how many rows render at
+                        // once. More rows reveal instantly as the user scrolls (see onScroll
+                        // above) — no extra network round-trip involved.
+                        chatItemsTotalRef.current = items.length;
+                        const visibleItems = items.slice(0, visibleChatItemCount);
 
                         return (
                           <>
@@ -5904,7 +6029,10 @@ const LobbyPage = () => {
                                       onClick={() => handleOpenGroup(group)}
                                       className="flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700/50"
                                     >
-                                      <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                                      <div
+                                        className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative overflow-hidden"
+                                        onClick={group.icon ? (e) => { e.stopPropagation(); setExpandedGroupIcon({ url: group.icon, name: group.name }); } : undefined}
+                                      >
                                         {group.icon ? (
                                           <img src={group.icon} alt={group.name} className="w-full h-full object-cover" />
                                         ) : (
@@ -5958,7 +6086,7 @@ const LobbyPage = () => {
                             )}
 
                             {/* Merged sorted list */}
-                            {items.map(item => {
+                            {visibleItems.map(item => {
                               if (item.type === 'group') {
                                 const group = item.data;
                                 const unread = groupUnreadCounts[group.id] || 0;
@@ -5969,7 +6097,10 @@ const LobbyPage = () => {
                                     onClick={() => handleOpenGroup(group)}
                                     className="flex items-center gap-3 px-3 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700/50"
                                   >
-                                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                                    <div
+                                      className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-purple-500 to-green-500 flex items-center justify-center flex-shrink-0 relative overflow-hidden"
+                                      onClick={group.icon ? (e) => { e.stopPropagation(); setExpandedGroupIcon({ url: group.icon, name: group.name }); } : undefined}
+                                    >
                                       {group.icon ? (
                                         <img src={group.icon} alt={group.name} className="w-full h-full object-cover" />
                                       ) : (
@@ -7005,8 +7136,8 @@ const LobbyPage = () => {
                   {/* Row 2: Title */}
                   <div className="mb-2">
                     {/* Title */}
-                    <h3 
-                      className="text-2xl font-bold leading-tight line-clamp-2"
+                    <h3
+                      className="text-white text-2xl font-bold leading-tight line-clamp-2"
                       style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}
                     >
                       {session.session_title || session.currently_playing || 'Live Session'}

@@ -532,6 +532,23 @@ export const getRoom = async(roomId) => {
     }
 };
 
+/**
+ * Resolve a room's shareable handle to its thin public record ({id, name,
+ * handle, is_public, image_url}) — used to redirect /r/:handle links.
+ * Public endpoint, works logged-out.
+ * @param {string} handle
+ * @returns {Promise} Axios promise resolving to the response
+ */
+export const getRoomByHandle = async(handle) => {
+    try {
+        const response = await apiClient.get(`/api/public/rooms/by-handle/${handle}`);
+        return response.data;
+    } catch (error) {
+        console.error(`Error fetching room by handle ${handle} (api.js):`, error);
+        throw error;
+    }
+};
+
 // For the Room Overrides
 export const updateRoomOverrides = async (roomId, overrides) => {
   try {

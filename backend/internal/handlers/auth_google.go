@@ -8,10 +8,10 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
@@ -80,23 +80,19 @@ type GoogleUser struct {
 
 // GoogleLoginHandler initiates the Google OAuth flow
 func GoogleLoginHandler(c *gin.Context) {
-	// Generate random state for CSRF protection
-	state := fmt.Sprintf("%d", time.Now().Unix())
-	
-	// SameSite=None + Secure required for cross-site XHR (Vercel frontend → Railway backend)
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "oauth_state",
-		Value:    state,
-		MaxAge:   300,
-		Path:     "/",
-		Secure:   true,
-		HttpOnly: true,
-		SameSite: http.SameSiteNoneMode,
-	})
-	
+	// Self-verifying signed state for CSRF protection — no cookie needed (see
+	// utils.GenerateOAuthState for why: iOS Safari's ITP silently blocks the
+	// cross-site cookie a cookie-based approach would depend on here).
+	state, err := utils.GenerateOAuthState()
+	if err != nil {
+		log.Printf("❌ [GoogleLogin] Failed to generate OAuth state: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start Google login"})
+		return
+	}
+
 	// Generate OAuth URL
 	url := googleOauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"url": url,
 	})
@@ -104,19 +100,14 @@ func GoogleLoginHandler(c *gin.Context) {
 
 // GoogleCallbackHandler handles the OAuth callback from Google
 func GoogleCallbackHandler(c *gin.Context) {
-	// Verify state to prevent CSRF
-	stateCookie, err := c.Cookie("oauth_state")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "State cookie not found"})
-		return
-	}
-	
+	// Verify state to prevent CSRF — self-verifying, no cookie lookup (see
+	// utils.GenerateOAuthState / GoogleLoginHandler for why).
 	stateParam := c.Query("state")
-	if stateParam != stateCookie {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state parameter"})
+	if stateParam == "" || !utils.ValidateOAuthState(stateParam) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid or expired state parameter"})
 		return
 	}
-	
+
 	// Get authorization code
 	code := c.Query("code")
 	if code == "" {
@@ -220,15 +211,24 @@ func GoogleCallbackHandler(c *gin.Context) {
 		Secure:   true,
 		SameSite: http.SameSiteNoneMode,
 	})
-	issueRefreshToken(c, user.ID)
+	// The wewatch_refresh cookie set inside issueRefreshToken is subject to the
+	// exact same iOS Safari third-party-cookie blocking as the old oauth_state
+	// cookie above, so it can't be relied on alone — the plaintext refresh
+	// token is also passed through the URL hash below (same delivery
+	// mechanism already used for the access token) so GoogleAuthCallback.jsx
+	// can store it directly in localStorage regardless of cookie support.
+	refreshToken := issueRefreshToken(c, user.ID)
 	log.Printf("✅ [GoogleCallback] JWT cookie set for user ID: %d", user.ID)
-	
-	// Redirect to frontend success page, passing token in URL hash so it can be stored in localStorage
+
+	// Redirect to frontend success page, passing tokens in URL hash so they can be stored in localStorage
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
 		frontendURL = "http://localhost:5173"
 	}
 
-	redirectURL := fmt.Sprintf("%s/auth/google/success#token=%s&new_user=%t", frontendURL, jwtToken, isNewUser)
+	redirectURL := fmt.Sprintf(
+		"%s/auth/google/success#token=%s&refresh_token=%s&new_user=%t",
+		frontendURL, url.QueryEscape(jwtToken), url.QueryEscape(refreshToken), isNewUser,
+	)
 	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }

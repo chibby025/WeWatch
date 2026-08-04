@@ -288,6 +288,20 @@ const RULES = {
       'Submit as soon as you think the grid is complete. First correct submission wins instantly — an incorrect submission just tells you to keep trying, it doesn\'t end your turn.',
     ],
   },
+  vs_battle: {
+    title: 'VS Battle',
+    rules: [
+      'Build a team of up to 3 fantasy characters, then battle another player\'s team — like/inspired by Death Battle.',
+      'Each character picks a tier (Regular → Universal). Higher tiers give more HP and a bigger points budget for moves — but every fight is between two teams at whatever tiers you both chose.',
+      'Give each character up to 5 attack moves and 5 defense moves, spending points from your tier\'s budget (attack and defense have separate budgets). Punch and Block are always free, built-in defaults.',
+      '🎬 You can attach a GIF, video, or image to any custom move — it plays as a short clip whenever that move is used in battle, so your fighters can look and feel exactly how you imagine them.',
+      'Once both players confirm their rosters, battle begins: each turn, pick one of your alive characters and lock in a move — moves reveal at the same time.',
+      'Attack vs Attack: the weaker attack takes damage equal to the gap between them. Very close power levels can stalemate — or spark a rare counter-attack window.',
+      'Attack vs Defense: a big enough gap lands the hit; a close gap deflects or blocks; a very close gap can trigger a counter window where the defender strikes back.',
+      'Land or block 3 of the same move type in a row and you earn a dice roll for a random power-up — Stun, Attack/Defense Boost, Health Pack, Shield, or Poison.',
+      'Defeat every character on the opponent\'s team to win the battle!',
+    ],
+  },
   texas_holdem: {
     title: "Texas Hold'em",
     rules: [

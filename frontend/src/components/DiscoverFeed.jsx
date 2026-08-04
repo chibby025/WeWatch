@@ -756,7 +756,12 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
   return (
     <div className="w-full pb-8">
       <style>{LIKE_CSS}</style>
-      <div className={isSearching ? "grid grid-cols-2 gap-2" : "md:grid md:grid-cols-2 md:gap-4"}>
+      {/* items-start matters here, not just cosmetics: CSS Grid's default align-items:stretch
+          combined with each card's overflow-hidden makes the grid treat the card's automatic
+          minimum height as 0 (per spec, a non-visible-overflow item's auto min-size is 0),
+          so the row gets sized off the header alone and the flex-1 media block gets clipped —
+          exactly why this only broke in the md:grid layout, never in mobile's plain block flow. */}
+      <div className={isSearching ? "grid grid-cols-2 gap-2 items-start" : "md:grid md:grid-cols-2 md:gap-4 md:items-start"}>
         {posts.map((post, index) => {
           return (
           <React.Fragment key={`post-${post.id}`}>
@@ -850,9 +855,16 @@ const DiscoverFeed = forwardRef(({ onPostClick, searchQuery = '' }, ref) => {
                 </div>
               )}
 
-              {/* ── Text post body ── */}
+              {/* ── Text post body ──
+                  min-height must never drop to 0 at any breakpoint: the child below is
+                  `absolute inset-0`, so it has no content-based height of its own and
+                  entirely depends on this box having a real height to fill. `flex-1`
+                  alone can't provide one — the card's own height is content-driven, not
+                  fixed — so a bare `md:min-h-0` collapsed this to zero on desktop and
+                  overflow-hidden silently clipped the text away. Grow the floor at wider
+                  breakpoints instead of removing it. */}
               {post.post_type === 'text' && (
-                <div className="flex-1 relative bg-white dark:bg-gray-900 overflow-hidden min-h-[150px] md:min-h-0">
+                <div className="flex-1 relative bg-white dark:bg-gray-900 overflow-hidden min-h-[150px] sm:min-h-[180px] md:min-h-[220px]">
                   <div className="absolute inset-0 flex flex-col px-4 py-4 sm:px-6 sm:py-5">
                     <p className="text-gray-900 dark:text-white text-sm sm:text-base md:text-lg font-medium text-left leading-relaxed line-clamp-5 sm:line-clamp-6">
                       {post.text_content}

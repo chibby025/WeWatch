@@ -732,7 +732,7 @@ func vsResolveTurn(gameState *GameSessionState, players map[uint]*VSPlayerState,
 	// Clear locked moves and dice_roll_result from the previous turn
 	gameState.GameData["locked_moves"] = map[string]interface{}{}
 	delete(gameState.GameData, "dice_roll_result")
-	turn, _ := gameState.GameData["turn"].(int)
+	turn := getIntField(gameState.GameData, "turn")
 	gameState.GameData["turn"] = turn + 1
 
 	// Store result for broadcast (caller reads this to construct the broadcast payload)
@@ -1289,7 +1289,7 @@ func processVSCounterChoice(gameState *GameSessionState, playerID uint, data map
 		}
 	}
 	delete(gameState.GameData, "counter_result")
-	counterTurn, _ := gameState.GameData["turn"].(int)
+	counterTurn := getIntField(gameState.GameData, "turn")
 	gameState.GameData["turn"] = counterTurn + 1
 
 	// Check win condition
@@ -1340,19 +1340,36 @@ func processVSHype(gameState *GameSessionState, playerID uint, data map[string]i
 // ── Win condition ─────────────────────────────────────────────────────────────
 
 func vsCheckWin(players map[uint]*VSPlayerState) (bool, *uint) {
+	var eliminated []uint
 	for uid, ps := range players {
 		if !vsAnyAlive(ps.Characters) {
-			// This player lost — find the winner
-			for wid := range players {
-				if wid != uid {
-					wid2 := wid
-					return true, &wid2
-				}
-			}
-			return true, nil // draw (both wiped out simultaneously)
+			eliminated = append(eliminated, uid)
 		}
 	}
-	return false, nil
+	if len(eliminated) == 0 {
+		return false, nil
+	}
+	if len(eliminated) >= len(players) {
+		return true, nil // everyone eliminated — draw
+	}
+	// Exactly one side eliminated (the only case today's single-target damage
+	// resolution can produce) — the other player wins. Iterating players again
+	// (rather than assuming exactly 2) keeps this correct if this game ever
+	// supports more than 2 players.
+	for uid := range players {
+		isEliminated := false
+		for _, e := range eliminated {
+			if e == uid {
+				isEliminated = true
+				break
+			}
+		}
+		if !isEliminated {
+			winner := uid
+			return true, &winner
+		}
+	}
+	return true, nil
 }
 
 func vsAnyAlive(chars []VSCharacter) bool {
@@ -1396,6 +1413,23 @@ func getF64(m map[string]interface{}, key string) float64 {
 		return v
 	}
 	return 0
+}
+
+// getIntField reads an int from GameData tolerant of both representations:
+// a plain Go int (same in-memory GameSessionState the whole match, the
+// common case) or a float64 (GameData round-tripped through JSON — see
+// vsBuildState's own comment on this happening for "players"). A bare
+// `.(int)` assertion silently returns 0 for the float64 case, which
+// resets "turn" back to 0 any time GameData gets rehydrated from JSON.
+func getIntField(m map[string]interface{}, key string) int {
+	switch v := m[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
 }
 
 func min(a, b int) int {

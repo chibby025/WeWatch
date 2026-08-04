@@ -21,6 +21,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import CreateRoomPage from './components/CreateRoomPage';
 import RoomsListPage from './components/RoomsListPage';
 import RoomPageNew from './components/RoomPageNew';
+import RoomHandleRedirect from './components/RoomHandleRedirect';
 import VideoWatch from './components/cinema/VideoWatch';
 import CinemaScene3DDemo from './components/cinema/3d-cinema/CinemaScene3DDemo';
 import LectureHallPage from './pages/LectureHallPage';
@@ -179,6 +180,15 @@ function App() {
           <Route path="/rooms/:id" element={
             <ErrorBoundary>
               <ProtectedRoute><RoomPageNew /></ProtectedRoute>
+            </ErrorBoundary>
+          } />
+
+          {/* Short shareable room link — resolves the handle then hands off to
+              /rooms/:id above. Deliberately NOT behind ProtectedRoute, since a
+              share link must work for a visitor who isn't logged in yet. */}
+          <Route path="/r/:handle" element={
+            <ErrorBoundary>
+              <RoomHandleRedirect />
             </ErrorBoundary>
           } />
 

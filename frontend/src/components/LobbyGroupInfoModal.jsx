@@ -9,6 +9,8 @@ import { UsersIcon } from '@heroicons/react/24/solid';
 import toast from 'react-hot-toast';
 import { renameLobbyGroup, addLobbyGroupMembers, uploadLobbyGroupIcon } from '../services/api';
 import Avatar from './Avatar';
+import UserProfileModal from './UserProfileModal';
+import { resolveAvatarUrl } from '../utils/avatar';
 
 const MAX_ICON_SIZE = 5 * 1024 * 1024; // 5MB, matches backend MaxImageSize
 
@@ -24,6 +26,9 @@ export default function LobbyGroupInfoModal({ isOpen, onClose, group, currentUse
   const [showAddMembers, setShowAddMembers] = useState(false);
   const [selectedNewMemberIds, setSelectedNewMemberIds] = useState([]);
   const [addingMembers, setAddingMembers] = useState(false);
+
+  const [expandedMemberAvatar, setExpandedMemberAvatar] = useState(null);
+  const [viewProfileUser, setViewProfileUser] = useState(null);
 
   // Reset per-field edit state whenever a different group is opened, and
   // keep nameInput in sync if the name changes externally (e.g. another
@@ -263,8 +268,17 @@ export default function LobbyGroupInfoModal({ isOpen, onClose, group, currentUse
 
           <div className="space-y-1">
             {members.map(member => (
-              <div key={member.id} className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-white/5 transition-colors">
-                <Avatar user={member} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+              <div
+                key={member.id}
+                onClick={() => setViewProfileUser(member)}
+                className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+              >
+                <Avatar
+                  user={member}
+                  onClick={(e) => { e.stopPropagation(); setExpandedMemberAvatar(resolveAvatarUrl(member.avatar_url)); }}
+                  title="Click to view full size"
+                  className="w-9 h-9 rounded-full object-cover flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-purple-400 transition-all"
+                />
                 <span className="text-sm text-white flex-1 truncate">
                   {member.username}{member.id === currentUser?.id ? ' (You)' : ''}
                 </span>
@@ -278,6 +292,43 @@ export default function LobbyGroupInfoModal({ isOpen, onClose, group, currentUse
           </div>
         </div>
       </div>
+
+      {/* Expanded member avatar */}
+      {expandedMemberAvatar && (
+        <div
+          className="fixed inset-0 bg-black/90 z-[70] flex items-center justify-center p-4"
+          onClick={() => setExpandedMemberAvatar(null)}
+        >
+          <div className="relative">
+            <button
+              onClick={() => setExpandedMemberAvatar(null)}
+              className="absolute -top-12 right-0 text-white hover:text-gray-300 text-3xl leading-none"
+            >
+              ×
+            </button>
+            <img
+              src={expandedMemberAvatar}
+              alt="Member"
+              className="max-w-[600px] max-h-[600px] w-auto h-auto object-contain rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+              onError={(e) => {
+                e.target.onerror = null;
+                e.target.src = '/icons/user1avatar.svg';
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Member profile */}
+      {viewProfileUser && (
+        <UserProfileModal
+          user={viewProfileUser}
+          isOpen={true}
+          onClose={() => setViewProfileUser(null)}
+          isOwnProfile={currentUser?.id === viewProfileUser.id}
+        />
+      )}
     </div>
   );
 }

@@ -115,7 +115,14 @@ const StickerPicker = ({ onEmojiSelect, onStickerSelect }) => {
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-xl overflow-hidden flex flex-col"
-      style={{ width: '320px', maxHeight: tab === 'emoji' ? '460px' : '380px' }}>
+      style={{
+        // A fixed 320px popup anchored to the emoji button (absolute bottom-full
+        // left-0 in the parent) can overflow past the right edge of a narrow
+        // phone screen with no way to reach the rest of it. min() caps it to
+        // whatever actually fits, while staying 320px on anything roomier.
+        width: 'min(320px, calc(100vw - 2rem))',
+        maxHeight: tab === 'emoji' ? 'min(460px, 70vh)' : 'min(380px, 60vh)',
+      }}>
 
       {/* Tab bar */}
       <div className="flex border-b border-gray-700 flex-shrink-0">
@@ -131,7 +138,7 @@ const StickerPicker = ({ onEmojiSelect, onStickerSelect }) => {
       {/* ── EMOJI ── */}
       {tab === 'emoji' && (
         <div className="flex-1 overflow-hidden">
-          <EmojiPicker onEmojiSelect={onEmojiSelect} />
+          <EmojiPicker onEmojiSelect={onEmojiSelect} height="100%" />
         </div>
       )}
 
