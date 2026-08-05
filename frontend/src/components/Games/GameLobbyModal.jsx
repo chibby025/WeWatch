@@ -406,7 +406,17 @@ const HOT_SEAT_GAME_IDS = ['fowl_play'];
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 
-export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUserId, onStartGame, onCreateTournament, onCreateHotSeatTournament, allowHeavyGames = true, activeGame = null, onEndGame, isHost = false }) {
+export default function GameLobbyModal({
+  isOpen, onClose, roomMembers, currentUserId, onStartGame, onCreateTournament, onCreateHotSeatTournament,
+  allowHeavyGames = true, activeGame = null, onEndGame, isHost = false,
+  // readOnly: a live mirror of the HOST's own modal, rendered for every other
+  // member so the whole room sees what the host is currently browsing before
+  // they commit — driven entirely by syncedGameId (from a WS broadcast), no
+  // local navigation of its own. onCarouselChange is the host-side counterpart:
+  // called whenever the *host's* own carouselIndex settles on a new game, so
+  // the parent can broadcast it.
+  readOnly = false, syncedGameId = null, hostName = 'The host', onCarouselChange,
+}) {
   const [selectedPlayers, setSelectedPlayers] = useState([currentUserId]);
   const [searchQuery, setSearchQuery] = useState('');
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -451,20 +461,40 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
   // Keep the centered card stable across a filter change when it's still present
   // (don't jump away from what the user is looking at just because the filtered
   // list got shorter/longer) -- only reset to the top match when it disappears.
+  // Skipped entirely in readOnly mode, which has its own sync effect below —
+  // there's no search box there to trigger a "filter changed" case anyway.
   const prevSelectedIdRef = useRef(selectedGame);
   useEffect(() => {
+    if (readOnly) return;
     const stillPresentIndex = filteredGames.findIndex(g => g.id === prevSelectedIdRef.current);
     if (stillPresentIndex >= 0) {
       setCarouselIndex(stillPresentIndex);
     } else {
       setCarouselIndex(0);
     }
-  }, [filteredGames]);
+  }, [filteredGames, readOnly]);
   useEffect(() => { prevSelectedIdRef.current = selectedGame; }, [selectedGame]);
 
+  // readOnly: mirror whichever game the host is currently centered on.
+  useEffect(() => {
+    if (!readOnly) return;
+    const idx = filteredGames.findIndex(g => g.id === syncedGameId);
+    if (idx >= 0) setCarouselIndex(idx);
+  }, [readOnly, syncedGameId, filteredGames]);
+
+  // Host mode: tell the parent every time the centered game changes (including
+  // the initial mount) so it can broadcast it to the room over WS.
+  useEffect(() => {
+    if (readOnly || !onCarouselChange) return;
+    onCarouselChange(selectedGame);
+  }, [readOnly, onCarouselChange, selectedGame]);
+
+  // A no-op in readOnly mode disables every navigation path at once (chevrons,
+  // dots, poster taps, touch swipe) — the carousel there is purely a mirror of
+  // syncedGameId, never locally driven.
   const goTo = useCallback(
-    (idx) => setCarouselIndex(Math.max(0, Math.min(idx, filteredGames.length - 1))),
-    [filteredGames.length],
+    (idx) => { if (!readOnly) setCarouselIndex(Math.max(0, Math.min(idx, filteredGames.length - 1))); },
+    [filteredGames.length, readOnly],
   );
 
   // Touch-drag swipe support, mirroring CommunityEventsCard's carousel.
@@ -759,8 +789,8 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                 ? 'w-[70%] order-2 overflow-y-auto border-l border-gray-700 px-4 py-2'
                 : 'px-4 sm:px-6 pt-3 pb-4 sm:pt-4 sm:pb-6 border-b border-gray-700'
           }>
-            {/* Search — hidden in landscape/wide */}
-            {!(isLandscape || isWideLayout) && (
+            {/* Search — hidden in landscape/wide, and in readOnly (no independent browsing there) */}
+            {!readOnly && !(isLandscape || isWideLayout) && (
               <div className="relative mb-3">
                 <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -788,13 +818,13 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
 
                 {/* Poster fan */}
                 <div ref={carouselRef} className="relative overflow-hidden" style={{ height: cardW * 1.46 + (isWideLayout ? 28 : isLandscape ? 10 : 20) }}>
-                  <button
+                  {!readOnly && <button
                     onClick={() => goTo(carouselIndex - 1)}
                     disabled={carouselIndex === 0}
                     className="absolute left-0 top-1/2 -translate-y-1/2 z-30 !min-h-0 !min-w-0 w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center bg-white/90 shadow-lg rounded-full disabled:opacity-0 hover:bg-white transition-all"
                   >
                     <ChevronLeft className="w-4 h-4 text-gray-700" />
-                  </button>
+                  </button>}
 
                   {filteredGames.map((game, i) => {
                     const offset = i - carouselIndex;
@@ -845,13 +875,13 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                   );
                 })}
 
-                <button
+                {!readOnly && <button
                   onClick={() => goTo(carouselIndex + 1)}
                   disabled={carouselIndex === filteredGames.length - 1}
                   className="absolute right-0 top-1/2 -translate-y-1/2 z-30 !min-h-0 !min-w-0 w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center bg-white/90 shadow-lg rounded-full disabled:opacity-0 hover:bg-white transition-all"
                 >
                   <ChevronRight className="w-4 h-4 text-gray-700" />
-                </button>
+                </button>}
               </div>
 
               {/* Dot indicators */}
@@ -881,7 +911,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                         ? 'Hot-seat — each player takes a turn'
                         : `${selectedGameData.minPlayers}–${selectedGameData.maxPlayers} players`}
                   </p>
-                  {selectedGame === 'ping_pong' && (
+                  {!readOnly && selectedGame === 'ping_pong' && (
                     <div className="mt-2 flex items-center justify-center gap-2">
                       <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                         <input
@@ -894,7 +924,7 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                       </label>
                     </div>
                   )}
-                  {(TOURNAMENT_GAME_IDS.includes(selectedGame) || HOT_SEAT_GAME_IDS.includes(selectedGame)) && (
+                  {!readOnly && (TOURNAMENT_GAME_IDS.includes(selectedGame) || HOT_SEAT_GAME_IDS.includes(selectedGame)) && (
                     <div className="mt-2 flex items-center justify-center gap-2">
                       <button
                         onClick={() => setIsTournamentMode(t => !t)}
@@ -926,7 +956,16 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
                 ? 'w-[30%] order-1 overflow-y-auto border-r border-gray-700 px-3 py-2'
                 : 'px-4 sm:px-6 py-3 sm:py-6'
           }>
-            {!selectedGameData ? null : selectedGameData.type === 'arcade' && !isTournamentMode ? (
+            {!selectedGameData ? null : readOnly ? (
+              /* Passive viewer — mirrors the host's browsing, no controls of its own */
+              <div className={`text-center ${isLandscape ? 'py-2' : 'py-2 sm:py-6'}`}>
+                <div className={`mb-2 ${isLandscape ? 'text-2xl' : 'text-4xl sm:text-6xl sm:mb-4'}`}>👀</div>
+                <h3 className={`font-bold text-white mb-1 ${isLandscape ? 'text-sm' : 'text-base sm:text-xl sm:mb-2'}`}>{hostName} is picking a game…</h3>
+                <p className={`text-gray-400 ${isLandscape ? 'text-[11px]' : 'text-sm'}`}>
+                  Everyone sees this live — chat in to say what you'd like to play!
+                </p>
+              </div>
+            ) : selectedGameData.type === 'arcade' && !isTournamentMode ? (
               /* Arcade games - single player info */
               <div className={`text-center ${isLandscape ? 'py-2' : 'py-2 sm:py-6'}`}>
                 <div className={`mb-2 ${isLandscape ? 'text-2xl' : 'text-4xl sm:text-6xl sm:mb-4'}`}>🎮</div>
@@ -1013,31 +1052,43 @@ export default function GameLobbyModal({ isOpen, onClose, roomMembers, currentUs
         <div className={`border-t border-gray-700 flex justify-end gap-2 sm:gap-3 flex-shrink-0 ${
           isLandscape ? 'px-4 py-2' : 'px-4 sm:px-6 py-3 sm:py-6'
         }`}>
-          <button
-            onClick={onClose}
-            className="px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleStartGame}
-            disabled={
-              !selectedGameData ||
-              (isTournamentMode
-                ? selectedPlayers.length < 4
-                : selectedGameData.type !== 'arcade' && selectedPlayers.length < selectedGameData.minPlayers)
-            }
-            className={`px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gradient-to-r ${
-              isTournamentMode
-                ? 'from-yellow-600 to-amber-600 hover:from-yellow-700 hover:to-amber-700'
-                : 'from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700'
-            } text-white rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2`}
-          >
-            {isTournamentMode
-              ? <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
-              : <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />}
-            {isTournamentMode ? 'Start Tournament' : 'Start Game'}
-          </button>
+          {readOnly ? (
+            // Dismisses this viewer's own mirror only — the host's picker keeps running.
+            <button
+              onClick={onClose}
+              className="px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+            >
+              Close
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onClose}
+                className="px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleStartGame}
+                disabled={
+                  !selectedGameData ||
+                  (isTournamentMode
+                    ? selectedPlayers.length < 4
+                    : selectedGameData.type !== 'arcade' && selectedPlayers.length < selectedGameData.minPlayers)
+                }
+                className={`px-4 sm:px-6 py-1.5 sm:py-2 text-sm sm:text-base bg-gradient-to-r ${
+                  isTournamentMode
+                    ? 'from-yellow-600 to-amber-600 hover:from-yellow-700 hover:to-amber-700'
+                    : 'from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700'
+                } text-white rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2`}
+              >
+                {isTournamentMode
+                  ? <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+                  : <Gamepad2 className="w-4 h-4 sm:w-5 sm:h-5" />}
+                {isTournamentMode ? 'Start Tournament' : 'Start Game'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

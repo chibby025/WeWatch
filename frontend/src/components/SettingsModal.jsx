@@ -45,6 +45,12 @@ const TOURS = [
     description: 'Leave Call, Chat, Audio, and Members — shown when you enter a watch session.',
     replayHint: "You'll see this next time you enter a watch session",
   },
+  {
+    key: 'wewatch_roomtv_join_tour_seen',
+    title: 'RoomTV Join Tour',
+    description: 'What the Join button does — shown the first time you see a live session on a room page.',
+    replayHint: "You'll see this next time you land on a room page with a live session",
+  },
 ];
 
 const SettingsModal = ({ isOpen, onClose, onReplayAppTour }) => {

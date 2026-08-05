@@ -8,12 +8,56 @@ const PUCK_R = 13;
 const SPEED_UP = 1.025;
 const MAX_SPEED = 500;
 const SYNC_EVERY = 6;       // state_sync every N frames (~10 Hz at 60 fps)
-const MALLET_SEND_MS = 40;  // throttle mallet_move to 25 Hz
+const MALLET_SEND_MS = 25;  // was 40 (25 Hz) — trims self-inflicted staleness, see the extrapolation block below for the actual fix
 
 // P1's half: Y in [MALLET_R, H/2 - MALLET_R]
 // P2's half: Y in [H/2 + MALLET_R, H - MALLET_R]
 const P1_Y_MIN = MALLET_R, P1_Y_MAX = H / 2 - MALLET_R;
 const P2_Y_MIN = H / 2 + MALLET_R, P2_Y_MAX = H - MALLET_R;
+
+// Same root cause and fix as Ping Pong's identically-named block (see
+// PingPongGame.jsx) — P1 is the sole physics authority, so P2's mallet
+// position, as P1's collision check sees it, is only as fresh as the last
+// mallet_move that made the round trip. Dead-reckon it forward from its last
+// known position+velocity (2D here, since Air Hockey mallets move freely in
+// both X and Y, unlike Ping Pong's 1D paddle), and widen the effective
+// collision radius proportionally to how stale that reckoning is.
+const MAX_EXTRA_MALLET_FORGIVENESS = 8; // px, additional effective radius at maximum staleness — remote mallet only
+const REMOTE_MALLET_EXTRAPOLATION_CAP_S = 0.35;
+
+// 2D analog of Ping Pong's estimateSendVelocity — measured once per actual
+// send (not per frame), since human mallet input rarely reverses direction
+// within one send interval.
+function estimateSendVelocity2D(track, currentX, currentY, now) {
+  const dtSec = Math.max((now - (track.t || now)) / 1000, 0.001);
+  const rawVx = (currentX - (track.x ?? currentX)) / dtSec;
+  const rawVy = (currentY - (track.y ?? currentY)) / dtSec;
+  track.x = currentX;
+  track.y = currentY;
+  track.t = now;
+  const maxV = 2500; // generous clamp — a fast flick can legitimately move a mallet quickly
+  return {
+    vx: Math.max(-maxV, Math.min(maxV, rawVx)),
+    vy: Math.max(-maxV, Math.min(maxV, rawVy)),
+  };
+}
+
+// Dead-reckons a mallet anchor {x, y, vx, vy, t} forward, clamped to the
+// canvas and the given valid Y half so a stale-enough prediction can't
+// overshoot into the other player's territory.
+function extrapolateMalletPos(anchor, now, yMin, yMax) {
+  const elapsedS = Math.min(Math.max((now - anchor.t) / 1000, 0), REMOTE_MALLET_EXTRAPOLATION_CAP_S);
+  const x = Math.max(MALLET_R, Math.min(W - MALLET_R, anchor.x + anchor.vx * elapsedS));
+  const y = Math.max(yMin, Math.min(yMax, anchor.y + anchor.vy * elapsedS));
+  return { x, y, elapsedS };
+}
+
+// Mobile haptic feedback — same technique as PingPongGame.jsx / SpaceAttackGame.jsx.
+function hapticImpact(pattern) {
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    navigator.vibrate(pattern);
+  }
+}
 
 // Sound effects — synthesized WAVs (no external samples), same technique and
 // hosting convention as Ping Pong's SOUND_FILES.
@@ -78,8 +122,18 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     puck: { x: W / 2, y: H / 2, vx: 0, vy: 0 },
     // My own mallet (2D, clamped to my half)
     myMallet: { x: W / 2, y: isP2 ? P2_Y_MIN + 80 : P1_Y_MAX - 80 },
-    // Remote mallet (from WS relay)
+    // Remote mallet (from WS relay) — raw last-known value, kept for anything
+    // simpler that still wants it. Collision + draw actually use the
+    // dead-reckoning anchor below.
     remoteMallet: { x: W / 2, y: isP2 ? P1_Y_MAX - 80 : P2_Y_MIN + 80 },
+    // Dead-reckoning anchor for the OTHER player's mallet — {x, y, vx, vy, t}.
+    // P1's view of P2 is collision-critical (see MAX_EXTRA_MALLET_FORGIVENESS
+    // above); P2/spectator's view of P1 is visual smoothness only.
+    remoteMalletAnchor: { x: W / 2, y: isP2 ? P1_Y_MAX - 80 : P2_Y_MIN + 80, vx: 0, vy: 0, t: Date.now() },
+    // Outgoing-velocity trackers for estimateSendVelocity2D — separate from
+    // the anchor above since these track MY OWN mallet at send time.
+    p1SendTrack: { x: W / 2, y: P1_Y_MAX - 80, t: 0 },
+    p2SendTrack: { x: W / 2, y: P2_Y_MIN + 80, t: 0 },
     // Local latch: set the instant a goal is detected locally (P1 only, the
     // physics authority), cleared once the server confirms via a phase
     // transition. Same purpose as ping_pong's pendingGoal — bridges the
@@ -108,6 +162,13 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     if (isP1) {
       if (gsCurrent.p2x != null) s.remoteMallet.x = gsCurrent.p2x;
       if (gsCurrent.p2y != null) s.remoteMallet.y = gsCurrent.p2y;
+      if (gsCurrent.p2x != null && gsCurrent.p2y != null) {
+        s.remoteMalletAnchor = {
+          x: gsCurrent.p2x, y: gsCurrent.p2y,
+          vx: gsCurrent.p2vx || 0, vy: gsCurrent.p2vy || 0,
+          t: Date.now(),
+        };
+      }
       // Just served — adopt the server-authoritative launched puck exactly
       // once, at the transition edge. Replaces the old "optimistic local
       // reset, then a second server-confirmed reset" race.
@@ -125,11 +186,19 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
       // fires for everyone else, so no double-play guard is needed here.
       if (justEnteredServing) {
         playAirHockeySound('goal', { volume: 0.55 });
+        if (s.isP2) hapticImpact([20, 40, 20]);
         s.syncAnchor = { x: W / 2, y: H / 2, vx: 0, vy: 0, t: Date.now() };
       }
 
       if (gsCurrent.p1x != null) s.remoteMallet.x = gsCurrent.p1x;
       if (gsCurrent.p1y != null) s.remoteMallet.y = gsCurrent.p1y;
+      if (gsCurrent.p1x != null && gsCurrent.p1y != null) {
+        s.remoteMalletAnchor = {
+          x: gsCurrent.p1x, y: gsCurrent.p1y,
+          vx: gsCurrent.p1vx || 0, vy: gsCurrent.p1vy || 0,
+          t: Date.now(),
+        };
+      }
       if (gsCurrent.phase === 'playing') {
         const now = Date.now();
         const newVx = gsCurrent.ball_vx ?? s.syncAnchor.vx;
@@ -146,6 +215,7 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
           if (prevSpeed > 0) {
             if (newSpeed > prevSpeed * MALLET_HIT_SPEED_RATIO) {
               playAirHockeySound('mallet_hit', { volume: 0.5, rate: 0.95 + Math.random() * 0.1 });
+              if (s.isP2) hapticImpact(15);
             } else if (Math.sign(newVx) !== Math.sign(s.syncAnchor.vx) || Math.sign(newVy) !== Math.sign(s.syncAnchor.vy)) {
               playAirHockeySound('wall_bounce', { volume: 0.35, rate: 0.95 + Math.random() * 0.1 });
             }
@@ -171,6 +241,7 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     const ctx = canvas.getContext('2d');
     const s = S.current;
     const gsCurrent = gsRef.current;
+    const nowDraw = Date.now();
 
     // Ice surface
     ctx.fillStyle = '#0f2744';
@@ -222,9 +293,26 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     ctx.beginPath(); ctx.arc(px - 3, py - 3, PUCK_R * 0.35, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fill();
 
+    // P1/P2 mallet positions — the "not mine" one uses the dead-reckoning
+    // anchor when I'm an actual player (same predicted position the host's
+    // collision check itself uses, when applicable), or a plain last-known
+    // fallback for a spectator (who has no anchor for either mallet, same as
+    // before this fix — spectators aren't collision-critical).
+    let m1x, m1y, m2x, m2y;
+    if (s.isP1) {
+      m1x = s.myMallet.x; m1y = s.myMallet.y;
+      const p2 = extrapolateMalletPos(s.remoteMalletAnchor, nowDraw, P2_Y_MIN, P2_Y_MAX);
+      m2x = p2.x; m2y = p2.y;
+    } else if (s.isP2) {
+      const p1 = extrapolateMalletPos(s.remoteMalletAnchor, nowDraw, P1_Y_MIN, P1_Y_MAX);
+      m1x = p1.x; m1y = p1.y;
+      m2x = s.myMallet.x; m2y = s.myMallet.y;
+    } else {
+      m1x = gsCurrent.p1x ?? s.remoteMallet.x; m1y = gsCurrent.p1y ?? s.remoteMallet.y;
+      m2x = gsCurrent.p2x ?? s.remoteMallet.x; m2y = gsCurrent.p2y ?? s.remoteMallet.y;
+    }
+
     // P1 mallet (red, top half)
-    const m1x = s.isP1 ? s.myMallet.x : (gsCurrent.p1x ?? s.remoteMallet.x);
-    const m1y = s.isP1 ? s.myMallet.y : (gsCurrent.p1y ?? s.remoteMallet.y);
     ctx.beginPath(); ctx.arc(m1x, m1y, MALLET_R, 0, Math.PI * 2);
     ctx.fillStyle = '#dc2626'; ctx.fill();
     ctx.strokeStyle = '#fca5a5'; ctx.lineWidth = 2; ctx.stroke();
@@ -232,8 +320,6 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fill();
 
     // P2 mallet (blue, bottom half)
-    const m2x = s.isP2 ? s.myMallet.x : (gsCurrent.p2x ?? s.remoteMallet.x);
-    const m2y = s.isP2 ? s.myMallet.y : (gsCurrent.p2y ?? s.remoteMallet.y);
     ctx.beginPath(); ctx.arc(m2x, m2y, MALLET_R, 0, Math.PI * 2);
     ctx.fillStyle = '#2563eb'; ctx.fill();
     ctx.strokeStyle = '#93c5fd'; ctx.lineWidth = 2; ctx.stroke();
@@ -254,6 +340,7 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
       s.lastTime = time;
       s.frameCount++;
       const gsCurrent = gsRef.current;
+      const now = Date.now();
 
       if (gsCurrent.phase === 'playing' && !s.pendingGoal) {
         const p = s.puck;
@@ -264,15 +351,22 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
         if (p.x < PUCK_R) { p.x = PUCK_R; p.vx = Math.abs(p.vx); playAirHockeySound('wall_bounce', { volume: 0.35, rate: 0.95 + Math.random() * 0.1 }); }
         if (p.x > W - PUCK_R) { p.x = W - PUCK_R; p.vx = -Math.abs(p.vx); playAirHockeySound('wall_bounce', { volume: 0.35, rate: 0.95 + Math.random() * 0.1 }); }
 
-        // Mallet-puck collision check (circle vs circle)
-        function checkMallet(mx, my) {
+        // Mallet-puck collision check (circle vs circle). extraRadius widens
+        // the effective collision boundary — 0 for P1's own mallet (always
+        // instantly fresh, same process), and a staleness-scaled margin for
+        // P2's dead-reckoned position (see MAX_EXTRA_MALLET_FORGIVENESS above)
+        // so a hit that would've whiffed against a stale snapshot becomes
+        // forgivable in proportion to how long it's been since P1 actually
+        // heard from P2.
+        function checkMallet(mx, my, extraRadius = 0) {
           const dx = p.x - mx, dy = p.y - my;
           const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < PUCK_R + MALLET_R && dist > 0) {
+          const collisionRadius = PUCK_R + MALLET_R + extraRadius;
+          if (dist < collisionRadius && dist > 0) {
             // Push puck out of overlap first
             const nx = dx / dist, ny = dy / dist;
-            p.x = mx + nx * (PUCK_R + MALLET_R + 1);
-            p.y = my + ny * (PUCK_R + MALLET_R + 1);
+            p.x = mx + nx * (collisionRadius + 1);
+            p.y = my + ny * (collisionRadius + 1);
             // Reflect velocity off collision normal
             const dot = p.vx * nx + p.vy * ny;
             if (dot < 0) { // only if approaching
@@ -284,12 +378,22 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
               p.vx = (p.vx / mag) * speed;
               p.vy = (p.vy / mag) * speed;
               playAirHockeySound('mallet_hit', { volume: 0.5, rate: 0.95 + Math.random() * 0.1 });
+              hapticImpact(15);
             }
           }
         }
 
-        checkMallet(s.myMallet.x, s.myMallet.y);         // P1's own mallet
-        checkMallet(s.remoteMallet.x, s.remoteMallet.y);  // P2's mallet
+        checkMallet(s.myMallet.x, s.myMallet.y); // P1's own mallet — always fresh, no forgiveness
+
+        // P2's mallet — dead-reckon its position forward, and widen the
+        // effective collision radius proportionally to how stale that
+        // reckoning is. Same root cause and fix as Ping Pong's remote-paddle
+        // collision check.
+        {
+          const { x: remoteX, y: remoteY, elapsedS } = extrapolateMalletPos(s.remoteMalletAnchor, now, P2_Y_MIN, P2_Y_MAX);
+          const extraRadius = MAX_EXTRA_MALLET_FORGIVENESS * (elapsedS / REMOTE_MALLET_EXTRAPOLATION_CAP_S);
+          checkMallet(remoteX, remoteY, extraRadius);
+        }
 
         // Goal detection — no local puck reset here; it just stops updating
         // (frozen wherever it exited) since the "serving" phase's UI takes
@@ -312,22 +416,25 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
         if (goalScorer) {
           s.pendingGoal = true;
           playAirHockeySound('goal', { volume: 0.55 });
+          hapticImpact([20, 40, 20]);
           onMove({ move_type: 'goal', scorer_id: goalScorer });
         } else if (s.frameCount % SYNC_EVERY === 0) {
           // Throttled state sync to P2
+          const v = estimateSendVelocity2D(s.p1SendTrack, s.myMallet.x, s.myMallet.y, now);
           onMove({
             move_type: 'state_sync',
             ball_x: p.x, ball_y: p.y, ball_vx: p.vx, ball_vy: p.vy,
-            p1x: s.myMallet.x, p1y: s.myMallet.y,
+            p1x: s.myMallet.x, p1y: s.myMallet.y, p1vx: v.vx, p1vy: v.vy,
           });
         }
       } else if (gsCurrent.phase === 'serving' && s.frameCount % SYNC_EVERY === 0) {
         // Still relay mallet position during the serving pause, so the
         // other player can see P1 lining up before the point starts.
+        const v = estimateSendVelocity2D(s.p1SendTrack, s.myMallet.x, s.myMallet.y, now);
         onMove({
           move_type: 'state_sync',
           ball_x: s.puck.x, ball_y: s.puck.y, ball_vx: 0, ball_vy: 0,
-          p1x: s.myMallet.x, p1y: s.myMallet.y,
+          p1x: s.myMallet.x, p1y: s.myMallet.y, p1vx: v.vx, p1vy: v.vy,
         });
       }
 
@@ -377,8 +484,9 @@ export default function AirHockeyGame({ gameState, players, currentUserId, onMov
     if (isP2) {
       const now = Date.now();
       if (now - s.lastMalletSend > MALLET_SEND_MS) {
+        const v = estimateSendVelocity2D(s.p2SendTrack, x, y, now);
         s.lastMalletSend = now;
-        onMove({ move_type: 'mallet_move', p2x: x, p2y: y });
+        onMove({ move_type: 'mallet_move', p2x: x, p2y: y, p2vx: v.vx, p2vy: v.vy });
       }
     }
   }, [isP1, isP2, onMove]);

@@ -30,6 +30,15 @@ type TemporaryMediaItem struct {
 	IsStream          bool   `gorm:"type:boolean;default:false" json:"is_stream"` // True if this is a stream URL (not uploaded file)
 	OriginalStreamURL string `gorm:"type:text" json:"original_stream_url,omitempty"` // Original cloud storage link before conversion
 
+	// CDNSegmentsPrefix is the BunnyCDN storage-relative folder prefix (e.g.
+	// "device_streams/{uploadID}/") this item's HLS .ts segments were uploaded to —
+	// only set when that CDN upload actually succeeded. FilePath's own manifest path
+	// only ever points at the LOCAL manifest; the segments themselves live at this
+	// separate CDN location and need their own explicit delete at cleanup time (see
+	// DeletePrefixFromBunnyCDNStorage). Empty for non-stream items, and for stream
+	// items that never made it to BunnyCDN (local-disk-only fallback).
+	CDNSegmentsPrefix string `gorm:"type:varchar(255)" json:"-"`
+
 	// --- Embed Support ---
 	IsEmbed           bool   `gorm:"type:boolean;default:false" json:"is_embed"` // True if rendered as iframe (Google Drive, YouTube, Twitch)
 	EmbedPlatform     string `gorm:"type:varchar(50)" json:"embed_platform,omitempty"` // "google_drive" | "youtube" | "twitch"

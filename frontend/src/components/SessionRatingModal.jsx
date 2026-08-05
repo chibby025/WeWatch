@@ -4,14 +4,16 @@
 
 import React, { useState } from 'react';
 import toast from 'react-hot-toast';
+import { resolveAvatarUrl } from '../utils/avatar';
 
-const SessionRatingModal = ({ 
-  isOpen, 
-  onClose, 
-  sessionId, 
-  hostName, 
+const SessionRatingModal = ({
+  isOpen,
+  onClose,
+  sessionId,
+  hostName,
+  hostAvatarUrl,
   sessionTitle,
-  onSubmit 
+  onSubmit
 }) => {
   const [rating, setRating] = useState(0);
   const [hoveredRating, setHoveredRating] = useState(0);
@@ -68,7 +70,13 @@ const SessionRatingModal = ({
         {/* Content */}
         <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4 sm:space-y-6">
           {/* Host Info */}
-          <div className="text-center">
+          <div className="flex flex-col items-center gap-2">
+            <img
+              src={resolveAvatarUrl(hostAvatarUrl)}
+              alt={hostName || 'Host'}
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-full object-cover border-2 border-purple-100 shadow-sm"
+              onError={(e) => { e.currentTarget.src = resolveAvatarUrl(null); }}
+            />
             <p className="text-gray-600 text-xs sm:text-sm">
               Hosted by <span className="font-semibold text-gray-900">{hostName}</span>
             </p>

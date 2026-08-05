@@ -122,6 +122,7 @@ type ProgressiveReadyInfo struct {
 	OriginalMimeType string // source mime type (e.g. "video/mp4", "audio/mpeg") — the manifest itself is always application/vnd.apple.mpegurl, but nothing actually depends on that being stored literally, so the original is preserved instead to keep the audio/video distinction
 	ClientDuration   string // non-empty when the browser supplied its own duration on chunk 0
 	ClientPosterPath string // non-empty when the browser supplied its own poster frame on chunk 0
+	CDNRemotePrefix  string // e.g. "device_streams/{uploadID}/" — where this upload's segments were (or are about to be) uploaded on BunnyCDN, empty if CDN mode wasn't configured for this upload. Persisted onto the TemporaryMediaItem row so delete-time cleanup knows what to remove.
 }
 
 // SetProgressiveMediaItemID records the TemporaryMediaItem row created by the
@@ -844,6 +845,7 @@ func watchManifestForFirstSegment(uploadID string, state *ProgressiveUploadState
 				OriginalMimeType: state.mimeType,
 				ClientDuration:   state.clientDuration,
 				ClientPosterPath: state.clientPosterPath,
+				CDNRemotePrefix:  state.cdnRemotePrefix,
 			}
 			state.mu.Unlock()
 

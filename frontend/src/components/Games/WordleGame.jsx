@@ -535,27 +535,50 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
                   <button
                     onPointerDown={e => { e.preventDefault(); pressKey('⌫'); }}
                     style={{
-                      width: 64, height: 48, background: '#818384', borderRadius: 6, border: 'none',
-                      color: '#fff', fontWeight: 700, fontSize: 20, cursor: 'pointer', userSelect: 'none',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      width: 46, height: 60, background: '#818384', borderRadius: 6, border: 'none',
+                      color: '#fff', fontWeight: 700, fontSize: 18, cursor: 'pointer', userSelect: 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                     }}
                   >⌫</button>
+                  {/* Live preview of what's being typed on the native keyboard — the
+                      Wordle grid up top can end up hidden behind the on-screen keyboard
+                      once it opens, so this stays visible right next to the controls.
+                      Shows filled letters + underscore placeholders for the rest;
+                      clears back to the "Tap to type" placeholder on submit (currentInput
+                      resets to '' after a valid guess, same as the grid's own preview). */}
                   <button
                     onPointerDown={e => { e.preventDefault(); focusNativeInput(); }}
                     style={{
-                      flex: 1, height: 48, background: '#2a2a2c', borderRadius: 6, border: '1px solid #444',
-                      color: '#9ca3af', fontWeight: 600, fontSize: 12, cursor: 'pointer', userSelect: 'none',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                      flex: 1, height: 60, background: currentInput ? '#1e1e20' : '#2a2a2c',
+                      borderRadius: 6, border: `1px solid ${currentInput ? '#666' : '#444'}`,
+                      color: currentInput ? '#fff' : '#9ca3af',
+                      fontWeight: 700, cursor: 'pointer', userSelect: 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      minWidth: 0,
                     }}
-                  ><span>⌨️</span><span>Tap to type</span></button>
+                  >
+                    {currentInput ? (
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {Array.from({ length: WORD_LEN }, (_, i) => currentInput[i] || '_').map((ch, i) => (
+                          <span key={i} style={{ fontSize: 20, letterSpacing: 0, opacity: ch === '_' ? 0.3 : 1, width: 14, textAlign: 'center' }}>
+                            {ch}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                        <span>⌨️</span><span>Tap to type</span>
+                      </div>
+                    )}
+                  </button>
                   <button
                     onPointerDown={e => { e.preventDefault(); pressKey('ENTER'); }}
                     style={{
-                      width: 64, height: 48, background: '#538d4e', borderRadius: 6, border: 'none',
-                      color: '#fff', fontWeight: 700, fontSize: 11, cursor: 'pointer', userSelect: 'none',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      width: 46, height: 60, background: '#538d4e', borderRadius: 6, border: 'none',
+                      color: '#fff', fontWeight: 700, fontSize: 10, cursor: 'pointer', userSelect: 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                     }}
-                  >↵ ENTER</button>
+                  >↵</button>
                 </div>
               </div>
             ) : (

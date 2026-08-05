@@ -488,6 +488,10 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
         maxRetries: 3,
         clientDuration,
         clientPosterBlob,
+        // Threaded all the way to the actual axios request (uploadChunk passes it as
+        // `signal`) — previously abortController.abort() only reset local UI state and
+        // never actually stopped in-flight/future chunk requests over the wire.
+        abortSignal: abortController.signal,
         onProgress: ({ chunkIndex, totalChunks, completedChunks, percent }) => {
           // Once the stream is live (device_stream_ready fired), the progress bar is
           // already hidden in the UI (uploading && !isUploadReady gates it). Skip the
@@ -569,6 +573,16 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
         clearChunkUploadState(uploadId);
         localStorage.removeItem('current_upload_id');
         toast('Upload cancelled.');
+      } else if (err.response?.status === 410) {
+        // Backend confirmed the session already ended (see ChunkUploadHandler's
+        // session-liveness check) — an expected outcome once cancelForSessionEnd has
+        // kicked in below, not a real failure. Quiet, matching the cancel case, not
+        // toast.error — this is what used to surface as a scary "Failed to upload
+        // chunk N after 3 attempts" toast on whatever page the user had since
+        // navigated to, including a brand new session.
+        console.log('🔴 [Upload] Session ended — stopping upload');
+        clearChunkUploadState(uploadId);
+        localStorage.removeItem('current_upload_id');
       } else {
         console.error('❌ [Upload] Failed:', err);
         clearChunkUploadState(uploadId);
@@ -1062,6 +1076,12 @@ export default function useMediaUploadManager({ roomId, sessionId, onUploadCompl
     uploadProgress,
     uploadSpeed,
     uploadRequiredBpsRef,
+    // The live File object for the current upload (null once cancelled/switched away
+    // from) and the upload_id it corresponds to — exposed so VideoWatch.jsx can play
+    // the host's own just-uploaded file back locally instead of re-downloading the
+    // server's HLS copy of it. See device_stream_ready's handler.
+    uploadFileRef,
+    currentUploadIdRef,
     uploadETA,
     uploadedBytes,
     totalBytes,

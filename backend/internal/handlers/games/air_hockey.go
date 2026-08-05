@@ -60,6 +60,15 @@ func (gm *GameManager) processAirHockeyMove(gameState *GameSessionState, playerI
 		if v, ok := ppFloat(moveData["p1y"]); ok {
 			gameState.GameData["p1y"] = v
 		}
+		// P1's estimated own-mallet velocity — lets P2's client extrapolate P1's
+		// position between throttled sends instead of freezing it, mirroring the
+		// same fix already applied to ping_pong.go.
+		if v, ok := ppFloat(moveData["p1vx"]); ok {
+			gameState.GameData["p1vx"] = v
+		}
+		if v, ok := ppFloat(moveData["p1vy"]); ok {
+			gameState.GameData["p1vy"] = v
+		}
 		return false, nil, nil
 
 	case "mallet_move":
@@ -69,6 +78,14 @@ func (gm *GameManager) processAirHockeyMove(gameState *GameSessionState, playerI
 		}
 		if v, ok := ppFloat(moveData["p2y"]); ok {
 			gameState.GameData["p2y"] = v
+		}
+		// P2's estimated own-mallet velocity — same extrapolation purpose as above,
+		// consumed by P1's collision check to forgive staleness on P2's side.
+		if v, ok := ppFloat(moveData["p2vx"]); ok {
+			gameState.GameData["p2vx"] = v
+		}
+		if v, ok := ppFloat(moveData["p2vy"]); ok {
+			gameState.GameData["p2vy"] = v
 		}
 		return false, nil, nil
 

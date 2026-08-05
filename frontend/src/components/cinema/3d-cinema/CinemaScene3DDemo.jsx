@@ -642,8 +642,11 @@ export default function CinemaScene3DDemo() {
   
   // 🎮 GAME SYSTEM: State
   const [isGameLobbyOpen, setIsGameLobbyOpen] = useState(false);
+  // Non-host members' live mirror of the host's own game picker — driven purely
+  // by game_lobby_browsing WS broadcasts, never opened/closed locally by them.
+  const [hostGameLobbyBrowsing, setHostGameLobbyBrowsing] = useState({ isOpen: false, gameType: null });
   const [activeGame, setActiveGame] = useState(null); // Currently active game session
-  
+
   // 🔊 Broadcast permissions (userId -> boolean)
   const [broadcastPermissions, setBroadcastPermissions] = useState({});
   const [remoteAudioStates, setRemoteAudioStates] = useState({});
@@ -3638,6 +3641,17 @@ export default function CinemaScene3DDemo() {
         return; // Hook handled it — skip rest
       }
 
+      // 🎮 Host opened/closed or cycled the game picker — mirror it live for
+      // everyone else. The sender (host) never receives their own echo
+      // (backend excludes them), so this only ever runs for other members.
+      if (msg.type === 'game_lobby_browsing') {
+        setHostGameLobbyBrowsing({
+          isOpen: !!msg.data?.is_open,
+          gameType: msg.data?.game_type || null,
+        });
+        return;
+      }
+
       // 🎮 Handle game messages
       if (msg.type === 'game') {
         console.log('🎮 [Game Handler 1] Processing game message:', msg.action, { hasCurrentGame: !!currentGame, hasActiveGame: !!activeGame });
@@ -4789,6 +4803,31 @@ export default function CinemaScene3DDemo() {
       toast('Only the host can start games', { icon: 'ℹ️' });
     }
   }, [isHost]);
+
+  // Fired by GameLobbyModal's own onCarouselChange whenever the host's centered
+  // game changes (including the initial mount) — this doubles as the "opened"
+  // signal too, since it only ever fires while the modal is mounted/open.
+  const handleGameLobbyCarouselChange = useCallback((gameType) => {
+    if (!isHost || !sendMessage) return;
+    sendMessage({ type: 'game_lobby_browsing', data: { is_open: true, game_type: gameType } });
+  }, [isHost, sendMessage]);
+
+  // Broadcast the "closed" transition once, covering every way the modal can
+  // close without needing to touch each close call site individually.
+  const prevGameLobbyOpenRef = useRef(false);
+  useEffect(() => {
+    if (isHost && prevGameLobbyOpenRef.current && !isGameLobbyOpen && sendMessage) {
+      sendMessage({ type: 'game_lobby_browsing', data: { is_open: false, game_type: null } });
+    }
+    prevGameLobbyOpenRef.current = isGameLobbyOpen;
+  }, [isGameLobbyOpen, isHost, sendMessage]);
+
+  // Host's own display name, for the "X is picking a game…" read-only mirror
+  // shown to other members.
+  const currentHostName = useMemo(() => {
+    const hostMember = roomMembers.find(m => m.user_role === 'host');
+    return hostMember?.username || hostMember?.name || 'The host';
+  }, [roomMembers]);
 
   const handleStartGame = useCallback((gameType, playersData) => {
     console.log('🎮 [handleStartGame] Called with:', { gameType, playersData });
@@ -6481,6 +6520,28 @@ export default function CinemaScene3DDemo() {
           currentUserId={currentUser?.id}
           onStartGame={handleStartGame}
           allowHeavyGames={false}
+          onCarouselChange={handleGameLobbyCarouselChange}
+        />
+      )}
+
+      {/* Live, read-only mirror of the host's own picker for everyone else —
+          lets the whole room see what's being considered before it's started. */}
+      {hostGameLobbyBrowsing.isOpen && !isHost && (
+        <GameLobbyModal
+          isOpen={hostGameLobbyBrowsing.isOpen}
+          onClose={() => setHostGameLobbyBrowsing({ isOpen: false, gameType: null })}
+          roomMembers={[
+            { id: currentUser?.id, username: currentUser?.username },
+            ...roomMembers
+              .filter(m => m.id !== currentUser?.id)
+              .map(m => ({ id: m.id, username: m.username || m.name }))
+          ].filter(m => m.id)}
+          currentUserId={currentUser?.id}
+          allowHeavyGames={false}
+          isHost={false}
+          readOnly
+          syncedGameId={hostGameLobbyBrowsing.gameType}
+          hostName={currentHostName}
         />
       )}
 // 🎮 Game Overlay is rendered when a game is active, and receives move updates via WebSocket messages

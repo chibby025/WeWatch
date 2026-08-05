@@ -417,6 +417,16 @@ const CinemaVideoPlayer = forwardRef(function CinemaVideoPlayer({
           readyState: e.target.readyState,
           src: e.target.src
         });
+        // Local-playback (blob: URL) errors are forwarded so VideoWatch.jsx can fall
+        // back to the server's transcoded/remuxed HLS copy — the raw local file can
+        // fail to decode natively even when the server's copy plays fine (see
+        // handleError's isLocalPlayback branch). Other media types on this branch
+        // (plain remote URLs, Drive/Twitch-uploaded links) keep today's log-only
+        // behavior — not touched, to avoid changing established behavior no one asked
+        // to change.
+        if (mediaItem?.isLocalPlayback) {
+          onErrorRef.current?.(e);
+        }
       };
       video.addEventListener('error', handleLoadError, { once: true });
       video.load();

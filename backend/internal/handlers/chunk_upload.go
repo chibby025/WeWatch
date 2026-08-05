@@ -103,17 +103,18 @@ func onProgressiveStreamReady(info utils.ProgressiveReadyInfo) {
 	}
 
 	item := models.TemporaryMediaItem{
-		FileName:     filepath.Base(info.FileName),
-		OriginalName: info.FileName,
-		MimeType:     info.OriginalMimeType,
-		FilePath:     manifestURL,
-		PosterURL:    posterURL,
-		Duration:     info.ClientDuration,
-		RoomID:       info.RoomID,
-		UploaderID:   info.UploaderID,
-		OrderIndex:   0,
-		SessionID:    info.SessionID,
-		IsStream:     true,
+		FileName:          filepath.Base(info.FileName),
+		OriginalName:      info.FileName,
+		MimeType:          info.OriginalMimeType,
+		FilePath:          manifestURL,
+		PosterURL:         posterURL,
+		Duration:          info.ClientDuration,
+		RoomID:            info.RoomID,
+		UploaderID:        info.UploaderID,
+		OrderIndex:        0,
+		SessionID:         info.SessionID,
+		IsStream:          true,
+		CDNSegmentsPrefix: info.CDNRemotePrefix,
 	}
 	if err := DB.Create(&item).Error; err != nil {
 		log.Printf("❌ [Progressive] Failed to create TemporaryMediaItem for %s: %v", info.UploadID, err)
@@ -552,6 +553,25 @@ func ChunkUploadHandler(c *gin.Context) {
 		return
 	}
 
+	// Reject a chunk for a session that's already ended — without this, a chunk that
+	// arrives after (or racing) session-end cleanup gets silently written to disk and
+	// can resurrect an already-aborted ProgressiveUploadState (see
+	// AbortProgressiveUpload's own doc comment, which names this exact risk). Checked
+	// before any chunk is written to disk. Scoped to session uploads only — a
+	// permanent-room upload has no session_id and isn't affected. A lookup failure
+	// (not found / DB error) doesn't block the upload — this is a guard against a
+	// *known*-ended session, not a hard requirement that session_id always resolve.
+	if sid := c.Query("session_id"); sid != "" {
+		var watchSession models.WatchSession
+		if err := DB.Select("ended_at").Where("session_id = ?", sid).First(&watchSession).Error; err == nil {
+			if watchSession.EndedAt != nil {
+				log.Printf("ChunkUploadHandler: Rejecting chunk %d/%d for upload %s — session %s has already ended", chunkIndex+1, totalChunks, uploadID, sid)
+				c.JSON(http.StatusGone, gin.H{"error": "This session has ended", "code": "session_ended"})
+				return
+			}
+		}
+	}
+
 	// Create upload directory for this upload_id
 	uploadDir := filepath.Join(ChunkUploadDir, uploadID)
 	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
@@ -731,6 +751,7 @@ func ChunkUploadHandler(c *gin.Context) {
 			streamFilePath := finalFilePath
 			streamMimeType := mimeType
 			isStream := false
+			streamCDNSegmentsPrefix := ""
 			if strings.HasPrefix(mimeType, "video/") || strings.HasPrefix(mimeType, "audio/") {
 				hlsDirName := strings.TrimSuffix(uniqueFilename, ext)
 				hlsOutputDir := filepath.Join(UploadDir, "temp", "hls", hlsDirName)
@@ -746,6 +767,12 @@ func ChunkUploadHandler(c *gin.Context) {
 						if uploadErr := utils.UploadHLSSegmentsToCDN(hlsOutputDir, cdnRemotePrefix); uploadErr != nil {
 							log.Printf("⚠️ [ChunkUpload] CDN segment upload failed, serving from local disk instead: %v", uploadErr)
 						}
+						// Recorded regardless of the individual upload outcome above — a
+						// delete-time cleanup call against a prefix that ended up with
+						// nothing (or only some segments) on BunnyCDN is a harmless no-op,
+						// and this is the only place that knows where segments for this
+						// item were even meant to go.
+						streamCDNSegmentsPrefix = cdnRemotePrefix
 					}
 					rel, _ := filepath.Rel(UploadDir, manifestPath)
 					streamFilePath = "/uploads/" + filepath.ToSlash(rel)
@@ -760,18 +787,19 @@ func ChunkUploadHandler(c *gin.Context) {
 
 			// Create TemporaryMediaItem
 			newTempMediaItem := models.TemporaryMediaItem{
-				FileName:     filepath.Base(finalFilePath),
-				OriginalName: fileName,
-				MimeType:     streamMimeType,
-				FileSize:     fileSize,
-				FilePath:     streamFilePath,
-				PosterURL:    posterURL,
-				RoomID:       roomIDUint,
-				UploaderID:   authenticatedUserID,
-				Duration:     duration,
-				OrderIndex:   0,
-				SessionID:    sessionID,
-				IsStream:     isStream,
+				FileName:          filepath.Base(finalFilePath),
+				OriginalName:      fileName,
+				MimeType:          streamMimeType,
+				FileSize:          fileSize,
+				FilePath:          streamFilePath,
+				PosterURL:         posterURL,
+				RoomID:            roomIDUint,
+				UploaderID:        authenticatedUserID,
+				Duration:          duration,
+				OrderIndex:        0,
+				SessionID:         sessionID,
+				IsStream:          isStream,
+				CDNSegmentsPrefix: streamCDNSegmentsPrefix,
 			}
 
 			log.Printf("📝 [ChunkUpload] Creating TemporaryMediaItem: fileName=%s, sessionID=%s", fileName, sessionID)

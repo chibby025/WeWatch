@@ -155,6 +155,15 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== 'undefined' ? window.matchMedia('(orientation: landscape)').matches : false
   );
+  // isLandscape (orientation: landscape) is true for essentially every desktop
+  // browser window, not just a phone rotated sideways — so it doubles as this
+  // modal's "wide 2-column layout" trigger below. This second check distinguishes
+  // an actual desktop-width viewport from a genuinely narrow mobile-landscape
+  // phone screen, so the petal picker can size up further on desktop without
+  // also blowing out on a phone held sideways.
+  const [isDesktopWidth, setIsDesktopWidth] = useState(
+    typeof window !== 'undefined' ? window.innerWidth >= 1024 : false
+  );
 
   const uploadInputRef  = useRef(null); // regular file picker
   const cameraInputRef  = useRef(null); // camera capture
@@ -174,6 +183,12 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
     const handler = (e) => setIsLandscape(e.matches);
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  useEffect(() => {
+    const check = () => setIsDesktopWidth(window.innerWidth >= 1024);
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
   }, []);
 
   // Preload 3D models while modal is open
@@ -413,7 +428,7 @@ const WatchTypeModal = ({ isOpen, onClose, onSelectType, title = "Choose Watch E
                 selectedTypeId={selectedTypeId}
                 onChange={setSelectedTypeId}
                 showDescription={false}
-                maxWidth={500}
+                maxWidth={isDesktopWidth ? 640 : 500}
               />
             </div>
             {/* Right: description + button */}

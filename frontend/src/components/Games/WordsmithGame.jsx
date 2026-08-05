@@ -459,39 +459,72 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
         {/* Rack + controls */}
         {!isOver && (
           <div className="bg-gray-900/80 border-t border-gray-800 px-3 py-3 flex-shrink-0">
-            {isMyTurn ? (
-              <>
-                <div className="flex items-center justify-center gap-1.5 mb-3 flex-wrap">
-                  {rack.map((tile, i) => (
-                    exchanging ? (
-                      <button
-                        key={i}
-                        onClick={() => toggleExchangeTile(i)}
-                        className={`flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center font-black text-lg transition-all ${exchangeSet.has(i) ? 'ring-2 ring-red-400 opacity-50' : ''}`}
-                        style={{ background: 'linear-gradient(135deg,#fde68a,#f59e0b)', color: '#3f2d00' }}
-                      >
-                        {tile === '?' ? '' : tile}
-                      </button>
-                    ) : (
-                      <RackTile
-                        key={i}
-                        tile={tile}
-                        selected={selectedRackIdx === i}
-                        disabled={usedRackIdxs.has(i)}
-                        onClick={() => handleRackTileClick(i)}
-                      />
-                    )
-                  ))}
-                </div>
+            {/* Rack — always visible, even on the opponent's turn, so a player can
+                plan their next move ahead of time. The backend pushes a fresh
+                hand_update the instant your own move resolves (not gated on whose
+                turn it is), so `rack` already reflects your post-move tiles the
+                whole time — this just stops hiding that. Only interactive
+                (selectable) on your own turn; a plain read-only tile otherwise. */}
+            {!isMyTurn && (
+              <p className="text-center text-gray-500 text-[10px] mb-1.5">Your tiles — plan your next move</p>
+            )}
+            <div className="flex items-center justify-center gap-1.5 mb-3 flex-wrap">
+              {rack.map((tile, i) => (
+                !isMyTurn ? (
+                  <div
+                    key={i}
+                    className="relative flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center font-black text-lg opacity-70 cursor-default"
+                    style={{ background: 'linear-gradient(135deg,#fde68a,#f59e0b)', color: '#3f2d00' }}
+                  >
+                    {tile === '?' ? '' : tile}
+                    <span className="absolute bottom-0.5 right-1 text-[8px] font-bold opacity-70">
+                      {tile === '?' ? '' : TILE_VALUES[tile] ?? ''}
+                    </span>
+                  </div>
+                ) : exchanging ? (
+                  <button
+                    key={i}
+                    onClick={() => toggleExchangeTile(i)}
+                    className={`relative flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center font-black text-lg transition-all
+                      ${exchangeSet.has(i) ? 'ring-2 ring-red-400 -translate-y-2 shadow-xl' : 'hover:-translate-y-1'}`}
+                    style={{
+                      background: 'linear-gradient(135deg,#fde68a,#f59e0b)',
+                      color: '#3f2d00',
+                      boxShadow: exchangeSet.has(i) ? '0 8px 20px rgba(220,38,38,0.5)' : '0 2px 6px rgba(0,0,0,0.4)',
+                    }}
+                  >
+                    {tile === '?' ? '' : tile}
+                    {exchangeSet.has(i) && (
+                      <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shadow">✕</span>
+                    )}
+                  </button>
+                ) : (
+                  <RackTile
+                    key={i}
+                    tile={tile}
+                    selected={selectedRackIdx === i}
+                    disabled={usedRackIdxs.has(i)}
+                    onClick={() => handleRackTileClick(i)}
+                  />
+                )
+              ))}
+            </div>
 
-                {exchanging ? (
+            {isMyTurn ? (
+              exchanging ? (
+                <div className="flex flex-col items-center gap-2">
+                  <p className="text-amber-300 text-xs font-semibold text-center">
+                    {exchangeSet.size === 0
+                      ? 'Tap tiles above to mark them for exchange'
+                      : `${exchangeSet.size} tile${exchangeSet.size > 1 ? 's' : ''} marked — tap Exchange to confirm and end your turn`}
+                  </p>
                   <div className="flex items-center justify-center gap-2">
                     <button
                       onClick={submitExchange}
                       disabled={exchangeSet.size === 0}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-bold rounded-xl transition-colors"
+                      className="flex items-center gap-1.5 px-5 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-all shadow-lg"
                     >
-                      Exchange {exchangeSet.size > 0 ? exchangeSet.size : ''}
+                      <Shuffle size={15} /> {exchangeSet.size > 0 ? `Exchange ${exchangeSet.size} →` : 'Exchange'}
                     </button>
                     <button
                       onClick={() => { setExchanging(false); setExchangeSet(new Set()); }}
@@ -500,39 +533,39 @@ export default function WordsmithGame({ gameState, players, currentUserId, myHan
                       Cancel
                     </button>
                   </div>
-                ) : (
-                  <div className="flex items-center justify-center gap-2 flex-wrap">
-                    <button
-                      onClick={submitWord}
-                      disabled={pending.length === 0 || submitting}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-colors"
-                    >
-                      <Send size={15} /> {submitting ? 'Playing…' : 'Play Word'}
-                    </button>
-                    <button
-                      onClick={recallAll}
-                      disabled={pending.length === 0}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors"
-                    >
-                      <RotateCcw size={15} /> Recall
-                    </button>
-                    <button
-                      onClick={() => setExchanging(true)}
-                      disabled={pending.length > 0 || bagCount === 0}
-                      title={bagCount === 0 ? 'Bag is empty' : 'Swap tiles for new ones'}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors"
-                    >
-                      <Shuffle size={15} /> Exchange
-                    </button>
-                    <button
-                      onClick={passTurn}
-                      className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-semibold rounded-xl transition-colors"
-                    >
-                      Pass
-                    </button>
-                  </div>
-                )}
-              </>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-2 flex-wrap">
+                  <button
+                    onClick={submitWord}
+                    disabled={pending.length === 0 || submitting}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-colors"
+                  >
+                    <Send size={15} /> {submitting ? 'Playing…' : 'Play Word'}
+                  </button>
+                  <button
+                    onClick={recallAll}
+                    disabled={pending.length === 0}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors"
+                  >
+                    <RotateCcw size={15} /> Recall
+                  </button>
+                  <button
+                    onClick={() => setExchanging(true)}
+                    disabled={pending.length > 0 || bagCount === 0}
+                    title={bagCount === 0 ? 'Bag is empty' : 'Swap tiles for new ones'}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors"
+                  >
+                    <Shuffle size={15} /> Exchange
+                  </button>
+                  <button
+                    onClick={passTurn}
+                    className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-semibold rounded-xl transition-colors"
+                  >
+                    Pass
+                  </button>
+                </div>
+              )
             ) : (
               <p className="text-center text-gray-400 text-sm py-2">
                 Waiting for {currentTurnPlayer?.username || 'the next player'}…

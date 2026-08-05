@@ -289,14 +289,78 @@ const Taskbar = ({
     const v = parseFloat(e.target.value);
     const video = videoRef?.current;
     if (!video) return;
+    // A manual adjustment while auto-ducked becomes the new baseline — stop
+    // planning to auto-restore the pre-duck value so the UI doesn't fight the
+    // user's own change the next time they mute.
+    duckRef.current = { active: false, preDuckVolume: null };
+    if (rampFrameRef.current) { cancelAnimationFrame(rampFrameRef.current); rampFrameRef.current = null; }
     if (v === 0) { video.muted = true; } else { video.muted = false; video.volume = v; }
   };
 
   const handleVolMuteToggle = () => {
     const video = videoRef?.current;
     if (!video) return;
+    duckRef.current = { active: false, preDuckVolume: null };
+    if (rampFrameRef.current) { cancelAnimationFrame(rampFrameRef.current); rampFrameRef.current = null; }
     video.muted = !video.muted;
   };
+
+  // Auto-duck media volume while the user's mic is on — lets them (and, via a
+  // cleaner mic signal with less speaker bleed into the mic, everyone else) hear
+  // them more clearly over the movie/show audio. Purely local: each client only
+  // ever touches its own <video> element, so this needs no broadcast/backend work.
+  const DUCK_VOLUME = 0.2;
+  const duckRef = useRef({ active: false, preDuckVolume: null });
+  const rampFrameRef = useRef(null);
+
+  const rampVolumeTo = (target, durationMs = 250) => {
+    const video = videoRef?.current;
+    if (!video) return;
+    if (rampFrameRef.current) {
+      cancelAnimationFrame(rampFrameRef.current);
+      rampFrameRef.current = null;
+    }
+    const start = video.volume;
+    const delta = target - start;
+    if (Math.abs(delta) < 0.001) return;
+    const startTime = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - startTime) / durationMs);
+      video.volume = start + delta * t;
+      rampFrameRef.current = t < 1 ? requestAnimationFrame(step) : null;
+    };
+    rampFrameRef.current = requestAnimationFrame(step);
+  };
+
+  useEffect(() => {
+    const video = videoRef?.current;
+    if (!video) return;
+
+    if (isAudioActive) {
+      // Mic just turned on. Skip if there's nothing meaningful to duck: no source
+      // playing, already muted, or already at/below the duck target (ducking
+      // "up" toward 20% would be backwards).
+      if (video.paused || video.muted || video.volume <= DUCK_VOLUME) return;
+      duckRef.current = { active: true, preDuckVolume: video.volume };
+      rampVolumeTo(DUCK_VOLUME);
+      toast('Reducing media volume so you can speak clearly', { icon: '🔉', duration: 1800 });
+    } else if (duckRef.current.active) {
+      // Mic just turned off — restore. If the user manually touched the slider
+      // while ducked, handleVolChange/handleVolMuteToggle already cleared
+      // duckRef.current.active above, so this branch is skipped in that case.
+      rampVolumeTo(duckRef.current.preDuckVolume);
+      duckRef.current = { active: false, preDuckVolume: null };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAudioActive]);
+
+  // Cancel any in-flight ramp on unmount so it doesn't keep writing to a
+  // <video> element after this component is gone.
+  useEffect(() => {
+    return () => {
+      if (rampFrameRef.current) cancelAnimationFrame(rampFrameRef.current);
+    };
+  }, []);
   useEffect(() => {
     if (!localStorage.getItem('wewatch_taskbar_tour_seen')) {
       const t = setTimeout(() => {
@@ -319,9 +383,11 @@ const Taskbar = ({
   // idle-hide window to 1s while a game is up keeps "tap to reveal, then mute/etc."
   // working without leaving it sitting on top of game buttons for long.
   const hideDelayMs = currentGame ? 1000 : 2000;
-  // How long the pill stays visible on first mount (a fresh session join),
-  // before the normal short idle-hide timers above take over.
-  const INITIAL_VISIBLE_MS = 60000;
+  // How long the pill stays visible on first mount (a fresh session join or a
+  // page refresh — both remount this component, so this effect fires for
+  // either case with no extra wiring needed), before the normal short
+  // idle-hide timers above take over.
+  const INITIAL_VISIBLE_MS = 30000;
 
   // Minimize-while-gaming: a game's own bottom controls sit in the same
   // screen region as the pill, so while a game is active the user can shrink
@@ -447,14 +513,14 @@ const Taskbar = ({
     if (!drag?.moved) setIsMinimized(false); // a tap (no real drag) restores the full pill
   };
 
-  // Initial grace period when a user first joins — shown once on mount only,
-  // for up to a full minute so a newly-joined user has real time to notice
-  // the controls (and the one-time tour below, if it's their first visit)
-  // before it fades. Shares hideTimerRef with the tap-activity effect below,
-  // so if the user taps during (or right after) this window, that tap's own
-  // shorter idle timer simply replaces this one — i.e. continued tapping
-  // keeps it visible indefinitely, it doesn't get force-hidden at the 1-minute
-  // mark regardless of what the user is doing.
+  // Initial grace period when a user first joins (or refreshes) — shown once
+  // on mount only, for up to 30s so a newly-joined user has real time to
+  // notice the controls (and the one-time tour below, if it's their first
+  // visit) before it fades. Shares hideTimerRef with the tap-activity effect
+  // below, so if the user taps during (or right after) this window, that
+  // tap's own shorter idle timer simply replaces this one — i.e. continued
+  // tapping keeps it visible indefinitely, it doesn't get force-hidden at the
+  // 30s mark regardless of what the user is doing.
   useEffect(() => {
     if (isSuppressed) return; // don't auto-show into an already-suppressed state
     setIsVisible(true);

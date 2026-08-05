@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -83,7 +84,7 @@ func extractTwitchChannel(url string) string {
 // ConvertToDirectStreamURL converts cloud storage share links to direct streaming URLs
 func ConvertToDirectStreamURL(originalURL string) string {
 	fmt.Printf("🔗 [ConvertToDirectStreamURL] Input: %s\n", originalURL)
-	
+
 	// Google Drive
 	if strings.Contains(originalURL, "drive.google.com") {
 		fileID := extractGoogleDriveFileID(originalURL)
@@ -156,49 +157,179 @@ func extractGoogleDriveFileID(url string) string {
 	return ""
 }
 
-// IsValidVideoURL checks if the URL points to a video file based on extension
-// Cloud storage URLs (Google Drive, Dropbox, OneDrive) are REJECTED
-// due to CORS and authentication issues that prevent browser playback
-func IsValidVideoURL(url string) bool {
-	urlLower := strings.ToLower(url)
-	
-	fmt.Printf("🔍 [IsValidVideoURL] Checking: %s\n", url)
-	
-	// ❌ Reject known cloud storage providers (CORS/403 errors in browser)
-	// Users should use "Watch From" tab to screen share these instead
-	cloudProviders := []string{
-		"drive.google.com",
-		"dropbox.com",
-		"onedrive.live.com",
-		"1drv.ms",
-	}
-	
-	for _, provider := range cloudProviders {
-		if strings.Contains(urlLower, provider) {
-			fmt.Printf("❌ [IsValidVideoURL] Rejected (cloud storage not supported: %s)\n", provider)
-			return false
-		}
-	}
-	
-	// For direct URLs, check for video file extensions
-	videoExtensions := []string{
-		".mp4", ".webm", ".ogg", ".mov", ".m3u8",
-		".avi", ".mkv", ".flv", ".wmv", ".m4v",
-	}
+// videoFileExtensions are checked against the URL's PATH ONLY, as a true suffix —
+// never against the raw query string or the full URL. Matching anywhere in the full
+// string (the old behavior) let a link like ".../Movie.mkv.html" — an HTML landing
+// page whose filename merely CONTAINS ".mkv" before the real ".html" extension —
+// pass as if it were a genuine .mkv file.
+var videoFileExtensions = []string{
+	".mp4", ".webm", ".ogg", ".mov", ".m3u8",
+	".avi", ".mkv", ".flv", ".wmv", ".m4v",
+}
 
-	for _, ext := range videoExtensions {
-		if strings.Contains(urlLower, ext) {
-			fmt.Printf("✅ [IsValidVideoURL] Accepted (video extension: %s)\n", ext)
+// hasVideoFileExtension checks the URL path's actual suffix, not a substring match
+// anywhere in the URL (which query params or a ".mkv.html"-style filename can fool).
+func hasVideoFileExtension(rawURL string) bool {
+	path := rawURL
+	if parsed, err := neturl.Parse(rawURL); err == nil && parsed.Path != "" {
+		path = parsed.Path
+	}
+	pathLower := strings.ToLower(path)
+	for _, ext := range videoFileExtensions {
+		if strings.HasSuffix(pathLower, ext) {
 			return true
 		}
 	}
-
-	fmt.Printf("❌ [IsValidVideoURL] Rejected (no cloud provider or video extension found)\n")
 	return false
 }
 
-// IsURLAccessible tests if a URL is accessible by making a HEAD request
-func IsURLAccessible(url string) bool {
+// knownFileLockerHosts are domains well known (from real user reports) to gate video
+// behind an HTML landing page — ads, a wait-timer, a CAPTCHA, a JS-driven "download"
+// button — rather than exposing a single stable, hotlink-able file URL. Even a link
+// from one of these sites that happens to end in a video extension is usually still
+// just that HTML page (see hasVideoFileExtension's doc comment for a concrete
+// example). Keep this in sync with KNOWN_FILE_LOCKER_HOSTS in
+// frontend/src/components/cinema/ui/LeftSidebar.jsx.
+var knownFileLockerHosts = []string{
+	"downloadwella.com", "nkiri.com", "waploaded.com",
+	"dood.to", "dood.so", "dood.ws", "doodstream.com",
+	"mixdrop.co", "mixdrop.to", "mixdrop.sx",
+	"streamtape.com", "streamsb.net", "sbembed.com", "sbembed1.com",
+	"uptobox.com", "gofile.io", "send.cm",
+	"vidcloud9.com", "vidcloud.co", "fembed.com", "feurl.com",
+	"upstream.to", "voe.sx", "streamwish.to", "streamhub.to",
+	"netnaija.com", "fzmovies.net", "o2tvseries.com",
+}
+
+// matchedFileLockerHost returns the matched host fragment, or "" if none matched.
+func matchedFileLockerHost(rawURL string) string {
+	lower := strings.ToLower(rawURL)
+	for _, host := range knownFileLockerHosts {
+		if strings.Contains(lower, host) {
+			return host
+		}
+	}
+	return ""
+}
+
+func fileLockerMessage(host string) string {
+	return fmt.Sprintf(
+		"%s is a file-locker/download-portal site — it serves an HTML page with ads, a wait-timer, or a \"download\" button rather than the video file itself, so it can't be streamed directly here (even a link ending in a video extension from this site is usually still that HTML page).\n\nTry: Google Drive (upload the file, then paste the share link), or download the file and use \"Browse Files\" to upload it to the room.",
+		host,
+	)
+}
+
+// DirectURLCheckResult reports why a candidate "direct video file" URL was accepted
+// or rejected, so the caller can surface a specific, actionable message instead of a
+// generic "invalid URL" — distinguishing "wrong syntax" from "this is a webpage" from
+// "this host never serves direct files" is the whole point of this type.
+type DirectURLCheckResult struct {
+	Valid   bool
+	Reason  string // "unsupported_host" | "bad_extension" | "ok"
+	Message string
+}
+
+// ClassifyDirectVideoURL performs the (network-free) syntactic checks on a candidate
+// direct-file URL: known-unsupported cloud providers, known file-locker/download
+// portals, and a real video file extension. Network-based checks (reachability +
+// actual Content-Type) are a separate step — see CheckURLAccessibility.
+func ClassifyDirectVideoURL(originalURL string) DirectURLCheckResult {
+	lower := strings.ToLower(originalURL)
+
+	// Cloud-storage providers we explicitly don't support as direct <video> links
+	// (browser CORS/authentication restrictions) — checked first since this gives a
+	// more specific, more helpful message than the generic ones below.
+	cloudProviders := []struct{ domain, name string }{
+		{"dropbox.com", "Dropbox"},
+		{"onedrive.live.com", "OneDrive"},
+		{"1drv.ms", "OneDrive"},
+	}
+	for _, provider := range cloudProviders {
+		if strings.Contains(lower, provider.domain) {
+			return DirectURLCheckResult{
+				Valid:  false,
+				Reason: "unsupported_host",
+				Message: fmt.Sprintf(
+					"%s links aren't supported directly (browser CORS/authentication restrictions). Use Google Drive instead — it works as an embed.",
+					provider.name,
+				),
+			}
+		}
+	}
+
+	if host := matchedFileLockerHost(originalURL); host != "" {
+		return DirectURLCheckResult{Valid: false, Reason: "unsupported_host", Message: fileLockerMessage(host)}
+	}
+
+	if !hasVideoFileExtension(originalURL) {
+		return DirectURLCheckResult{
+			Valid:  false,
+			Reason: "bad_extension",
+			Message: "This doesn't look like a direct video file link — it looks like a webpage (an article, listing, or download portal) rather than a raw video.\n\n" +
+				"What works: a Google Drive share link, a Twitch channel link, or a direct file URL ending in .mp4/.webm/.mkv/.m3u8 etc. For YouTube, use the YouTube Co-Watch box in Watch From. Otherwise, download the file and use \"Browse Files\" to upload it.",
+		}
+	}
+
+	return DirectURLCheckResult{Valid: true, Reason: "ok"}
+}
+
+// looksLikeVideoContentType inspects a real HTTP response Content-Type header — the
+// actual proof a URL serves video bytes, since a URL merely ENDING in ".mp4" can
+// still resolve to an HTML interstitial (a wait-timer page, a login wall, an
+// expired-link error page) that no amount of extension/status-code checking alone
+// can catch.
+func looksLikeVideoContentType(contentType string) bool {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if idx := strings.Index(ct, ";"); idx != -1 {
+		ct = ct[:idx]
+	}
+	if strings.HasPrefix(ct, "video/") {
+		return true
+	}
+	switch ct {
+	case "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/octet-stream", "binary/octet-stream", "":
+		// octet-stream / no Content-Type at all is common on plain file servers that
+		// don't bother setting a specific video type — treated as inconclusive rather
+		// than rejected, to avoid false negatives on legitimate direct-file hosts.
+		return true
+	}
+	return false
+}
+
+// DescribeContentType turns a raw HTTP Content-Type header into a short, human label
+// for building a specific "this isn't actually a video" error message — "a webpage
+// (HTML)" is far more actionable than a bare 400 with no explanation.
+func DescribeContentType(contentType string) string {
+	lower := strings.ToLower(contentType)
+	switch {
+	case strings.Contains(lower, "text/html"):
+		return "webpage (HTML)"
+	case strings.Contains(lower, "application/json"):
+		return "JSON/API response"
+	case strings.TrimSpace(contentType) == "":
+		return "unknown, non-video content"
+	default:
+		return contentType
+	}
+}
+
+// NotVideoContentMessage builds the user-facing explanation for a URL that resolved
+// successfully (HTTP 2xx/3xx) but whose Content-Type doesn't look like video — the
+// single most common real-world failure for "paste a movie site link" attempts,
+// since a download-portal page returns 200 for its own landing page, not the file.
+func NotVideoContentMessage(contentType string) string {
+	return fmt.Sprintf(
+		"This link is reachable, but it returns a %s, not a video file — probably a landing or wait-timer page rather than the actual file. Download the file yourself and use \"Browse Files\" to upload it, or find the real direct-download link on the page (right-click the video/download button → Copy Link).",
+		DescribeContentType(contentType),
+	)
+}
+
+// CheckURLAccessibility performs a HEAD request (falling back to a ranged GET, since
+// some servers don't support HEAD) and reports both reachability and whether the
+// response actually looks like video content. A 2xx/3xx status code alone (the old
+// behavior) is just as true for an HTML landing page as for a real video file — the
+// Content-Type check is what tells the two apart.
+func CheckURLAccessibility(rawURL string) (accessible bool, isVideoContent bool, contentType string) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -211,28 +342,31 @@ func IsURLAccessible(url string) bool {
 	}
 
 	// Try HEAD request first (lightweight)
-	resp, err := client.Head(url)
+	resp, err := client.Head(rawURL)
 	if err == nil {
 		defer resp.Body.Close()
-		// Accept 2xx, 3xx, and 206 (Partial Content) status codes
 		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-			return true
+			ct := resp.Header.Get("Content-Type")
+			return true, looksLikeVideoContentType(ct), ct
 		}
 	}
 
 	// If HEAD fails, try GET with Range header (some servers don't support HEAD)
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
-		return false
+		return false, false, ""
 	}
 	req.Header.Set("Range", "bytes=0-0") // Request only first byte
 
 	resp, err = client.Do(req)
 	if err != nil {
-		return false
+		return false, false, ""
 	}
 	defer resp.Body.Close()
 
-	// Accept 2xx, 3xx, and 206 (Partial Content) status codes
-	return resp.StatusCode >= 200 && resp.StatusCode < 400
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		ct := resp.Header.Get("Content-Type")
+		return true, looksLikeVideoContentType(ct), ct
+	}
+	return false, false, ""
 }

@@ -653,6 +653,10 @@ export default function VideoWatch() {
   const [roomChatUnreadCount, setRoomChatUnreadCount] = useState(0);
   const [subtitleUrl, setSubtitleUrl] = useState(null);
   const [subtitleContent, setSubtitleContent] = useState(null);
+  // Host's own just-uploaded File, played back locally instead of re-downloading the
+  // server's HLS copy of it — null whenever local playback isn't in use. See the
+  // ownership effect below (keyed on this) and device_stream_ready's handler.
+  const [localPlaybackFile, setLocalPlaybackFile] = useState(null);
   const [sessionChatMessages, setSessionChatMessages] = useState([]);
   const [newSessionMessage, setNewSessionMessage] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -1086,6 +1090,9 @@ export default function VideoWatch() {
 
   // 🎮 GAME SYSTEM: State
   const [isGameLobbyOpen, setIsGameLobbyOpen] = useState(false);
+  // Non-host members' live mirror of the host's own game picker — driven purely
+  // by game_lobby_browsing WS broadcasts, never opened/closed locally by them.
+  const [hostGameLobbyBrowsing, setHostGameLobbyBrowsing] = useState({ isOpen: false, gameType: null });
   const [activeGame, setActiveGame] = useState(null); // Currently active game session
   // Card games only: this client's own hand, delivered via a private hand_update
   // message (never broadcast in game_state — every other player's hand and the
@@ -1175,6 +1182,13 @@ export default function VideoWatch() {
   // or poster/duration patch, defeating the point of a stable periodic poll).
   useEffect(() => { isHostRef.current = isHost; }, [isHost]);
   useEffect(() => { currentMediaRef.current = currentMedia; }, [currentMedia]);
+
+  // Host's own display name, for the "X is picking a game…" read-only mirror
+  // shown to other members — same hostId fallback chain isHost itself uses.
+  const currentHostName = React.useMemo(() => {
+    const hostId = hostIdFromState || sessionStatus?.hostId || roomHostId;
+    return roomMembers.find(m => Number(m.id) === Number(hostId))?.username || 'The host';
+  }, [hostIdFromState, sessionStatus?.hostId, roomHostId, roomMembers]);
 
   // 🛡️ Determine if current user is a room admin
   const isAdmin = React.useMemo(() => {
@@ -2515,6 +2529,25 @@ export default function VideoWatch() {
     }
   }, [isHost]);
 
+  // Fired by GameLobbyModal's own onCarouselChange whenever the host's centered
+  // game changes (including the initial mount) — this doubles as the "opened"
+  // signal too, since it only ever fires while the modal is mounted/open.
+  const handleGameLobbyCarouselChange = useCallback((gameType) => {
+    if (!isHost || !sendMessage) return;
+    sendMessage({ type: 'game_lobby_browsing', data: { is_open: true, game_type: gameType } });
+  }, [isHost, sendMessage]);
+
+  // Broadcast the "closed" transition once, covering every way the modal can
+  // close (Cancel, X, Start Game, tournament creation) without needing to
+  // touch each of those handlers individually.
+  const prevGameLobbyOpenRef = useRef(false);
+  useEffect(() => {
+    if (isHost && prevGameLobbyOpenRef.current && !isGameLobbyOpen && sendMessage) {
+      sendMessage({ type: 'game_lobby_browsing', data: { is_open: false, game_type: null } });
+    }
+    prevGameLobbyOpenRef.current = isGameLobbyOpen;
+  }, [isGameLobbyOpen, isHost, sendMessage]);
+
   const handleStartGame = useCallback((gameType, playersData, gameOptions = {}) => {
     if (!sendMessage) {
       console.error('❌ [VideoWatch] sendMessage not available');
@@ -2727,7 +2760,15 @@ export default function VideoWatch() {
   const handleSkipToLive = useCallback(() => {
     if (!lastHostPosRef.current) return;
     const ageSeconds = (Date.now() - lastHostPosRef.current.timestamp) / 1000;
-    const skipTarget = lastHostPosRef.current.expected + ageSeconds;
+    // Same 1s safety margin handleFragChanged's own JUMP branch uses, and for the
+    // same reason: the host has already played past hostPos-1, so that segment is
+    // guaranteed to already be uploaded/generated. Aiming at the bare estimated
+    // hostPos (the old behavior, with zero margin) could land past the last segment
+    // hls.js actually has — the video stalls buffering there while the native
+    // <track> subtitle cue engine (which reacts to currentTime, not to what's
+    // visually rendered yet) immediately jumps to whatever text corresponds to that
+    // unbuffered point, showing dialogue ahead of what's actually on screen.
+    const skipTarget = Math.max(0, lastHostPosRef.current.expected + ageSeconds - 1);
     const videoEl = videoPlayerRef.current;
     if (videoEl) videoEl.currentTime = skipTarget;
     if (currentMedia?.type === 'youtube' && ytPlayerRef.current) {
@@ -2826,6 +2867,20 @@ export default function VideoWatch() {
 
     console.error("🎬 CinemaVideoPlayer: Error:", err);
 
+    // Host's own local-blob playback failed to decode — e.g. a codec the browser
+    // can't play natively even though the server's transcoded/remuxed HLS copy would
+    // work fine. Fall back to that server copy instead of erroring out. remoteMediaUrl
+    // is only ever set alongside isLocalPlayback (see device_stream_ready's handler).
+    if (currentMedia?.isLocalPlayback && currentMedia?.remoteMediaUrl) {
+      console.warn('🎥 [LocalPlayback] local playback failed, falling back to server copy:', errorMessage);
+      const fallbackUrl = currentMedia.remoteMediaUrl;
+      // Triggers the ownership effect's cleanup, revoking the failed blob.
+      setLocalPlaybackFile(null);
+      setCurrentMedia(prev => (prev ? { ...prev, mediaUrl: fallbackUrl, isLocalPlayback: false, remoteMediaUrl: undefined } : prev));
+      toast('Playing from server — this file needs the server\'s version to play here.', { icon: 'ℹ️' });
+      return;
+    }
+
     // hls.js fatal manifest-load failure (most commonly a 404) means the underlying
     // file is confirmed gone, not a transient blip — manifestLoadTimeOut (a different
     // `details` value) covers the slow-network case and is deliberately NOT matched
@@ -2899,6 +2954,23 @@ export default function VideoWatch() {
   useEffect(() => { subtitleContentRef.current = subtitleContent; }, [subtitleContent]);
   // Revoke subtitle blob URL on unmount to avoid memory leaks
   useEffect(() => () => { if (subtitleUrlRef.current) URL.revokeObjectURL(subtitleUrlRef.current); }, []);
+
+  // Owns the local-playback blob URL's entire lifecycle. Deliberately NOT a ref
+  // mutated directly inside device_stream_ready's handler — this effect's cleanup
+  // closes over its own local `url`, so it can only ever revoke the blob IT created,
+  // never a newer one that's already replaced it (a ref read at cleanup time would
+  // see whatever the ref currently holds, which — since ref mutations are
+  // synchronous — could already be the *next* blob by the time cleanup runs).
+  useEffect(() => {
+    if (!localPlaybackFile) return;
+    const url = URL.createObjectURL(localPlaybackFile);
+    console.log(`🎥 [LocalPlayback] blob URL created — ${localPlaybackFile.name} (${(localPlaybackFile.size / 1024 / 1024).toFixed(1)}MB)`);
+    setCurrentMedia(prev => (prev ? { ...prev, mediaUrl: url, isLocalPlayback: true } : prev));
+    return () => {
+      URL.revokeObjectURL(url);
+      console.log('🎥 [LocalPlayback] blob URL revoked');
+    };
+  }, [localPlaybackFile]);
 
   const isPlayingRef         = useRef(isPlaying);
   const pendingSeekTimeRef   = useRef(pendingSeekTime);
@@ -3071,10 +3143,25 @@ export default function VideoWatch() {
 
   // Handle Delete Media
   const handleDeleteMedia = async (mediaItem) => {
-    // ... (keep your existing logic — unchanged)
-    console.log("🗑️ [VideoWatch] handleDeleteMedia called for item:", mediaItem.ID);
-    if (!mediaItem?.ID) {
+    console.log("🗑️ [VideoWatch] handleDeleteMedia called for item:", mediaItem?.ID);
+    if (!mediaItem) {
       alert("❌ Error: Invalid media item selected for deletion.");
+      return;
+    }
+
+    // Ephemeral media — a YouTube iframe play, most notably — is intercepted
+    // client-side (handleStreamFromUrl's extractYouTubeVideoId check) and never
+    // creates a TemporaryMediaItem row, so it has no ID and nothing to delete
+    // server-side. Just clear it locally and broadcast media_cleared so every other
+    // room member's player clears too. Persisted media (uploads, direct stream
+    // URLs, Drive/Twitch embeds) has a real ID and goes through the delete API
+    // below, which already broadcasts playlist_item_removed to clear it for
+    // everyone.
+    if (!mediaItem.ID) {
+      setCurrentMedia(null);
+      setIsPlaying(false);
+      setLocalPlaybackFile(null);
+      sendMessage?.({ type: 'media_cleared' });
       return;
     }
     const filePath = mediaItem.file_path || mediaItem.FilePath;
@@ -3096,6 +3183,7 @@ export default function VideoWatch() {
       if (currentMedia?.ID === normalizedMediaItem.ID) {
         setCurrentMedia(null);
         setIsPlaying(false);
+        setLocalPlaybackFile(null);
       }
     } catch (err) {
       console.error("❌ [VideoWatch] Failed to delete media item:", normalizedMediaItem.ID, err);
@@ -3250,6 +3338,9 @@ export default function VideoWatch() {
     // overriding) the switch members are about to receive below. See
     // cancelForMediaSwitch's own comment for the full rationale.
     mediaUploadManager.cancelForMediaSwitch();
+    // Switching to a different item — if the outgoing one was using local playback,
+    // this triggers the ownership effect's cleanup, revoking that blob.
+    setLocalPlaybackFile(null);
 
     // Route documents (PDF, image, text) to the document viewer instead of the video pipeline.
     const mimeType = mediaItem.mime_type || mediaItem.MimeType || '';
@@ -3323,6 +3414,77 @@ export default function VideoWatch() {
       });
       
       // ✅ Auto-update session title with media name
+      if (sessionStatus?.id) {
+        sendMessage({
+          type: 'session_title_update',
+          data: {
+            session_id: sessionStatus.id,
+            title: normalizedMediaItem.original_name
+          }
+        });
+      }
+    }
+  };
+
+  // Play a Google Drive / Twitch embed from the playlist (YouTube bypasses this
+  // entirely — it's intercepted client-side via extractYouTubeVideoId and uses its
+  // own dedicated iframe-API path, never creating a TemporaryMediaItem). An embed is
+  // just an iframe pointing at an external URL, not a <video> element WeWatch can
+  // seek/sync — so unlike handlePlayMedia this deliberately skips all of the
+  // playback_control seek machinery (transitLatency, pendingSeekTime, etc.) and just
+  // broadcasts the plain embed fields for every client to load independently in
+  // their own iframe. embed_play has no dedicated backend case — it's picked up by
+  // handleMessage's generic default broadcast (same as update_room_status).
+  const handlePlayEmbed = (mediaItem) => {
+    const id = mediaItem?.ID || mediaItem?.id;
+    if (!id) {
+      alert("❌ Error: Invalid media item selected.");
+      return;
+    }
+    if (currentMedia?.ID === id) return;
+
+    mediaUploadManager.cancelForMediaSwitch();
+    // Switching to a different item — if the outgoing one was using local playback,
+    // this triggers the ownership effect's cleanup, revoking that blob.
+    setLocalPlaybackFile(null);
+
+    const embedUrl = mediaItem.file_path || mediaItem.FilePath;
+    if (!embedUrl) {
+      alert("❌ This embed is missing its URL and cannot be played.");
+      return;
+    }
+
+    const normalizedMediaItem = {
+      ...mediaItem,
+      ID: id,
+      type: 'embed',
+      mediaUrl: embedUrl,
+      embed_platform: mediaItem.embed_platform,
+      original_name: mediaItem.original_name || mediaItem.OriginalName || 'Embedded Content',
+    };
+    setCurrentMedia(normalizedMediaItem);
+    setIsPlaying(true);
+
+    if (isHost && isConnected) {
+      sendMessage({
+        type: 'embed_play',
+        media_item_id: id,
+        media_url: embedUrl,
+        embed_platform: mediaItem.embed_platform,
+        original_name: normalizedMediaItem.original_name,
+        sender_id: currentUser.id,
+      });
+
+      sendMessage({
+        type: 'update_room_status',
+        data: {
+          currently_playing: normalizedMediaItem.original_name,
+          coming_next: '',
+          is_screen_sharing: false,
+          screen_sharing_user_id: 0,
+        }
+      });
+
       if (sessionStatus?.id) {
         sendMessage({
           type: 'session_title_update',
@@ -4072,6 +4234,8 @@ export default function VideoWatch() {
     if (!media) return;
     if (media.type === 'upload') {
       handlePlayMedia(media);
+    } else if (media.type === 'embed') {
+      handlePlayEmbed(media);
     } else if (media.type === 'screen_share') {
       handleStartScreenShare();
     } else if (media.type === 'end_screen_share') {
@@ -4236,6 +4400,32 @@ export default function VideoWatch() {
             }
             return prev;
           });
+          break;
+        }
+
+        case "media_cleared": {
+          // Host deleted/cleared media with no backing TemporaryMediaItem row (a
+          // YouTube iframe play, most notably — see handleDeleteMedia). The sender
+          // already cleared its own state before broadcasting; this is for everyone
+          // else in the room.
+          setCurrentMedia(null);
+          setIsPlaying(false);
+          break;
+        }
+
+        case "embed_play": {
+          // Host played a Google Drive / Twitch embed from the playlist — see
+          // handlePlayEmbed. No seek/sync state involved (an iframe, not a <video>
+          // element); every client just loads the same URL independently.
+          if (isHost) break; // host already set local state in handlePlayEmbed
+          setCurrentMedia({
+            ID: message.media_item_id,
+            type: 'embed',
+            mediaUrl: message.media_url,
+            embed_platform: message.embed_platform,
+            original_name: message.original_name,
+          });
+          setIsPlaying(true);
           break;
         }
 
@@ -4471,10 +4661,17 @@ export default function VideoWatch() {
             setScreenSharerUserId(null);
           }
 
-          // Restore subtitle for late joiners / reconnects (members only — host
-          // already has it locally; restoring it for the host would be a no-op anyway
-          // since subtitleContentRef.current is also already set on the host side).
-          if (data.current_subtitle && !isHostRef.current) {
+          // Restore subtitle for late joiners / reconnects — including the host. This
+          // used to skip the host on the (false) assumption that subtitleContentRef.current
+          // is already set on the host side — true while the tab stays open, but a host
+          // page refresh wipes all local React state including that ref, same as anyone
+          // else. The backend's in-memory subtitleContent map (keyed by room, populated
+          // by the original subtitle_added send) survives the refresh regardless of who
+          // uploaded it, so there's no reason to withhold this restore from the host.
+          // Skip only when the content already matches what's currently applied, to
+          // avoid an unnecessary blob recreate + track reload on an ordinary WS
+          // reconnect where nothing actually changed.
+          if (data.current_subtitle && data.current_subtitle !== subtitleContentRef.current) {
             const blob = new Blob([data.current_subtitle], { type: 'text/vtt' });
             const url = URL.createObjectURL(blob);
             if (subtitleUrlRef.current) {
@@ -4769,7 +4966,6 @@ export default function VideoWatch() {
             break;
           }
           const readyMediaUrl = resolveMediaUrl(readyUrl);
-          console.log('📺 [VideoWatch] device_stream_ready:', readyMediaUrl);
           // Reset the latency-compensated-seek ref — it tracks the PREVIOUS media's
           // playback position via handleTimeUpdate and is never auto-cleared on its
           // own, so without this a brand new stream could inherit a stale position.
@@ -4781,26 +4977,78 @@ export default function VideoWatch() {
           // LiveShare to Browse Files while the host was mid-buffer-pause.
           setRemoteBufferingActive(false);
           isBufferingRef.current = false;
-          setCurrentMedia({
-            ID: message.media_item_id,
-            type: 'upload',
-            file_path: message.file_path,
-            mediaUrl: readyMediaUrl,
-            original_name: message.original_name || 'Now Playing',
-            mime_type: message.mime_type,
-          });
+
+          // Host watching back their OWN just-uploaded file: use the local File
+          // object directly instead of downloading the HLS copy the server just
+          // produced for everyone else — same bytes, zero re-download. Only applies
+          // when the upload_id matches what's still live in this tab (uploadFileRef
+          // survives a sidebar toggle but not a refresh, and is cleared on explicit
+          // cancel/media-switch — see useMediaUploadManager.js) — a stale or
+          // cancelled upload never qualifies.
+          const isOwnFreshUpload = isHost
+            && message.uploader_id === currentUser?.id
+            && message.upload_id
+            && message.upload_id === mediaUploadManager.currentUploadIdRef?.current
+            && !!mediaUploadManager.uploadFileRef?.current;
+
+          // One concise line per event, always — role + which path it's taking, so
+          // this is confirmable in the console without needing verbose per-field dumps.
+          console.log(`📺 [LocalPlayback] device_stream_ready — role=${isHost ? 'host' : 'member'} path=${isOwnFreshUpload ? 'LOCAL (no re-download)' : 'remote-HLS'} url=${readyMediaUrl}`);
+          if (isHost && !isOwnFreshUpload) {
+            // Diagnostic only for the "expected local, got remote" case — tells you
+            // exactly which precondition failed without adding noise for members
+            // (who are always, correctly, on the remote path).
+            console.log(`📺 [LocalPlayback] host on remote path — uploaderMatch=${message.uploader_id === currentUser?.id} sameUpload=${message.upload_id === mediaUploadManager.currentUploadIdRef?.current} hasFile=${!!mediaUploadManager.uploadFileRef?.current}`);
+          }
+
+          if (isOwnFreshUpload) {
+            // mediaUrl is intentionally omitted here — setting it to the remote HLS
+            // URL first would briefly kick off an hls.js load that gets torn down a
+            // moment later once the ownership effect (keyed on localPlaybackFile)
+            // patches in the local blob URL, wasting a manifest fetch for nothing.
+            // remoteMediaUrl is the fallback target handleError swaps to if the raw
+            // local file ever fails to decode natively.
+            setCurrentMedia({
+              ID: message.media_item_id,
+              type: 'upload',
+              file_path: message.file_path,
+              remoteMediaUrl: readyMediaUrl,
+              original_name: message.original_name || 'Now Playing',
+              mime_type: message.mime_type,
+            });
+            setLocalPlaybackFile(mediaUploadManager.uploadFileRef.current);
+            // Local playback has no network dependency at all — no upload-throughput
+            // question to evaluate, so this skips useStreamBufferHealth's Tier 2 gate
+            // entirely (that hook itself also checks isLocalPlayback and stands down).
+            setIsPlaying(true);
+          } else {
+            setCurrentMedia({
+              ID: message.media_item_id,
+              type: 'upload',
+              file_path: message.file_path,
+              mediaUrl: readyMediaUrl,
+              original_name: message.original_name || 'Now Playing',
+              mime_type: message.mime_type,
+            });
+            // In case the PREVIOUS media on this client was using local playback —
+            // e.g. the host switched from their own upload to something else and a
+            // late-arriving device_stream_ready for a third client's upload lands
+            // here. Triggers the ownership effect's cleanup, revoking that stale blob.
+            setLocalPlaybackFile(null);
+            // Non-host: no upload-throughput signal to evaluate, start immediately as
+            // before. Host (remote-URL path only): deferred to useStreamBufferHealth's
+            // one-shot Tier 2 check (fires off the currentMedia update just above) —
+            // it calls setIsPlaying(true) right away for a healthy connection or holds
+            // off and pre-buffers first for a connection too slow to keep pace.
+            if (!isHost) {
+              setIsPlaying(true);
+            }
+          }
+
           // Mark that media was established via a WS broadcast so the late-join
           // restoration effect doesn't re-trigger when the video ends naturally.
           mediaRestoredFromJoinRef.current = true;
           setPendingSeekTime(0);
-          // Non-host: no upload-throughput signal to evaluate, start immediately as
-          // before. Host: deferred to useStreamBufferHealth's one-shot Tier 2 check
-          // (fires off the currentMedia update just above) — it calls setIsPlaying(true)
-          // right away for a healthy connection (matching this exact previous behavior)
-          // or holds off and pre-buffers first for a connection too slow to keep pace.
-          if (!isHost) {
-            setIsPlaying(true);
-          }
           // Lets the upload hook hide its load bar the moment THIS upload's stream is
           // confirmed playable, instead of waiting for every remaining chunk to finish
           // sending in the background — no-ops for any other client's upload_id.
@@ -5231,6 +5479,11 @@ export default function VideoWatch() {
           break;
         
         case "session_ended":
+          // Stop this client's own in-flight upload (if any) — covers the case where
+          // the session ends for a reason other than this client's own handleLeaveRoom
+          // call (e.g. AutoEndSession's host-timeout path, or CleanupStaleSessions),
+          // which handleLeaveRoom's own cancel call never gets a chance to run for.
+          mediaUploadManager.handleCancelUpload();
           // Clear member map and derived state
           updateMemberMap('clear');
           setMemberCount(0);
@@ -5756,6 +6009,16 @@ export default function VideoWatch() {
           }
           break;
           
+        case "game_lobby_browsing":
+          // Host opened/closed or cycled the game picker — mirror it live for
+          // everyone else. The sender (host) never receives their own echo
+          // (backend excludes them), so this only ever runs for other members.
+          setHostGameLobbyBrowsing({
+            isOpen: !!message.data?.is_open,
+            gameType: message.data?.game_type || null,
+          });
+          break;
+
         case "room_post_created":
           // Room host created a new post (recording or upload)
           if (message.data) {
@@ -6133,6 +6396,9 @@ export default function VideoWatch() {
     }
     // Clear subtitle when media actually ends (not a loop)
     clearSubtitle(isHost);
+    // If the item that just ended was using local playback, this triggers the
+    // ownership effect's cleanup, revoking that blob.
+    setLocalPlaybackFile(null);
     // Record which file just ended so the playback_control handler can ignore stale
     // in-flight heartbeats that would otherwise reload the video via the !isSameMedia path.
     if (currentMedia?.file_path) {
@@ -6185,6 +6451,12 @@ export default function VideoWatch() {
 
   // Handle Leave Room
   const handleLeaveRoom = async () => {
+    // Stop this client's own in-flight upload (if any) before anything else — without
+    // this, an upload's retry loop is a plain async chain the React component
+    // unmounting can't kill, and it keeps retrying against a session that's about to
+    // be deleted server-side, eventually throwing a stale error toast on whatever
+    // page (or brand new session) the user's since navigated to.
+    mediaUploadManager.handleCancelUpload();
     prefetchRoom(roomId);
     const finalSessionId = sessionStatus?.id || urlSessionId || activeSessionId;
     const urlParams = new URLSearchParams(window.location.search);
@@ -8205,6 +8477,27 @@ export default function VideoWatch() {
           activeGame={activeGame}
           onEndGame={handleEndGame}
           isHost={isHost}
+          onCarouselChange={handleGameLobbyCarouselChange}
+        />
+      )}
+
+      {/* Live, read-only mirror of the host's own picker for everyone else —
+          lets the whole room see what's being considered before it's started. */}
+      {hostGameLobbyBrowsing.isOpen && !isHost && !isAdmin && (
+        <GameLobbyModal
+          isOpen={hostGameLobbyBrowsing.isOpen}
+          onClose={() => setHostGameLobbyBrowsing({ isOpen: false, gameType: null })}
+          roomMembers={[
+            { id: currentUser?.id, username: currentUser?.username, avatar_url: currentUser?.avatar_url },
+            ...roomMembers.filter(m => m.id !== currentUser?.id)
+          ].filter(m => m.id)}
+          currentUserId={currentUser?.id}
+          activeGame={activeGame}
+          onEndGame={handleEndGame}
+          isHost={false}
+          readOnly
+          syncedGameId={hostGameLobbyBrowsing.gameType}
+          hostName={currentHostName}
         />
       )}
 

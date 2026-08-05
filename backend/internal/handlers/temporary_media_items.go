@@ -14,6 +14,28 @@ import (
 	"wewatch-backend/internal/utils"
 )
 
+// deleteTemporaryMediaItemFiles deletes a TemporaryMediaItem's file, poster, and — for
+// stream items whose segments made it to BunnyCDN — the CDN segment folder. The single
+// place all three cleanup steps for one item happen, so every "delete a
+// TemporaryMediaItem" call site across the codebase gets CDN segment cleanup for free
+// instead of needing its own copy of this logic (previously only the local manifest was
+// ever removed; the segments themselves, once uploaded, had no delete path at all).
+func deleteTemporaryMediaItemFiles(item models.TemporaryMediaItem) {
+	if err := utils.DeleteMediaFile(item.FilePath); err != nil {
+		log.Printf("Warning: failed to delete file %s: %v", item.FilePath, err)
+	}
+	if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+		if err := utils.DeleteMediaFile(item.PosterURL); err != nil {
+			log.Printf("Warning: failed to delete poster %s: %v", item.PosterURL, err)
+		}
+	}
+	if item.CDNSegmentsPrefix != "" {
+		if err := utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix); err != nil {
+			log.Printf("Warning: failed to delete CDN segments %s: %v", item.CDNSegmentsPrefix, err)
+		}
+	}
+}
+
 // DeleteSingleTemporaryMediaItemHandler handles DELETE /api/rooms/:id/temporary-media/:item_id
 func DeleteSingleTemporaryMediaItemHandler(c *gin.Context) {
 	log.Println("DeleteSingleTemporaryMediaItemHandler: Request received")
@@ -70,16 +92,20 @@ func DeleteSingleTemporaryMediaItemHandler(c *gin.Context) {
 		return
 	}
 
-	// Delete video file (local or CDN)
-	if err := utils.DeleteMediaFile(item.FilePath); err != nil {
-		log.Printf("Warning: failed to delete file %s: %v", item.FilePath, err)
+	// If this item's own upload is still in flight, tell it to stop before deleting
+	// anything out from under it — without this, a still-running drainer/ffmpeg
+	// process keeps writing segments (and trying to push them to BunnyCDN) into a
+	// directory this handler is about to remove, the same race class fixed for
+	// session-end (see AbortProgressiveUploadForSession's own doc comment). Matched
+	// by session ID, same as the session-end call site — a session realistically has
+	// at most one upload in flight at a time, so this is a no-op for an already-
+	// complete item (its upload's state was already forgotten on normal completion).
+	if item.IsStream && item.SessionID != "" {
+		utils.AbortProgressiveUploadForSession(item.SessionID)
 	}
-	// Delete poster (local or CDN)
-	if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
-		if err := utils.DeleteMediaFile(item.PosterURL); err != nil {
-			log.Printf("Warning: failed to delete poster %s: %v", item.PosterURL, err)
-		}
-	}
+
+	// Delete video file, poster, and (for stream items) BunnyCDN segments
+	deleteTemporaryMediaItemFiles(item)
 
 	// Delete DB record
 	if err := DB.Delete(&item).Error; err != nil {
@@ -414,6 +440,12 @@ func DeleteTemporaryMediaItemsForRoomHandler(c *gin.Context) {
 		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 			if err := utils.DeleteMediaFile(item.PosterURL); err != nil {
 				log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Warning - Failed to delete poster '%s': %v", item.PosterURL, err)
+			}
+		}
+
+		if item.CDNSegmentsPrefix != "" {
+			if err := utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix); err != nil {
+				log.Printf("DeleteTemporaryMediaItemsForRoomHandler: Warning - Failed to delete CDN segments '%s': %v", item.CDNSegmentsPrefix, err)
 			}
 		}
 

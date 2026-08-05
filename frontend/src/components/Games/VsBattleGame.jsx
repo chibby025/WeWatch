@@ -403,16 +403,42 @@ function DamageHPDisplay({ char, oldHp, newHp, maxHp, playSound }) {
 function CharMini({ char, dim = false, globalMaxHp, large = false, xl = false }) {
   const tier = TIERS[char.tier] || TIERS['Regular'];
   const charMaxHp = char.max_hp ?? tier.hp;
-  const pct = Math.max(0, (char.hp / (globalMaxHp ?? charMaxHp)) * 100);
+  // Fill % is always relative to THIS character's own max HP — a full-health
+  // character always shows a fully-filled bar regardless of tier. Previously
+  // this divided by globalMaxHp (the roster's tallest max HP) instead, so
+  // every character except the single tallest-HP teammate showed a
+  // permanently short-capped, gappy-looking bar even at 100% health.
+  const pct = Math.max(0, (char.hp / charMaxHp) * 100);
   const hpColor = pct > 50 ? 'bg-green-500' : pct > 25 ? 'bg-yellow-400' : 'bg-red-500';
+  // The bar's own LENGTH (not its fill %) is what scales with max HP relative
+  // to the roster — a 350-HP character's bar container is visibly longer
+  // than a 200-HP teammate's, while the fill inside each always accurately
+  // reflects that one character's own current/max ratio. Floored at 30% so a
+  // low-tier teammate's bar never becomes imperceptibly thin next to a
+  // much-higher-HP one.
+  const barWidthPct = globalMaxHp ? Math.min(100, Math.max(30, (charMaxHp / globalMaxHp) * 100)) : 100;
   const sizeClass = xl
     ? 'w-36 h-36 sm:w-48 sm:h-48 md:w-56 md:h-56 lg:w-64 lg:h-64'
     : large
-      ? 'w-28 h-28 sm:w-36 sm:h-36'
+      ? 'w-20 h-20 sm:w-36 sm:h-36'
       : 'w-16 h-16 sm:w-20 sm:h-20';
+  // Width-only (no height) version of sizeClass, applied to the ROOT card
+  // below — not just the image box. Without this, the root has no fixed
+  // width of its own, so the name row's `w-full` sizes itself to the root's
+  // auto/content width — and since a flex item's default min-width is
+  // "auto" (i.e. never smaller than its content), a long name like "Captain
+  // America" reports a min-content width wider than the 80px image box,
+  // silently blowing the WHOLE card (and truncate's ellipsis never actually
+  // engages, since the box is never narrow enough to trigger it) — which is
+  // exactly what pushed a 3rd roster card onto its own line on a real phone.
+  const widthClass = xl
+    ? 'w-36 sm:w-48 md:w-56 lg:w-64'
+    : large
+      ? 'w-20 sm:w-36'
+      : 'w-16 sm:w-20';
   const koSize = xl ? '3rem' : large ? '2.2rem' : '1.5rem';
   return (
-    <div className={`relative flex flex-col items-center ${dim || char.defeated ? 'opacity-40 grayscale' : ''}`}>
+    <div className={`relative flex flex-col items-center min-w-0 ${widthClass} ${dim || char.defeated ? 'opacity-40 grayscale' : ''}`}>
       <div className={`relative ${sizeClass} rounded-xl overflow-hidden border border-gray-600 bg-gray-800 flex-shrink-0`}>
         {char.image_url
           ? <img src={char.image_url} alt={char.name} className="w-full h-full object-cover" />
@@ -424,12 +450,19 @@ function CharMini({ char, dim = false, globalMaxHp, large = false, xl = false })
           </div>
         )}
       </div>
-      <div className={`w-full flex items-baseline justify-between gap-1 mt-0.5 ${xl || large ? 'mt-1' : 'mt-0.5'}`}>
-        <span className={`${xl ? 'text-base' : large ? 'text-sm' : 'text-[10px]'} text-white font-medium leading-tight truncate`}>{char.name}</span>
-        <span className={`${xl ? 'text-sm' : large ? 'text-xs' : 'text-[9px]'} text-gray-400 leading-none tabular-nums flex-shrink-0`}>{char.hp}/{char.max_hp ?? tier.hp}</span>
+      {/* Name and HP figure stack as two separate rows on mobile (Image / Name /
+          HP figure / Health bar) instead of sharing one cramped side-by-side
+          row — gives the name real room instead of fighting the HP figure for
+          space at small card widths. Reverts to the original side-by-side
+          layout on sm+ where the wider card already has room for both. */}
+      <div className={`w-full flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-0 sm:gap-1 mt-0.5 ${xl || large ? 'mt-1' : 'mt-0.5'}`}>
+        <span className={`${xl ? 'text-base' : large ? 'text-sm' : 'text-[10px]'} text-white font-medium leading-tight truncate min-w-0 text-center sm:text-left`}>{char.name}</span>
+        <span className={`${xl ? 'text-sm' : large ? 'text-xs' : 'text-[9px]'} text-gray-400 leading-none tabular-nums flex-shrink-0 text-center sm:text-right`}>{char.hp}/{char.max_hp ?? tier.hp}</span>
       </div>
-      <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mt-0.5">
-        <div className={`h-full ${hpColor} transition-all duration-500`} style={{ width: `${pct}%` }} />
+      <div className="w-full flex justify-center mt-0.5">
+        <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden" style={{ width: `${barWidthPct}%` }}>
+          <div className={`h-full ${hpColor} transition-all duration-500`} style={{ width: `${pct}%` }} />
+        </div>
       </div>
     </div>
   );
@@ -1426,6 +1459,55 @@ function ConfirmingPhase({ myRoster, opponentRoster, myConfirmed, opponentConfir
   );
 }
 
+// ── Teams Assembled Reveal ──────────────────────────────────────────────────
+// Shown once, the instant `phase` first reaches "battle" — both full rosters
+// lined up, unhidden, for both players at the same moment (see the effect
+// that triggers this in the main component for why this is the only point
+// in the flow guaranteed to be genuinely simultaneous for both sides).
+function TeamsRevealOverlay({ myChars, oppChars, myName, oppName, onContinue }) {
+  const globalMaxHpFor = (chars) => Math.max(...chars.map(c => {
+    const t = TIERS[c.tier] || TIERS['Regular'];
+    return c.max_hp ?? t.hp;
+  }), 1);
+  return (
+    <div
+      className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-6 px-6"
+      style={{ background: 'radial-gradient(ellipse at center, rgba(35,12,55,0.97) 0%, rgba(5,5,15,0.99) 100%)' }}
+    >
+      <div className="text-center">
+        <div className="text-3xl font-black" style={{ fontFamily: 'Bangers, cursive', letterSpacing: '0.08em', color: '#facc15' }}>
+          TEAMS ASSEMBLED
+        </div>
+        <div className="text-xs text-gray-400 mt-1">Both fighters are ready — let the battle begin!</div>
+      </div>
+
+      <div className="flex items-center gap-4 w-full max-w-2xl justify-center">
+        <div className="flex-1 min-w-0">
+          <div className="text-center text-sm font-semibold text-purple-300 mb-2 truncate">{myName}</div>
+          <div className="flex justify-center gap-2 flex-wrap">
+            {myChars.map(c => <CharMini key={c.id} char={c} globalMaxHp={globalMaxHpFor(myChars)} large />)}
+          </div>
+        </div>
+        <div className="text-2xl font-black text-red-500 flex-shrink-0" style={{ fontFamily: 'Bangers, cursive' }}>VS</div>
+        <div className="flex-1 min-w-0">
+          <div className="text-center text-sm font-semibold text-blue-300 mb-2 truncate">{oppName}</div>
+          <div className="flex justify-center gap-2 flex-wrap">
+            {oppChars.map(c => <CharMini key={c.id} char={c} globalMaxHp={globalMaxHpFor(oppChars)} large />)}
+          </div>
+        </div>
+      </div>
+
+      <button
+        onClick={onContinue}
+        className="mt-2 px-6 py-2 rounded-xl font-bold text-sm text-white transition-all active:scale-95"
+        style={{ background: 'linear-gradient(135deg, #7c3aed, #2563eb)' }}
+      >
+        Continue →
+      </button>
+    </div>
+  );
+}
+
 // ── Battle Phase ──────────────────────────────────────────────────────────────
 
 function TeamPanel({ chars, label, isMe, selectedCharId, onSelectChar }) {
@@ -1443,7 +1525,13 @@ function TeamPanel({ chars, label, isMe, selectedCharId, onSelectChar }) {
       >
         {label}
       </div>
-      <div className="flex gap-5 flex-wrap">
+      {/* On mobile, a 3-column grid spreads the roster evenly across the full
+          available width instead of clustering tightly on the left (the old
+          flex-wrap default just sized to content) — flex-1/min-w-0 lets this
+          container actually claim the row's remaining space in the first
+          place. Reverts to the original tight flex-row on sm+, where there's
+          room to spare and the original layout already looked right. */}
+      <div className="flex-1 min-w-0 grid grid-cols-3 gap-2 justify-items-center sm:flex sm:gap-5 sm:flex-wrap sm:justify-start">
         {chars.map(c => {
           if (isMe && onSelectChar) {
             return (
@@ -1628,24 +1716,6 @@ function PowerUpBadge({ ps, label }) {
   );
 }
 
-function StreakBar({ attackStreak = 0, defenseStreak = 0 }) {
-  const pip = (n, total, color) => Array.from({ length: total }, (_, i) => (
-    <span key={i} className={`inline-block w-2 h-2 rounded-full mr-0.5 ${i < n ? '' : 'opacity-20'}`} style={{ background: i < n ? color : '#6b7280' }} />
-  ));
-  return (
-    <div className="flex items-center gap-3 text-xs">
-      <div className="flex items-center gap-1">
-        <span className="text-red-400">⚔️</span>
-        {pip(attackStreak, 3, '#ef4444')}
-      </div>
-      <div className="flex items-center gap-1">
-        <span className="text-blue-400">🛡️</span>
-        {pip(defenseStreak, 3, '#3b82f6')}
-      </div>
-    </div>
-  );
-}
-
 function BattlePhase({ myChars, oppChars, myName, oppName, turn, lastTurnResult, onLock, myLock, opponentLocked, playSound, myPs, oppPs }) {
   const [showResult, setShowResult] = useState(false);
   const [displayedResult, setDisplayedResult] = useState(null);
@@ -1754,9 +1824,6 @@ function BattlePhase({ myChars, oppChars, myName, oppName, turn, lastTurnResult,
       {/* Opponent side */}
       <div className="flex-shrink-0 p-2 lg:p-3 lg:w-52 border-b lg:border-b-0 lg:border-r border-gray-700 bg-gray-900/40 flex flex-col">
         <TeamPanel chars={oppChars} label={oppName} />
-        <div className="mt-1 flex justify-center">
-          <StreakBar attackStreak={oppPs?.attack_streak ?? 0} defenseStreak={oppPs?.defense_streak ?? 0} />
-        </div>
         <PowerUpBadge ps={oppPs} />
         {opponentLocked && (
           <div className="mt-1 text-center text-yellow-400 text-xs font-medium animate-pulse">🔒 Locked in</div>
@@ -1805,9 +1872,6 @@ function BattlePhase({ myChars, oppChars, myName, oppName, turn, lastTurnResult,
       {/* Player side */}
       <div className="flex-shrink-0 lg:flex-none lg:w-72 p-3 border-t lg:border-t-0 lg:border-l border-gray-700 bg-gray-900/40 flex flex-col gap-2 overflow-y-auto">
         <TeamPanel chars={myChars} label={myName} isMe selectedCharId={selectedCharId} onSelectChar={setSelectedCharId} />
-        <div className="mt-1 flex justify-center">
-          <StreakBar attackStreak={myPs?.attack_streak ?? 0} defenseStreak={myPs?.defense_streak ?? 0} />
-        </div>
         <PowerUpBadge ps={myPs} />
         {myLock && (
           <div className="text-center py-1 space-y-0.5">
@@ -2616,6 +2680,24 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
     return () => clearTimeout(t);
   }, [lastTurnResult?.outcome, lastTurnResult?.option, lastTurnResult?.actor_char_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // "Teams Assembled" reveal — the moment phase first reaches "battle" (both
+  // players confirmed), both full rosters are shown lined up before the
+  // interactive battle UI takes over. Unlike ConfirmingPhase's per-viewer
+  // "waiting for opponent" state, this always fires for both players at the
+  // exact same instant, since phase flips to "battle" in one shared broadcast
+  // the moment the second player confirms — a genuinely simultaneous reveal
+  // rather than something only the first-to-confirm player would otherwise see.
+  const [showTeamsReveal, setShowTeamsReveal] = useState(false);
+  const revealShownRef = useRef(false);
+  useEffect(() => {
+    if (phase === 'battle' && !revealShownRef.current) {
+      revealShownRef.current = true;
+      setShowTeamsReveal(true);
+      const t = setTimeout(() => setShowTeamsReveal(false), 3500);
+      return () => clearTimeout(t);
+    }
+  }, [phase]);
+
   return (
     <div className="fixed inset-0 bg-gray-950 flex flex-col overflow-hidden z-50">
       {/* Header */}
@@ -2635,9 +2717,10 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
         </div>
         <div className="flex items-center gap-2">
           <GameRulesButton gameType="vs_battle" className="text-white/70 hover:text-white" />
-          {isPlayer && (phase === 'battle' || phase === 'counter_window' || phase === 'dice_roll') && !gameOver && (
+          {isPlayer && !gameOver && (
             <button
               onClick={handleEndGame}
+              title="End the game for everyone"
               className="text-sm font-semibold text-white bg-red-600 hover:bg-red-500 active:bg-red-700 px-4 py-0.5 rounded-2xl transition-colors"
             >
               End Game
@@ -2655,7 +2738,19 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
 
       {/* Phase content */}
       <div className="flex-1 overflow-hidden relative">
-        {phase === 'building' && (
+        {/* Building vs. Confirming is gated on MY OWN confirmed state, not the
+            shared server `phase` field. The backend flips `phase` to
+            "confirming" for BOTH players the instant EITHER one confirms
+            (a single shared field can't represent "player A is reviewing
+            while player B is still building") — without this client-side
+            gate, the opponent confirming would yank whoever hasn't clicked
+            "I'm Ready" yet out of their own roster-building screen. Staying
+            on `!myConfirmed` keeps each player in BuildingPhase, undisturbed,
+            until THEY personally confirm; only then do they see the shared
+            roster-review screen (which itself already shows a "waiting for
+            opponent" state privately per-viewer via ConfirmingPhase's own
+            myConfirmed prop). */}
+        {!myConfirmed && phase !== 'battle' && phase !== 'counter_window' && phase !== 'dice_roll' && (
           <BuildingPhase
             myRoster={displayRoster}
             draft={draft}
@@ -2668,7 +2763,7 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
           />
         )}
 
-        {phase === 'confirming' && (
+        {myConfirmed && phase !== 'battle' && phase !== 'counter_window' && phase !== 'dice_roll' && (
           <ConfirmingPhase
             myRoster={displayRoster}
             opponentRoster={oppRoster}
@@ -2679,7 +2774,7 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
           />
         )}
 
-        {(phase === 'battle' || phase === 'counter_window' || phase === 'dice_roll') && (
+        {(phase === 'battle' || phase === 'counter_window' || phase === 'dice_roll') && !showTeamsReveal && (
           <BattlePhase
             myChars={myRoster}
             oppChars={oppRoster}
@@ -2693,6 +2788,16 @@ export default function VsBattleGame({ gameState, players, currentUserId, roomId
             playSound={playSound}
             myPs={myState}
             oppPs={oppState}
+          />
+        )}
+
+        {showTeamsReveal && (
+          <TeamsRevealOverlay
+            myChars={myRoster}
+            oppChars={oppRoster}
+            myName={myName}
+            oppName={oppName}
+            onContinue={() => setShowTeamsReveal(false)}
           />
         )}
 

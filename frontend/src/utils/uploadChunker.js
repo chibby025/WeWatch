@@ -109,7 +109,8 @@ export const uploadChunkWithRetry = async ({
   onProgress,
   onRetry,
   clientDuration = null,
-  clientPosterBlob = null
+  clientPosterBlob = null,
+  abortSignal = null
 }) => {
   let lastError;
 
@@ -127,9 +128,10 @@ export const uploadChunkWithRetry = async ({
         // Only meaningful on chunk 0 — uploadChunk decides whether to actually attach
         // these (no point sending the same blob/string with every chunk).
         clientDuration,
-        clientPosterBlob
+        clientPosterBlob,
+        abortSignal
       });
-      
+
       if (onProgress) {
         onProgress({
           chunkIndex: chunk.index,
@@ -137,15 +139,22 @@ export const uploadChunkWithRetry = async ({
           percent: Math.round(((chunk.index + 1) / chunk.totalChunks) * 100)
         });
       }
-      
+
       return response;
-      
+
     } catch (error) {
       lastError = error;
       console.error(`❌ [Chunk ${chunk.index + 1}/${chunk.totalChunks}] Attempt ${attempt} failed:`, error.message);
-      
+
       // Don't retry if abort was called
       if (error.name === 'CanceledError' || error.message?.includes('cancel')) {
+        throw error;
+      }
+
+      // 410 means the backend has confirmed the session already ended — every further
+      // attempt would just get the same rejection. Distinct from a transient network/5xx
+      // error, which retrying can genuinely recover from.
+      if (error.response?.status === 410) {
         throw error;
       }
 
@@ -234,7 +243,8 @@ export const uploadChunksParallel = async ({
   alreadyUploadedIndices = null,
   onProgress,
   clientDuration = null,
-  clientPosterBlob = null
+  clientPosterBlob = null,
+  abortSignal = null
 }) => {
   // Resume support: skip chunks already confirmed uploaded in a previous attempt —
   // re-sending them would still work (the backend overwrites by index), but wastes
@@ -279,6 +289,7 @@ export const uploadChunksParallel = async ({
           // mean re-uploading the same poster blob pointlessly on every request.
           clientDuration: chunk.index === 0 ? clientDuration : null,
           clientPosterBlob: chunk.index === 0 ? clientPosterBlob : null,
+          abortSignal,
           onRetry: () => { hadRetryInBatch = true; },
           onProgress: ({ chunkIndex, totalChunks }) => {
             completedChunks++;

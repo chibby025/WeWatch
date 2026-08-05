@@ -196,6 +196,7 @@ function PuzzlePiece({ pieceId, row, col, cellW, cellH, edges, imageUrl, boardW,
 export default function JigsawGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
   const gs = gameState?.game_state || {};
   const phase = gs.phase || 'setup';
+  const puzzleType = gs.puzzle_type || 'regular';
   const cols = gs.cols || 0;
   const rows = gs.rows || 0;
   const imageUrl = gs.image_url || '';
@@ -206,6 +207,10 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
   // which the drag callback and the snap-detection effect below both take
   // as a dependency.
   const pieces = useMemo(() => gs.pieces || {}, [gs.pieces]);
+  // Grid mode's whole-puzzle state — cellOrder[i] is the home-piece-index
+  // currently sitting in cell i; cell i is correct once cellOrder[i] === i.
+  // Same stable-reference reasoning as `pieces` above.
+  const cellOrder = useMemo(() => gs.cell_order || [], [gs.cell_order]);
   const placedCount = gs.placed_count || 0;
   const totalPieces = gs.total_pieces || (cols * rows) || 0;
   const placedBy = gs.placed_by || {};
@@ -216,6 +221,7 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
   const [selectedImage, setSelectedImage] = useState(CURATED_IMAGES[0].id);
   const [selectedDifficulty, setSelectedDifficulty] = useState(1); // index into DIFFICULTIES
   const [customUrl, setCustomUrl] = useState('');
+  const [selectedPuzzleType, setSelectedPuzzleType] = useState('regular'); // setup-screen choice
 
   const boardRef = useRef(null);
   const dragRef = useRef(null); // { pieceId, pointerId, offsetX, offsetY }
@@ -261,6 +267,24 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
   // self-remove after the animation finishes.
   const [justSnapped, setJustSnapped] = useState({});
 
+  // ── Grid mode (Snapchat-style swap puzzle) — tap-to-select-swap state.
+  // No drag physics, no holder claiming: selection is purely local UI state
+  // until the actual swap move is sent.
+  const [selectedCell, setSelectedCell] = useState(null);
+  // { [cellIndex]: true } — the two cells in the most recent local tap-swap,
+  // briefly pulsed for tactile "something happened" feedback regardless of
+  // whether the swap turned out correct.
+  const [justSwappedCells, setJustSwappedCells] = useState({});
+  // { [cellIndex]: true } — cells currently mid-pop-animation because they
+  // just became correct (mirrors justSnapped above, keyed by cell index
+  // instead of pieceId since grid mode has no piece ids of its own).
+  const [justSnappedCells, setJustSnappedCells] = useState({});
+  const knownCorrectCellsRef = useRef(new Set());
+  // Cell indices whose "just became correct" sound/animation was already
+  // predicted locally by MY OWN swap — same dedupe purpose as
+  // predictedSnapsRef above, just keyed by cell index.
+  const predictedCorrectCellsRef = useRef(new Set());
+
   const cellW = cols > 0 ? boardPx / cols : 0;
   const cellH = rows > 0 ? boardPx / rows : 0;
 
@@ -277,7 +301,7 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
   function startPuzzle() {
     const diff = DIFFICULTIES[selectedDifficulty];
     const image = customUrl.trim() || CURATED_IMAGES.find(i => i.id === selectedImage)?.url;
-    onMove({ move_type: 'configure', image_url: image, cols: diff.cols, rows: diff.rows });
+    onMove({ move_type: 'configure', image_url: image, cols: diff.cols, rows: diff.rows, puzzle_type: selectedPuzzleType });
   }
 
   // Detects pieces that just transitioned to placed=true (by anyone, on any
@@ -309,6 +333,43 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
     }, 450);
     return () => clearTimeout(t);
   }, [pieces]);
+
+  // Grid mode's equivalent of the pieces-diff effect above: detects cell
+  // indices that just became correct (cellOrder[i] === i, by anyone's swap,
+  // on any client) and triggers the same snap sound + pop/sparkle treatment
+  // — skipping any cell the local player's own swap already predicted, so a
+  // player never hears their own swap's success sound twice.
+  useEffect(() => {
+    if (puzzleType !== 'grid') return;
+    const currentlyCorrect = new Set(
+      cellOrder.reduce((acc, pieceIdx, cellIdx) => {
+        if (pieceIdx === cellIdx) acc.push(cellIdx);
+        return acc;
+      }, [])
+    );
+    const newlyCorrect = [...currentlyCorrect].filter(i => !knownCorrectCellsRef.current.has(i));
+    knownCorrectCellsRef.current = currentlyCorrect;
+    if (newlyCorrect.length === 0) return;
+
+    const toAnimate = {};
+    newlyCorrect.forEach(i => {
+      if (predictedCorrectCellsRef.current.has(i)) {
+        predictedCorrectCellsRef.current.delete(i);
+      } else {
+        playJigsawSound('snap', { volume: 0.45 });
+      }
+      toAnimate[i] = true;
+    });
+    setJustSnappedCells(prev => ({ ...prev, ...toAnimate }));
+    const t = setTimeout(() => {
+      setJustSnappedCells(prev => {
+        const next = { ...prev };
+        newlyCorrect.forEach(i => delete next[i]);
+        return next;
+      });
+    }, 450);
+    return () => clearTimeout(t);
+  }, [cellOrder, puzzleType]);
 
   // Triumphant chime once, the moment the puzzle actually completes.
   const wasOverRef = useRef(false);
@@ -394,6 +455,46 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
     return idx >= 0 ? PLAYER_COLORS[idx % PLAYER_COLORS.length] : '#94a3b8';
   }, [players]);
 
+  // Grid mode's entire interaction model: tap a cell to select it, tap a
+  // second (different) cell to swap them. No drag, no pointer-move
+  // listeners — a plain click handler is enough, which is exactly what
+  // makes this mode inherently touch-friendly in a way free-drag isn't.
+  // Already-correct cells are unclickable (see the `pointerEvents: 'none'`
+  // in the render below) so they can never be selected in the first place —
+  // the server enforces this too (processJigsawSwap), this is just the
+  // client-side reflection of that same rule.
+  const handleGridCellClick = useCallback((cellIdx) => {
+    if (isOver) return;
+    setSelectedCell(prev => {
+      if (prev === null) {
+        return cellIdx;
+      }
+      if (prev === cellIdx) {
+        return null; // tap the same tile again to deselect
+      }
+      const a = prev, b = cellIdx;
+      // Instant local prediction of which cell(s) this swap will land
+      // correctly — mirrors jigsaw.go's exact rule (neither can already be
+      // correct, so this is simply "does the OTHER cell's current piece
+      // belong here"), so the two people involved hear the right sound
+      // immediately instead of waiting on the server round-trip. The server
+      // re-validates and is the actual source of truth regardless.
+      const aBecomesCorrect = cellOrder[b] === a;
+      const bBecomesCorrect = cellOrder[a] === b;
+      if (aBecomesCorrect) predictedCorrectCellsRef.current.add(a);
+      if (bBecomesCorrect) predictedCorrectCellsRef.current.add(b);
+      playJigsawSound(aBecomesCorrect || bBecomesCorrect ? 'snap' : 'pickup', {
+        volume: aBecomesCorrect || bBecomesCorrect ? 0.45 : 0.3,
+      });
+
+      setJustSwappedCells({ [a]: true, [b]: true });
+      setTimeout(() => setJustSwappedCells({}), 260);
+
+      onMove({ move_type: 'swap', cell_a: a, cell_b: b });
+      return null;
+    });
+  }, [isOver, cellOrder, onMove]);
+
   return (
     <>
     <div className="fixed inset-0 z-50 flex flex-col text-white select-none overflow-y-auto"
@@ -403,6 +504,13 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
           0%   { transform: translate(var(--tx), var(--ty)) scale(0.85); filter: brightness(1.6) drop-shadow(0 0 8px rgba(165,243,252,0.9)); }
           60%  { transform: translate(var(--tx), var(--ty)) scale(1.08); filter: brightness(1.25) drop-shadow(0 0 4px rgba(165,243,252,0.6)); }
           100% { transform: translate(var(--tx), var(--ty)) scale(1); filter: brightness(1) drop-shadow(0 0 0 rgba(165,243,252,0)); }
+        }
+        /* Grid mode's cells have no --tx/--ty margin offset (unlike the
+           free-drag pieces above), so this is the same pop minus the translate. */
+        @keyframes jigsawGridSnapPop {
+          0%   { transform: scale(0.85); filter: brightness(1.6) drop-shadow(0 0 8px rgba(165,243,252,0.9)); }
+          60%  { transform: scale(1.08); filter: brightness(1.25) drop-shadow(0 0 4px rgba(165,243,252,0.6)); }
+          100% { transform: scale(1); filter: brightness(1) drop-shadow(0 0 0 rgba(165,243,252,0)); }
         }
         @keyframes jigsawSparkle {
           0%   { transform: translate(0,0) scale(1); opacity: 1; }
@@ -458,6 +566,19 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
               value={customUrl} onChange={e => setCustomUrl(e.target.value)}
               className="w-full px-3 py-2 mb-4 rounded-lg bg-white/10 border border-white/20 text-sm placeholder:text-gray-500"
             />
+            <p className="text-sm font-semibold text-gray-300 mb-2">Puzzle Style</p>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <button onClick={() => setSelectedPuzzleType('regular')}
+                className={`py-2.5 px-2 rounded-lg text-xs font-bold transition-all text-left ${
+                  selectedPuzzleType === 'regular' ? 'bg-cyan-500 text-black' : 'bg-white/10 text-gray-300 hover:bg-white/20'}`}>
+                🧩 Interlocking<br /><span className="font-normal opacity-70">Drag pieces from a tray</span>
+              </button>
+              <button onClick={() => setSelectedPuzzleType('grid')}
+                className={`py-2.5 px-2 rounded-lg text-xs font-bold transition-all text-left ${
+                  selectedPuzzleType === 'grid' ? 'bg-cyan-500 text-black' : 'bg-white/10 text-gray-300 hover:bg-white/20'}`}>
+                ▦ Swap Grid<br /><span className="font-normal opacity-70">Tap 2 tiles to swap them</span>
+              </button>
+            </div>
             <p className="text-sm font-semibold text-gray-300 mb-2">Difficulty</p>
             <div className="grid grid-cols-4 gap-2 mb-4">
               {DIFFICULTIES.map((d, i) => (
@@ -489,43 +610,82 @@ export default function JigsawGame({ gameState, players, currentUserId, onMove, 
               }} />
             </div>
 
-            <div ref={boardRef} className="relative flex-shrink-0"
-              style={{ width: boardPx, height: boardPx * 1.9, touchAction: 'none' }}>
-              {/* Faint outline of the target picture, so people can see what they're building toward */}
-              <div className="absolute top-0 left-0 rounded-lg overflow-hidden"
-                style={{ width: boardPx, height: boardPx, opacity: 0.12, border: '1px dashed rgba(255,255,255,0.3)' }}>
-                <img src={imageUrl} alt="" className="w-full h-full object-cover" />
+            {puzzleType === 'grid' ? (
+              <div ref={boardRef} className="relative flex-shrink-0"
+                style={{ width: boardPx, height: boardPx, touchAction: 'none' }}>
+                <div
+                  className="grid rounded-lg overflow-hidden"
+                  style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, width: boardPx, height: boardPx }}
+                >
+                  {cellOrder.map((pieceIdx, cellIdx) => {
+                    const pRow = Math.floor(pieceIdx / cols);
+                    const pCol = pieceIdx % cols;
+                    const isCorrect = pieceIdx === cellIdx;
+                    const isSelected = selectedCell === cellIdx;
+                    return (
+                      <div
+                        key={cellIdx}
+                        onClick={() => handleGridCellClick(cellIdx)}
+                        className="relative"
+                        style={{
+                          backgroundImage: `url(${imageUrl})`,
+                          backgroundSize: `${boardPx}px ${boardPx}px`,
+                          backgroundPosition: `${-(pCol * cellW)}px ${-(pRow * cellH)}px`,
+                          outline: isSelected ? '3px solid #22d3ee' : isCorrect ? '2px solid rgba(34,197,94,0.55)' : '1px solid rgba(255,255,255,0.1)',
+                          outlineOffset: -2,
+                          cursor: isCorrect ? 'default' : 'pointer',
+                          transform: justSwappedCells[cellIdx] ? 'scale(1.06)' : 'scale(1)',
+                          transition: 'transform 0.2s ease, outline-color 0.15s ease',
+                          animation: justSnappedCells[cellIdx] ? 'jigsawGridSnapPop 0.4s ease-out' : undefined,
+                          pointerEvents: isCorrect ? 'none' : 'auto',
+                          zIndex: isSelected ? 20 : 10,
+                        }}
+                      >
+                        {justSnappedCells[cellIdx] && <SnapSparkle />}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+            ) : (
+              <div ref={boardRef} className="relative flex-shrink-0"
+                style={{ width: boardPx, height: boardPx * 1.9, touchAction: 'none' }}>
+                {/* Faint outline of the target picture, so people can see what they're building toward */}
+                <div className="absolute top-0 left-0 rounded-lg overflow-hidden"
+                  style={{ width: boardPx, height: boardPx, opacity: 0.12, border: '1px dashed rgba(255,255,255,0.3)' }}>
+                  <img src={imageUrl} alt="" className="w-full h-full object-cover" />
+                </div>
 
-              {Object.entries(pieces).map(([pieceId, piece]) => {
-                const edges = pieceEdges(piece.row, piece.col, rows, cols, vEdges, hEdges);
-                const isMine = piece.holder_id === currentUserId;
-                const isDraggingThis = dragPos && dragPos.pieceId === pieceId && isMine;
-                const x = isDraggingThis ? dragPos.x : (piece.x ?? 0) * boardPx;
-                const y = isDraggingThis ? dragPos.y : (piece.y ?? 0) * boardPx;
-                const heldColor = piece.holder_id ? playerColorFor(piece.holder_id) : null;
-                return (
-                  <PuzzlePiece
-                    key={pieceId}
-                    pieceId={pieceId}
-                    row={piece.row} col={piece.col}
-                    cellW={cellW} cellH={cellH}
-                    edges={edges}
-                    imageUrl={imageUrl}
-                    boardW={boardPx} boardH={boardPx}
-                    heldByColor={heldColor}
-                    justSnapped={!!justSnapped[pieceId]}
-                    onPointerDownPiece={handlePointerDown}
-                    style={{
-                      left: x, top: y,
-                      zIndex: piece.placed ? 1 : (isDraggingThis ? 50 : 10),
-                      transition: isDraggingThis ? 'none' : 'left 0.2s ease-out, top 0.2s ease-out',
-                      pointerEvents: piece.placed ? 'none' : 'auto',
-                    }}
-                  />
-                );
-              })}
-            </div>
+                {Object.entries(pieces).map(([pieceId, piece]) => {
+                  const edges = pieceEdges(piece.row, piece.col, rows, cols, vEdges, hEdges);
+                  const isMine = piece.holder_id === currentUserId;
+                  const isDraggingThis = dragPos && dragPos.pieceId === pieceId && isMine;
+                  const x = isDraggingThis ? dragPos.x : (piece.x ?? 0) * boardPx;
+                  const y = isDraggingThis ? dragPos.y : (piece.y ?? 0) * boardPx;
+                  const heldColor = piece.holder_id ? playerColorFor(piece.holder_id) : null;
+                  return (
+                    <PuzzlePiece
+                      key={pieceId}
+                      pieceId={pieceId}
+                      row={piece.row} col={piece.col}
+                      cellW={cellW} cellH={cellH}
+                      edges={edges}
+                      imageUrl={imageUrl}
+                      boardW={boardPx} boardH={boardPx}
+                      heldByColor={heldColor}
+                      justSnapped={!!justSnapped[pieceId]}
+                      onPointerDownPiece={handlePointerDown}
+                      style={{
+                        left: x, top: y,
+                        zIndex: piece.placed ? 1 : (isDraggingThis ? 50 : 10),
+                        transition: isDraggingThis ? 'none' : 'left 0.2s ease-out, top 0.2s ease-out',
+                        pointerEvents: piece.placed ? 'none' : 'auto',
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
 

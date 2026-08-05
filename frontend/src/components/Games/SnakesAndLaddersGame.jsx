@@ -4,14 +4,18 @@ import { X as CloseIcon } from 'lucide-react';
 import GameWinnerBanner from './GameWinnerBanner';
 import GameRulesButton from './GameRulesButton';
 
-// Mirrors snakes_ladders.go's snakeLadders map exactly — used for the
-// board's visual labeling AND for deriving client-side event banners
-// (ladder/snake/overshoot), never for move validation, which the server
-// owns entirely.
+// Mirrors snakes_ladders.go's snakeLadders/warpPads/trapSquares maps exactly
+// — used purely for the board's visual labeling (icons, tints, tooltips),
+// never for move validation or event classification. The server tags every
+// move's actual outcome via `last_event` (see the sync effect below), so
+// these consts don't need to be consulted to know what happened — only to
+// know what a given square *looks like* before anyone lands on it.
 const SNAKES_LADDERS = {
   4: 14, 9: 31, 20: 38, 28: 84, 40: 59, 51: 67, 63: 81, 71: 91, // ladders (up)
   17: 7, 54: 34, 62: 19, 64: 60, 87: 24, 93: 73, 95: 75, 99: 78, // snakes (down)
 };
+const WARP_PADS = { 11: 44, 46: 16, 79: 97 };
+const TRAP_SQUARES = { 30: true, 58: true, 68: true, 90: true };
 
 // ── Palette (reuses LudoGame.jsx's exact values for visual consistency
 // across the app's game family) ─────────────────────────────────────────
@@ -176,11 +180,37 @@ function SnakeIcon() {
   );
 }
 
+// Portal/spiral — deliberately doesn't lean up or down (unlike Ladder/Snake)
+// since a warp pad's direction is unknown until landed on.
+function WarpIcon() {
+  return (
+    <svg viewBox="0 0 24 24" style={{ width:'70%', height:'70%' }}>
+      <path d="M 12 2 A 8 8 0 1 1 4 12" fill="none" stroke="#a855f7" strokeWidth="2.4" strokeLinecap="round"/>
+      <path d="M 12 6 A 4.5 4.5 0 1 0 16.5 10.5" fill="none" stroke="#22d3ee" strokeWidth="2.2" strokeLinecap="round"/>
+      <circle cx="12" cy="12" r="1.7" fill="#22d3ee"/>
+    </svg>
+  );
+}
+
+function TrapIcon() {
+  return (
+    <svg viewBox="0 0 24 24" style={{ width:'70%', height:'70%' }}>
+      <path d="M 3 8 L 21 8 L 18.5 21 L 5.5 21 Z" fill="none" stroke="#ea580c" strokeWidth="1.8" strokeLinejoin="round"/>
+      <line x1="3" y1="8" x2="12" y2="2" stroke="#fb923c" strokeWidth="1.8" strokeLinecap="round"/>
+      <line x1="21" y1="8" x2="12" y2="2" stroke="#fb923c" strokeWidth="1.8" strokeLinecap="round"/>
+      <line x1="7" y1="8" x2="9" y2="19" stroke="#fb923c" strokeWidth="1.3" opacity="0.8"/>
+      <line x1="12" y1="8" x2="12" y2="20" stroke="#fb923c" strokeWidth="1.3" opacity="0.8"/>
+      <line x1="17" y1="8" x2="15" y2="19" stroke="#fb923c" strokeWidth="1.3" opacity="0.8"/>
+    </svg>
+  );
+}
+
 const BOARD_CP = 10; // percent per cell (100 / 10)
 
 export default function SnakesAndLaddersGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
   const [positions, setPositions] = useState([]);               // authoritative, from server
   const [displayPositions, setDisplayPositions] = useState([]); // what's actually rendered (animated)
+  const [skipNext, setSkipNext] = useState([]);                 // per-player "will miss next turn" flags
   const [currentTurn, setCurrentTurn] = useState(0);
   const [lastRoll, setLastRoll] = useState(null);
   const [lastPlayerIdx, setLastPlayerIdx] = useState(null);
@@ -207,10 +237,13 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
     if (!gameState) return;
     const gs = gameState.game_state || {};
     const newPositions = gs.positions || players.map(() => 0);
+    const newSkipNext = gs.skip_next || players.map(() => false);
     const roll = typeof gs.last_roll === 'number' ? gs.last_roll : null;
     const lastPlayer = typeof gs.last_player === 'number' ? gs.last_player : null;
+    const lastEvent = gs.last_event || null;
 
     setPositions(newPositions);
+    setSkipNext(newSkipNext);
     setCurrentTurn(gameState.current_turn ?? 0);
     setLastRoll(roll);
     setLastPlayerIdx(lastPlayer);
@@ -223,6 +256,18 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
     clearTimeout(animTimerRef.current);
 
     const prevDisplay = displayPositionsRef.current;
+    const playerName = players[lastPlayer]?.username || 'Someone';
+
+    // A trapped player's "roll" click burns the skip with no dice roll and no
+    // position change at all — handle it before any of the roll-based
+    // animation math below, which assumes a real roll just happened.
+    if (lastEvent === 'skipped') {
+      setDisplayPositions(newPositions);
+      announce({ icon: '😵', text: 'TURN SKIPPED!', sub: `${playerName} was trapped and missed their turn`,
+        bg: 'linear-gradient(135deg,#78350f,#451a03)' });
+      return;
+    }
+
     if (lastPlayer === null || roll === null || prevDisplay.length === 0) {
       // First render / rehydration — snap directly, nothing to animate from yet.
       setDisplayPositions(newPositions);
@@ -231,40 +276,49 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
 
     const oldPos = prevDisplay[lastPlayer] ?? 0;
     const finalPos = newPositions[lastPlayer] ?? 0;
-    const overshoot = oldPos + roll > 100;
+    const overshoot = lastEvent === 'overshoot';
     const landedSquare = overshoot ? oldPos : oldPos + roll;
 
     if (landedSquare === finalPos) {
       // Ordinary move (or a forfeited overshoot, or a landing with no
-      // snake/ladder) — a single CSS-transition slide is enough.
+      // event) — a single CSS-transition slide is enough.
       setDisplayPositions(newPositions);
     } else {
-      // Landed on a snake/ladder square: slide to the landed-on square
+      // Landed on a snake/ladder/warp square: slide to the landed-on square
       // first (normal roll motion)...
       setDisplayPositions(prev => {
         const next = [...prev];
         next[lastPlayer] = landedSquare;
         return next;
       });
-      // ...then, once that slide has visibly finished, climb/slide the rest
-      // of the way to the real destination.
+      // ...then, once that slide has visibly finished, climb/slide/teleport
+      // the rest of the way to the real destination.
       animTimerRef.current = setTimeout(() => {
         setDisplayPositions(newPositions);
       }, 480);
     }
 
-    // ── Event banner — mutually-exclusive priority: ladder/snake > overshoot > extra roll ──
-    const dest = SNAKES_LADDERS[landedSquare];
-    const playerName = players[lastPlayer]?.username || 'Someone';
-    if (!overshoot && dest !== undefined && dest === finalPos) {
-      if (dest > landedSquare) {
-        announce({ icon: '🪜', text: 'LADDER CLIMB!', sub: `${playerName} climbs to ${dest}!`,
-          bg: 'linear-gradient(135deg,#16a34a,#14532d)' });
-      } else {
-        announce({ icon: '🐍', text: 'SNAKE BITE!', sub: `${playerName} slides down to ${dest}!`,
-          bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' });
-      }
-    } else if (overshoot) {
+    // ── Event banner — trusts the server's own `last_event` tag directly
+    // (rather than re-deriving it from position deltas), since a warp pad
+    // can go either up or down and can't be told apart from a ladder/snake
+    // by direction alone. ──
+    if (lastEvent === 'ladder') {
+      announce({ icon: '🪜', text: 'LADDER CLIMB!', sub: `${playerName} climbs to ${finalPos}!`,
+        bg: 'linear-gradient(135deg,#16a34a,#14532d)' });
+    } else if (lastEvent === 'snake') {
+      announce({ icon: '🐍', text: 'SNAKE BITE!', sub: `${playerName} slides down to ${finalPos}!`,
+        bg: 'linear-gradient(135deg,#dc2626,#7f1d1d)' });
+    } else if (lastEvent === 'warp') {
+      announce({ icon: '🌀', text: finalPos > landedSquare ? 'WARPED FORWARD!' : 'WARPED BACK!',
+        sub: `${playerName} teleports to ${finalPos}!`,
+        bg: 'linear-gradient(135deg,#7c3aed,#0891b2)' });
+    } else if (lastEvent === 'trap') {
+      announce({ icon: '🕸️', text: 'TRAPPED!', sub: `${playerName} will miss their next turn`,
+        bg: 'linear-gradient(135deg,#c2410c,#431407)' });
+    } else if (lastEvent === 'trap_dodged') {
+      announce({ icon: '🍀', text: 'LUCKY SIX!', sub: `${playerName} rolled right out of the trap!`,
+        bg: 'linear-gradient(135deg,#65a30d,#365314)' });
+    } else if (lastEvent === 'overshoot') {
       announce({ icon: '🚫', text: 'TOO FAR!', sub: 'Need an exact roll to reach 100',
         bg: 'linear-gradient(135deg,#b45309,#78350f)' });
     } else if (roll === 6 && finalPos !== 100) {
@@ -283,6 +337,10 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
 
   const currentPlayer = players[currentTurn];
   const isMyTurn = currentPlayer?.user_id === currentUserId && !isOver;
+  // Server is the sole authority on whether this actually consumes a trap —
+  // this only drives the button label/copy, same "display only" role every
+  // other client-side mirror in this file plays.
+  const amTrapped = !isOver && skipNext[currentTurn] === true;
 
   const handleRoll = () => {
     if (!isMyTurn || rolling) return;
@@ -373,6 +431,7 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
                     <div className="w-5 h-5 flex-shrink-0"><Token colorIdx={idx} isCurrentTurn={false} /></div>
                     <span className="max-w-[70px] truncate">{p.username}</span>
                     <span className="font-normal opacity-70">#{positions[idx] || 0}</span>
+                    {skipNext[idx] && <span title="Trapped — will miss next turn" className="flex-shrink-0 text-[11px]">🕸️</span>}
                     {active && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse flex-shrink-0"/>}
                   </div>
                 );
@@ -393,9 +452,11 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
                   onClick={handleRoll}
                   disabled={rolling}
                   className="px-4 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95 disabled:opacity-50"
-                  style={{ background: 'linear-gradient(135deg,#7c3aed,#4f46e5)', boxShadow: '0 2px 10px rgba(124,58,237,0.5)' }}
+                  style={amTrapped
+                    ? { background: 'linear-gradient(135deg,#c2410c,#7c2d12)', boxShadow: '0 2px 10px rgba(194,65,12,0.5)' }
+                    : { background: 'linear-gradient(135deg,#7c3aed,#4f46e5)', boxShadow: '0 2px 10px rgba(124,58,237,0.5)' }}
                 >
-                  {rolling ? 'Rolling…' : '🎲 Roll Dice'}
+                  {rolling ? (amTrapped ? 'Skipping…' : 'Rolling…') : (amTrapped ? '😵 Trapped — Tap to Continue' : '🎲 Roll Dice')}
                 </button>
               ) : (
                 <p className="text-gray-400 text-sm font-semibold">{currentPlayer?.username}'s turn</p>
@@ -418,36 +479,52 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
                 const dest = SNAKES_LADDERS[square];
                 const isLadder = dest !== undefined && dest > square;
                 const isSnake = dest !== undefined && dest < square;
+                const warpDest = WARP_PADS[square];
+                const isWarp = warpDest !== undefined;
+                const isTrap = TRAP_SQUARES[square] === true;
                 const isStart = square === 1;
                 const isFinish = square === 100;
                 const rowIsEven = Math.floor((square - 1) / 10) % 2 === 0;
+                // Two clearly-separated bands (was a near-flat ~15-lightness-point
+                // gap) so the checkerboard pattern itself reads at a glance.
                 const baseShade = rowIsEven
-                  ? 'linear-gradient(135deg,#2d3548,#242b3d)'
-                  : 'linear-gradient(135deg,#242b3d,#1c2333)';
+                  ? 'linear-gradient(135deg,#3d4560,#323a52)'
+                  : 'linear-gradient(135deg,#232a3d,#1a2030)';
                 const bg = isFinish
                   ? 'linear-gradient(135deg,#fbbf24,#b45309)'
                   : isStart
                     ? 'linear-gradient(135deg,#1e3a8a,#1e293b)'
                     : isLadder
-                      ? 'linear-gradient(135deg,#14532d99,#16653488)'
+                      ? 'linear-gradient(135deg,#16a34acc,#14532dcc)'
                       : isSnake
-                        ? 'linear-gradient(135deg,#7f1d1d99,#99182888)'
-                        : baseShade;
+                        ? 'linear-gradient(135deg,#dc2626cc,#7f1d1dcc)'
+                        : isWarp
+                          ? 'linear-gradient(135deg,#a855f7cc,#0891b2cc)'
+                          : isTrap
+                            ? 'linear-gradient(135deg,#ea580ccc,#43140799)'
+                            : baseShade;
+                const title = isLadder ? `Ladder to ${dest}`
+                  : isSnake ? `Snake to ${dest}`
+                  : isWarp ? 'Warp pad — teleports somewhere unknown'
+                  : isTrap ? 'Trap — skip your next turn'
+                  : undefined;
                 return (
                   <div key={square} className="absolute flex items-center justify-center"
-                    title={isLadder ? `Ladder to ${dest}` : isSnake ? `Snake to ${dest}` : undefined}
+                    title={title}
                     style={{
                       top: `${row * BOARD_CP}%`, left: `${col * BOARD_CP}%`,
                       width: `${BOARD_CP}%`, height: `${BOARD_CP}%`,
                       background: bg,
                       border: '1px solid rgba(255,255,255,0.06)',
                     }}>
-                    <span className="absolute top-0.5 left-0.5 text-[8px] font-semibold"
-                      style={{ color: isFinish ? '#78350f' : 'rgba(255,255,255,0.35)' }}>
+                    <span className="absolute top-0.5 left-0.5 text-[9px] font-bold"
+                      style={{ color: isFinish ? '#78350f' : 'rgba(255,255,255,0.45)' }}>
                       {square}
                     </span>
                     {isLadder && <LadderIcon />}
                     {isSnake && <SnakeIcon />}
+                    {isWarp && <WarpIcon />}
+                    {isTrap && <TrapIcon />}
                     {isFinish && <span className="text-sm">🏁</span>}
                     {isStart && <span className="text-[6.5px] font-bold text-blue-300 tracking-wide">START</span>}
                   </div>

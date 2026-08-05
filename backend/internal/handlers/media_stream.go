@@ -150,26 +150,44 @@ func HandleStreamURL(c *gin.Context) {
 		return
 	}
 
-	// 6. Non-embed path: validate that URL points to a direct video file
+	// 6. Non-embed path: validate that URL points to a direct video file. This first
+	// pass is purely syntactic (host + extension) — it catches known file-locker
+	// domains and non-video links without a network round trip.
 	directURL := utils.ConvertToDirectStreamURL(originalURL)
 	log.Printf("🔗 HandleStreamURL: Original URL: %s", originalURL)
 	log.Printf("🔗 HandleStreamURL: Direct URL: %s", directURL)
 
-	if !utils.IsValidVideoURL(directURL) {
-		log.Printf("❌ HandleStreamURL: URL validation failed for: %s", directURL)
+	classification := utils.ClassifyDirectVideoURL(directURL)
+	if !classification.Valid {
+		log.Printf("❌ HandleStreamURL: URL rejected (%s): %s", classification.Reason, directURL)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "URL must point to a direct video file (.mp4, .webm, .m3u8, etc.). For Google Drive, YouTube, or Twitch links use those directly — they are supported as embeds.",
+			"error":  classification.Message,
+			"reason": classification.Reason,
 		})
 		return
 	}
 	log.Printf("✅ HandleStreamURL: URL validation passed")
 
-	// 7. Test if URL is accessible
-	log.Printf("🔍 HandleStreamURL: Testing URL accessibility...")
-	if !utils.IsURLAccessible(directURL) {
+	// 7. Test if the URL is actually reachable AND actually serves video content. A
+	// 200 status alone isn't proof — plenty of download-portal links return 200 for
+	// an HTML wait-timer/interstitial page even when the URL itself ends in a video
+	// extension (e.g. "Movie.mkv.html"). Checking the real Content-Type is what
+	// catches those.
+	log.Printf("🔍 HandleStreamURL: Testing URL accessibility and content type...")
+	accessible, isVideoContent, contentType := utils.CheckURLAccessibility(directURL)
+	if !accessible {
 		log.Printf("❌ HandleStreamURL: URL is not accessible: %s", directURL)
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "Unable to access the video URL. Please ensure it's a public link.",
+			"error":  "Unable to access the video URL. Please ensure it's a public link.",
+			"reason": "not_accessible",
+		})
+		return
+	}
+	if !isVideoContent {
+		log.Printf("❌ HandleStreamURL: URL accessible but not video content (Content-Type: %q): %s", contentType, directURL)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  utils.NotVideoContentMessage(contentType),
+			"reason": "not_video_content",
 		})
 		return
 	}

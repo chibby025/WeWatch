@@ -142,6 +142,11 @@ export default function LeftSidebar({
   const [ytError, setYtError]     = useState('');
   const [isValidatingUrl, setIsValidatingUrl] = useState(false);
   const [urlError, setUrlError] = useState(null);
+  // True when urlError stems from "this link can't be streamed directly" (bad
+  // extension, a known file-locker host, or a non-video Content-Type) rather than a
+  // plain input mistake (empty field, malformed URL) — gates the Watch From /
+  // LiveShare screen-share suggestion buttons shown under the error.
+  const [urlErrorSuggestScreenShare, setUrlErrorSuggestScreenShare] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [urlInputFocused, setUrlInputFocused] = useState(false);
   const sidebarRef = useRef(null);
@@ -425,15 +430,51 @@ export default function LeftSidebar({
   const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
   const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); handleFileUpload(e.dataTransfer.files); };
 
+  // Keep this in sync with `knownFileLockerHosts` in
+  // backend/internal/utils/stream_urls.go. These domains are well known (from real
+  // user reports) to gate video behind an HTML landing page — ads, a wait-timer, a
+  // CAPTCHA, a JS-driven "download" button — rather than exposing a single stable,
+  // hotlink-able file URL. Even a link from one of these that happens to end in a
+  // video extension is usually still that HTML page (see hasVideoFileExtension).
+  const KNOWN_FILE_LOCKER_HOSTS = [
+    'downloadwella.com', 'nkiri.com', 'waploaded.com',
+    'dood.to', 'dood.so', 'dood.ws', 'doodstream.com',
+    'mixdrop.co', 'mixdrop.to', 'mixdrop.sx',
+    'streamtape.com', 'streamsb.net', 'sbembed.com', 'sbembed1.com',
+    'uptobox.com', 'gofile.io', 'send.cm',
+    'vidcloud9.com', 'vidcloud.co', 'fembed.com', 'feurl.com',
+    'upstream.to', 'voe.sx', 'streamwish.to', 'streamhub.to',
+    'netnaija.com', 'fzmovies.net', 'o2tvseries.com',
+  ];
+
+  const VIDEO_FILE_EXTENSIONS = ['.mp4', '.webm', '.ogg', '.mov', '.m3u8', '.avi', '.mkv', '.flv', '.wmv', '.m4v'];
+
+  // Appended to any "this link can't be streamed directly" error — the actual
+  // catch-all fix for a link this box will never be able to parse (piracy/download
+  // portals deliberately never expose a stable direct file). Screen-sharing works for
+  // literally any site since it doesn't depend on that site's link structure at all.
+  const SCREEN_SHARE_SUGGESTION = '\n\nCan\'t get a direct link to work? Screen-share it instead — open the site in your own browser tab and use Watch From (built for playing video from another platform in sync) or LiveShare (regular screen share).';
+
+  // Checks the URL's PATH ONLY, and only as a true suffix — matching anywhere in the
+  // full string (the old behavior) let a link like ".../Movie.mkv.html" (an HTML
+  // page whose filename merely CONTAINS ".mkv" before the real ".html") pass as if
+  // it were a genuine .mkv file.
+  const hasVideoFileExtension = (rawUrl) => {
+    let path = rawUrl;
+    try { path = new URL(rawUrl).pathname; } catch { /* fall back to the raw string */ }
+    const pathLower = path.toLowerCase();
+    return VIDEO_FILE_EXTENSIONS.some(ext => pathLower.endsWith(ext));
+  };
+
   // 🔗 Validate and stream from URL
   const validateStreamUrl = (url) => {
     console.log('🔗 [validateStreamUrl] Validating URL:', url);
-    
+
     if (!url) {
       console.log('❌ [validateStreamUrl] Empty URL');
       return { valid: false, error: 'Please enter a URL' };
     }
-    
+
     // Check if it's a valid URL
     try {
       new URL(url);
@@ -441,9 +482,9 @@ export default function LeftSidebar({
       console.log('❌ [validateStreamUrl] Invalid URL format:', e.message);
       return { valid: false, error: 'Invalid URL format' };
     }
-    
+
     const urlLower = url.toLowerCase();
-    
+
     // ✅ Embed platforms are resolved server-side — pass them straight through
     const embedPlatforms = ['drive.google.com', 'youtube.com', 'youtu.be', 'twitch.tv'];
     if (embedPlatforms.some(p => urlLower.includes(p))) {
@@ -459,26 +500,48 @@ export default function LeftSidebar({
     ];
     for (const provider of blockedProviders) {
       if (urlLower.includes(provider.domain)) {
-        return { valid: false, error: `${provider.name} isn't supported. Try Google Drive instead.` };
+        return {
+          valid: false,
+          suggestScreenShare: true,
+          error: `${provider.name} links aren't supported directly (browser CORS/authentication restrictions). Use Google Drive instead — it works as an embed.${SCREEN_SHARE_SUGGESTION}`,
+        };
       }
     }
 
-    // For direct URLs, check for video file extensions
-    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.m3u8', '.avi', '.mkv', '.flv', '.wmv', '.m4v'];
-    const hasVideoExtension = videoExtensions.some(ext => urlLower.includes(ext));
-
-    if (!hasVideoExtension) {
-      console.log('❌ [validateStreamUrl] No video extension found in URL');
-      return { valid: false, error: 'Paste a Google Drive / Twitch link, or a direct video URL (.mp4, .webm, .m3u8). For YouTube, use the YouTube Co-Watch box in Watch From.' };
+    // ❌ Known file-locker / download-portal sites — never expose a real direct file
+    const lockerHost = KNOWN_FILE_LOCKER_HOSTS.find(host => urlLower.includes(host));
+    if (lockerHost) {
+      console.log('❌ [validateStreamUrl] Known file-locker host:', lockerHost);
+      return {
+        valid: false,
+        suggestScreenShare: true,
+        error: `${lockerHost} is a file-locker/download-portal site — it serves an HTML page with ads, a wait-timer, or a "download" button rather than the video file itself, so it can't be streamed directly here (even a link ending in a video extension from this site is usually still that HTML page).\n\nTry: Google Drive (upload the file, then paste the share link), or download the file and use "Browse Files" to upload it to the room.${SCREEN_SHARE_SUGGESTION}`,
+      };
     }
-    
+
+    // For direct URLs, check for a real video file extension (path suffix, not a
+    // substring match anywhere in the URL)
+    if (!hasVideoFileExtension(url)) {
+      console.log('❌ [validateStreamUrl] No video file extension found in URL path');
+      return {
+        valid: false,
+        suggestScreenShare: true,
+        error: `This doesn't look like a direct video file link — it looks like a webpage (an article, listing, or download portal) rather than a raw video.\n\nWhat works: a Google Drive share link, a Twitch channel link, or a direct file URL ending in .mp4/.webm/.mkv/.m3u8 etc. For YouTube, use the YouTube Co-Watch box in Watch From. Otherwise, download the file and use "Browse Files" to upload it.${SCREEN_SHARE_SUGGESTION}`,
+      };
+    }
+
     console.log('✅ [validateStreamUrl] Valid video URL');
     return { valid: true };
   };
 
+  // Backend rejection reasons where "screen-share it instead" is genuinely the fix —
+  // mirrors the frontend's own suggestScreenShare cases in validateStreamUrl.
+  const SCREEN_SHARE_SUGGEST_REASONS = ['unsupported_host', 'bad_extension', 'not_video_content'];
+
   const handleStreamFromUrl = async () => {
     if (!streamUrl.trim()) {
       setUrlError('Please enter a video URL');
+      setUrlErrorSuggestScreenShare(false);
       return;
     }
     // YouTube → legal iframe API path (not stream/embed)
@@ -488,34 +551,36 @@ export default function LeftSidebar({
       setStreamUrl('');
       return;
     }
-    
+
     // Check if user has accepted terms
     if (!hasAcceptedTerms) {
       setShowUploadDisclaimer(true);
       return;
     }
-    
+
     const validation = validateStreamUrl(streamUrl);
     if (!validation.valid) {
       setUrlError(validation.error);
+      setUrlErrorSuggestScreenShare(!!validation.suggestScreenShare);
       return;
     }
-    
+
     setIsValidatingUrl(true);
     setUrlError(null);
-    
+    setUrlErrorSuggestScreenShare(false);
+
     try {
       // Add stream URL to playlist via API
       const response = await apiClient.post(`/api/rooms/${roomId}/media/stream`, {
         stream_url: streamUrl.trim(),
         session_id: sessionId
       });
-      
+
       console.log('🔗 [LeftSidebar] Stream URL added:', response.data);
-      
+
       // Clear input
       setStreamUrl('');
-      
+
       // Refresh playlist
       if (onUploadComplete) {
         playSuccess();
@@ -525,14 +590,19 @@ export default function LeftSidebar({
       toast.success('Stream URL added to playlist!');
     } catch (err) {
       console.error('❌ [LeftSidebar] Stream URL failed:', err);
-      
+
       if (err.response?.status === 400) {
-        setUrlError(err.response.data.error || 'Invalid stream URL');
+        const backendMessage = err.response.data.error || 'Invalid stream URL';
+        const suggest = SCREEN_SHARE_SUGGEST_REASONS.includes(err.response.data.reason);
+        setUrlError(suggest ? `${backendMessage}${SCREEN_SHARE_SUGGESTION}` : backendMessage);
+        setUrlErrorSuggestScreenShare(suggest);
       } else if (err.response?.status === 403) {
-        setUrlError('URL is not accessible or requires authentication');
+        setUrlError(`URL is not accessible or requires authentication.${SCREEN_SHARE_SUGGESTION}`);
+        setUrlErrorSuggestScreenShare(true);
       } else {
         setUrlError('Failed to add stream URL. Would you like to upload the file instead?');
-        
+        setUrlErrorSuggestScreenShare(false);
+
         // Offer fallback after 3 seconds
         setTimeout(() => {
           if (confirm('Stream URL failed. Upload the file from your device instead?')) {
@@ -1070,7 +1140,7 @@ export default function LeftSidebar({
                   <input
                     type="url"
                     value={streamUrl}
-                    onChange={(e) => { setStreamUrl(e.target.value); setUrlError(null); }}
+                    onChange={(e) => { setStreamUrl(e.target.value); setUrlError(null); setUrlErrorSuggestScreenShare(false); }}
                     onFocus={() => setUrlInputFocused(true)}
                     onBlur={() => setTimeout(() => setUrlInputFocused(false), 200)}
                     onKeyPress={(e) => { if (e.key === 'Enter' && !isValidatingUrl) handleStreamFromUrl(); }}
@@ -1078,7 +1148,40 @@ export default function LeftSidebar({
                     className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white text-xs placeholder-gray-400 focus:outline-none focus:border-purple-500 transition-colors"
                   />
                   {urlError && (
-                    <p className="text-red-400 text-[10px]">{urlError}</p>
+                    <div className="space-y-1.5">
+                      <p className="text-red-400 text-[10px] whitespace-pre-line">{urlError}</p>
+                      {/* Screen-sharing (Watch From / LiveShare) works for any site, since it
+                          doesn't depend on that site exposing a direct file link at all — the
+                          actual fix for a link this box can never parse. */}
+                      {urlErrorSuggestScreenShare && (isHost || hasLiveSharePermission) && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          {isHost && (
+                            <button
+                              type="button"
+                              onClick={() => { intendedTabRef.current = 'watchfrom'; setActiveTab('watchfrom'); }}
+                              className="flex items-start gap-2 p-2 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-600/30 hover:border-blue-500/50 rounded-lg text-left transition-colors"
+                            >
+                              <span className="text-base leading-none flex-shrink-0 mt-0.5">🖥️</span>
+                              <span className="min-w-0">
+                                <span className="block text-blue-300 text-[11px] font-semibold">Try Watch From</span>
+                                <span className="block text-blue-200/60 text-[10px] leading-snug mt-0.5">Browse the internet and share your screen</span>
+                              </span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => { intendedTabRef.current = 'liveshare'; setActiveTab('liveshare'); }}
+                            className="flex items-start gap-2 p-2 bg-purple-600/10 hover:bg-purple-600/20 border border-purple-600/30 hover:border-purple-500/50 rounded-lg text-left transition-colors"
+                          >
+                            <span className="text-base leading-none flex-shrink-0 mt-0.5">📡</span>
+                            <span className="min-w-0">
+                              <span className="block text-purple-300 text-[11px] font-semibold">Try LiveShare</span>
+                              <span className="block text-purple-200/60 text-[10px] leading-snug mt-0.5">Share what's live on your device and/or camera</span>
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )}
                   <button
                     onClick={handleStreamFromUrl}
@@ -1388,7 +1491,11 @@ export default function LeftSidebar({
                       <p className="text-white font-medium truncate text-xs sm:text-sm">{currentMedia.original_name}</p>
                       <p className="text-gray-400 text-[10px] sm:text-xs">{currentMedia.duration || '00:00'}</p>
                     </div>
-                    {isHost && (
+                    {/* LiveShare / screen-share already has its own dedicated "End
+                        LiveShare" stop control (LiveShareManager) — this button is
+                        for clearing playable media (uploads, direct URLs, YouTube,
+                        embeds), not for tearing down a live LiveKit publish. */}
+                    {isHost && currentMedia.type !== 'liveshare' && currentMedia.type !== 'screen_share' && (
                       <button
                         className="text-red-400 hover:text-red-600 flex-shrink-0"
                         title="Delete media"

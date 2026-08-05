@@ -80,11 +80,10 @@ const RULES = {
     title: 'Jigsaw Puzzle',
     rules: [
       'Fully cooperative — everyone works on the same puzzle at the same time, no turns.',
-      'The host picks an image and a difficulty to start.',
-      'Tap and drag any unclaimed piece — while you\'re holding it, nobody else can pick it up.',
-      'Drop a piece near its correct spot and it snaps into place and locks. Drop it elsewhere and it just stays where you left it — try again!',
-      'The faint image outline in the background shows what you\'re building toward.',
-      'The puzzle is solved once every piece is placed — everyone wins together!',
+      'The host picks an image, a puzzle style, and a difficulty to start.',
+      '🧩 Interlocking: tap and drag any unclaimed piece from the tray — while you\'re holding it, nobody else can pick it up. Drop it near its correct spot and it snaps into place. Drop it elsewhere and it just stays where you left it — try again! The faint image outline shows what you\'re building toward.',
+      '▦ Swap Grid: every tile starts in the wrong spot, but the grid is always full. Tap a tile, then tap another to swap them. A tile that\'s already correct locks in place and can\'t be swapped again.',
+      'The puzzle is solved once every piece is in its correct spot — everyone wins together!',
     ],
   },
   blackjack: {
@@ -216,6 +215,8 @@ const RULES = {
       'Take turns rolling the dice and moving your token forward that many squares.',
       'Land on a ladder bottom 🪜 and climb straight up to the top.',
       'Land on a snake head 🐍 and slide straight down to its tail.',
+      'Land on a warp pad 🌀 and teleport somewhere else on the board — could be forward, could be back. You won\'t know until you land.',
+      'Land on a trap 🕸️ and you\'ll miss your next turn — unless you rolled a 6 to get there, which frees you from the trap on the spot!',
       'You must land exactly on square 100 to win — an overshoot forfeits that move.',
       'Roll a 6 and you get an extra turn!',
     ],
@@ -334,50 +335,57 @@ export default function GameRulesButton({ gameType, className = '' }) {
 
       {open && (
         <div
-          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
           onClick={() => setOpen(false)}
         >
+          {/* max-h + flex-col + a scrollable body (not the whole modal) — several
+              rule lists (VS Battle, Property Tycoon, Texas Hold'em, ...) are long
+              enough to overflow a short mobile viewport entirely; without a height
+              cap here, the modal just extended off-screen with no way to scroll
+              down to the rest of the rules OR back up to reach the close button. */}
           <div
-            className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-6"
+            className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm max-h-[85vh] flex flex-col overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-white text-lg font-bold">How to play — {data.title}</h3>
+            <div className="flex items-center justify-between px-5 sm:px-6 pt-5 sm:pt-6 pb-4 flex-shrink-0">
+              <h3 className="text-white text-lg font-bold pr-3">How to play — {data.title}</h3>
               <button
                 onClick={() => setOpen(false)}
-                className="text-gray-400 hover:text-white transition-colors"
+                className="text-gray-400 hover:text-white transition-colors flex-shrink-0"
                 aria-label="Close"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <ol className="space-y-3">
-              {data.rules.map((rule, i) => (
-                <li key={i} className="flex gap-3 text-sm text-gray-300 leading-snug">
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-purple-600 text-white text-xs flex items-center justify-center font-bold mt-0.5">
-                    {i + 1}
-                  </span>
-                  <span>{rule}</span>
-                </li>
-              ))}
-            </ol>
-            {data.legend && (
-              <div className="mt-4 pt-4 border-t border-gray-700 space-y-2">
-                {data.legend.map((item, i) => (
-                  <div key={i} className="flex items-center gap-2.5">
-                    {item.swatch && (
-                      <span style={{
-                        display:'inline-flex', flexShrink:0, alignItems:'center', justifyContent:'center',
-                        width:16, height:16, borderRadius:3,
-                        background:'linear-gradient(135deg,#fcd34d,#f59e0b)',
-                        color:'#78350f', fontSize:10, fontWeight:900,
-                      }}>✦</span>
-                    )}
-                    <span className="text-xs text-gray-400">{item.label}</span>
-                  </div>
+            <div className="px-5 sm:px-6 pb-5 sm:pb-6 overflow-y-auto">
+              <ol className="space-y-3">
+                {data.rules.map((rule, i) => (
+                  <li key={i} className="flex gap-3 text-sm text-gray-300 leading-snug">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-purple-600 text-white text-xs flex items-center justify-center font-bold mt-0.5">
+                      {i + 1}
+                    </span>
+                    <span>{rule}</span>
+                  </li>
                 ))}
-              </div>
-            )}
+              </ol>
+              {data.legend && (
+                <div className="mt-4 pt-4 border-t border-gray-700 space-y-2">
+                  {data.legend.map((item, i) => (
+                    <div key={i} className="flex items-center gap-2.5">
+                      {item.swatch && (
+                        <span style={{
+                          display:'inline-flex', flexShrink:0, alignItems:'center', justifyContent:'center',
+                          width:16, height:16, borderRadius:3,
+                          background:'linear-gradient(135deg,#fcd34d,#f59e0b)',
+                          color:'#78350f', fontSize:10, fontWeight:900,
+                        }}>✦</span>
+                      )}
+                      <span className="text-xs text-gray-400">{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

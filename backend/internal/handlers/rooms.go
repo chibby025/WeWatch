@@ -662,7 +662,7 @@ func EndWatchSessionHandler(c *gin.Context) {
 	// surfaced as "Unknown Host" in SessionRatingModal for every session end.
 	var hostUser models.User
 	hostName := ""
-	if err := DB.Select("username").First(&hostUser, room.HostID).Error; err == nil {
+	if err := DB.Select("username", "avatar_url").First(&hostUser, room.HostID).Error; err == nil {
 		hostName = hostUser.Username
 	}
 	log.Printf("📡 [EndWatchSessionHandler] Broadcasting session_ended to room %d", session.RoomID)
@@ -675,6 +675,7 @@ func EndWatchSessionHandler(c *gin.Context) {
 			"session_title":    session.SessionTitle,
 			"host_id":          room.HostID,
 			"host_name":        hostName,
+			"host_avatar_url":  hostUser.AvatarURL,
 			"watch_type":       session.WatchType,
 			"is_temporary":     room.IsTemporary,
 		},
@@ -740,6 +741,11 @@ func EndWatchSessionHandler(c *gin.Context) {
 			}
 			if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 				utils.DeleteMediaFile(item.PosterURL) //nolint
+			}
+			if item.CDNSegmentsPrefix != "" {
+				if err := utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix); err != nil {
+					log.Printf("⚠️ [EndWatchSession cleanup] Failed to delete CDN segments %s: %v", item.CDNSegmentsPrefix, err)
+				}
 			}
 			if err := tx.Delete(&item).Error; err != nil {
 				log.Printf("⚠️ [EndWatchSession cleanup] Failed to delete temp media record: %v", err)
@@ -991,6 +997,11 @@ func AutoEndSession(sessionID string) error {
 		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 			utils.DeleteMediaFile(item.PosterURL) //nolint
 		}
+		if item.CDNSegmentsPrefix != "" {
+			if err := utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix); err != nil {
+				log.Printf("⚠️ AutoEndSession: Failed to delete CDN segments %s: %v", item.CDNSegmentsPrefix, err)
+			}
+		}
 		if err := tx.Delete(&item).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete DB record for %s: %v", item.FilePath, err)
 		} else {
@@ -1163,18 +1174,19 @@ func AutoEndSession(sessionID string) error {
 		// own session (isCurrentUserHost checks compare against message.data.host_id).
 		var hostUser models.User
 		hostName := ""
-		if err := DB.Select("username").First(&hostUser, room.HostID).Error; err == nil {
+		if err := DB.Select("username", "avatar_url").First(&hostUser, room.HostID).Error; err == nil {
 			hostName = hostUser.Username
 		}
 		autoEndData := map[string]interface{}{
 			"type": "session_ended",
 			"data": map[string]interface{}{
-				"session_id":   sessionID,
-				"room_id":      session.RoomID,
-				"reason":       "host_timeout",
-				"is_temporary": room.IsTemporary,
-				"host_id":      room.HostID,
-				"host_name":    hostName,
+				"session_id":      sessionID,
+				"room_id":         session.RoomID,
+				"reason":          "host_timeout",
+				"is_temporary":    room.IsTemporary,
+				"host_id":         room.HostID,
+				"host_name":       hostName,
+				"host_avatar_url": hostUser.AvatarURL,
 			},
 		}
 		autoEndBytes, _ := json.Marshal(autoEndData)
@@ -1236,6 +1248,11 @@ func cleanupSession(sessionID string, roomID uint) {
 		}
 		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 			utils.DeleteMediaFile(item.PosterURL) //nolint
+		}
+		if item.CDNSegmentsPrefix != "" {
+			if err := utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix); err != nil {
+				log.Printf("⚠️ cleanupSession: Failed to delete CDN segments %s: %v", item.CDNSegmentsPrefix, err)
+			}
 		}
 		tx.Delete(&item)
 	}
@@ -1336,6 +1353,11 @@ func CleanupAllTemporaryMedia() {
 		}
 		if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 			utils.DeleteMediaFile(item.PosterURL) //nolint
+		}
+		if item.CDNSegmentsPrefix != "" {
+			if err := utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix); err != nil {
+				log.Printf("⚠️ [CleanupTempMedia] Failed to delete CDN segments %s: %v", item.CDNSegmentsPrefix, err)
+			}
 		}
 
 		// Delete database record regardless of the file-delete outcome above
@@ -1442,6 +1464,9 @@ func CleanupExpiredSessions() {
 			if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 				utils.DeleteMediaFile(item.PosterURL) //nolint
 			}
+			if item.CDNSegmentsPrefix != "" {
+				utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix) //nolint
+			}
 			tx.Delete(&item)
 		}
 		// Mark session as ended
@@ -1542,6 +1567,9 @@ func CleanupOrphanedInstantWatchRooms() {
 				utils.DeleteMediaFile(item.FilePath)  //nolint
 				if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 					utils.DeleteMediaFile(item.PosterURL) //nolint
+				}
+				if item.CDNSegmentsPrefix != "" {
+					utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix) //nolint
 				}
 			}
 		}
@@ -2452,6 +2480,9 @@ func DeleteRoomHandler(c *gin.Context) {
                     } else {
                         log.Printf("Deleted temp file: %s", item.FilePath)
                     }
+                }
+                if item.CDNSegmentsPrefix != "" {
+                    utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix) //nolint
                 }
             }
         }

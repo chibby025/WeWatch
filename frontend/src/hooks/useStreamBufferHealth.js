@@ -189,7 +189,10 @@ export default function useStreamBufferHealth({
   // (currentMedia is already set by the caller before this runs) but delays the *first*
   // play() if the upload looks too slow to keep pace.
   useEffect(() => {
-    if (!isHost || !currentMedia || currentMedia.type !== 'upload') return;
+    // isLocalPlayback: the host's own just-uploaded file, played from a local blob
+    // URL — no network dependency at all, so there's no upload-throughput-vs-playback
+    // question to evaluate here. See VideoWatch.jsx's device_stream_ready handler.
+    if (!isHost || !currentMedia || currentMedia.type !== 'upload' || currentMedia.isLocalPlayback) return;
     if (tier2EvaluatedRef.current) return;
     tier2EvaluatedRef.current = true;
 
@@ -238,7 +241,7 @@ export default function useStreamBufferHealth({
   // broadcasts anything for a pause it didn't initiate.
   useEffect(() => {
     if (!isHost || !isPlaying || !isConnected) return;
-    if (!currentMedia || currentMedia.type !== 'upload') return;
+    if (!currentMedia || currentMedia.type !== 'upload' || currentMedia.isLocalPlayback) return;
 
     const interval = setInterval(() => {
       if (engagedRef.current) return; // already mid pause/resume cycle, let it finish

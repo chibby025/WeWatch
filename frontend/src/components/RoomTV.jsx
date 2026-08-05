@@ -5,6 +5,7 @@ import { PlayIcon, ClockIcon, XMarkIcon, UsersIcon } from '@heroicons/react/24/o
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import Coachmark from './Coachmark';
 
 // CSS Animations for RoomTV text
 const animations = `
@@ -165,6 +166,15 @@ const RoomTV = ({
   const adTimeoutRef = useRef(null);
   const postRotationRef = useRef(null);
   const postDismissRef = useRef(null);
+
+  // One-time "Join" coach-mark — fires the first time a user lands on a room
+  // page (or is already there when a session starts) and sees a live session
+  // in the RoomTV strip. Ref-guarded so it only ever arms once per mount even
+  // if `content` churns through other types (ads, host content) and back;
+  // localStorage makes it a true one-time-ever tour across visits.
+  const [showJoinTour, setShowJoinTour] = useState(false);
+  const joinTourTriggeredRef = useRef(false);
+  const joinButtonRef = useRef(null);
 
   // Helper: Get random gradient for jumbotron
   const getRandomGradient = () => {
@@ -426,6 +436,16 @@ const RoomTV = ({
 
   }, [activeSession, hostContent, upcomingEvents, roomPosts, adDismissed]); // Removed currentPostIndex to prevent timer resets
 
+  // Arm the one-time Join tour the moment a live session actually shows up here.
+  useEffect(() => {
+    if (content?.type !== 'session') return;
+    if (joinTourTriggeredRef.current) return;
+    if (localStorage.getItem('wewatch_roomtv_join_tour_seen')) return;
+    joinTourTriggeredRef.current = true;
+    const t = setTimeout(() => setShowJoinTour(true), 700);
+    return () => clearTimeout(t);
+  }, [content]);
+
   // Render nothing if no content
   if (!content) return null;
 
@@ -460,7 +480,7 @@ const RoomTV = ({
               <UsersIcon className="w-3 h-3 flex-shrink-0" />{content.data.members?.length || 0}
             </span>
             <div className="flex-1" />
-            <button onClick={onJoinSession}
+            <button ref={joinButtonRef} onClick={onJoinSession}
               className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-md font-medium flex-shrink-0 transition-colors">
               Join{content.data.ticketing_enabled ? ' 🪙' : ''}
             </button>
@@ -581,6 +601,21 @@ const RoomTV = ({
         <video src={expandedVideoUrl} controls autoPlay className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl"
           onClick={e => e.stopPropagation()} />
       </div>
+    )}
+
+    {/* One-time coach-mark pointing at the Join button — only when a live session is showing */}
+    {showJoinTour && (
+      <Coachmark
+        steps={[{
+          ref: joinButtonRef,
+          title: 'Live Session',
+          description: 'This room has a session playing right now — tap Join to hop in and watch together.',
+        }]}
+        onComplete={() => {
+          setShowJoinTour(false);
+          localStorage.setItem('wewatch_roomtv_join_tour_seen', '1');
+        }}
+      />
     )}
     </>
   );

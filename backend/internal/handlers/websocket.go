@@ -2760,15 +2760,63 @@ func CleanupStaleSessions() {
 
 			CleanupLiveShareAssets(session.ID)
 
-			var room models.Room
-			isTemporary := false
-			if err := DB.First(&room, session.RoomID).Error; err == nil {
-				isTemporary = room.IsTemporary
+			// Session-level preview (poster/clip) cleanup — this is the dominant real-world
+			// "session ended" path (heartbeat timeout: host closed the tab, lost connection,
+			// or just walked away without clicking "End Session"), but until now only
+			// EndWatchSessionHandler's own explicit-end goroutine ever called these. That left
+			// previews for every session that ended this way sitting on BunnyCDN forever.
+			// Mirrors EndWatchSessionHandler's own cleanup exactly.
+			if mediaSwitchHandler != nil {
+				mediaSwitchHandler.HandleSessionEnd(session.SessionID)
+			}
+			if err := CleanupSessionPreviews(session.SessionID); err != nil {
+				log.Printf("⚠️ [CleanupStaleSessions] Failed to cleanup preview files for %s: %v", session.SessionID, err)
 			}
 
+			var room models.Room
+			isTemporary := false
+			var hostID uint
+			if err := DB.First(&room, session.RoomID).Error; err == nil {
+				isTemporary = room.IsTemporary
+				hostID = room.HostID
+			}
+
+			// host_id/host_name/host_avatar_url were missing from this specific
+			// broadcast path entirely (unlike EndWatchSessionHandler's manual-end
+			// path and the host-timeout auto-end path, both of which already
+			// include them) — this is the dominant real-world "session ended"
+			// path (heartbeat timeout sweep), so omitting host_id here meant
+			// isCurrentUserHost in RoomPageNew.jsx's session_ended handler was
+			// always false for EVERYONE including the actual host, incorrectly
+			// showing the host their own session's rating prompt; omitting
+			// host_avatar_url meant SessionRatingModal fell back to the room
+			// state's own host_avatar_url (usually fine) or, if that was also
+			// unavailable, the default silhouette placeholder.
+			var hostUser models.User
+			hostName := ""
+			hostAvatarURL := ""
+			if hostID != 0 {
+				if err := DB.Select("username", "avatar_url").First(&hostUser, hostID).Error; err == nil {
+					hostName = hostUser.Username
+					hostAvatarURL = hostUser.AvatarURL
+				}
+			}
+
+			staleCleanupData := map[string]interface{}{
+				"type": "session_ended",
+				"data": map[string]interface{}{
+					"session_id":      session.SessionID,
+					"room_id":         session.RoomID,
+					"reason":          "stale_cleanup",
+					"is_temporary":    isTemporary,
+					"host_id":         hostID,
+					"host_name":       hostName,
+					"host_avatar_url": hostAvatarURL,
+				},
+			}
+			staleCleanupBytes, _ := json.Marshal(staleCleanupData)
 			broadcastMsg := OutgoingMessage{
-				Data: []byte(fmt.Sprintf(`{"type":"session_ended","data":{"session_id":"%s","room_id":%d,"reason":"stale_cleanup","is_temporary":%t}}`,
-					session.SessionID, session.RoomID, isTemporary)),
+				Data:     staleCleanupBytes,
 				IsBinary: false,
 			}
 			hub.BroadcastToRoom(session.RoomID, broadcastMsg, nil)
@@ -5941,6 +5989,9 @@ func (client *Client) handleMessage(message []byte) {
                     if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
                         utils.DeleteMediaFile(item.PosterURL) //nolint
                     }
+                    if item.CDNSegmentsPrefix != "" {
+                        utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix) //nolint
+                    }
                     DB.Delete(&item)
                 }
                 if deletedFiles > 0 {
@@ -6357,6 +6408,28 @@ func (client *Client) handleMessage(message []byte) {
                 client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: relayMsg, IsBinary: false}, client)
             }
         }
+        return
+    }
+
+    // Handle game_lobby_browsing: host opens/cycles the "Start a Game" picker —
+    // relayed live so every room member sees what the host is currently looking
+    // at (letting everyone weigh in on what to play before the host commits).
+    // Purely ephemeral UI state, same trust/no-persistence model as
+    // sync_heartbeat — raw passthrough, no server-side bookkeeping needed.
+    if msg.Type == "game_lobby_browsing" {
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+
+    // Handle media_cleared: host stops/deletes the currently playing media that has
+    // no backing TemporaryMediaItem row — a YouTube iframe play, most notably, since
+    // those are intercepted client-side and never reach HandleStreamURL at all.
+    // Persisted media (uploads, stream URLs, Drive/Twitch embeds) already clears for
+    // everyone via playlist_item_removed (DeleteSingleTemporaryMediaItemHandler);
+    // this covers the ephemeral case that handler can't reach. Same trust/
+    // no-persistence model as game_lobby_browsing — raw passthrough, no DB write.
+    if msg.Type == "media_cleared" {
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
         return
     }
 

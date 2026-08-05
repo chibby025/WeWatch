@@ -1269,6 +1269,7 @@ const RoomPageNew = () => {
               // nested Host relation, only host_id. GetRoomHandler actually returns
               // it as a flat `host_username` field (see fetchRoomData above).
               hostName: message.data.host_name || room?.host_username || 'Unknown Host',
+              hostAvatarUrl: message.data.host_avatar_url || room?.host_avatar_url || '',
               sessionTitle: message.data.session_title || activeSession?.title || 'Untitled Session',
               watchType: message.data.watch_type,
               isTemporary: message.data.is_temporary, // Store for future use (e.g., redirect after rating)
@@ -3659,6 +3660,7 @@ const RoomPageNew = () => {
           }}
           sessionId={sessionToRate.sessionId}
           hostName={sessionToRate.hostName}
+          hostAvatarUrl={sessionToRate.hostAvatarUrl}
           sessionTitle={sessionToRate.sessionTitle}
           onSubmit={async ({ rating, review }) => {
             try {

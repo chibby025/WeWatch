@@ -33,6 +33,17 @@ function playPingPongSound(name, { volume = 0.5, rate = 1 } = {}) {
   audio.playbackRate = rate;
   audio.play().catch(() => {}); // autoplay-policy rejections are expected before the first user gesture
 }
+
+// Mobile haptic feedback for impact moments (paddle hits, smashes, goals,
+// pickups) — same technique already used in SpaceAttackGame.jsx
+// (navigator.vibrate, feature-detected since Safari/iOS has no Vibration API
+// at all). Deliberately independent of the sound-mute toggle, matching that
+// existing convention — a silent room doesn't mean no haptic feedback wanted.
+function hapticImpact(pattern) {
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    navigator.vibrate(pattern);
+  }
+}
 // Hits at or above this speed sound like a "smash" instead of a normal hit —
 // ties into the existing rally-speedup mechanic (SPEED_UP) rather than a
 // separate, not-yet-built smash-meter feature.
@@ -48,8 +59,58 @@ const SPEED_UP = 1.03;  // velocity multiplier each paddle hit
 const MAX_SPEED = 560;
 const MAX_VX_RATIO = 0.75;
 const SYNC_EVERY = 6;      // send state_sync every N frames (~10 Hz at 60 fps)
-const PADDLE_SEND_MS = 50; // throttle paddle_move to 20 Hz
-const PADDLE_BTN_SPEED = 340; // px/sec — directional-button paddle movement
+// 50→30ms: mobile users reported the ball "passing through" their paddle — see
+// the extrapolation/tolerance block below for the actual fix, this just trims
+// a bit of self-inflicted staleness off the top of it for free.
+const PADDLE_SEND_MS = 30; // throttle paddle_move to ~33 Hz
+// 340→480: mobile's directional buttons were objectively too slow to cross the
+// table in time against a ball that can reach MAX_SPEED and compounds every
+// hit via SPEED_UP — independent of any network latency at all.
+const PADDLE_BTN_SPEED = 480; // px/sec — directional-button paddle movement
+
+// P1 is the sole physics authority (see file-level architecture note above) —
+// P2's paddle position, as P1's collision check sees it, is only as fresh as
+// the last paddle_move that's made the full round trip. On a laggy (typically
+// mobile) connection that gap is large enough that P1's physics genuinely
+// believes P2's paddle isn't where it actually is, missing real hits — this is
+// what was reported as "the ball passes through my paddle" from the mobile
+// side and "the member doesn't move fast enough" from the host side: two
+// symptoms of the exact same staleness, not two separate bugs.
+//
+// Fix: dead-reckon the remote paddle forward from its last known position +
+// velocity (same technique already used for the ball itself, extrapolated for
+// P2/spectators below), and widen the hit window proportionally to how stale
+// that reckoning is — a hit that would've been a clean miss against a fresh
+// position becomes forgivable exactly in proportion to how long it's been
+// since we last actually heard from the other side.
+const BASE_HIT_TOLERANCE = 1.20;        // was a flat 1.15 for every hit, including P1's own (always instantly fresh)
+const MAX_EXTRA_HIT_FORGIVENESS = 0.25; // additional tolerance at maximum staleness, remote paddle only
+const REMOTE_PADDLE_EXTRAPOLATION_CAP_S = 0.35; // don't dead-reckon further forward than this — a stale-enough guess is worse than none
+
+// Secant-based velocity estimate between two actual sends of one logical
+// paddle track — measured once per send (not per frame, which would be noisy
+// from touchmove/RAF jitter), since human paddle input rarely reverses
+// direction within one send interval. `track` is a small {x, t} object the
+// caller owns; each send site below (P1's state_sync, P2's paddle_move) keeps
+// its own track since they're different logical paddles sent at different
+// cadences.
+function estimateSendVelocity(track, currentX, now) {
+  const dtSec = Math.max((now - (track.t || now)) / 1000, 0.001);
+  const rawVx = (currentX - (track.x ?? currentX)) / dtSec;
+  track.x = currentX;
+  track.t = now;
+  return Math.max(-PADDLE_BTN_SPEED * 4, Math.min(PADDLE_BTN_SPEED * 4, rawVx));
+}
+
+// Dead-reckons a paddle anchor {x, vx, t} forward by however long it's been
+// since the last update, capped so a stale-enough prediction doesn't overshoot
+// into nonsense. Returns both the predicted position and how stale the anchor
+// was, so callers can also scale a forgiveness margin off the same number.
+function extrapolatePaddleX(anchor, now) {
+  const elapsedS = Math.min(Math.max((now - anchor.t) / 1000, 0), REMOTE_PADDLE_EXTRAPOLATION_CAP_S);
+  const x = Math.max(PAD_W / 2, Math.min(W - PAD_W / 2, anchor.x + anchor.vx * elapsedS));
+  return { x, elapsedS };
+}
 
 // Power-up pickups — spawned locally by P1 (the physics authority) on a
 // random timer and relayed through the existing state_sync channel, same
@@ -248,6 +309,17 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
     balls: [{ id: 0, x: W / 2, y: H / 2, vx: 0, vy: 0 }],
     myPaddle: W / 2,
     remotePaddle: W / 2,
+    // Dead-reckoning anchors for the OTHER player's paddle — {x, vx, t}.
+    // remotePaddleAnchor: P1's view of P2 (collision-critical — see the
+    // BASE_HIT_TOLERANCE block above). localP1Anchor: P2/spectator's view of
+    // P1 (visual smoothness only, P2 never runs collision detection).
+    remotePaddleAnchor: { x: W / 2, vx: 0, t: Date.now() },
+    localP1Anchor: { x: W / 2, vx: 0, t: Date.now() },
+    // Outgoing-velocity trackers for estimateSendVelocity — separate from the
+    // anchors above since these track MY OWN paddle at the moment I send it,
+    // not what I've received from the other side.
+    p1SendTrack: { x: W / 2, t: 0 },
+    p2SendTrack: { x: W / 2, t: 0 },
     // Local latch: set the instant a goal is detected locally (P1 only, the
     // physics authority), cleared once the server confirms via a phase
     // transition. Needed to bridge the round-trip gap — without it, the next
@@ -290,8 +362,13 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
     const justEnteredServing = prevPhase !== 'serving' && gsCurrent.phase === 'serving';
 
     if (isP1) {
-      // P1: update remote (P2) paddle from WS relay
-      if (gsCurrent.p2x != null) s.remotePaddle = gsCurrent.p2x;
+      // P1: update remote (P2) paddle from WS relay — both the raw last-known
+      // value (kept for anything simpler that still wants it) and the
+      // dead-reckoning anchor the collision check + draw() actually use.
+      if (gsCurrent.p2x != null) {
+        s.remotePaddle = gsCurrent.p2x;
+        s.remotePaddleAnchor = { x: gsCurrent.p2x, vx: gsCurrent.p2vx || 0, t: Date.now() };
+      }
       // Just served (initial serve, or after a goal + tap) — adopt the
       // server-authoritative served ball(s) exactly once, at the transition
       // edge. This is the only place the physics-authority client's ball
@@ -315,10 +392,18 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
       // P2 / spectator: update extrapolation anchors from relayed state.
       // Goal sound: P1 always plays it directly, the instant it detects a
       // goal in its own physics loop — this branch is the ONLY place it fires
-      // for everyone else, so no double-play guard is needed here.
-      if (justEnteredServing) playPingPongSound('goal', { volume: 0.55 });
+      // for everyone else, so no double-play guard is needed here. Haptic
+      // gated on isP2 specifically (not just !isP1) — a spectator watching
+      // shouldn't feel their phone buzz for a game they're not playing.
+      if (justEnteredServing) {
+        playPingPongSound('goal', { volume: 0.55 });
+        if (s.isP2) hapticImpact([20, 40, 20]);
+      }
 
-      if (gsCurrent.p1x != null) s.remotePaddle = gsCurrent.p1x;
+      if (gsCurrent.p1x != null) {
+        s.remotePaddle = gsCurrent.p1x;
+        s.localP1Anchor = { x: gsCurrent.p1x, vx: gsCurrent.p1vx || 0, t: Date.now() };
+      }
       if (gsCurrent.phase === 'playing' && Array.isArray(gsCurrent.balls)) {
         const now = Date.now();
         // Infer hit/bounce sounds from what changed since the last sync —
@@ -333,6 +418,7 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
             const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
             const isSmash = speed >= MAX_SPEED * SMASH_SPEED_THRESHOLD_RATIO;
             playPingPongSound(isSmash ? 'smash_hit' : 'paddle_hit', { volume: 0.4, rate: 0.95 + Math.random() * 0.1 });
+            if (s.isP2) hapticImpact(isSmash ? [25, 15, 25] : 15);
           } else if (prevAnchor && prevAnchor.vx !== 0 && b.vx != null && Math.sign(b.vx) !== Math.sign(prevAnchor.vx)) {
             playPingPongSound('wall_bounce', { volume: 0.3, rate: 0.95 + Math.random() * 0.1 });
           }
@@ -373,8 +459,12 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
       if (effKey && effKey !== s.knownEffectExpiresAt) {
         const iAmTarget = eff.target_player === s.myId;
         playPingPongSound('pickup_grab', { volume: 0.45 });
+        if (s.isP2) hapticImpact(10);
         const effectSound = eff.type === 'freeze' ? 'effect_freeze' : eff.type === 'slow' ? 'effect_slow' : 'effect_ghost';
         playPingPongSound(effectSound, { volume: iAmTarget ? 0.6 : 0.4 });
+        // Only the player it's actually happening TO feels it — hearing that
+        // your opponent got debuffed shouldn't buzz your own phone.
+        if (s.isP2 && iAmTarget) hapticImpact([10, 50, 10, 50, 10]);
       }
       s.knownEffectExpiresAt = effKey;
     }
@@ -388,6 +478,7 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
     const s = S.current;
     const gsCurrent = gsRef.current;
     const curPhase = gsCurrent.phase || 'serving';
+    const nowDraw = Date.now();
 
     // Table background
     ctx.fillStyle = '#14532d';
@@ -405,15 +496,18 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
     ctx.lineWidth = 3;
     ctx.strokeRect(6, 6, W - 12, H - 12);
 
-    // P1 paddle (blue, top)
-    const p1x = s.isP1 ? s.myPaddle : (gsCurrent.p1x ?? s.remotePaddle);
+    // P1 paddle (blue, top) — non-P1 viewers see the dead-reckoned position
+    // (visual smoothness only; P2/spectators never run collision detection).
+    const p1x = s.isP1 ? s.myPaddle : extrapolatePaddleX(s.localP1Anchor, nowDraw).x;
     ctx.beginPath();
     ctx.roundRect(p1x - PAD_W / 2, P1_CY - PAD_H / 2, PAD_W, PAD_H, 6);
     ctx.fillStyle = '#3b82f6'; ctx.fill();
     ctx.strokeStyle = '#93c5fd'; ctx.lineWidth = 2; ctx.stroke();
 
-    // P2 paddle (red, bottom)
-    const p2x = s.isP2 ? s.myPaddle : (gsCurrent.p2x ?? s.remotePaddle);
+    // P2 paddle (red, bottom) — P1 draws the SAME dead-reckoned position its
+    // own collision check uses, so what the host sees matches what actually
+    // determines a hit.
+    const p2x = s.isP2 ? s.myPaddle : extrapolatePaddleX(s.remotePaddleAnchor, nowDraw).x;
     ctx.beginPath();
     ctx.roundRect(p2x - PAD_W / 2, P2_CY - PAD_H / 2, PAD_W, PAD_H, 6);
     ctx.fillStyle = '#ef4444'; ctx.fill();
@@ -591,10 +685,12 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
             if (b.x > W - BALL_R) { b.x = W - BALL_R; b.vx = -Math.abs(b.vx); playPingPongSound('wall_bounce', { volume: 0.35, rate: 0.95 + Math.random() * 0.1 }); }
           }
 
-          // P1 paddle collision (ball moving UP — vy < 0)
+          // P1 paddle collision (ball moving UP — vy < 0). s.myPaddle is
+          // always instantly fresh (same process), so no staleness forgiveness
+          // needed here — just the flat BASE_HIT_TOLERANCE.
           if (b.vy < 0 && b.y - BALL_R <= P1_CY + PAD_H / 2 && b.y + BALL_R >= P1_CY - PAD_H / 2) {
             const hit = (b.x - s.myPaddle) / (PAD_W / 2);
-            if (Math.abs(hit) <= 1.15) {
+            if (Math.abs(hit) <= BASE_HIT_TOLERANCE) {
               s.lastTouch = 'p1';
               b.y = P1_CY + PAD_H / 2 + BALL_R + 1;
               const speed = Math.min(Math.abs(b.vy) * SPEED_UP, MAX_SPEED);
@@ -602,13 +698,20 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
               b.vy = speed;
               const isSmash = speed >= MAX_SPEED * SMASH_SPEED_THRESHOLD_RATIO;
               playPingPongSound(isSmash ? 'smash_hit' : 'paddle_hit', { volume: 0.5, rate: 0.95 + Math.random() * 0.1 });
+              hapticImpact(isSmash ? [25, 15, 25] : 15);
             }
           }
 
-          // P2 paddle collision (ball moving DOWN — vy > 0)
+          // P2 paddle collision (ball moving DOWN — vy > 0). P2's paddle
+          // position is only as fresh as the last paddle_move that made the
+          // round trip — dead-reckon it forward from its last known
+          // position+velocity, and widen the hit window proportionally to how
+          // stale that reckoning is (see the BASE_HIT_TOLERANCE block up top).
           if (b.vy > 0 && b.y + BALL_R >= P2_CY - PAD_H / 2 && b.y - BALL_R <= P2_CY + PAD_H / 2) {
-            const hit = (b.x - s.remotePaddle) / (PAD_W / 2);
-            if (Math.abs(hit) <= 1.15) {
+            const { x: remoteX, elapsedS } = extrapolatePaddleX(s.remotePaddleAnchor, now);
+            const tolerance = BASE_HIT_TOLERANCE + MAX_EXTRA_HIT_FORGIVENESS * (elapsedS / REMOTE_PADDLE_EXTRAPOLATION_CAP_S);
+            const hit = (b.x - remoteX) / (PAD_W / 2);
+            if (Math.abs(hit) <= tolerance) {
               s.lastTouch = 'p2';
               b.y = P2_CY - PAD_H / 2 - BALL_R - 1;
               const speed = Math.min(Math.abs(b.vy) * SPEED_UP, MAX_SPEED);
@@ -616,6 +719,7 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
               b.vy = -speed;
               const isSmash = speed >= MAX_SPEED * SMASH_SPEED_THRESHOLD_RATIO;
               playPingPongSound(isSmash ? 'smash_hit' : 'paddle_hit', { volume: 0.5, rate: 0.95 + Math.random() * 0.1 });
+              hapticImpact(isSmash ? [25, 15, 25] : 15);
             }
           }
 
@@ -634,8 +738,11 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
                 s.pickups = s.pickups.filter(other => other.id !== p.id);
                 onMove({ move_type: 'grab_pickup', pickup_id: p.id, effect_type: p.type, target_player: target });
                 playPingPongSound('pickup_grab', { volume: 0.45 });
+                hapticImpact(10);
                 const effectSound = p.type === 'freeze' ? 'effect_freeze' : p.type === 'slow' ? 'effect_slow' : 'effect_ghost';
                 playPingPongSound(effectSound, { volume: target === s.myId ? 0.6 : 0.4 });
+                // Only the player it's actually happening TO feels it.
+                if (target === s.myId) hapticImpact([10, 50, 10, 50, 10]);
                 break; // at most one pickup per ball per frame
               }
             }
@@ -652,6 +759,7 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
         if (goalScorer) {
           s.pendingGoal = true;
           playPingPongSound('goal', { volume: 0.55 });
+          hapticImpact([20, 40, 20]);
           onMove({ move_type: 'goal', scorer_id: goalScorer });
         } else if (s.frameCount % SYNC_EVERY === 0) {
           // Throttled state sync to P2
@@ -660,6 +768,7 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
             balls: s.balls.map(b => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy })),
             pickups: s.pickups.map(p => ({ id: p.id, type: p.type, x: p.x, y: p.y })),
             p1x: s.myPaddle,
+            p1vx: estimateSendVelocity(s.p1SendTrack, s.myPaddle, now),
           });
         }
       } else if (gsCurrent.phase === 'serving' && s.frameCount % SYNC_EVERY === 0) {
@@ -669,6 +778,7 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
           move_type: 'state_sync',
           balls: s.balls.map(b => ({ id: b.id, x: b.x, y: b.y, vx: 0, vy: 0 })),
           p1x: s.myPaddle,
+          p1vx: estimateSendVelocity(s.p1SendTrack, s.myPaddle, now),
         });
       }
 
@@ -702,8 +812,9 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
           const speed = PADDLE_BTN_SPEED * (iAmSlowed ? SLOW_MULTIPLIER : 1);
           s.myPaddle = Math.max(PAD_W / 2, Math.min(W - PAD_W / 2, s.myPaddle + s.buttonDir * speed * dt));
           if (now - s.lastPaddleSend > PADDLE_SEND_MS) {
+            const vx = estimateSendVelocity(s.p2SendTrack, s.myPaddle, now);
             s.lastPaddleSend = now;
-            onMove({ move_type: 'paddle_move', p2x: s.myPaddle });
+            onMove({ move_type: 'paddle_move', p2x: s.myPaddle, p2vx: vx });
           }
         }
       }
@@ -739,8 +850,9 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
 
     if (isP2) {
       if (now - s.lastPaddleSend > PADDLE_SEND_MS) {
+        const vx = estimateSendVelocity(s.p2SendTrack, s.myPaddle, now);
         s.lastPaddleSend = now;
-        onMove({ move_type: 'paddle_move', p2x: s.myPaddle });
+        onMove({ move_type: 'paddle_move', p2x: s.myPaddle, p2vx: vx });
       }
     }
   }, [isP2, onMove]);

@@ -85,6 +85,13 @@ func (gm *GameManager) processPingPongMove(gameState *GameSessionState, playerID
 		if v, ok := ppFloat(moveData["p1x"]); ok {
 			gameState.GameData["p1x"] = v
 		}
+		// p1vx: P1's own outgoing paddle velocity, alongside position — lets
+		// P2/spectators dead-reckon P1's paddle forward between updates instead
+		// of rendering a frozen last-known position (visual smoothness only;
+		// P2 never runs collision detection, so this doesn't affect fairness).
+		if v, ok := ppFloat(moveData["p1vx"]); ok {
+			gameState.GameData["p1vx"] = v
+		}
 		// Pickups spawn/despawn on P1's own local timer (same self-reporting
 		// trust model as ball physics — see the file-level note above) and
 		// are relayed wholesale here, replacing the previous list.
@@ -97,6 +104,15 @@ func (gm *GameManager) processPingPongMove(gameState *GameSessionState, playerID
 		// P2 sends their paddle X. Relay to everyone. No DB write (volatile).
 		if v, ok := ppFloat(moveData["p2x"]); ok {
 			gameState.GameData["p2x"] = v
+		}
+		// p2vx: P2's own outgoing paddle velocity — this one IS collision-
+		// critical. P1 (the physics authority) dead-reckons P2's paddle forward
+		// from {p2x, p2vx, receipt time} instead of trusting a frozen snapshot,
+		// closing most of the gap that let the ball "pass through" a laggy
+		// (typically mobile) player's paddle — see PingPongGame.jsx's
+		// BASE_HIT_TOLERANCE comment for the full explanation.
+		if v, ok := ppFloat(moveData["p2vx"]); ok {
+			gameState.GameData["p2vx"] = v
 		}
 		return false, nil, nil
 
