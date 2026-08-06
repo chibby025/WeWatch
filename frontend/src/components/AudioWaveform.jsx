@@ -8,58 +8,36 @@ import React from 'react';
  * @param {number} audioLevel - Audio level from 0-255
  * @param {string} color - Bar color (default: green)
  */
+// 5-bar bell-curve profile (short-tall-tallest-tall-short) instead of 3 equal
+// bars — reads as a fuller, more natural waveform shape both at rest and at
+// full volume, rather than a flat 3-block meter.
+const BAR_PROFILE = [0.45, 0.75, 1, 0.75, 0.45];
+const BAR_DELAYS = ['0s', '0.1s', '0.2s', '0.1s', '0s'];
+
 export default function AudioWaveform({ audioLevel = 0, color = '#10b981' }) {
   // Normalize audio level to 0-1 range
   const normalizedLevel = Math.min(audioLevel / 255, 1);
-  
-  // 🔍 Debug: Log audioLevel changes
-  React.useEffect(() => {
-    if (audioLevel > 0) {
-      console.log('🎨 [AudioWaveform] audioLevel changed:', audioLevel, 'normalized:', normalizedLevel);
-    }
-  }, [audioLevel, normalizedLevel]);
-  
-  // Calculate bar heights with better scaling (minimum 10%, maximum 100%)
   // Use quadratic scaling for more dramatic effect at low volumes
   const scaledLevel = Math.pow(normalizedLevel, 0.7); // Makes lower values more visible
-  const lowHeight = 10 + (scaledLevel * 90);  // 10-100%
-  const midHeight = 15 + (scaledLevel * 85);  // 15-100%
-  const highHeight = 10 + (scaledLevel * 90); // 10-100%
-  
+
   return (
-    <div className="flex items-center gap-0.5 h-6">
-      {/* Low bar */}
-      <div 
-        className="w-1 bg-green-500 rounded-full transition-all duration-100"
-        style={{ 
-          height: `${lowHeight}%`,
-          backgroundColor: color,
-          animation: 'pulse-bar 0.5s ease-in-out infinite',
-          animationDelay: '0s'
-        }}
-      />
-      
-      {/* Mid bar */}
-      <div 
-        className="w-1 bg-green-500 rounded-full transition-all duration-100"
-        style={{ 
-          height: `${midHeight}%`,
-          backgroundColor: color,
-          animation: 'pulse-bar 0.5s ease-in-out infinite',
-          animationDelay: '0.15s'
-        }}
-      />
-      
-      {/* High bar */}
-      <div 
-        className="w-1 bg-green-500 rounded-full transition-all duration-100"
-        style={{ 
-          height: `${highHeight}%`,
-          backgroundColor: color,
-          animation: 'pulse-bar 0.5s ease-in-out infinite',
-          animationDelay: '0.3s'
-        }}
-      />
+    <div className="flex items-end gap-[3px] h-9">
+      {BAR_PROFILE.map((mult, i) => {
+        const height = Math.max(6, mult * (15 + scaledLevel * 85)); // 15-100% range, shaped by the bell curve, floored so a bar is always visible
+        return (
+          <div
+            key={i}
+            className="w-[3px] rounded-full transition-all duration-100"
+            style={{
+              height: `${height}%`,
+              background: `linear-gradient(to top, ${color}, ${color}cc)`,
+              boxShadow: `0 0 4px ${color}80`,
+              animation: 'pulse-bar 0.6s ease-in-out infinite',
+              animationDelay: BAR_DELAYS[i],
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

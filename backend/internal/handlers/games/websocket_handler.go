@@ -1,7 +1,6 @@
 package games
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 
@@ -205,12 +204,25 @@ func (h *GameWebSocketHandler) GetPlayerHandMessage(roomID uint, userID uint) ma
 func (h *GameWebSocketHandler) sendHandUpdate(roomID uint, userID uint) {
 	message := h.GetPlayerHandMessage(roomID, userID)
 	if message == nil {
+		// 🐛 [DEBUG] temporary — GetPlayerHandMessage returns nil for any
+		// non-card game OR when GetPlayerHand found no active game / no Hands
+		// map / no entry for this userID. Logging which of those it was.
+		log.Printf("🐛 [DEBUG] sendHandUpdate: no hand message for user %d room %d (nil from GetPlayerHandMessage)", userID, roomID)
 		return
 	}
+	handLen := -1
+	if data, ok := message["data"].(map[string]interface{}); ok {
+		if hand, ok := data["hand"].([]string); ok {
+			handLen = len(hand)
+		}
+	}
+	log.Printf("🐛 [DEBUG] sendHandUpdate: sending hand (len=%d) to user %d room %d", handLen, userID, roomID)
 	if hub, ok := h.hub.(interface {
 		BroadcastJSONToUser(uint, uint, map[string]interface{})
 	}); ok {
 		hub.BroadcastJSONToUser(userID, roomID, message)
+	} else {
+		log.Printf("🐛 [DEBUG] sendHandUpdate: h.hub does NOT implement BroadcastJSONToUser")
 	}
 }
 
@@ -619,15 +631,22 @@ func (h *GameWebSocketHandler) sendError(client interface{}, errorMsg string) {
 		"type":  "game",
 		"error": errorMsg,
 	}
-	messageBytes, _ := json.Marshal(message)
 
-	type ClientSend interface {
-		GetSendChan() chan []byte
+	// Previously tried client.(ClientSend) requiring a GetSendChan() chan []byte
+	// method — no concrete Client type in the codebase ever implemented that
+	// method, so the assertion always silently failed and this function never
+	// actually delivered anything to the client (only the log line below ever
+	// fired). Fixed to use the same BroadcastJSONToUser mechanism already
+	// proven working for sendHandUpdate/sendDrawerWord above.
+	type ClientFields interface {
+		GetRoomID() uint
+		GetUserID() uint
 	}
-	if cs, ok := client.(ClientSend); ok {
-		select {
-		case cs.GetSendChan() <- messageBytes:
-		default:
+	if cf, ok := client.(ClientFields); ok {
+		if hub, ok := h.hub.(interface {
+			BroadcastJSONToUser(uint, uint, map[string]interface{})
+		}); ok {
+			hub.BroadcastJSONToUser(cf.GetUserID(), cf.GetRoomID(), message)
 		}
 	}
 

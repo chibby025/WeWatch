@@ -358,14 +358,20 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
   const tokensBySquare = useMemo(() => {
     const map = {};
     displayPositions.forEach((pos, idx) => {
-      if (pos <= 0) return;
+      // `pos <= 0` alone doesn't exclude NaN — every comparison with NaN is
+      // false, so `NaN <= 0` is false too, letting a corrupted position
+      // silently become an invalid "NaN" key below (SQUARE_TO_POS has no
+      // such entry, crashing the token-overlay render further down). A
+      // positive range check excludes NaN correctly since `NaN >= 1` is
+      // also false.
+      if (!(pos >= 1 && pos <= 100)) return;
       (map[pos] = map[pos] || []).push(idx);
     });
     return map;
   }, [displayPositions]);
 
   const offBoardIdxs = useMemo(
-    () => displayPositions.map((pos, idx) => ({ pos, idx })).filter(t => t.pos <= 0).map(t => t.idx),
+    () => displayPositions.map((pos, idx) => ({ pos, idx })).filter(t => !(t.pos >= 1 && t.pos <= 100)).map(t => t.idx),
     [displayPositions]
   );
 
@@ -534,7 +540,13 @@ export default function SnakesAndLaddersGame({ gameState, players, currentUserId
               {/* Token overlay — same coordinate system as the cells above, so
                   the CSS top/left transition below animates a real slide. */}
               {Object.entries(tokensBySquare).map(([sq, idxs]) => {
-                const { row, col } = SQUARE_TO_POS[Number(sq)];
+                // Defensive: tokensBySquare's own filter should already keep every
+                // key within 1-100, but this is the actual point a bad key would
+                // otherwise throw (destructuring undefined) and take the whole
+                // board down — fail safe by skipping the render instead.
+                const pos = SQUARE_TO_POS[Number(sq)];
+                if (!pos) return null;
+                const { row, col } = pos;
                 return idxs.map((idx, i) => {
                   const stagger = idxs.length > 1 ? (i - (idxs.length - 1) / 2) * 5.5 : 0;
                   return (

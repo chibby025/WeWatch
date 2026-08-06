@@ -5509,7 +5509,8 @@ export default function VideoWatch() {
               sessionId: message.data.session_id,
               hostId: message.data.host_id,
               hostName: message.data.host_name || 'Unknown Host',
-              sessionTitle: message.data.session_title || 'Untitled Session',
+              hostAvatarUrl: message.data.host_avatar_url || '',
+              sessionTitle: message.data.session_title || '',
               watchType: message.data.watch_type,
               isTemporary: message.data.is_temporary || false,
             };
@@ -6162,6 +6163,8 @@ export default function VideoWatch() {
             // Private, per-player message (hub.BroadcastToUser, not a room broadcast) —
             // only this client's own hand ever arrives here, on game start, after this
             // player's own move, and on late-join rehydration.
+            // 🐛 [DEBUG] temporary — pin down a report of the host's own rack arriving empty.
+            console.log('🐛 [DEBUG] hand_update received:', { rawData: message.data, hand: message.data?.hand, currentUserId: currentUser?.id });
             setMyHand(message.data?.hand || []);
           }
           // ── Hot-seat tournament (arcade single-player) ──────────────────────
@@ -7237,14 +7240,19 @@ export default function VideoWatch() {
       {/* ✅ Toast Notifications */}
       <Toaster position="top-center" />
 
-      {/* 📋 Copy-logs button — tap to copy recent console logs to clipboard for debugging */}
-      <button
-        onClick={handleExportLogs}
-        className="fixed bottom-20 right-2 z-[9999] w-8 h-8 bg-green-600 hover:bg-green-500 active:scale-95 rounded-full flex items-center justify-center text-white text-sm shadow-lg transition-all opacity-70 hover:opacity-100"
-        title="Copy logs to clipboard"
-      >
-        📋
-      </button>
+      {/* 📋 Copy-logs button — tap to copy recent console logs to clipboard for debugging.
+          Super-admin only, matching this codebase's convention for debug tooling
+          (SettingsModal/LectureHallPage debug overlays are gated the same way) —
+          AND localhost-only, so it never appears in production regardless of role. */}
+      {currentUser?.role === 'super_admin' && ['localhost', '127.0.0.1'].includes(window.location.hostname) && (
+        <button
+          onClick={handleExportLogs}
+          className="fixed bottom-20 right-2 z-[9999] w-8 h-8 bg-green-600 hover:bg-green-500 active:scale-95 rounded-full flex items-center justify-center text-white text-sm shadow-lg transition-all opacity-70 hover:opacity-100"
+          title="Copy logs to clipboard"
+        >
+          📋
+        </button>
+      )}
 
       {/* Session Ended Overlay */}
       {sessionEndedInfo && (

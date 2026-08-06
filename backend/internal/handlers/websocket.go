@@ -1588,14 +1588,28 @@ func (h *Hub) BroadcastToUsers(userIDs []uint, message OutgoingMessage) {
 // Uses clientRegistry for O(1) lookup — bypasses the broadcastToUsers channel.
 func (h *Hub) BroadcastToUser(userID uint, roomID uint, message OutgoingMessage) {
     h.registryMutex.RLock()
-    if roomMap, ok := h.clientRegistry[userID]; ok {
-        if c, ok := roomMap[roomID]; ok {
-            select {
-            case c.send <- message:
-            default:
-                log.Printf("[Hub] drop BroadcastToUser to user %d room %d (send buffer full)", userID, roomID)
+    roomMap, userFound := h.clientRegistry[userID]
+    var c *Client
+    var roomFound bool
+    if userFound {
+        c, roomFound = roomMap[roomID]
+    }
+    if userFound && roomFound {
+        select {
+        case c.send <- message:
+        default:
+            log.Printf("[Hub] drop BroadcastToUser to user %d room %d (send buffer full)", userID, roomID)
+        }
+    } else {
+        // 🐛 [DEBUG] temporary — pin down a report of a private message (e.g.
+        // Wordsmith's hand_update) silently never reaching a specific client.
+        registeredRooms := []uint{}
+        if userFound {
+            for rid := range roomMap {
+                registeredRooms = append(registeredRooms, rid)
             }
         }
+        log.Printf("🐛 [DEBUG] BroadcastToUser MISS: user %d not registered for room %d (userFound=%v, roomsRegisteredForUser=%v)", userID, roomID, userFound, registeredRooms)
     }
     h.registryMutex.RUnlock()
 }
@@ -2812,6 +2826,8 @@ func CleanupStaleSessions() {
 					"host_id":         hostID,
 					"host_name":       hostName,
 					"host_avatar_url": hostAvatarURL,
+					"session_title":   session.SessionTitle,
+					"watch_type":      session.WatchType,
 				},
 			}
 			staleCleanupBytes, _ := json.Marshal(staleCleanupData)

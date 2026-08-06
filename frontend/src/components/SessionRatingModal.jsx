@@ -6,6 +6,25 @@ import React, { useState } from 'react';
 import toast from 'react-hot-toast';
 import { resolveAvatarUrl } from '../utils/avatar';
 
+// Fallback labels when a session never got a real title (instant/quick-start
+// sessions, mostly) — named after the feature instead of a generic
+// "Untitled Session", so the prompt doubles as a light reminder that these
+// other watch experiences exist. Mirrors the labels already used elsewhere
+// in the app for the same watch_type values (RoomPageNew's own
+// sessionTypeLabel, MembersModal's getModalTitle).
+const WATCH_TYPE_FALLBACK_TITLES = {
+  video_watch: 'Video Watch',
+  '3d_cinema': '3D Cinema',
+  classroom: 'Lecture Hall',
+  lecture_hall: 'Lecture Hall',
+  custom: 'Custom Scene',
+};
+
+function getDisplayTitle(sessionTitle, watchType) {
+  if (sessionTitle && sessionTitle.trim()) return sessionTitle;
+  return WATCH_TYPE_FALLBACK_TITLES[watchType] || 'Video Watch';
+}
+
 const SessionRatingModal = ({
   isOpen,
   onClose,
@@ -13,6 +32,7 @@ const SessionRatingModal = ({
   hostName,
   hostAvatarUrl,
   sessionTitle,
+  watchType,
   onSubmit
 }) => {
   const [rating, setRating] = useState(0);
@@ -52,7 +72,7 @@ const SessionRatingModal = ({
             <div className="flex-1 min-w-0">
               <h2 className="text-lg sm:text-2xl font-bold">Rate This Session</h2>
               <p className="text-purple-100 mt-1 text-xs sm:text-sm line-clamp-2">
-                How was "{sessionTitle}"?
+                How was "{getDisplayTitle(sessionTitle, watchType)}"?
               </p>
             </div>
             <button
