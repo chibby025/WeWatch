@@ -104,6 +104,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"backgammon":      true,
 		"property_tycoon": true,
 		"texas_holdem":    true,
+		"ramp_rush":       true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -143,6 +144,11 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	}
 	if gameType == "texas_holdem" && (len(players) < 2 || len(players) > 8) {
 		return nil, fmt.Errorf("texas hold'em supports 2-8 players")
+	}
+	// ramp_rush is a strictly 1-vs-1 turn-based game — round resolution compares
+	// exactly two results, same hard requirement as mancala/backgammon.
+	if gameType == "ramp_rush" && len(players) != 2 {
+		return nil, fmt.Errorf("ramp_rush is a 2-player game")
 	}
 
 	gameSession := &models.GameSession{
@@ -365,6 +371,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processPropertyTycoonMove(gameState, playerID, moveType, moveData)
 	case "texas_holdem":
 		gameOver, winnerID, err = gm.processTexasHoldemMove(gameState, playerID, moveType, moveData)
+	case "ramp_rush":
+		gameOver, winnerID, err = gm.processRampRushMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -396,6 +404,7 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"backgammon":          true, // roll → move(s) → (auto-)pass; turn only advances when the backend decides dice are exhausted/unusable
 		"property_tycoon":     true, // roll → land/resolve → (auto-)advance; doubles grant another roll, a pending buy/decline defers the advance
 		"texas_holdem":        true, // action_on is managed directly (skips folded/all-in/busted players, reopens on a raise); never a simple +1 mod N
+		"ramp_rush":           true, // round resolution (both players must launch before advancing) manages CurrentTurn directly
 	}
 	if !gameOver && !selfManagedTurn[gameState.GameSession.GameType] {
 		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % len(gameState.Players)
@@ -837,6 +846,11 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 		state["pending_purchase"] = nil
 		state["doubles_count"] = 0
 		state["last_event"] = ""
+
+	case "ramp_rush":
+		for k, v := range rampRushInitialState() {
+			state[k] = v
+		}
 	}
 
 	return state

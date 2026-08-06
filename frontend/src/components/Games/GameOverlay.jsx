@@ -35,6 +35,9 @@ const VSBattleGame = lazy(() => import('./VsBattleGame'));
 const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
 // const PenaltyGame = lazy(() => import('./PenaltyGame')); // temporarily removed
 const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
+// 3D + physics (react-three-fiber, cannon-es) — heaviest bundle in this
+// package after DOOM, same lazy-load rationale.
+const RampRushGame = lazy(() => import('./RampRushGame'));
 // const RouletteGame = lazy(() => import('./RouletteGame')); // temporarily removed
 
 import HangmanGame from './HangmanGame';
@@ -471,6 +474,21 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onEndGame={onEndGame}
           onPostResult={onPostResult}
         />
+      );
+
+    case 'ramp_rush':
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-gray-950 flex items-center justify-center text-white text-lg">Loading Ramp Rush…</div>}>
+          <RampRushGame
+            gameState={activeGame}
+            players={activeGame.players}
+            currentUserId={currentUserId}
+            onMove={handleMove}
+            onClose={onClose}
+            onEndGame={onEndGame}
+            onPostResult={onPostResult}
+          />
+        </Suspense>
       );
 
     case 'jigsaw':

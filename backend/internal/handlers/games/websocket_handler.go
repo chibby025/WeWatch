@@ -97,6 +97,8 @@ func gamePosterURL(gameType string) string {
 		return gamePostersBaseURL + "/backgammon.webp"
 	case "texas_holdem":
 		return gamePostersBaseURL + "/texas_holdem.webp"
+	case "ramp_rush":
+		return gamePostersBaseURL + "/ramp_rush.webp"
 	default:
 		return ""
 	}
@@ -467,6 +469,21 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
 				gs.GameSession.GameState["no_walls"] = true
 			}
 			gameStateBcast["no_walls"] = true
+		}
+	}
+	if gameType == "ramp_rush" {
+		if format, _ := data["format"].(string); format == "first_to_win" {
+			if gs, exists := h.gameManager.GetActiveGame(roomID); exists {
+				gs.GameData["format"] = "first_to_win"
+				gs.GameData["rounds_to_win"] = 1
+				gs.GameData["max_rounds"] = 20 // safety net against a pathological all-draws game, not a real target
+				gs.GameSession.GameState["format"] = "first_to_win"
+				gs.GameSession.GameState["rounds_to_win"] = 1
+				gs.GameSession.GameState["max_rounds"] = 20
+			}
+			gameStateBcast["format"] = "first_to_win"
+			gameStateBcast["rounds_to_win"] = 1
+			gameStateBcast["max_rounds"] = 20
 		}
 	}
 

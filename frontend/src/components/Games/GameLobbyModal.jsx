@@ -211,6 +211,16 @@ const games = [
     type: 'multiplayer'
   },
   {
+    id: 'ramp_rush',
+    name: 'Ramp Rush',
+    description: 'Tap to charge your engine, launch, and clear the course — best driver wins!',
+    minPlayers: 2,
+    maxPlayers: 2,
+    image: `${GAME_POSTERS_BASE_URL}/ramp_rush.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
     id: 'jigsaw',
     name: 'Jigsaw Puzzle',
     description: 'Fully cooperative — everyone works the same puzzle together in real time!',
@@ -400,7 +410,7 @@ const games = [
 // Games eligible for tournament mode: 2-player, head-to-head games where a
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
-const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon'];
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon', 'ramp_rush'];
 // Hot-seat tournament: each player takes a solo turn; highest score wins.
 const HOT_SEAT_GAME_IDS = ['fowl_play'];
 
@@ -422,6 +432,7 @@ export default function GameLobbyModal({
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [isTournamentMode, setIsTournamentMode] = useState(false);
   const [noWalls, setNoWalls] = useState(false);
+  const [rampRushFormat, setRampRushFormat] = useState('best_of_5');
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== 'undefined' ? window.matchMedia('(orientation: landscape)').matches : false
   );
@@ -651,7 +662,11 @@ export default function GameLobbyModal({
       return;
     }
 
-    const gameOptions = selectedGame === 'ping_pong' ? { no_walls: noWalls } : {};
+    const gameOptions = selectedGame === 'ping_pong'
+      ? { no_walls: noWalls }
+      : selectedGame === 'ramp_rush'
+        ? { format: rampRushFormat }
+        : {};
     onStartGame(selectedGame, buildPlayersData(), gameOptions);
     onClose();
   };
@@ -922,6 +937,16 @@ export default function GameLobbyModal({
                         />
                         <span className="text-xs text-gray-300 font-medium">No walls (classic table-tennis rules)</span>
                       </label>
+                    </div>
+                  )}
+                  {!readOnly && selectedGame === 'ramp_rush' && (
+                    <div className="mt-2 flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => setRampRushFormat(f => (f === 'best_of_5' ? 'first_to_win' : 'best_of_5'))}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border bg-gray-700/60 border-gray-600 text-gray-300 hover:border-gray-500 transition-all"
+                      >
+                        {rampRushFormat === 'best_of_5' ? 'Best of 5' : 'First to Win'}
+                      </button>
                     </div>
                   )}
                   {!readOnly && (TOURNAMENT_GAME_IDS.includes(selectedGame) || HOT_SEAT_GAME_IDS.includes(selectedGame)) && (

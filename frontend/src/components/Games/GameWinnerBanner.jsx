@@ -20,6 +20,7 @@ const GAME_LABELS = {
   ping_pong: 'Ping Pong',
   snakes_ladders: 'Snakes & Ladders',
   mancala: 'Mancala',
+  ramp_rush: 'Ramp Rush',
 };
 
 /**

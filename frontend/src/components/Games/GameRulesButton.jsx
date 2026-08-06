@@ -221,6 +221,17 @@ const RULES = {
       'Roll a 6 and you get an extra turn!',
     ],
   },
+  ramp_rush: {
+    title: 'Ramp Rush',
+    rules: [
+      'On your turn, tap rapidly to charge your engine — the meter fills with each tap and slowly drains if you stop, so keep the rhythm up!',
+      'Stop tapping (or hit max charge) and your car auto-launches — the more charge you built, the further and higher you fly.',
+      'You must clear every obstacle on the course to score anything — hit a barrier or fall in a gap and you get 0 for that round.',
+      'If both players clear the course cleanly, whoever travelled further wins the round.',
+      'Best of 5: first to 3 round wins takes the match. First to Win: the first round someone actually wins ends it — a draw round just replays.',
+      'Courses get harder each round, so pace your charge — overshooting a barrier is just as fatal as coming up short on a gap.',
+    ],
+  },
   mancala: {
     title: 'Mancala',
     rules: [
