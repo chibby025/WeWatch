@@ -899,33 +899,45 @@ func vsResolveEncounter(gameState *GameSessionState, players map[uint]*VSPlayerS
 		result["outcome"] = "both_timeout"
 
 	case aSelected && !bSelected:
-		// a attacks undefended b (apply atk boost if attack)
+		// a attacks; b timed out and never selected a character, so a.char/
+		// a.move are the only resolved side here — b.char stays nil (the
+		// resolution loop above `continue`s without setting it whenever
+		// lockData is nil). The attack lands on b's first alive character
+		// instead, same as every other "no selection made" resolution in
+		// this file (see vsFirstAliveChar's other callers in the counter-
+		// choice logic below). Dereferencing b.char.ID directly here used
+		// to panic with a nil pointer — this is that fix.
 		if a.lockData.MoveType == "attack" {
-			dmg := a.move.Power
-			vsApplyDamage(b.char, dmg)
-			result["outcome"] = "undefended"
-			result["attacker"] = a.uid
-			result["defender"] = b.uid
-			result["attacker_char_id"] = a.char.ID
-			result["defender_char_id"] = b.char.ID
-			result["damage"] = dmg
-			result["trigger_url"] = a.move.TriggerURL
-			result["attacker_move_name"] = a.move.Name
+			if defChar := vsFirstAliveChar(b.ps); defChar != nil {
+				dmg := a.move.Power
+				vsApplyDamage(defChar, dmg)
+				result["outcome"] = "undefended"
+				result["attacker"] = a.uid
+				result["defender"] = b.uid
+				result["attacker_char_id"] = a.char.ID
+				result["defender_char_id"] = defChar.ID
+				result["damage"] = dmg
+				result["trigger_url"] = a.move.TriggerURL
+				result["attacker_move_name"] = a.move.Name
+			}
 		}
 		// if a chose defense and b timed out: nothing meaningful
 
 	case !aSelected && bSelected:
+		// Symmetric case — a timed out, b attacks. Same nil-pointer fix.
 		if b.lockData.MoveType == "attack" {
-			dmg := b.move.Power
-			vsApplyDamage(a.char, dmg)
-			result["outcome"] = "undefended"
-			result["attacker"] = b.uid
-			result["defender"] = a.uid
-			result["attacker_char_id"] = b.char.ID
-			result["defender_char_id"] = a.char.ID
-			result["damage"] = dmg
-			result["trigger_url"] = b.move.TriggerURL
-			result["attacker_move_name"] = b.move.Name
+			if defChar := vsFirstAliveChar(a.ps); defChar != nil {
+				dmg := b.move.Power
+				vsApplyDamage(defChar, dmg)
+				result["outcome"] = "undefended"
+				result["attacker"] = b.uid
+				result["defender"] = a.uid
+				result["attacker_char_id"] = b.char.ID
+				result["defender_char_id"] = defChar.ID
+				result["damage"] = dmg
+				result["trigger_url"] = b.move.TriggerURL
+				result["attacker_move_name"] = b.move.Name
+			}
 		}
 
 	case a.lockData.MoveType == "attack" && b.lockData.MoveType == "attack":
@@ -1298,6 +1310,39 @@ func processVSCounterChoice(gameState *GameSessionState, playerID uint, data map
 		gameState.GameData["last_turn_result"] = map[string]interface{}{"game_over": true}
 	}
 	return gameOver, winnerID, nil
+}
+
+// vsResolveCounterTimeout is the server-side backstop for a counter window
+// nobody responded to in time — see GameManager.startVSCounterTimeout's doc
+// comment for the full rationale (a purely client-side countdown can't be
+// trusted alone: a backgrounded/throttled tab, a crash, or a dropped
+// connection means the resolving move never arrives, and every connected
+// client's modal stays open forever since it's gated on the server-broadcast
+// phase, which would otherwise never change).
+//
+// Deliberately does nothing clever — no guessed "reflect" on anyone's
+// behalf, just a clean revert to normal play with zero damage, reported to
+// clients via the same "both_timeout" outcome the normal turn-timeout path
+// already uses. Returns resolved=false (a no-op) if a real player choice
+// already closed this window before the timer fired, which is the
+// expected, common case; the caller uses that to skip a redundant
+// broadcast.
+func vsResolveCounterTimeout(gameState *GameSessionState) (resolved bool, err error) {
+	if vsGetPhase(gameState) != "counter_window" {
+		return false, nil
+	}
+	vsSetPhase(gameState, "battle")
+	delete(gameState.GameData, "counter_state")
+	// Reuse the existing "both_timeout" outcome — the frontend's OUTCOME_MAP
+	// already has a proper "TIMED OUT" label/color for it, and the semantic
+	// (nothing happened, time ran out) is exactly right here too. No new
+	// outcome string needed, so no frontend changes required for this fix.
+	gameState.GameData["last_turn_result"] = map[string]interface{}{
+		"outcome": "both_timeout",
+	}
+	turn := getIntField(gameState.GameData, "turn")
+	gameState.GameData["turn"] = turn + 1
+	return true, nil
 }
 
 // ── Hype ─────────────────────────────────────────────────────────────────────

@@ -27,6 +27,10 @@ type HotSeatTournament struct {
 	CurrentIndex int                  `json:"current_index"` // index into Participants
 	Status       string               `json:"status"`        // "active" | "completed" | "cancelled"
 	WinnerID     *uint                `json:"winner_id,omitempty"`
+	// LowerIsBetter flips the win condition for games where a smaller score
+	// wins (e.g. golf stroke count) instead of the default "highest score
+	// wins" every other hot-seat game (Fowl Play, Toad Ball, etc) uses.
+	LowerIsBetter bool `json:"lower_is_better"`
 }
 
 type HotSeatManager struct {
@@ -46,7 +50,7 @@ func NewHotSeatManager(hub MessageHub) *HotSeatManager {
 	}
 }
 
-func (hm *HotSeatManager) CreateTournament(roomID, hostID uint, gameType string, players []models.Player) *HotSeatTournament {
+func (hm *HotSeatManager) CreateTournament(roomID, hostID uint, gameType string, players []models.Player, lowerIsBetter bool) *HotSeatTournament {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
@@ -59,12 +63,13 @@ func (hm *HotSeatManager) CreateTournament(roomID, hostID uint, gameType string,
 	hm.nextID++
 
 	t := &HotSeatTournament{
-		ID:           id,
-		RoomID:       roomID,
-		GameType:     gameType,
-		HostID:       hostID,
-		CurrentIndex: 0,
-		Status:       "active",
+		ID:            id,
+		RoomID:        roomID,
+		GameType:      gameType,
+		HostID:        hostID,
+		CurrentIndex:  0,
+		Status:        "active",
+		LowerIsBetter: lowerIsBetter,
 	}
 	for i, p := range players {
 		p := p // capture
@@ -158,13 +163,22 @@ func (hm *HotSeatManager) CancelTournament(roomID uint) {
 	log.Printf("🏆 [HotSeat] Tournament #%d in room %d cancelled", id, roomID)
 }
 
-// finalizeLocked picks the winner (highest score; ties go to whoever played first),
-// broadcasts tournament_complete, and cleans up.
+// finalizeLocked picks the winner (highest score, or lowest if
+// t.LowerIsBetter — e.g. golf stroke count; ties go to whoever played
+// first), broadcasts tournament_complete, and cleans up.
 func (hm *HotSeatManager) finalizeLocked(t *HotSeatTournament) {
 	t.Status = "completed"
 	var best *HotSeatParticipant
 	for _, p := range t.Participants {
-		if best == nil || p.Score > best.Score {
+		if best == nil {
+			best = p
+			continue
+		}
+		if t.LowerIsBetter {
+			if p.Score < best.Score {
+				best = p
+			}
+		} else if p.Score > best.Score {
 			best = p
 		}
 	}
@@ -192,9 +206,10 @@ func (hm *HotSeatManager) finalizeLocked(t *HotSeatTournament) {
 		hub.BroadcastJSON(t.RoomID, map[string]interface{}{
 			"type": "hot_seat_tournament_complete",
 			"data": map[string]interface{}{
-				"tournament_id": t.ID,
-				"game_type":     t.GameType,
-				"winner_id":     t.WinnerID,
+				"tournament_id":   t.ID,
+				"game_type":       t.GameType,
+				"winner_id":       t.WinnerID,
+				"lower_is_better": t.LowerIsBetter,
 				"winner_name": func() string {
 					if best != nil {
 						return best.Player.Username
@@ -272,13 +287,14 @@ func (hm *HotSeatManager) payloadLocked(t *HotSeatTournament) map[string]interfa
 		}
 	}
 	return map[string]interface{}{
-		"tournament_id":  t.ID,
-		"room_id":        t.RoomID,
-		"game_type":      t.GameType,
-		"host_id":        t.HostID,
-		"participants":   parts,
-		"current_index":  t.CurrentIndex,
-		"status":         t.Status,
-		"winner_id":      t.WinnerID,
+		"tournament_id":   t.ID,
+		"room_id":         t.RoomID,
+		"game_type":       t.GameType,
+		"host_id":         t.HostID,
+		"participants":    parts,
+		"current_index":   t.CurrentIndex,
+		"status":          t.Status,
+		"winner_id":       t.WinnerID,
+		"lower_is_better": t.LowerIsBetter,
 	}
 }

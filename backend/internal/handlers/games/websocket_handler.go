@@ -33,6 +33,8 @@ func gamePosterURL(gameType string) string {
 		return gamePostersBaseURL + "/trivia.webp"
 	case "doom":
 		return gamePostersBaseURL + "/doom.webp"
+	case "quake3":
+		return gamePostersBaseURL + "/quake3.webp"
 	case "othello":
 		return gamePostersBaseURL + "/othello.webp"
 	case "checkers":
@@ -84,6 +86,12 @@ func gamePosterURL(gameType string) string {
 		return gamePostersBaseURL + "/air_hockey.webp"
 	case "space_attack":
 		return gamePostersBaseURL + "/space_attack.webp"
+	case "toad_ball":
+		return gamePostersBaseURL + "/toad_ball.webp"
+	case "rebus_round":
+		return gamePostersBaseURL + "/rebus_round.webp"
+	case "karaoke":
+		return gamePostersBaseURL + "/karaoke.webp"
 	// case "roulette": temporarily removed
 	case "snakes_ladders":
 		return gamePostersBaseURL + "/snakes_ladders.webp"
@@ -99,6 +107,8 @@ func gamePosterURL(gameType string) string {
 		return gamePostersBaseURL + "/texas_holdem.webp"
 	case "ramp_rush":
 		return gamePostersBaseURL + "/ramp_rush.webp"
+	case "golf":
+		return gamePostersBaseURL + "/golf.webp"
 	default:
 		return ""
 	}
@@ -113,6 +123,8 @@ var arcadeGameTypes = map[string]bool{
 	"fowl_play": true,
 	// "penalty_shootout": true, // temporarily removed
 	"space_attack": true,
+	"toad_ball":    true,
+	"golf":         true,
 }
 
 // minPlayersOverride lets a genuinely multiplayer game still be launched
@@ -128,6 +140,14 @@ var minPlayersOverride = map[string]int{
 	"typing_race":      1, // solo time-trial is valid
 	"draw_guess":       1, // host can draw for the room even with no other guessers
 	"jigsaw":           1, // fully cooperative — solo assembly is valid too
+	"quake3":           1, // real N-player arena FPS, but solo (vs the empty arena/bots) is valid too
+}
+
+// lowerScoreWinsGameTypes flips a hot-seat tournament's win condition —
+// every other hot-seat game reports an arcade-style "higher is better"
+// score, but golf's natural score is stroke count, where fewer is better.
+var lowerScoreWinsGameTypes = map[string]bool{
+	"golf": true,
 }
 
 type GameWebSocketHandler struct {
@@ -741,7 +761,7 @@ func (h *GameWebSocketHandler) handleCreateHotSeatTournament(client interface{},
 		h.sendError(client, "hot-seat tournaments unavailable")
 		return
 	}
-	h.gameManager.HotSeatManager.CreateTournament(roomID, hostID, gameType, players)
+	h.gameManager.HotSeatManager.CreateTournament(roomID, hostID, gameType, players, lowerScoreWinsGameTypes[gameType])
 	log.Printf("🏆 [HotSeat] Created tournament in room %d (%s, %d players)", roomID, gameType, len(players))
 }
 

@@ -36,7 +36,7 @@ import RemoteAudioPlayer from './ui/RemoteAudioPlayer';
 import FloatingGiftIcon from '../FloatingGiftIcon';
 import DonationNotification from '../DonationNotification';
 // Import sounds
-import { playSeatSound, playMicOnSound, playMicOffSound, playJoinSound } from '../../utils/audio';
+import { playSeatSound, playMicOnSound, playMicOffSound, playJoinSound, playLeaveSound } from '../../utils/audio';
 import ChatHomeModal from '../ChatHomeModal.jsx';
 import PrivateChatModal from '../PrivateChatModal.jsx';
 // Quiz system modals
@@ -2805,6 +2805,19 @@ export default function VideoWatch() {
       status: 'forfeited',
       winner_id: opponentId,
     } : null);
+    // Iframe-based games with no lingering "Game Over" results screen of their
+    // own (quake3, doom) — their own end-game button calls onEndGame() then
+    // onClose() synchronously in the same click handler. handleGameClose's own
+    // "only close_game if activeGame.status is already finished" check reads a
+    // stale pre-update closure at that point (the setActiveGame above hasn't
+    // re-rendered yet), so it never actually fires for these two — confirmed
+    // via code tracing, not assumed. Turn-based games deliberately rely on
+    // that same gate to keep their results screen visible until the player
+    // manually dismisses it, so this is scoped to just these two game types
+    // rather than changing the shared gate itself.
+    if (activeGame.game_type === 'quake3' || activeGame.game_type === 'doom') {
+      sendMessage({ type: 'close_game', data: { game_type: activeGame.game_type } });
+    }
   }, [activeGame, sendMessage, currentUser?.id]);
 
   const handlePostGameResult = useCallback(async (content) => {
@@ -3553,8 +3566,23 @@ export default function VideoWatch() {
       
       // Start screen share
       if (mode === 'screen' || mode === 'both') {
+        // 📱 Defense in depth: LiveShareTypeSelector already filters "Screen
+        // Only"/"Screen + Camera" out of the picker on devices that can't do
+        // this (iOS Safari has no getDisplayMedia at all, ever) — but this
+        // handler shouldn't just trust that the picker did its job (same
+        // "the action-taking code re-checks regardless of what the UI
+        // already filtered" reasoning used throughout this codebase). Fails
+        // fast with a specific, actionable message instead of letting
+        // setScreenShareEnabled below throw and fall through to the generic
+        // "Failed to start screen share" catch-all, which gave a real user
+        // zero indication their device fundamentally can't do this at all.
+        if (typeof navigator.mediaDevices?.getDisplayMedia !== 'function') {
+          toast.error('Screen sharing isn\'t supported on this device/browser — try Camera Only instead.');
+          console.error('❌ [VideoWatch] getDisplayMedia unavailable — device cannot screen share (e.g. iOS Safari)');
+          return;
+        }
         console.log('🖥️ [VideoWatch] Starting screen share...');
-        
+
         // 📊 Adaptive bitrate: 2-5 Mbps based on network quality
         const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
         const effectiveType = connection?.effectiveType || '4g';
@@ -4888,6 +4916,11 @@ export default function VideoWatch() {
             updateMemberMap('remove', userId);
             if (message.data.member_count != null) {
               setMemberCount(message.data.member_count);
+            }
+            // Play leave sound for everyone remaining (not for the leaving user
+            // themselves, who's already navigating away) — mirrors the join sound above.
+            if (userId !== currentUser?.id) {
+              playLeaveSound();
             }
           }
           break;

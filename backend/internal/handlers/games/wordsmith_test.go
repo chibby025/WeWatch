@@ -18,7 +18,13 @@ func makeTestWordsmithState(numPlayers int) *GameSessionState {
 		GameData:    map[string]interface{}{},
 		GameSession: &models.GameSession{GameType: "wordsmith"},
 		Hands:       map[uint][]string{},
-		DrawPile:    []string{},
+		// Non-empty by default so wordsmithCheckMathematicallyDecided's own
+		// "bag must be empty" precondition doesn't spuriously activate for
+		// tests that never intended to exercise end-game logic at all — matches
+		// a real game, where the bag always starts with ~100 tiles. A test that
+		// specifically wants bag-empty behavior sets gs.DrawPile explicitly
+		// (see TestWordsmithEmptyRackEndsGameWithScoreAdjustment).
+		DrawPile: []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"},
 	}
 	gs.GameData["board"] = wordsmithEmptyBoard()
 	gs.GameData["scores"] = map[string]interface{}{}
@@ -70,6 +76,14 @@ func TestWordsmithFirstMoveScoresWithCenterDoubleWord(t *testing.T) {
 	gs := makeTestWordsmithState(2)
 	gm := &GameManager{}
 	gs.Hands[1] = []string{"C", "A", "T", "Z", "Z", "Z", "Z"}
+	// A normal 7-tile rack, like a real player would actually have — without
+	// this, player 2's hand stays the fixture's empty default, which combined
+	// with the explicit empty DrawPile below would make
+	// wordsmithCheckMathematicallyDecided (correctly) treat player 2 as having
+	// zero possible remaining points and end the game early, which isn't what
+	// this test is about at all.
+	gs.Hands[2] = []string{"A", "B", "C", "D", "E", "F", "G"}
+	gs.DrawPile = []string{} // explicit: this test verifies rack behavior with no bag to refill from
 
 	gameOver, _, err := gm.processWordsmithPlace(gs, 1, placementsData(
 		placement(7, 6, "C"), placement(7, 7, "A"), placement(7, 8, "T"),
@@ -562,5 +576,76 @@ func TestWordsmithInsistMoveType(t *testing.T) {
 	))
 	if err != nil {
 		t.Fatalf("insist move_type: %v", err)
+	}
+}
+
+// TestWordsmithMathematicallyDecidedEndsEarlyWithUnreachableLead: once the
+// bag is empty, a trailing player whose entire remaining rack couldn't
+// possibly close the gap (even under the most generous conceivable scoring)
+// ends the game immediately in the leader's favor, without needing to play
+// out to a literal empty-rack or stalling-passes condition.
+func TestWordsmithMathematicallyDecidedEndsEarlyWithUnreachableLead(t *testing.T) {
+	gs := makeTestWordsmithState(2)
+	gm := &GameManager{}
+	gs.DrawPile = []string{} // bag empty — precondition for the check to run at all
+	gs.GameData["scores"] = map[string]interface{}{"1": 500.0, "2": 0.0}
+	// Player 2's entire remaining rack, maxed out as generously as possible
+	// (every tile at x9, plus the bingo bonus), still can't reach 500:
+	// (10+10+8+8)*9 + 50 = 324+50 = 374 < 500.
+	gs.Hands[2] = []string{"Q", "Z", "J", "X"}
+
+	gameOver, winnerID, err := gm.processWordsmithPass(gs, 2)
+	if err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	if !gameOver {
+		t.Fatal("expected the game to end — player 2 is mathematically eliminated")
+	}
+	if winnerID == nil || *winnerID != 1 {
+		t.Errorf("expected player 1 (unreachable leader) to win, got %v", winnerID)
+	}
+}
+
+// TestWordsmithMathematicallyDecidedDoesNotFireWhenStillContestable: the
+// mirror case — a trailing player whose rack COULD (in the most generous
+// case) still close the gap must NOT trigger an early end. This is the
+// safety property that matters most: a false "still contestable" just costs
+// a few extra ordinary turns, but a false "decided" would incorrectly end a
+// game someone could genuinely still have won.
+func TestWordsmithMathematicallyDecidedDoesNotFireWhenStillContestable(t *testing.T) {
+	gs := makeTestWordsmithState(2)
+	gm := &GameManager{}
+	gs.DrawPile = []string{}
+	gs.GameData["scores"] = map[string]interface{}{"1": 100.0, "2": 0.0}
+	// Player 2's ceiling: 10*9 + 50 = 140 >= 100 — still theoretically enough
+	// to catch up, so the game must NOT end early here.
+	gs.Hands[2] = []string{"Q"}
+
+	gameOver, _, err := gm.processWordsmithPass(gs, 2)
+	if err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	if gameOver {
+		t.Fatal("game ended early even though player 2 could theoretically still catch up")
+	}
+}
+
+// TestWordsmithMathematicallyDecidedRequiresEmptyBag: with tiles still in
+// the bag, any player's rack could still be refreshed with anything, so the
+// check must never fire regardless of how large the score gap looks right
+// now — it has no sound basis to declare anything decided yet.
+func TestWordsmithMathematicallyDecidedRequiresEmptyBag(t *testing.T) {
+	gs := makeTestWordsmithState(2)
+	gm := &GameManager{}
+	gs.DrawPile = []string{"A", "B", "C"} // bag still has tiles
+	gs.GameData["scores"] = map[string]interface{}{"1": 500.0, "2": 0.0}
+	gs.Hands[2] = []string{"Q"}
+
+	gameOver, _, err := gm.processWordsmithPass(gs, 2)
+	if err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	if gameOver {
+		t.Fatal("game ended early despite the bag still having tiles left")
 	}
 }

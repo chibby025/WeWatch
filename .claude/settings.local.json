@@ -296,7 +296,8 @@
       "Bash(grep -n \"USE_LOCAL_HEADERS\" \"//wsl.localhost/Ubuntu-22.04/home/chibuzor_dev/dev-tools/quake3_fork/ioq3/Makefile\" 2>&1 | head -10 *)",
       "PowerShell(wsl -d Ubuntu-22.04 -e bash -c \"cd ~/dev-tools/quake3_fork/ioq3 && rm -rf build && bash /tmp/build_q3.sh > /tmp/build_q3.log 2>&1\")",
       "Bash(tail -n 40 \"//wsl.localhost/Ubuntu-22.04/tmp/build_q3.log\" 2>&1)",
-      "Bash(grep -B2 \"sdl_input.c$\" \"//wsl.localhost/Ubuntu-22.04/tmp/build_q3.log\" 2>&1 | head -5 *)"
+      "Bash(grep -B2 \"sdl_input.c$\" \"//wsl.localhost/Ubuntu-22.04/tmp/build_q3.log\" 2>&1 | head -5 *)",
+      "Bash(wsl.exe -d Ubuntu -- bash -lc \"curl -s http://localhost:8095/ ; echo; ps aux | grep 'index.js' | grep -v grep\")"
     ],
     "additionalDirectories": [
       "\\\\wsl.localhost\\Ubuntu-22.04\\home\\chibuzor_dev\\dev-tools\\space-shooter\\client\\src",

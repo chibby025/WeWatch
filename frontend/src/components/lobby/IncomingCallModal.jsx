@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Avatar from '../Avatar';
+
+const RINGTONE_URL = 'https://letswatchout.b-cdn.net/sounds/incoming-ring.wav';
 
 const PhoneIcon = () => (
   <svg className="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24">
@@ -15,6 +17,7 @@ const EndCallIcon = () => (
 
 const IncomingCallModal = ({ isOpen, caller, onAccept, onDecline }) => {
   const [elapsed, setElapsed] = useState(0);
+  const ringRef = useRef(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -23,6 +26,21 @@ const IncomingCallModal = ({ isOpen, caller, onAccept, onDecline }) => {
     const timeout = setTimeout(() => onDecline?.(), 60000);
     return () => { clearInterval(interval); clearTimeout(timeout); };
   }, [isOpen, onDecline]);
+
+  // Ringtone loops for as long as the modal stays open (accept/decline/timeout
+  // all close it via isOpen going false, which stops the loop here too).
+  useEffect(() => {
+    if (!isOpen) return;
+    const audio = new Audio(RINGTONE_URL);
+    audio.loop = true;
+    audio.volume = 0.6;
+    ringRef.current = audio;
+    audio.play().catch(e => console.warn('Ringtone play failed:', e));
+    return () => {
+      audio.pause();
+      ringRef.current = null;
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

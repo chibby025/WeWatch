@@ -605,6 +605,10 @@ func (gm *GameManager) processWordsmithPlace(gameState *GameSessionState, player
 		return true, wordsmithSettleEmptyRack(gameState, playerID), nil
 	}
 
+	if decided, winnerID := wordsmithCheckMathematicallyDecided(gameState); decided {
+		return true, winnerID, nil
+	}
+
 	return false, nil, nil
 }
 
@@ -746,6 +750,9 @@ func (gm *GameManager) processWordsmithExchange(gameState *GameSessionState, pla
 	if wordsmithIntField(gameState.GameData, "consecutive_passes") >= len(gameState.Players)*2 {
 		return true, wordsmithSettleByScore(gameState), nil
 	}
+	if decided, winnerID := wordsmithCheckMathematicallyDecided(gameState); decided {
+		return true, winnerID, nil
+	}
 	return false, nil, nil
 }
 
@@ -755,6 +762,9 @@ func (gm *GameManager) processWordsmithPass(gameState *GameSessionState, playerI
 
 	if wordsmithIntField(gameState.GameData, "consecutive_passes") >= len(gameState.Players)*2 {
 		return true, wordsmithSettleByScore(gameState), nil
+	}
+	if decided, winnerID := wordsmithCheckMathematicallyDecided(gameState); decided {
+		return true, winnerID, nil
 	}
 	return false, nil, nil
 }
@@ -813,6 +823,99 @@ func wordsmithSettleEmptyRack(gameState *GameSessionState, emptyPlayerID uint) *
 func wordsmithSettleByScore(gameState *GameSessionState) *uint {
 	scores := wordsmithScores(gameState)
 	return wordsmithTopScorer(gameState, scores)
+}
+
+// wordsmithMaxTilePremium is the highest multiplier any single tile could
+// ever receive in one word: landing on both a triple-letter (x3) square and
+// contributing to a word that also passes through a triple-word (x3) square
+// = x9. Deliberately generous/an upper bound, not a realistic estimate — a
+// real placement essentially never hits this, but this function's whole job
+// is to prove "even in the best conceivable case, this player cannot win",
+// so understating the ceiling would risk wrongly ending a game a trailing
+// player could still have won. Overstating it only ever costs a few extra
+// turns of normal play before the (still-inevitable) real ending — a safe
+// failure direction, unlike the reverse.
+const wordsmithMaxTilePremium = 9
+
+// wordsmithMaxPossibleGain upper-bounds how many additional points a player
+// could still conceivably score using nothing but the tiles already in their
+// rack (valid to call once the bag is empty — see
+// wordsmithCheckMathematicallyDecided for why that precondition matters).
+// Every tile is scored at its face value times the maximum possible premium,
+// plus the bingo bonus for playing the whole rack in one move — the most
+// generous single-turn outcome physically expressible by the scoring rules,
+// which is also a valid upper bound on any sequence of multiple smaller
+// turns using the same fixed set of tiles (splitting a play across turns can
+// only ever waste potential compounding, never create more of it).
+func wordsmithMaxPossibleGain(rack []string) int {
+	total := 0
+	for _, t := range rack {
+		if t == "?" {
+			continue // blanks always score 0, no matter the premium
+		}
+		if len(t) == 1 {
+			total += wordsmithTileValues[t[0]] * wordsmithMaxTilePremium
+		}
+	}
+	if len(rack) > 0 {
+		total += wordsmithBingoBonus
+	}
+	return total
+}
+
+// wordsmithCheckMathematicallyDecided reports whether the game's outcome is
+// already provably locked in, and if so, who the (sole, unambiguous) winner
+// is — letting the game end before the normal empty-rack/stalling
+// conditions are reached, rather than always playing out every remaining
+// turn once nothing meaningful can still change.
+//
+// Only sound once the tile bag is empty: from that point on nobody can ever
+// draw again, so each player's entire remaining scoring potential for the
+// rest of the game is bounded by exactly the (small, fully known) set of
+// tiles already in their own rack — see wordsmithMaxPossibleGain. Before the
+// bag empties, any player's rack could still be refreshed with anything, so
+// no meaningful bound exists and this deliberately does not run.
+//
+// Fires only for a single, clear-cut leader: every other player's current
+// score plus their own generous best-case ceiling must still fall short of
+// the leader's current score. If two or more players are within reach of
+// each other (or of the presumptive leader), the game simply continues to
+// its normal end condition — a false "not yet decided" costs a few extra
+// turns of ordinary play; a false "decided" would incorrectly end a game
+// someone could still have won, which this is built to never risk.
+func wordsmithCheckMathematicallyDecided(gameState *GameSessionState) (bool, *uint) {
+	if len(gameState.DrawPile) > 0 {
+		return false, nil
+	}
+	if len(gameState.Players) < 2 {
+		return false, nil
+	}
+
+	scores := wordsmithScores(gameState)
+	leaderID := gameState.Players[0].UserID
+	leaderScore := wordsmithFloatField(scores, fmt.Sprintf("%d", leaderID))
+	for _, p := range gameState.Players[1:] {
+		s := wordsmithFloatField(scores, fmt.Sprintf("%d", p.UserID))
+		if s > leaderScore {
+			leaderID, leaderScore = p.UserID, s
+		}
+	}
+
+	for _, p := range gameState.Players {
+		if p.UserID == leaderID {
+			continue
+		}
+		key := fmt.Sprintf("%d", p.UserID)
+		ceiling := wordsmithFloatField(scores, key) + float64(wordsmithMaxPossibleGain(gameState.Hands[p.UserID]))
+		if ceiling >= leaderScore {
+			// This player could still (in the most generous possible case)
+			// catch or tie the presumptive leader — not decided yet.
+			return false, nil
+		}
+	}
+
+	id := leaderID
+	return true, &id
 }
 
 func wordsmithFloatField(m map[string]interface{}, key string) float64 {

@@ -46,11 +46,27 @@ export default function LiveShareTypeSelector({
   const [presentationPreview, setPresentationPreview] = useState(null);
   const presentationInputRef = useRef(null);
 
-  // ✅ Filter share types - remove 'both' if guest is selected
+  // 📱 Screen capture is a real, hard platform limitation — iOS Safari has
+  // never implemented the Screen Capture API at all (no getDisplayMedia at
+  // any version), and it's what's actually behind reports of "mobile has
+  // issues": a user picks "Screen Only"/"Screen + Camera", the underlying
+  // browser call fails, and VideoWatch.jsx's handleStartLiveShare only ever
+  // showed a generic "Failed to start screen share" toast with no
+  // explanation. Filtering the impossible options out here (same pattern
+  // already used below for hasGuestSelected removing "both") stops the user
+  // from ever picking an option that was always going to fail on their
+  // device, rather than letting them hit a confusing error after the fact.
+  const screenShareSupported = typeof navigator !== 'undefined' &&
+    typeof navigator.mediaDevices?.getDisplayMedia === 'function';
+
+  // ✅ Filter share types - remove 'both' if guest is selected, remove
+  // screen-capture-dependent options on devices that can't do it at all.
   const availableShareTypes = SHARE_TYPES.filter(type => {
     // Remove 'both' if guest is selected
     if (hasGuestSelected && type.id === 'both') return false;
-    
+    // Remove screen-capture-dependent options where the API doesn't exist
+    if (!screenShareSupported && (type.id === 'screen' || type.id === 'both')) return false;
+
     return true;
   });
 

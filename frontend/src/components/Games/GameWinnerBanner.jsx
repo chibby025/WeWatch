@@ -21,6 +21,7 @@ const GAME_LABELS = {
   snakes_ladders: 'Snakes & Ladders',
   mancala: 'Mancala',
   ramp_rush: 'Ramp Rush',
+  wordsmith: 'Wordsmith',
 };
 
 /**

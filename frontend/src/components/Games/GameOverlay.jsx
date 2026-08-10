@@ -4,6 +4,8 @@ import TicTacToeGame from './TicTacToeGame';
 import RockPaperScissorsGame from './RockPaperScissorsGame';
 import ChessGame from './ChessGame';
 import TriviaGame from './TriviaGame';
+import RebusRoundGame from './RebusRoundGame';
+import KaraokeGame from './KaraokeGame';
 import OthelloGame from './OthelloGame';
 import CheckersGame from './CheckersGame';
 import CrazyEightsGame from './CrazyEightsGame';
@@ -31,10 +33,13 @@ import TexasHoldemGame from './TexasHoldemGame';
 // pattern for any future heavy/rarely-used game: don't pay its bundle cost
 // until a user actually opens it. First use of React.lazy in this codebase.
 const DoomGame = lazy(() => import('./DoomGame'));
+const Quake3Game = lazy(() => import('./Quake3Game'));
 const VSBattleGame = lazy(() => import('./VsBattleGame'));
 const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
 // const PenaltyGame = lazy(() => import('./PenaltyGame')); // temporarily removed
 const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
+const ToadBallGame = lazy(() => import('./ToadBallGame'));
+const GolfGame = lazy(() => import('./GolfGame'));
 // 3D + physics (react-three-fiber, cannon-es) — heaviest bundle in this
 // package after DOOM, same lazy-load rationale.
 const RampRushGame = lazy(() => import('./RampRushGame'));
@@ -108,6 +113,28 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+        />
+      );
+
+    case 'rebus_round':
+      return (
+        <RebusRoundGame
+          gameState={activeGame}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          gameErrorMsg={gameErrorMsg}
+          gameErrorKey={gameErrorKey}
+        />
+      );
+
+    case 'karaoke':
+      return (
+        <KaraokeGame
+          gameState={activeGame}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
         />
       );
 
@@ -284,6 +311,23 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             isHost={activeGame.host_id === currentUserId}
             onRelayPacket={onRelayPacket}
             registerRelayReceiver={registerRelayReceiver}
+          />
+        </Suspense>
+      );
+
+    case 'quake3':
+      // Genuine N-player multiplayer, unlike DOOM: every room member's
+      // iframe connects directly to a dedicated per-room WS supervisor (a
+      // separate Railway service) over the engine's own real netcode — no
+      // relay through this app's backend, no host/spectator split. isHost
+      // only gates the extra "End for Everyone" control.
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <Quake3Game
+            roomId={roomId}
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
           />
         </Suspense>
       );
@@ -579,6 +623,41 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             onClose={onClose}
             onEndGame={onEndGame}
             isHost={activeGame.host_id === currentUserId}
+          />
+        </Suspense>
+      );
+
+    case 'toad_ball':
+      // Arcade: single-player or hot-seat tournament — same "pass the device
+      // to whoever's turn it is" pattern as fowl_play, but self-contained
+      // canvas gameplay (no relay plumbing needed, unlike fowl_play's iframe).
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <ToadBallGame
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
+            hotSeatTournament={hotSeatTournament}
+            currentUserId={currentUserId}
+            onTournamentScore={onTournamentScore}
+          />
+        </Suspense>
+      );
+
+    case 'golf':
+      // Arcade: single-player or hot-seat tournament, iframe-embedded (see
+      // GolfGame.jsx header) — combines toad_ball's hot-seat precedence with
+      // fowl_play's iframe/postMessage shape, since golf has no server-side
+      // move logic of its own (a real Vercel-hosted fork, not a relay).
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <GolfGame
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
+            hotSeatTournament={hotSeatTournament}
+            currentUserId={currentUserId}
+            onTournamentScore={onTournamentScore}
           />
         </Suspense>
       );

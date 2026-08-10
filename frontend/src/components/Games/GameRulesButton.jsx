@@ -143,6 +143,47 @@ const RULES = {
       'Waves speed up the longer you survive — how high can you score?',
     ],
   },
+  rebus_round: {
+    title: 'Rebus Round',
+    rules: [
+      'Each round shows a "rebus" — letters, words, or symbols styled or arranged in a way that hints at a phrase (e.g. the word "OLD" growing bigger letter by letter = "growing old").',
+      'Type your guess and hit send. Wrong guesses don\'t cost you anything — keep trying until you get it, the round ends, or the host reveals the answer.',
+      'The first player to solve it scores 100 points, second scores 75, third scores 50, and everyone else who solves it in time scores 25.',
+      'The host can reveal the answer early, or it auto-reveals after 40 seconds.',
+      'After the last puzzle, the host taps "Show Results" — highest total score wins (a tie is a draw).',
+    ],
+  },
+  karaoke: {
+    title: 'Karaoke Night',
+    rules: [
+      'The host searches for a song, picks the right match from the lyrics database, then pastes a YouTube link to an instrumental/karaoke-version of it.',
+      'Once started, everyone in the room sees the video playing and synced, highlighted lyrics — sing along together!',
+      'The host controls playback (play/pause/seek); everyone else just watches and sings.',
+      'The host can switch to a new song at any time with "New Song," or end the session for everyone.',
+      'This is just for fun — there\'s no scoring or winner.',
+    ],
+  },
+  toad_ball: {
+    title: 'Toad Ball',
+    rules: [
+      'A toad guards the bog — a chain of colored orbs crawls along the winding track toward it.',
+      'Move your mouse/finger to aim, then click/tap to fire the loaded orb toward the chain. The next orb up is shown beside the toad.',
+      'Match 3 or more of the same color in a row to pop them — bigger runs and chain reactions score more.',
+      'Clear the whole chain before it reaches the bog to advance a level — the track gets longer, faster, and gains new colors.',
+      'You have 3 lives — losing one resets the current level\'s chain, but not your score.',
+      'Can be played solo, or as a hot-seat tournament where players take turns on the host\'s device for the highest score.',
+    ],
+  },
+  golf: {
+    title: 'Mini Golf',
+    rules: [
+      'A real 3D mini-golf course — 4 holes, par 11 overall.',
+      'Click/tap and drag away from the ball, then release to putt — drag distance controls power, direction controls aim.',
+      'Fewer total strokes across all 4 holes is better — this is the one game where a lower score wins.',
+      'Can be played solo, or as a hot-seat tournament where players take turns on the host\'s device — whoever finishes with the fewest strokes wins.',
+      'First load can take a few seconds — the course is hosted separately and needs to load fresh each turn.',
+    ],
+  },
   doom: {
     title: 'DOOM',
     rules: [
@@ -151,6 +192,16 @@ const RULES = {
       'Interact with doors/switches: E. Run: hold Shift.',
       'Switch weapons: number keys 1–7. Map: Tab.',
       'Find the exit to complete the level. Survive!',
+    ],
+  },
+  quake3: {
+    title: 'Quake Death Match',
+    rules: [
+      'Real arena FPS multiplayer — every player who joins drops into the same live match, fighting for real.',
+      'Move: WASD or Arrow keys. Look/aim: mouse. Fire: left-click. Jump: Space.',
+      'Switch weapons: number keys 1–9. Console: ~.',
+      'First load can take a little while — the level data downloads once and is cached after that.',
+      'On mobile: an on-screen joystick handles movement, and a drag zone on the right handles look/aim — a hint shows the first time you touch it.',
     ],
   },
   ping_pong: {

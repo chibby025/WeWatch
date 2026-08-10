@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Avatar from '../Avatar';
+
+const RINGBACK_URL = 'https://letswatchout.b-cdn.net/sounds/outgoing-ringback.wav';
 
 const EndCallIcon = () => (
   <svg className="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24" style={{ transform: 'rotate(135deg)' }}>
@@ -17,6 +19,7 @@ const STATUS = {
 const OutgoingCallModal = ({ isOpen, friend, onCancel, callStatus = 'calling' }) => {
   const [elapsed, setElapsed] = useState(0);
   const [dots, setDots] = useState('');
+  const ringbackRef = useRef(null);
 
   useEffect(() => {
     if (!isOpen) { setElapsed(0); setDots(''); return; }
@@ -25,6 +28,22 @@ const OutgoingCallModal = ({ isOpen, friend, onCancel, callStatus = 'calling' })
     const elapsedInterval = setInterval(() => setElapsed(prev => prev + 1), 1000);
     const dotsInterval   = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 600);
     return () => { clearInterval(elapsedInterval); clearInterval(dotsInterval); };
+  }, [isOpen, callStatus]);
+
+  // Ringback tone loops only while actively "calling" — stops the instant the
+  // call resolves (accepted closes the modal, or status flips to
+  // declined/busy/no_answer), same gate as the elapsed/dots timer above.
+  useEffect(() => {
+    if (!isOpen || callStatus !== 'calling') return;
+    const audio = new Audio(RINGBACK_URL);
+    audio.loop = true;
+    audio.volume = 0.5;
+    ringbackRef.current = audio;
+    audio.play().catch(e => console.warn('Ringback play failed:', e));
+    return () => {
+      audio.pause();
+      ringbackRef.current = null;
+    };
   }, [isOpen, callStatus]);
 
   if (!isOpen) return null;

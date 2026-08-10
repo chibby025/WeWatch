@@ -41,3 +41,12 @@ export const playJoinSound = () => {
   audio.volume = 0.5;
   audio.play().catch(e => console.warn("Join sound failed:", e));
 };
+
+// User left session sound (Leave Call button) — hosted on BunnyCDN per
+// explicit request, unlike every other short effect above which is bundled
+// locally in public/sounds/.
+export const playLeaveSound = () => {
+  const audio = new Audio('https://letswatchout.b-cdn.net/sounds/leave-call.mp3');
+  audio.volume = 0.5;
+  audio.play().catch(e => console.warn("Leave sound failed:", e));
+};

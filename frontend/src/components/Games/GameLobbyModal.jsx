@@ -59,6 +59,26 @@ const games = [
     type: 'multiplayer'
   },
   {
+    id: 'rebus_round',
+    name: 'Rebus Round',
+    description: 'A picture puzzle appears — type the phrase it\'s hinting at before anyone else!',
+    minPlayers: 2,
+    maxPlayers: 10,
+    image: `${GAME_POSTERS_BASE_URL}/rebus_round.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'karaoke',
+    name: 'Karaoke Night',
+    description: 'Search a song, pick an instrumental, and sing along together with synced lyrics!',
+    minPlayers: 1,
+    maxPlayers: 10,
+    image: `${GAME_POSTERS_BASE_URL}/karaoke.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
     id: 'doom',
     name: 'DOOM',
     description: 'Classic vintage shooter — solo arcade mode',
@@ -67,6 +87,17 @@ const games = [
     image: `${GAME_POSTERS_BASE_URL}/doom.webp`,
     disabled: false,
     type: 'arcade',
+    heavy: true
+  },
+  {
+    id: 'quake3',
+    name: 'Quake Death Match',
+    description: 'Real arena FPS multiplayer — everyone drops into the same match!',
+    minPlayers: 1,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/quake3.webp`,
+    disabled: false,
+    type: 'multiplayer',
     heavy: true
   },
   {
@@ -394,6 +425,28 @@ const games = [
     type: 'arcade',
     heavy: false
   },
+  {
+    id: 'toad_ball',
+    name: 'Toad Ball',
+    description: 'Aim, fire, and match 3+ colored orbs before the chain reaches the bog — solo or hot-seat tournament!',
+    minPlayers: 1,
+    maxPlayers: 1,
+    image: `${GAME_POSTERS_BASE_URL}/toad_ball.webp`,
+    disabled: false,
+    type: 'arcade',
+    heavy: false
+  },
+  {
+    id: 'golf',
+    name: 'Mini Golf',
+    description: 'Putt through a real 3D course — fewest strokes wins! Solo practice or hot-seat tournament.',
+    minPlayers: 1,
+    maxPlayers: 1,
+    image: `${GAME_POSTERS_BASE_URL}/golf.webp`,
+    disabled: false,
+    type: 'arcade',
+    heavy: true
+  },
   // roulette temporarily removed
   // {
   //   id: 'roulette',
@@ -411,8 +464,10 @@ const games = [
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
 const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon', 'ramp_rush'];
-// Hot-seat tournament: each player takes a solo turn; highest score wins.
-const HOT_SEAT_GAME_IDS = ['fowl_play'];
+// Hot-seat tournament: each player takes a solo turn; highest score wins
+// (golf is the one exception — lower stroke count wins, handled entirely
+// backend-side via lowerScoreWinsGameTypes in websocket_handler.go).
+const HOT_SEAT_GAME_IDS = ['fowl_play', 'toad_ball', 'golf'];
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 

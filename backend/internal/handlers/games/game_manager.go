@@ -26,6 +26,7 @@ type GameManager struct {
 	TournamentManager *TournamentManager
 	HotSeatManager    *HotSeatManager
 	disconnectTimers  sync.Map // key: userID (uint) → *time.Timer; pending forfeit grace timers
+	counterTimers     sync.Map // key: gameSessionID (uint) → *time.Timer; pending vs_battle counter-window auto-resolve timers
 }
 
 // GameSessionState holds the runtime state of an active game
@@ -52,6 +53,19 @@ type GameSessionState struct {
 	Hands       map[uint][]string
 	DrawPile    []string
 	DiscardPile []string // includes the current top card (last element)
+
+	// Rebus Round-only field. Deliberately kept OFF GameData and never
+	// broadcast/persisted to GameSession.GameState — the whole game is "type
+	// the hidden answer", so the correct answer for the currently-active
+	// puzzle must never reach the wire until an explicit reveal, unlike every
+	// perfect-information board game in this package (trivia included, whose
+	// correct_index IS broadcast up front — acceptable there since 1-of-4
+	// multiple choice isn't the actual test of skill; here the answer text
+	// itself is). Set once at StartGame to a shuffled, fixed-for-this-session
+	// order; GameData["round"] indexes directly into it (round N → index
+	// N-1), same convention Trivia already uses for its own client-supplied
+	// questions array.
+	RebusPuzzles []RebusPuzzle
 }
 
 // NewGameManager creates a new game manager instance
@@ -77,7 +91,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 
 	validGameTypes := map[string]bool{
 		"tic_tac_toe": true, "rock_paper_scissors": true, "chess": true,
-		"trivia": true, "doom": true,
+		"trivia": true, "doom": true, "quake3": true,
 		"othello": true, "checkers": true, "crazy_eights": true, "ludo": true,
 		"connect_four": true, "would_you_rather": true, "wordle": true,
 		"uno": true, "quiplash": true,
@@ -96,6 +110,9 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"ping_pong":    true,
 		"air_hockey":   true,
 		"space_attack": true,
+		"toad_ball":    true,
+		"rebus_round":  true,
+		"karaoke":      true,
 		// "roulette": true, // temporarily removed
 		"snakes_ladders":  true,
 		"mancala":         true,
@@ -105,6 +122,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"property_tycoon": true,
 		"texas_holdem":    true,
 		"ramp_rush":       true,
+		"golf":            true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -208,6 +226,13 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	case "sudoku":
 		ensureSudokuState(gameState)
 		gameState.GameSession.GameState = gameState.GameData
+	case "rebus_round":
+		gameState.RebusPuzzles = rebusShuffledPuzzles()
+		gameState.GameData["phase"] = "waiting"
+		gameState.GameData["round"] = float64(0)
+		gameState.GameData["total_puzzles"] = float64(len(gameState.RebusPuzzles))
+		gameState.GameData["scores"] = map[string]interface{}{}
+		gameState.GameSession.GameState = gameState.GameData
 	case "roulette":
 		// Chips seeded lazily on first move; just set opening state here.
 		gameState.GameData["phase"] = "betting"
@@ -304,6 +329,10 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processChessMove(gameState, playerID, moveData)
 	case "trivia":
 		gameOver, winnerID, err = gm.processTriviaMove(gameState, playerID, moveType, moveData)
+	case "rebus_round":
+		gameOver, winnerID, err = gm.processRebusRoundMove(gameState, playerID, moveType, moveData)
+	case "karaoke":
+		gameOver, winnerID, err = gm.processKaraokeMove(gameState, playerID, moveType, moveData)
 	case "othello":
 		gameOver, winnerID, err = gm.processOthelloMove(gameState, playerID, moveData)
 	case "checkers":
@@ -355,6 +384,10 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 	case "space_attack":
 		// Arcade iframe — no server-side move logic needed
 		gameOver, winnerID, err = false, nil, nil
+	case "toad_ball":
+		// Self-contained canvas arcade game — score is reported client-side via
+		// record_hot_seat_score for tournament mode; no server-side move logic needed
+		gameOver, winnerID, err = false, nil, nil
 	case "roulette":
 		gameOver, winnerID, err = gm.processRouletteMove(gameState, playerID, moveType, moveData)
 	case "snakes_ladders":
@@ -385,6 +418,21 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameState.GameSession.GameState = gameState.GameData
 		if err := gm.db.Model(&models.GameSession{}).Where("id = ?", gameSessionID).Update("game_state", gameState.GameSession.GameState).Error; err != nil {
 			log.Printf("⚠️ [GameManager] Failed to update game state: %v", err)
+		}
+	}
+
+	// A freshly-opened vs_battle counter window gets a server-side backstop
+	// timer — see startVSCounterTimeout's own doc comment for why a purely
+	// client-side countdown isn't enough on its own.
+	if gameState.GameSession.GameType == "vs_battle" {
+		if phase, _ := gameState.GameData["phase"].(string); phase == "counter_window" {
+			if cs, ok := gameState.GameData["counter_state"].(map[string]interface{}); ok {
+				durationMs := 3000
+				if csType, _ := cs["type"].(string); csType == "stalemate" {
+					durationMs = 1000
+				}
+				gm.startVSCounterTimeout(gameSessionID, gameState.GameSession.RoomID, durationMs)
+			}
 		}
 	}
 
@@ -704,6 +752,54 @@ func (gm *GameManager) BroadcastGameState(roomID uint) error {
 	return nil
 }
 
+// startVSCounterTimeout schedules a server-side backstop for a vs_battle
+// counter window. The frontend already has the responsible player's own
+// client auto-submit a choice when its local countdown reaches zero — but
+// that's a purely client-side timer with no server enforcement: if that
+// specific client's tab is backgrounded (browsers throttle setInterval
+// heavily in inactive tabs), the app crashes, or the connection drops,
+// nothing ever sends the resolving move, and every connected client's
+// counter-window modal stays open indefinitely (it's gated purely on the
+// server-broadcast `phase`, which never changes). Mirrors the exact
+// time.AfterFunc + re-lock + activeGames-still-exists pattern already
+// proven in HandlePlayerDisconnect's forfeit-grace-timer above.
+func (gm *GameManager) startVSCounterTimeout(gameSessionID uint, roomID uint, durationMs int) {
+	// Cancel any previous pending timer for this session — a fresh counter
+	// window superseding an old one (shouldn't normally overlap, but this
+	// keeps a stray duplicate schedule from ever double-firing).
+	if prev, loaded := gm.counterTimers.LoadAndDelete(gameSessionID); loaded {
+		prev.(*time.Timer).Stop()
+	}
+	// Grace period on top of the frontend's own visual countdown so this only
+	// ever fires as a genuine backstop — under normal conditions the
+	// responsible player's client auto-submits well before this elapses.
+	wait := time.Duration(durationMs+2000) * time.Millisecond
+	timer := time.AfterFunc(wait, func() {
+		gm.counterTimers.Delete(gameSessionID)
+		gm.mu.Lock()
+		defer gm.mu.Unlock()
+		gameState, exists := gm.activeGames[gameSessionID]
+		if !exists {
+			return // game already ended while we were waiting
+		}
+		resolved, err := vsResolveCounterTimeout(gameState)
+		if err != nil {
+			log.Printf("⚠️ [GameManager] vs_battle counter timeout resolve error (game %d): %v", gameSessionID, err)
+			return
+		}
+		if !resolved {
+			return // a real player choice already closed this window — nothing to do
+		}
+		gameState.GameSession.GameState = gameState.GameData
+		if err := gm.db.Model(&models.GameSession{}).Where("id = ?", gameSessionID).Update("game_state", gameState.GameSession.GameState).Error; err != nil {
+			log.Printf("⚠️ [GameManager] Failed to persist vs_battle counter-timeout state: %v", err)
+		}
+		log.Printf("🎮 [GameManager] VS Battle counter window in game %d expired unanswered — auto-resolved", gameSessionID)
+		_ = gm.BroadcastGameState(roomID)
+	})
+	gm.counterTimers.Store(gameSessionID, timer)
+}
+
 // publicGameData returns the room-broadcastable view of a game's GameData, stripping
 // any per-game hidden fields. Draw & Guess hides the secret word from every client
 // except the drawer (who receives it via the private draw_word message); everything
@@ -756,6 +852,10 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 		state["phase"] = "waiting"
 		state["scores"] = map[string]interface{}{}
 		state["answers"] = map[string]interface{}{}
+
+	case "karaoke":
+		state["phase"] = "waiting"
+		state["song_number"] = float64(0)
 
 	case "ludo":
 		ludoBoard := ludoInitialBoard(playerCount)

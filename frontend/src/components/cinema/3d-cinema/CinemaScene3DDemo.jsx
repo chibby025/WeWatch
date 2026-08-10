@@ -698,6 +698,9 @@ export default function CinemaScene3DDemo() {
   
   // 🔊 User join sound
   const joinSoundRef = useRef(null);
+  // 🔊 User leave sound (Leave Call button) — hosted on BunnyCDN, unlike the
+  // local /sounds/ join sound above, per explicit request for this one.
+  const leaveSoundRef = useRef(null);
   
   // 🎤 Floating audio notification state
   const [audioNotification, setAudioNotification] = useState(null); // { text: string, timestamp: number }
@@ -716,10 +719,16 @@ export default function CinemaScene3DDemo() {
   useEffect(() => {
     joinSoundRef.current = new Audio('/sounds/userjoin.mp3');
     joinSoundRef.current.volume = 0.5; // 50% volume
+    leaveSoundRef.current = new Audio('https://letswatchout.b-cdn.net/sounds/leave-call.mp3');
+    leaveSoundRef.current.volume = 0.5;
     return () => {
       if (joinSoundRef.current) {
         joinSoundRef.current.pause();
         joinSoundRef.current = null;
+      }
+      if (leaveSoundRef.current) {
+        leaveSoundRef.current.pause();
+        leaveSoundRef.current = null;
       }
     };
   }, []);
@@ -4492,7 +4501,7 @@ export default function CinemaScene3DDemo() {
           if (msg.data?.user_id) {
             const userId = msg.data.user_id;
             const username = msg.data.username;
-            
+
             console.log('👋 [CinemaScene3D] Removing member:', username, userId);
             setRoomMembers(prev => {
               const updated = prev.filter(m => m.id !== userId);
@@ -4503,7 +4512,7 @@ export default function CinemaScene3DDemo() {
               });
               return updated;
             });
-            
+
             // Remove their seat assignment
             setUserSeats(prev => {
               const updated = { ...prev };
@@ -4511,6 +4520,12 @@ export default function CinemaScene3DDemo() {
               console.log('🪑 [CinemaScene3D] Removed seat for user:', userId);
               return updated;
             });
+
+            // 🔊 Play leave sound for everyone remaining (not for the leaving user themselves)
+            if (leaveSoundRef.current && currentUser && userId !== currentUser.id) {
+              leaveSoundRef.current.currentTime = 0;
+              leaveSoundRef.current.play().catch(err => console.log('Leave sound play error:', err));
+            }
           }
           break;
 
