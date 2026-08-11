@@ -287,6 +287,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"roulette":              true, // all players bet freely; host-only spin/end enforced inside processRouletteMove
 		"uno":                   true, // catch_uno can be sent by any player at any time; play/draw/uno enforced internally
 		"jigsaw":                true, // fully cooperative — any player can pick up/place any unclaimed piece at any time
+		"rebus_round":           true, // any player can submit "answer" at any time (unlimited retries); host-only rebus_start/reveal/rebus_end enforced internally
+		"karaoke":               true, // host-only karaoke_start/karaoke_end enforced internally; no per-player turn concept at all
 	}
 	if !simultaneousGames[gameState.GameSession.GameType] {
 		currentPlayer := gameState.Players[gameState.CurrentTurn]
