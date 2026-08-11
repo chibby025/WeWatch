@@ -192,6 +192,25 @@ func CreateRoomHandler(c *gin.Context) {
 		return
 	}
 
+	// GORM's struct-based Create silently substitutes a column's own
+	// `gorm:"default:..."` tag value whenever the Go field is left at its zero
+	// value — and false IS the zero value for bool. IsPublic is tagged
+	// `default:true`, so a request for a genuinely PRIVATE room (isPublic ==
+	// false) was silently created public every single time, confirmed via a
+	// real generated INSERT statement showing `"is_public"` with a literal
+	// `true` in its VALUES list despite the struct explicitly holding false.
+	// A plain UPDATE isn't subject to this same substitution, so force it
+	// explicitly whenever the room should be private (found 2026-08-12).
+	if !isPublic {
+		if err := tx.Model(&newRoom).Update("is_public", false).Error; err != nil {
+			tx.Rollback()
+			log.Printf("CreateRoomHandler: Failed to set is_public=false for room %d: %v", newRoom.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create room"})
+			return
+		}
+		newRoom.IsPublic = false
+	}
+
 	// Create the UserRoom membership
 	userRoom := models.UserRoom{
 		UserID:   newRoom.HostID,
@@ -271,6 +290,7 @@ func CreateRoomHandler(c *gin.Context) {
 			"playback_state":  newRoom.PlaybackState,
 			"playback_time":   newRoom.PlaybackTime,
 			"created_at":      newRoom.CreatedAt,
+			"is_public":       newRoom.IsPublic,
 		},
 	})
 }
@@ -1806,6 +1826,21 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		return
 	}
 
+	// Same GORM zero-value + `gorm:"default:true"` substitution as
+	// CreateRoomHandler above — an explicit isPublic=false request needs a
+	// follow-up Update, since struct-based Create silently swaps it back to
+	// the column default (found 2026-08-12, same root cause across both
+	// room-creation paths).
+	if !isPublic {
+		if err := tx.Model(&newRoom).Update("is_public", false).Error; err != nil {
+			tx.Rollback()
+			log.Printf("CreateInstantWatchHandler: Failed to set is_public=false for room %d: %v", newRoom.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+			return
+		}
+		newRoom.IsPublic = false
+	}
+
 	// Add user as member
 	userRoom := models.UserRoom{
 		UserID:   userID,
@@ -3137,7 +3172,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 }
 
 // GetRoomHandler handles the GET /api/rooms/:id endpoint
-//Fetches details for a specific room by its ID
+// Fetches details for a specific room by its ID
 // This requires authentication
 func GetRoomHandler(c *gin.Context) {
 	// Get the room id from the URL parameter
