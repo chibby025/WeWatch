@@ -182,24 +182,6 @@ const LobbyPage = () => {
     }
   }, []);
 
-  // One-time coach-mark tour of the bottom taskbar — shown once to every
-  // user (new or existing) who hasn't seen it yet, matching the existing
-  // Room Page / Sidebar / RoomTV tour convention (fire once, gate on a
-  // localStorage flag). Deliberately waits for the App Tour (above) to be
-  // dismissed first if both are pending at once, rather than stacking two
-  // full-screen overlays — the effect naturally re-fires once
-  // isOnboardingTourOpen flips back to false, since it never marks
-  // taskbarTourShown while blocked.
-  useEffect(() => {
-    if (taskbarTourShown.current) return;
-    if (localStorage.getItem('wewatch_lobby_taskbar_tour_seen')) return;
-    if (!currentUser) return;
-    if (isOnboardingTourOpen) return;
-    taskbarTourShown.current = true;
-    const t = setTimeout(() => setShowTaskbarTour(true), 700);
-    return () => clearTimeout(t);
-  }, [currentUser, isOnboardingTourOpen]);
-
   // 🔔 Notification state
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [notifications, setNotifications] = useState([]);
@@ -521,7 +503,32 @@ const LobbyPage = () => {
   
   // Use currentUser.id for authenticated user ID
   const authenticatedUserID = currentUser?.id || null;
-  
+
+  // One-time coach-mark tour of the bottom taskbar — shown once to every
+  // user (new or existing) who hasn't seen it yet, matching the existing
+  // Room Page / Sidebar / RoomTV tour convention (fire once, gate on a
+  // localStorage flag). Deliberately waits for the App Tour (above) to be
+  // dismissed first if both are pending at once, rather than stacking two
+  // full-screen overlays — the effect naturally re-fires once
+  // isOnboardingTourOpen flips back to false, since it never marks
+  // taskbarTourShown while blocked.
+  //
+  // Must stay below the useAuth() destructuring above — this previously sat
+  // near the top of the component and referenced currentUser (declared here),
+  // isOnboardingTourOpen (line ~346), taskbarTourShown/setShowTaskbarTour
+  // (line ~354-355) before any of them existed yet, throwing a real
+  // "Cannot access 'currentUser' before initialization" TDZ error on every
+  // single LobbyPage mount in production builds (found 2026-08-11).
+  useEffect(() => {
+    if (taskbarTourShown.current) return;
+    if (localStorage.getItem('wewatch_lobby_taskbar_tour_seen')) return;
+    if (!currentUser) return;
+    if (isOnboardingTourOpen) return;
+    taskbarTourShown.current = true;
+    const t = setTimeout(() => setShowTaskbarTour(true), 700);
+    return () => clearTimeout(t);
+  }, [currentUser, isOnboardingTourOpen]);
+
   // 🔇 Toggle video mute state and save to localStorage
   const toggleVideoMute = () => {
     setVideoMuted(prev => {
