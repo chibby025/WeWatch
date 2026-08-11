@@ -15,6 +15,16 @@ import { useAuth } from '../contexts/AuthContext';
 
 const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = true, membersInRoom = 0, members = [] }) => {
   const { currentUser } = useAuth();
+
+  // The real authority here is the backend's own check in UpdateRoomHandler:
+  // `room.HostID != userID && requestingUser.Role != "super_admin"` → 403. The
+  // `isHost` prop alone (a strict host_id match, computed in RoomPageNew.jsx
+  // and reused for many other unrelated host-only features there) doesn't
+  // reflect that — a super_admin who isn't the room's host would get isHost
+  // false, hiding controls the backend would actually let them use. Every
+  // edit control in this modal should gate on this, not raw isHost — found
+  // 2026-08-12 alongside the toggle-visible-to-everyone bug below.
+  const canManageRoom = isHost || currentUser?.role === 'super_admin';
   const [activeTab, setActiveTab] = useState('info');
   const [selectedPost, setSelectedPost] = useState(null);
   const [isPostViewModalOpen, setIsPostViewModalOpen] = useState(false);
@@ -110,10 +120,10 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
 
   // Fetch groups when modal opens and Groups tab is active
   useEffect(() => {
-    if (isOpen && room?.id && activeTab === 'groups' && isHost) {
+    if (isOpen && room?.id && activeTab === 'groups' && canManageRoom) {
       fetchGroups();
     }
-  }, [isOpen, room?.id, activeTab, isHost]);
+  }, [isOpen, room?.id, activeTab, canManageRoom]);
 
   const fetchGroups = async () => {
     try {
@@ -319,6 +329,15 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    // The backend (UpdateRoomHandler) is the real authority and already
+    // rejects this with a 403 for anyone who isn't the host or a super_admin
+    // — this is purely a UX guard to skip a doomed network round-trip. It
+    // matters because the "Save Changes" button itself is hidden for a
+    // non-privileged viewer, but this form can still be submitted natively
+    // via Enter inside the Name/Handle/Description inputs above, which don't
+    // call preventDefault() on their own Enter handling.
+    if (!canManageRoom) return;
+
     // Handle both lowercase 'id' and uppercase 'ID' from backend
     const roomId = room?.id || room?.ID;
 
@@ -393,6 +412,11 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
   // the value already matches what's persisted — this is what makes the
   // Escape-then-blur sequence a safe no-op (see the *EditCloseRef guards below).
   const saveRoomField = async (field, value) => {
+    // Same defensive UX guard as handleSubmit — the inline editors that call
+    // this are already gated behind canManageRoom before they're reachable at
+    // all, so this should never actually trip, but the backend remains the
+    // real enforcement point regardless.
+    if (!canManageRoom) return;
     const roomId = room?.id || room?.ID;
     if (!roomId) return;
 
@@ -483,7 +507,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               </div>
               
               {/* Edit/Upload Button (Host only) */}
-              {isHost && (
+              {canManageRoom && (
                 <label 
                   htmlFor="room-image-input"
                   className="absolute bottom-0 right-0 bg-gradient-to-br from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-full p-2 cursor-pointer shadow-xl transition-all transform hover:scale-110"
@@ -495,7 +519,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               )}
               
               {/* Delete Button (Host only, only show if image exists) */}
-              {isHost && (imagePreview || room?.image_url) && (
+              {canManageRoom && (imagePreview || room?.image_url) && (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -520,7 +544,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               />
               
               {/* Upload Button (only show if new file selected) */}
-              {isHost && imageFile && (
+              {canManageRoom && imageFile && (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -538,7 +562,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
             {/* Room Name and Description */}
             <div className="flex-1 min-w-0">
               {/* Room Name - Editable for Host */}
-              {isEditingName && isHost ? (
+              {isEditingName && canManageRoom ? (
                 <input
                   type="text"
                   value={formData.name}
@@ -568,13 +592,13 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               ) : (
                 <div className="flex items-center gap-1.5 mb-0 sm:mb-0.5 group">
                   <h2
-                    className={`text-base sm:text-xl font-bold text-white truncate ${isHost ? 'cursor-pointer hover:text-purple-400 transition-colors' : ''}`}
-                    onClick={() => isHost && setIsEditingName(true)}
-                    title={isHost ? 'Click to edit' : ''}
+                    className={`text-base sm:text-xl font-bold text-white truncate ${canManageRoom ? 'cursor-pointer hover:text-purple-400 transition-colors' : ''}`}
+                    onClick={() => canManageRoom && setIsEditingName(true)}
+                    title={canManageRoom ? 'Click to edit' : ''}
                   >
                     {formData.name || 'Untitled Room'}
                   </h2>
-                  {isHost && (
+                  {canManageRoom && (
                     <button
                       onClick={() => setIsEditingName(true)}
                       className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700/50 rounded flex-shrink-0"
@@ -587,7 +611,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               )}
               
               {/* Handle */}
-              {isEditingHandle && isHost ? (
+              {isEditingHandle && canManageRoom ? (
                 <div className="flex items-center gap-1 mt-1">
                   <span className="text-gray-500 text-xs font-semibold">@</span>
                   <input
@@ -619,13 +643,13 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               ) : (
                 <div className="flex items-center gap-1 mt-0 group">
                   <p
-                    className={`text-[10px] text-gray-500 font-medium ${isHost ? 'cursor-pointer hover:text-gray-300 transition-colors' : ''}`}
-                    onClick={() => isHost && setIsEditingHandle(true)}
-                    title={isHost ? 'Click to edit' : ''}
+                    className={`text-[10px] text-gray-500 font-medium ${canManageRoom ? 'cursor-pointer hover:text-gray-300 transition-colors' : ''}`}
+                    onClick={() => canManageRoom && setIsEditingHandle(true)}
+                    title={canManageRoom ? 'Click to edit' : ''}
                   >
-                    {formData.handle ? `@${formData.handle}` : (isHost ? '@handle' : '')}
+                    {formData.handle ? `@${formData.handle}` : (canManageRoom ? '@handle' : '')}
                   </p>
-                  {isHost && (
+                  {canManageRoom && (
                     <button
                       onClick={() => setIsEditingHandle(true)}
                       className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700/50 rounded"
@@ -670,13 +694,13 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               ) : (
                 <div className="flex items-start gap-2 mt-1.5 group">
                   <p
-                    className={`text-xs sm:text-sm text-gray-400 line-clamp-2 flex-1 ${isHost ? 'cursor-pointer hover:text-gray-300 transition-colors' : ''}`}
-                    onClick={() => isHost && setIsEditingDescription(true)}
-                    title={isHost ? 'Click to edit' : ''}
+                    className={`text-xs sm:text-sm text-gray-400 line-clamp-2 flex-1 ${canManageRoom ? 'cursor-pointer hover:text-gray-300 transition-colors' : ''}`}
+                    onClick={() => canManageRoom && setIsEditingDescription(true)}
+                    title={canManageRoom ? 'Click to edit' : ''}
                   >
                     {formData.description || 'No description'}
                   </p>
-                  {isHost && (
+                  {canManageRoom && (
                     <button
                       onClick={() => setIsEditingDescription(true)}
                       className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-700/50 rounded"
@@ -736,7 +760,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
             <Squares2X2Icon className="w-4 h-4" />
             <span>Posts</span>
           </button>
-          {isHost && (
+          {canManageRoom && (
             <button
               onClick={() => setActiveTab('groups')}
               className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium transition-all ${
@@ -814,7 +838,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                   </svg>
                 </span>
                 <div className="flex items-center gap-2">
-                  {isHost && (
+                  {canManageRoom && (
                     <button
                       type="button"
                       title="Invite member"
@@ -837,7 +861,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
               </div>
 
               {/* Search bar — shown above the card when invite is open */}
-              {isHost && showAddMember && (
+              {canManageRoom && showAddMember && (
                 <div className="mt-2 flex items-center gap-2">
                   <input
                     type="text"
@@ -946,14 +970,20 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                     </p>
                   </div>
                   <label
-                    className="relative cursor-pointer ml-4 flex-shrink-0"
-                    style={{ display: 'inline-block', width: '44px', height: '24px' }}
+                    className="relative ml-4 flex-shrink-0"
+                    style={{
+                      display: 'inline-block', width: '44px', height: '24px',
+                      cursor: canManageRoom ? 'pointer' : 'not-allowed',
+                      opacity: canManageRoom ? 1 : 0.5,
+                    }}
+                    title={canManageRoom ? undefined : 'Only the room host or an admin can change this'}
                   >
                     <input
                       type="checkbox"
                       className="sr-only"
                       checked={!!formData.is_public}
-                      onChange={() => setFormData(prev => ({ ...prev, is_public: !prev.is_public }))}
+                      disabled={!canManageRoom}
+                      onChange={() => canManageRoom && setFormData(prev => ({ ...prev, is_public: !prev.is_public }))}
                     />
                     <span
                       className="absolute inset-0 rounded-full transition-colors duration-200"
@@ -995,15 +1025,21 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 </p>
                 <label
                   htmlFor="host_only_chat"
-                  className="relative cursor-pointer"
-                  style={{ display: 'inline-block', width: '44px', height: '24px', flexShrink: 0 }}
+                  className="relative"
+                  style={{
+                    display: 'inline-block', width: '44px', height: '24px', flexShrink: 0,
+                    cursor: canManageRoom ? 'pointer' : 'not-allowed',
+                    opacity: canManageRoom ? 1 : 0.5,
+                  }}
+                  title={canManageRoom ? undefined : 'Only the room host or an admin can change this'}
                 >
                   <input
                     type="checkbox"
                     id="host_only_chat"
                     className="sr-only"
                     checked={!!formData.host_only_chat}
-                    onChange={() => setFormData(prev => ({ ...prev, host_only_chat: !prev.host_only_chat }))}
+                    disabled={!canManageRoom}
+                    onChange={() => canManageRoom && setFormData(prev => ({ ...prev, host_only_chat: !prev.host_only_chat }))}
                   />
                   <span
                     className="absolute inset-0 rounded-full transition-colors duration-200"
@@ -1036,15 +1072,21 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
                 </p>
                 <label
                   htmlFor="auto_invite_followers"
-                  className="relative cursor-pointer"
-                  style={{ display: 'inline-block', width: '44px', height: '24px', flexShrink: 0 }}
+                  className="relative"
+                  style={{
+                    display: 'inline-block', width: '44px', height: '24px', flexShrink: 0,
+                    cursor: canManageRoom ? 'pointer' : 'not-allowed',
+                    opacity: canManageRoom ? 1 : 0.5,
+                  }}
+                  title={canManageRoom ? undefined : 'Only the room host or an admin can change this'}
                 >
                   <input
                     type="checkbox"
                     id="auto_invite_followers"
                     className="sr-only"
                     checked={!!formData.auto_invite_followers}
-                    onChange={() => setFormData(prev => ({ ...prev, auto_invite_followers: !prev.auto_invite_followers }))}
+                    disabled={!canManageRoom}
+                    onChange={() => canManageRoom && setFormData(prev => ({ ...prev, auto_invite_followers: !prev.auto_invite_followers }))}
                   />
                   <span
                     className="absolute inset-0 rounded-full transition-colors duration-200"
@@ -1082,7 +1124,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
         {activeTab === 'groups' && (
           <div className="p-6 overflow-y-auto flex-1">
             {/* Create New Group - Host Only */}
-            {isHost && (
+            {canManageRoom && (
             <div className="bg-white rounded-lg p-4 mb-4 border border-gray-200">
               <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
                 <PlusIcon className="w-4 h-4" />
@@ -1394,7 +1436,7 @@ const RoomPageEditModal = ({ isOpen, onClose, room, onUpdate, onShare, isHost = 
         )}
 
         {/* Fixed Footer with Action Buttons */}
-        {isHost && (
+        {canManageRoom && (
           <div className="border-t border-gray-700/50 p-4 sm:p-6 bg-gray-900/50">
             <button
               type="submit"

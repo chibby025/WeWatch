@@ -1,17 +1,17 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
+	"github.com/google/uuid"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
-    "os"
-    "fmt"
-    "time"
-    "encoding/json"
-    "strings"
-    "path/filepath"
-    "io"
-    "github.com/google/uuid"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -65,214 +65,214 @@ func sanitizeHandle(h string) string {
 // CreateRoomHandler handles the POST /api/rooms endpoint
 // It requires authentication (the user ID comes from the JWT context).
 func CreateRoomHandler(c *gin.Context) {
-    userID, exists := c.Get("user_id")
-    if !exists {
-        log.Println("CreateRoomHandler: Unauthorized access, user_id not found in context")
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-        return
-    }
+	userID, exists := c.Get("user_id")
+	if !exists {
+		log.Println("CreateRoomHandler: Unauthorized access, user_id not found in context")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
 
-    id, ok := userID.(uint)
-    if !ok {
-        log.Println("CreateRoomHandler: Error asserting user ID type")
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-        return
-    }
+	id, ok := userID.(uint)
+	if !ok {
+		log.Println("CreateRoomHandler: Error asserting user ID type")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
 
-    var input CreateRoomInput
-    if err := c.ShouldBindJSON(&input); err != nil {
-        log.Printf("CreateRoomHandler: Error binding input: %v", err)
-        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-        return
-    }
+	var input CreateRoomInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Printf("CreateRoomHandler: Error binding input: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
-    // Fetch the requesting user to check role and existing room ownership
-    var requestingUser models.User
-    if err := DB.Select("id, role, main_room_id").First(&requestingUser, id).Error; err != nil {
-        log.Printf("CreateRoomHandler: Failed to fetch user %d: %v", id, err)
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-        return
-    }
+	// Fetch the requesting user to check role and existing room ownership
+	var requestingUser models.User
+	if err := DB.Select("id, role, main_room_id").First(&requestingUser, id).Error; err != nil {
+		log.Printf("CreateRoomHandler: Failed to fetch user %d: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
 
-    // Enforce 1-room limit: non-super-admins may only own one permanent room
-    if requestingUser.Role != "super_admin" {
-        var ownedCount int64
-        DB.Model(&models.Room{}).Where("host_id = ? AND is_temporary = false AND deleted_at IS NULL", id).Count(&ownedCount)
-        if ownedCount >= 1 {
-            log.Printf("CreateRoomHandler: User %d already owns %d room(s) — blocked", id, ownedCount)
-            c.JSON(http.StatusForbidden, gin.H{"error": "You already have a room. Build your audience there using room groups and sessions."})
-            return
-        }
-    }
+	// Enforce 1-room limit: non-super-admins may only own one permanent room
+	if requestingUser.Role != "super_admin" {
+		var ownedCount int64
+		DB.Model(&models.Room{}).Where("host_id = ? AND is_temporary = false AND deleted_at IS NULL", id).Count(&ownedCount)
+		if ownedCount >= 1 {
+			log.Printf("CreateRoomHandler: User %d already owns %d room(s) — blocked", id, ownedCount)
+			c.JSON(http.StatusForbidden, gin.H{"error": "You already have a room. Build your audience there using room groups and sessions."})
+			return
+		}
+	}
 
-    // 🔁 BEGIN TRANSACTION
-    tx := DB.Begin()
-    if tx.Error != nil {
-        log.Printf("CreateRoomHandler: Failed to begin transaction: %v", tx.Error)
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create room"})
-        return
-    }
+	// 🔁 BEGIN TRANSACTION
+	tx := DB.Begin()
+	if tx.Error != nil {
+		log.Printf("CreateRoomHandler: Failed to begin transaction: %v", tx.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create room"})
+		return
+	}
 
-    // Create the room
-    isPublic := true // Default to public
-    if input.IsPublic != nil {
-        isPublic = *input.IsPublic
-    }
-    
-    // Validate room type (default to 'general')
-    roomType := "general"
-    validRoomTypes := []string{"general", "church", "education", "other"}
-    if input.RoomType != "" {
-        isValidType := false
-        for _, rt := range validRoomTypes {
-            if input.RoomType == rt {
-                isValidType = true
-                roomType = rt
-                break
-            }
-        }
-        if !isValidType {
-            tx.Rollback()
-            log.Printf("CreateRoomHandler: Invalid room type: %s", input.RoomType)
-            c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room type. Must be one of: general, church, education, other"})
-            return
-        }
-    }
+	// Create the room
+	isPublic := true // Default to public
+	if input.IsPublic != nil {
+		isPublic = *input.IsPublic
+	}
 
-    // Validate and set content rating (default to 'G')
-    contentRating := "G"
-    if input.ContentRating != "" {
-        validRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
-        isValid := false
-        for _, rating := range validRatings {
-            if input.ContentRating == rating {
-                isValid = true
-                contentRating = rating
-                break
-            }
-        }
-        if !isValid {
-            tx.Rollback()
-            log.Printf("CreateRoomHandler: Invalid content rating: %s", input.ContentRating)
-            c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content rating. Must be one of: G, PG, Educational, Religious, 13+, 16+, 18+, Mature"})
-            return
-        }
-    }
+	// Validate room type (default to 'general')
+	roomType := "general"
+	validRoomTypes := []string{"general", "church", "education", "other"}
+	if input.RoomType != "" {
+		isValidType := false
+		for _, rt := range validRoomTypes {
+			if input.RoomType == rt {
+				isValidType = true
+				roomType = rt
+				break
+			}
+		}
+		if !isValidType {
+			tx.Rollback()
+			log.Printf("CreateRoomHandler: Invalid room type: %s", input.RoomType)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room type. Must be one of: general, church, education, other"})
+			return
+		}
+	}
 
-    // Auto-lock content rating based on room type (overrides any user input)
-    if roomType == "church" {
-        contentRating = "Religious"
-    } else if roomType == "education" {
-        contentRating = "Educational"
-    }
+	// Validate and set content rating (default to 'G')
+	contentRating := "G"
+	if input.ContentRating != "" {
+		validRatings := []string{"G", "PG", "Educational", "Religious", "13+", "16+", "18+", "Mature"}
+		isValid := false
+		for _, rating := range validRatings {
+			if input.ContentRating == rating {
+				isValid = true
+				contentRating = rating
+				break
+			}
+		}
+		if !isValid {
+			tx.Rollback()
+			log.Printf("CreateRoomHandler: Invalid content rating: %s", input.ContentRating)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid content rating. Must be one of: G, PG, Educational, Religious, 13+, 16+, 18+, Mature"})
+			return
+		}
+	}
 
-    otherRoomType := ""
-    if roomType == "other" && input.OtherRoomType != "" {
-        if len(input.OtherRoomType) > 100 {
-            otherRoomType = input.OtherRoomType[:100]
-        } else {
-            otherRoomType = input.OtherRoomType
-        }
-    }
+	// Auto-lock content rating based on room type (overrides any user input)
+	if roomType == "church" {
+		contentRating = "Religious"
+	} else if roomType == "education" {
+		contentRating = "Educational"
+	}
 
-    newRoom := models.Room{
-        Name:          input.Name,
-        Description:   input.Description,
-        HostID:        id,
-        IsPublic:      isPublic,
-        ContentRating: contentRating,
-        RoomType:      roomType,
-        OtherRoomType: otherRoomType,
-    }
+	otherRoomType := ""
+	if roomType == "other" && input.OtherRoomType != "" {
+		if len(input.OtherRoomType) > 100 {
+			otherRoomType = input.OtherRoomType[:100]
+		} else {
+			otherRoomType = input.OtherRoomType
+		}
+	}
 
-    if err := tx.Create(&newRoom).Error; err != nil {
-        tx.Rollback()
-        log.Printf("CreateRoomHandler: Error creating room: %v", err)
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create room"})
-        return
-    }
+	newRoom := models.Room{
+		Name:          input.Name,
+		Description:   input.Description,
+		HostID:        id,
+		IsPublic:      isPublic,
+		ContentRating: contentRating,
+		RoomType:      roomType,
+		OtherRoomType: otherRoomType,
+	}
 
-    // Create the UserRoom membership
-    userRoom := models.UserRoom{
-        UserID:   newRoom.HostID,
-        RoomID:   newRoom.ID,
-        UserRole: "host",
-    }
+	if err := tx.Create(&newRoom).Error; err != nil {
+		tx.Rollback()
+		log.Printf("CreateRoomHandler: Error creating room: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create room"})
+		return
+	}
 
-    if err := tx.Create(&userRoom).Error; err != nil {
-        tx.Rollback()
-        log.Printf("CreateRoomHandler: Error adding host as member: %v", err)
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create room"})
-        return
-    }
+	// Create the UserRoom membership
+	userRoom := models.UserRoom{
+		UserID:   newRoom.HostID,
+		RoomID:   newRoom.ID,
+		UserRole: "host",
+	}
 
-    // ✅ COMMIT TRANSACTION
-    if err := tx.Commit().Error; err != nil {
-        log.Printf("CreateRoomHandler: Failed to commit transaction: %v", err)
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to finalize room creation"})
-        return
-    }
+	if err := tx.Create(&userRoom).Error; err != nil {
+		tx.Rollback()
+		log.Printf("CreateRoomHandler: Error adding host as member: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create room"})
+		return
+	}
 
-    // Set main_room_id on the user if not already set
-    if requestingUser.MainRoomID == nil {
-        if err := DB.Model(&models.User{}).Where("id = ?", id).Update("main_room_id", newRoom.ID).Error; err != nil {
-            log.Printf("CreateRoomHandler: Failed to set main_room_id for user %d: %v", id, err)
-        } else {
-            log.Printf("CreateRoomHandler: Set main_room_id=%d for user %d", newRoom.ID, id)
-        }
-    }
+	// ✅ COMMIT TRANSACTION
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("CreateRoomHandler: Failed to commit transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to finalize room creation"})
+		return
+	}
 
-    // Assign handle: use provided (sanitized) or auto-generate from name + room ID
-    handle := sanitizeHandle(input.Handle)
-    if handle == "" {
-        handle = generateRoomHandle(input.Name, newRoom.ID)
-    }
-    // Ensure uniqueness — append room ID if collision
-    var handleConflict int64
-    DB.Model(&models.Room{}).Where("handle = ? AND id != ?", handle, newRoom.ID).Count(&handleConflict)
-    if handleConflict > 0 {
-        handle = fmt.Sprintf("%s_%d", handle, newRoom.ID)
-    }
-    if err := DB.Model(&models.Room{}).Where("id = ?", newRoom.ID).Update("handle", handle).Error; err != nil {
-        log.Printf("CreateRoomHandler: Failed to set handle for room %d: %v", newRoom.ID, err)
-    } else {
-        newRoom.Handle = handle
-        log.Printf("CreateRoomHandler: Set handle=%s for room %d", handle, newRoom.ID)
-    }
+	// Set main_room_id on the user if not already set
+	if requestingUser.MainRoomID == nil {
+		if err := DB.Model(&models.User{}).Where("id = ?", id).Update("main_room_id", newRoom.ID).Error; err != nil {
+			log.Printf("CreateRoomHandler: Failed to set main_room_id for user %d: %v", id, err)
+		} else {
+			log.Printf("CreateRoomHandler: Set main_room_id=%d for user %d", newRoom.ID, id)
+		}
+	}
 
-    // Broadcast to lobby for real-time room list updates
-    lobbyBroadcastData := map[string]interface{}{
-        "type":    "room_created",
-        "room_id": newRoom.ID,
-    }
-    lobbyJsonData, _ := json.Marshal(lobbyBroadcastData)
-    hub := GetHub()
-    if hub != nil {
-        hub.BroadcastToLobby(OutgoingMessage{
-            Data:     lobbyJsonData,
-            IsBinary: false,
-        })
-    }
+	// Assign handle: use provided (sanitized) or auto-generate from name + room ID
+	handle := sanitizeHandle(input.Handle)
+	if handle == "" {
+		handle = generateRoomHandle(input.Name, newRoom.ID)
+	}
+	// Ensure uniqueness — append room ID if collision
+	var handleConflict int64
+	DB.Model(&models.Room{}).Where("handle = ? AND id != ?", handle, newRoom.ID).Count(&handleConflict)
+	if handleConflict > 0 {
+		handle = fmt.Sprintf("%s_%d", handle, newRoom.ID)
+	}
+	if err := DB.Model(&models.Room{}).Where("id = ?", newRoom.ID).Update("handle", handle).Error; err != nil {
+		log.Printf("CreateRoomHandler: Failed to set handle for room %d: %v", newRoom.ID, err)
+	} else {
+		newRoom.Handle = handle
+		log.Printf("CreateRoomHandler: Set handle=%s for room %d", handle, newRoom.ID)
+	}
 
-    // Success
-    log.Printf("CreateRoomHandler: Room created successfully: ID=%d, Name=%s, HostID=%d", newRoom.ID, newRoom.Name, newRoom.HostID)
+	// Broadcast to lobby for real-time room list updates
+	lobbyBroadcastData := map[string]interface{}{
+		"type":    "room_created",
+		"room_id": newRoom.ID,
+	}
+	lobbyJsonData, _ := json.Marshal(lobbyBroadcastData)
+	hub := GetHub()
+	if hub != nil {
+		hub.BroadcastToLobby(OutgoingMessage{
+			Data:     lobbyJsonData,
+			IsBinary: false,
+		})
+	}
 
-    c.JSON(http.StatusCreated, gin.H{
-        "message": "Room created successfully",
-        "room": gin.H{
-            "id":              newRoom.ID,
-            "name":            newRoom.Name,
-            "description":     newRoom.Description,
-            "host_id":         newRoom.HostID,
-            "handle":          newRoom.Handle,
-            "room_type":       newRoom.RoomType,
-            "other_room_type": newRoom.OtherRoomType,
-            "media_file_name": newRoom.MediaFileName,
-            "playback_state":  newRoom.PlaybackState,
-            "playback_time":   newRoom.PlaybackTime,
-            "created_at":      newRoom.CreatedAt,
-        },
-    })
+	// Success
+	log.Printf("CreateRoomHandler: Room created successfully: ID=%d, Name=%s, HostID=%d", newRoom.ID, newRoom.Name, newRoom.HostID)
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Room created successfully",
+		"room": gin.H{
+			"id":              newRoom.ID,
+			"name":            newRoom.Name,
+			"description":     newRoom.Description,
+			"host_id":         newRoom.HostID,
+			"handle":          newRoom.Handle,
+			"room_type":       newRoom.RoomType,
+			"other_room_type": newRoom.OtherRoomType,
+			"media_file_name": newRoom.MediaFileName,
+			"playback_state":  newRoom.PlaybackState,
+			"playback_time":   newRoom.PlaybackTime,
+			"created_at":      newRoom.CreatedAt,
+		},
+	})
 }
 
 // UpdateRoomHandler handles PUT /api/rooms/:id
@@ -585,11 +585,11 @@ func DeleteRoomImageHandler(c *gin.Context) {
 // Handle Ending the watch session
 func EndWatchSessionHandler(c *gin.Context) {
 	log.Println("🔴🔴🔴 [EndWatchSessionHandler] ===== API CALLED =====")
-	
+
 	// ✅ FIX: Use "session_id" to match route :session_id
 	sessionID := c.Param("session_id")
 	log.Printf("🔍 [EndWatchSessionHandler] Extracted session_id from URL: %s", sessionID)
-	
+
 	if sessionID == "" {
 		log.Println("❌ [EndWatchSessionHandler] Missing session_id in URL")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
@@ -929,7 +929,7 @@ func EndWatchSessionHandler(c *gin.Context) {
 // This is the internal version without HTTP context
 func AutoEndSession(sessionID string) error {
 	log.Printf("🤖 AutoEndSession called for session %s", sessionID)
-	
+
 	// Fetch session
 	var session models.WatchSession
 	if err := DB.Where("session_id = ?", sessionID).First(&session).Error; err != nil {
@@ -939,30 +939,30 @@ func AutoEndSession(sessionID string) error {
 		}
 		return fmt.Errorf("database error: %v", err)
 	}
-	
+
 	// Check if already ended
 	if session.EndedAt != nil {
 		log.Printf("AutoEndSession: Session %s already ended at %v", sessionID, session.EndedAt)
 		return nil
 	}
-	
+
 	log.Printf("✅ AutoEndSession: Auto-ending session %s (room %d)", sessionID, session.RoomID)
-	
+
 	// ✅ Check if this is an instant watch (temporary room) FIRST
 	var room models.Room
 	if err := DB.First(&room, session.RoomID).Error; err != nil {
 		log.Printf("AutoEndSession: Failed to fetch room %d: %v", session.RoomID, err)
 		return fmt.Errorf("failed to fetch room: %v", err)
 	}
-	
+
 	isInstantWatch := room.IsTemporary
-	
+
 	// 🔁 Use transaction for data consistency
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return fmt.Errorf("failed to start transaction: %v", tx.Error)
 	}
-	
+
 	// Declare now for use in marking members as inactive
 	now := time.Now()
 
@@ -978,14 +978,14 @@ func AutoEndSession(sessionID string) error {
 	} else {
 		log.Printf("🗑️ Instant watch session %s - will be deleted entirely", sessionID)
 	}
-	
+
 	// ✅ Delete temporary media files and records
 	var tempItems []models.TemporaryMediaItem
 	if err := tx.Where("session_id = ?", sessionID).Find(&tempItems).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to fetch temp media: %v", err)
 	}
-	
+
 	log.Printf("🗑️ AutoEndSession: Found %d temporary media items to delete for session %s", len(tempItems), sessionID)
 	for _, item := range tempItems {
 		log.Printf("🗑️ Deleting temporary media: ID=%d, File=%s, SessionID=%s", item.ID, item.FileName, item.SessionID)
@@ -1008,7 +1008,7 @@ func AutoEndSession(sessionID string) error {
 			log.Printf("✅ Deleted DB record: ID=%d", item.ID)
 		}
 	}
-	
+
 	// ✅ Mark all session members as inactive
 	result := tx.Model(&models.WatchSessionMember{}).
 		Where("watch_session_id = ? AND is_active = ?", session.ID, true).
@@ -1021,19 +1021,19 @@ func AutoEndSession(sessionID string) error {
 	} else {
 		log.Printf("✅ AutoEndSession: Marked %d members as inactive for session %s", result.RowsAffected, sessionID)
 	}
-	
+
 	// ✅ Delete session chat messages and reactions
 	var chatMessages []models.ChatMessage
 	if err := tx.Where("session_id = ?", sessionID).Find(&chatMessages).Error; err != nil {
 		log.Printf("⚠️ AutoEndSession: Failed to fetch chat messages: %v", err)
 	} else {
 		log.Printf("🗑️ AutoEndSession: Found %d chat messages to delete for session %s", len(chatMessages), sessionID)
-		
+
 		messageIDs := make([]uint, len(chatMessages))
 		for i, msg := range chatMessages {
 			messageIDs[i] = msg.ID
 		}
-		
+
 		if len(messageIDs) > 0 {
 			var reactions []models.Reaction
 			if err := tx.Where("message_id IN ?", messageIDs).Find(&reactions).Error; err != nil {
@@ -1047,21 +1047,21 @@ func AutoEndSession(sessionID string) error {
 				}
 			}
 		}
-		
+
 		if err := tx.Where("session_id = ?", sessionID).Delete(&models.ChatMessage{}).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete chat messages: %v", err)
 		} else {
 			log.Printf("✅ Deleted %d chat messages", len(chatMessages))
 		}
 	}
-	
+
 	// ✅ DELETE SESSION-SPECIFIC ROOMTV CONTENT (before room deletion check)
 	var sessionTVContent []models.RoomTVContent
 	if err := tx.Where("session_id = ?", session.ID).Find(&sessionTVContent).Error; err != nil {
 		log.Printf("⚠️ AutoEndSession: Failed to fetch session TV content: %v", err)
 	} else if len(sessionTVContent) > 0 {
 		log.Printf("🗑️ AutoEndSession: Found %d RoomTV items linked to session %s", len(sessionTVContent), sessionID)
-		
+
 		// Delete video files if uploaded
 		for _, content := range sessionTVContent {
 			if content.IsUploaded && content.FilePath != "" {
@@ -1072,13 +1072,13 @@ func AutoEndSession(sessionID string) error {
 				}
 			}
 		}
-		
+
 		// Delete database records
 		if err := tx.Where("session_id = ?", session.ID).Delete(&models.RoomTVContent{}).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete RoomTV content: %v", err)
 		} else {
 			log.Printf("✅ Deleted %d RoomTV items for session %s", len(sessionTVContent), sessionID)
-			
+
 			// Note: Broadcasting will happen after transaction commits (in session_ended broadcast)
 		}
 	}
@@ -1091,7 +1091,7 @@ func AutoEndSession(sessionID string) error {
 	} else {
 		log.Printf("✅ AutoEndSession: Deleted all quizzes and responses for session %s", sessionID)
 	}
-	
+
 	// ✅ Delete room if it's temporary (instant watch)
 	if isInstantWatch {
 		// Delete all related data for temporary room
@@ -1099,34 +1099,34 @@ func AutoEndSession(sessionID string) error {
 		if err := tx.Where("room_id = ?", room.ID).Delete(&models.UserRoom{}).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete UserRoom memberships for room %d: %v", room.ID, err)
 		}
-		
+
 		// Delete room invitations (if any)
 		if err := tx.Where("room_id = ?", room.ID).Delete(&models.RoomInvitation{}).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete room invitations for room %d: %v", room.ID, err)
 		}
-		
+
 		// Delete media items
 		if err := tx.Where("room_id = ?", room.ID).Delete(&models.MediaItem{}).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete media items for room %d: %v", room.ID, err)
 		}
-		
+
 		// Delete scheduled events
 		if err := tx.Where("room_id = ?", room.ID).Delete(&models.ScheduledEvent{}).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete scheduled events for room %d: %v", room.ID, err)
 		}
-		
+
 		// Delete RoomTV content
 		if err := tx.Where("room_id = ?", room.ID).Delete(&models.RoomTVContent{}).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete RoomTV content for room %d: %v", room.ID, err)
 		}
-		
+
 		// ✅ DELETE THE SESSION ITSELF for instant watch (before deleting room)
 		if err := tx.Delete(&models.WatchSession{}, session.ID).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete session %s: %v", sessionID, err)
 		} else {
 			log.Printf("🗑️ Deleted instant watch session: %s", sessionID)
 		}
-		
+
 		// Finally, delete the room itself
 		if err := tx.Delete(&models.Room{}, room.ID).Error; err != nil {
 			log.Printf("⚠️ AutoEndSession: Failed to delete temporary room %d: %v", room.ID, err)
@@ -1134,27 +1134,27 @@ func AutoEndSession(sessionID string) error {
 			log.Printf("🗑️ Deleted temporary room %d and all related data after session auto-end", room.ID)
 		}
 	}
-	
+
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("transaction commit failed: %v", err)
 	}
-	
+
 	// ✅ DELETE LIVEKIT ROOM (after successful DB commit)
 	livekitRoomName := fmt.Sprintf("room-%d", session.RoomID)
 	if err := utils.DeleteLiveKitRoom(livekitRoomName); err != nil {
 		log.Printf("⚠️ AutoEndSession: Failed to delete LiveKit room %s: %v", livekitRoomName, err)
 	}
-	
+
 	// ✅ CLEANUP SESSION PREVIEW FILES
 	if err := CleanupSessionPreviews(sessionID); err != nil {
 		log.Printf("⚠️ AutoEndSession: Failed to cleanup preview files for session %s: %v", sessionID, err)
 	}
-	
+
 	// ✅ CLEANUP MEDIA SWITCH HANDLER STATE (timers, queue, etc.)
 	if mediaSwitchHandler != nil {
 		mediaSwitchHandler.HandleSessionEnd(sessionID)
 	}
-	
+
 	// ✅ CLEAR SEATING ASSIGNMENTS for this room (prevent stale seat data in new sessions)
 	if hub != nil {
 		hub.seatingMutex.Lock()
@@ -1164,7 +1164,7 @@ func AutoEndSession(sessionID string) error {
 		}
 		hub.seatingMutex.Unlock()
 	}
-	
+
 	// ✅ BROADCAST SESSION_ENDED TO ALL PARTICIPANTS
 	if hub != nil {
 		// host_id/host_name were previously omitted from this broadcast entirely
@@ -1202,7 +1202,7 @@ func AutoEndSession(sessionID string) error {
 		time.Sleep(500 * time.Millisecond)
 		hub.DisconnectRoomClients(session.RoomID)
 	}
-	
+
 	log.Printf("✅ Session %s auto-ended successfully after host timeout", sessionID)
 	return nil
 }
@@ -1217,21 +1217,20 @@ func cleanupSession(sessionID string, roomID uint) {
 
 	log.Printf("🧹 Starting cleanup for session: %s", sessionID)
 
-    // 🔒 Only clean up if room is temporary
-    var room models.Room
-    if DB.First(&room, roomID).Error != nil || !room.IsTemporary {
-        log.Printf("cleanupSession: Skipping cleanup for non-temporary room %d", roomID)
-        return
-    }
+	// 🔒 Only clean up if room is temporary
+	var room models.Room
+	if DB.First(&room, roomID).Error != nil || !room.IsTemporary {
+		log.Printf("cleanupSession: Skipping cleanup for non-temporary room %d", roomID)
+		return
+	}
 
-    // ✅ ONLY clean up temporary rooms
-    if !room.IsTemporary {
-        log.Printf("cleanupSession: Skipping cleanup for REGULAR room %d (session %s) — not temporary", roomID, sessionID)
-        return
-    }
+	// ✅ ONLY clean up temporary rooms
+	if !room.IsTemporary {
+		log.Printf("cleanupSession: Skipping cleanup for REGULAR room %d (session %s) — not temporary", roomID, sessionID)
+		return
+	}
 
-    log.Printf("🧹 CLEANING UP TEMPORARY session: %s (room %d)", sessionID, roomID)
-
+	log.Printf("🧹 CLEANING UP TEMPORARY session: %s (room %d)", sessionID, roomID)
 
 	tx := DB.Begin()
 	if tx.Error != nil {
@@ -1265,8 +1264,6 @@ func cleanupSession(sessionID string, roomID uint) {
 		tx.Save(&session)
 	}
 
-	
-
 	if err := tx.Commit().Error; err != nil {
 		log.Printf("cleanupSession: Transaction commit failed: %v", err)
 	}
@@ -1276,24 +1273,24 @@ func cleanupSession(sessionID string, roomID uint) {
 // Safety net for logos missed during session end (crashes, errors, etc.)
 func CleanupOrphanedPodcastLogos() {
 	log.Println("🧹 [CleanupPodcastLogos] Starting cleanup of orphaned podcast logos...")
-	
+
 	// Find all ended sessions with podcast logos
 	var endedPodcastSessions []models.WatchSession
 	result := DB.Where("ended_at IS NOT NULL AND podcast_logo_url != '' AND podcast_logo_url IS NOT NULL").
 		Find(&endedPodcastSessions)
-	
+
 	if result.Error != nil {
 		log.Printf("❌ [CleanupPodcastLogos] Database query failed: %v", result.Error)
 		return
 	}
-	
+
 	if len(endedPodcastSessions) == 0 {
 		log.Println("✅ [CleanupPodcastLogos] No orphaned podcast logos found")
 		return
 	}
-	
+
 	log.Printf("🗑️ [CleanupPodcastLogos] Found %d ended sessions with podcast logos to clean", len(endedPodcastSessions))
-	
+
 	deletedLogos := 0
 	for _, session := range endedPodcastSessions {
 		if err := utils.DeleteMediaFile(session.PodcastLogoURL); err != nil {
@@ -1305,7 +1302,7 @@ func CleanupOrphanedPodcastLogos() {
 		// Clear URL to prevent re-scanning on next cycle
 		DB.Model(&session).Update("podcast_logo_url", "")
 	}
-	
+
 	log.Printf("✅ [CleanupPodcastLogos] Cleanup complete: %d logos deleted", deletedLogos)
 }
 
@@ -1313,31 +1310,31 @@ func CleanupOrphanedPodcastLogos() {
 // This is the safety net that catches files missed by immediate cleanup
 func CleanupAllTemporaryMedia() {
 	log.Println("🧹 [CleanupTempMedia] Starting cleanup of temporary media from ALL ended sessions...")
-	
+
 	// Find all temporary media items where session has ended
 	var orphanedMedia []models.TemporaryMediaItem
 	result := DB.
 		Joins("JOIN watch_sessions ON watch_sessions.session_id = temporary_media_items.session_id").
 		Where("watch_sessions.ended_at IS NOT NULL").
 		Find(&orphanedMedia)
-	
+
 	if result.Error != nil {
 		log.Printf("❌ [CleanupTempMedia] Database query failed: %v", result.Error)
 		return
 	}
-	
+
 	if len(orphanedMedia) == 0 {
 		log.Println("✅ [CleanupTempMedia] No orphaned temporary media found")
 		return
 	}
-	
+
 	log.Printf("🗑️ [CleanupTempMedia] Found %d orphaned temporary media items to delete", len(orphanedMedia))
-	
+
 	// Delete files and database records
 	deletedFiles := 0
 	deletedRecords := 0
 	failedFiles := 0
-	
+
 	for _, item := range orphanedMedia {
 		// Delete physical file or CDN object — failure does NOT skip the DB row delete
 		// below. A row left pointing at nothing is worse than a leaked file: the file is
@@ -1367,8 +1364,8 @@ func CleanupAllTemporaryMedia() {
 			deletedRecords++
 		}
 	}
-	
-	log.Printf("✅ [CleanupTempMedia] Cleanup complete: %d files deleted, %d DB records removed, %d failures", 
+
+	log.Printf("✅ [CleanupTempMedia] Cleanup complete: %d files deleted, %d DB records removed, %d failures",
 		deletedFiles, deletedRecords, failedFiles)
 }
 
@@ -1443,8 +1440,8 @@ func CleanupExpiredSessions() {
 	cutoff := time.Now().Add(-5 * time.Minute) // ✅ Reduced from 30 to 5 minutes
 
 	DB.Joins("JOIN rooms ON watch_sessions.room_id = rooms.id").
-        Where("watch_sessions.ended_at IS NULL AND watch_sessions.started_at < ? AND rooms.is_temporary = ?", cutoff, true).
-        Find(&sessions)
+		Where("watch_sessions.ended_at IS NULL AND watch_sessions.started_at < ? AND rooms.is_temporary = ?", cutoff, true).
+		Find(&sessions)
 
 	for _, s := range sessions {
 		log.Printf("🧹 Cleaning up expired session: %s", s.SessionID)
@@ -1490,7 +1487,7 @@ func CleanupExpiredSessions() {
 // This catches rooms that weren't properly deleted during session end
 func CleanupOrphanedInstantWatchRooms() {
 	log.Println("🧹 [CleanupOrphanedInstantWatchRooms] Checking for orphaned instant watch rooms...")
-	
+
 	// Find all temporary rooms (including soft-deleted ones)
 	var allTempRooms []models.Room
 	result := DB.Unscoped().Where("is_temporary = ?", true).Find(&allTempRooms)
@@ -1498,11 +1495,11 @@ func CleanupOrphanedInstantWatchRooms() {
 		log.Printf("❌ [CleanupOrphanedInstantWatchRooms] Failed to query temporary rooms: %v", result.Error)
 		return
 	}
-	
+
 	log.Printf("📊 [CleanupOrphanedInstantWatchRooms] Query executed: is_temporary = true")
 	log.Printf("📊 [CleanupOrphanedInstantWatchRooms] Rows affected: %d", result.RowsAffected)
 	log.Printf("📊 [CleanupOrphanedInstantWatchRooms] Found %d temporary rooms in database", len(allTempRooms))
-	
+
 	// Debug: Print first few room IDs
 	if len(allTempRooms) > 0 {
 		log.Printf("🔍 [CleanupOrphanedInstantWatchRooms] First 5 room IDs: ")
@@ -1510,13 +1507,13 @@ func CleanupOrphanedInstantWatchRooms() {
 			log.Printf("  - Room ID %d: %s (is_temporary=%v)", allTempRooms[i].ID, allTempRooms[i].Name, allTempRooms[i].IsTemporary)
 		}
 	}
-	
+
 	// Filter to only orphaned rooms (where session has ended or doesn't exist or has no active members)
 	var orphanedRooms []models.Room
 	for _, room := range allTempRooms {
 		var session models.WatchSession
 		err := DB.Where("room_id = ?", room.ID).First(&session).Error
-		
+
 		if err == gorm.ErrRecordNotFound {
 			// No session found - orphaned room
 			log.Printf("🗑️ [CleanupOrphanedInstantWatchRooms] Room %d has no watch session - marking for deletion", room.ID)
@@ -1543,28 +1540,28 @@ func CleanupOrphanedInstantWatchRooms() {
 			log.Printf("⚠️ [CleanupOrphanedInstantWatchRooms] Error checking session for room %d: %v", room.ID, err)
 		}
 	}
-	
+
 	if len(orphanedRooms) == 0 {
 		log.Println("✅ [CleanupOrphanedInstantWatchRooms] No orphaned instant watch rooms found")
 		return
 	}
-	
+
 	log.Printf("🗑️ [CleanupOrphanedInstantWatchRooms] Found %d orphaned instant watch rooms to delete", len(orphanedRooms))
-	
+
 	for _, room := range orphanedRooms {
 		log.Printf("🗑️ [CleanupOrphanedInstantWatchRooms] Deleting room %d (%s)", room.ID, room.Name)
-		
+
 		tx := DB.Begin()
 		if tx.Error != nil {
 			log.Printf("❌ Failed to start transaction for room %d", room.ID)
 			continue
 		}
-		
+
 		// Delete CDN/local files before removing DB rows
 		var tempMedia []models.TemporaryMediaItem
 		if DB.Where("room_id = ?", room.ID).Find(&tempMedia).Error == nil {
 			for _, item := range tempMedia {
-				utils.DeleteMediaFile(item.FilePath)  //nolint
+				utils.DeleteMediaFile(item.FilePath) //nolint
 				if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
 					utils.DeleteMediaFile(item.PosterURL) //nolint
 				}
@@ -1601,29 +1598,29 @@ func CleanupOrphanedInstantWatchRooms() {
 		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.RoomTVContent{})
 		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.WatchSession{})
 		tx.Unscoped().Where("room_id = ?", room.ID).Delete(&models.RoomMessage{})
-		
+
 		// Delete the room itself (hard delete)
 		if err := tx.Unscoped().Delete(&room).Error; err != nil {
 			tx.Rollback()
 			log.Printf("❌ Failed to delete room %d: %v", room.ID, err)
 			continue
 		}
-		
+
 		if err := tx.Commit().Error; err != nil {
 			log.Printf("❌ Failed to commit deletion for room %d: %v", room.ID, err)
 			continue
 		}
-		
+
 		log.Printf("✅ Successfully deleted orphaned instant watch room %d", room.ID)
 	}
-	
+
 	log.Printf("✅ [CleanupOrphanedInstantWatchRooms] Cleanup complete - deleted %d orphaned rooms", len(orphanedRooms))
 }
 
 // GenerateLiveKitTokenHandler returns a LiveKit access token for the room
 func GenerateLiveKitTokenHandler(c *gin.Context) {
 	log.Printf("🎫 [LiveKit] GenerateLiveKitTokenHandler called for room %s", c.Param("id"))
-	
+
 	userIDVal, exists := c.Get("user_id")
 	log.Printf("🔍 [LiveKit] user_id exists=%v, value=%v", exists, userIDVal)
 	if !exists {
@@ -1651,12 +1648,12 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 	// Verify user has access: either permanent room member OR active session participant
 	var userRoom models.UserRoom
 	isPermanentMember := DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&userRoom).Error == nil
-	
+
 	// Check if user is in an active session for this room
 	var activeSession models.WatchSession
 	var sessionMember models.WatchSessionMember
 	isSessionParticipant := false
-	
+
 	if err := DB.Where("room_id = ? AND ended_at IS NULL", roomID).First(&activeSession).Error; err == nil {
 		// Found active session, check if user is a member
 		if err := DB.Where("watch_session_id = ? AND user_id = ? AND is_active = ?",
@@ -1668,13 +1665,13 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 			// denial path below still logs (the actually-interesting case).
 		}
 	}
-	
+
 	if !isPermanentMember && !isSessionParticipant {
 		log.Printf("❌ [LiveKit] User %d denied: not a room member and not in active session", userID)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Not a member of this room"})
 		return
 	}
-	
+
 	log.Printf("✅ [LiveKit] User %d authorized: permanent=%v, session=%v", userID, isPermanentMember, isSessionParticipant)
 
 	// Get room to check if user is host
@@ -1685,7 +1682,7 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 	}
 
 	isHost := room.HostID == userID
-	
+
 	// ✅ Use tab_id from query params to make identity unique per browser tab
 	tabID := c.Query("tab_id")
 	identity := "user-" + strconv.FormatUint(uint64(userID), 10)
@@ -1693,7 +1690,7 @@ func GenerateLiveKitTokenHandler(c *gin.Context) {
 		identity = identity + "-" + tabID
 		log.Printf("🆔 [LiveKit] Using tab-unique identity: %s", identity)
 	}
-	
+
 	roomName := "room-" + roomIDStr
 
 	log.Printf("🎬 [LiveKit] Generating token: room=%s, identity=%s, isHost=%v", roomName, identity, isHost)
@@ -1731,17 +1728,17 @@ func CreateInstantWatchHandler(c *gin.Context) {
 
 	// Parse watch_type from request body
 	var input struct {
-		WatchType     string  `json:"watch_type"` // "video", "3d_cinema", or "classroom"
-		ClassType     *string `json:"class_type"` // "classroom" (25 seats) or "lecture_hall" (145 seats) - only for classroom watch_type
-		IsPublic      *bool   `json:"is_public"`  // Pointer to allow nil (defaults to true)
-		IsPrivate     *bool   `json:"is_private"` // If true, session hidden from lobby unless user is member
+		WatchType     string  `json:"watch_type"`     // "video", "3d_cinema", or "classroom"
+		ClassType     *string `json:"class_type"`     // "classroom" (25 seats) or "lecture_hall" (145 seats) - only for classroom watch_type
+		IsPublic      *bool   `json:"is_public"`      // Pointer to allow nil (defaults to true)
+		IsPrivate     *bool   `json:"is_private"`     // If true, session hidden from lobby unless user is member
 		ContentRating string  `json:"content_rating"` // Optional: 'G', 'PG', '13+', '16+', '18+', 'Mature' (defaults to 'G')
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		// Default to "video" if not specified
 		input.WatchType = "video"
 	}
-	
+
 	// Validate watch_type
 	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" {
 		input.WatchType = "video"
@@ -1780,7 +1777,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 
 	// Create temporary room with watch type indicator
 	roomName := fmt.Sprintf("Instant Watch – %s", time.Now().Format("15:04"))
-	
+
 	// Validate and set content rating (default to 'G')
 	contentRatingForRoom := "G"
 	if input.ContentRating != "" {
@@ -1792,7 +1789,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	newRoom := models.Room{
 		Name:          roomName,
 		Description:   "Temporary session – auto-deleted after use",
@@ -1825,7 +1822,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 
 	// Create watch session with watch_type and optional class_type
 	sessionUUID := uuid.New().String()
-	
+
 	// Validate and set content rating (default to 'G')
 	log.Printf("🎬 [CreateInstantWatch] Received content_rating: '%s'", input.ContentRating)
 	contentRating := "G"
@@ -1841,7 +1838,7 @@ func CreateInstantWatchHandler(c *gin.Context) {
 	} else {
 		log.Printf("⚠️ [CreateInstantWatch] No content_rating received, defaulting to 'G'")
 	}
-	
+
 	watchSession := models.WatchSession{
 		SessionID:      sessionUUID,
 		RoomID:         newRoom.ID,
@@ -1897,20 +1894,18 @@ func CreateInstantWatchHandler(c *gin.Context) {
 		log.Printf("✅ Created instant watch session: room=%d, session=%s, type=%s", newRoom.ID, sessionUUID, input.WatchType)
 	}
 	c.JSON(http.StatusCreated, gin.H{
-		"room_id":    newRoom.ID,
-		"session":    watchSession,
-		"message":    "Instant watch session created",
+		"room_id": newRoom.ID,
+		"session": watchSession,
+		"message": "Instant watch session created",
 	})
 }
-
-
 
 // GetRoomsHandler handles the GET /api/rooms endpoint
 // This could return a list of public rooms/rooms the user is a part of
 // For MVP simplicity, lets return all rooms for now
 // Will require authentication
 func GetRoomsHandler(c *gin.Context) {
-    log.Println("🚨🚨🚨 GetRoomsHandler CALLED 🚨🚨🚨")
+	log.Println("🚨🚨🚨 GetRoomsHandler CALLED 🚨🚨🚨")
 	// 1. Get the authenticated user's ID (optional for listing, but good to know who is asking)
 	// _, exists := c.Get("user_id")
 	// if !exists {
@@ -1930,13 +1925,13 @@ func GetRoomsHandler(c *gin.Context) {
 	// ✅ Parse pagination parameters
 	limit := 20 // Default limit
 	offset := 0 // Default offset
-	
+
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 && parsedLimit <= 100 {
 			limit = parsedLimit
 		}
 	}
-	
+
 	if offsetParam := c.Query("offset"); offsetParam != "" {
 		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
 			offset = parsedOffset
@@ -1955,9 +1950,9 @@ func GetRoomsHandler(c *gin.Context) {
 		LastChatMessage string     `gorm:"column:last_chat_message"`
 		LastChatAt      *time.Time `gorm:"column:last_chat_at"`
 	}
-	
+
 	var roomsWithUsername []RoomWithUsername
-	
+
 	// Build query based on authentication
 	var query *gorm.DB
 	if userExists && userID > 0 {
@@ -2032,10 +2027,10 @@ func GetRoomsHandler(c *gin.Context) {
 			Offset(offset).
 			Scan(&roomsWithUsername)
 	}
-	
+
 	if result.Error != nil {
 		log.Printf("GetRoomsHandler: Error fetching rooms from the database: %v", result.Error)
-		c.JSON(http.StatusInternalServerError, gin.H{"error":"Failed to fetch rooms"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch rooms"})
 		return
 	}
 
@@ -2047,59 +2042,59 @@ func GetRoomsHandler(c *gin.Context) {
 		if hostDisplay == "" {
 			hostDisplay = fmt.Sprintf("User %d", roomData.Room.HostID)
 		}
-		
+
 		// Check if room has upcoming events
 		var upcomingCount int64
 		DB.Model(&models.ScheduledEvent{}).
 			Where("room_id = ? AND start_time > ?", roomData.Room.ID, time.Now()).
 			Count(&upcomingCount)
-		
+
 		// Count room members
 		var memberCount int64
 		DB.Model(&models.UserRoom{}).
 			Where("room_id = ?", roomData.Room.ID).
 			Count(&memberCount)
-		
+
 		roomsResponse[i] = gin.H{
-			"id":                  roomData.Room.ID,
-			"name":                roomData.Room.Name,
-			"description":         roomData.Room.Description,
-			"host_id":             roomData.Room.HostID,
-			"host_username":       hostDisplay,
-			"handle":              roomData.Room.Handle,
-			"room_type":           roomData.Room.RoomType,
-			"other_room_type":     roomData.Room.OtherRoomType,
-			"is_public":           roomData.Room.IsPublic,
-			"is_temporary":        roomData.Room.IsTemporary,
-			"media_file_name":     roomData.Room.MediaFileName,
-			"playback_state":      roomData.Room.PlaybackState,
-			"playback_time":       roomData.Room.PlaybackTime,
-			"created_at":          roomData.Room.CreatedAt,
-			"currently_playing":   roomData.Room.CurrentlyPlaying,
-			"coming_next":         roomData.Room.ComingNext,
-			"is_screen_sharing":   roomData.Room.IsScreenSharing,
-			"image_url":           roomData.Room.ImageURL,
-			"has_upcoming_events": upcomingCount > 0,
+			"id":                    roomData.Room.ID,
+			"name":                  roomData.Room.Name,
+			"description":           roomData.Room.Description,
+			"host_id":               roomData.Room.HostID,
+			"host_username":         hostDisplay,
+			"handle":                roomData.Room.Handle,
+			"room_type":             roomData.Room.RoomType,
+			"other_room_type":       roomData.Room.OtherRoomType,
+			"is_public":             roomData.Room.IsPublic,
+			"is_temporary":          roomData.Room.IsTemporary,
+			"media_file_name":       roomData.Room.MediaFileName,
+			"playback_state":        roomData.Room.PlaybackState,
+			"playback_time":         roomData.Room.PlaybackTime,
+			"created_at":            roomData.Room.CreatedAt,
+			"currently_playing":     roomData.Room.CurrentlyPlaying,
+			"coming_next":           roomData.Room.ComingNext,
+			"is_screen_sharing":     roomData.Room.IsScreenSharing,
+			"image_url":             roomData.Room.ImageURL,
+			"has_upcoming_events":   upcomingCount > 0,
 			"upcoming_events_count": upcomingCount,
-			"average_rating":      roomData.Room.AverageRating,
-			"total_ratings":       roomData.Room.TotalRatings,
-			"member_count":        memberCount,
-			"is_active_session":   roomData.IsActiveSession,
-			"is_member":           roomData.IsMember,
-			"last_chat_message":   roomData.LastChatMessage,
-			"last_chat_at":        roomData.LastChatAt,
+			"average_rating":        roomData.Room.AverageRating,
+			"total_ratings":         roomData.Room.TotalRatings,
+			"member_count":          memberCount,
+			"is_active_session":     roomData.IsActiveSession,
+			"is_member":             roomData.IsMember,
+			"last_chat_message":     roomData.LastChatMessage,
+			"last_chat_at":          roomData.LastChatAt,
 		}
 	}
 
 	// Respond with the list of rooms and pagination info.
 	log.Printf("GetRoomsHandler: Fetched %d rooms (offset: %d, limit: %d, total: %d)", len(roomsWithUsername), offset, limit, totalCount)
-	c.JSON(http.StatusOK, gin.H {
+	c.JSON(http.StatusOK, gin.H{
 		"message":     "Rooms fetched successfully",
 		"count":       len(roomsWithUsername),
 		"total_count": totalCount,
 		"offset":      offset,
 		"limit":       limit,
-		"has_more":    offset + len(roomsWithUsername) < int(totalCount),
+		"has_more":    offset+len(roomsWithUsername) < int(totalCount),
 		"rooms":       roomsResponse,
 	})
 }
@@ -2108,431 +2103,424 @@ func GetRoomsHandler(c *gin.Context) {
 
 // GetRoomMembersHandler handles the GET /api/rooms/:id/members endpoint
 func GetRoomMembersHandler(c *gin.Context) {
-    // 1. Get RoomID from the URL Parameter
-    roomIDStr := c.Param("id")
-    if roomIDStr == "" {
-        log.Println("GetRoomMembersHandler: Missing room ID parameter")
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
-        return
-    }
+	// 1. Get RoomID from the URL Parameter
+	roomIDStr := c.Param("id")
+	if roomIDStr == "" {
+		log.Println("GetRoomMembersHandler: Missing room ID parameter")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
+		return
+	}
 
-    // 2. Convert room ID to uint
-    roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
-    if err != nil || roomID == 0 {
-        log.Printf("GetRoomMembersHandler: Invalid room ID format: %s", roomIDStr)
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
-        return
-    }
-    roomIDUint := uint(roomID)
+	// 2. Convert room ID to uint
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil || roomID == 0 {
+		log.Printf("GetRoomMembersHandler: Invalid room ID format: %s", roomIDStr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+	roomIDUint := uint(roomID)
 
-    // 3. Check if the room exists
-    var room models.Room
-    result := DB.First(&room, roomIDUint)
-    if result.Error != nil {
-        if result.Error == gorm.ErrRecordNotFound {
-            log.Printf("GetRoomMembersHandler: Room with ID %d not found", roomIDUint)
-            c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
-            return
-        } else {
-            log.Printf("GetRoomMembersHandler: Database error fetching room %d: %v", roomIDUint, result.Error)
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-            return
-        }
-    }
+	// 3. Check if the room exists
+	var room models.Room
+	result := DB.First(&room, roomIDUint)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			log.Printf("GetRoomMembersHandler: Room with ID %d not found", roomIDUint)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+			return
+		} else {
+			log.Printf("GetRoomMembersHandler: Database error fetching room %d: %v", roomIDUint, result.Error)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
+		}
+	}
 
-    // 4. NEW APPROACH: Count all users who have a UserRoom entry for this room
-    // This is the proper way to get room members
-    var userRooms []models.UserRoom
-    result = DB.Where("room_id = ?", roomIDUint).Preload("User").Find(&userRooms)
-    if result.Error != nil {
-        log.Printf("GetRoomMembersHandler: Error fetching user rooms for room %d: %v", roomIDUint, result.Error)
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error fetching members"})
-        return
-    }
+	// 4. NEW APPROACH: Count all users who have a UserRoom entry for this room
+	// This is the proper way to get room members
+	var userRooms []models.UserRoom
+	result = DB.Where("room_id = ?", roomIDUint).Preload("User").Find(&userRooms)
+	if result.Error != nil {
+		log.Printf("GetRoomMembersHandler: Error fetching user rooms for room %d: %v", roomIDUint, result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error fetching members"})
+		return
+	}
 
-    // 5. Prepare response with proper member information
-    memberList := make([]map[string]interface{}, len(userRooms))
-    for i, userRoom := range userRooms {
-        // Check if this is the host user
-        isHost := userRoom.UserID == room.HostID
-        
-        memberList[i] = map[string]interface{}{
-            "id":         userRoom.UserID,
-            "username":   userRoom.User.Username,
-            "avatar_url": userRoom.User.AvatarURL, // ✅ Include avatar URL
-            "is_host":    isHost,
-            "user_role":  userRoom.UserRole,
-        }
-    }
+	// 5. Prepare response with proper member information
+	memberList := make([]map[string]interface{}, len(userRooms))
+	for i, userRoom := range userRooms {
+		// Check if this is the host user
+		isHost := userRoom.UserID == room.HostID
 
-    // 6. Return response
-    c.JSON(http.StatusOK, gin.H{
-        "members": memberList,
-        "count":   len(memberList),
-    })
+		memberList[i] = map[string]interface{}{
+			"id":         userRoom.UserID,
+			"username":   userRoom.User.Username,
+			"avatar_url": userRoom.User.AvatarURL, // ✅ Include avatar URL
+			"is_host":    isHost,
+			"user_role":  userRoom.UserRole,
+		}
+	}
+
+	// 6. Return response
+	c.JSON(http.StatusOK, gin.H{
+		"members": memberList,
+		"count":   len(memberList),
+	})
 }
-
 
 // Add this handler to update media item order
 // UpdateMediaOrderHandler handles PUT /api/rooms/:id/media/order
 func UpdateMediaOrderHandler(c *gin.Context) {
-    roomIDStr := c.Param("id")
-    if roomIDStr == "" {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
-        return
-    }
-    
-    // Get authenticated user ID
-    userIDValue, exists := c.Get("user_id")
-    if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-        return
-    }
-    
-    // Convert user ID to uint
-    userID, ok := userIDValue.(uint)
-    if !ok {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-        return
-    }
-    
-    // Convert room ID to uint
-    roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
-    if err != nil || roomID == 0 {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
-        return
-    }
-    
-    // Check if user is the host
-    var room models.Room
-    result := DB.First(&room, uint(roomID))
-    if result.Error != nil {
-        if result.Error == gorm.ErrRecordNotFound {
-            c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
-            return
-        } else {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-            return
-        }
-    }
-    
-    if room.HostID != userID {
-        c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can reorder media"})
-        return
-    }
-    
-    // Parse the order updates
-    var orderUpdates []struct {
-        ID        uint `json:"id"`
-        OrderIndex int `json:"order_index"`
-    }
-    
-    if err := c.ShouldBindJSON(&orderUpdates); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order data"})
-        return
-    }
-    
-    // Update each media item's order index
-    for _, update := range orderUpdates {
-        var mediaItem models.MediaItem
-        result := DB.First(&mediaItem, update.ID)
-        if result.Error == nil {
-            mediaItem.OrderIndex = update.OrderIndex
-            DB.Save(&mediaItem)
-        }
-    }
-    
-    c.JSON(http.StatusOK, gin.H{
-        "message": "Media order updated successfully",
-    })
+	roomIDStr := c.Param("id")
+	if roomIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
+		return
+	}
+
+	// Get authenticated user ID
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Convert user ID to uint
+	userID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Convert room ID to uint
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil || roomID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	// Check if user is the host
+	var room models.Room
+	result := DB.First(&room, uint(roomID))
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+			return
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
+		}
+	}
+
+	if room.HostID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can reorder media"})
+		return
+	}
+
+	// Parse the order updates
+	var orderUpdates []struct {
+		ID         uint `json:"id"`
+		OrderIndex int  `json:"order_index"`
+	}
+
+	if err := c.ShouldBindJSON(&orderUpdates); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order data"})
+		return
+	}
+
+	// Update each media item's order index
+	for _, update := range orderUpdates {
+		var mediaItem models.MediaItem
+		result := DB.First(&mediaItem, update.ID)
+		if result.Error == nil {
+			mediaItem.OrderIndex = update.OrderIndex
+			DB.Save(&mediaItem)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Media order updated successfully",
+	})
 }
-
-
 
 // UpdateRoomLoopModeHandler handles PUT /api/rooms/:id/loop-mode
 func UpdateRoomLoopModeHandler(c *gin.Context) {
-    roomIDStr := c.Param("id")
-    if roomIDStr == "" {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
-        return
-    }
-    
-    // Get authenticated user ID
-    userIDValue, exists := c.Get("user_id")
-    if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-        return
-    }
-    
-    // Convert user ID to uint
-    userID, ok := userIDValue.(uint)
-    if !ok {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-        return
-    }
-    
-    // Convert room ID to uint
-    roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
-    if err != nil || roomID == 0 {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
-        return
-    }
-    
-    // Check if user is the host
-    var room models.Room
-    result := DB.First(&room, uint(roomID))
-    if result.Error != nil {
-        if result.Error == gorm.ErrRecordNotFound {
-            c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
-            return
-        } else {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-            return
-        }
-    }
-    
-    if room.HostID != userID {
-        c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can change loop mode"})
-        return
-    }
-    
-    // Parse the loop mode
-    var loopData struct {
-        LoopMode string `json:"loop_mode"`
-    }
-    
-    if err := c.ShouldBindJSON(&loopData); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid loop mode data"})
-        return
-    }
-    
-    // Validate loop mode
-    validModes := map[string]bool{
-        "none": true, "playlist-once": true, "playlist-infinite": true,
-    }
-    
-    if !validModes[loopData.LoopMode] {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid loop mode"})
-        return
-    }
-    
-    // Update room loop mode
-    room.LoopMode = loopData.LoopMode
-    result = DB.Save(&room)
-    if result.Error != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update loop mode"})
-        return
-    }
-    
-    c.JSON(http.StatusOK, gin.H{
-        "message": "Loop mode updated successfully",
-        "loop_mode": room.LoopMode,
-    })
+	roomIDStr := c.Param("id")
+	if roomIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
+		return
+	}
+
+	// Get authenticated user ID
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Convert user ID to uint
+	userID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Convert room ID to uint
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil || roomID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	// Check if user is the host
+	var room models.Room
+	result := DB.First(&room, uint(roomID))
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+			return
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
+		}
+	}
+
+	if room.HostID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can change loop mode"})
+		return
+	}
+
+	// Parse the loop mode
+	var loopData struct {
+		LoopMode string `json:"loop_mode"`
+	}
+
+	if err := c.ShouldBindJSON(&loopData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid loop mode data"})
+		return
+	}
+
+	// Validate loop mode
+	validModes := map[string]bool{
+		"none": true, "playlist-once": true, "playlist-infinite": true,
+	}
+
+	if !validModes[loopData.LoopMode] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid loop mode"})
+		return
+	}
+
+	// Update room loop mode
+	room.LoopMode = loopData.LoopMode
+	result = DB.Save(&room)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update loop mode"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Loop mode updated successfully",
+		"loop_mode": room.LoopMode,
+	})
 }
-
-
-
 
 // DeleteRoomHandler handles DELETE /api/rooms/:id
 func DeleteRoomHandler(c *gin.Context) {
-    // Get room ID from URL parameter
-    roomIDStr := c.Param("id")
-    if roomIDStr == "" {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
-        return
-    }
-    
-    // Get authenticated user ID from context (set by AuthMiddleware)
-    userIDValue, exists := c.Get("user_id")
-    if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-        return
-    }
-    
-    // Convert user ID to uint
-    userID, ok := userIDValue.(uint)
-    if !ok {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-        return
-    }
-    
-    // Convert room ID to uint
-    roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
-    if err != nil || roomID == 0 {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
-        return
-    }
-    
-    // Check if user is the host of this room
-    var room models.Room
-    result := DB.First(&room, uint(roomID))
-    if result.Error != nil {
-        if result.Error == gorm.ErrRecordNotFound {
-            c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
-            return
-        } else {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-            return
-        }
-    }
-    
-    // Verify user is the host
-    if room.HostID != userID {
-        c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can delete the room"})
-        return
-    }
-    
-    // Cascade delete all related records in a transaction
-    err = DB.Transaction(func(tx *gorm.DB) error {
-        roomIDUint := uint(roomID)
-        
-        // 1. Delete media items
-        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.MediaItem{}).Error; err != nil {
-            return err
-        }
-        
-        // 2. Delete temporary media items
-        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.TemporaryMediaItem{}).Error; err != nil {
-            return err
-        }
-        
-        // 3. Delete scheduled events
-        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.ScheduledEvent{}).Error; err != nil {
-            return err
-        }
-        
-        // 4. Delete room TV content
-        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.RoomTVContent{}).Error; err != nil {
-            return err
-        }
-        
-        // 5. Delete room messages (chat)
-        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.RoomMessage{}).Error; err != nil {
-            return err
-        }
-        
-        // 6. Delete watch sessions
-        // Get all session IDs for this room (needed for broadcast request cleanup)
-        var sessionIDs []string
-        if err := tx.Model(&models.WatchSession{}).Where("room_id = ?", roomIDUint).Pluck("session_id", &sessionIDs).Error; err != nil {
-            return err
-        }
-        
-        // Delete watch sessions
-        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.WatchSession{}).Error; err != nil {
-            return err
-        }
-        
-        // 7. Delete broadcast requests and permissions (both linked via watch_session_id, not room_id)
-        if len(sessionIDs) > 0 {
-            // First, get the numeric IDs of sessions (both models use uint watch_session_id)
-            var sessionNumericIDs []uint
-            if err := tx.Model(&models.WatchSession{}).Where("session_id IN ?", sessionIDs).Pluck("id", &sessionNumericIDs).Error; err != nil {
-                log.Printf("Warning: Failed to get session IDs for broadcast cleanup: %v", err)
-            } else if len(sessionNumericIDs) > 0 {
-                // Delete broadcast requests
-                if err := tx.Where("watch_session_id IN ?", sessionNumericIDs).Delete(&models.BroadcastRequest{}).Error; err != nil {
-                    log.Printf("Warning: Failed to delete broadcast requests: %v", err)
-                }
-                // Delete broadcast permissions
-                if err := tx.Where("watch_session_id IN ?", sessionNumericIDs).Delete(&models.BroadcastPermission{}).Error; err != nil {
-                    log.Printf("Warning: Failed to delete broadcast permissions: %v", err)
-                }
-            }
-        }
-        
-        // 9. Delete user room memberships
-        if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.UserRoom{}).Error; err != nil {
-            return err
-        }
-        
-        // 10. Finally, delete the room itself
-        if err := tx.Delete(&room, roomIDUint).Error; err != nil {
-            return err
-        }
-        
-        return nil
-    })
-    
-    if err != nil {
-        log.Printf("Error deleting room %d: %v", roomID, err)
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete room and related data"})
-        return
-    }
-    
-    // Queue file deletion in background (non-blocking)
-    go func() {
-        roomIDUint := uint(roomID)
-        
-        // Delete uploaded media files
-        var mediaItems []models.MediaItem
-        if err := DB.Unscoped().Where("room_id = ?", roomIDUint).Find(&mediaItems).Error; err == nil {
-            for _, item := range mediaItems {
-                if item.FilePath != "" {
-                    if err := utils.DeleteMediaFile(item.FilePath); err != nil {
-                        log.Printf("⚠️ Failed to delete media file %s: %v", item.FilePath, err)
-                    } else {
-                        log.Printf("Deleted file: %s", item.FilePath)
-                    }
-                }
-                if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
-                    utils.DeleteMediaFile(item.PosterURL) //nolint
-                }
-            }
-        }
-        
-        // Delete temporary media files
-        var tempItems []models.TemporaryMediaItem
-        if err := DB.Unscoped().Where("room_id = ?", roomIDUint).Find(&tempItems).Error; err == nil {
-            for _, item := range tempItems {
-                if item.FilePath != "" {
-                    if err := utils.DeleteMediaFile(item.FilePath); err != nil {
-                        log.Printf("⚠️ Failed to delete temp file %s: %v", item.FilePath, err)
-                    } else {
-                        log.Printf("Deleted temp file: %s", item.FilePath)
-                    }
-                }
-                if item.CDNSegmentsPrefix != "" {
-                    utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix) //nolint
-                }
-            }
-        }
-        
-        log.Printf("Room %d and all related files deleted successfully", roomID)
-    }()
-    
-    // Broadcast room deletion via WebSocket to room members
-    broadcastMsg := map[string]interface{}{
-        "type":    "room_deleted",
-        "room_id": uint(roomID),
-        "message": "This room has been deleted by the host",
-    }
-    if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
-        hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
-    }
-    
-    // Broadcast to lobby for real-time room list updates
-    lobbyBroadcastData := map[string]interface{}{
-        "type":    "room_deleted",
-        "room_id": uint(roomID),
-    }
-    if lobbyJsonData, err := json.Marshal(lobbyBroadcastData); err == nil {
-        hub.BroadcastToLobby(OutgoingMessage{
-            Data:     lobbyJsonData,
-            IsBinary: false,
-        })
-    }
-    
-    // Clear main_room_id on the host if it pointed to this room
-    DB.Model(&models.User{}).
-        Where("id = ? AND main_room_id = ?", userID, uint(roomID)).
-        Update("main_room_id", nil)
+	// Get room ID from URL parameter
+	roomIDStr := c.Param("id")
+	if roomIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
+		return
+	}
 
-    c.JSON(http.StatusOK, gin.H{
-        "message": "Room and all related data deleted successfully",
-    })
+	// Get authenticated user ID from context (set by AuthMiddleware)
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Convert user ID to uint
+	userID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Convert room ID to uint
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil || roomID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	// Check if user is the host of this room
+	var room models.Room
+	result := DB.First(&room, uint(roomID))
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+			return
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
+		}
+	}
+
+	// Verify user is the host
+	if room.HostID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can delete the room"})
+		return
+	}
+
+	// Cascade delete all related records in a transaction
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		roomIDUint := uint(roomID)
+
+		// 1. Delete media items
+		if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.MediaItem{}).Error; err != nil {
+			return err
+		}
+
+		// 2. Delete temporary media items
+		if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.TemporaryMediaItem{}).Error; err != nil {
+			return err
+		}
+
+		// 3. Delete scheduled events
+		if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.ScheduledEvent{}).Error; err != nil {
+			return err
+		}
+
+		// 4. Delete room TV content
+		if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.RoomTVContent{}).Error; err != nil {
+			return err
+		}
+
+		// 5. Delete room messages (chat)
+		if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.RoomMessage{}).Error; err != nil {
+			return err
+		}
+
+		// 6. Delete watch sessions
+		// Get all session IDs for this room (needed for broadcast request cleanup)
+		var sessionIDs []string
+		if err := tx.Model(&models.WatchSession{}).Where("room_id = ?", roomIDUint).Pluck("session_id", &sessionIDs).Error; err != nil {
+			return err
+		}
+
+		// Delete watch sessions
+		if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.WatchSession{}).Error; err != nil {
+			return err
+		}
+
+		// 7. Delete broadcast requests and permissions (both linked via watch_session_id, not room_id)
+		if len(sessionIDs) > 0 {
+			// First, get the numeric IDs of sessions (both models use uint watch_session_id)
+			var sessionNumericIDs []uint
+			if err := tx.Model(&models.WatchSession{}).Where("session_id IN ?", sessionIDs).Pluck("id", &sessionNumericIDs).Error; err != nil {
+				log.Printf("Warning: Failed to get session IDs for broadcast cleanup: %v", err)
+			} else if len(sessionNumericIDs) > 0 {
+				// Delete broadcast requests
+				if err := tx.Where("watch_session_id IN ?", sessionNumericIDs).Delete(&models.BroadcastRequest{}).Error; err != nil {
+					log.Printf("Warning: Failed to delete broadcast requests: %v", err)
+				}
+				// Delete broadcast permissions
+				if err := tx.Where("watch_session_id IN ?", sessionNumericIDs).Delete(&models.BroadcastPermission{}).Error; err != nil {
+					log.Printf("Warning: Failed to delete broadcast permissions: %v", err)
+				}
+			}
+		}
+
+		// 9. Delete user room memberships
+		if err := tx.Where("room_id = ?", roomIDUint).Delete(&models.UserRoom{}).Error; err != nil {
+			return err
+		}
+
+		// 10. Finally, delete the room itself
+		if err := tx.Delete(&room, roomIDUint).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("Error deleting room %d: %v", roomID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete room and related data"})
+		return
+	}
+
+	// Queue file deletion in background (non-blocking)
+	go func() {
+		roomIDUint := uint(roomID)
+
+		// Delete uploaded media files
+		var mediaItems []models.MediaItem
+		if err := DB.Unscoped().Where("room_id = ?", roomIDUint).Find(&mediaItems).Error; err == nil {
+			for _, item := range mediaItems {
+				if item.FilePath != "" {
+					if err := utils.DeleteMediaFile(item.FilePath); err != nil {
+						log.Printf("⚠️ Failed to delete media file %s: %v", item.FilePath, err)
+					} else {
+						log.Printf("Deleted file: %s", item.FilePath)
+					}
+				}
+				if item.PosterURL != "" && item.PosterURL != "/icons/placeholder-poster.jpg" {
+					utils.DeleteMediaFile(item.PosterURL) //nolint
+				}
+			}
+		}
+
+		// Delete temporary media files
+		var tempItems []models.TemporaryMediaItem
+		if err := DB.Unscoped().Where("room_id = ?", roomIDUint).Find(&tempItems).Error; err == nil {
+			for _, item := range tempItems {
+				if item.FilePath != "" {
+					if err := utils.DeleteMediaFile(item.FilePath); err != nil {
+						log.Printf("⚠️ Failed to delete temp file %s: %v", item.FilePath, err)
+					} else {
+						log.Printf("Deleted temp file: %s", item.FilePath)
+					}
+				}
+				if item.CDNSegmentsPrefix != "" {
+					utils.DeletePathFromBunnyCDNStorage(item.CDNSegmentsPrefix) //nolint
+				}
+			}
+		}
+
+		log.Printf("Room %d and all related files deleted successfully", roomID)
+	}()
+
+	// Broadcast room deletion via WebSocket to room members
+	broadcastMsg := map[string]interface{}{
+		"type":    "room_deleted",
+		"room_id": uint(roomID),
+		"message": "This room has been deleted by the host",
+	}
+	if msgBytes, err := json.Marshal(broadcastMsg); err == nil {
+		hub.BroadcastToRoom(uint(roomID), OutgoingMessage{Data: msgBytes, IsBinary: false}, nil)
+	}
+
+	// Broadcast to lobby for real-time room list updates
+	lobbyBroadcastData := map[string]interface{}{
+		"type":    "room_deleted",
+		"room_id": uint(roomID),
+	}
+	if lobbyJsonData, err := json.Marshal(lobbyBroadcastData); err == nil {
+		hub.BroadcastToLobby(OutgoingMessage{
+			Data:     lobbyJsonData,
+			IsBinary: false,
+		})
+	}
+
+	// Clear main_room_id on the host if it pointed to this room
+	DB.Model(&models.User{}).
+		Where("id = ? AND main_room_id = ?", userID, uint(roomID)).
+		Update("main_room_id", nil)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Room and all related data deleted successfully",
+	})
 }
-
 
 // UpdateRoomStatusHandler handles PUT /api/rooms/:id/status
 // UpdateRoomStatusHandler updates room status including screen sharing state
@@ -2587,10 +2575,10 @@ func UpdateRoomStatusHandler(c *gin.Context) {
 
 	// Parse the status update data
 	var statusData struct {
-		CurrentlyPlaying     string `json:"currently_playing"`
-		ComingNext           string `json:"coming_next"`
-		IsScreenSharing      bool   `json:"is_screen_sharing"`           // ✅ bool, not string
-		ScreenSharingUserID  uint   `json:"screen_sharing_user_id"`      // ✅ include user ID
+		CurrentlyPlaying    string `json:"currently_playing"`
+		ComingNext          string `json:"coming_next"`
+		IsScreenSharing     bool   `json:"is_screen_sharing"`      // ✅ bool, not string
+		ScreenSharingUserID uint   `json:"screen_sharing_user_id"` // ✅ include user ID
 	}
 
 	if err := c.ShouldBindJSON(&statusData); err != nil {
@@ -2611,8 +2599,6 @@ func UpdateRoomStatusHandler(c *gin.Context) {
 		return
 	}
 
-	
-
 	//if hub != nil {
 	//	if broadcastBytes, err := json.Marshal(broadcastMsg); err == nil {
 	//		hub.BroadcastToRoom(roomIDUint, broadcastBytes)
@@ -2622,10 +2608,10 @@ func UpdateRoomStatusHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Room status updated successfully",
 		"room": gin.H{
-			"id":                    room.ID,
-			"currently_playing":     room.CurrentlyPlaying,
-			"coming_next":           room.ComingNext,
-			"is_screen_sharing":     room.IsScreenSharing,
+			"id":                     room.ID,
+			"currently_playing":      room.CurrentlyPlaying,
+			"coming_next":            room.ComingNext,
+			"is_screen_sharing":      room.IsScreenSharing,
 			"screen_sharing_user_id": room.ScreenSharingUserID,
 		},
 	})
@@ -2634,86 +2620,86 @@ func UpdateRoomStatusHandler(c *gin.Context) {
 // This handles overriding the default settings in a room
 // UpdateRoomOverridesHandler handles PUT /api/rooms/:id/overrides
 func UpdateRoomOverridesHandler(c *gin.Context) {
-    // Get room ID from URL parameter
-    roomIDStr := c.Param("id")
-    if roomIDStr == "" {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
-        return
-    }
-    
-    // Get authenticated user ID from context
-    userIDValue, exists := c.Get("user_id")
-    if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-        return
-    }
-    
-    // Convert user ID to uint
-    userID, ok := userIDValue.(uint)
-    if !ok {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
-        return
-    }
-    
-    // Convert room ID to uint
-    roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
-    if err != nil || roomID == 0 {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
-        return
-    }
-    
-    // Check if user is the host of this room
-    var room models.Room
-    result := DB.First(&room, uint(roomID))
-    if result.Error != nil {
-        if result.Error == gorm.ErrRecordNotFound {
-            c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
-            return
-        } else {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-            return
-        }
-    }
-    
-    // Verify user is the host
-    if room.HostID != userID {
-        c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can update overrides"})
-        return
-    }
-    
-    // Parse the override data
-    var overrideData struct {
-        CurrentlyPlaying string `json:"currently_playing"`
-        ComingNext       string `json:"coming_next"`
-    }
-    
-    if err := c.ShouldBindJSON(&overrideData); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid override data"})
-        return
-    }
-    
-    // Update the room with override values
-    room.CurrentlyPlaying = overrideData.CurrentlyPlaying
-    room.ComingNext = overrideData.ComingNext
-    
-    // Save the updated room
-    result = DB.Save(&room)
-    if result.Error != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update room overrides"})
-        return
-    }
-    
-    // Broadcast the update to all room members
-    // This would be handled by your WebSocket system
-    
-    c.JSON(http.StatusOK, gin.H{
-        "message": "Room overrides updated successfully",
-        "room": gin.H{
-            "id":                  room.ID,
-            "currently_playing":   room.CurrentlyPlaying,
-            "coming_next":         room.ComingNext,
-        },
-    })
+	// Get room ID from URL parameter
+	roomIDStr := c.Param("id")
+	if roomIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
+		return
+	}
+
+	// Get authenticated user ID from context
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Convert user ID to uint
+	userID, ok := userIDValue.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+		return
+	}
+
+	// Convert room ID to uint
+	roomID, err := strconv.ParseUint(roomIDStr, 10, 64)
+	if err != nil || roomID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
+		return
+	}
+
+	// Check if user is the host of this room
+	var room models.Room
+	result := DB.First(&room, uint(roomID))
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
+			return
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
+		}
+	}
+
+	// Verify user is the host
+	if room.HostID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can update overrides"})
+		return
+	}
+
+	// Parse the override data
+	var overrideData struct {
+		CurrentlyPlaying string `json:"currently_playing"`
+		ComingNext       string `json:"coming_next"`
+	}
+
+	if err := c.ShouldBindJSON(&overrideData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid override data"})
+		return
+	}
+
+	// Update the room with override values
+	room.CurrentlyPlaying = overrideData.CurrentlyPlaying
+	room.ComingNext = overrideData.ComingNext
+
+	// Save the updated room
+	result = DB.Save(&room)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update room overrides"})
+		return
+	}
+
+	// Broadcast the update to all room members
+	// This would be handled by your WebSocket system
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Room overrides updated successfully",
+		"room": gin.H{
+			"id":                room.ID,
+			"currently_playing": room.CurrentlyPlaying,
+			"coming_next":       room.ComingNext,
+		},
+	})
 }
 
 // GetActiveSessionHandler returns active session_id if one exists
@@ -2748,13 +2734,13 @@ func GetActiveSessionHandler(c *gin.Context) {
 
 	// ✅ Fetch active members with user details
 	type MemberResponse struct {
-		UserID      uint       `json:"user_id"`
-		Username    string     `json:"username"`
-		AvatarURL   string     `json:"avatar_url"`
-		IsActive    bool       `json:"is_active"`
-		UserRole    string     `json:"user_role"`
-		LastSeenAt  *time.Time `json:"last_seen_at"`
-		JoinedAt    time.Time  `json:"joined_at"`
+		UserID     uint       `json:"user_id"`
+		Username   string     `json:"username"`
+		AvatarURL  string     `json:"avatar_url"`
+		IsActive   bool       `json:"is_active"`
+		UserRole   string     `json:"user_role"`
+		LastSeenAt *time.Time `json:"last_seen_at"`
+		JoinedAt   time.Time  `json:"joined_at"`
 	}
 
 	var members []MemberResponse
@@ -2817,34 +2803,34 @@ func GetActiveSessionHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"id":                     session.ID,  // Numeric DB ID for API calls
-		"session_id":            session.SessionID,  // UUID string for WebSocket
-		"watch_type":            session.WatchType,
-		"class_type":            session.ClassType,
-		"session_title":         session.SessionTitle,
-		"content_rating":        session.ContentRating,  // ✅ Include content rating
-		"host_id":               session.HostID,
-		"host_name":             hostName,  // ✅ Add host name for ticket purchase modal
-		"is_existing":           true,
-		"started_at":            session.StartedAt,
-		"member_count":          memberCount,
-		"ws_connection_count":   wsConnectionCount,
-		"members":               members,
+		"id":                  session.ID,        // Numeric DB ID for API calls
+		"session_id":          session.SessionID, // UUID string for WebSocket
+		"watch_type":          session.WatchType,
+		"class_type":          session.ClassType,
+		"session_title":       session.SessionTitle,
+		"content_rating":      session.ContentRating, // ✅ Include content rating
+		"host_id":             session.HostID,
+		"host_name":           hostName, // ✅ Add host name for ticket purchase modal
+		"is_existing":         true,
+		"started_at":          session.StartedAt,
+		"member_count":        memberCount,
+		"ws_connection_count": wsConnectionCount,
+		"members":             members,
 		// ✅ TICKET ENFORCEMENT: Include ticketing fields for frontend validation
-		"ticketing_enabled":      session.TicketingEnabled,
-		"ticket_price_tokens":    session.TicketPriceTokens,
-		"ticket_price_currency":  session.TicketPriceCurrency,
-		"ticket_price_amount":    session.TicketPriceAmount,
+		"ticketing_enabled":     session.TicketingEnabled,
+		"ticket_price_tokens":   session.TicketPriceTokens,
+		"ticket_price_currency": session.TicketPriceCurrency,
+		"ticket_price_amount":   session.TicketPriceAmount,
 		// ✅ Early bird pricing fields
-		"early_bird_enabled":     session.EarlyBirdEnabled,
+		"early_bird_enabled":      session.EarlyBirdEnabled,
 		"early_bird_price_tokens": session.EarlyBirdPriceTokens,
 		"early_bird_price_amount": session.EarlyBirdPriceAmount,
-		"early_bird_active":      session.EarlyBirdActive,
+		"early_bird_active":       session.EarlyBirdActive,
 		// ✅ LIVESHARE STATE: Include for late joiners to restore graphics
-		"liveshare_mode":         session.LiveshareMode,
-		"podcast_title":          session.PodcastTitle,
-		"podcast_logo_url":       session.PodcastLogoURL,
-		"podcast_guest_user_id":  session.PodcastGuestUserID,
+		"liveshare_mode":        session.LiveshareMode,
+		"podcast_title":         session.PodcastTitle,
+		"podcast_logo_url":      session.PodcastLogoURL,
+		"podcast_guest_user_id": session.PodcastGuestUserID,
 		// Canvas graphics state (JSON strings)
 		"liveshare_banner_text":  session.LiveShareBannerText,
 		"liveshare_ticker_items": session.LiveShareTickerItems,
@@ -2922,7 +2908,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		// Default to "video" if not specified
 		input.WatchType = "video"
 	}
-	
+
 	log.Printf("📥 [CreateWatchSession] RAW INPUT RECEIVED:")
 	log.Printf("  ├─ content_rating: '%s'", input.ContentRating)
 	log.Printf("  ├─ watch_type: '%s'", input.WatchType)
@@ -2930,7 +2916,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	log.Printf("  ├─ ticketing_enabled: %v", input.TicketingEnabled)
 	log.Printf("🎬 [CreateWatchSession] Received ticketing_enabled: %v", input.TicketingEnabled)
 	log.Printf("🎬 [CreateWatchSession] Received watch_type: '%s', class_type: %v", input.WatchType, input.ClassType)
-	
+
 	// Validate watch_type
 	if input.WatchType != "video" && input.WatchType != "3d_cinema" && input.WatchType != "classroom" && input.WatchType != "custom" {
 		input.WatchType = "video"
@@ -2945,7 +2931,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 			classType = "lecture_hall" // Default
 		}
 	}
-	
+
 	// Validate content_rating
 	log.Printf("🔍 [CreateWatchSession] Starting content_rating validation...")
 	log.Printf("  ├─ Input value: '%s' (length: %d)", input.ContentRating, len(input.ContentRating))
@@ -2964,7 +2950,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	if !matched {
 		log.Printf("⚠️ [CreateWatchSession] NO MATCH FOUND! Defaulting to 'G'. Input was: '%s'", input.ContentRating)
 	}
-	
+
 	// Early bird pricing is managed by the utils.StartEarlyBirdScheduler
 	// It auto-deactivates 1 hour before scheduled events
 
@@ -2992,11 +2978,11 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		log.Printf("  ├─ Started At: %v", existingSession.StartedAt)
 		log.Printf("  ├─ Is Active: %v", existingSession.IsActive)
 		log.Printf("  └─ RETURNING EXISTING SESSION (not creating new one)")
-		
+
 		// Count active members
 		var memberCount int64
 		DB.Model(&models.WatchSessionMember{}).Where("watch_session_id = ? AND is_active = ?", existingSession.ID, true).Count(&memberCount)
-		
+
 		c.JSON(200, gin.H{
 			"session_id":   existingSession.SessionID,
 			"watch_type":   existingSession.WatchType,
@@ -3030,14 +3016,14 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 		CustomBackgroundURL: input.CustomBackgroundURL,
 		ScreenRegion:        input.ScreenRegion,
 	}
-	
+
 	// Only populate ticketing fields if ticketing is enabled
 	if input.TicketingEnabled {
 		session.TicketingEnabled = true
 		session.TicketPriceTokens = input.TicketPriceTokens
 		session.TicketPriceCurrency = input.TicketPriceCurrency
 		session.TicketPriceAmount = input.TicketPriceAmount
-		
+
 		// Only populate early bird fields if early bird is also enabled
 		if input.EarlyBirdEnabled {
 			session.EarlyBirdEnabled = true
@@ -3046,7 +3032,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 			session.EarlyBirdActive = true // Default to active, scheduler will deactivate later
 		}
 	}
-	
+
 	if err := DB.Create(&session).Error; err != nil {
 		log.Printf("❌ Failed to create watch session: %v", err)
 		c.JSON(500, gin.H{"error": "Failed to create session"})
@@ -3116,7 +3102,7 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	log.Printf("  ├─ session_id: %s", sessionID)
 	log.Printf("  ├─ content_rating in struct: '%s'", session.ContentRating)
 	log.Printf("  ├─ ticketing_enabled: %v", input.TicketingEnabled)
-	
+
 	// Verify what was actually saved
 	var savedSession models.WatchSession
 	if err := DB.Where("session_id = ?", sessionID).First(&savedSession).Error; err == nil {
@@ -3132,21 +3118,21 @@ func CreateWatchSessionForRoomHandler(c *gin.Context) {
 	log.Printf("  ├─ session_id: %s", sessionID)
 	log.Printf("  └─ is_existing: false")
 	c.JSON(201, gin.H{
-		"session_id":             sessionID,
-		"watch_type":             input.WatchType,
-		"class_type":             classType,
-		"content_rating":         contentRating,             // ✅ Return content rating to frontend
-		"ticketing_enabled":      input.TicketingEnabled,    // ✅ Return ticketing status
-		"ticket_price_tokens":    input.TicketPriceTokens,   // ✅ Return ticket price
-		"ticket_price_currency":  input.TicketPriceCurrency, // ✅ Return currency
-		"ticket_price_amount":    input.TicketPriceAmount,   // ✅ Return local price
-		"early_bird_enabled":     input.EarlyBirdEnabled,    // ✅ Return early bird status
+		"session_id":              sessionID,
+		"watch_type":              input.WatchType,
+		"class_type":              classType,
+		"content_rating":          contentRating,             // ✅ Return content rating to frontend
+		"ticketing_enabled":       input.TicketingEnabled,    // ✅ Return ticketing status
+		"ticket_price_tokens":     input.TicketPriceTokens,   // ✅ Return ticket price
+		"ticket_price_currency":   input.TicketPriceCurrency, // ✅ Return currency
+		"ticket_price_amount":     input.TicketPriceAmount,   // ✅ Return local price
+		"early_bird_enabled":      input.EarlyBirdEnabled,    // ✅ Return early bird status
 		"early_bird_price_tokens": input.EarlyBirdPriceTokens,
 		"early_bird_price_amount": input.EarlyBirdPriceAmount,
-		"early_bird_active":      session.EarlyBirdActive,   // ✅ Return active status from session
-		"is_existing":            false,
-		"started_at":             session.StartedAt,
-		"member_count":           0,
+		"early_bird_active":       session.EarlyBirdActive, // ✅ Return active status from session
+		"is_existing":             false,
+		"started_at":              session.StartedAt,
+		"member_count":            0,
 	})
 }
 
@@ -3157,9 +3143,9 @@ func GetRoomHandler(c *gin.Context) {
 	// Get the room id from the URL parameter
 	// c.Param("id") returns a string
 	roomIDStr := c.Param("id")
-	if roomIDStr 	== ""{
+	if roomIDStr == "" {
 		log.Println("GetRoomHandler: Missing room ID parameter")
-		c.JSON(http.StatusBadRequest, gin.H{"error":"Room ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Room ID is required"})
 		return
 	}
 
@@ -3169,11 +3155,10 @@ func GetRoomHandler(c *gin.Context) {
 		log.Printf("GetRoomHandler: Invalid room ID format: %s", roomIDStr)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid room ID"})
 		return
-}
+	}
 
 	// Convert the uint64 to uint
 	roomIDUint := uint(roomID)
-
 
 	// Query the database for the specific room by ID with host username and avatar
 	type RoomWithUsername struct {
@@ -3181,20 +3166,20 @@ func GetRoomHandler(c *gin.Context) {
 		HostUsername  string `gorm:"column:host_username"`
 		HostAvatarURL string `gorm:"column:host_avatar_url"`
 	}
-	
+
 	var roomData RoomWithUsername
 	result := DB.Table("rooms").
 		Select("rooms.*, users.username as host_username, users.avatar_url as host_avatar_url").
 		Joins("LEFT JOIN users ON rooms.host_id = users.id").
 		Where("rooms.id = ? AND rooms.deleted_at IS NULL", roomIDUint).
 		Scan(&roomData)
-	
+
 	if result.Error != nil {
 		log.Printf("GetRoomHandler: Database error fetching room %d: %v", roomIDUint, result.Error)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
-	
+
 	if roomData.Room.ID == 0 {
 		log.Printf("GetRoomHandler: Room with ID %d not found", roomIDUint)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Room not found"})
@@ -3212,24 +3197,42 @@ func GetRoomHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Room fetched successfully",
 		"room": gin.H{
-			"id":              roomData.Room.ID,
-			"name":            roomData.Room.Name,
-			"description":     roomData.Room.Description,
-			"host_id":         roomData.Room.HostID,
-			"host_username":   hostDisplay,
-			"host_avatar_url": roomData.HostAvatarURL,
-			"handle":          roomData.Room.Handle,
-			"room_type":       roomData.Room.RoomType,
-			"other_room_type": roomData.Room.OtherRoomType,
-			"media_file_name": roomData.Room.MediaFileName,
-			"playback_state":  roomData.Room.PlaybackState,
-			"playback_time":   roomData.Room.PlaybackTime,
-			"created_at":      roomData.Room.CreatedAt,
-			"image_url":       roomData.Room.ImageURL,
-			"loop_mode":       roomData.Room.LoopMode,
-			"currently_playing":  roomData.Room.CurrentlyPlaying,
-			"coming_next":        roomData.Room.ComingNext,
-			"is_screen_sharing":  roomData.Room.IsScreenSharing,
+			"id":                roomData.Room.ID,
+			"name":              roomData.Room.Name,
+			"description":       roomData.Room.Description,
+			"host_id":           roomData.Room.HostID,
+			"host_username":     hostDisplay,
+			"host_avatar_url":   roomData.HostAvatarURL,
+			"handle":            roomData.Room.Handle,
+			"room_type":         roomData.Room.RoomType,
+			"other_room_type":   roomData.Room.OtherRoomType,
+			"media_file_name":   roomData.Room.MediaFileName,
+			"playback_state":    roomData.Room.PlaybackState,
+			"playback_time":     roomData.Room.PlaybackTime,
+			"created_at":        roomData.Room.CreatedAt,
+			"image_url":         roomData.Room.ImageURL,
+			"loop_mode":         roomData.Room.LoopMode,
+			"currently_playing": roomData.Room.CurrentlyPlaying,
+			"coming_next":       roomData.Room.ComingNext,
+			"is_screen_sharing": roomData.Room.IsScreenSharing,
+			// These 5 were missing entirely (found 2026-08-12 investigating
+			// RoomPageEditModal showing "Public room" for a genuinely private
+			// room): RoomPageEditModal's formData init falls back to a
+			// hardcoded default whenever the corresponding field is `undefined`
+			// on the room prop — is_public defaults to true, show_host/
+			// show_description/auto_invite_followers default to true,
+			// host_only_chat defaults to false. Since none of these 5 were ever
+			// present in this response, EVERY room opened via RoomPageNew (the
+			// only page that calls this endpoint, both directly and via
+			// prefetchCache.js's identical GET) showed these hardcoded defaults
+			// instead of its real persisted settings — only visible as a bug
+			// when the real value differed from the default (e.g. a private
+			// room always displaying as public).
+			"is_public":             roomData.Room.IsPublic,
+			"show_host":             roomData.Room.ShowHost,
+			"show_description":      roomData.Room.ShowDescription,
+			"host_only_chat":        roomData.Room.HostOnlyChat,
+			"auto_invite_followers": roomData.Room.AutoInviteFollowers,
 		},
 	})
 }

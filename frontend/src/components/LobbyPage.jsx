@@ -507,11 +507,11 @@ const LobbyPage = () => {
   // One-time coach-mark tour of the bottom taskbar — shown once to every
   // user (new or existing) who hasn't seen it yet, matching the existing
   // Room Page / Sidebar / RoomTV tour convention (fire once, gate on a
-  // localStorage flag). Deliberately waits for the App Tour (above) to be
-  // dismissed first if both are pending at once, rather than stacking two
-  // full-screen overlays — the effect naturally re-fires once
-  // isOnboardingTourOpen flips back to false, since it never marks
-  // taskbarTourShown while blocked.
+  // localStorage flag). Deliberately waits for the App Tour AND the
+  // "complete your profile" UserProfileModal (both further below) to be
+  // dismissed first if any is pending, rather than stacking full-screen
+  // overlays — the effect naturally re-fires once either flag flips back to
+  // false, since it never marks taskbarTourShown while blocked.
   //
   // Must stay below the useAuth() destructuring above — this previously sat
   // near the top of the component and referenced currentUser (declared here),
@@ -519,15 +519,63 @@ const LobbyPage = () => {
   // (line ~354-355) before any of them existed yet, throwing a real
   // "Cannot access 'currentUser' before initialization" TDZ error on every
   // single LobbyPage mount in production builds (found 2026-08-11).
+  //
+  // Also fixed the same day: this used to fire on the identical 700ms delay
+  // as the UserProfileModal onboarding effect below (both keyed off
+  // `currentUser` becoming available), racing to show at the same instant.
+  // Coachmark's full-screen overlay (z-[10000]) has no pointer-events:none of
+  // its own — only its spotlighted cutout passes clicks through — so when
+  // both won the race to render, the profile modal's own close (×) button
+  // sat underneath the coachmark's click-capturing layer and became
+  // unclickable. That modal only marks itself "done" in its own onClose
+  // handler, so a user who couldn't reach × never got the flag set and saw
+  // it reopen on every later login — the "I thought it was one-time" bug.
+  // Fixed by also gating on isUserProfileModalOpen, and giving this tour a
+  // longer delay (1500ms vs. the modal's 700ms) so by the time it's about to
+  // show, the modal's own effect has already had a full margin to resolve
+  // either way — no more coin-flip between two independently-scheduled timers.
+  //
+  // taskbarTourShown only latches inside the timeout callback below, once the
+  // tour actually fires uninterrupted — NOT synchronously when merely
+  // scheduling the attempt. Setting it eagerly was a real bug: this effect's
+  // first pass can run (and schedule its timer) before isUserProfileModalOpen
+  // has even had a chance to flip true — that flag is itself behind its own
+  // 700ms timer in a *different* effect — so the ref would latch permanently
+  // "shown" on that first pass, before the modal ever opened. When the modal
+  // then did open and this effect re-ran (isUserProfileModalOpen in the deps
+  // array), React's cleanup cleared the pending timer as intended, but the
+  // already-latched ref then blocked every later re-run (including the one
+  // once the modal closed) from ever scheduling a replacement — so the tour
+  // silently never showed at all, for the rest of the session. Confirmed via
+  // a real timed reproduction: with the eager-latch version, the tour never
+  // appeared even 9+ seconds after the modal was closed.
   useEffect(() => {
     if (taskbarTourShown.current) return;
     if (localStorage.getItem('wewatch_lobby_taskbar_tour_seen')) return;
     if (!currentUser) return;
     if (isOnboardingTourOpen) return;
-    taskbarTourShown.current = true;
-    const t = setTimeout(() => setShowTaskbarTour(true), 700);
+    if (isUserProfileModalOpen) return;
+    const t = setTimeout(() => {
+      taskbarTourShown.current = true;
+      setShowTaskbarTour(true);
+    }, 1500);
     return () => clearTimeout(t);
-  }, [currentUser, isOnboardingTourOpen]);
+  }, [currentUser, isOnboardingTourOpen, isUserProfileModalOpen]);
+
+  // Safety net for a rarer path than the automatic-login race above: a user
+  // can manually open UserProfileModal (sidebar → "My Profile") while the
+  // taskbar tour happens to already be showing. Coachmark's full-screen
+  // overlay would otherwise sit on top and make the modal's own × unreachable
+  // — so back the tour off rather than risk that same deadlock. Deliberately
+  // does NOT mark wewatch_lobby_taskbar_tour_seen (this isn't the user
+  // dismissing the tour, just deferring it) and does not attempt to resume it
+  // this session — taskbarTourShown.current is already true by this point, so
+  // the main gating effect above won't re-fire it; it'll show on next login.
+  useEffect(() => {
+    if (isUserProfileModalOpen && showTaskbarTour) {
+      setShowTaskbarTour(false);
+    }
+  }, [isUserProfileModalOpen, showTaskbarTour]);
 
   // 🔇 Toggle video mute state and save to localStorage
   const toggleVideoMute = () => {
