@@ -27,6 +27,14 @@ const CATEGORIES = [
   { id: 26, label: 'Celebrities',       emoji: '⭐', color: 'from-amber-500 to-yellow-600' },
   { id: 32, label: 'Cartoons',          emoji: '🎭', color: 'from-violet-600 to-purple-600' },
   { id: 23, label: 'History',           emoji: '📜', color: 'from-stone-500 to-amber-700' },
+  // Sentinel ids, not real OpenTDB categories — OpenTDB has neither an
+  // African/indigenous-culture nor a religion category at all (confirmed
+  // against its own live category list). handleCategoryConfirm special-cases
+  // both ids and pulls from the hand-authored CULTURE_QUESTIONS /
+  // RELIGION_QUESTIONS banks below instead of fetching. Two separate tiles,
+  // not one combined topic.
+  { id: 'culture',  label: 'Culture',  emoji: '🪘', color: 'from-amber-600 to-orange-700' },
+  { id: 'religion', label: 'Religion', emoji: '🕊️', color: 'from-indigo-600 to-blue-800' },
 ];
 
 const DIFFICULTIES = [
@@ -35,6 +43,11 @@ const DIFFICULTIES = [
   { id: 'hard',   label: 'Hard',   color: 'border-red-500 bg-red-500/20 text-red-300',          active: 'border-red-400 bg-red-500/40 ring-2 ring-red-400' },
 ];
 
+// A larger, mixed general-knowledge pool used only when OpenTDB is genuinely
+// unreachable (network failure, or every retry in fetchQuestions exhausted).
+// pickFreshSubset() below randomly samples + shuffles 10 of these per game and
+// tracks recently-served ones in sessionStorage, so a real outage doesn't show
+// the exact same 10 questions in the exact same order every single time.
 const FALLBACK_QUESTIONS = [
   { text: 'What is the largest planet in our solar system?', options: ['Earth','Jupiter','Saturn','Neptune'], correct_index: 1 },
   { text: "Which element has the chemical symbol 'Au'?", options: ['Silver','Copper','Gold','Platinum'], correct_index: 2 },
@@ -46,6 +59,92 @@ const FALLBACK_QUESTIONS = [
   { text: 'What is the capital of Japan?', options: ['Beijing','Seoul','Tokyo','Osaka'], correct_index: 2 },
   { text: 'Which planet is known as the Red Planet?', options: ['Venus','Jupiter','Mars','Saturn'], correct_index: 2 },
   { text: 'How many sides does a hexagon have?', options: ['5','6','7','8'], correct_index: 1 },
+  { text: 'What is the longest river in the world?', options: ['Amazon','Nile','Yangtze','Mississippi'], correct_index: 1 },
+  { text: 'Which country gifted the Statue of Liberty to the United States?', options: ['United Kingdom','Spain','France','Italy'], correct_index: 2 },
+  { text: 'What is the smallest prime number?', options: ['0','1','2','3'], correct_index: 2 },
+  { text: 'Which gas do plants primarily absorb from the atmosphere for photosynthesis?', options: ['Oxygen','Nitrogen','Carbon dioxide','Hydrogen'], correct_index: 2 },
+  { text: 'What is the largest ocean on Earth?', options: ['Atlantic Ocean','Indian Ocean','Arctic Ocean','Pacific Ocean'], correct_index: 3 },
+  { text: "Who wrote the play 'Romeo and Juliet'?", options: ['Charles Dickens','William Shakespeare','Jane Austen','Mark Twain'], correct_index: 1 },
+  { text: 'What is the currency of Japan?', options: ['Won','Yuan','Yen','Ringgit'], correct_index: 2 },
+  { text: 'How many continents are there on Earth?', options: ['5','6','7','8'], correct_index: 2 },
+  { text: 'Which vitamin is produced when human skin is exposed to sunlight?', options: ['Vitamin A','Vitamin C','Vitamin D','Vitamin K'], correct_index: 2 },
+  { text: 'What is the tallest mountain in the world?', options: ['K2','Mount Kilimanjaro','Mount Everest','Denali'], correct_index: 2 },
+  { text: 'Which musical instrument has 88 keys?', options: ['Organ','Piano','Harpsichord','Accordion'], correct_index: 1 },
+  { text: 'What is the freezing point of water in Celsius?', options: ['-10°C','0°C','10°C','32°C'], correct_index: 1 },
+  { text: 'Which country is home to the kangaroo as a native species?', options: ['New Zealand','South Africa','Australia','Brazil'], correct_index: 2 },
+  { text: 'What is the largest mammal in the world?', options: ['African elephant','Blue whale','Giraffe','Sperm whale'], correct_index: 1 },
+  { text: 'Which language has the most native speakers worldwide?', options: ['English','Spanish','Mandarin Chinese','Hindi'], correct_index: 2 },
+  { text: 'How many players are on a standard soccer team on the field?', options: ['9','10','11','12'], correct_index: 2 },
+  { text: 'What is the capital city of Canada?', options: ['Toronto','Vancouver','Ottawa','Montreal'], correct_index: 2 },
+  { text: 'Which organ in the human body produces insulin?', options: ['Liver','Pancreas','Kidney','Spleen'], correct_index: 1 },
+  { text: 'The speed of light is approximately how many kilometers per second?', options: ['30,000 km/s','300,000 km/s','3,000,000 km/s','300 km/s'], correct_index: 1 },
+  { text: 'Which shape has three sides?', options: ['Square','Pentagon','Triangle','Hexagon'], correct_index: 2 },
+];
+
+// ─── Culture & Religion question banks ───────────────────────────────────────
+// OpenTDB has no African/indigenous-culture or religion category at all
+// (verified directly against its live /api_category.php list) — both of these
+// bypass OpenTDB entirely and pull from these hand-authored, fact-checked
+// banks instead, same as the Custom-quiz path already does for host-authored
+// questions. Two separate categories/tiles, not one combined topic: Culture
+// (African civilizations + indigenous peoples worldwide) and Religion (world
+// faiths). correct_index is always authored as 0 here — shuffleQuestionOptions()
+// (below) randomizes the actual on-screen order every time a question is
+// served, so the answer position isn't memorizable across repeated plays.
+const CULTURE_QUESTIONS = [
+  // ── African civilizations & culture ──
+  { text: 'Mansa Musa, often cited as history’s richest individual, ruled which West African empire?', options: ['Mali Empire','Songhai Empire','Ashanti Empire','Kingdom of Kush'], correct_index: 0 },
+  { text: 'The stone city of Great Zimbabwe, built without mortar, was constructed by the ancestors of which people?', options: ['Shona people','Zulu people','Maasai people','Yoruba people'], correct_index: 0 },
+  { text: 'The Ashanti Empire, known for its sacred Golden Stool, was centered in present-day which country?', options: ['Ghana','Nigeria','Senegal','Kenya'], correct_index: 0 },
+  { text: 'Which Ethiopian imperial dynasty claimed descent from King Solomon and the Queen of Sheba?', options: ['Solomonic dynasty','Aksumite dynasty','Zagwe dynasty','Fatimid dynasty'], correct_index: 0 },
+  { text: 'The rock-hewn churches of Lalibela, carved directly from stone, are found in which country?', options: ['Ethiopia','Sudan','Eritrea','Kenya'], correct_index: 0 },
+  { text: 'Timbuktu, a historic center of Islamic scholarship with the Sankore Madrasah, is located in which present-day country?', options: ['Mali','Niger','Chad','Sudan'], correct_index: 0 },
+  { text: 'The Zulu Kingdom was famously united and expanded in the early 19th century under which leader?', options: ['Shaka Zulu','Cetshwayo','Moshoeshoe I','Lobengula'], correct_index: 0 },
+  { text: 'The Nubian pyramids at Meröe, more numerous than Egypt’s, belong to which ancient African kingdom?', options: ['Kingdom of Kush','Land of Punt','Kingdom of Aksum','Nok culture'], correct_index: 0 },
+  { text: 'The Yoruba people, known for a rich oral tradition and the Ifá divination system, are primarily from which present-day country?', options: ['Nigeria','Ghana','Cameroon','Ivory Coast'], correct_index: 0 },
+  { text: 'The medieval Ghana Empire, from which modern Ghana later borrowed its name, was actually located in present-day which region?', options: ['Mali and Mauritania','Present-day Ghana','Present-day Nigeria','Present-day Senegal'], correct_index: 0 },
+  { text: 'The Maasai people, known for distinctive red shuka clothing, are primarily found in which two countries?', options: ['Kenya and Tanzania','Nigeria and Ghana','South Africa and Namibia','Ethiopia and Somalia'], correct_index: 0 },
+  { text: 'The kora, a 21-string gourd-resonated instrument, is a traditional instrument of which region?', options: ['West Africa','East Africa','Southern Africa','North Africa'], correct_index: 0 },
+  { text: 'South Africa’s system of institutionalized racial segregation, formally dismantled by 1994, was called what?', options: ['Apartheid','Federation','Partition','Colonialism'], correct_index: 0 },
+  { text: 'The djembe, a rope-tuned skin-covered drum, originated in West Africa among which peoples?', options: ['Mandinka people','Zulu people','Maasai people','Amhara people'], correct_index: 0 },
+  { text: 'The ancient obelisks (stelae) of Aksum, some over 100 feet tall, are found in which country?', options: ['Ethiopia','Egypt','Sudan','Eritrea'], correct_index: 0 },
+  { text: 'The intricate Benin Bronzes originate from the historic Kingdom of Benin, located in present-day which country?', options: ['Nigeria','Republic of Benin','Ghana','Ivory Coast'], correct_index: 0 },
+  { text: 'The Southern African philosophy of "Ubuntu" — often summarized as "I am because we are" — comes from which language family?', options: ['Bantu languages','Cushitic languages','Nilotic languages','Berber languages'], correct_index: 0 },
+  // ── Indigenous peoples worldwide ──
+  { text: 'The Māori are the indigenous people of which country?', options: ['New Zealand','Australia','Fiji','Papua New Guinea'], correct_index: 0 },
+  { text: 'The Haka, a ceremonial dance of challenge and unity, is traditionally performed by which indigenous group?', options: ['Māori','Aboriginal Australians','Native Hawaiians','Sámi'], correct_index: 0 },
+  { text: 'Aboriginal Australian dot painting traditionally depicts stories from which spiritual concept?', options: ['The Dreamtime','The Underworld','Ancestor Spirits Path','The Sky Road'], correct_index: 0 },
+  { text: 'The Inuit people are traditionally native to which region?', options: ['The Arctic','The Amazon','The Sahara','The Andes'], correct_index: 0 },
+  { text: 'The Iroquois Confederacy (Haudenosaunee), also called the Six Nations, includes the Mohawk and which other people?', options: ['Seneca','Cherokee','Navajo','Lakota'], correct_index: 0 },
+  { text: 'The Sámi people are indigenous to which region of Europe?', options: ['Northern Scandinavia (Lapland)','Southern Italy','Eastern Balkans','Western Ireland'], correct_index: 0 },
+  { text: 'Machu Picchu, high in the Andes, was built by which indigenous civilization?', options: ['The Inca','The Maya','The Aztec','The Olmec'], correct_index: 0 },
+  { text: 'Uluru (Ayers Rock), a sacred site in central Australia, is traditionally cared for by which Aboriginal people?', options: ['Anangu','Yolŋu','Noongar','Torres Strait Islanders'], correct_index: 0 },
+  { text: 'Which indigenous people built the multi-story cliff dwellings at Mesa Verde in present-day Colorado, USA?', options: ['The Ancestral Puebloans','The Aztec','The Maya','The Cherokee'], correct_index: 0 },
+  { text: 'Totem poles carved from cedar to represent family lineage and stories are a tradition of indigenous peoples from which region?', options: ['The Pacific Northwest Coast','The Great Plains','The Caribbean','The Andes'], correct_index: 0 },
+  { text: 'The Iroquois Confederacy (Haudenosaunee) is governed by a founding oral constitution often called what?', options: ['The Great Law of Peace','The Magna Carta','The Treaty of Tordesillas','The Articles of Confederacy'], correct_index: 0 },
+  { text: 'The Aztec capital of Tenochtitlan was built on an island in which lake, in present-day Mexico?', options: ['Lake Texcoco','Lake Titicaca','Lake Nicaragua','Lake Chapala'], correct_index: 0 },
+  { text: 'Which indigenous Andean people developed a system of knotted cords called "quipu" for record-keeping?', options: ['The Inca','The Maya','The Aztec','The Olmec'], correct_index: 0 },
+  { text: 'The Navajo (Diné) Nation, the largest Native American reservation by land area, spans Arizona, Utah, and which other state?', options: ['New Mexico','Colorado','Texas','Nevada'], correct_index: 0 },
+  { text: 'The traditional Polynesian navigation technique of reading stars, waves, and wildlife without modern instruments is called what?', options: ['Wayfinding','Dead reckoning','Triangulation','Celestial mapping'], correct_index: 0 },
+];
+
+const RELIGION_QUESTIONS = [
+  { text: 'The Quran is the central religious text of which religion?', options: ['Islam','Judaism','Sikhism','Zoroastrianism'], correct_index: 0 },
+  { text: 'The Torah is the central text of which religion?', options: ['Judaism','Islam','Christianity','Hinduism'], correct_index: 0 },
+  { text: 'Which religion teaches the Four Noble Truths and the Eightfold Path?', options: ['Buddhism','Hinduism','Jainism','Sikhism'], correct_index: 0 },
+  { text: 'The Bhagavad Gita is a sacred scripture central to which religion?', options: ['Hinduism','Buddhism','Sikhism','Jainism'], correct_index: 0 },
+  { text: 'Sikhism was founded by which guru in the Punjab region of South Asia?', options: ['Guru Nanak','Guru Gobind Singh','Guru Arjan','Guru Amar Das'], correct_index: 0 },
+  { text: 'Ramadan, a month of daytime fasting, is observed by followers of which religion?', options: ['Islam','Christianity','Judaism','Hinduism'], correct_index: 0 },
+  { text: 'Holi, the festival involving colored powders, celebrates the arrival of spring in which religion?', options: ['Hinduism','Buddhism','Sikhism','Shinto'], correct_index: 0 },
+  { text: 'The Star of David is a widely recognized symbol of which religion?', options: ['Judaism','Islam','Christianity','Baha’i'], correct_index: 0 },
+  { text: 'Followers of which religion traditionally observe the Sabbath from Friday evening to Saturday evening?', options: ['Judaism','Christianity','Islam','Zoroastrianism'], correct_index: 0 },
+  { text: 'Diwali, the "Festival of Lights," is primarily celebrated by followers of which religion?', options: ['Hinduism','Islam','Christianity','Judaism'], correct_index: 0 },
+  { text: 'Which of these religions originated in ancient India?', options: ['Hinduism','Islam','Christianity','Judaism'], correct_index: 0 },
+  { text: 'Vodou (Voodoo), which blends West African spiritual traditions with Catholicism, is widely practiced in which Caribbean nation?', options: ['Haiti','Jamaica','Cuba','Trinidad and Tobago'], correct_index: 0 },
+  { text: 'The Orisha spiritual tradition, centered on deities such as Shango and Oshun, originates with which African people?', options: ['Yoruba people','Zulu people','Maasai people','Amhara people'], correct_index: 0 },
+  { text: 'Christianity is centered on the teachings of Jesus of Nazareth, as recorded primarily in which text?', options: ['The New Testament','The Torah','The Quran','The Vedas'], correct_index: 0 },
+  { text: 'The Kaaba, considered Islam’s holiest site, is located in which city?', options: ['Mecca','Medina','Jerusalem','Baghdad'], correct_index: 0 },
+  { text: 'Traditional African religions commonly hold that a single Supreme Creator (like the Akan’s "Nyame" or Zulu’s "uNkulunkulu") oversees the universe alongside what else?', options: ['Ancestor spirits','Guardian angels','Reincarnated saints','Elemental demigods'], correct_index: 0 },
 ];
 
 function decodeHtml(str) {
@@ -58,14 +157,120 @@ function processOpentdbQuestion(q) {
   return { text: decodeHtml(q.question), options: all, correct_index: all.indexOf(correct) };
 }
 
+// ─── Question freshness ───────────────────────────────────────────────────────
+// OpenTDB path: a real session token (verified live against opentdb.com — see
+// the response_code handling below, each branch matches a real, confirmed
+// server behavior, not a guess) makes OpenTDB exclude every question it has
+// already served to this browser tab for the lifetime of the token, so a long
+// play session keeps genuinely cycling through new questions instead of
+// occasionally re-serving one from a few rounds ago. response_code 4 means
+// the token has now seen every question OpenTDB has for this exact
+// category+difficulty combo — reset it server-side and retry once rather
+// than failing. response_code 3 means the token itself is stale (OpenTDB
+// expires an idle token after ~6h) — drop it and retry once without one.
+// response_code 5 is OpenTDB's own rate limit (~1 request per 5s per IP) —
+// wait it out once. response_code 1 means the chosen category+difficulty
+// combo simply doesn't have 10 questions — retry once at any difficulty
+// (a much larger pool) before giving up, so a narrow combo still starts a
+// real quiz instead of silently falling back to the exact same fixed list.
+const OPENTDB_TOKEN_KEY = 'wewatch_trivia_opentdb_token';
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getOpenTdbToken() {
+  try {
+    const existing = sessionStorage.getItem(OPENTDB_TOKEN_KEY);
+    if (existing) return existing;
+  } catch { /* sessionStorage unavailable (private mode) — proceed tokenless */ }
+  try {
+    const res = await fetch('https://opentdb.com/api_token.php?command=request');
+    const data = await res.json();
+    if (data.response_code === 0 && data.token) {
+      try { sessionStorage.setItem(OPENTDB_TOKEN_KEY, data.token); } catch { /* ignore */ }
+      return data.token;
+    }
+  } catch { /* network failure acquiring a token — degrade to plain random fetch */ }
+  return null;
+}
+
+async function resetOpenTdbToken(token) {
+  try {
+    await fetch(`https://opentdb.com/api_token.php?command=reset&token=${token}`);
+  } catch { /* best-effort — a failed reset just means the next fetch falls through to fallback */ }
+}
+
 async function fetchQuestions(categoryId, difficulty) {
-  const url = `https://opentdb.com/api.php?amount=10&type=multiple&encode=url3986${
-    categoryId ? `&category=${categoryId}` : ''
-  }${difficulty ? `&difficulty=${difficulty}` : ''}`;
-  const res = await fetch(url);
-  const data = await res.json();
-  if (data.response_code !== 0 || !data.results?.length) throw new Error('no results');
+  const token = await getOpenTdbToken();
+
+  const buildUrl = ({ cat = categoryId, diff = difficulty, tok = token } = {}) => {
+    let url = 'https://opentdb.com/api.php?amount=10&type=multiple&encode=url3986';
+    if (cat) url += `&category=${cat}`;
+    if (diff) url += `&difficulty=${diff}`;
+    if (tok) url += `&token=${tok}`;
+    return url;
+  };
+  const run = async (opts) => (await fetch(buildUrl(opts))).json();
+
+  let data = await run();
+
+  if (data.response_code === 4 && token) {
+    await resetOpenTdbToken(token);
+    data = await run();
+  }
+  if (data.response_code === 3) {
+    try { sessionStorage.removeItem(OPENTDB_TOKEN_KEY); } catch { /* ignore */ }
+    data = await run({ tok: null });
+  }
+  if (data.response_code === 5) {
+    await sleep(5500);
+    data = await run();
+  }
+  if (data.response_code === 1 && difficulty) {
+    data = await run({ diff: null });
+  }
+
+  if (data.response_code !== 0 || !data.results?.length) {
+    throw new Error(`opentdb response_code ${data.response_code}`);
+  }
   return data.results.map(processOpentdbQuestion);
+}
+
+// Randomizes a question's option order (and remaps correct_index to match) —
+// applied every time a question is pulled from a locally-authored bank
+// (Culture & Religion, or the OpenTDB-outage fallback list), matching the
+// same shuffle OpenTDB questions already get in processOpentdbQuestion above,
+// so the correct answer's on-screen position isn't memorizable across plays.
+function shuffleQuestionOptions(q) {
+  const correctText = q.options[q.correct_index];
+  const shuffled = [...q.options].sort(() => Math.random() - 0.5);
+  return { ...q, options: shuffled, correct_index: shuffled.indexOf(correctText) };
+}
+
+// Samples `count` questions from a locally-authored `pool`, avoiding whatever
+// this browser tab was already served from that same pool (tracked by
+// question text in sessionStorage under `storageKey`) until the pool's
+// remaining unseen questions run low — at which point tracking resets and the
+// full pool becomes available again. This is the local-bank equivalent of
+// OpenTDB's own session-token exclusion above: neither the Culture & Religion
+// bank nor the outage fallback list should show the identical set every time.
+function pickFreshSubset(pool, count, storageKey) {
+  let seen = [];
+  try { seen = JSON.parse(sessionStorage.getItem(storageKey) || '[]'); } catch { seen = []; }
+  const seenSet = new Set(seen);
+  let available = pool.filter((q) => !seenSet.has(q.text));
+  if (available.length < count) {
+    seenSet.clear();
+    available = pool;
+  }
+  const shuffled = [...available].sort(() => Math.random() - 0.5);
+  const picked = shuffled.slice(0, Math.min(count, shuffled.length)).map(shuffleQuestionOptions);
+  try {
+    const nextSeen = [...seenSet, ...picked.map((q) => q.text)].slice(-200);
+    sessionStorage.setItem(storageKey, JSON.stringify(nextSeen));
+  } catch { /* sessionStorage unavailable — freshness degrades to pure per-round randomness */ }
+  return picked;
 }
 
 // ─── Custom question builder (host only) ─────────────────────────────────────
@@ -307,22 +512,27 @@ function CategoryPicker({ onConfirm, onConfirmCustom, onEnd }) {
 
       {/* Difficulty + start */}
       <div className="px-5 pb-6 pt-2 space-y-4 border-t border-gray-800">
-        <div>
-          <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Difficulty</p>
-          <div className="flex gap-2">
-            {DIFFICULTIES.map(d => (
-              <button
-                key={d.id}
-                onClick={() => setDifficulty(d.id)}
-                className={`flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-all ${
-                  difficulty === d.id ? d.active : d.color
-                }`}
-              >
-                {d.label}
-              </button>
-            ))}
+        {/* Culture/Religion pull from a fixed hand-authored bank with no
+            difficulty tagging — the selector doesn't apply to them, so hide
+            it rather than show a control that silently does nothing. */}
+        {selected !== 'culture' && selected !== 'religion' && (
+          <div>
+            <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Difficulty</p>
+            <div className="flex gap-2">
+              {DIFFICULTIES.map(d => (
+                <button
+                  key={d.id}
+                  onClick={() => setDifficulty(d.id)}
+                  className={`flex-1 py-2 rounded-lg border-2 text-sm font-semibold transition-all ${
+                    difficulty === d.id ? d.active : d.color
+                  }`}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="flex gap-2">
           <button
@@ -437,6 +647,17 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose }
   }, [phase, currentQuestion?.started_at, isHostUser, onMove]);
 
   const handleCategoryConfirm = async (categoryId, difficulty) => {
+    // Culture/Religion bypass OpenTDB entirely (it has no such categories —
+    // confirmed against its own live category list) and pull straight from
+    // the hand-authored banks, same as Custom — no fetch, no loading screen.
+    if (categoryId === 'culture' || categoryId === 'religion') {
+      const pool = categoryId === 'culture' ? CULTURE_QUESTIONS : RELIGION_QUESTIONS;
+      const storageKey = categoryId === 'culture' ? 'wewatch_trivia_culture_seen' : 'wewatch_trivia_religion_seen';
+      setFetchError(false);
+      setQuestions(pickFreshSubset(pool, 10, storageKey));
+      setLocalPhase('game');
+      return;
+    }
     setLocalPhase('loading');
     setFetchError(false);
     try {
@@ -444,7 +665,7 @@ export default function TriviaGame({ gameState, currentUserId, onMove, onClose }
       setQuestions(qs);
     } catch {
       setFetchError(true);
-      setQuestions(FALLBACK_QUESTIONS);
+      setQuestions(pickFreshSubset(FALLBACK_QUESTIONS, 10, 'wewatch_trivia_fallback_seen'));
     }
     setLocalPhase('game');
   };

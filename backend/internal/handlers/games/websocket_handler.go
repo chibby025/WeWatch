@@ -35,6 +35,10 @@ func gamePosterURL(gameType string) string {
 		return gamePostersBaseURL + "/doom.webp"
 	case "quake3":
 		return gamePostersBaseURL + "/quake3.webp"
+	case "micro_racing":
+		return gamePostersBaseURL + "/micro_racing.webp"
+	case "obby_parkour":
+		return gamePostersBaseURL + "/obby_parkour.webp"
 	case "othello":
 		return gamePostersBaseURL + "/othello.webp"
 	case "checkers":
@@ -141,6 +145,8 @@ var minPlayersOverride = map[string]int{
 	"draw_guess":       1, // host can draw for the room even with no other guessers
 	"jigsaw":           1, // fully cooperative — solo assembly is valid too
 	"quake3":           1, // real N-player arena FPS, but solo (vs the empty arena/bots) is valid too
+	"micro_racing":     1, // real N-player kart racer, but solo (vs AI bots) is valid too
+	"obby_parkour":     1, // real N-player parkour course, but solo practice is valid too
 }
 
 // lowerScoreWinsGameTypes flips a hot-seat tournament's win condition —

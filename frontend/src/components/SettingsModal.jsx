@@ -51,9 +51,14 @@ const TOURS = [
     description: 'What the Join button does — shown the first time you see a live session on a room page.',
     replayHint: "You'll see this next time you land on a room page with a live session",
   },
+  {
+    key: 'wewatch_lobby_taskbar_tour_seen',
+    title: 'Lobby Taskbar Tour',
+    description: 'What each bottom-bar button does — Calendar, Notifications/Calls, Quick Action, Search, and Home/New Group — shown once in the Lobby.',
+  },
 ];
 
-const SettingsModal = ({ isOpen, onClose, onReplayAppTour }) => {
+const SettingsModal = ({ isOpen, onClose, onReplayAppTour, onReplayLobbyTaskbarTour }) => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [theme, setTheme] = useState('dark');
@@ -580,6 +585,9 @@ const SettingsModal = ({ isOpen, onClose, onReplayAppTour }) => {
                     }
                     onClose();
                     navigate(`/rooms/${currentUser.main_room_id}`);
+                  } else if (tour.key === 'wewatch_lobby_taskbar_tour_seen') {
+                    onClose();
+                    onReplayLobbyTaskbarTour?.();
                   } else {
                     toast.success(tour.replayHint || "You'll see this again next time it's due");
                   }

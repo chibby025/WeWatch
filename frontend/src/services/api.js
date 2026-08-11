@@ -493,10 +493,10 @@ export const createRoom = async (roomData) => {
  * Get a list of rooms
  * @returns {Promise} Axios promise resolving to the response
  */
-export const getRooms = async (limit = 20, offset = 0, { signal } = {}) => {
+export const getRooms = async (limit = 20, offset = 0, search = '', { signal } = {}) => {
     try {
         const response = await apiClient.get('/api/rooms', {
-            params: { limit, offset },
+            params: { limit, offset, ...(search ? { search } : {}) },
             signal,
         });
         return response.data;
@@ -505,10 +505,10 @@ export const getRooms = async (limit = 20, offset = 0, { signal } = {}) => {
     }
 };
 
-export const getPublicRooms = async (limit = 20, offset = 0, { signal } = {}) => {
+export const getPublicRooms = async (limit = 20, offset = 0, search = '', { signal } = {}) => {
     try {
         const response = await apiClient.get('/api/public/rooms', {
-            params: { limit, offset },
+            params: { limit, offset, ...(search ? { search } : {}) },
             signal,
         });
         return response.data;

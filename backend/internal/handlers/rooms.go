@@ -1992,7 +1992,18 @@ func GetRoomsHandler(c *gin.Context) {
 			Where("rooms.deleted_at IS NULL").
 			Where("rooms.is_public = ?", true)
 	}
-	
+
+	// ✅ Server-side search — matches against name/description across ALL rooms
+	// the user is allowed to see (public + genuinely-member private rooms, the
+	// scoping already applied above), not just whatever page happens to already
+	// be loaded client-side. Applied to `query` before both the count and the
+	// paginated fetch below, so total_count/has_more reflect the search too.
+	searchQuery := strings.TrimSpace(c.Query("search"))
+	if searchQuery != "" {
+		like := "%" + searchQuery + "%"
+		query = query.Where("rooms.name ILIKE ? OR rooms.description ILIKE ?", like, like)
+	}
+
 	// ✅ Get total count before pagination
 	var totalCount int64
 	countQuery := query

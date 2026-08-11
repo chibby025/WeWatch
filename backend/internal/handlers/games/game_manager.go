@@ -123,6 +123,8 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"texas_holdem":    true,
 		"ramp_rush":       true,
 		"golf":            true,
+		"micro_racing":    true,
+		"obby_parkour":    true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)

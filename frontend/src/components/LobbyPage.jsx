@@ -21,6 +21,7 @@ import { buildRoomShareUrl } from '../utils/roomShare';
 import SettingsModal from './SettingsModal';
 import CreateNewModal from './CreateNewModal';
 import OnboardingTour from './OnboardingTour';
+import Coachmark from './Coachmark';
 import PostUploadModal from './PostUploadModal';
 import PostViewModal from './PostViewModal';
 import DiscoverFeed from './DiscoverFeed';
@@ -181,6 +182,24 @@ const LobbyPage = () => {
     }
   }, []);
 
+  // One-time coach-mark tour of the bottom taskbar — shown once to every
+  // user (new or existing) who hasn't seen it yet, matching the existing
+  // Room Page / Sidebar / RoomTV tour convention (fire once, gate on a
+  // localStorage flag). Deliberately waits for the App Tour (above) to be
+  // dismissed first if both are pending at once, rather than stacking two
+  // full-screen overlays — the effect naturally re-fires once
+  // isOnboardingTourOpen flips back to false, since it never marks
+  // taskbarTourShown while blocked.
+  useEffect(() => {
+    if (taskbarTourShown.current) return;
+    if (localStorage.getItem('wewatch_lobby_taskbar_tour_seen')) return;
+    if (!currentUser) return;
+    if (isOnboardingTourOpen) return;
+    taskbarTourShown.current = true;
+    const t = setTimeout(() => setShowTaskbarTour(true), 700);
+    return () => clearTimeout(t);
+  }, [currentUser, isOnboardingTourOpen]);
+
   // 🔔 Notification state
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [notifications, setNotifications] = useState([]);
@@ -325,6 +344,20 @@ const LobbyPage = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isCreateNewModalOpen, setIsCreateNewModalOpen] = useState(false);
   const [isOnboardingTourOpen, setIsOnboardingTourOpen] = useState(false);
+
+  // One-time coach-mark tour of the bottom taskbar. Unlike the App Tour
+  // (OnboardingTour, a slideshow explaining the tabs conceptually), this
+  // points at the actual taskbar buttons — and specifically calls out that
+  // the middle 3 slots (notifications/calls, the center action button, and
+  // home/new-group) change meaning depending on which tab is active, since
+  // nothing else in the app ever explains that.
+  const [showTaskbarTour, setShowTaskbarTour] = useState(false);
+  const taskbarTourShown = React.useRef(false);
+  const calendarIconRef = React.useRef(null);
+  const secondaryIconRef = React.useRef(null); // notifications/calls slot
+  const centerFabRef = React.useRef(null);
+  const searchIconRef = React.useRef(null);
+  const homeIconRef = React.useRef(null);
   const [isPostUploadModalOpen, setIsPostUploadModalOpen] = useState(false);
   const [isRoomExplainerOpen, setIsRoomExplainerOpen] = useState(false);
   const [openMenuRoomId, setOpenMenuRoomId] = useState(null);
@@ -985,15 +1018,57 @@ const LobbyPage = () => {
     return [...owned, ...member];
   };
 
+  // Real, server-side room search — fixes a genuine gap where the search box
+  // only ever filtered whatever pages had already loaded via infinite scroll
+  // (20 rooms/page), so a real room you're a member of (or any public room)
+  // could search as "not found" purely because it hadn't been paginated into
+  // view yet. `null` = no active server search (search box empty, or debounce
+  // hasn't resolved yet); a real array once the backend has answered.
+  // Deliberately a SEPARATE state from `rooms` — never mutates the general
+  // room list, so clearing the search box always instantly reveals whatever
+  // was already loaded, with zero staleness risk.
+  const [roomSearchResults, setRoomSearchResults] = useState(null);
+  const roomSearchAbortRef = React.useRef(null);
+
+  const searchRoomsServerSide = async (term) => {
+    if (roomSearchAbortRef.current) roomSearchAbortRef.current.abort();
+    const controller = new AbortController();
+    roomSearchAbortRef.current = controller;
+    try {
+      const fetchFn = authenticatedUserID ? getRooms : getPublicRooms;
+      const data = await fetchFn(50, 0, term, { signal: controller.signal });
+      const roomsList = (data.rooms || []).filter(r => !r.is_temporary);
+      setRoomSearchResults(roomsList);
+    } catch (err) {
+      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
+      console.error('❌ [LobbyPage] Room search failed:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'rooms') return;
+    const trimmed = searchTerm.trim();
+    if (!trimmed) { setRoomSearchResults(null); return; }
+    const t = setTimeout(() => searchRoomsServerSide(trimmed), 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, activeTab]);
+
   // Derived — no useState, no useEffect; recomputes only when rooms/sessions/searchTerm change
   const filteredRooms = useMemo(() => {
     if (!searchTerm) return sortRooms(rooms);
+    // Authoritative server-side result is in — use it, covering every room
+    // you're allowed to see, not just what's already paginated locally.
+    if (roomSearchResults !== null) return sortRooms(roomSearchResults);
+    // Debounce hasn't resolved yet — fall back to an instant client-side
+    // filter over whatever's already loaded, so the list doesn't blank out
+    // while waiting on the network.
     const termLower = searchTerm.toLowerCase().trim();
     return sortRooms(rooms.filter(room =>
       (room.name && room.name.toLowerCase().includes(termLower)) ||
       (room.description && room.description.toLowerCase().includes(termLower))
     ));
-  }, [rooms, searchTerm]);
+  }, [rooms, searchTerm, roomSearchResults]);
 
   const filteredSessions = useMemo(() => {
     if (!searchTerm) return sessions;
@@ -1050,7 +1125,7 @@ const LobbyPage = () => {
       const limit = 20;
       const offset = page * limit;
       const fetchFn = authenticatedUserID ? getRooms : getPublicRooms;
-      const data = await fetchFn(limit, offset, { signal: controller.signal });
+      const data = await fetchFn(limit, offset, '', { signal: controller.signal });
       
       const roomsList = data.rooms || [];
       
@@ -1065,11 +1140,14 @@ const LobbyPage = () => {
         // Show all public rooms
         if (r.is_public) return true;
         
-        // For private rooms, check if current user is a member
+        // For private rooms, trust the backend's own is_member boolean
+        // (GetRoomsHandler already computes this correctly via an EXISTS
+        // subquery) instead of re-deriving it from r.member_ids — that field
+        // was never actually present in the API response, so this check
+        // always evaluated false for a non-host member and silently dropped
+        // their private rooms from the list.
         if (!r.is_public && authenticatedUserID) {
-          // Check if user is in the members array or is the host
-          const isMember = r.member_ids?.includes(authenticatedUserID) || r.host_id === authenticatedUserID;
-          return isMember;
+          return r.is_member === true || r.host_id === authenticatedUserID;
         }
         
         // Hide private rooms if user not authenticated
@@ -3752,6 +3830,12 @@ const LobbyPage = () => {
         setCreateModalHidePosts(true);
         setIsCreateNewModalOpen(true);
       }
+    } else {
+      // Chats has its own dedicated onClick (Circle of Friends sphere) at the
+      // JSX call site, so this branch is only ever reachable if activeTab is
+      // some future/unexpected value — a silent no-op would otherwise leave
+      // the button looking dead with zero feedback of any kind.
+      console.warn('[LobbyPage] handleCenterFAB: unrecognized activeTab', activeTab);
     }
   };
 
@@ -3768,6 +3852,8 @@ const LobbyPage = () => {
       setShowSessionSearch(s => !s);
     } else if (activeTab === 'feed') {
       setShowDiscoverSearch(s => !s);
+    } else {
+      console.warn('[LobbyPage] handleSearchToggle: unrecognized activeTab', activeTab);
     }
   };
 
@@ -3786,6 +3872,8 @@ const LobbyPage = () => {
       const p = discoverFeedRef.current?.refresh();
       if (p && typeof p.then === 'function') p.then(scrollToTop);
       else scrollToTop();
+    } else {
+      console.warn('[LobbyPage] handleHomeButton: unrecognized activeTab', activeTab);
     }
   };
 
@@ -4059,6 +4147,7 @@ const LobbyPage = () => {
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
         onReplayAppTour={() => setIsOnboardingTourOpen(true)}
+        onReplayLobbyTaskbarTour={() => setShowTaskbarTour(true)}
       />
 
       <div className="container mx-auto p-4">
@@ -7590,6 +7679,7 @@ const LobbyPage = () => {
           <div className="flex items-center justify-around px-2 h-16">
             {/* Calendar */}
             <button
+              ref={calendarIconRef}
               onClick={() => { setShowCalendarDrawer(true); setUpcomingEventsCount(0); }}
               className="p-2 relative text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
             >
@@ -7606,6 +7696,7 @@ const LobbyPage = () => {
             {/* Calls (chats tab) / Notifications (all other tabs) */}
             {activeTab === 'chats' ? (
               <button
+                ref={secondaryIconRef}
                 onClick={() => setIsCallHistoryModalOpen(true)}
                 className="p-2 relative text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
               >
@@ -7613,6 +7704,7 @@ const LobbyPage = () => {
               </button>
             ) : (
               <button
+                ref={secondaryIconRef}
                 onClick={() => { setShowNotifPanel(prev => !prev); if (unreadNotifCount > 0) markAllNotifsRead(); }}
                 className="p-2 relative text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
               >
@@ -7631,6 +7723,7 @@ const LobbyPage = () => {
             <div className="relative -mt-5">
               {activeTab === 'chats' ? (
                 <button
+                  ref={centerFabRef}
                   onClick={() => setShowCircleSphere(true)}
                   className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-700 to-indigo-800 shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-90 relative"
                   title="Circle of Friends"
@@ -7644,6 +7737,7 @@ const LobbyPage = () => {
                 </button>
               ) : (activeTab === 'watching' && watchingSubTab === 'sessions') || (activeTab === 'rooms' && currentUser?.main_room_id) ? (
                 <button
+                  ref={centerFabRef}
                   onClick={handleCenterFAB}
                   className="w-14 h-14 flex items-center justify-center transition-all active:scale-95"
                 >
@@ -7651,6 +7745,7 @@ const LobbyPage = () => {
                 </button>
               ) : (
                 <button
+                  ref={centerFabRef}
                   onClick={handleCenterFAB}
                   className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-600 to-pink-600 shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-90"
                 >
@@ -7661,6 +7756,7 @@ const LobbyPage = () => {
 
             {/* Search */}
             <button
+              ref={searchIconRef}
               onClick={handleSearchToggle}
               className={`p-2 transition-all active:scale-90 ${
                 isSearchActive
@@ -7674,6 +7770,7 @@ const LobbyPage = () => {
             {/* Home / New Group */}
             {activeTab === 'chats' ? (
               <button
+                ref={homeIconRef}
                 onClick={() => setShowCreateGroupModal(true)}
                 className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-500 dark:hover:text-purple-400 transition-all active:scale-90"
                 title="New Group"
@@ -7682,6 +7779,7 @@ const LobbyPage = () => {
               </button>
             ) : (
               <button
+                ref={homeIconRef}
                 onClick={handleHomeButton}
                 className="p-2 text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 transition-all active:scale-90"
               >
@@ -7696,6 +7794,23 @@ const LobbyPage = () => {
             )}
           </div>
         </div>
+      )}
+
+      {/* One-time coach-mark tour of the bottom taskbar */}
+      {showTaskbarTour && (
+        <Coachmark
+          steps={[
+            { ref: calendarIconRef, title: 'Upcoming Events', description: 'See scheduled sessions and events across every room you\'re in.' },
+            { ref: secondaryIconRef, title: 'Calls & Notifications', description: 'Your call history here in Chats — notifications everywhere else.' },
+            { ref: centerFabRef, title: 'Quick Action', description: 'This button changes with each tab: start a hangout in Chats, watch or create in Rooms, post in Feed.' },
+            { ref: searchIconRef, title: 'Search', description: 'Find rooms, sessions, friends, or posts — right where you are.' },
+            { ref: homeIconRef, title: 'Home & New Group', description: 'Refreshes what you\'re viewing here — or starts a new group chat in Chats.' },
+          ]}
+          onComplete={() => {
+            setShowTaskbarTour(false);
+            localStorage.setItem('wewatch_lobby_taskbar_tour_seen', '1');
+          }}
+        />
       )}
     </div>
   );

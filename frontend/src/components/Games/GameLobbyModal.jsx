@@ -101,6 +101,28 @@ const games = [
     heavy: true
   },
   {
+    id: 'micro_racing',
+    name: 'Micro Racing',
+    description: 'Real isometric kart racing multiplayer — pick a car, pick a track, race for the checkered flag!',
+    minPlayers: 1,
+    maxPlayers: 6,
+    image: `${GAME_POSTERS_BASE_URL}/micro_racing.webp`,
+    disabled: false,
+    type: 'multiplayer',
+    heavy: true
+  },
+  {
+    id: 'obby_parkour',
+    name: 'Obby Parkour',
+    description: 'Real Roblox-style multiplayer parkour — jump, climb, and race everyone else to the top of the course!',
+    minPlayers: 1,
+    maxPlayers: 8,
+    image: `${GAME_POSTERS_BASE_URL}/obby_parkour.webp`,
+    disabled: false,
+    type: 'multiplayer',
+    heavy: true
+  },
+  {
     id: 'fowl_play',
     name: 'Fowl Play',
     description: 'Shoot the ducks before they fly away!',

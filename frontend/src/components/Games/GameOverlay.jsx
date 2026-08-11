@@ -40,6 +40,8 @@ const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
 const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
 const ToadBallGame = lazy(() => import('./ToadBallGame'));
 const GolfGame = lazy(() => import('./GolfGame'));
+const MicroRacingGame = lazy(() => import('./MicroRacingGame'));
+const ObbyParkourGame = lazy(() => import('./ObbyParkourGame'));
 // 3D + physics (react-three-fiber, cannon-es) — heaviest bundle in this
 // package after DOOM, same lazy-load rationale.
 const RampRushGame = lazy(() => import('./RampRushGame'));
@@ -324,6 +326,41 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
       return (
         <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
           <Quake3Game
+            roomId={roomId}
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
+          />
+        </Suspense>
+      );
+
+    case 'micro_racing':
+      // Genuine N-player multiplayer, same shape as quake3 above — every
+      // room member's iframe connects directly to the forked racing app's
+      // own Railway-hosted server (its own real room/physics/netcode), no
+      // relay through this app's backend. isHost only gates the extra
+      // "End for Everyone" control.
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <MicroRacingGame
+            roomId={roomId}
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
+          />
+        </Suspense>
+      );
+
+    case 'obby_parkour':
+      // Genuine N-player multiplayer, same shape as quake3/micro_racing
+      // above — every room member's iframe connects directly to the
+      // forked parkour app's own supervisor-fronted Railway service (its
+      // own real room/physics/netcode via a genuinely isolated per-room
+      // process), no relay through this app's backend. isHost only gates
+      // the extra "End for Everyone" control.
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <ObbyParkourGame
             roomId={roomId}
             onClose={onClose}
             onEndGame={onEndGame}

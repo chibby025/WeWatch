@@ -125,6 +125,8 @@ const RULES = {
     title: 'Trivia',
     rules: [
       'The host picks a topic category and starts each round.',
+      'Topics include General Knowledge, Film, Music, Science, History, and more, plus dedicated Culture (African & indigenous civilizations worldwide) and Religion (world faiths) topics, or a fully custom quiz the host writes themselves.',
+      'Questions are pulled fresh each game and avoid repeating recently-seen ones, so replaying a topic keeps surfacing new questions.',
       'All players answer the question at the same time within the time limit.',
       'Correct answers score points — be both right and fast for the most points.',
       'The player with the highest total score after all rounds wins.',
@@ -202,6 +204,26 @@ const RULES = {
       'Switch weapons: number keys 1–9. Console: ~.',
       'First load can take a little while — the level data downloads once and is cached after that.',
       'On mobile: an on-screen joystick handles movement, and a drag zone on the right handles look/aim — a hint shows the first time you touch it.',
+    ],
+  },
+  micro_racing: {
+    title: 'Micro Racing',
+    rules: [
+      'Real isometric kart racing multiplayer — every player who joins races on the same live track together.',
+      'Accelerate: W or Up. Brake/reverse: S or Down. Steer: A/D or Left/Right.',
+      'The room owner picks the car, track, lap count, and can add AI bots to fill empty slots before starting.',
+      'Race to complete the set number of laps first — live positions and lap times show on the leaderboard.',
+      'Keyboard-only for now — best played on a desktop or laptop.',
+    ],
+  },
+  obby_parkour: {
+    title: 'Obby Parkour',
+    rules: [
+      'Real Roblox-style multiplayer parkour — every player who joins climbs the same live obstacle course together.',
+      'Move: WASD or Arrow keys. Jump: Space. Look around: mouse.',
+      'Type /cp in chat to save your current position as a checkpoint — handy before a tricky jump.',
+      'Race everyone else to the top — there\'s a real chat if you want to cheer each other on (or trash talk).',
+      'First load can take a moment — the course assets download once and are cached after that.',
     ],
   },
   ping_pong: {
