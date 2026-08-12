@@ -135,6 +135,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"golf":            true,
 		"micro_racing":    true,
 		"obby_parkour":    true,
+		"rhythm_hero":     true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -411,6 +412,11 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 	case "toad_ball":
 		// Self-contained canvas arcade game — score is reported client-side via
 		// record_hot_seat_score for tournament mode; no server-side move logic needed
+		gameOver, winnerID, err = false, nil, nil
+	case "rhythm_hero":
+		// Self-contained Three.js canvas arcade game (note-highway rhythm game) —
+		// score is reported client-side via record_hot_seat_score for tournament
+		// mode, same as toad_ball/golf; no server-side move logic needed
 		gameOver, winnerID, err = false, nil, nil
 	case "roulette":
 		gameOver, winnerID, err = gm.processRouletteMove(gameState, playerID, moveType, moveData)

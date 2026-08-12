@@ -6200,60 +6200,6 @@ export default function VideoWatch() {
             console.log('🐛 [DEBUG] hand_update received:', { rawData: message.data, hand: message.data?.hand, currentUserId: currentUser?.id });
             setMyHand(message.data?.hand || []);
           }
-          // ── Hot-seat tournament (arcade single-player) ──────────────────────
-          if (_gAction === 'hot_seat_tournament_update') {
-            setActiveHotSeatTournament(message.data || null);
-          }
-          if (_gAction === 'hot_seat_turn') {
-            const d = message.data || {};
-            setHotSeatCurrentPlayer({ id: d.current_player_id, name: d.current_player });
-            setActiveHotSeatTournament(prev => {
-              const updated = prev ? {
-                ...prev,
-                current_player_id: d.current_player_id,
-                current_player_name: d.current_player,
-                current_index: d.turn_index,
-              } : null;
-              // Open the Fowl Play overlay for everyone so they see whose turn it is.
-              // FowlPlayGame.jsx gates the actual iframe behind isHost && isMyTurn;
-              // everyone else sees a "waiting for X" placeholder.
-              setActiveGame({
-                game_type: d.game_type || 'fowl_play',
-                host_id: d.current_player_id, // current player is the "host" for this turn
-                players: updated?.participants?.map(p => ({
-                  user_id: p.user_id,
-                  username: p.username,
-                  color: p.color,
-                })) || [],
-                status: 'active',
-              });
-              return updated;
-            });
-          }
-          if (_gAction === 'hot_seat_score') {
-            const d = message.data || {};
-            toast(`🎯 ${d.username} scored ${(d.score || 0).toLocaleString()}!`, { duration: 3000, icon: '🦆' });
-            setActiveHotSeatTournament(prev => {
-              if (!prev) return prev;
-              const parts = (prev.participants || []).map(p =>
-                p.user_id === d.user_id ? { ...p, score: d.score, played: true } : p
-              );
-              return { ...prev, participants: parts };
-            });
-          }
-          if (_gAction === 'hot_seat_tournament_complete') {
-            const d = message.data || {};
-            toast.success(`🏆 Hot-Seat over! Winner: ${d.winner_name || 'nobody'} 🦆`, { duration: 6000, icon: '🏆' });
-            setActiveHotSeatTournament(null);
-            setHotSeatCurrentPlayer(null);
-            setActiveGame(null);
-          }
-          if (_gAction === 'hot_seat_tournament_cancelled') {
-            toast('Hot-seat tournament cancelled.', { duration: 3000 });
-            setActiveHotSeatTournament(null);
-            setHotSeatCurrentPlayer(null);
-            setActiveGame(null);
-          }
           // ── close_game: host dismissed a completed game — close for everyone ─
           if (_gAction === 'game_closed') {
             setActiveGame(null);
@@ -6277,6 +6223,75 @@ export default function VideoWatch() {
               setGameErrorKey(k => k + 1);
             }
           }
+          break;
+        }
+
+        // ── Hot-seat tournament (arcade single-player) ────────────────────────
+        // These 5 arrive as FLAT top-level messages from HotSeatManager
+        // (hot_seat_tournament.go) — {type: "hot_seat_X", data: {...}}, never
+        // wrapped as {type: "game", action: ...} — so they must be matched here
+        // directly on message.type, not nested inside case 'game'. They used to
+        // live inside that case gated on message.action, which this switch never
+        // sets for these broadcasts — a real, previously-shipped bug that meant
+        // Toad Ball/Golf/Fowl Play hot-seat turn-rotation never actually reached
+        // the browser. Mirrors the existing case "playlist_poster_updated"
+        // pattern above, which reads message.data directly the same way.
+        case 'hot_seat_tournament_update': {
+          setActiveHotSeatTournament(message.data || null);
+          break;
+        }
+        case 'hot_seat_turn': {
+          const d = message.data || {};
+          setHotSeatCurrentPlayer({ id: d.current_player_id, name: d.current_player });
+          setActiveHotSeatTournament(prev => {
+            const updated = prev ? {
+              ...prev,
+              current_player_id: d.current_player_id,
+              current_player_name: d.current_player,
+              current_index: d.turn_index,
+            } : null;
+            // Open the hot-seat game's overlay for everyone so they see whose
+            // turn it is. Each hot-seat game gates its own real controls behind
+            // isHost && isMyTurn; everyone else sees a "waiting for X" placeholder.
+            setActiveGame({
+              game_type: d.game_type || 'fowl_play',
+              host_id: d.current_player_id, // current player is the "host" for this turn
+              players: updated?.participants?.map(p => ({
+                user_id: p.user_id,
+                username: p.username,
+                color: p.color,
+              })) || [],
+              status: 'active',
+            });
+            return updated;
+          });
+          break;
+        }
+        case 'hot_seat_score': {
+          const d = message.data || {};
+          toast(`🎯 ${d.username} scored ${(d.score || 0).toLocaleString()}!`, { duration: 3000, icon: '🦆' });
+          setActiveHotSeatTournament(prev => {
+            if (!prev) return prev;
+            const parts = (prev.participants || []).map(p =>
+              p.user_id === d.user_id ? { ...p, score: d.score, played: true } : p
+            );
+            return { ...prev, participants: parts };
+          });
+          break;
+        }
+        case 'hot_seat_tournament_complete': {
+          const d = message.data || {};
+          toast.success(`🏆 Hot-Seat over! Winner: ${d.winner_name || 'nobody'} 🦆`, { duration: 6000, icon: '🏆' });
+          setActiveHotSeatTournament(null);
+          setHotSeatCurrentPlayer(null);
+          setActiveGame(null);
+          break;
+        }
+        case 'hot_seat_tournament_cancelled': {
+          toast('Hot-seat tournament cancelled.', { duration: 3000 });
+          setActiveHotSeatTournament(null);
+          setHotSeatCurrentPlayer(null);
+          setActiveGame(null);
           break;
         }
 

@@ -95,7 +95,7 @@ func gamePosterURL(gameType string) string {
 	case "rebus_round":
 		return gamePostersBaseURL + "/v2/rebus_round.webp"
 	case "four_frames":
-		return gamePostersBaseURL + "/four_frames.webp"
+		return gamePostersBaseURL + "/v2/four_frames.webp"
 	case "karaoke":
 		return gamePostersBaseURL + "/v2/karaoke.webp"
 	// case "roulette": temporarily removed
@@ -115,6 +115,8 @@ func gamePosterURL(gameType string) string {
 		return gamePostersBaseURL + "/ramp_rush.webp"
 	case "golf":
 		return gamePostersBaseURL + "/v2/golf.webp"
+	case "rhythm_hero":
+		return gamePostersBaseURL + "/v2/rhythm_hero.webp"
 	default:
 		return ""
 	}
@@ -131,6 +133,7 @@ var arcadeGameTypes = map[string]bool{
 	"space_attack": true,
 	"toad_ball":    true,
 	"golf":         true,
+	"rhythm_hero":  true,
 }
 
 // minPlayersOverride lets a genuinely multiplayer game still be launched

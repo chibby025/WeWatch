@@ -74,7 +74,7 @@ const games = [
     description: 'Four real photos, one hidden word — race to guess what connects them!',
     minPlayers: 2,
     maxPlayers: 10,
-    image: `${GAME_POSTERS_BASE_URL}/four_frames.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/four_frames.webp`,
     disabled: false,
     type: 'multiplayer'
   },
@@ -469,6 +469,17 @@ const games = [
     heavy: false
   },
   {
+    id: 'rhythm_hero',
+    name: 'Rhythm Hero',
+    description: 'Pick your instrument, search or upload a song, and tap/hold notes in time with the music — sing along to the lyrics too! Solo or hot-seat tournament.',
+    minPlayers: 1,
+    maxPlayers: 1,
+    image: `${GAME_POSTERS_BASE_URL}/v2/rhythm_hero.webp`,
+    disabled: false,
+    type: 'arcade',
+    heavy: false
+  },
+  {
     id: 'golf',
     name: 'Mini Golf',
     description: 'Putt through a real 3D course — fewest strokes wins! Solo practice or hot-seat tournament.',
@@ -499,7 +510,7 @@ const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'con
 // Hot-seat tournament: each player takes a solo turn; highest score wins
 // (golf is the one exception — lower stroke count wins, handled entirely
 // backend-side via lowerScoreWinsGameTypes in websocket_handler.go).
-const HOT_SEAT_GAME_IDS = ['fowl_play', 'toad_ball', 'golf'];
+const HOT_SEAT_GAME_IDS = ['fowl_play', 'toad_ball', 'golf', 'rhythm_hero'];
 
 const playerColors = ['#FF6B6B','#4ECDC4','#45B7D1','#FFA07A','#C77DFF','#80ED99','#FFD166','#F72585','#4CC9F0','#06D6A0'];
 

@@ -51,6 +51,36 @@ func (gm *GameManager) processKaraokeMove(gameState *GameSessionState, playerID 
 		gameState.GameData["plain_lyrics"] = plainLyrics
 		gameState.GameData["started_at"] = float64(time.Now().UnixMilli())
 		gameState.GameData["song_number"] = karaokeFloatField(gameState.GameData, "song_number") + 1
+		// A new song always starts fresh — clear any leftover playback state
+		// from a previous track so a late-joining/rehydrating member never
+		// seeks into the wrong video's stale position.
+		gameState.GameData["playback_command"] = ""
+		gameState.GameData["playback_seek_time"] = float64(0)
+		gameState.GameData["playback_timestamp"] = float64(0)
+		return false, nil, nil
+
+	case "karaoke_sync":
+		// Host-only. The actual room-wide co-watch sync: the host's own
+		// YouTube player reports a play/pause/seek (or a periodic drift-
+		// correction heartbeat while playing — see KaraokeGame.jsx), and this
+		// just relays it into game_state for the generic BroadcastGameState
+		// path to fan out. Same host-authoritative pattern already proven for
+		// the main VideoWatch co-watch sync (playback_control) — timestamp is
+		// always the HOST'S OWN Date.now(), never a server clock, for the same
+		// documented reason (WSL/host clock skew would otherwise make members
+		// seek backwards).
+		if playerID != hostID {
+			return false, nil, fmt.Errorf("only the host can control playback")
+		}
+		command, _ := moveData["command"].(string)
+		if command != "play" && command != "pause" && command != "seek" {
+			return false, nil, fmt.Errorf("invalid playback command")
+		}
+		seekTime, _ := moveData["seek_time"].(float64)
+		timestamp, _ := moveData["timestamp"].(float64)
+		gameState.GameData["playback_command"] = command
+		gameState.GameData["playback_seek_time"] = seekTime
+		gameState.GameData["playback_timestamp"] = timestamp
 		return false, nil, nil
 
 	case "karaoke_end":

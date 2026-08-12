@@ -19,14 +19,14 @@ type HotSeatParticipant struct {
 }
 
 type HotSeatTournament struct {
-	ID           uint                 `json:"id"`
-	RoomID       uint                 `json:"room_id"`
-	GameType     string               `json:"game_type"`
-	HostID       uint                 `json:"host_id"`
+	ID           uint                  `json:"id"`
+	RoomID       uint                  `json:"room_id"`
+	GameType     string                `json:"game_type"`
+	HostID       uint                  `json:"host_id"`
 	Participants []*HotSeatParticipant `json:"participants"`
-	CurrentIndex int                  `json:"current_index"` // index into Participants
-	Status       string               `json:"status"`        // "active" | "completed" | "cancelled"
-	WinnerID     *uint                `json:"winner_id,omitempty"`
+	CurrentIndex int                   `json:"current_index"` // index into Participants
+	Status       string                `json:"status"`        // "active" | "completed" | "cancelled"
+	WinnerID     *uint                 `json:"winner_id,omitempty"`
 	// LowerIsBetter flips the win condition for games where a smaller score
 	// wins (e.g. golf stroke count) instead of the default "highest score
 	// wins" every other hot-seat game (Fowl Play, Toad Ball, etc) uses.
@@ -34,11 +34,11 @@ type HotSeatTournament struct {
 }
 
 type HotSeatManager struct {
-	mu           sync.RWMutex
-	tournaments  map[uint]*HotSeatTournament // keyed by tournament ID
-	roomToTour   map[uint]uint               // roomID → active tournament ID
-	nextID       uint
-	hub          MessageHub
+	mu          sync.RWMutex
+	tournaments map[uint]*HotSeatTournament // keyed by tournament ID
+	roomToTour  map[uint]uint               // roomID → active tournament ID
+	nextID      uint
+	hub         MessageHub
 }
 
 func NewHotSeatManager(hub MessageHub) *HotSeatManager {
@@ -154,8 +154,8 @@ func (hm *HotSeatManager) CancelTournament(roomID uint) {
 		BroadcastJSON(uint, map[string]interface{})
 	}); ok {
 		hub.BroadcastJSON(roomID, map[string]interface{}{
-			"type":   "hot_seat_tournament_cancelled",
-			"data":   map[string]interface{}{"tournament_id": t.ID},
+			"type": "hot_seat_tournament_cancelled",
+			"data": map[string]interface{}{"tournament_id": t.ID},
 		})
 	}
 	delete(hm.roomToTour, roomID)
@@ -247,11 +247,12 @@ func (hm *HotSeatManager) broadcastTurnLocked(t *HotSeatTournament) {
 		hub.BroadcastJSON(t.RoomID, map[string]interface{}{
 			"type": "hot_seat_turn",
 			"data": map[string]interface{}{
-				"tournament_id":      t.ID,
-				"current_player_id":  current.Player.UserID,
-				"current_player":     current.Player.Username,
-				"turn_index":         t.CurrentIndex,
-				"total_turns":        len(t.Participants),
+				"tournament_id":     t.ID,
+				"game_type":         t.GameType,
+				"current_player_id": current.Player.UserID,
+				"current_player":    current.Player.Username,
+				"turn_index":        t.CurrentIndex,
+				"total_turns":       len(t.Participants),
 			},
 		})
 	}

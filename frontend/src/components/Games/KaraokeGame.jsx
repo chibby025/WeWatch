@@ -185,6 +185,7 @@ function SongSearch({ onPick, onCancel, canCancel }) {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function KaraokeGame({ gameState, currentUserId, onMove, onClose }) {
   const playerRef = useRef(null);
+  const lastAppliedSyncTsRef = useRef(null);
   const [currentLineIdx, setCurrentLineIdx] = useState(-1);
   const [pickingNewSong, setPickingNewSong] = useState(false);
 
@@ -218,7 +219,69 @@ export default function KaraokeGame({ gameState, currentUserId, onMove, onClose 
     return () => clearInterval(interval);
   }, [phase, hasSyncedLyrics, lrcLines]);
 
-  useEffect(() => { setCurrentLineIdx(-1); }, [videoId]);
+  useEffect(() => {
+    setCurrentLineIdx(-1);
+    // A fresh video also needs a fresh sync-dedup baseline — otherwise a
+    // playback_timestamp value already "seen" against the previous song's
+    // player instance would be silently skipped for the new one too.
+    lastAppliedSyncTsRef.current = null;
+  }, [videoId]);
+
+  // ── Room-wide co-watch sync ──────────────────────────────────────────────
+  // The host's own YouTube player is the source of truth; everyone else's
+  // player is driven entirely by these relayed WS messages. Same host-
+  // authoritative pattern already proven for the main VideoWatch co-watch
+  // sync (playback_control) — see karaoke.go's karaoke_sync case for the
+  // matching backend half.
+  const sendSync = useCallback((command) => {
+    if (!isHostUser) return;
+    const player = playerRef.current;
+    if (!player) return;
+    const seekTime = player.getCurrentTime?.() ?? 0;
+    onMove({ move_type: 'karaoke_sync', command, seek_time: seekTime, timestamp: Date.now() });
+  }, [isHostUser, onMove]);
+
+  const handlePlayerStateChange = useCallback((e) => {
+    if (!isHostUser) return;
+    // YT.PlayerState: 1 = playing, 2 = paused (stable, documented constants).
+    if (e.data === 1) sendSync('play');
+    else if (e.data === 2) sendSync('pause');
+  }, [isHostUser, sendSync]);
+
+  // Periodic drift-correction heartbeat while the host is actively playing —
+  // also the practical way a manual seek-bar scrub reaches members, since the
+  // YouTube IFrame API has no dedicated "seek" event to hook directly.
+  useEffect(() => {
+    if (!isHostUser || phase !== 'playing') return;
+    const interval = setInterval(() => {
+      const player = playerRef.current;
+      if (player?.getPlayerState?.() === 1) sendSync('play');
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isHostUser, phase, sendSync]);
+
+  // Non-host members: apply whatever the host's latest relayed command was.
+  useEffect(() => {
+    if (isHostUser) return;
+    const ts = gs.playback_timestamp;
+    const command = gs.playback_command;
+    if (!ts || !command || ts === lastAppliedSyncTsRef.current) return;
+    const player = playerRef.current;
+    if (!player) return;
+    lastAppliedSyncTsRef.current = ts;
+    const transitLatency = Math.max(0, Date.now() - ts) / 1000;
+    const baseSeek = Number(gs.playback_seek_time) || 0;
+    if (command === 'pause') {
+      player.pause();
+      player.seekTo(baseSeek);
+    } else {
+      // 'play' or 'seek' — compensate for message transit time so the member
+      // lands roughly where the host actually is right now, not where the
+      // host was at the moment the message was sent.
+      player.seekTo(baseSeek + transitLatency);
+      player.play();
+    }
+  }, [gs.playback_timestamp, gs.playback_command, gs.playback_seek_time, isHostUser]);
 
   const startSong = useCallback((lrcResult, ytVideoId) => {
     onMove({
@@ -323,7 +386,7 @@ export default function KaraokeGame({ gameState, currentUserId, onMove, onClose 
 
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-4 gap-4 overflow-hidden">
         <div className="w-full max-w-3xl aspect-video bg-black rounded-xl overflow-hidden shadow-2xl flex-shrink-0">
-          <YouTubePlayer ref={playerRef} videoId={videoId} isHost={isHostUser} />
+          <YouTubePlayer ref={playerRef} videoId={videoId} isHost={isHostUser} onStateChange={handlePlayerStateChange} />
         </div>
 
         <div className="w-full max-w-3xl flex-1 min-h-0 flex flex-col items-center justify-center overflow-hidden text-center px-4">

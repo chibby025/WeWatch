@@ -186,6 +186,18 @@ const RULES = {
       'Can be played solo, or as a hot-seat tournament where players take turns on the host\'s device for the highest score.',
     ],
   },
+  rhythm_hero: {
+    title: 'Rhythm Hero',
+    rules: [
+      'Pick your instrument (Guitar, Bass, Drums, or Vocals) — every instrument plays exactly the same, just with a different look.',
+      'Search for any song (plays a short preview) or upload your own audio file for the full song.',
+      'Notes scroll down 5 lanes toward the strike line — tap A S D F G (or the on-screen buttons on touch devices) in time with the beat. Hold for sustained notes.',
+      'Perfect timing scores more than good timing, and a hit streak builds a combo multiplier — press Space when your Star Power meter is full to double it.',
+      'If lyrics are found for your song, they scroll in sync so you can sing along too.',
+      'Miss too many notes and your Rock Meter drains — if it hits zero, the song ends early.',
+      'Can be played solo, or as a hot-seat tournament — each player picks their own instrument and song on their turn; the highest song-length-normalized score wins.',
+    ],
+  },
   golf: {
     title: 'Mini Golf',
     rules: [

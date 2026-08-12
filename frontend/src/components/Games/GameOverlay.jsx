@@ -40,6 +40,7 @@ const FowlPlayGame = lazy(() => import('./FowlPlayGame'));
 // const PenaltyGame = lazy(() => import('./PenaltyGame')); // temporarily removed
 const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
 const ToadBallGame = lazy(() => import('./ToadBallGame'));
+const RhythmHeroGame = lazy(() => import('./RhythmHeroGame'));
 const GolfGame = lazy(() => import('./GolfGame'));
 const MicroRacingGame = lazy(() => import('./MicroRacingGame'));
 const ObbyParkourGame = lazy(() => import('./ObbyParkourGame'));
@@ -686,6 +687,23 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
       return (
         <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
           <ToadBallGame
+            onClose={onClose}
+            onEndGame={onEndGame}
+            isHost={activeGame.host_id === currentUserId}
+            hotSeatTournament={hotSeatTournament}
+            currentUserId={currentUserId}
+            onTournamentScore={onTournamentScore}
+          />
+        </Suspense>
+      );
+
+    case 'rhythm_hero':
+      // Arcade: single-player or hot-seat tournament — same pattern as
+      // toad_ball (self-contained canvas gameplay, here a Three.js note-
+      // highway rhythm game instead of a 2D canvas one).
+      return (
+        <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <RhythmHeroGame
             onClose={onClose}
             onEndGame={onEndGame}
             isHost={activeGame.host_id === currentUserId}
