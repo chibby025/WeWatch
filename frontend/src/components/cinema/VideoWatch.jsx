@@ -6261,9 +6261,21 @@ export default function VideoWatch() {
           }
           if (message.error) {
             console.error('❌ [VideoWatch] Game error:', message.error);
-            toast.error(message.error);
-            setGameErrorMsg(message.error);
-            setGameErrorKey(k => k + 1);
+            // "game session N not found" means the backend has no record of this
+            // session at all (e.g. a server restart wiped its in-memory game
+            // state) — every further move (including End Game/close) would just
+            // hit the identical error forever, stranding the player on a dead
+            // overlay with no way out except a page refresh. Clear it locally
+            // instead of surfacing the raw backend error as a retryable toast.
+            if (/game session \d+ not found/i.test(message.error)) {
+              toast.error('This game session is no longer available — it may have ended unexpectedly.');
+              setActiveGame(null);
+              setMyHand(null);
+            } else {
+              toast.error(message.error);
+              setGameErrorMsg(message.error);
+              setGameErrorKey(k => k + 1);
+            }
           }
           break;
         }

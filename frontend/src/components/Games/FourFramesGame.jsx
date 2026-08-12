@@ -201,13 +201,21 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
                 : 'Waiting for the host to start the first round…'}
             </p>
             {isHostUser && (
-              <button
-                onClick={sendStart}
-                disabled={isSendingNext}
-                className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold rounded-xl text-base transition-all"
-              >
-                {isSendingNext ? 'Loading photos…' : 'Start Round 1'}
-              </button>
+              <div className="flex flex-col items-center gap-3">
+                <button
+                  onClick={sendStart}
+                  disabled={isSendingNext}
+                  className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold rounded-xl text-base transition-all"
+                >
+                  {isSendingNext ? 'Loading photos…' : 'Start Round 1'}
+                </button>
+                <button
+                  onClick={endOrLeave}
+                  className="px-4 py-2 bg-red-600/20 hover:bg-red-600/40 border border-red-500/40 text-red-400 hover:text-red-300 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  End Game
+                </button>
+              </div>
             )}
           </div>
         )}
