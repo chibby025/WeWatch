@@ -155,8 +155,18 @@ const RULES = {
       'After the last puzzle, the host taps "Show Results" — highest total score wins (a tie is a draw).',
     ],
   },
+  four_frames: {
+    title: 'Four Frames',
+    rules: [
+      'Each round shows 4 real photos that all connect to one hidden word — figure out what they have in common and type it in.',
+      'Wrong guesses don\'t cost you anything — keep trying until you get it, the round ends, or the host reveals the answer.',
+      'The first player to solve it scores 100 points, second scores 75, third scores 50, and everyone else who solves it in time scores 25.',
+      'The host can reveal the answer early, or it auto-reveals after 45 seconds.',
+      'After the last round, the host taps "Show Results" — highest total score wins (a tie is a draw).',
+    ],
+  },
   karaoke: {
-    title: 'Karaoke Night',
+    title: 'Music Warrior',
     rules: [
       'The host searches for a song, picks the right match from the lyrics database, then pastes a YouTube link to an instrumental/karaoke-version of it.',
       'Once started, everyone in the room sees the video playing and synced, highlighted lyrics — sing along together!',

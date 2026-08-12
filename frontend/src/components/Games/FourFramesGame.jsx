@@ -1,60 +1,37 @@
 import { useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
-import { X, Clock, Trophy, Send, ChevronRight } from 'lucide-react';
+import { X, Clock, Trophy, Send, ChevronRight, ImageOff } from 'lucide-react';
 import GameRulesButton from './GameRulesButton';
 import GameWinnerBanner from './GameWinnerBanner';
 
-const PUZZLE_SECONDS = 40;
+const ROUND_SECONDS = 45;
 
-// ── Token-based pattern renderer ─────────────────────────────────────────────
-// Puzzles arrive as a flat array of small style-flag tokens (see
-// backend/internal/handlers/games/rebus_round.go's RebusToken) rather than
-// raw HTML — no dangerouslySetInnerHTML anywhere. `break` starts a new line;
-// everything else is a plain styled inline span.
-function tokenStyle(tok) {
-  const style = {
-    fontSize: tok.op ? '1.1rem' : `${(tok.scale || 1) * 1.9}rem`,
-    fontWeight: tok.op ? 500 : 700,
-    color: tok.op ? '#9ca3af' : (tok.color || '#f8fafc'),
-    textDecoration: tok.strike ? 'line-through' : undefined,
-    lineHeight: 1.15,
-    display: 'inline-block',
-    whiteSpace: 'pre',
-  };
-  const transforms = [];
-  if (tok.mirror) transforms.push('scaleX(-1)');
-  if (tok.flip) transforms.push('rotate(180deg)');
-  if (transforms.length) style.transform = transforms.join(' ');
-  if (tok.sup) { style.position = 'relative'; style.top = '-0.55em'; }
-  if (tok.sub) { style.position = 'relative'; style.top = '0.55em'; }
-  return style;
-}
-
-function RebusPatternDisplay({ pattern }) {
-  if (!pattern || pattern.length === 0) {
-    return <div className="text-gray-600 text-sm">Loading puzzle…</div>;
-  }
-  const lines = [[]];
-  pattern.forEach((tok) => {
-    if (tok.break && lines[lines.length - 1].length > 0) lines.push([]);
-    lines[lines.length - 1].push(tok);
-  });
+// One photo cell in the 2x2 grid — real photos fetched server-side from the
+// Pexels API (see backend/internal/handlers/games/four_frames.go), so unlike
+// Rebus Round's token renderer there's no custom drawing here, just an <img>
+// with a graceful fallback if a given URL ever fails to load.
+function PhotoCell({ url }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [url]); // reset the fallback when a new round's photo arrives
   return (
-    <div className="flex flex-col items-center gap-3 py-2">
-      {lines.map((line, li) => (
-        <div key={li} className="flex items-center justify-center gap-1.5 flex-wrap px-4">
-          {line.map((tok, ti) => (
-            <span key={ti} style={tokenStyle(tok)}>{tok.text}</span>
-          ))}
-        </div>
-      ))}
+    <div className="aspect-square rounded-xl overflow-hidden bg-gray-900 flex items-center justify-center">
+      {url && !failed ? (
+        <img
+          src={url}
+          alt=""
+          className="w-full h-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <ImageOff className="w-8 h-8 text-gray-700" />
+      )}
     </div>
   );
 }
 
-export default function RebusRoundGame({ gameState, currentUserId, onMove, onClose, onPostResult, gameErrorMsg, gameErrorKey }) {
+export default function FourFramesGame({ gameState, currentUserId, onMove, onClose, onPostResult, gameErrorMsg, gameErrorKey }) {
   const [guess, setGuess] = useState('');
-  const [timeLeft, setTimeLeft] = useState(PUZZLE_SECONDS);
+  const [timeLeft, setTimeLeft] = useState(ROUND_SECONDS);
   const [isSendingNext, setIsSendingNext] = useState(false);
   const [shakeError, setShakeError] = useState(null);
   const revealSentRef = useRef(false);
@@ -64,18 +41,18 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
 
   const gs = gameState?.game_state || {};
   const phase = gs.phase || 'waiting';
-  const pattern = gs.current_pattern || [];
+  const photos = gs.current_photos || [];
   const scores = gs.scores || {};
   const correctOrder = gs.correct_order || [];
   const round = Number(gs.round) || 0;
-  const totalPuzzles = Number(gs.total_puzzles) || 0;
+  const totalRounds = Number(gs.total_rounds) || 0;
   const revealedAnswer = gs.revealed_answer || '';
   const revealedAlternates = gs.revealed_alternates || [];
 
   const players = gameState?.players || [];
   const isHostUser = (gameState?.host_id ?? players[0]?.user_id) === currentUserId;
   const isPlayer = players.some(p => p.user_id === currentUserId);
-  const isLastRound = totalPuzzles > 0 && round >= totalPuzzles;
+  const isLastRound = totalRounds > 0 && round >= totalRounds;
 
   const myCorrectEntry = correctOrder.find(e => Number(e.user_id) === currentUserId);
   const alreadySolvedThisRound = !!myCorrectEntry;
@@ -84,8 +61,7 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
   useEffect(() => { roundRef.current = round; }, [round]);
 
   // A fresh server-rejected-guess error → show a quick shake/message near the
-  // input, matching WordsmithGame's established gameErrorMsg/gameErrorKey
-  // pattern for surfacing per-move rejections without a generic toast.
+  // input, same gameErrorMsg/gameErrorKey pattern as Rebus Round/Wordsmith.
   useEffect(() => {
     if (gameErrorKey === lastHandledErrorKeyRef.current) return;
     lastHandledErrorKeyRef.current = gameErrorKey;
@@ -95,12 +71,12 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
     return () => clearTimeout(t);
   }, [gameErrorKey, gameErrorMsg]);
 
-  // Clear the input + stuck-detection guard whenever a new puzzle starts.
+  // Clear the input + stuck-detection guard whenever a new round starts.
   useEffect(() => {
     if (phase === 'puzzle') {
       setGuess('');
       revealSentRef.current = false;
-      setTimeLeft(PUZZLE_SECONDS);
+      setTimeLeft(ROUND_SECONDS);
     }
   }, [round, phase]);
 
@@ -116,12 +92,12 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
     if (nextRoundTimeoutRef.current) clearTimeout(nextRoundTimeoutRef.current);
   }, []);
 
-  // Countdown + host-side auto-reveal, same shape as TriviaGame's timer.
+  // Countdown + host-side auto-reveal, same shape as Rebus Round/Trivia.
   useEffect(() => {
     if (phase !== 'puzzle' || !gs.started_at) return;
     const interval = setInterval(() => {
       const elapsed = (Date.now() - Number(gs.started_at)) / 1000;
-      const remaining = Math.max(0, PUZZLE_SECONDS - elapsed);
+      const remaining = Math.max(0, ROUND_SECONDS - elapsed);
       setTimeLeft(Math.ceil(remaining));
       if (remaining <= 0 && isHostUser && !revealSentRef.current) {
         revealSentRef.current = true;
@@ -134,16 +110,19 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
   const sendStart = () => {
     if (isLastRound && round > 0) return;
     const sentAtRound = round;
-    onMove({ move_type: 'rebus_start' });
+    onMove({ move_type: 'four_frames_start' });
     setIsSendingNext(true);
     if (nextRoundTimeoutRef.current) clearTimeout(nextRoundTimeoutRef.current);
+    // Photos are fetched live from Pexels on the backend when this move is
+    // processed — a slower/network-dependent step than Rebus Round's purely
+    // local puzzle pick, so this failure-detection window matters more here.
     nextRoundTimeoutRef.current = setTimeout(() => {
       nextRoundTimeoutRef.current = null;
       setIsSendingNext(false);
       if (roundRef.current === sentAtRound) {
-        toast.error('Failed to start the next puzzle — tap the button to retry.');
+        toast.error('Failed to load photos for the next round — tap the button to retry.');
       }
-    }, 5000);
+    }, 8000);
   };
 
   const sendGuess = () => {
@@ -159,7 +138,7 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
   };
 
   const endOrLeave = () => {
-    if (isHostUser) onMove({ move_type: 'rebus_end' });
+    if (isHostUser) onMove({ move_type: 'four_frames_end' });
     else onClose();
   };
 
@@ -176,14 +155,14 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
       {/* Header */}
       <div className="flex items-center justify-between pl-20 pr-5 py-4 border-b border-gray-800 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-2xl">🖼️</span>
-          <span className="text-white font-bold text-xl">Rebus Round</span>
-          {round > 0 && totalPuzzles > 0 && (
-            <span className="text-gray-400 text-sm ml-1">Puzzle {round}/{totalPuzzles}</span>
+          <span className="text-2xl">📸</span>
+          <span className="text-white font-bold text-xl">Four Frames</span>
+          {round > 0 && totalRounds > 0 && (
+            <span className="text-gray-400 text-sm ml-1">Round {round}/{totalRounds}</span>
           )}
         </div>
         <div className="flex items-center gap-1">
-          <GameRulesButton gameType="rebus_round" />
+          <GameRulesButton gameType="four_frames" />
           <button
             onClick={endOrLeave}
             className="text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors"
@@ -214,12 +193,12 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
         {/* Waiting */}
         {phase === 'waiting' && (
           <div className="text-center">
-            <div className="text-6xl mb-5">{isHostUser ? '🖼️' : '⏳'}</div>
+            <div className="text-6xl mb-5">{isHostUser ? '📸' : '⏳'}</div>
             <h2 className="text-2xl font-bold text-white mb-2">{isHostUser ? 'Ready!' : 'Get Ready!'}</h2>
             <p className="text-gray-400 mb-8 text-sm max-w-sm">
               {isHostUser
-                ? 'A picture puzzle appears — type the phrase it’s hinting at. First correct guess scores the most!'
-                : 'Waiting for the host to start the first puzzle…'}
+                ? '4 real photos appear — type the one word that connects them. First correct guess scores the most!'
+                : 'Waiting for the host to start the first round…'}
             </p>
             {isHostUser && (
               <button
@@ -227,7 +206,7 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
                 disabled={isSendingNext}
                 className="px-8 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold rounded-xl text-base transition-all"
               >
-                {isSendingNext ? 'Starting…' : 'Start Round 1'}
+                {isSendingNext ? 'Loading photos…' : 'Start Round 1'}
               </button>
             )}
           </div>
@@ -235,14 +214,14 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
 
         {/* Puzzle / Reveal */}
         {(phase === 'puzzle' || phase === 'reveal') && (
-          <div className="w-full max-w-xl">
+          <div className="w-full max-w-md">
             {phase === 'puzzle' && (
               <div className="flex items-center gap-3 mb-4">
                 <Clock className={`w-4 h-4 flex-shrink-0 ${timeLeft <= 8 ? 'text-red-400 animate-pulse' : 'text-gray-400'}`} />
                 <div className="flex-1 bg-gray-800 rounded-full h-1.5 overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${timeLeft <= 8 ? 'bg-red-500' : 'bg-purple-500'}`}
-                    style={{ width: `${(timeLeft / PUZZLE_SECONDS) * 100}%` }}
+                    style={{ width: `${(timeLeft / ROUND_SECONDS) * 100}%` }}
                   />
                 </div>
                 <span className={`text-xs font-bold w-6 text-right tabular-nums ${timeLeft <= 8 ? 'text-red-400' : 'text-gray-300'}`}>
@@ -251,9 +230,11 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
               </div>
             )}
 
-            {/* Puzzle card */}
-            <div className="bg-gray-800 rounded-2xl p-6 mb-4 shadow-lg min-h-[140px] flex items-center justify-center">
-              <RebusPatternDisplay pattern={pattern} />
+            {/* Photo grid */}
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              {(photos.length ? photos : [null, null, null, null]).map((url, i) => (
+                <PhotoCell key={i} url={url} />
+              ))}
             </div>
 
             {/* Who's solved it so far */}
@@ -345,7 +326,7 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
                       disabled={isSendingNext}
                       className="flex items-center gap-1.5 px-6 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-60 text-white font-bold rounded-xl text-sm transition-all"
                     >
-                      {isSendingNext ? 'Loading…' : isLastRound ? 'Show Results' : 'Next Puzzle'}
+                      {isSendingNext ? 'Loading…' : isLastRound ? 'Show Results' : 'Next Round'}
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   )}
@@ -353,25 +334,25 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
               </div>
             )}
             {!isHostUser && phase === 'reveal' && (
-              <p className="text-center text-gray-500 text-xs mt-4">Waiting for the host to start the next puzzle…</p>
+              <p className="text-center text-gray-500 text-xs mt-4">Waiting for the host to start the next round…</p>
             )}
           </div>
         )}
       </div>
 
       <style>{`
-        @keyframes rebusShake {
+        @keyframes fourFramesShake {
           0%, 100% { transform: translateX(0); }
           20%, 60% { transform: translateX(-6px); }
           40%, 80% { transform: translateX(6px); }
         }
-        .animate-shake { animation: rebusShake 0.4s ease-in-out; }
+        .animate-shake { animation: fourFramesShake 0.4s ease-in-out; }
       `}</style>
 
       {phase === 'ended' && (
         <GameWinnerBanner
           winner={finalWinner}
-          gameType="rebus_round"
+          gameType="four_frames"
           gameStats={{ lines: sortedPlayers.map(p => ({ label: p.username, value: `${scoreOf(p)}pts` })) }}
           isForfeit={gameState?.status === 'forfeited'}
           onClose={onClose}

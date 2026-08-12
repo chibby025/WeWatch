@@ -39,19 +39,222 @@ type RebusPuzzle struct {
 }
 
 func rt(text string) RebusToken                     { return RebusToken{Text: text} }
-func rtScale(text string, scale float64) RebusToken  { return RebusToken{Text: text, Scale: scale} }
-func rtOp(sym string) RebusToken                     { return RebusToken{Text: sym, Op: true} }
-func rtSup(text string) RebusToken                   { return RebusToken{Text: text, Sup: true} }
-func rtSub(text string) RebusToken                   { return RebusToken{Text: text, Sub: true} }
-func rtColor(text, color string) RebusToken          { return RebusToken{Text: text, Color: color} }
-func rtBreak(text string) RebusToken                 { return RebusToken{Text: text, Break: true} }
-func rtMirror(text string) RebusToken                { return RebusToken{Text: text, Mirror: true} }
-func rtFlip(text string) RebusToken                  { return RebusToken{Text: text, Flip: true} }
-func rtStrike(text string) RebusToken                { return RebusToken{Text: text, Strike: true} }
+func rtScale(text string, scale float64) RebusToken { return RebusToken{Text: text, Scale: scale} }
+func rtOp(sym string) RebusToken                    { return RebusToken{Text: sym, Op: true} }
+func rtSup(text string) RebusToken                  { return RebusToken{Text: text, Sup: true} }
+func rtSub(text string) RebusToken                  { return RebusToken{Text: text, Sub: true} }
+func rtColor(text, color string) RebusToken         { return RebusToken{Text: text, Color: color} }
+func rtBreak(text string) RebusToken                { return RebusToken{Text: text, Break: true} }
+func rtMirror(text string) RebusToken               { return RebusToken{Text: text, Mirror: true} }
+func rtFlip(text string) RebusToken                 { return RebusToken{Text: text, Flip: true} }
+func rtStrike(text string) RebusToken               { return RebusToken{Text: text, Strike: true} }
 
-// rebusPuzzleBank — the full curated set. Order here is irrelevant; each game
-// session draws a shuffled copy via rebusShuffledPuzzles().
-var rebusPuzzleBank = []RebusPuzzle{
+// ── Procedural generators ────────────────────────────────────────────────────
+// The 6 pattern "kinds" below (letter-scale, whole-word-scale, compound,
+// repeat-count, sub, sup) are the volume categories among the hand-authored
+// puzzles above — the ones where the *visual trick* is identical across many
+// different words, and only the specific word(s) + answer actually vary. These
+// turn "hand-build a token array per puzzle" into "supply a word or two and an
+// answer" — the same content-scaling idea already proven for Trivia (external
+// question banks instead of a fixed list). The remaining categories above
+// (stacked idioms, mirror/flip, phonetic, color, strikethrough-opposite) stay
+// hand-authored — each one is a genuinely bespoke visual joke that doesn't
+// generalize across a word list the way "make this word bigger" does.
+
+// rtGenScaleWord scales each letter of word individually, linearly ascending
+// (growing) or descending (shrinking) across the same 0.55–1.75 range the
+// original hand-authored "growing old"/"growing economy" entries used.
+func rtGenScaleWord(word string, ascending bool) []RebusToken {
+	const minScale, maxScale = 0.55, 1.75
+	letters := strings.Split(word, "")
+	n := len(letters)
+	tokens := make([]RebusToken, n)
+	for i, l := range letters {
+		t := float64(i) / float64(max(n-1, 1))
+		if !ascending {
+			t = 1 - t
+		}
+		tokens[i] = rtScale(l, minScale+t*(maxScale-minScale))
+	}
+	return tokens
+}
+
+// rtGenWholeWordScale renders a single word at one fixed scale — the "big
+// deal"/"small talk" trick, where the *whole word itself* is oversized or
+// undersized (as opposed to rtGenScaleWord's letter-by-letter gradient).
+func rtGenWholeWordScale(word string, scale float64) []RebusToken {
+	return []RebusToken{rtScale(word, scale)}
+}
+
+// rtGenCompound is the plain "WORD1 + WORD2" combination trick.
+func rtGenCompound(partA, partB string) []RebusToken {
+	return []RebusToken{rt(partA), rtOp("+"), rt(partB)}
+}
+
+// rtGenRepeat renders word count times in a row — the "CYCLE CYCLE CYCLE" =
+// tricycle trick, where the repeat count itself is the clue (uni-/bi-/tri-).
+func rtGenRepeat(word string, count int) []RebusToken {
+	tokens := make([]RebusToken, count)
+	for i := range tokens {
+		tokens[i] = rt(word)
+	}
+	return tokens
+}
+
+// rtGenSub/rtGenSup render a single word sitting low/high on the line — the
+// established "downtown"/"top secret" trick for "down-"/"up-" prefixed words,
+// without ever spelling "down"/"up" as text.
+func rtGenSub(word string) []RebusToken { return []RebusToken{rtSub(word)} }
+func rtGenSup(word string) []RebusToken { return []RebusToken{rtSup(word)} }
+
+// rebusGenSpec is one row of generated-puzzle data — just the words and the
+// answer, no hand-built token art. kind selects which rtGen* function above
+// turns it into a real RebusPuzzle.
+type rebusGenSpec struct {
+	kind       string // "grow" | "shrink" | "wholeScale" | "compound" | "repeat" | "sub" | "sup"
+	words      []string
+	scale      float64 // wholeScale only
+	count      int     // repeat only
+	answer     string
+	alternates []string
+	hint       string
+}
+
+func (s rebusGenSpec) toPuzzle() RebusPuzzle {
+	var pattern []RebusToken
+	switch s.kind {
+	case "grow":
+		pattern = rtGenScaleWord(s.words[0], true)
+	case "shrink":
+		pattern = rtGenScaleWord(s.words[0], false)
+	case "wholeScale":
+		pattern = rtGenWholeWordScale(s.words[0], s.scale)
+	case "compound":
+		pattern = rtGenCompound(s.words[0], s.words[1])
+	case "repeat":
+		pattern = rtGenRepeat(s.words[0], s.count)
+	case "sub":
+		pattern = rtGenSub(s.words[0])
+	case "sup":
+		pattern = rtGenSup(s.words[0])
+	}
+	return RebusPuzzle{Pattern: pattern, Answer: s.answer, Alternates: s.alternates, Hint: s.hint}
+}
+
+// rebusGeneratedSpecs — the data-only puzzle table. Adding a new puzzle in any
+// of these 6 categories is now just one more line here, not a hand-built
+// token array — this is the actual "keep it from being repetitive" mechanism
+// asked for: growing this list (or adding a 7th category + generator above)
+// scales content without scaling authoring effort the way the original 31
+// hand-authored entries did.
+var rebusGeneratedSpecs = []rebusGenSpec{
+	// Letter-scale growing/shrinking
+	{kind: "grow", words: []string{"FAMILY"}, answer: "growing family"},
+	{kind: "grow", words: []string{"CONCERN"}, answer: "growing concern"},
+	{kind: "grow", words: []string{"CROWD"}, answer: "growing crowd"},
+	{kind: "grow", words: []string{"DEBT"}, answer: "growing debt"},
+	{kind: "shrink", words: []string{"BUDGET"}, answer: "shrinking budget"},
+	{kind: "shrink", words: []string{"MARKET"}, answer: "shrinking market"},
+	{kind: "shrink", words: []string{"ICE"}, answer: "shrinking ice"},
+	{kind: "shrink", words: []string{"POPULATION"}, answer: "shrinking population"},
+
+	// Whole-word big/small scale
+	{kind: "wholeScale", words: []string{"SHOT"}, scale: 2.2, answer: "big shot"},
+	{kind: "wholeScale", words: []string{"TIME"}, scale: 2.2, answer: "big time"},
+	{kind: "wholeScale", words: []string{"WIG"}, scale: 2.2, answer: "big wig"},
+	{kind: "wholeScale", words: []string{"PRINT"}, scale: 0.5, answer: "small print"},
+	{kind: "wholeScale", words: []string{"FRY"}, scale: 0.5, answer: "small fry"},
+	{kind: "wholeScale", words: []string{"CHANGE"}, scale: 0.5, answer: "small change"},
+
+	// Compound words
+	{kind: "compound", words: []string{"MOON", "SHINE"}, answer: "moonshine"},
+	{kind: "compound", words: []string{"SUN", "SET"}, answer: "sunset"},
+	{kind: "compound", words: []string{"SUN", "RISE"}, answer: "sunrise"},
+	{kind: "compound", words: []string{"AIR", "PLANE"}, answer: "airplane"},
+	{kind: "compound", words: []string{"FOOT", "BALL"}, answer: "football"},
+	{kind: "compound", words: []string{"BASKET", "BALL"}, answer: "basketball"},
+	{kind: "compound", words: []string{"BASE", "BALL"}, answer: "baseball"},
+	{kind: "compound", words: []string{"BLACK", "BOARD"}, answer: "blackboard"},
+	{kind: "compound", words: []string{"KEY", "BOARD"}, answer: "keyboard"},
+	{kind: "compound", words: []string{"NOTE", "BOOK"}, answer: "notebook"},
+	{kind: "compound", words: []string{"BACK", "PACK"}, answer: "backpack"},
+	{kind: "compound", words: []string{"WATER", "FALL"}, answer: "waterfall"},
+	{kind: "compound", words: []string{"WATER", "MELON"}, answer: "watermelon"},
+	{kind: "compound", words: []string{"BUTTER", "FLY"}, answer: "butterfly"},
+	{kind: "compound", words: []string{"HONEY", "MOON"}, answer: "honeymoon"},
+	{kind: "compound", words: []string{"HONEY", "BEE"}, answer: "honeybee"},
+	{kind: "compound", words: []string{"DAY", "LIGHT"}, answer: "daylight"},
+	{kind: "compound", words: []string{"DAY", "DREAM"}, answer: "daydream"},
+	{kind: "compound", words: []string{"NIGHT", "MARE"}, answer: "nightmare"},
+	{kind: "compound", words: []string{"UP", "STAIRS"}, answer: "upstairs"},
+	{kind: "compound", words: []string{"DOWN", "STAIRS"}, answer: "downstairs"},
+	{kind: "compound", words: []string{"OUT", "SIDE"}, answer: "outside"},
+	{kind: "compound", words: []string{"IN", "SIDE"}, answer: "inside"},
+	{kind: "compound", words: []string{"GRAND", "FATHER"}, answer: "grandfather"},
+	{kind: "compound", words: []string{"GRAND", "MOTHER"}, answer: "grandmother"},
+	{kind: "compound", words: []string{"CLASS", "ROOM"}, answer: "classroom"},
+	{kind: "compound", words: []string{"BED", "ROOM"}, answer: "bedroom"},
+	{kind: "compound", words: []string{"BOOK", "SHELF"}, answer: "bookshelf"},
+	{kind: "compound", words: []string{"FOOT", "PRINT"}, answer: "footprint"},
+	{kind: "compound", words: []string{"FINGER", "PRINT"}, answer: "fingerprint"},
+	{kind: "compound", words: []string{"SNOW", "MAN"}, answer: "snowman"},
+	{kind: "compound", words: []string{"SNOW", "BALL"}, answer: "snowball"},
+	{kind: "compound", words: []string{"RAIN", "COAT"}, answer: "raincoat"},
+	{kind: "compound", words: []string{"SEA", "SHELL"}, answer: "seashell"},
+	{kind: "compound", words: []string{"LIGHT", "HOUSE"}, answer: "lighthouse"},
+	{kind: "compound", words: []string{"FIRE", "WORK"}, answer: "firework"},
+	{kind: "compound", words: []string{"CAMP", "FIRE"}, answer: "campfire"},
+	{kind: "compound", words: []string{"THUNDER", "STORM"}, answer: "thunderstorm"},
+	{kind: "compound", words: []string{"RAIL", "ROAD"}, answer: "railroad"},
+	{kind: "compound", words: []string{"NEWS", "PAPER"}, answer: "newspaper"},
+	{kind: "compound", words: []string{"TOOTH", "BRUSH"}, answer: "toothbrush"},
+	{kind: "compound", words: []string{"LEFT", "OVER"}, answer: "leftover"},
+	{kind: "compound", words: []string{"HANG", "OVER"}, answer: "hangover"},
+	{kind: "compound", words: []string{"TAKE", "OVER"}, answer: "takeover"},
+	{kind: "compound", words: []string{"MAKE", "OVER"}, answer: "makeover"},
+	{kind: "compound", words: []string{"SLEEP", "OVER"}, answer: "sleepover"},
+	{kind: "compound", words: []string{"TURN", "OVER"}, answer: "turnover"},
+	{kind: "compound", words: []string{"PUSH", "OVER"}, answer: "pushover"},
+	{kind: "compound", words: []string{"OVER", "COAT"}, answer: "overcoat"},
+	{kind: "compound", words: []string{"OVER", "TIME"}, answer: "overtime"},
+
+	// Repeat-count (uni-/bi-/tri-/du-)
+	{kind: "repeat", words: []string{"CYCLE"}, count: 1, answer: "unicycle"},
+	{kind: "repeat", words: []string{"CYCLE"}, count: 2, answer: "bicycle"},
+	{kind: "repeat", words: []string{"PLEX"}, count: 2, answer: "duplex", hint: "A building split into two."},
+	{kind: "repeat", words: []string{"ANGLE"}, count: 3, answer: "triangle"},
+
+	// Sub (down-) / Sup (up-) prefix, without ever spelling "down"/"up"
+	{kind: "sub", words: []string{"FALL"}, answer: "downfall"},
+	{kind: "sub", words: []string{"GRADE"}, answer: "downgrade"},
+	{kind: "sub", words: []string{"PLAY"}, answer: "downplay"},
+	{kind: "sub", words: []string{"SIDE"}, answer: "downside"},
+	{kind: "sub", words: []string{"STREAM"}, answer: "downstream"},
+	{kind: "sub", words: []string{"TURN"}, answer: "downturn"},
+	{kind: "sub", words: []string{"WIND"}, answer: "downwind"},
+	{kind: "sup", words: []string{"GRADE"}, answer: "upgrade"},
+	{kind: "sup", words: []string{"ROAR"}, answer: "uproar"},
+	{kind: "sup", words: []string{"STREAM"}, answer: "upstream"},
+	{kind: "sup", words: []string{"TURN"}, answer: "upturn"},
+	{kind: "sup", words: []string{"LIFT"}, answer: "uplift"},
+	{kind: "sup", words: []string{"BEAT"}, answer: "upbeat"},
+	{kind: "sup", words: []string{"FRONT"}, answer: "upfront"},
+}
+
+func rebusGeneratedBank() []RebusPuzzle {
+	out := make([]RebusPuzzle, len(rebusGeneratedSpecs))
+	for i, s := range rebusGeneratedSpecs {
+		out[i] = s.toPuzzle()
+	}
+	return out
+}
+
+// rebusHandAuthoredBank — bespoke puzzles that don't fit any of the
+// procedural generators above (stacked idioms, mirror/flip, phonetic, color,
+// strikethrough-opposite — each a one-off visual joke, not a word-list-driven
+// pattern). Order here is irrelevant; the final combined bank is shuffled per
+// session via rebusShuffledPuzzles().
+var rebusHandAuthoredBank = []RebusPuzzle{
 	{
 		Pattern:    []RebusToken{rtScale("O", 0.6), rtScale("L", 1.1), rtScale("D", 1.7)},
 		Answer:     "growing old",
@@ -192,9 +395,9 @@ var rebusPuzzleBank = []RebusPuzzle{
 		Hint:    "The last part is literally flipped.",
 	},
 	{
-		Pattern:    []RebusToken{rt("PAIR"), rtOp("+"), rt("O"), rtOp("+"), rt("DICE")},
-		Answer:     "paradise",
-		Hint:       "Say it out loud: pair… a… dice…",
+		Pattern: []RebusToken{rt("PAIR"), rtOp("+"), rt("O"), rtOp("+"), rt("DICE")},
+		Answer:  "paradise",
+		Hint:    "Say it out loud: pair… a… dice…",
 	},
 	{
 		Pattern: []RebusToken{rtStrike("IN"), rt("LAW")},
@@ -211,6 +414,13 @@ var rebusPuzzleBank = []RebusPuzzle{
 		Hint:    "The color of two of the words is the clue.",
 	},
 }
+
+// rebusPuzzleBank — the full combined set (hand-authored + procedurally
+// generated) that rebusShuffledPuzzles() draws from. Computed once at package
+// init via a fresh backing array (not append(rebusHandAuthoredBank, ...)
+// directly) so growing the generated bank later can never alias/corrupt
+// rebusHandAuthoredBank's own underlying array.
+var rebusPuzzleBank = append(append([]RebusPuzzle{}, rebusHandAuthoredBank...), rebusGeneratedBank()...)
 
 // rebusNormalize strips case, punctuation, and extra whitespace so "Growing-Old!",
 // "growing old", and "GROWING  OLD" all compare equal. Deliberately no fuzzy

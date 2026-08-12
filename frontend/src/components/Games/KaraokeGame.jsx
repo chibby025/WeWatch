@@ -242,7 +242,7 @@ export default function KaraokeGame({ gameState, currentUserId, onMove, onClose 
     return (
       <div className="fixed inset-0 z-[60] bg-gray-950/98 flex flex-col items-center justify-center gap-4 text-white">
         <span className="text-6xl">🎤</span>
-        <p className="text-lg font-semibold">Karaoke Night</p>
+        <p className="text-lg font-semibold">Music Warrior</p>
         <p className="text-sm text-gray-400">Waiting for the host to pick a song…</p>
         <button onClick={onClose} className="mt-2 px-5 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">Close</button>
       </div>
@@ -273,7 +273,7 @@ export default function KaraokeGame({ gameState, currentUserId, onMove, onClose 
         <div className="flex items-center justify-between pl-20 pr-5 py-4 border-b border-gray-800 flex-shrink-0">
           <div className="flex items-center gap-3">
             <span className="text-2xl">🎤</span>
-            <span className="text-white font-bold text-xl">Karaoke Night</span>
+            <span className="text-white font-bold text-xl">Music Warrior</span>
           </div>
           <button onClick={endOrLeave} className="text-gray-400 hover:text-white hover:bg-gray-800 p-1.5 rounded-lg transition-colors">
             <X className="w-5 h-5" />

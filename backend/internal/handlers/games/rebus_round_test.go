@@ -280,3 +280,124 @@ func TestRebusPuzzleBankIntegrity(t *testing.T) {
 		}
 	}
 }
+
+func TestRtGenScaleWordAscendingIncreasesMonotonically(t *testing.T) {
+	tokens := rtGenScaleWord("GROW", true)
+	if len(tokens) != 4 {
+		t.Fatalf("expected 4 tokens for a 4-letter word, got %d", len(tokens))
+	}
+	for i := 1; i < len(tokens); i++ {
+		if tokens[i].Scale <= tokens[i-1].Scale {
+			t.Errorf("ascending scale did not increase at index %d: %v -> %v", i, tokens[i-1].Scale, tokens[i].Scale)
+		}
+	}
+	if tokens[0].Scale != 0.55 || tokens[len(tokens)-1].Scale != 1.75 {
+		t.Errorf("expected the scale range to span exactly 0.55..1.75, got %v..%v", tokens[0].Scale, tokens[len(tokens)-1].Scale)
+	}
+}
+
+func TestRtGenScaleWordDescendingDecreasesMonotonically(t *testing.T) {
+	tokens := rtGenScaleWord("SHRINK", false)
+	if len(tokens) != 6 {
+		t.Fatalf("expected 6 tokens, got %d", len(tokens))
+	}
+	for i := 1; i < len(tokens); i++ {
+		if tokens[i].Scale >= tokens[i-1].Scale {
+			t.Errorf("descending scale did not decrease at index %d: %v -> %v", i, tokens[i-1].Scale, tokens[i].Scale)
+		}
+	}
+}
+
+func TestRtGenScaleWordSingleLetterDoesNotDivideByZero(t *testing.T) {
+	// n-1 == 0 for a single-letter word — must not panic on a zero-length
+	// scale range division.
+	tokens := rtGenScaleWord("A", true)
+	if len(tokens) != 1 {
+		t.Fatalf("expected 1 token, got %d", len(tokens))
+	}
+}
+
+func TestRtGenCompoundProducesWordOpWord(t *testing.T) {
+	tokens := rtGenCompound("SUN", "SET")
+	if len(tokens) != 3 {
+		t.Fatalf("expected 3 tokens (word, op, word), got %d", len(tokens))
+	}
+	if tokens[0].Text != "SUN" || tokens[2].Text != "SET" {
+		t.Errorf("expected SUN/SET as the two word tokens, got %q/%q", tokens[0].Text, tokens[2].Text)
+	}
+	if !tokens[1].Op {
+		t.Errorf("expected the middle token to be flagged Op")
+	}
+}
+
+func TestRtGenRepeatProducesExactCount(t *testing.T) {
+	tokens := rtGenRepeat("CYCLE", 3)
+	if len(tokens) != 3 {
+		t.Fatalf("expected 3 tokens, got %d", len(tokens))
+	}
+	for _, tok := range tokens {
+		if tok.Text != "CYCLE" {
+			t.Errorf("expected every token to read CYCLE, got %q", tok.Text)
+		}
+	}
+}
+
+func TestRtGenSubAndSup(t *testing.T) {
+	sub := rtGenSub("FALL")
+	if len(sub) != 1 || !sub[0].Sub || sub[0].Text != "FALL" {
+		t.Errorf("rtGenSub produced unexpected tokens: %+v", sub)
+	}
+	sup := rtGenSup("GRADE")
+	if len(sup) != 1 || !sup[0].Sup || sup[0].Text != "GRADE" {
+		t.Errorf("rtGenSup produced unexpected tokens: %+v", sup)
+	}
+}
+
+// TestRebusGeneratedSpecsWellFormed guards against a future spec entry
+// silently panicking at toPuzzle() time (an index-out-of-range on s.words)
+// or being missing critical data — checked once for every entry in the real
+// table, not just a hand-picked sample.
+func TestRebusGeneratedSpecsWellFormed(t *testing.T) {
+	wantWords := map[string]int{
+		"grow": 1, "shrink": 1, "wholeScale": 1, "compound": 2, "repeat": 1, "sub": 1, "sup": 1,
+	}
+	for i, s := range rebusGeneratedSpecs {
+		want, ok := wantWords[s.kind]
+		if !ok {
+			t.Errorf("spec %d (%q) has unknown kind %q", i, s.answer, s.kind)
+			continue
+		}
+		if len(s.words) != want {
+			t.Errorf("spec %d (%q, kind=%s) expected %d word(s), got %d", i, s.answer, s.kind, want, len(s.words))
+		}
+		if s.answer == "" {
+			t.Errorf("spec %d has an empty answer", i)
+		}
+		if s.kind == "repeat" && s.count < 1 {
+			t.Errorf("spec %d (%q) is kind=repeat with a non-positive count %d", i, s.answer, s.count)
+		}
+		if s.kind == "wholeScale" && s.scale <= 0 {
+			t.Errorf("spec %d (%q) is kind=wholeScale with a non-positive scale %v", i, s.answer, s.scale)
+		}
+		// toPuzzle() must not panic and must produce a non-empty pattern —
+		// the real, end-to-end guarantee the field-count checks above exist
+		// to protect.
+		p := s.toPuzzle()
+		if len(p.Pattern) == 0 {
+			t.Errorf("spec %d (%q) produced an empty pattern from toPuzzle()", i, s.answer)
+		}
+	}
+}
+
+// TestRebusBankGrewSubstantially is a soft, intentionally loose sanity check
+// (not tied to the exact count) confirming the generator-driven expansion
+// actually landed in rebusPuzzleBank, not just in an unused table — 113 at
+// the time this was written (31 hand-authored + 82 generated); guards against
+// a future refactor accidentally dropping rebusGeneratedBank() from the
+// combined var.
+func TestRebusBankGrewSubstantially(t *testing.T) {
+	const minExpected = 80
+	if len(rebusPuzzleBank) < minExpected {
+		t.Errorf("expected the combined bank to have grown well past the original 31 entries (>= %d), got %d", minExpected, len(rebusPuzzleBank))
+	}
+}

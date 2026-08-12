@@ -5,6 +5,7 @@ import RockPaperScissorsGame from './RockPaperScissorsGame';
 import ChessGame from './ChessGame';
 import TriviaGame from './TriviaGame';
 import RebusRoundGame from './RebusRoundGame';
+import FourFramesGame from './FourFramesGame';
 import KaraokeGame from './KaraokeGame';
 import OthelloGame from './OthelloGame';
 import CheckersGame from './CheckersGame';
@@ -125,6 +126,20 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           currentUserId={currentUserId}
           onMove={handleMove}
           onClose={onClose}
+          onPostResult={onPostResult}
+          gameErrorMsg={gameErrorMsg}
+          gameErrorKey={gameErrorKey}
+        />
+      );
+
+    case 'four_frames':
+      return (
+        <FourFramesGame
+          gameState={activeGame}
+          currentUserId={currentUserId}
+          onMove={handleMove}
+          onClose={onClose}
+          onPostResult={onPostResult}
           gameErrorMsg={gameErrorMsg}
           gameErrorKey={gameErrorKey}
         />

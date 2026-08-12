@@ -64,17 +64,27 @@ const games = [
     description: 'A picture puzzle appears — type the phrase it\'s hinting at before anyone else!',
     minPlayers: 2,
     maxPlayers: 10,
-    image: `${GAME_POSTERS_BASE_URL}/rebus_round.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/rebus_round.webp`,
+    disabled: false,
+    type: 'multiplayer'
+  },
+  {
+    id: 'four_frames',
+    name: 'Four Frames',
+    description: 'Four real photos, one hidden word — race to guess what connects them!',
+    minPlayers: 2,
+    maxPlayers: 10,
+    image: `${GAME_POSTERS_BASE_URL}/four_frames.webp`,
     disabled: false,
     type: 'multiplayer'
   },
   {
     id: 'karaoke',
-    name: 'Karaoke Night',
+    name: 'Music Warrior',
     description: 'Search a song, pick an instrumental, and sing along together with synced lyrics!',
     minPlayers: 1,
     maxPlayers: 10,
-    image: `${GAME_POSTERS_BASE_URL}/karaoke.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/karaoke.webp`,
     disabled: false,
     type: 'multiplayer'
   },
@@ -106,7 +116,7 @@ const games = [
     description: 'Real isometric kart racing multiplayer — pick a car, pick a track, race for the checkered flag!',
     minPlayers: 1,
     maxPlayers: 6,
-    image: `${GAME_POSTERS_BASE_URL}/micro_racing.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/micro_racing.webp`,
     disabled: false,
     type: 'multiplayer',
     heavy: true
@@ -117,7 +127,7 @@ const games = [
     description: 'Real Roblox-style multiplayer parkour — jump, climb, and race everyone else to the top of the course!',
     minPlayers: 1,
     maxPlayers: 8,
-    image: `${GAME_POSTERS_BASE_URL}/obby_parkour.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/obby_parkour.webp`,
     disabled: false,
     type: 'multiplayer',
     heavy: true
@@ -453,7 +463,7 @@ const games = [
     description: 'Aim, fire, and match 3+ colored orbs before the chain reaches the bog — solo or hot-seat tournament!',
     minPlayers: 1,
     maxPlayers: 1,
-    image: `${GAME_POSTERS_BASE_URL}/toad_ball.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/toad_ball.webp`,
     disabled: false,
     type: 'arcade',
     heavy: false
@@ -464,7 +474,7 @@ const games = [
     description: 'Putt through a real 3D course — fewest strokes wins! Solo practice or hot-seat tournament.',
     minPlayers: 1,
     maxPlayers: 1,
-    image: `${GAME_POSTERS_BASE_URL}/golf.webp`,
+    image: `${GAME_POSTERS_BASE_URL}/v2/golf.webp`,
     disabled: false,
     type: 'arcade',
     heavy: true

@@ -66,6 +66,15 @@ type GameSessionState struct {
 	// N-1), same convention Trivia already uses for its own client-supplied
 	// questions array.
 	RebusPuzzles []RebusPuzzle
+
+	// Four Frames-only field — same rationale and same "kept OFF GameData"
+	// convention as RebusPuzzles above: the hidden answer word for the
+	// currently-active round must never reach the wire pre-reveal. Unlike
+	// RebusPuzzles (a fixed hand-authored/generated pattern per entry), each
+	// round's 4 photo URLs are fetched live from the Pexels API when that
+	// round starts (see four_frames.go) — only the *word list order* is fixed
+	// per session here, not the photos themselves.
+	FourFramesRounds []FourFramesRound
 }
 
 // NewGameManager creates a new game manager instance
@@ -112,6 +121,7 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"space_attack": true,
 		"toad_ball":    true,
 		"rebus_round":  true,
+		"four_frames":  true,
 		"karaoke":      true,
 		// "roulette": true, // temporarily removed
 		"snakes_ladders":  true,
@@ -235,6 +245,13 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		gameState.GameData["total_puzzles"] = float64(len(gameState.RebusPuzzles))
 		gameState.GameData["scores"] = map[string]interface{}{}
 		gameState.GameSession.GameState = gameState.GameData
+	case "four_frames":
+		gameState.FourFramesRounds = fourFramesShuffledRounds()
+		gameState.GameData["phase"] = "waiting"
+		gameState.GameData["round"] = float64(0)
+		gameState.GameData["total_rounds"] = float64(len(gameState.FourFramesRounds))
+		gameState.GameData["scores"] = map[string]interface{}{}
+		gameState.GameSession.GameState = gameState.GameData
 	case "roulette":
 		// Chips seeded lazily on first move; just set opening state here.
 		gameState.GameData["phase"] = "betting"
@@ -288,6 +305,7 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"uno":                   true, // catch_uno can be sent by any player at any time; play/draw/uno enforced internally
 		"jigsaw":                true, // fully cooperative — any player can pick up/place any unclaimed piece at any time
 		"rebus_round":           true, // any player can submit "answer" at any time (unlimited retries); host-only rebus_start/reveal/rebus_end enforced internally
+		"four_frames":           true, // same shape as rebus_round — any player can answer at any time; host-only four_frames_start/reveal/four_frames_end enforced internally. Added here from day one, unlike rebus_round which shipped without this and needed a same-day fix (2026-08-11) after a live test showed it locking every non-current-turn player out of "answer" entirely.
 		"karaoke":               true, // host-only karaoke_start/karaoke_end enforced internally; no per-player turn concept at all
 	}
 	if !simultaneousGames[gameState.GameSession.GameType] {
@@ -335,6 +353,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processTriviaMove(gameState, playerID, moveType, moveData)
 	case "rebus_round":
 		gameOver, winnerID, err = gm.processRebusRoundMove(gameState, playerID, moveType, moveData)
+	case "four_frames":
+		gameOver, winnerID, err = gm.processFourFramesMove(gameState, playerID, moveType, moveData)
 	case "karaoke":
 		gameOver, winnerID, err = gm.processKaraokeMove(gameState, playerID, moveType, moveData)
 	case "othello":

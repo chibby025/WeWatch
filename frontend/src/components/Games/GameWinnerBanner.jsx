@@ -22,6 +22,8 @@ const GAME_LABELS = {
   mancala: 'Mancala',
   ramp_rush: 'Ramp Rush',
   wordsmith: 'Wordsmith',
+  rebus_round: 'Rebus Round',
+  four_frames: 'Four Frames',
 };
 
 /**

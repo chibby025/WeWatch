@@ -36,9 +36,9 @@ func gamePosterURL(gameType string) string {
 	case "quake3":
 		return gamePostersBaseURL + "/quake3.webp"
 	case "micro_racing":
-		return gamePostersBaseURL + "/micro_racing.webp"
+		return gamePostersBaseURL + "/v2/micro_racing.webp"
 	case "obby_parkour":
-		return gamePostersBaseURL + "/obby_parkour.webp"
+		return gamePostersBaseURL + "/v2/obby_parkour.webp"
 	case "othello":
 		return gamePostersBaseURL + "/othello.webp"
 	case "checkers":
@@ -91,11 +91,13 @@ func gamePosterURL(gameType string) string {
 	case "space_attack":
 		return gamePostersBaseURL + "/space_attack.webp"
 	case "toad_ball":
-		return gamePostersBaseURL + "/toad_ball.webp"
+		return gamePostersBaseURL + "/v2/toad_ball.webp"
 	case "rebus_round":
-		return gamePostersBaseURL + "/rebus_round.webp"
+		return gamePostersBaseURL + "/v2/rebus_round.webp"
+	case "four_frames":
+		return gamePostersBaseURL + "/four_frames.webp"
 	case "karaoke":
-		return gamePostersBaseURL + "/karaoke.webp"
+		return gamePostersBaseURL + "/v2/karaoke.webp"
 	// case "roulette": temporarily removed
 	case "snakes_ladders":
 		return gamePostersBaseURL + "/snakes_ladders.webp"
@@ -112,7 +114,7 @@ func gamePosterURL(gameType string) string {
 	case "ramp_rush":
 		return gamePostersBaseURL + "/ramp_rush.webp"
 	case "golf":
-		return gamePostersBaseURL + "/golf.webp"
+		return gamePostersBaseURL + "/v2/golf.webp"
 	default:
 		return ""
 	}
