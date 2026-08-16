@@ -1,4 +1,11 @@
 // src/components/Games/MicroRacingGame.jsx
+//
+// TEMPORARILY REMOVED FROM THE APP. No longer imported anywhere
+// (GameOverlay.jsx's lazy import + case, and GameLobbyModal.jsx's
+// games-array entry are all commented out), so this file is inert and
+// won't be bundled. To re-enable: uncomment those call sites, plus the
+// matching ones in game_manager.go/websocket_handler.go.
+//
 // Real N-player multiplayer: every room member who joins gets an identical,
 // fully-playable instance — a fork of Mati365/micro-racing (MIT), a real
 // isometric kart racer with its own server-authoritative physics, client-

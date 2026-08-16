@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -184,6 +185,30 @@ type Hub struct {
     liveGraphics   map[string]map[string]interface{}
     liveGraphicsMu sync.RWMutex
 
+    // In-memory "is there a live Rhythm Hero performance right now" cache
+    // (roomID -> the raw rhythm_hero_start message bytes, already correctly
+    // {"type":"rhythm_hero_start","data":{...}}-shaped). rhythm_hero_start/
+    // _input/_end are raw room broadcasts with zero other persistence (see the
+    // handleMessage cases) — without this, a spectator joining mid-performance
+    // never learns one is running at all, the same real gap
+    // GetActiveGameMessage already closes for ordinary game_started broadcasts,
+    // just for a message family that lives outside the game-message system
+    // entirely. Cleared on rhythm_hero_end and on session-end cleanup.
+    rhythmHeroLive      map[uint][]byte
+    rhythmHeroLiveMutex sync.RWMutex
+
+    // In-memory, session-scoped Rhythm Hero leaderboard (roomID -> scores
+    // from every performance in the room's CURRENT watch session, solo and
+    // tournament alike — both submit here the moment their onEnd fires).
+    // Deliberately not DB-persisted: a lightweight "who's on top tonight"
+    // board, not a permanent all-time record — scoped to match this game's
+    // other in-memory-only state (rhythmHeroLive above) rather than adding a
+    // new migration for it. Cleared at the same 3 session-end cleanup sites
+    // as rhythmHeroLive, for the same reason (avoid an unbounded map growing
+    // across the server's whole lifetime).
+    rhythmHeroLeaderboard      map[uint][]RhythmHeroLeaderboardEntry
+    rhythmHeroLeaderboardMutex sync.RWMutex
+
     // ── Phase 3 observability counters ──────────────────────────────────────
     // Incremented wherever a channel-full "default: drop" branch already existed.
     // Lets /api/admin/hub-stats answer "is the Hub falling behind?" without
@@ -192,6 +217,14 @@ type Hub struct {
     statUserBroadcastDropped atomic.Int64 // h.broadcastToUsers enqueue dropped
     statUnregisterDropped    atomic.Int64 // h.unregister enqueue dropped (duplicate-client kick path)
     statClientSendDropped    atomic.Int64 // any individual client.send buffer was full
+}
+
+// One completed Rhythm Hero performance — see Hub.rhythmHeroLeaderboard.
+type RhythmHeroLeaderboardEntry struct {
+	UserID    uint   `json:"user_id"`
+	Username  string `json:"username"`
+	Score     int    `json:"score"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 type RoomBroadcastMessage struct {
@@ -271,6 +304,10 @@ func NewHub() *Hub {
 		subtitleContent:     make(map[uint]string),
 		subtitleMu:          sync.RWMutex{},
 		liveGraphics:        make(map[string]map[string]interface{}),
+		rhythmHeroLive:      make(map[uint][]byte),
+		rhythmHeroLiveMutex: sync.RWMutex{},
+		rhythmHeroLeaderboard:      make(map[uint][]RhythmHeroLeaderboardEntry),
+		rhythmHeroLeaderboardMutex: sync.RWMutex{},
 	}
 }
 
@@ -453,6 +490,19 @@ func (h *Hub) startBroadcastWorkers() {
 
             // Fan-out non-blocking to each client
             for c := range clients {
+                // Exclude the sender if provided — this worker and Hub.Run()'s own
+                // broadcastToRoom select-case (below) both consume the same channel
+                // concurrently; a message only ever reaches ONE of them (Go channel
+                // semantics), so both must honor sender/excludeUserID identically or
+                // whichever one happens to win the race silently drops the exclusion.
+                // Found via a real Rhythm Hero live-broadcast test that caught the
+                // active player receiving an echo of their own performance.
+                if msg.sender != nil && c == msg.sender {
+                    continue
+                }
+                if msg.excludeUserID != 0 && c.userID == msg.excludeUserID {
+                    continue
+                }
                 // ✅ Check if channel is closed before sending
                 func() {
                     defer func() {
@@ -460,7 +510,7 @@ func (h *Hub) startBroadcastWorkers() {
                             log.Printf("⚠️ [Hub] Recovered from panic sending to user %d: %v", c.userID, r)
                         }
                     }()
-                    
+
                     select {
                     case c.send <- data:
                         // enqueued ok
@@ -1030,6 +1080,41 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
             }
             // Player reconnected within the grace window — cancel any pending forfeit timer.
             gameWebSocketHandler.CancelDisconnectGrace(client.roomID, client.userID)
+        }
+
+        // Rhythm Hero live-performance rehydration — same real gap the game
+        // rehydration above closes, but rhythm_hero_start/_input/_end are raw
+        // room broadcasts outside the game-message system entirely (see
+        // handleMessage), so they need their own small hub-level cache instead
+        // of routing through gameWebSocketHandler.
+        hub.rhythmHeroLiveMutex.RLock()
+        rhythmHeroLiveBytes, hasRhythmHeroLive := hub.rhythmHeroLive[client.roomID]
+        hub.rhythmHeroLiveMutex.RUnlock()
+        if hasRhythmHeroLive {
+            select {
+            case client.send <- OutgoingMessage{Data: rhythmHeroLiveBytes, IsBinary: false}:
+            default:
+                log.Printf("⚠️ [JoinWatchSession] rhythm_hero rehydration dropped — client.send full for user %d", client.userID)
+            }
+        }
+
+        // Rhythm Hero leaderboard rehydration — a late joiner should see the
+        // session's scores-so-far immediately, not just once the next
+        // performance finishes and re-broadcasts it.
+        hub.rhythmHeroLeaderboardMutex.RLock()
+        rhythmHeroEntries, hasRhythmHeroEntries := hub.rhythmHeroLeaderboard[client.roomID]
+        hub.rhythmHeroLeaderboardMutex.RUnlock()
+        if hasRhythmHeroEntries && len(rhythmHeroEntries) > 0 {
+            if lbBytes, err := json.Marshal(map[string]interface{}{
+                "type": "rhythm_hero_leaderboard_update",
+                "data": map[string]interface{}{"entries": rhythmHeroEntries},
+            }); err == nil {
+                select {
+                case client.send <- OutgoingMessage{Data: lbBytes, IsBinary: false}:
+                default:
+                    log.Printf("⚠️ [JoinWatchSession] rhythm_hero leaderboard rehydration dropped — client.send full for user %d", client.userID)
+                }
+            }
         }
 
         // Push updated count to lobby so session cards update without polling
@@ -2787,6 +2872,25 @@ func CleanupStaleSessions() {
 				log.Printf("⚠️ [CleanupStaleSessions] Failed to cleanup preview files for %s: %v", session.SessionID, err)
 			}
 
+			// Rhythm Hero uploaded-song audio — no DB row, same predictable
+			// rhythm_hero/session_{id}/ prefix as the other two cleanup paths.
+			// This sweep is the dominant real-world path per the comment above,
+			// so this is the one most likely to actually catch a live
+			// performance whose turn/session ended abruptly (tab closed) rather
+			// than via a clean rhythm_hero_end/EndWatchSessionHandler call.
+			if err := utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("rhythm_hero/session_%s/", session.SessionID)); err != nil {
+				log.Printf("⚠️ [CleanupStaleSessions] Failed to delete Rhythm Hero audio prefix for session %s: %v", session.SessionID, err)
+			}
+			if err := os.RemoveAll(fmt.Sprintf("uploads/rhythm_hero/session_%s", session.SessionID)); err != nil {
+				log.Printf("⚠️ [CleanupStaleSessions] Failed to remove local Rhythm Hero audio dir for session %s: %v", session.SessionID, err)
+			}
+			hub.rhythmHeroLiveMutex.Lock()
+			delete(hub.rhythmHeroLive, session.RoomID)
+			hub.rhythmHeroLiveMutex.Unlock()
+			hub.rhythmHeroLeaderboardMutex.Lock()
+			delete(hub.rhythmHeroLeaderboard, session.RoomID)
+			hub.rhythmHeroLeaderboardMutex.Unlock()
+
 			var room models.Room
 			isTemporary := false
 			var hostID uint
@@ -3018,7 +3122,7 @@ func (client *Client) handleMessage(message []byte) {
     }
     // ✅ Handle game-related messages
     // ✅ Handle game-related messages
-    if msg.Type == "game" || msg.Type == "start_game" || msg.Type == "make_move" || msg.Type == "end_game" || msg.Type == "relay_packet" || msg.Type == "create_tournament" || msg.Type == "create_hot_seat_tournament" || msg.Type == "record_hot_seat_score" || msg.Type == "cancel_hot_seat_tournament" || msg.Type == "close_game" {
+    if msg.Type == "game" || msg.Type == "start_game" || msg.Type == "make_move" || msg.Type == "end_game" || msg.Type == "relay_packet" || msg.Type == "create_tournament" || msg.Type == "create_hot_seat_tournament" || msg.Type == "record_hot_seat_score" || msg.Type == "cancel_hot_seat_tournament" || msg.Type == "forfeit_hot_seat_tournament" || msg.Type == "close_game" {
         // Convert msg.Data to map
         if dataMap, ok := msg.Data.(map[string]interface{}); ok {
             // Inject action from message type if not present
@@ -6446,6 +6550,125 @@ func (client *Client) handleMessage(message []byte) {
     // no-persistence model as game_lobby_browsing — raw passthrough, no DB write.
     if msg.Type == "media_cleared" {
         client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+
+    // Handle Rhythm Hero live-broadcast: the active player (host in solo/arcade
+    // mode, or the current hot-seat turn player) relays their chart+song+timing
+    // once at start, then a tiny message per press/release/star-power, and a
+    // final message when their turn ends — every other connected client mirrors
+    // it in their own local engine instance. Deliberately NOT routed through
+    // GameManager.ProcessMove: hot-seat tournaments (HotSeatManager) have no
+    // backing GameSessionState at all, so a ProcessMove-based design would only
+    // ever work for solo/arcade mode. Same trust/no-persistence model as
+    // sync_heartbeat/game_lobby_browsing — raw passthrough, no DB write. Late-
+    // join rehydration is handled separately via hub.rhythmHeroLive (updated
+    // here, read back in JoinWatchSession) rather than through this broadcast
+    // path itself.
+    // rhythm_hero_selecting: the active player is choosing an instrument/song
+    // or loading one — fired on every keystroke/state change during those
+    // pre-gameplay phases (debounced client-side). Reuses the exact same
+    // hub.rhythmHeroLive cache slot rhythm_hero_start already uses, rather
+    // than a second cache: a room can only ever be in one of "nobody /
+    // selecting / loading / playing" at a time, and whichever of
+    // rhythm_hero_selecting/rhythm_hero_start fired most recently correctly
+    // reflects what's true right now. Only one client (the active player)
+    // ever writes to a given room's slot, and readPump processes that
+    // client's messages strictly synchronously/in-order, so this is race-free
+    // with no new locking needed. Late-join rehydration (JoinWatchSession)
+    // and all 4 existing cache-clear sites need zero changes — they're
+    // already opaque/type-agnostic and correctly serve/clear whichever
+    // message type happens to be cached.
+    if msg.Type == "rhythm_hero_selecting" {
+        client.hub.rhythmHeroLiveMutex.Lock()
+        client.hub.rhythmHeroLive[client.roomID] = message
+        client.hub.rhythmHeroLiveMutex.Unlock()
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+    if msg.Type == "rhythm_hero_start" {
+        client.hub.rhythmHeroLiveMutex.Lock()
+        client.hub.rhythmHeroLive[client.roomID] = message
+        client.hub.rhythmHeroLiveMutex.Unlock()
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+    // rhythm_hero_score: a tournament turn just finished — broadcasts the
+    // result to the whole room (ScoreMirror) instead of only the player who
+    // played. Reuses the same cache slot/reasoning as rhythm_hero_selecting
+    // above: a room can only be in one of "nobody / selecting / loading /
+    // playing / reviewing a just-finished score" at a time, and rhythm_hero_end
+    // (still the sole clear point, now deferred until the scoring player
+    // clicks Proceed rather than firing the instant the song ends) already
+    // clears whichever of these happens to be cached, unchanged.
+    if msg.Type == "rhythm_hero_score" {
+        client.hub.rhythmHeroLiveMutex.Lock()
+        client.hub.rhythmHeroLive[client.roomID] = message
+        client.hub.rhythmHeroLiveMutex.Unlock()
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+    if msg.Type == "rhythm_hero_end" {
+        client.hub.rhythmHeroLiveMutex.Lock()
+        delete(client.hub.rhythmHeroLive, client.roomID)
+        client.hub.rhythmHeroLiveMutex.Unlock()
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+    if msg.Type == "rhythm_hero_input" {
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+    // rhythm_hero_cheer: any connected client (spectator or, harmlessly, the
+    // performer) taps a cheer button to boost the crowd/lights on everyone's
+    // own engine instance. Unlike rhythm_hero_input (performer -> room), this
+    // flows in every direction — plain opaque passthrough, sender excluded
+    // (the sender already applies it locally/optimistically, same convention
+    // as every other broadcast here). No caching needed — purely ephemeral.
+    if msg.Type == "rhythm_hero_cheer" {
+        client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
+        return
+    }
+    // rhythm_hero_leaderboard_submit: a performance just finished (solo OR
+    // tournament — both submit here, unlike rhythm_hero_score which is
+    // tournament-only) with a real score. UserID is server-authoritative
+    // (client.GetUserID()); Username/player_name is client-supplied display
+    // text only, same trust level rhythm_hero_score's own player_name field
+    // already has — this is a session-scoped leaderboard display, not an
+    // access-control decision. Broadcasts the FULL updated board back to
+    // the whole room, sender included (nil sender = no exclusion, confirmed
+    // safe against both dispatch sites' own nil-checks) — everyone,
+    // including whoever just scored, should see the update land.
+    if msg.Type == "rhythm_hero_leaderboard_submit" {
+        dataMap, _ := msg.Data.(map[string]interface{})
+        scoreF, _ := dataMap["score"].(float64)
+        playerName, _ := dataMap["player_name"].(string)
+        if playerName == "" {
+            playerName = "Someone"
+        }
+        entry := RhythmHeroLeaderboardEntry{
+            UserID:    client.GetUserID(),
+            Username:  playerName,
+            Score:     int(scoreF),
+            Timestamp: time.Now().Unix(),
+        }
+        client.hub.rhythmHeroLeaderboardMutex.Lock()
+        entries := append(client.hub.rhythmHeroLeaderboard[client.roomID], entry)
+        sort.Slice(entries, func(i, j int) bool { return entries[i].Score > entries[j].Score })
+        const maxLeaderboardEntries = 20
+        if len(entries) > maxLeaderboardEntries {
+            entries = entries[:maxLeaderboardEntries]
+        }
+        client.hub.rhythmHeroLeaderboard[client.roomID] = entries
+        client.hub.rhythmHeroLeaderboardMutex.Unlock()
+
+        payload, err := json.Marshal(map[string]interface{}{
+            "type": "rhythm_hero_leaderboard_update",
+            "data": map[string]interface{}{"entries": entries},
+        })
+        if err == nil {
+            client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: payload, IsBinary: false}, nil)
+        }
         return
     }
 

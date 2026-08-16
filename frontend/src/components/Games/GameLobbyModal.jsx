@@ -79,16 +79,6 @@ const games = [
     type: 'multiplayer'
   },
   {
-    id: 'karaoke',
-    name: 'Music Warrior',
-    description: 'Search a song, pick an instrumental, and sing along together with synced lyrics!',
-    minPlayers: 1,
-    maxPlayers: 10,
-    image: `${GAME_POSTERS_BASE_URL}/v2/karaoke.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
-  {
     id: 'doom',
     name: 'DOOM',
     description: 'Classic vintage shooter — solo arcade mode',
@@ -110,17 +100,18 @@ const games = [
     type: 'multiplayer',
     heavy: true
   },
-  {
-    id: 'micro_racing',
-    name: 'Micro Racing',
-    description: 'Real isometric kart racing multiplayer — pick a car, pick a track, race for the checkered flag!',
-    minPlayers: 1,
-    maxPlayers: 6,
-    image: `${GAME_POSTERS_BASE_URL}/v2/micro_racing.webp`,
-    disabled: false,
-    type: 'multiplayer',
-    heavy: true
-  },
+  // micro_racing temporarily removed
+  // {
+  //   id: 'micro_racing',
+  //   name: 'Micro Racing',
+  //   description: 'Real isometric kart racing multiplayer — pick a car, pick a track, race for the checkered flag!',
+  //   minPlayers: 1,
+  //   maxPlayers: 6,
+  //   image: `${GAME_POSTERS_BASE_URL}/v2/micro_racing.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer',
+  //   heavy: true
+  // },
   {
     id: 'obby_parkour',
     name: 'Obby Parkour',
@@ -273,16 +264,17 @@ const games = [
     disabled: false,
     type: 'multiplayer'
   },
-  {
-    id: 'ramp_rush',
-    name: 'Ramp Rush',
-    description: 'Tap to charge your engine, launch, and clear the course — best driver wins!',
-    minPlayers: 2,
-    maxPlayers: 2,
-    image: `${GAME_POSTERS_BASE_URL}/ramp_rush.webp`,
-    disabled: false,
-    type: 'multiplayer'
-  },
+  // ramp_rush temporarily removed — not enough time to finish/fix it
+  // {
+  //   id: 'ramp_rush',
+  //   name: 'Ramp Rush',
+  //   description: 'Tap to charge your engine, launch, and clear the course — best driver wins!',
+  //   minPlayers: 2,
+  //   maxPlayers: 2,
+  //   image: `${GAME_POSTERS_BASE_URL}/ramp_rush.webp`,
+  //   disabled: false,
+  //   type: 'multiplayer'
+  // },
   {
     id: 'jigsaw',
     name: 'Jigsaw Puzzle',
@@ -503,10 +495,28 @@ const games = [
   // },
 ];
 
+// Warm the browser's HTTP + decode cache for every poster the moment this
+// module is evaluated — GameLobbyModal is statically (never lazily) imported
+// by VideoWatch.jsx/CinemaScene3DDemo.jsx, so this fires well before the user
+// ever opens the modal, not on mount. Without this, the modal is fully
+// unmounted/remounted on every open/close (`{isOpen && <GameLobbyModal/>}` in
+// both callers), so every poster `<img>` is a brand-new DOM node each time —
+// BunnyCDN's own 30-day cache-control header avoids a network re-fetch, but
+// does nothing for the decode/paint cost of a fresh element, or for a poster
+// that's never been requested yet this session. Same `new Image()` warming
+// pattern already used for room content-rating icons in RoomPageNew.jsx.
+if (typeof window !== 'undefined') {
+  games.forEach((g) => {
+    if (!g.image) return;
+    const img = new Image();
+    img.src = g.image;
+  });
+}
+
 // Games eligible for tournament mode: 2-player, head-to-head games where a
 // single-elimination "winner advances" bracket makes sense. N-player party games
 // (draw_guess, typing_race, trivia, etc.) are excluded.
-const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon', 'ramp_rush'];
+const TOURNAMENT_GAME_IDS = ['tic_tac_toe', 'chess', 'othello', 'checkers', 'connect_four', 'battleship', 'pool', 'mancala', 'backgammon']; // ramp_rush removed here too — temporarily disabled
 // Hot-seat tournament: each player takes a solo turn; highest score wins
 // (golf is the one exception — lower stroke count wins, handled entirely
 // backend-side via lowerScoreWinsGameTypes in websocket_handler.go).
@@ -530,7 +540,7 @@ export default function GameLobbyModal({
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [isTournamentMode, setIsTournamentMode] = useState(false);
   const [noWalls, setNoWalls] = useState(false);
-  const [rampRushFormat, setRampRushFormat] = useState('best_of_5');
+  // const [rampRushFormat, setRampRushFormat] = useState('best_of_5'); // ramp_rush temporarily removed
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== 'undefined' ? window.matchMedia('(orientation: landscape)').matches : false
   );
@@ -691,7 +701,12 @@ export default function GameLobbyModal({
   // members and just run/spectate it. minPlayers/maxPlayers still gate the count.
   const togglePlayerSelection = (playerId) => {
     if (!selectedGameData) return;
-    const cap = isTournamentMode ? 8 : selectedGameData.maxPlayers;
+    // Hot-seat arcade games always allow up to 8 players regardless of the
+    // tournament toggle — the toggle only changes flat turns vs. a bracket, never
+    // list visibility/size. Non-hot-seat games keep the existing behavior.
+    const cap = HOT_SEAT_GAME_IDS.includes(selectedGame)
+      ? 8
+      : (isTournamentMode ? 8 : selectedGameData.maxPlayers);
     setSelectedPlayers(prev => {
       if (prev.includes(playerId)) return prev.filter(id => id !== playerId);
       if (prev.length >= cap) return prev;
@@ -720,18 +735,36 @@ export default function GameLobbyModal({
       };
     });
 
-    // Arcade hot-seat tournament (fowl_play with tournament mode on)
-    if (selectedGameData.type === 'arcade' && isTournamentMode && HOT_SEAT_GAME_IDS.includes(selectedGame)) {
-      if (selectedPlayers.length < 2) {
-        alert('A hot-seat tournament needs at least 2 players');
+    // Hot-seat arcade games (Rhythm Hero, Toad Ball, Golf, Fowl Play): the player
+    // list is always visible for these. 0/1 selected -> solo. 2+ selected -> either
+    // flat sequential turns (toggle off) or a real bracket elimination (toggle on).
+    if (selectedGameData.type === 'arcade' && HOT_SEAT_GAME_IDS.includes(selectedGame)) {
+      if (selectedPlayers.length >= 2) {
+        if (isTournamentMode) {
+          if (selectedPlayers.length < 4) {
+            alert('A bracket tournament needs at least 4 players');
+            return;
+          }
+          if (onCreateHotSeatTournament) onCreateHotSeatTournament(selectedGame, buildPlayersData(), 'bracket');
+        } else {
+          if (onCreateHotSeatTournament) onCreateHotSeatTournament(selectedGame, buildPlayersData(), 'flat');
+        }
+        onClose();
         return;
       }
-      if (onCreateHotSeatTournament) onCreateHotSeatTournament(selectedGame, buildPlayersData());
+      // 0 or 1 selected -> solo, using the actual selection (not always the host —
+      // a host can set up someone else to play solo while everyone watches).
+      const solo = selectedPlayers.length === 1 ? buildPlayersData() : [{
+        user_id: currentUserId,
+        username: roomMembers.find(m => m.id === currentUserId)?.username || 'Player 1',
+        color: playerColors[0]
+      }];
+      onStartGame(selectedGame, solo);
       onClose();
       return;
     }
 
-    // Arcade games (solo) — only need host, no player selection
+    // Other arcade games (doom, space_attack) — solo only, no player selection
     if (selectedGameData.type === 'arcade') {
       const playersData = [{
         user_id: currentUserId,
@@ -762,9 +795,8 @@ export default function GameLobbyModal({
 
     const gameOptions = selectedGame === 'ping_pong'
       ? { no_walls: noWalls }
-      : selectedGame === 'ramp_rush'
-        ? { format: rampRushFormat }
-        : {};
+      // ramp_rush temporarily removed: : selectedGame === 'ramp_rush' ? { format: rampRushFormat }
+      : {};
     onStartGame(selectedGame, buildPlayersData(), gameOptions);
     onClose();
   };
@@ -1018,10 +1050,14 @@ export default function GameLobbyModal({
                 <div className={`text-center ${isWideLayout ? 'mt-3' : isLandscape ? 'mt-1' : 'mt-2 sm:mt-3'}`}>
                   <p className={`text-gray-400 leading-snug max-w-lg mx-auto ${isWideLayout ? 'text-sm' : 'text-[11px] sm:text-xs'}`}>{selectedGameData.description}</p>
                   <p className="text-gray-500 text-[10px] sm:text-[11px] mt-1">
-                    {selectedGameData.type === 'arcade' && !isTournamentMode
-                      ? 'Solo arcade'
-                      : selectedGameData.type === 'arcade' && isTournamentMode
-                        ? 'Hot-seat — each player takes a turn'
+                    {selectedGameData.type === 'arcade' && HOT_SEAT_GAME_IDS.includes(selectedGame)
+                      ? (selectedPlayers.length <= 1
+                          ? 'Solo arcade — or select more players below'
+                          : isTournamentMode
+                            ? 'Bracket tournament — highest score per match advances'
+                            : 'Hot-seat — each player takes a turn')
+                      : selectedGameData.type === 'arcade'
+                        ? 'Solo arcade'
                         : `${selectedGameData.minPlayers}–${selectedGameData.maxPlayers} players`}
                   </p>
                   {!readOnly && selectedGame === 'ping_pong' && (
@@ -1037,6 +1073,7 @@ export default function GameLobbyModal({
                       </label>
                     </div>
                   )}
+                  {/* ramp_rush format picker temporarily removed
                   {!readOnly && selectedGame === 'ramp_rush' && (
                     <div className="mt-2 flex items-center justify-center gap-2">
                       <button
@@ -1047,6 +1084,7 @@ export default function GameLobbyModal({
                       </button>
                     </div>
                   )}
+                  */}
                   {!readOnly && (TOURNAMENT_GAME_IDS.includes(selectedGame) || HOT_SEAT_GAME_IDS.includes(selectedGame)) && (
                     <div className="mt-2 flex items-center justify-center gap-2">
                       <button
@@ -1088,8 +1126,8 @@ export default function GameLobbyModal({
                   Everyone sees this live — chat in to say what you'd like to play!
                 </p>
               </div>
-            ) : selectedGameData.type === 'arcade' && !isTournamentMode ? (
-              /* Arcade games - single player info */
+            ) : selectedGameData.type === 'arcade' && !HOT_SEAT_GAME_IDS.includes(selectedGame) ? (
+              /* Non-hot-seat arcade games (doom, space_attack) - single player info */
               <div className={`text-center ${isLandscape ? 'py-2' : 'py-2 sm:py-6'}`}>
                 <div className={`mb-2 ${isLandscape ? 'text-2xl' : 'text-4xl sm:text-6xl sm:mb-4'}`}>🎮</div>
                 <h3 className={`font-bold text-white mb-1 ${isLandscape ? 'text-sm' : 'text-base sm:text-xl sm:mb-2'}`}>Arcade Mode</h3>
@@ -1111,17 +1149,31 @@ export default function GameLobbyModal({
                 <div className={`flex items-center justify-between ${isLandscape ? 'mb-2' : 'mb-2 sm:mb-4'}`}>
                   <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
                     <Users className="w-4 h-4" />
-                    Players ({selectedPlayers.length}/{isTournamentMode ? 8 : selectedGameData.maxPlayers})
-                    {roomMembers.length < (isTournamentMode ? 4 : selectedGameData.minPlayers) && (
+                    Players ({selectedPlayers.length}/{
+                      HOT_SEAT_GAME_IDS.includes(selectedGame)
+                        ? 8
+                        : (isTournamentMode ? 8 : selectedGameData.maxPlayers)
+                    })
+                    {roomMembers.length < (
+                      HOT_SEAT_GAME_IDS.includes(selectedGame)
+                        ? (isTournamentMode ? 4 : 1)
+                        : (isTournamentMode ? 4 : selectedGameData.minPlayers)
+                    ) && (
                       <AlertTriangle
                         className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0"
-                        title={`Need at least ${isTournamentMode ? 4 : selectedGameData.minPlayers} players in the room`}
+                        title={`Need at least ${
+                          HOT_SEAT_GAME_IDS.includes(selectedGame)
+                            ? (isTournamentMode ? 4 : 1)
+                            : (isTournamentMode ? 4 : selectedGameData.minPlayers)
+                        } players in the room`}
                       />
                     )}
                   </h3>
                 </div>
                 <p className={`text-xs text-gray-400 ${isLandscape ? 'mb-2' : 'mb-2 sm:mb-3'}`}>
-                  {isTournamentMode ? 'Min: 4 | Max: 16' : `Min: ${selectedGameData.minPlayers} | Max: ${selectedGameData.maxPlayers}`}
+                  {HOT_SEAT_GAME_IDS.includes(selectedGame)
+                    ? (isTournamentMode ? 'Min: 4 | Max: 8' : 'Min: 1 | Max: 8')
+                    : (isTournamentMode ? 'Min: 4 | Max: 16' : `Min: ${selectedGameData.minPlayers} | Max: ${selectedGameData.maxPlayers}`)}
                 </p>
 
                 <div className={`grid gap-2 overflow-y-auto ${

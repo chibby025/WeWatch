@@ -71,6 +71,7 @@ module.exports = {
         'slide-up': 'slide-up 0.3s ease-out forwards',
         'slide-down': 'slide-down 0.3s ease-in forwards',
         'voice-wave': 'voiceWave 0.9s ease-in-out infinite',
+        'char-bob': 'charBob 0.5s ease-in-out infinite',
       },
       keyframes: {
         float: {
@@ -117,6 +118,15 @@ module.exports = {
         voiceWave: {
           '0%, 100%': { transform: 'scaleY(0.3)' },
           '50%': { transform: 'scaleY(1)' },
+        },
+        charBob: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(2px)' },
+        },
+        charSing: {
+          '0%': { transform: 'rotate(0deg)' },
+          '30%': { transform: 'rotate(-2deg)' },
+          '100%': { transform: 'rotate(0deg)' },
         },
       }
     },

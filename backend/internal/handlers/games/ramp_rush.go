@@ -1,3 +1,14 @@
+//go:build ignore
+
+// Ramp Rush temporarily removed from the build — not enough time to finish
+// fixing it (the frontend's GLB vehicle models are also blocked by a
+// BunnyCDN CORS-allowlist gap, see CLAUDE.md). Every call site into this
+// file has been commented out in game_manager.go/websocket_handler.go and
+// every UI entry point removed. To re-enable: delete this build tag (and
+// the matching one in ramp_rush_test.go), then uncomment the ~8 call sites
+// flagged "ramp_rush temporarily removed" across game_manager.go,
+// websocket_handler.go, GameLobbyModal.jsx, and GameOverlay.jsx.
+
 package games
 
 import "fmt"

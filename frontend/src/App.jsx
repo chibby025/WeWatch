@@ -32,6 +32,7 @@ import WithdrawalRequestForm from './components/payment/WithdrawalRequestForm';
 import KYCSubmissionForm from './components/payment/KYCSubmissionForm';
 import SVGComparison from './components/dev/SVGComparison';
 import VsBattlePreview from './components/dev/VsBattlePreview';
+import RhythmHeroHighwayPreview from './components/dev/RhythmHeroHighwayPreview';
 import ExplorePage from './pages/ExplorePage';
 import BackButtonGuard from './components/BackButtonGuard';
 import GuestViewPage from './pages/GuestViewPage';
@@ -215,6 +216,9 @@ function App() {
           } />
           <Route path="/dev/vs-battle-preview" element={
             <VsBattlePreview />
+          } />
+          <Route path="/dev/rhythm-hero-highway" element={
+            <RhythmHeroHighwayPreview />
           } />
 
           {/* ✅ ALL DEMO ROUTES COMMENTED OUT */}

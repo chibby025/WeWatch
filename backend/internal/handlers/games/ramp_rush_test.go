@@ -1,3 +1,8 @@
+//go:build ignore
+
+// Ramp Rush temporarily removed from the build — see ramp_rush.go's own
+// header comment for why and how to re-enable.
+
 package games
 
 import (

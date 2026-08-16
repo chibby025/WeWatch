@@ -122,7 +122,6 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"toad_ball":    true,
 		"rebus_round":  true,
 		"four_frames":  true,
-		"karaoke":      true,
 		// "roulette": true, // temporarily removed
 		"snakes_ladders":  true,
 		"mancala":         true,
@@ -131,11 +130,11 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		"backgammon":      true,
 		"property_tycoon": true,
 		"texas_holdem":    true,
-		"ramp_rush":       true,
-		"golf":            true,
-		"micro_racing":    true,
-		"obby_parkour":    true,
-		"rhythm_hero":     true,
+		// "ramp_rush":    true, // temporarily removed — not enough time to finish/fix it
+		"golf": true,
+		// "micro_racing": true, // temporarily removed
+		"obby_parkour": true,
+		"rhythm_hero":  true,
 	}
 	if !validGameTypes[gameType] {
 		return nil, fmt.Errorf("invalid game type: %s", gameType)
@@ -176,11 +175,11 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 	if gameType == "texas_holdem" && (len(players) < 2 || len(players) > 8) {
 		return nil, fmt.Errorf("texas hold'em supports 2-8 players")
 	}
-	// ramp_rush is a strictly 1-vs-1 turn-based game — round resolution compares
-	// exactly two results, same hard requirement as mancala/backgammon.
-	if gameType == "ramp_rush" && len(players) != 2 {
-		return nil, fmt.Errorf("ramp_rush is a 2-player game")
-	}
+	// ramp_rush temporarily removed (see validGameTypes above) — this check is
+	// now unreachable but left in place for when it's re-enabled.
+	// if gameType == "ramp_rush" && len(players) != 2 {
+	// 	return nil, fmt.Errorf("ramp_rush is a 2-player game")
+	// }
 
 	gameSession := &models.GameSession{
 		RoomID:    roomID,
@@ -307,7 +306,6 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"jigsaw":                true, // fully cooperative — any player can pick up/place any unclaimed piece at any time
 		"rebus_round":           true, // any player can submit "answer" at any time (unlimited retries); host-only rebus_start/reveal/rebus_end enforced internally
 		"four_frames":           true, // same shape as rebus_round — any player can answer at any time; host-only four_frames_start/reveal/four_frames_end enforced internally. Added here from day one, unlike rebus_round which shipped without this and needed a same-day fix (2026-08-11) after a live test showed it locking every non-current-turn player out of "answer" entirely.
-		"karaoke":               true, // host-only karaoke_start/karaoke_end enforced internally; no per-player turn concept at all
 	}
 	if !simultaneousGames[gameState.GameSession.GameType] {
 		currentPlayer := gameState.Players[gameState.CurrentTurn]
@@ -356,8 +354,6 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processRebusRoundMove(gameState, playerID, moveType, moveData)
 	case "four_frames":
 		gameOver, winnerID, err = gm.processFourFramesMove(gameState, playerID, moveType, moveData)
-	case "karaoke":
-		gameOver, winnerID, err = gm.processKaraokeMove(gameState, playerID, moveType, moveData)
 	case "othello":
 		gameOver, winnerID, err = gm.processOthelloMove(gameState, playerID, moveData)
 	case "checkers":
@@ -434,8 +430,8 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		gameOver, winnerID, err = gm.processPropertyTycoonMove(gameState, playerID, moveType, moveData)
 	case "texas_holdem":
 		gameOver, winnerID, err = gm.processTexasHoldemMove(gameState, playerID, moveType, moveData)
-	case "ramp_rush":
-		gameOver, winnerID, err = gm.processRampRushMove(gameState, playerID, moveType, moveData)
+	// case "ramp_rush": // temporarily removed
+	// 	gameOver, winnerID, err = gm.processRampRushMove(gameState, playerID, moveType, moveData)
 	default:
 		return fmt.Errorf("unknown game type: %s", gameState.GameSession.GameType)
 	}
@@ -482,7 +478,7 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		"backgammon":          true, // roll → move(s) → (auto-)pass; turn only advances when the backend decides dice are exhausted/unusable
 		"property_tycoon":     true, // roll → land/resolve → (auto-)advance; doubles grant another roll, a pending buy/decline defers the advance
 		"texas_holdem":        true, // action_on is managed directly (skips folded/all-in/busted players, reopens on a raise); never a simple +1 mod N
-		"ramp_rush":           true, // round resolution (both players must launch before advancing) manages CurrentTurn directly
+		// "ramp_rush":        true, // temporarily removed — round resolution (both players must launch before advancing) manages CurrentTurn directly
 	}
 	if !gameOver && !selfManagedTurn[gameState.GameSession.GameType] {
 		gameState.CurrentTurn = (gameState.CurrentTurn + 1) % len(gameState.Players)
@@ -883,10 +879,6 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 		state["scores"] = map[string]interface{}{}
 		state["answers"] = map[string]interface{}{}
 
-	case "karaoke":
-		state["phase"] = "waiting"
-		state["song_number"] = float64(0)
-
 	case "ludo":
 		ludoBoard := ludoInitialBoard(playerCount)
 		state["tokens"] = ludoBoard["tokens"]
@@ -977,10 +969,11 @@ func (gm *GameManager) initializeGameState(gameType string, playerCount int) mod
 		state["doubles_count"] = 0
 		state["last_event"] = ""
 
-	case "ramp_rush":
-		for k, v := range rampRushInitialState() {
-			state[k] = v
-		}
+		// ramp_rush temporarily removed:
+		// case "ramp_rush":
+		// 	for k, v := range rampRushInitialState() {
+		// 		state[k] = v
+		// 	}
 	}
 
 	return state

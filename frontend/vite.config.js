@@ -75,7 +75,30 @@ export default defineConfig({
             },
           },
           {
-            // BunnyCDN user avatars, room images, post thumbnails — serve stale, refresh in background
+            // Game poster images (GameLobbyModal) and other per-game static art
+            // (e.g. Rhythm Hero's guitar sprite sheets) — BunnyCDN, immutable by
+            // convention: this project versions these assets via a new v2/v3/...
+            // path rather than ever overwriting a URL in place (BunnyCDN's edge
+            // cache has no purge access here, see CLAUDE.md). Since a given
+            // asset URL's content never changes, cache it once and never
+            // re-fetch — only a genuinely new path (a real version bump) ever
+            // misses this cache. Must be registered before the generic
+            // .b-cdn.net rule below so it wins the match (Workbox routes match
+            // in array order, first match wins).
+            urlPattern: /\/games\/(posters|rhythm)\//i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'game-posters-v1',
+              expiration: {
+                maxEntries: 150,
+                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year — URLs are immutable, this is really just an LRU-ish cap
+              },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
+          {
+            // BunnyCDN user avatars, room images, post thumbnails — these DO change in
+            // place (a user can re-upload the same URL), so serve stale + refresh in background
             urlPattern: /\.b-cdn\.net\//i,
             handler: 'StaleWhileRevalidate',
             options: {

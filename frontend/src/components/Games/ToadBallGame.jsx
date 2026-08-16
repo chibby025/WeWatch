@@ -6,8 +6,20 @@ const BALL_R = 15;
 const BALL_GAP = BALL_R * 2;
 const SHOOTER_R = 24;
 const FLY_SPEED = 12;
-const BASE_CHAIN_SPEED = 0.34;
-const SPEED_RAMP_PER_LEVEL = 0.05;
+// Chain crawl speed is expressed as "how many seconds should the leader take
+// to cross the WHOLE maze" rather than a fixed px/frame value. A fixed
+// px/frame speed would mean a short path (small mobile screen) gives LESS
+// real reaction time than a long one (large desktop screen), even though
+// both nominally "start from the bottom" — path.total scales with screen
+// size (~3.8*W + 0.72*H), so a fixed px/frame crossing takes proportionally
+// less real time on a smaller screen. Scaling speed to the ACTUAL path
+// length keeps the time budget consistent across screen sizes.
+const BASE_CROSS_SECONDS = 85;          // level 1 target crossing time
+const CROSS_SECONDS_RAMP_PER_LEVEL = 6; // each level shaves this many seconds off
+const MIN_CROSS_SECONDS = 18;           // floor so very high levels stay barely playable
+const ASSUMED_FPS = 60;                 // requestAnimationFrame's typical rate — same
+                                         // implicit assumption the old fixed px/frame
+                                         // value already made, not a new one
 const EASE = 0.3;
 const RECEDE_BONUS = BALL_GAP * 1.7;
 const START_LEVEL_BALLS = 15;
@@ -88,23 +100,33 @@ function pickColor(palette, chain) {
   return palette[Math.floor(Math.random() * palette.length)];
 }
 
-function buildLevelChain(level) {
+// Spawns the whole chain near the FAR/entry end of the track (large s,
+// close to pathTotal) rather than already close to the goal — the chain
+// then has to crawl the entire winding path to reach the goal, giving the
+// player the full track length to pop it. pathTotal is the real winding-
+// track length (buildPath's LUT total, several thousand px for any real
+// canvas), which the old fixed small-s spawn values had no relation to —
+// they clustered the whole chain within roughly the first 15-30% of the
+// track, right next to the goal from the very start.
+function buildLevelChain(level, pathTotal) {
   const palette = paletteForLevel(level);
   const count = Math.min(MAX_LEVEL_BALLS, START_LEVEL_BALLS + (level - 1) * BALLS_PER_LEVEL_INC);
   const chain = [];
+  const startS = Math.max(BALL_GAP * 3, pathTotal - BALL_GAP * 4);
   for (let i = 0; i < count; i++) {
-    chain.push({ id: ballId++, color: pickColor(palette, chain), s: BALL_GAP * 3 + i * BALL_GAP });
+    chain.push({ id: ballId++, color: pickColor(palette, chain), s: startS + i * BALL_GAP });
   }
   return chain;
 }
 
 function mkGame(W, H) {
   const level = 1;
+  const path = buildPath(W, H);
   return {
     frame: 0, score: 0, over: false, started: false,
     level, lives: LIVES,
-    path: buildPath(W, H),
-    chain: buildLevelChain(level),
+    path,
+    chain: buildLevelChain(level, path.total),
     flyings: [],
     current: pickColor(paletteForLevel(level), []),
     next: pickColor(paletteForLevel(level), []),
@@ -115,8 +137,12 @@ function mkGame(W, H) {
   };
 }
 
-function chainSpeedForLevel(level) {
-  return BASE_CHAIN_SPEED + (level - 1) * SPEED_RAMP_PER_LEVEL;
+function chainSpeedForLevel(level, pathTotal) {
+  const targetSeconds = Math.max(
+    MIN_CROSS_SECONDS,
+    BASE_CROSS_SECONDS - (level - 1) * CROSS_SECONDS_RAMP_PER_LEVEL
+  );
+  return pathTotal / (targetSeconds * ASSUMED_FPS);
 }
 
 function popBurst(g, x, y, color) {
@@ -179,14 +205,14 @@ function loseLife(g) {
   g.sounds.push('hit');
   if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate([60, 30, 60]);
   if (g.lives <= 0) { g.over = true; g.sounds.push('gameover'); return; }
-  g.chain = buildLevelChain(g.level);
+  g.chain = buildLevelChain(g.level, g.path.total);
 }
 
 function nextLevel(g) {
   g.level++;
   g.levelFlash = 40;
   g.sounds.push('levelup');
-  g.chain = buildLevelChain(g.level);
+  g.chain = buildLevelChain(g.level, g.path.total);
 }
 
 function updateGame(g, W, H) {
@@ -197,7 +223,7 @@ function updateGame(g, W, H) {
 
   // Chain crawl toward the goal.
   if (g.chain.length > 0) {
-    g.chain[0].s -= chainSpeedForLevel(g.level);
+    g.chain[0].s -= chainSpeedForLevel(g.level, g.path.total);
     for (let i = 1; i < g.chain.length; i++) {
       const target = g.chain[i - 1].s + BALL_GAP;
       g.chain[i].s += (target - g.chain[i].s) * EASE;
@@ -453,6 +479,88 @@ function playGameSound(type, ctxRef) {
   }
 }
 
+// Live spectator view for a plain (non-tournament) solo arcade session — a
+// non-host member sees a real mirror of the host's own running game instead
+// of a static "someone's playing" placeholder, driven by relayed full-state
+// snapshots (see the host-side broadcast effect in the main component below).
+// Genuinely just RENDERS whatever snapshot arrived (via drawGame, the exact
+// same pure-render function the host's own canvas uses) — no local
+// simulation on this end at all, so there's no risk of drift/desync.
+// Deliberately its own component (not inline JSX in the main one) since it
+// needs its own canvas + RAF draw loop, which Rules of Hooks means can't be
+// conditionally mounted inside a function that also has early-return
+// branches above it.
+function ToadBallSpectatorMirror({ stateRef, hasData, playerLabel, onClose }) {
+  const canvasRef = useRef(null);
+  const rafRef = useRef(null);
+  const frameRef = useRef(0);
+  // Cached per {W,H} — the host's own canvas can resize mid-game (their
+  // window/container changing), and the path is a pure function of W/H, so
+  // this only rebuilds when those actually change rather than every frame.
+  const pathCacheRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    function loop() {
+      rafRef.current = requestAnimationFrame(loop);
+      const snap = stateRef.current;
+      if (!snap || !snap.W || !snap.H) return;
+      frameRef.current++;
+      const { W, H } = snap;
+      if (canvas.width !== W) canvas.width = W;
+      if (canvas.height !== H) canvas.height = H;
+      let cache = pathCacheRef.current;
+      if (!cache || cache.W !== W || cache.H !== H) {
+        cache = { W, H, path: buildPath(W, H) };
+        pathCacheRef.current = cache;
+      }
+      // Reconstructed into the exact shape drawGame expects — frame/shooter
+      // are cheap, deterministic-from-W/H values the host never needs to
+      // send at all (frame is purely cosmetic, the goal-pulse animation
+      // phase; shooter position is always a fixed function of W/H, same
+      // formula the host itself uses).
+      const g = {
+        started: snap.started, over: snap.over,
+        score: snap.score, level: snap.level, lives: snap.lives,
+        frame: frameRef.current,
+        path: cache.path,
+        chain: snap.chain || [],
+        flyings: snap.flyings || [],
+        effects: snap.effects || [],
+        aim: snap.aim || { x: W * 0.5, y: H * 0.5 },
+        shooter: { x: W * 0.5, y: H * 0.94 },
+        current: snap.current, next: snap.next,
+        hitFlash: snap.hitFlash || 0, levelFlash: snap.levelFlash || 0,
+      };
+      drawGame(canvas.getContext('2d'), g, W, H);
+    }
+    rafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [stateRef]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-black select-none">
+      <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
+        <h2 className="text-sm font-bold tracking-widest text-green-400">TOAD  BALL</h2>
+        <button onClick={onClose} className="px-2 py-1 text-xs bg-white/20 hover:bg-white/30 rounded">✕</button>
+      </div>
+      <div className="flex-1 flex items-center justify-center overflow-hidden bg-black relative">
+        {!hasData && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white">
+            <span className="text-6xl">🐸</span>
+            <p className="text-sm text-gray-400">Connecting to {playerLabel}'s live game…</p>
+          </div>
+        )}
+        <canvas ref={canvasRef} style={{ maxWidth: '100%', maxHeight: '100%' }} />
+      </div>
+      <div className="shrink-0 text-center py-1 bg-gray-900 border-t border-gray-800">
+        <p className="text-xs text-gray-600">Watching {playerLabel} play — sit back and cheer them on 🐸</p>
+      </div>
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 // Arcade: solo play, or a hot-seat tournament (players take turns on the room
 // host's own device — see FowlPlayGame.jsx for the established precedent this
@@ -466,35 +574,72 @@ export default function ToadBallGame({
   hotSeatTournament = null,
   currentUserId = null,
   onTournamentScore = null,
+  // Live spectator broadcast — same generic relay_packet plumbing
+  // FowlPlayGame.jsx already established. onRelayPacket: host calls with a
+  // base64 JSON payload to relay it to the room. registerRelayReceiver:
+  // spectator registers a callback to receive relayed payloads.
+  onRelayPacket = null,
+  registerRelayReceiver = null,
 }) {
   const canvasRef = useRef(null);
-  const containerRef = useRef(null);
   const rafRef = useRef(null);
   const gsRef = useRef(null);
   const dimsRef = useRef({ W: 400, H: 300 });
   const audioCtxRef = useRef(null);
   const endedHandledRef = useRef(false);
+  const resizeObserverRef = useRef(null);
+  // True once the REAL container size has been measured at least once — see
+  // setContainerEl below. Before that, {W:400,H:300} is just a placeholder
+  // default with no relation to the actual rendered size.
+  const hasRealDimsRef = useRef(false);
   const [dims, setDims] = useState({ W: 400, H: 300 });
   const [myScore, setMyScore] = useState(null);
+  // Spectator-side: latest relayed snapshot from the host's game. A ref, not
+  // state — arrives up to ~7x/sec, and ToadBallSpectatorMirror reads it
+  // straight from its own RAF loop, so routing it through setState here
+  // would just cause pointless re-renders of this (non-rendering, for a
+  // spectator) parent component.
+  const spectatorStateRef = useRef(null);
+  const [hasSpectatorData, setHasSpectatorData] = useState(false);
 
   const isInTournament = !!hotSeatTournament;
   const isMyTurn = isInTournament && hotSeatTournament.current_player_id === currentUserId;
 
-  useEffect(() => { gsRef.current = mkGame(400, 300); }, []);
-
-  // Fresh run each time a new hot-seat turn starts (or on first solo mount).
+  // Fresh run each time a new hot-seat turn starts (or on first solo mount)
+  // — but only once the REAL container size is known. Before that, this
+  // defers entirely to setContainerEl's own first real measurement below,
+  // which does the actual initial build itself once it has real dims to
+  // build against, rather than a {400,300} placeholder that virtually never
+  // matches the real rendered size.
   useEffect(() => {
     if (isInTournament && !isMyTurn) return;
+    if (!hasRealDimsRef.current) return;
     gsRef.current = mkGame(dimsRef.current.W, dimsRef.current.H);
     endedHandledRef.current = false;
     setMyScore(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hotSeatTournament?.current_player_id]);
 
-  // Responsive sizing — also rebuilds the path LUT, since it's defined in
-  // canvas-pixel space.
-  useEffect(() => {
-    const el = containerRef.current;
+  // Responsive sizing — a CALLBACK ref (not a plain useRef + a `[]`-deps
+  // effect) specifically because the container div only exists in ONE of
+  // several conditionally-rendered branches (see the render logic below).
+  // A `[]`-deps effect only ever runs once, on this component's very FIRST
+  // commit — for a hot-seat tournament participant (this same mounted
+  // component instance, on the room host's own device) whose first-ever
+  // render happens to show one of the "waiting for your turn" placeholder
+  // branches (no container in that JSX at all), that effect's setup would
+  // find containerRef.current permanently null and never run again — the
+  // observer would never get attached for the rest of this component's
+  // life, even once a LATER render actually reaches the real gameplay
+  // branch and mounts the container. A callback ref fires every time the
+  // DOM node is attached OR detached, regardless of which render caused
+  // that transition, so the observer reliably gets set up the moment the
+  // container genuinely becomes available.
+  const setContainerEl = useCallback((el) => {
+    if (resizeObserverRef.current) {
+      resizeObserverRef.current.disconnect();
+      resizeObserverRef.current = null;
+    }
     if (!el) return;
     const obs = new ResizeObserver(([e]) => {
       const { width, height } = e.contentRect;
@@ -504,14 +649,38 @@ export default function ToadBallGame({
       setDims({ W, H });
       const c = canvasRef.current;
       if (c) { c.width = W; c.height = H; }
-      const g = gsRef.current;
-      if (g) {
-        g.path = buildPath(W, H);
-        g.shooter = { x: W * 0.5, y: H * 0.94 };
+
+      if (!hasRealDimsRef.current) {
+        // First-ever real measurement — build the initial game fresh
+        // against the ACTUAL container size instead of a placeholder
+        // default, so the chain is correctly positioned relative to the
+        // real path from the very start.
+        hasRealDimsRef.current = true;
+        gsRef.current = mkGame(W, H);
+        endedHandledRef.current = false;
+        setMyScore(null);
+        return;
       }
+
+      // A later resize (browser window resize, device rotation) mid-game —
+      // rebuild the path for the new size, and rescale the EXISTING
+      // chain's positions proportionally so balls already in flight stay
+      // meaningfully in the same relative spot on the new, differently
+      // -sized track, rather than suddenly landing at a different
+      // fraction of it (which is exactly what silently happened before
+      // this fix: g.path used to get rebuilt here without ever touching
+      // g.chain, permanently desyncing the two).
+      const g = gsRef.current;
+      if (!g) return;
+      const oldTotal = g.path.total;
+      const newPath = buildPath(W, H);
+      const scale = oldTotal > 0 ? newPath.total / oldTotal : 1;
+      g.path = newPath;
+      g.shooter = { x: W * 0.5, y: H * 0.94 };
+      g.chain.forEach((b) => { b.s *= scale; });
     });
     obs.observe(el);
-    return () => obs.disconnect();
+    resizeObserverRef.current = obs;
   }, []);
 
   // RAF loop.
@@ -541,6 +710,68 @@ export default function ToadBallGame({
     return () => cancelAnimationFrame(rafRef.current);
   }, [isInTournament, onTournamentScore]);
 
+  // Live-broadcasts a snapshot of this device's running game (~150ms
+  // interval, matching Fowl Play's own established relay cadence for the
+  // same generic relay_packet channel) so every non-host spectator sees a
+  // real mirror instead of a static placeholder — covering both solo
+  // arcade and hot-seat tournament spectating (see the render branch
+  // below; unlike Fowl Play's own narrower precedent, which only mirrors
+  // the non-tournament case). Sent whenever this device is the host
+  // actually running the game, regardless of solo vs. hot-seat turn.
+  // Colors are sent as plain strings (not ball ids) — a spectator only ever
+  // needs to render, never simulate, so there's nothing else worth sending.
+  useEffect(() => {
+    if (!isHost || !onRelayPacket) return;
+    const id = setInterval(() => {
+      const g = gsRef.current;
+      if (!g || !g.started) return;
+      const { W, H } = dimsRef.current;
+      const snapshot = {
+        W, H,
+        started: g.started, over: g.over,
+        score: g.score, level: g.level, lives: g.lives,
+        chain: g.chain.map(b => ({ color: b.color, s: b.s })),
+        flyings: g.flyings.map(fb => ({ x: fb.x, y: fb.y, color: fb.color })),
+        effects: g.effects
+          .filter(fx => fx.kind === 'px')
+          .map(fx => ({ x: fx.x, y: fx.y, color: fx.color, r: fx.r, life: fx.life, kind: 'px' })),
+        aim: g.aim, current: g.current, next: g.next,
+        hitFlash: g.hitFlash, levelFlash: g.levelFlash,
+      };
+      onRelayPacket(btoa(JSON.stringify(snapshot)));
+    }, 150);
+    return () => clearInterval(id);
+  }, [isHost, onRelayPacket]);
+
+  // Spectator: register to receive relayed state snapshots.
+  useEffect(() => {
+    if (!registerRelayReceiver || isHost) return;
+    registerRelayReceiver((payload) => {
+      if (!payload) return;
+      try {
+        spectatorStateRef.current = JSON.parse(atob(payload));
+        setHasSpectatorData(true);
+      } catch {
+        // A malformed/partial payload just means this tick is skipped — the
+        // next relay ~150ms later self-corrects.
+      }
+    });
+    return () => registerRelayReceiver(null);
+  }, [registerRelayReceiver, isHost]);
+
+  // Spectator: clear the last-seen snapshot on every turn rotation, so a
+  // newly-current player's name (which updates immediately, since it's a
+  // reactive prop) doesn't show alongside the PREVIOUS player's frozen
+  // final game state for the brief gap before the new turn's own first
+  // broadcast arrives — spectators instead see the normal "connecting…"
+  // placeholder again for that gap, matching what a genuinely fresh
+  // connection looks like.
+  useEffect(() => {
+    if (isHost) return;
+    spectatorStateRef.current = null;
+    setHasSpectatorData(false);
+  }, [isHost, hotSeatTournament?.current_player_id]);
+
   const updateAim = useCallback((clientX, clientY) => {
     const c = canvasRef.current; if (!c) return;
     const rect = c.getBoundingClientRect();
@@ -566,29 +797,24 @@ export default function ToadBallGame({
     fireCurrentBall(g);
   }, [updateAim, isInTournament]);
 
-  // 1. Non-host, hot-seat tournament active: spectator card naming whoever
-  //    currently has the device.
-  if (!isHost && isInTournament) {
-    const currentPlayerName = hotSeatTournament?.current_player_name ?? 'someone';
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
-        <span className="text-6xl">🐸</span>
-        <p className="text-lg font-semibold">{currentPlayerName}'s turn at Toad Ball!</p>
-        <p className="text-sm text-gray-400">Sit back and cheer them on.</p>
-        <button onClick={onClose} className="mt-2 px-5 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">Close</button>
-      </div>
-    );
-  }
-
-  // 2. Non-host, no tournament: plain spectator (Space Attack precedent).
+  // 1. Non-host: live spectator mirror, driven by relayed full-state
+  // snapshots from whoever currently has the device (see the broadcast/
+  // receive effects above) — a real mirror of the actual game, not a
+  // static placeholder. Covers BOTH solo arcade and hot-seat tournament
+  // spectating (unlike Fowl Play's own narrower precedent, which only
+  // covers the non-tournament case — see the broadcast effect's own
+  // comment for why that scoping doesn't apply here).
   if (!isHost) {
+    const currentPlayerName = isInTournament
+      ? (hotSeatTournament?.current_player_name ?? 'someone')
+      : 'the host';
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
-        <span className="text-6xl">🐸</span>
-        <p className="text-lg font-semibold">Someone's playing Toad Ball!</p>
-        <p className="text-sm text-gray-400">Sit back and cheer them on.</p>
-        <button onClick={onClose} className="mt-2 px-5 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">Close</button>
-      </div>
+      <ToadBallSpectatorMirror
+        stateRef={spectatorStateRef}
+        hasData={hasSpectatorData}
+        playerLabel={currentPlayerName}
+        onClose={onClose}
+      />
     );
   }
 
@@ -605,13 +831,21 @@ export default function ToadBallGame({
     );
   }
 
-  // 4. Host device, my hot-seat turn just ended — waiting for the rotation.
+  // 4. Host device, my hot-seat turn just ended — waiting for the rotation
+  // (or, in bracket mode, eliminated from further play).
   if (isInTournament && myScore !== null) {
+    const isEliminated = hotSeatTournament?.participants?.some(
+      (p) => p.user_id === currentUserId && p.eliminated
+    );
     return (
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
         <span className="text-6xl">🎯</span>
         <p className="text-lg font-semibold">Your score: {myScore.toLocaleString()}</p>
-        <p className="text-sm text-gray-400">Pass the device to the next player…</p>
+        {isEliminated ? (
+          <p className="text-sm text-gray-400">You were eliminated — thanks for playing!</p>
+        ) : (
+          <p className="text-sm text-gray-400">Pass the device to the next player…</p>
+        )}
       </div>
     );
   }
@@ -636,7 +870,7 @@ export default function ToadBallGame({
         </div>
       )}
 
-      <div ref={containerRef} className="flex-1 flex items-center justify-center overflow-hidden bg-black">
+      <div ref={setContainerEl} className="flex-1 flex items-center justify-center overflow-hidden bg-black">
         <canvas
           ref={canvasRef}
           width={dims.W}

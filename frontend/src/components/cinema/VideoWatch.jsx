@@ -47,6 +47,7 @@ import QuizResultsModal from './modals/QuizResultsModal';
 // Game system components
 import GameLobbyModal from '../Games/GameLobbyModal';
 import GameOverlay from '../Games/GameOverlay';
+import GameWinnerBanner from '../Games/GameWinnerBanner';
 import TournamentBracket from '../Games/TournamentBracket';
 // Graphics renderer for LiveShare overlays
 import { GraphicsRenderer } from '../../utils/GraphicsRenderer';
@@ -1114,6 +1115,13 @@ export default function VideoWatch() {
   // is the player whose turn it currently is (id + name).
   const [activeHotSeatTournament, setActiveHotSeatTournament] = useState(null);
   const [hotSeatCurrentPlayer, setHotSeatCurrentPlayer] = useState(null);
+  // Set on hot_seat_tournament_complete instead of immediately clearing
+  // everything — renders a real GameWinnerBanner (confetti, avatar, stats)
+  // on top of the still-mounted game overlay, matching every other game's
+  // own end-of-match banner, instead of just a toast. The actual cleanup
+  // (clearing activeGame/activeHotSeatTournament) happens in the banner's
+  // own onClose, not here.
+  const [hotSeatTournamentResult, setHotSeatTournamentResult] = useState(null);
 
   // 🎤 Audio device management
   const [audioDevices, setAudioDevices] = useState([]);
@@ -2596,6 +2604,9 @@ export default function VideoWatch() {
     setActiveGame(null);
     setMyHand(null);
     setDrawerWord(null);
+    setRhythmHeroLiveInfo(null);
+    setRhythmHeroSelectingInfo(null);
+    setRhythmHeroScoreInfo(null);
     setShowChallengeModal(false);
   }, [isHost, activeGame, sendMessage]);
 
@@ -2609,10 +2620,11 @@ export default function VideoWatch() {
   }, [sendMessage]);
 
   // Hot-seat tournament: create (host only). Backend broadcasts initial state
-  // + first turn notification to all room members.
-  const handleCreateHotSeatTournament = useCallback((gameType, playersData) => {
+  // + first turn notification to all room members. mode is 'flat' (sequential
+  // turns, default) or 'bracket' (real single-elimination — see GameLobbyModal).
+  const handleCreateHotSeatTournament = useCallback((gameType, playersData, mode = 'flat') => {
     if (!sendMessage) return;
-    sendMessage({ type: 'create_hot_seat_tournament', data: { game_type: gameType, players: playersData } });
+    sendMessage({ type: 'create_hot_seat_tournament', data: { game_type: gameType, players: playersData, mode } });
     setIsGameLobbyOpen(false);
   }, [sendMessage]);
 
@@ -2621,6 +2633,18 @@ export default function VideoWatch() {
     if (!sendMessage || !activeHotSeatTournament) return;
     sendMessage({ type: 'record_hot_seat_score', data: { score } });
   }, [sendMessage, activeHotSeatTournament]);
+
+  // Hot-seat tournament: either participant can end it early — the other
+  // (or best-scoring, if 3+) remaining participant wins by forfeit. This is
+  // what onEndGame gets rerouted to below, in place of the generic
+  // handleEndGame, whenever a hot-seat tournament is active — hot-seat
+  // tournaments have no real GameSession backing them at all, so
+  // handleEndGame's own game_session_id-gated logic is a silent no-op for
+  // them; this is a genuinely separate mechanism, not a variant of it.
+  const handleForfeitHotSeatTournament = useCallback(() => {
+    if (!sendMessage) return;
+    sendMessage({ type: 'forfeit_hot_seat_tournament', data: {} });
+  }, [sendMessage]);
 
   // Tournament: host starts a specific pending match — fires a normal start_game with
   // that match's two players; the backend links the resulting session to the match.
@@ -2825,6 +2849,15 @@ export default function VideoWatch() {
     try { await postGameResultToRoom(roomId, content); } catch {}
   }, [roomId]);
 
+  // The actual cleanup deferred from hot_seat_tournament_complete — runs once
+  // the player has seen and dismissed the GameWinnerBanner.
+  const handleHotSeatResultClose = useCallback(() => {
+    setHotSeatTournamentResult(null);
+    setActiveHotSeatTournament(null);
+    setHotSeatCurrentPlayer(null);
+    setActiveGame(null);
+  }, []);
+
   // DOOM relay bridge: DOOM's own networking protocol round-trips through
   // WeWatch's WebSocket connection as opaque base64 payloads (this app never
   // parses them). Outgoing packets go straight through sendMessage like any
@@ -2849,6 +2882,48 @@ export default function VideoWatch() {
   const registerGameRelayReceiver = useCallback((handler) => {
     gameRelayHandlerRef.current = handler;
   }, []);
+
+  // Rhythm Hero live broadcast — the active player (host in solo mode, or the
+  // current hot-seat turn player) relays their performance so every other
+  // connected client mirrors it in their own local engine instance. Split the
+  // same way DOOM's relay does: rhythm_hero_start/_end are low-frequency and
+  // drive a real render transition (spectator placeholder <-> live mirror), so
+  // they're real state; rhythm_hero_input fires on every press/release and
+  // goes through a ref-registered handler instead, to avoid a re-render per
+  // keystroke.
+  const [rhythmHeroLiveInfo, setRhythmHeroLiveInfo] = useState(null);
+  // Room-visible instrument-pick/song-search/loading state — the pre-gameplay
+  // phases rhythmHeroLiveInfo above doesn't cover at all (that only turns
+  // active once rhythm_hero_start fires, i.e. once selection/loading are
+  // already done). Same {...message.data, active:true}/null shape.
+  const [rhythmHeroSelectingInfo, setRhythmHeroSelectingInfo] = useState(null);
+  // Room-visible results screen for a just-finished tournament turn — every
+  // connected client sees the same score, not just the player who played
+  // (see rhythm_hero_score/ScoreMirror in RhythmHeroGame.jsx). Cleared by the
+  // same rhythm_hero_end broadcast that used to only clear rhythmHeroLiveInfo
+  // — now deliberately deferred until the scoring player clicks Proceed.
+  const [rhythmHeroScoreInfo, setRhythmHeroScoreInfo] = useState(null);
+  // Session-scoped leaderboard — every completed performance (solo AND
+  // tournament) this watch session, sorted desc by score. Backend-owned
+  // (in-memory, per-room, cleared on session end) — this is just a mirror
+  // of whatever it last broadcast, including on late-join rehydration.
+  const [rhythmHeroLeaderboard, setRhythmHeroLeaderboard] = useState([]);
+  const rhythmHeroInputHandlerRef = useRef(null);
+  const registerRhythmHeroInputReceiver = useCallback((handler) => {
+    rhythmHeroInputHandlerRef.current = handler;
+  }, []);
+  // Cheer flows in the OPPOSITE direction from input (any spectator -> the
+  // performer AND every other spectator), so it needs its own receiver
+  // rather than reusing the input one — whichever RhythmHeroGame render path
+  // is mounted in THIS tab (the main component if this client is the
+  // performer, WarmPerformanceMirror if they're spectating) registers here.
+  const rhythmHeroCheerHandlerRef = useRef(null);
+  const registerRhythmHeroCheerReceiver = useCallback((handler) => {
+    rhythmHeroCheerHandlerRef.current = handler;
+  }, []);
+  const handleRhythmHeroBroadcast = useCallback((type, data) => {
+    sendMessage({ type, data });
+  }, [sendMessage]);
 
   // Draw & Guess: the drawer's secret word, delivered via the private draw_word
   // message (never a room broadcast). Cleared on game close.
@@ -6053,6 +6128,53 @@ export default function VideoWatch() {
           });
           break;
 
+        case "rhythm_hero_selecting":
+          // The active player is choosing an instrument/song, or loading one
+          // — every other client mirrors this live, keystroke by keystroke.
+          // Superseded the moment rhythm_hero_start fires (below).
+          setRhythmHeroSelectingInfo({ ...message.data, active: true });
+          break;
+
+        case "rhythm_hero_start":
+          // The active player just started a performance — every other client
+          // switches from the static spectator placeholder to a live mirror.
+          setRhythmHeroLiveInfo({ ...message.data, active: true });
+          setRhythmHeroSelectingInfo(null);
+          break;
+
+        case "rhythm_hero_input":
+          // High-frequency (press/release/star-power) — ref-registered handler
+          // only, no setState, same reasoning as the DOOM relay handlers above.
+          rhythmHeroInputHandlerRef.current?.(message.data);
+          break;
+
+        case "rhythm_hero_cheer":
+          // A spectator cheered — ref-registered handler, same reasoning as
+          // rhythm_hero_input, just flowing the other direction (see
+          // rhythmHeroCheerHandlerRef's own comment above).
+          rhythmHeroCheerHandlerRef.current?.(message.data);
+          break;
+
+        case "rhythm_hero_score":
+          // A tournament turn just finished — every client sees the same
+          // results screen (ScoreMirror) until the scoring player proceeds.
+          // Also clears rhythmHeroLiveInfo (the performance itself is over)
+          // — solo/arcade mode never sends this, it still uses
+          // rhythm_hero_end directly for that, unchanged.
+          setRhythmHeroScoreInfo({ ...message.data, active: true });
+          setRhythmHeroLiveInfo(null);
+          break;
+
+        case "rhythm_hero_end":
+          setRhythmHeroLiveInfo(null);
+          setRhythmHeroSelectingInfo(null);
+          setRhythmHeroScoreInfo(null);
+          break;
+
+        case "rhythm_hero_leaderboard_update":
+          setRhythmHeroLeaderboard(message.data?.entries || []);
+          break;
+
         case "room_post_created":
           // Room host created a new post (recording or upload)
           if (message.data) {
@@ -6237,18 +6359,40 @@ export default function VideoWatch() {
         // the browser. Mirrors the existing case "playlist_poster_updated"
         // pattern above, which reads message.data directly the same way.
         case 'hot_seat_tournament_update': {
-          setActiveHotSeatTournament(message.data || null);
+          // The backend now always includes current_player_id/current_player_name
+          // directly in this payload (payloadLocked) — but this merge is kept as
+          // defense-in-depth anyway, since hot_seat_tournament_update and
+          // hot_seat_turn have no guaranteed relative delivery order (Hub's
+          // broadcastToRoom channel is drained by two concurrent workers). A
+          // full replace here could otherwise silently null out whatever a
+          // hot_seat_turn broadcast had *just* set, if this one happened to
+          // arrive second — that's exactly what caused a real "Pass the device
+          // to …" / "someone is choosing an instrument" bug.
+          const d = message.data || {};
+          setActiveHotSeatTournament(prev => ({
+            ...d,
+            current_player_id: d.current_player_id ?? prev?.current_player_id,
+            current_player_name: d.current_player_name ?? prev?.current_player_name,
+          }));
           break;
         }
         case 'hot_seat_turn': {
           const d = message.data || {};
           setHotSeatCurrentPlayer({ id: d.current_player_id, name: d.current_player });
           setActiveHotSeatTournament(prev => {
+            // Bracket-mode per-turn broadcasts (a match's opening turn, or "the other
+            // side's turn now") don't always come with a full hot_seat_tournament_update
+            // — mode/current_match/current_round must be carried forward here too, or
+            // hotSeatTournament.current_match goes stale mid-match for the 4 hot-seat
+            // game components that read it directly off this prop.
             const updated = prev ? {
               ...prev,
               current_player_id: d.current_player_id,
               current_player_name: d.current_player,
               current_index: d.turn_index,
+              ...(d.mode !== undefined ? { mode: d.mode } : {}),
+              ...(d.current_match !== undefined ? { current_match: d.current_match } : {}),
+              ...(d.current_round !== undefined ? { current_round: d.current_round } : {}),
             } : null;
             // Open the hot-seat game's overlay for everyone so they see whose
             // turn it is. Each hot-seat game gates its own real controls behind
@@ -6281,10 +6425,41 @@ export default function VideoWatch() {
         }
         case 'hot_seat_tournament_complete': {
           const d = message.data || {};
-          toast.success(`🏆 Hot-Seat over! Winner: ${d.winner_name || 'nobody'} 🦆`, { duration: 6000, icon: '🏆' });
-          setActiveHotSeatTournament(null);
-          setHotSeatCurrentPlayer(null);
-          setActiveGame(null);
+          // Bracket mode has no ranked "standings" list — just a champion.
+          const isBracketFinish = d.mode === 'bracket' || !Array.isArray(d.standings) || d.standings.length === 0;
+          // Build the GameWinnerBanner's winner/stats from this broadcast plus
+          // whatever participant data we've already been tracking (for color —
+          // the broadcast itself only carries winner_id/winner_name). Read via
+          // the functional setState form to avoid a stale closure over
+          // activeHotSeatTournament, without actually mutating it — the real
+          // cleanup is deferred to the banner's own Close button so it can
+          // render on top of the still-mounted game overlay.
+          setActiveHotSeatTournament(prev => {
+            const winnerParticipant = prev?.participants?.find(p => p.user_id === d.winner_id);
+            const winner = d.winner_id ? {
+              user_id: d.winner_id,
+              username: d.winner_name || winnerParticipant?.username || 'Someone',
+              color: winnerParticipant?.color || null,
+              avatar: winnerParticipant?.avatar || null,
+            } : null;
+            const gameStats = { lines: [] };
+            if (!isBracketFinish && Array.isArray(d.standings)) {
+              gameStats.lines = [...d.standings]
+                .sort((a, b) => (d.lower_is_better ? a.score - b.score : b.score - a.score))
+                .map(s => ({ label: s.username, value: Number(s.score || 0).toLocaleString() }));
+            }
+            setHotSeatTournamentResult({
+              winner,
+              gameType: d.game_type || prev?.game_type || '',
+              gameStats,
+              // Set when a participant explicitly ended the tournament early
+              // (ForfeitTournament backend-side) rather than it completing
+              // naturally — GameWinnerBanner shows "by forfeit" under the
+              // winner's name and includes it in the posted result text.
+              isForfeit: !!d.forfeit,
+            });
+            return prev;
+          });
           break;
         }
         case 'hot_seat_tournament_cancelled': {
@@ -8574,9 +8749,10 @@ export default function VideoWatch() {
           activeGame={activeGame}
           currentUserId={currentUser?.id}
           roomId={roomId}
+          sessionId={activeSessionId}
           onMove={handleGameMove}
           onClose={handleGameClose}
-          onEndGame={handleEndGame}
+          onEndGame={activeHotSeatTournament ? handleForfeitHotSeatTournament : handleEndGame}
           onPlayAgain={handlePlayAgain}
           onPostResult={handlePostGameResult}
           onRelayPacket={handleDoomRelayPacket}
@@ -8588,7 +8764,7 @@ export default function VideoWatch() {
             // since its raw-byte netcode is a different shape entirely. Safe
             // to share the generic ref across multiple game_types here since
             // only one game is ever active per room at a time.
-            ['draw_guess', 'fowl_play'].includes(activeGame.game_type)
+            ['draw_guess', 'fowl_play', 'toad_ball', 'golf'].includes(activeGame.game_type)
               ? registerGameRelayReceiver
               : registerDoomRelayReceiver
           }
@@ -8598,6 +8774,28 @@ export default function VideoWatch() {
           onTournamentScore={handleHotSeatScore}
           gameErrorMsg={gameErrorMsg}
           gameErrorKey={gameErrorKey}
+          onRhythmHeroBroadcast={handleRhythmHeroBroadcast}
+          rhythmHeroLiveInfo={rhythmHeroLiveInfo}
+          rhythmHeroSelectingInfo={rhythmHeroSelectingInfo}
+          rhythmHeroScoreInfo={rhythmHeroScoreInfo}
+          rhythmHeroLeaderboard={rhythmHeroLeaderboard}
+          currentUsername={currentUser?.username}
+          registerRhythmHeroInputReceiver={registerRhythmHeroInputReceiver}
+          registerRhythmHeroCheerReceiver={registerRhythmHeroCheerReceiver}
+        />
+      )}
+
+      {/* Hot-seat tournament result — renders on top of the still-mounted
+          game overlay above (z-[200] vs. its z-50), same composition every
+          other game's own end-of-match banner already uses. */}
+      {hotSeatTournamentResult && (
+        <GameWinnerBanner
+          winner={hotSeatTournamentResult.winner}
+          gameType={hotSeatTournamentResult.gameType}
+          gameStats={hotSeatTournamentResult.gameStats}
+          isForfeit={hotSeatTournamentResult.isForfeit}
+          onClose={handleHotSeatResultClose}
+          onPostResult={handlePostGameResult}
         />
       )}
 

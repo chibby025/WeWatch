@@ -35,8 +35,8 @@ func gamePosterURL(gameType string) string {
 		return gamePostersBaseURL + "/doom.webp"
 	case "quake3":
 		return gamePostersBaseURL + "/quake3.webp"
-	case "micro_racing":
-		return gamePostersBaseURL + "/v2/micro_racing.webp"
+	// case "micro_racing": // temporarily removed
+	// 	return gamePostersBaseURL + "/v2/micro_racing.webp"
 	case "obby_parkour":
 		return gamePostersBaseURL + "/v2/obby_parkour.webp"
 	case "othello":
@@ -96,8 +96,6 @@ func gamePosterURL(gameType string) string {
 		return gamePostersBaseURL + "/v2/rebus_round.webp"
 	case "four_frames":
 		return gamePostersBaseURL + "/v2/four_frames.webp"
-	case "karaoke":
-		return gamePostersBaseURL + "/v2/karaoke.webp"
 	// case "roulette": temporarily removed
 	case "snakes_ladders":
 		return gamePostersBaseURL + "/snakes_ladders.webp"
@@ -111,8 +109,8 @@ func gamePosterURL(gameType string) string {
 		return gamePostersBaseURL + "/backgammon.webp"
 	case "texas_holdem":
 		return gamePostersBaseURL + "/texas_holdem.webp"
-	case "ramp_rush":
-		return gamePostersBaseURL + "/ramp_rush.webp"
+	// case "ramp_rush": // temporarily removed
+	// 	return gamePostersBaseURL + "/ramp_rush.webp"
 	case "golf":
 		return gamePostersBaseURL + "/v2/golf.webp"
 	case "rhythm_hero":
@@ -150,8 +148,8 @@ var minPlayersOverride = map[string]int{
 	"draw_guess":       1, // host can draw for the room even with no other guessers
 	"jigsaw":           1, // fully cooperative — solo assembly is valid too
 	"quake3":           1, // real N-player arena FPS, but solo (vs the empty arena/bots) is valid too
-	"micro_racing":     1, // real N-player kart racer, but solo (vs AI bots) is valid too
-	"obby_parkour":     1, // real N-player parkour course, but solo practice is valid too
+	// "micro_racing": 1, // temporarily removed — real N-player kart racer, but solo (vs AI bots) is valid too
+	"obby_parkour": 1, // real N-player parkour course, but solo practice is valid too
 }
 
 // lowerScoreWinsGameTypes flips a hot-seat tournament's win condition —
@@ -292,6 +290,8 @@ func (h *GameWebSocketHandler) HandleGameMessage(client interface{}, messageData
 		h.handleRecordHotSeatScore(client, messageData)
 	case "cancel_hot_seat_tournament":
 		h.handleCancelHotSeatTournament(client, messageData)
+	case "forfeit_hot_seat_tournament":
+		h.handleForfeitHotSeatTournament(client, messageData)
 	case "close_game":
 		h.handleCloseGame(client, messageData)
 	default:
@@ -502,21 +502,22 @@ func (h *GameWebSocketHandler) handleGameStart(client interface{}, data map[stri
 			gameStateBcast["no_walls"] = true
 		}
 	}
-	if gameType == "ramp_rush" {
-		if format, _ := data["format"].(string); format == "first_to_win" {
-			if gs, exists := h.gameManager.GetActiveGame(roomID); exists {
-				gs.GameData["format"] = "first_to_win"
-				gs.GameData["rounds_to_win"] = 1
-				gs.GameData["max_rounds"] = 20 // safety net against a pathological all-draws game, not a real target
-				gs.GameSession.GameState["format"] = "first_to_win"
-				gs.GameSession.GameState["rounds_to_win"] = 1
-				gs.GameSession.GameState["max_rounds"] = 20
-			}
-			gameStateBcast["format"] = "first_to_win"
-			gameStateBcast["rounds_to_win"] = 1
-			gameStateBcast["max_rounds"] = 20
-		}
-	}
+	// ramp_rush temporarily removed:
+	// if gameType == "ramp_rush" {
+	// 	if format, _ := data["format"].(string); format == "first_to_win" {
+	// 		if gs, exists := h.gameManager.GetActiveGame(roomID); exists {
+	// 			gs.GameData["format"] = "first_to_win"
+	// 			gs.GameData["rounds_to_win"] = 1
+	// 			gs.GameData["max_rounds"] = 20 // safety net against a pathological all-draws game, not a real target
+	// 			gs.GameSession.GameState["format"] = "first_to_win"
+	// 			gs.GameSession.GameState["rounds_to_win"] = 1
+	// 			gs.GameSession.GameState["max_rounds"] = 20
+	// 		}
+	// 		gameStateBcast["format"] = "first_to_win"
+	// 		gameStateBcast["rounds_to_win"] = 1
+	// 		gameStateBcast["max_rounds"] = 20
+	// 	}
+	// }
 
 	message := map[string]interface{}{
 		"type":   "game",
@@ -748,6 +749,24 @@ func (h *GameWebSocketHandler) handleCreateHotSeatTournament(client interface{},
 		return
 	}
 
+	// mode: "flat" (default — sequential turns, highest total score wins) or
+	// "bracket" (real single-elimination — pairs play head-to-head matches,
+	// higher score per match wins, loser is eliminated, ties replay via sudden
+	// death). Anything else is rejected rather than silently defaulted, so a
+	// frontend typo surfaces immediately instead of quietly running flat mode.
+	mode, _ := data["mode"].(string)
+	if mode == "" {
+		mode = "flat"
+	}
+	if mode != "flat" && mode != "bracket" {
+		h.sendError(client, "invalid tournament mode — must be 'flat' or 'bracket'")
+		return
+	}
+	if mode == "bracket" && len(playersData) < 4 {
+		h.sendError(client, "a bracket tournament needs at least 4 players")
+		return
+	}
+
 	type ClientFields interface {
 		GetRoomID() uint
 		GetUserID() uint
@@ -765,15 +784,16 @@ func (h *GameWebSocketHandler) handleCreateHotSeatTournament(client interface{},
 		userID := uint(pm["user_id"].(float64))
 		username, _ := pm["username"].(string)
 		color, _ := pm["color"].(string)
-		players = append(players, models.Player{UserID: userID, Username: username, Color: color})
+		avatarURL, _ := pm["avatar_url"].(string)
+		players = append(players, models.Player{UserID: userID, Username: username, Color: color, Avatar: avatarURL})
 	}
 
 	if h.gameManager.HotSeatManager == nil {
 		h.sendError(client, "hot-seat tournaments unavailable")
 		return
 	}
-	h.gameManager.HotSeatManager.CreateTournament(roomID, hostID, gameType, players, lowerScoreWinsGameTypes[gameType])
-	log.Printf("🏆 [HotSeat] Created tournament in room %d (%s, %d players)", roomID, gameType, len(players))
+	h.gameManager.HotSeatManager.CreateTournament(roomID, hostID, gameType, players, lowerScoreWinsGameTypes[gameType], mode)
+	log.Printf("🏆 [HotSeat] Created %s tournament in room %d (%s, %d players)", mode, roomID, gameType, len(players))
 }
 
 // handleRecordHotSeatScore records a player's score after their Fowl Play (or any
@@ -812,4 +832,24 @@ func (h *GameWebSocketHandler) handleCancelHotSeatTournament(client interface{},
 		return
 	}
 	h.gameManager.HotSeatManager.CancelTournament(roomID)
+}
+
+// handleForfeitHotSeatTournament ends the room's active hot-seat tournament
+// early because the calling player chose to end it mid-tournament — the
+// other (or best-scoring, if more than 2) remaining participant wins by
+// forfeit. Any participant can trigger this, matching
+// handleCancelHotSeatTournament's own precedent — not host-only.
+func (h *GameWebSocketHandler) handleForfeitHotSeatTournament(client interface{}, data map[string]interface{}) {
+	type ClientFields interface {
+		GetRoomID() uint
+		GetUserID() uint
+	}
+	cf := client.(ClientFields)
+	roomID := cf.GetRoomID()
+	playerID := cf.GetUserID()
+
+	if h.gameManager.HotSeatManager == nil {
+		return
+	}
+	h.gameManager.HotSeatManager.ForfeitTournament(roomID, playerID)
 }

@@ -46,6 +46,54 @@ const DEFAULT_FRET_COLORS = [0x3fe34a, 0xff3b30, 0xffd60a, 0x2f7cff, 0xff9500];
 const DEFAULT_ACCENT = 0x8a2be2;
 const DEFAULT_ACCENT_RAIL = 0xb14cff;
 
+// -------------------------------------------------- highway design upgrades
+// 1. Combo-reactive camera — FOV tightens as the streak builds, easing back
+//    toward baseFov the instant it resets (streak=0 on a miss/overstrum).
+const CAMERA_BASE_Z = 9.5;
+const COMBO_FOV_STREAK_CAP = 40;   // streak at which the FOV-tighten maxes out
+const COMBO_FOV_MAX_DELTA = 4;     // degrees tightened at max combo
+// 5. Star Power camera — an extra FOV pull-in + forward dolly + wider sway on
+//    top of whatever the combo camera above is already doing, layered
+//    additively so the two never fight.
+const SP_FOV_KICK = 2.5;
+const SP_CAMERA_Z = 9.0;
+const CAMERA_SWAY_BASE = 0.35;
+const CAMERA_SWAY_SP = 0.55;
+// 3. Lane trail streaks — a persistent ambient glow per lane once the streak
+//    passes STREAK_TRAIL_MIN, ramping to full intensity by
+//    STREAK_TRAIL_MAX_STREAK, plus a brief per-hit flash on top.
+const STREAK_TRAIL_MIN = 8;
+const STREAK_TRAIL_MAX_STREAK = 38;
+// 4. Miss feedback — a one-shot red flash on the missed lane's fret ring,
+//    mirroring the existing hit shockwave but for misses/overstrums.
+const MISS_FLASH_DECAY = 3.2; // per-second decay rate
+// 6. Player-overlay hit flash — same one-shot-decay pattern as MISS_FLASH_DECAY
+//    above, but for the DOM instrument player overlay's own per-hit glow
+//    burst (see getPlayerVisualState / InstrumentCloseup.jsx's InstrumentTopOverlay).
+const PLAYER_HIT_FLASH_DECAY = 3.4; // per-second decay rate — ~0.3s to fade
+
+// 7. Audience count scales with the rock/accuracy meter — a bigger reveal
+//    pool (beyond the always-visible core crowd) fades members in/out as
+//    `rock` crosses each one's own threshold (see _buildAudience). Uses
+//    `rock`, not streak: streak resets to 0 on a single miss, and tying
+//    crowd SIZE to that would empty the venue over one bad note — `rock`
+//    moves gradually instead, the right signal for a slow "buildup".
+const AUDIENCE_REVEAL_FADE = 10; // smoothing window (rock points) around each member's own threshold
+// 8. Dance-burst "arms up" wave — a decaying hype scalar, spiked on streak
+//    milestones / Star Power activation / occasional PERFECT hits, that
+//    gates which audience members raise their arms (via each member's own
+//    continuous dancePhase, not discrete per-burst state — see
+//    _updateAudience) rather than swap all 50 into the same rigid pose.
+const DANCE_BURST_DECAY = 0.5; // per-second decay rate
+// 9. Supernova twinkle pool — ambient background sparkle layered into the
+//    starfield, independent of gameplay performance (always ticking, idle
+//    menu screen included), with a small bonus chance to fire immediately
+//    on a PERFECT hit. See _buildBackground/_updateSupernovas.
+const SUPERNOVA_COUNT = 8;
+const SUPERNOVA_MIN_COOLDOWN = 3;   // seconds
+const SUPERNOVA_MAX_COOLDOWN = 12;  // seconds
+const SUPERNOVA_PERFECT_CHANCE = 0.12; // probability a PERFECT hit fires one early
+
 // Rock meter (the "booed off" fail). Tuned so anyone actually playing (>~50%
 // accuracy) hears the whole song, while barely-playing still fails. Real
 // Clone Hero charts are dense, and the old values (60 / +1.3 / -5) booted
@@ -132,6 +180,130 @@ function makeGlowTexture() {
   return new THREE.CanvasTexture(c);
 }
 
+// A simple humanoid silhouette (head + shoulders/torso), soft-edged via a
+// radial-ish alpha falloff so it reads as "shadowy crowd," not a hard cutout.
+// Used for the audience layer — see _buildAudience.
+function makeSilhouetteTexture() {
+  const c = document.createElement('canvas');
+  c.width = 48; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = '#000';
+  // head
+  g.beginPath();
+  g.arc(24, 16, 10, 0, Math.PI * 2);
+  g.fill();
+  // body — a rounded trapezoid widening toward the base
+  g.beginPath();
+  g.moveTo(14, 28);
+  g.quadraticCurveTo(24, 24, 34, 28);
+  g.lineTo(40, 62);
+  g.quadraticCurveTo(24, 68, 8, 62);
+  g.closePath();
+  g.fill();
+  // soft edge falloff so the silhouette blends rather than hard-cuts
+  g.globalCompositeOperation = 'destination-in';
+  const grad = g.createRadialGradient(24, 36, 6, 24, 36, 40);
+  grad.addColorStop(0, 'rgba(0,0,0,1)');
+  grad.addColorStop(0.75, 'rgba(0,0,0,0.9)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.35)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 48, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+// A "hands up" variant of the silhouette above — head/body drawn at the
+// EXACT same position/size as makeSilhouetteTexture (critical: swapping a
+// sprite's material.map between the two mid-song needs both textures to
+// agree on where the figure sits, or the swap reads as a jump/pop rather
+// than a clean pose change). Elbows bent so the raised arms stay well
+// within the same 48x64 canvas, near head height — used for the audience's
+// dance-burst reveal (see _updateAudience's dancing state).
+function makeSilhouetteArmsUpTexture() {
+  const c = document.createElement('canvas');
+  c.width = 48; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = '#000';
+  // head — identical to the idle pose
+  g.beginPath();
+  g.arc(24, 16, 10, 0, Math.PI * 2);
+  g.fill();
+  // body — identical to the idle pose
+  g.beginPath();
+  g.moveTo(14, 28);
+  g.quadraticCurveTo(24, 24, 34, 28);
+  g.lineTo(40, 62);
+  g.quadraticCurveTo(24, 68, 8, 62);
+  g.closePath();
+  g.fill();
+  // raised arms, mirrored both sides
+  for (const side of [-1, 1]) {
+    g.beginPath();
+    g.moveTo(24 + side * 10, 30);
+    g.quadraticCurveTo(24 + side * 20, 22, 24 + side * 17, 6);
+    g.lineTo(24 + side * 10, 8);
+    g.quadraticCurveTo(24 + side * 13, 22, 24 + side * 5, 32);
+    g.closePath();
+    g.fill();
+  }
+  // soft edge falloff — same gradient shape as the idle pose
+  g.globalCompositeOperation = 'destination-in';
+  const grad = g.createRadialGradient(24, 36, 6, 24, 36, 40);
+  grad.addColorStop(0, 'rgba(0,0,0,1)');
+  grad.addColorStop(0.75, 'rgba(0,0,0,0.9)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.35)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 48, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+// ----------------------------------------------------- shared instance cache
+// Every geometry/texture below is instance-agnostic — the same vertex data
+// and pixels regardless of which song is playing or who's watching — so
+// there's no reason to reconstruct them for every new Game() the way the
+// original vendored code did. Built once, lazily, the first time any Game
+// instance needs them, and never disposed (module-lifetime, same scope as
+// the shader source strings above). This is what actually helps a late
+// joiner: their spectator mirror's own Game() construction is genuinely
+// cheaper (no CPU-side vertex generation, no re-randomizing the starfield)
+// regardless of when it mounts, not just when it's pre-warmed ahead of time.
+// Materials still get built per-instance below (their per-instrument color
+// IS meaningfully different across instances), only their shared geometries
+// are cached here.
+let _shared = null;
+function getShared() {
+  if (_shared) return _shared;
+  const starGeo = new THREE.BufferGeometry();
+  const N = 1400;
+  const pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const r = 60 + Math.random() * 90;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.random() * Math.PI * 0.9;
+    pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+    pos[i * 3 + 1] = Math.abs(r * Math.cos(phi)) - 8;
+    pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta) - 30;
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+
+  _shared = {
+    glowTex: makeGlowTexture(),
+    silhouetteTex: makeSilhouetteTexture(),
+    silhouetteArmsUpTex: makeSilhouetteArmsUpTexture(),
+    highwayPlane: new THREE.PlaneGeometry(HIGHWAY_W, HIGHWAY_LEN),
+    rail: new THREE.BoxGeometry(0.18, 0.3, HIGHWAY_LEN),
+    fretRing: new THREE.TorusGeometry(0.68, 0.09, 12, 32),
+    fretDisc: new THREE.CircleGeometry(0.6, 28),
+    streakTrailPlane: new THREE.PlaneGeometry(LANE_W * 0.7, HIGHWAY_LEN * 0.5),
+    gemBase: new THREE.CylinderGeometry(0.62, 0.7, 0.26, 24),
+    gemCap: new THREE.CylinderGeometry(0.4, 0.46, 0.3, 24),
+    tailBox: new THREE.BoxGeometry(0.4, 0.12, 1),
+    ringTorus: new THREE.TorusGeometry(0.7, 0.05, 8, 36),
+    starGeo,
+    sunDisc: new THREE.CircleGeometry(20, 48),
+  };
+  return _shared;
+}
+
 // ================================================================= Game
 export class Game {
   constructor(canvas, hud, options = {}) {
@@ -142,6 +314,13 @@ export class Game {
     this.fretColors = options.instrumentColors || DEFAULT_FRET_COLORS;
     this.accentColor = options.highwayAccentColor ?? DEFAULT_ACCENT;
     this.accentColorRail = options.highwayAccentColorRail ?? DEFAULT_ACCENT_RAIL;
+    // Spectator instances (mirroring another player's broadcast performance)
+    // must never attach real keyboard listeners of their own — a spectator's
+    // own stray keypresses shouldn't drive a highway that's supposed to be a
+    // read-only mirror of someone else's relayed input. pressLane/releaseLane/
+    // activateStarPower stay fully callable either way — only the internal
+    // window listener setup is skipped.
+    this.readOnly = !!options.readOnly;
     this.running = false;
     this._raf = 0;
     this._initThree();
@@ -157,23 +336,29 @@ export class Game {
     this.scene.background = new THREE.Color(0x06030f);
     this.scene.fog = new THREE.Fog(0x06030f, 32, 78);
 
+    // baseFov is the "neutral" FOV a resize should always restore — the
+    // combo/Star-Power camera below only ever lerps AWAY from this value,
+    // never mutates it directly, so the two mechanisms can't fight.
+    this.baseFov = fovForAspect(window.innerWidth / window.innerHeight);
     this.camera = new THREE.PerspectiveCamera(
-      fovForAspect(window.innerWidth / window.innerHeight),
-      window.innerWidth / window.innerHeight, 0.1, 200);
-    this.camera.position.set(0, 7.8, 9.5);
+      this.baseFov, window.innerWidth / window.innerHeight, 0.1, 200);
+    this.camera.position.set(0, 7.8, CAMERA_BASE_Z);
     this.camera.lookAt(0, 0, -16);
 
     this.scene.add(new THREE.AmbientLight(0x8866ff, 0.5));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
-    dir.position.set(4, 12, 6);
-    this.scene.add(dir);
+    this.dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    this.dirLight.position.set(4, 12, 6);
+    this.scene.add(this.dirLight);
 
-    this.glowTex = makeGlowTexture();
+    this.shared = getShared();
+    this.glowTex = this.shared.glowTex;
 
     this._buildHighway();
     this._buildFrets();
     this._buildBackground();
     this._buildPools();
+    this._buildStreakTrails();
+    this._buildAudience();
 
     // bloom
     this.composer = new EffectComposer(this.renderer);
@@ -185,7 +370,8 @@ export class Game {
 
     this._onResize = () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
-      this.camera.fov = fovForAspect(this.camera.aspect);
+      this.baseFov = fovForAspect(this.camera.aspect);
+      this.camera.fov = this.baseFov;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
       this.composer.setSize(window.innerWidth, window.innerHeight);
@@ -210,22 +396,20 @@ export class Game {
       uLineColor: { value: new THREE.Color(this.accentColor) },
       uPulse: { value: 0 },
     };
-    const geo = new THREE.PlaneGeometry(HIGHWAY_W, HIGHWAY_LEN);
     const mat = new THREE.ShaderMaterial({
       uniforms: this.highwayUniforms,
       vertexShader: highwayVert,
       fragmentShader: highwayFrag,
     });
-    const plane = new THREE.Mesh(geo, mat);
+    const plane = new THREE.Mesh(this.shared.highwayPlane, mat);
     plane.rotation.x = -Math.PI / 2;
     plane.position.set(0, 0, -HIGHWAY_LEN / 2 + 5);
     this.scene.add(plane);
 
     // glowing side rails
-    const railGeo = new THREE.BoxGeometry(0.18, 0.3, HIGHWAY_LEN);
     const railMat = new THREE.MeshBasicMaterial({ color: this.accentColorRail });
     for (const s of [-1, 1]) {
-      const rail = new THREE.Mesh(railGeo, railMat);
+      const rail = new THREE.Mesh(this.shared.rail, railMat);
       rail.position.set(s * (HIGHWAY_W / 2 + 0.1), 0.15, -HIGHWAY_LEN / 2 + 5);
       this.scene.add(rail);
     }
@@ -234,6 +418,10 @@ export class Game {
 
   _buildFrets() {
     this.frets = [];
+    // Stored per-lane so _updateFrets can lerp a fret's emissive color back to
+    // its own true color after a red miss-flash, without re-parsing the hex
+    // constant every frame.
+    this._laneBaseColors = this.fretColors.map((c) => new THREE.Color(c));
     for (let i = 0; i < LANES; i++) {
       const group = new THREE.Group();
       group.position.set(laneX(i), 0.12, HIT_Z);
@@ -245,7 +433,7 @@ export class Game {
         roughness: 0.35,
         metalness: 0.6,
       });
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.09, 12, 32), ringMat);
+      const ring = new THREE.Mesh(this.shared.fretRing, ringMat);
       ring.rotation.x = -Math.PI / 2;
       group.add(ring);
 
@@ -254,13 +442,234 @@ export class Game {
         transparent: true,
         opacity: 0.0,
       });
-      const disc = new THREE.Mesh(new THREE.CircleGeometry(0.6, 28), discMat);
+      const disc = new THREE.Mesh(this.shared.fretDisc, discMat);
       disc.rotation.x = -Math.PI / 2;
       disc.position.y = 0.01;
       group.add(disc);
 
       this.scene.add(group);
-      this.frets.push({ group, ringMat, discMat, press: 0 });
+      this.frets.push({ group, ringMat, discMat, press: 0, missFlash: 0 });
+    }
+  }
+
+  // Lane trail streaks — persistent per-lane glow strips, hidden by default,
+  // whose opacity is driven purely from live streak state in
+  // _updateStreakTrails. One static mesh per lane rather than a pooled
+  // per-hit system, since the effect is a continuous ambient glow (with a
+  // brief per-hit flash on top) rather than discrete particles.
+  _buildStreakTrails() {
+    this.streakTrails = [];
+    for (let i = 0; i < LANES; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: this.fretColors[i],
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const mesh = new THREE.Mesh(this.shared.streakTrailPlane, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(laneX(i), 0.05, -HIGHWAY_LEN * 0.22);
+      mesh.visible = false;
+      this.scene.add(mesh);
+      this.streakTrails.push({ mesh, mat, flash: 0 });
+    }
+  }
+
+  // Audience — a shadowy crowd flanking the highway on both sides (camera-
+  // facing sprites, so they read correctly regardless of the camera's own
+  // sway/dolly), plus soft "smoke" haze and pulsing colored stage-light
+  // glows. All three react to the same streak-driven ambientT the lane
+  // trails use (computed once in _loop and passed in) — the crowd visibly
+  // brightens/gets louder as a streak builds, easing back once it resets.
+  //
+  // Two rows are CORE (always fully visible, unaffected by performance —
+  // the baseline crowd this engine has always shown) and two are BONUS
+  // (gated on the rock/accuracy meter in _updateAudience, fading in as the
+  // player does well — a bigger venue for a better performance). Each
+  // member also gets a dancePhase used for the arms-up dance-burst reveal.
+  _buildAudience() {
+    this.audience = [];
+    const coreRows = [
+      { z: -HIGHWAY_LEN * 0.35, scale: 3.4, count: 5, core: true },
+      { z: -HIGHWAY_LEN * 0.55, scale: 2.6, count: 6, core: true },
+    ];
+    const bonusRows = [
+      // Nearer/bigger — front-row fans arriving first as accuracy climbs.
+      { z: -HIGHWAY_LEN * 0.25, scale: 3.8, count: 6, revealFrom: 35, revealTo: 65 },
+      // Further/smaller — the back of the venue filling in for a truly
+      // excellent run.
+      { z: -HIGHWAY_LEN * 0.68, scale: 2.0, count: 8, revealFrom: 60, revealTo: 95 },
+    ];
+    for (const side of [-1, 1]) {
+      for (const row of [...coreRows, ...bonusRows]) {
+        for (let i = 0; i < row.count; i++) {
+          const mat = new THREE.SpriteMaterial({
+            map: this.shared.silhouetteTex, color: 0x000000,
+            transparent: true, opacity: 0.5, depthWrite: false,
+          });
+          const sprite = new THREE.Sprite(mat);
+          const jitter = (Math.random() - 0.5) * 2.2;
+          const baseY = row.scale * 0.5 - 0.3;
+          sprite.position.set(
+            side * (HIGHWAY_W / 2 + 2.5 + i * 0.9) + jitter * 0.3,
+            baseY,
+            row.z + jitter
+          );
+          const s = row.scale * (0.85 + Math.random() * 0.3);
+          sprite.scale.set(s, s, 1);
+          this.scene.add(sprite);
+          // Bonus-row members stagger their own reveal threshold evenly
+          // across the row's [revealFrom, revealTo] range rather than all
+          // popping in at once at the same rock value.
+          const revealAt = row.core ? 0
+            : row.revealFrom + (row.revealTo - row.revealFrom) * (i / Math.max(1, row.count - 1));
+          this.audience.push({
+            sprite, mat, baseY,
+            baseOpacity: 0.32 + Math.random() * 0.15,
+            phase: Math.random() * Math.PI * 2,
+            dancePhase: Math.random() * Math.PI * 2,
+            bobJitter: 0.75 + Math.random() * 0.5,
+            isCore: !!row.core,
+            revealAt,
+            dancing: false,
+          });
+        }
+      }
+    }
+
+    this.smoke = [];
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const mat = new THREE.SpriteMaterial({
+          map: this.shared.glowTex, color: 0x9a86ff,
+          transparent: true, opacity: 0.08, depthWrite: false, blending: THREE.AdditiveBlending,
+        });
+        const sprite = new THREE.Sprite(mat);
+        const baseY = 2 + i * 1.5;
+        sprite.position.set(side * (HIGHWAY_W / 2 + 3.5), baseY, -HIGHWAY_LEN * (0.3 + i * 0.15));
+        sprite.scale.set(6, 8, 1);
+        this.scene.add(sprite);
+        this.smoke.push({ sprite, mat, baseY, drift: 0.15 + Math.random() * 0.15, phase: Math.random() * Math.PI * 2 });
+      }
+    }
+
+    this.stageLights = [];
+    for (const side of [-1, 1]) {
+      const mat = new THREE.SpriteMaterial({
+        map: this.shared.glowTex, color: this.accentColor,
+        transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.set(side * (HIGHWAY_W / 2 + 1.5), 9, -HIGHWAY_LEN * 0.4);
+      sprite.scale.set(3, 5, 1);
+      this.scene.add(sprite);
+      this.stageLights.push({ sprite, mat, phase: side > 0 ? 0 : Math.PI });
+    }
+  }
+
+  // cheerBoost (0..1, spikes when a spectator taps Cheer — see cheer() below)
+  // is additive on top of the streak-driven ambientT, decayed here rather
+  // than in cheer() itself so it fades smoothly frame-by-frame instead of
+  // as a single step. beatPulse drives the crowd's bob so they're actually
+  // moving in time with the music, not a generic idle sine wave.
+  // How "revealed" a given audience member currently is (0-1) — core
+  // members are always fully visible; bonus members fade in/out smoothly
+  // as `rock` crosses their own individual threshold. Shared by
+  // _updateAudience (live, every frame) and _finish (freezing the crowd at
+  // its true final size for the results screen, rather than snapping every
+  // still-hidden bonus member suddenly visible).
+  _audienceRevealT(a) {
+    if (a.isCore) return 1;
+    const rock = this.rock ?? ROCK_START;
+    return Math.max(0, Math.min(1,
+      (rock - (a.revealAt - AUDIENCE_REVEAL_FADE / 2)) / AUDIENCE_REVEAL_FADE));
+  }
+
+  _updateAudience(dt, t, ambientT, beatPulse) {
+    this._cheerFlash = Math.max(0, (this._cheerFlash || 0) - dt * 0.6);
+    const cheerBoost = this._cheerFlash;
+    // Dance-burst hype — spiked on streak milestones / Star Power / lucky
+    // PERFECTs (see _hitNote/activateStarPower), decayed here.
+    this._danceBurst = Math.max(0, (this._danceBurst || 0) - dt * DANCE_BURST_DECAY);
+    const danceBurst = this._danceBurst;
+    for (const a of this.audience) {
+      const revealT = this._audienceRevealT(a);
+
+      // Arms-up dance pose — a continuous per-member phase gated by the
+      // overall danceBurst scalar, so a burst naturally reveals a shifting
+      // SUBSET of the crowd (not all 50 in lockstep) and calms back down as
+      // danceBurst decays. Only touches the material when the boolean
+      // actually flips, since swapping `.map` needs needsUpdate=true.
+      const isDancing = danceBurst > 0.15 && (Math.sin(t * 2 + a.dancePhase) + 1) / 2 > 0.5;
+      if (isDancing !== a.dancing) {
+        a.dancing = isDancing;
+        a.mat.map = isDancing ? this.shared.silhouetteArmsUpTex : this.shared.silhouetteTex;
+        a.mat.needsUpdate = true;
+      }
+
+      const bobAmount = beatPulse * a.bobJitter * (isDancing ? 0.13 : 0.09);
+      a.sprite.position.y = a.baseY + Math.sin(t * 1.6 + a.phase) * 0.02 + bobAmount + cheerBoost * 0.15;
+      a.mat.opacity = revealT * (a.baseOpacity + ambientT * 0.4 + cheerBoost * 0.3);
+    }
+    for (const s of this.smoke) {
+      s.sprite.position.y += s.drift * dt;
+      if (s.sprite.position.y > s.baseY + 3) s.sprite.position.y = s.baseY;
+      s.mat.opacity = 0.05 + Math.sin(t * 0.3 + s.phase) * 0.03 + ambientT * 0.06 + cheerBoost * 0.05;
+    }
+    for (const l of this.stageLights) {
+      l.mat.opacity = 0.3 + Math.sin(t * 0.8 + l.phase) * 0.15 + ambientT * 0.35 + cheerBoost * 0.4;
+    }
+  }
+
+  // Public: a spectator (or the player themselves) tapped "Cheer" — gives
+  // the crowd/smoke/stage-lights a brief additive boost on top of whatever
+  // the streak is already driving, plus a synthesized crowd-noise burst.
+  // Safe to call before start() finishes setting up audioCtx (no-ops via
+  // the try/catch below) — genuinely possible if a cheer broadcast arrives
+  // in the brief window before the receiving engine has audio wired up.
+  cheer() {
+    this._cheerFlash = 1;
+    try {
+      this._playCheerBurst();
+    } catch { /* audio not ready yet — the visual boost above still applies */ }
+  }
+
+  // A short burst of bandpass-filtered noise with a handful of randomly
+  // detuned tone "whoops" layered on top — reads as a crowd cheer without
+  // needing a real sample (same no-external-asset convention as every other
+  // sound in this engine).
+  _playCheerBurst() {
+    const now = this.audioCtx.currentTime;
+    const sr = this.audioCtx.sampleRate;
+    const dur = 0.6;
+    const buf = this.audioCtx.createBuffer(1, sr * dur, sr);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) {
+      const env = Math.sin((Math.PI * i) / d.length); // rises then falls
+      d[i] = (Math.random() * 2 - 1) * env * 0.4;
+    }
+    const noise = this.audioCtx.createBufferSource();
+    noise.buffer = buf;
+    const f = this.audioCtx.createBiquadFilter();
+    f.type = 'bandpass'; f.frequency.value = 1400; f.Q.value = 0.7;
+    const g = this.audioCtx.createGain();
+    g.gain.value = 0.5;
+    noise.connect(f).connect(g).connect(this.audioCtx.destination);
+    noise.start(now);
+
+    for (let i = 0; i < 3; i++) {
+      const osc = this.audioCtx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = 260 + Math.random() * 180;
+      const og = this.audioCtx.createGain();
+      const start = now + i * 0.04;
+      og.gain.setValueAtTime(0.0001, start);
+      og.gain.exponentialRampToValueAtTime(0.06, start + 0.05);
+      og.gain.exponentialRampToValueAtTime(0.0001, start + 0.4);
+      osc.connect(og).connect(this.audioCtx.destination);
+      osc.start(start);
+      osc.stop(start + 0.42);
     }
   }
 
@@ -268,29 +677,20 @@ export class Game {
     // deep-space backdrop (set on the scene in _initThree); the starfield and
     // horizon glow below give it depth behind the highway.
 
-    // starfield
-    const starGeo = new THREE.BufferGeometry();
-    const N = 1400;
-    const pos = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) {
-      const r = 60 + Math.random() * 90;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.random() * Math.PI * 0.9;
-      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = Math.abs(r * Math.cos(phi)) - 8;
-      pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta) - 30;
-    }
-    starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    // starfield — same shared point positions reused across every instance;
+    // the random scatter is imperceptible to re-randomize per turn anyway, so
+    // sharing it costs nothing visually while skipping the 1400-point
+    // Math.random() loop on every single Game() construction.
     const starMat = new THREE.PointsMaterial({
       color: 0xbbaaff, size: 0.35, map: this.glowTex,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     });
-    this.stars = new THREE.Points(starGeo, starMat);
+    this.stars = new THREE.Points(this.shared.starGeo, starMat);
     this.scene.add(this.stars);
 
     // horizon glow disc
     const sun = new THREE.Mesh(
-      new THREE.CircleGeometry(20, 48),
+      this.shared.sunDisc,
       new THREE.MeshBasicMaterial({ color: 0x5a2bd4, transparent: true, opacity: 0.35 })
     );
     sun.position.set(0, 6, -85);
@@ -298,22 +698,40 @@ export class Game {
 
     // (rotating spotlight cones removed)
     this.spots = [];
+
+    // Supernova twinkle pool — ambient background sparkle scattered across
+    // the same starfield-shaped distribution as the stars themselves. Ticks
+    // continuously (idle menu screen included, see _idleLoop) independent
+    // of gameplay performance; _hitNote also gets a small bonus chance to
+    // fire one early on a PERFECT. Pool-and-reuse, same pattern as
+    // gemPool/particles/rings above — each entry starts dormant (life=0,
+    // invisible) with a staggered first-fire cooldown so they don't all
+    // flash together at song start.
+    this.supernovas = [];
+    for (let i = 0; i < SUPERNOVA_COUNT; i++) {
+      const mat = new THREE.SpriteMaterial({
+        map: this.glowTex, color: 0xffffff,
+        transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.visible = false;
+      this.scene.add(sprite);
+      this.supernovas.push({ sprite, mat, life: 0, maxLife: 1, nextTrigger: Math.random() * 6 });
+    }
   }
 
   _buildPools() {
     // --- note gems
     this.gemPool = [];
     this.activeNotes = [];
-    const baseGeo = new THREE.CylinderGeometry(0.62, 0.7, 0.26, 24);
-    const capGeo = new THREE.CylinderGeometry(0.4, 0.46, 0.3, 24);
     for (let i = 0; i < 72; i++) {
       const group = new THREE.Group();
       const baseMat = new THREE.MeshStandardMaterial({ color: 0x222230, roughness: 0.3, metalness: 0.9 });
       const capMat = new THREE.MeshStandardMaterial({
         color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.6, roughness: 0.2,
       });
-      const base = new THREE.Mesh(baseGeo, baseMat);
-      const cap = new THREE.Mesh(capGeo, capMat);
+      const base = new THREE.Mesh(this.shared.gemBase, baseMat);
+      const cap = new THREE.Mesh(this.shared.gemCap, capMat);
       cap.position.y = 0.12;
       group.add(base, cap);
       group.visible = false;
@@ -323,10 +741,9 @@ export class Game {
 
     // --- sustain tails
     this.tailPool = [];
-    const tailGeo = new THREE.BoxGeometry(0.4, 0.12, 1); // scaled in z
     for (let i = 0; i < 24; i++) {
       const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 });
-      const mesh = new THREE.Mesh(tailGeo, mat);
+      const mesh = new THREE.Mesh(this.shared.tailBox, mat); // scaled in z per-note
       mesh.visible = false;
       this.scene.add(mesh);
       this.tailPool.push({ mesh, mat, inUse: false });
@@ -350,13 +767,12 @@ export class Game {
 
     // --- shockwave rings
     this.rings = [];
-    const ringGeo = new THREE.TorusGeometry(0.7, 0.05, 8, 36);
     for (let i = 0; i < 10; i++) {
       const mat = new THREE.MeshBasicMaterial({
         color: 0xffffff, transparent: true, opacity: 0,
         depthWrite: false, blending: THREE.AdditiveBlending,
       });
-      const mesh = new THREE.Mesh(ringGeo, mat);
+      const mesh = new THREE.Mesh(this.shared.ringTorus, mat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.visible = false;
       this.scene.add(mesh);
@@ -368,14 +784,75 @@ export class Game {
   _idleLoop() {
     if (this.running) return;
     this._raf = requestAnimationFrame(() => this._idleLoop());
-    const t = performance.now() / 1000;
+    const now = performance.now();
+    const t = now / 1000;
+    // Own lightweight dt tracking — the idle loop never needed this before
+    // supernovas (background rotation only reads absolute t), so this
+    // resets cleanly if start()/stop() has been running gameplay's own
+    // dt-tracked _loop in between idle stretches.
+    const dt = this._lastIdleFrame != null ? Math.min(0.05, (now - this._lastIdleFrame) / 1000) : 0.016;
+    this._lastIdleFrame = now;
     this._animateBackground(t);
+    this._updateSupernovas(dt);
     this.highwayUniforms.uScroll.value = t * SPEED * 0.25;
     this.composer.render();
   }
 
   _animateBackground(t) {
     this.stars.rotation.y = t * 0.008;
+  }
+
+  // Ambient starfield twinkle pool — see the SUPERNOVA_* constants and
+  // _buildBackground. Ticks every frame in both gameplay (_loop) and the
+  // idle menu background (_idleLoop), so the effect is always alive, not
+  // just during a song.
+  _updateSupernovas(dt) {
+    for (const sn of this.supernovas) {
+      if (sn.life > 0) {
+        sn.life -= dt;
+        if (sn.life <= 0) {
+          sn.life = 0;
+          sn.sprite.visible = false;
+          sn.nextTrigger = SUPERNOVA_MIN_COOLDOWN + Math.random() * (SUPERNOVA_MAX_COOLDOWN - SUPERNOVA_MIN_COOLDOWN);
+        } else {
+          const k = sn.life / sn.maxLife; // 1 -> 0 over the flash's lifetime
+          // Quick bright rise (first 30% of life) then a longer fade —
+          // reads as a "flash" rather than a smooth pulse.
+          const flash = k > 0.7 ? (1 - k) / 0.3 : k / 0.7;
+          sn.mat.opacity = flash * 0.9;
+          sn.sprite.scale.setScalar(0.6 + (1 - k) * 1.8);
+        }
+      } else {
+        sn.nextTrigger -= dt;
+        if (sn.nextTrigger <= 0) this._triggerSupernova(sn);
+      }
+    }
+  }
+
+  // Fires a single, specific (currently-dormant) supernova — random
+  // position within the same distribution the starfield itself uses, a
+  // random soft pastel tint, and a random flash duration.
+  _triggerSupernova(sn) {
+    const r = 60 + Math.random() * 90;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.random() * Math.PI * 0.9;
+    sn.sprite.position.set(
+      r * Math.sin(phi) * Math.cos(theta),
+      Math.abs(r * Math.cos(phi)) - 8,
+      r * Math.sin(phi) * Math.sin(theta) - 30
+    );
+    sn.mat.color.setHSL(Math.random(), 0.55, 0.85);
+    sn.life = sn.maxLife = 0.9 + Math.random() * 0.6;
+    sn.sprite.visible = true;
+  }
+
+  // Public-ish helper used by _hitNote's PERFECT-hit bonus — finds the
+  // first currently-dormant slot in the pool and fires it early, on top of
+  // (not instead of) each one's own ambient random cycle. A no-op if every
+  // slot happens to already be mid-flash.
+  _triggerRandomSupernova() {
+    const dormant = this.supernovas.find((sn) => sn.life <= 0);
+    if (dormant) this._triggerSupernova(dormant);
   }
 
   // ------------------------------------------------- reactive neon wave fx
@@ -481,6 +958,22 @@ export class Game {
     this.rock = ROCK_START;
     this.sp = 0;
     this.spActive = false;
+    this._cheerFlash = 0;
+    // Per-frame decorative state for the DOM guitar/bass player overlay (see
+    // getPlayerVisualState below) — beat pulse and streak-ambient are
+    // snapshotted here each frame from the same math the highway/audience
+    // already use; hitFlash/hitColor are a one-shot-per-hit decay, set in
+    // _hitNote and decayed in _loop, mirroring frets' own missFlash pattern.
+    this._lastBeatPulse = 0;
+    this._lastStreakT = 0;
+    this._playerHitFlash = 0;
+    this._playerHitColor = this.fretColors[0];
+    // A fresh song shouldn't inherit a stale dance-burst from whatever the
+    // previous song ended on (this Game instance is reused across multiple
+    // songs — see WarmPerformanceMirror/playAgainSolo) — resetting this to
+    // 0 also forces _updateAudience's very first tick to flip any member
+    // still stuck on the arms-up pose back to idle.
+    this._danceBurst = 0;
     this.failed = false;
     this.ended = false;
     this.nextSpawn = 0;
@@ -499,8 +992,10 @@ export class Game {
 
     this._missNoise = this._makeMissNoise();
 
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
+    if (!this.readOnly) {
+      window.addEventListener('keydown', this._onKeyDown);
+      window.addEventListener('keyup', this._onKeyUp);
+    }
 
     this.running = true;
     this.hud.onScore(0, 1, 0);
@@ -529,6 +1024,27 @@ export class Game {
     g.gain.value = 0.9;
     s.connect(f).connect(g).connect(this.audioCtx.destination);
     s.start();
+  }
+
+  // Synthesized hit confirmation — the engine had a miss "clank" and a
+  // muffle dip on the song itself, but a successful hit had zero dedicated
+  // audio, only visual feedback (burst/shockwave/streak glow). A short
+  // triangle-wave blip with a fast exponential decay, pitched higher for a
+  // PERFECT than a GOOD, gives that missing "confirm" sound. Deliberately
+  // plain oscillator synthesis (no sample/buffer), matching the same
+  // no-external-asset convention _makeMissNoise already established.
+  _playHitTone(perfect) {
+    const now = this.audioCtx.currentTime;
+    const osc = this.audioCtx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = perfect ? 880 : 660;
+    const g = this.audioCtx.createGain();
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.exponentialRampToValueAtTime(0.22, now + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+    osc.connect(g).connect(this.audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.14);
   }
 
   _muffle() {
@@ -577,6 +1093,10 @@ export class Game {
     this.heldLanes[lane] = true;
     this.frets[lane].press = 1;
     this._tryHit(lane);
+    // Optional, backward-compatible: lets a UI layer react to the raw physical
+    // input (e.g. an animated instrument close-up) independent of hit/miss
+    // judgment. Safe no-op if the hud object doesn't supply it.
+    this.hud?.onLanePress?.(lane);
   }
 
   releaseLane(lane) {
@@ -587,6 +1107,7 @@ export class Game {
       if (s.lane === lane) { this._endSustain(s); return false; }
       return true;
     });
+    this.hud?.onLaneRelease?.(lane);
   }
 
   activateStarPower() {
@@ -596,7 +1117,54 @@ export class Game {
       this.hud.onBanner('STAR POWER!');
       this.hud.onSP(this.sp, true);
       this.hud.onScore(this.score, this.multiplier, this.streak);
+      // Star Power is the biggest hype moment in the song — the whole crowd
+      // should react.
+      this._danceBurst = 1;
     }
+  }
+
+  // Projects real 3D world points through the LIVE camera to get their
+  // current on-screen position, as a {xPercent, yPercent} pair (0-100,
+  // relative to the canvas). This is how the instrument sprite overlays
+  // (InstrumentTopOverlay/InstrumentBottomOverlay in InstrumentCloseup.jsx)
+  // find the highway's actual far edge and hit-line — a flat CSS percentage
+  // can only ever approximate where those points land on screen, since the camera's
+  // FOV and position both respond to aspect ratio (fovForAspect) AND move
+  // slightly during play (combo sway, Star Power dolly) — reading the real
+  // projection is exact regardless of screen size or camera state, and the
+  // caller re-reads it every frame specifically to track that camera motion
+  // live, not just on resize.
+  getHighwayAnchors() {
+    const project = (x, y, z) => {
+      const v = new THREE.Vector3(x, y, z).project(this.camera);
+      return { xPercent: ((v.x + 1) / 2) * 100, yPercent: ((1 - v.y) / 2) * 100 };
+    };
+    return {
+      // Far edge of the highway plane (see _buildHighway: plane spans
+      // HIGHWAY_LEN centered at z = -HIGHWAY_LEN/2 + 5, so its far edge is
+      // at z = -HIGHWAY_LEN + 5), at ground level (y=0, the road surface) —
+      // where a standing performer's feet should land.
+      farEdge: project(0, 0, -HIGHWAY_LEN + 5),
+      // The fret/hit-line row, at ground level.
+      hitLine: project(0, 0, HIT_Z),
+    };
+  }
+
+  // Per-frame decorative state for the DOM instrument player overlay's own
+  // stage-light effects (spotlight glow, streak rim light, Star Power
+  // flash/color-shift, hit flash — see InstrumentCloseup.jsx's
+  // InstrumentTopOverlay). Every value here is derived from math the loop
+  // already computes for the highway/fret/audience visuals — this just
+  // exposes it rather than duplicating it, same reasoning as
+  // getHighwayAnchors above.
+  getPlayerVisualState() {
+    return {
+      beatPulse: this._lastBeatPulse || 0,
+      streakT: this._lastStreakT || 0,
+      spActive: !!this.spActive,
+      hitFlash: this._playerHitFlash || 0,
+      hitColor: this._playerHitColor ?? this.fretColors[0],
+    };
   }
 
   _tryHit(lane) {
@@ -617,6 +1185,7 @@ export class Game {
       this.streak = 0;
       this._playClank();
       this.hud.onScore(this.score, this.multiplier, this.streak);
+      this.frets[lane].missFlash = 1;
       return;
     }
     this._hitNote(best, bestDt);
@@ -639,10 +1208,30 @@ export class Game {
     this.hud.onSP(this.sp, this.spActive);
     if (this.streak > 0 && this.streak % 50 === 0) {
       this.hud.onBanner(`${this.streak} NOTE STREAK!`);
+      // A streak milestone is a hype moment — send a wave of arms up
+      // through the crowd (see _updateAudience's dancing state).
+      this._danceBurst = 1;
     }
 
     this._burst(note.lane, perfect ? 16 : 10);
     this._shockwave(note.lane);
+    this._playHitTone(perfect);
+    if (this.streak >= STREAK_TRAIL_MIN) this.streakTrails[note.lane].flash = 1;
+    // Player-overlay hit flash (see getPlayerVisualState) — decayed per-frame
+    // in _loop, same one-shot-per-hit pattern as the streak trail flash above.
+    this._playerHitFlash = 1;
+    this._playerHitColor = this.fretColors[note.lane];
+
+    if (perfect) {
+      // Occasional smaller crowd pop on a PERFECT — not every single one
+      // (that would look chaotic), just often enough to feel alive.
+      if (Math.random() < 0.15) this._danceBurst = Math.max(this._danceBurst || 0, 0.6);
+      // Small bonus chance to fire a supernova early on top of its own
+      // ambient random cycle — ties the background sparkle to great play
+      // without making it the ONLY trigger (a rough run should still see
+      // the occasional ambient twinkle).
+      if (Math.random() < SUPERNOVA_PERFECT_CHANCE) this._triggerRandomSupernova();
+    }
 
     if (note.gem) this._recycleGem(note);
     if (note.len > 0) {
@@ -679,19 +1268,39 @@ export class Game {
       setTimeout(() => this.hud.onCountdown(''), 700);
     }
 
+    // 2. Beat-synced highway pulse — this uniform already drove the highway
+    // floor's own beat-line brightness; computed early here (before frets/
+    // lighting below) so both can now breathe with it too, not just the
+    // floor texture.
+    this.highwayUniforms.uScroll.value = t * SPEED;
+    const beatPhase = (t / this.beatDur) % 1;
+    const beatPulse = Math.max(0, 1 - beatPhase * 4);
+    this.highwayUniforms.uPulse.value = beatPulse;
+    if (this.dirLight) this.dirLight.intensity = 1.2 + beatPulse * 0.5;
+
+    // 3. Shared by both the lane trails and the audience/crowd below, so
+    // they stay in lockstep off the same streak curve.
+    const streakAmbientT = Math.max(0, Math.min(1,
+      (this.streak - STREAK_TRAIL_MIN) / (STREAK_TRAIL_MAX_STREAK - STREAK_TRAIL_MIN)));
+
+    // 6. Snapshot for the DOM player overlay (getPlayerVisualState) — same
+    // beatPulse/streakAmbientT values the 3D scene itself is already using
+    // this frame, plus the per-hit flash's own decay.
+    this._lastBeatPulse = beatPulse;
+    this._lastStreakT = streakAmbientT;
+    this._playerHitFlash = Math.max(0, (this._playerHitFlash || 0) - dt * PLAYER_HIT_FLASH_DECAY);
+
     this._spawnNotes(t);
     this._updateNotes(t);
     this._updateSustains(t, dt);
-    this._updateFrets(dt);
+    this._updateFrets(dt, beatPulse);
+    this._updateStreakTrails(dt, streakAmbientT);
+    this._updateAudience(dt, t, streakAmbientT, beatPulse);
     this._updateParticles(dt);
     this._updateRings(dt);
     this._animateBackground(now / 1000);
+    this._updateSupernovas(dt);
     this._updateWaveFx(dt);
-
-    // highway scroll + beat pulse
-    this.highwayUniforms.uScroll.value = t * SPEED;
-    const beatPhase = (t / this.beatDur) % 1;
-    this.highwayUniforms.uPulse.value = Math.max(0, 1 - beatPhase * 4);
 
     // star power drain + visuals
     if (this.spActive) {
@@ -708,8 +1317,19 @@ export class Game {
     this.railMat.color.lerp(new THREE.Color(this.spActive ? 0x3ef0ff : this.accentColorRail), dt * 5);
     this.bloom.strength += ((this.spActive ? 1.5 : 0.9) - this.bloom.strength) * dt * 5;
 
-    // camera sway for life
-    this.camera.position.x = Math.sin(now / 4200) * 0.35;
+    // 1 + 5. Combo-reactive camera, with an extra Star Power kick layered on
+    // top additively (both only ever pull AWAY from baseFov/CAMERA_BASE_Z, so
+    // they never fight a resize, which resets those base values directly).
+    const comboT = Math.min(1, this.streak / COMBO_FOV_STREAK_CAP);
+    const spFovKick = this.spActive ? SP_FOV_KICK : 0;
+    const targetFov = this.baseFov - comboT * COMBO_FOV_MAX_DELTA - spFovKick;
+    this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 3);
+    this.camera.updateProjectionMatrix();
+
+    const swayAmp = this.spActive ? CAMERA_SWAY_SP : CAMERA_SWAY_BASE;
+    this.camera.position.x = Math.sin(now / 4200) * swayAmp;
+    const targetZ = this.spActive ? SP_CAMERA_Z : CAMERA_BASE_Z;
+    this.camera.position.z += (targetZ - this.camera.position.z) * Math.min(1, dt * 3);
     this.camera.lookAt(0, 0, -16);
 
     this.composer.render();
@@ -764,6 +1384,7 @@ export class Game {
           this.hud.onScore(this.score, this.multiplier, this.streak);
           this.hud.onRock(this.rock);
           this._muffle();
+          this.frets[n.lane].missFlash = 1;
           n.gem.capMat.color.set(0x555560);
           n.gem.capMat.emissive.set(0x222228);
           n.gem.capMat.emissiveIntensity = 0.3;
@@ -831,14 +1452,36 @@ export class Game {
     n.tail = null;
   }
 
-  _updateFrets(dt) {
+  // beatPulse (0..1, spikes at each detected beat — see _loop) gives every
+  // fret ring a faint ambient brighten in time with the music, on top of its
+  // own press-glow; missFlash (also decayed here) blends the ring's emissive
+  // color toward red for a one-shot "that didn't land" cue, reverting to the
+  // lane's true color as it decays.
+  _updateFrets(dt, beatPulse = 0) {
     for (let i = 0; i < LANES; i++) {
       const f = this.frets[i];
       const target = this.heldLanes[i] ? 1 : 0;
       f.press += (target - f.press) * Math.min(1, dt * 18);
-      f.ringMat.emissiveIntensity = 0.5 + f.press * 2.2;
+      f.missFlash = Math.max(0, f.missFlash - dt * MISS_FLASH_DECAY);
+      f.ringMat.emissiveIntensity = 0.5 + f.press * 2.2 + f.missFlash * 1.8 + beatPulse * 0.18;
+      f.ringMat.emissive.copy(this._laneBaseColors[i]).lerp(new THREE.Color(0xff2020), f.missFlash);
       f.discMat.opacity = f.press * 0.55;
       f.group.scale.setScalar(1 + f.press * 0.12);
+    }
+  }
+
+  // 3. Lane trail streaks — ambient glow ramps in as the streak crosses
+  // STREAK_TRAIL_MIN, reaching full ambient intensity at
+  // STREAK_TRAIL_MAX_STREAK; each hit while above the threshold also adds a
+  // brief flash on top (set in _hitNote), decaying independently here.
+  // ambientT is computed once in _loop and shared with _updateAudience so
+  // the crowd and the lane trails stay in lockstep off the same curve.
+  _updateStreakTrails(dt, ambientT) {
+    for (const st of this.streakTrails) {
+      st.flash = Math.max(0, st.flash - dt * 2.5);
+      const opacity = ambientT * 0.22 + st.flash * 0.35;
+      st.mat.opacity = opacity;
+      st.mesh.visible = opacity > 0.01;
     }
   }
 
@@ -915,6 +1558,47 @@ export class Game {
     for (const p of this.particles) { p.life = 0; p.sprite.visible = false; }
     this.activeNotes = [];
     this.activeSustains = [];
+
+    // Reset every combo/Star-Power-driven visual back to neutral before
+    // handing off to _idleLoop() — that loop never touches the camera, frets,
+    // or streak trails, so without this, whatever state gameplay ended on
+    // (e.g. a tight FOV mid-streak, a red miss-flash, a lit trail) would
+    // otherwise linger visually behind the results screen.
+    this.camera.fov = this.baseFov;
+    this.camera.position.set(0, 7.8, CAMERA_BASE_Z);
+    this.camera.updateProjectionMatrix();
+    for (let i = 0; i < this.frets.length; i++) {
+      const f = this.frets[i];
+      f.press = 0;
+      f.missFlash = 0;
+      f.ringMat.emissiveIntensity = 0.5;
+      f.ringMat.emissive.copy(this._laneBaseColors[i]);
+    }
+    for (const st of this.streakTrails) { st.flash = 0; st.mat.opacity = 0; st.mesh.visible = false; }
+    // Freeze the crowd at its true final size — _audienceRevealT (using the
+    // rock value the song actually ended on) rather than a blind reset to
+    // baseOpacity, which would snap every still-hidden bonus member
+    // suddenly visible on the results screen even though they never
+    // actually appeared during play. Any member still stuck mid-dance-burst
+    // also reverts to its idle pose here, since _updateAudience (the only
+    // place that normally corrects this) stops running once ended=true.
+    for (const a of this.audience) {
+      a.mat.opacity = this._audienceRevealT(a) * a.baseOpacity;
+      if (a.dancing) {
+        a.dancing = false;
+        a.mat.map = this.shared.silhouetteTex;
+        a.mat.needsUpdate = true;
+      }
+    }
+    this._danceBurst = 0;
+    for (const s of this.smoke) { s.mat.opacity = 0.05; }
+    for (const l of this.stageLights) { l.mat.opacity = 0.3; }
+    // Same reset for the DOM player-overlay state (getPlayerVisualState) —
+    // otherwise a song ending mid-streak/mid-SP would leave that overlay's
+    // glow/rim-light lingering at gameplay intensity on the results screen.
+    this._lastBeatPulse = 0;
+    this._lastStreakT = 0;
+    this._playerHitFlash = 0;
 
     const total = this.chart.notes.length;
     const acc = total > 0 ? this.hits / total : 0;

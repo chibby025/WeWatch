@@ -24,6 +24,10 @@ const GAME_LABELS = {
   wordsmith: 'Wordsmith',
   rebus_round: 'Rebus Round',
   four_frames: 'Four Frames',
+  fowl_play: 'Fowl Play',
+  toad_ball: 'Toad Ball',
+  golf: 'Mini Golf',
+  rhythm_hero: 'Rhythm Hero',
 };
 
 /**

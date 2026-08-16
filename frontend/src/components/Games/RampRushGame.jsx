@@ -1,5 +1,13 @@
 // src/components/Games/RampRushGame.jsx
 //
+// TEMPORARILY REMOVED FROM THE APP — not enough time to finish/fix it (the
+// GLB vehicle models are also blocked by a BunnyCDN CORS-allowlist gap, see
+// CLAUDE.md). No longer imported anywhere (GameOverlay.jsx's lazy import +
+// case, and GameLobbyModal.jsx's games-array entry are all commented out),
+// so this file is inert and won't be bundled. To re-enable: uncomment those
+// call sites, plus the matching ones in game_manager.go/websocket_handler.go
+// (and remove the //go:build ignore tags on ramp_rush.go/ramp_rush_test.go).
+//
 // Ramp Rush — 2-player turn-based car-jump game. Tap rapidly to charge power,
 // the car auto-launches once you stop tapping, flies down a straight track,
 // and must clear every obstacle to score. Physics/flight simulation runs

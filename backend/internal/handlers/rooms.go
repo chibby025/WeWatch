@@ -742,6 +742,33 @@ func EndWatchSessionHandler(c *gin.Context) {
 		// independent state).
 		utils.AbortProgressiveUploadForSession(sessionID)
 
+		// Rhythm Hero uploaded-song audio has no DB row at all — it's a single
+		// CDN object per session, uploaded under a predictable rhythm_hero/
+		// session_{id}/ prefix (see UploadRhythmHeroAudioHandler). Delete the
+		// whole prefix (a no-op if nobody ever uploaded a song this session)
+		// and clear the in-memory "live performance" cache so a stale
+		// performance can never be resurrected for a late joiner to a brand
+		// new, unrelated future session in the same room.
+		if err := utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("rhythm_hero/session_%s/", sessionID)); err != nil {
+			log.Printf("⚠️ [EndWatchSession cleanup] Failed to delete Rhythm Hero audio prefix for session %s: %v", sessionID, err)
+		}
+		// The CDN delete above is a no-op in local dev (UploadLocalFileToBunnyCDN
+		// never actually pushes anything there — the file stays on local disk
+		// instead), so it alone would leak disk space across dev sessions
+		// indefinitely. os.RemoveAll is a safe no-op if nobody ever uploaded a
+		// song this session (directory never created).
+		if err := os.RemoveAll(fmt.Sprintf("uploads/rhythm_hero/session_%s", sessionID)); err != nil {
+			log.Printf("⚠️ [EndWatchSession cleanup] Failed to remove local Rhythm Hero audio dir for session %s: %v", sessionID, err)
+		}
+		if hub != nil {
+			hub.rhythmHeroLiveMutex.Lock()
+			delete(hub.rhythmHeroLive, session.RoomID)
+			hub.rhythmHeroLiveMutex.Unlock()
+			hub.rhythmHeroLeaderboardMutex.Lock()
+			delete(hub.rhythmHeroLeaderboard, session.RoomID)
+			hub.rhythmHeroLeaderboardMutex.Unlock()
+		}
+
 		tx := DB.Begin()
 		if tx.Error != nil {
 			log.Printf("⚠️ [EndWatchSession cleanup] Failed to start transaction: %v", tx.Error)
@@ -1004,6 +1031,23 @@ func AutoEndSession(sessionID string) error {
 	if err := tx.Where("session_id = ?", sessionID).Find(&tempItems).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to fetch temp media: %v", err)
+	}
+
+	// Rhythm Hero uploaded-song audio — no DB row, same predictable
+	// rhythm_hero/session_{id}/ prefix as EndWatchSessionHandler's own cleanup.
+	if err := utils.DeletePathFromBunnyCDNStorage(fmt.Sprintf("rhythm_hero/session_%s/", sessionID)); err != nil {
+		log.Printf("⚠️ AutoEndSession: Failed to delete Rhythm Hero audio prefix for session %s: %v", sessionID, err)
+	}
+	if err := os.RemoveAll(fmt.Sprintf("uploads/rhythm_hero/session_%s", sessionID)); err != nil {
+		log.Printf("⚠️ AutoEndSession: Failed to remove local Rhythm Hero audio dir for session %s: %v", sessionID, err)
+	}
+	if hub != nil {
+		hub.rhythmHeroLiveMutex.Lock()
+		delete(hub.rhythmHeroLive, session.RoomID)
+		hub.rhythmHeroLiveMutex.Unlock()
+		hub.rhythmHeroLeaderboardMutex.Lock()
+		delete(hub.rhythmHeroLeaderboard, session.RoomID)
+		hub.rhythmHeroLeaderboardMutex.Unlock()
 	}
 
 	log.Printf("🗑️ AutoEndSession: Found %d temporary media items to delete for session %s", len(tempItems), sessionID)
@@ -2746,12 +2790,17 @@ func GetActiveSessionHandler(c *gin.Context) {
 		return
 	}
 
+	// Deliberately no heartbeat filter in the query itself — a stale heartbeat
+	// (backend restart, brief connectivity loss, a backgrounded app) doesn't mean
+	// the session is dead, just that it hasn't checked in for a bit. Filtering on
+	// that here made a genuinely-still-open session (ended_at IS NULL) disappear
+	// from its own room page — no Join button, no End button — well before the
+	// backend's own stale-session sweep would actually close it. The real
+	// joinability decision (heartbeat freshness OR a live WS connection) happens
+	// below, after wsConnectionCount is available.
 	var session models.WatchSession
-	heartbeatCutoff := time.Now().Add(-5 * time.Minute)
-	err = DB.Where(
-		"room_id = ? AND ended_at IS NULL AND is_active = ? AND (last_heartbeat_at IS NULL OR last_heartbeat_at > ?)",
-		roomID, true, heartbeatCutoff,
-	).Order("started_at DESC").First(&session).Error
+	err = DB.Where("room_id = ? AND ended_at IS NULL AND is_active = ?", roomID, true).
+		Order("started_at DESC").First(&session).Error
 
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -2764,6 +2813,26 @@ func GetActiveSessionHandler(c *gin.Context) {
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
 		}
+		return
+	}
+
+	// A session with zero live WS connections AND a heartbeat that's gone stale
+	// well beyond any normal reconnect window is treated the same as "no session"
+	// here — it's still technically open in the DB and will eventually be closed
+	// by the stale-session sweep, but showing it as joinable would be misleading.
+	// A NULL heartbeat (never sent one yet — a session that just started) is
+	// always treated as fresh. wsConnectionCount is real-time proof of life,
+	// independent of heartbeat timing, so it's checked first/preferentially.
+	const joinableHeartbeatWindow = 15 * time.Minute
+	wsConnectionCount := hub.GetRoomConnectionCount(uint(roomID))
+	heartbeatFresh := session.LastHeartbeatAt == nil || time.Since(*session.LastHeartbeatAt) < joinableHeartbeatWindow
+	if wsConnectionCount == 0 && !heartbeatFresh {
+		c.JSON(http.StatusOK, gin.H{
+			"session_id":   nil,
+			"is_existing":  false,
+			"started_at":   nil,
+			"member_count": 0,
+		})
 		return
 	}
 
@@ -2825,8 +2894,9 @@ func GetActiveSessionHandler(c *gin.Context) {
 		}
 	}(session.ID, members, wsActiveUserIDs)
 
+	// wsConnectionCount was already computed above for the joinability check —
+	// reused here rather than queried a second time.
 	memberCount := int64(len(members))
-	wsConnectionCount := hub.GetRoomConnectionCount(uint(roomID))
 
 	// ✅ Fetch host username for ticket purchase modal
 	var hostUser models.User

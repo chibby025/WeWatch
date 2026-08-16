@@ -6,7 +6,6 @@ import ChessGame from './ChessGame';
 import TriviaGame from './TriviaGame';
 import RebusRoundGame from './RebusRoundGame';
 import FourFramesGame from './FourFramesGame';
-import KaraokeGame from './KaraokeGame';
 import OthelloGame from './OthelloGame';
 import CheckersGame from './CheckersGame';
 import CrazyEightsGame from './CrazyEightsGame';
@@ -42,11 +41,9 @@ const SpaceAttackGame = lazy(() => import('./SpaceAttackGame'));
 const ToadBallGame = lazy(() => import('./ToadBallGame'));
 const RhythmHeroGame = lazy(() => import('./RhythmHeroGame'));
 const GolfGame = lazy(() => import('./GolfGame'));
-const MicroRacingGame = lazy(() => import('./MicroRacingGame'));
 const ObbyParkourGame = lazy(() => import('./ObbyParkourGame'));
-// 3D + physics (react-three-fiber, cannon-es) — heaviest bundle in this
-// package after DOOM, same lazy-load rationale.
-const RampRushGame = lazy(() => import('./RampRushGame'));
+// const MicroRacingGame = lazy(() => import('./MicroRacingGame')); // temporarily removed
+// const RampRushGame = lazy(() => import('./RampRushGame')); // temporarily removed
 // const RouletteGame = lazy(() => import('./RouletteGame')); // temporarily removed
 
 import HangmanGame from './HangmanGame';
@@ -57,7 +54,7 @@ import SudokuGame from './SudokuGame';
 import PingPongGame from './PingPongGame';
 import AirHockeyGame from './AirHockeyGame';
 
-export default function GameOverlay({ activeGame, currentUserId, roomId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore, gameErrorMsg, gameErrorKey }) {
+export default function GameOverlay({ activeGame, currentUserId, roomId, sessionId, onMove, onClose, onEndGame, onPlayAgain, onPostResult, onRelayPacket, registerRelayReceiver, myHand, drawerWord, hotSeatTournament, onTournamentScore, gameErrorMsg, gameErrorKey, onRhythmHeroBroadcast, rhythmHeroLiveInfo, rhythmHeroSelectingInfo, rhythmHeroScoreInfo, rhythmHeroLeaderboard, registerRhythmHeroInputReceiver, registerRhythmHeroCheerReceiver, currentUsername }) {
   if (!activeGame) return null;
 
   const handleMove = (moveData) => {
@@ -143,16 +140,6 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           onPostResult={onPostResult}
           gameErrorMsg={gameErrorMsg}
           gameErrorKey={gameErrorKey}
-        />
-      );
-
-    case 'karaoke':
-      return (
-        <KaraokeGame
-          gameState={activeGame}
-          currentUserId={currentUserId}
-          onMove={handleMove}
-          onClose={onClose}
         />
       );
 
@@ -350,7 +337,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
         </Suspense>
       );
 
-    case 'micro_racing':
+    /* case 'micro_racing': temporarily removed
       // Genuine N-player multiplayer, same shape as quake3 above — every
       // room member's iframe connects directly to the forked racing app's
       // own Railway-hosted server (its own real room/physics/netcode), no
@@ -366,6 +353,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           />
         </Suspense>
       );
+    */
 
     case 'obby_parkour':
       // Genuine N-player multiplayer, same shape as quake3/micro_racing
@@ -573,6 +561,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
         />
       );
 
+    /* ramp_rush temporarily removed
     case 'ramp_rush':
       return (
         <Suspense fallback={<div className="fixed inset-0 bg-gray-950 flex items-center justify-center text-white text-lg">Loading Ramp Rush…</div>}>
@@ -587,6 +576,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
           />
         </Suspense>
       );
+    */
 
     case 'jigsaw':
       return (
@@ -682,8 +672,10 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
 
     case 'toad_ball':
       // Arcade: single-player or hot-seat tournament — same "pass the device
-      // to whoever's turn it is" pattern as fowl_play, but self-contained
-      // canvas gameplay (no relay plumbing needed, unlike fowl_play's iframe).
+      // to whoever's turn it is" pattern as fowl_play. Non-playing members
+      // get a live spectator view inside ToadBallGame itself, driven by
+      // relayed full-state snapshots from the host's own running game —
+      // same generic relay_packet plumbing fowl_play already uses.
       return (
         <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
           <ToadBallGame
@@ -693,6 +685,8 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             hotSeatTournament={hotSeatTournament}
             currentUserId={currentUserId}
             onTournamentScore={onTournamentScore}
+            onRelayPacket={onRelayPacket}
+            registerRelayReceiver={registerRelayReceiver}
           />
         </Suspense>
       );
@@ -710,6 +704,17 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             hotSeatTournament={hotSeatTournament}
             currentUserId={currentUserId}
             onTournamentScore={onTournamentScore}
+            onRhythmHeroBroadcast={onRhythmHeroBroadcast}
+            rhythmHeroLiveInfo={rhythmHeroLiveInfo}
+            rhythmHeroSelectingInfo={rhythmHeroSelectingInfo}
+            rhythmHeroScoreInfo={rhythmHeroScoreInfo}
+            rhythmHeroLeaderboard={rhythmHeroLeaderboard}
+            currentUsername={currentUsername}
+            registerRhythmHeroInputReceiver={registerRhythmHeroInputReceiver}
+            registerRhythmHeroCheerReceiver={registerRhythmHeroCheerReceiver}
+            roomId={roomId}
+            sessionId={sessionId}
+            onPostResult={onPostResult}
           />
         </Suspense>
       );
@@ -719,6 +724,8 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
       // GolfGame.jsx header) — combines toad_ball's hot-seat precedence with
       // fowl_play's iframe/postMessage shape, since golf has no server-side
       // move logic of its own (a real Vercel-hosted fork, not a relay).
+      // onRelayPacket/registerRelayReceiver carry the active player's live
+      // ball-position updates to every spectator's own read-only mirror.
       return (
         <Suspense fallback={<div className="fixed inset-0 bg-black" />}>
           <GolfGame
@@ -728,6 +735,8 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, onMove,
             hotSeatTournament={hotSeatTournament}
             currentUserId={currentUserId}
             onTournamentScore={onTournamentScore}
+            onRelayPacket={onRelayPacket}
+            registerRelayReceiver={registerRelayReceiver}
           />
         </Suspense>
       );

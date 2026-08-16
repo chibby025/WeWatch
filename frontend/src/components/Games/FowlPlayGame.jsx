@@ -335,13 +335,20 @@ export default function FowlPlayGame({
     );
   }
 
-  // ─── Score recorded — waiting for other players ──────────────────────────────
+  // ─── Score recorded — waiting for other players (or eliminated, in bracket mode) ──
   if (isInTournament && myScore !== null) {
+    const isEliminated = hotSeatTournament?.participants?.some(
+      (p) => p.user_id === currentUserId && p.eliminated
+    );
     return (
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
         <span className="text-6xl">🎯</span>
         <p className="text-lg font-semibold">Your score: {myScore.toLocaleString()}</p>
-        <p className="text-sm text-gray-400">Waiting for other players to finish…</p>
+        {isEliminated ? (
+          <p className="text-sm text-gray-400">You were eliminated — thanks for playing!</p>
+        ) : (
+          <p className="text-sm text-gray-400">Waiting for other players to finish…</p>
+        )}
         <button
           onClick={onClose}
           className="mt-2 px-5 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors"

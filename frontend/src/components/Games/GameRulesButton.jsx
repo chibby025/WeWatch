@@ -165,16 +165,6 @@ const RULES = {
       'After the last round, the host taps "Show Results" — highest total score wins (a tie is a draw).',
     ],
   },
-  karaoke: {
-    title: 'Music Warrior',
-    rules: [
-      'The host searches for a song, picks the right match from the lyrics database, then pastes a YouTube link to an instrumental/karaoke-version of it.',
-      'Once started, everyone in the room sees the video playing and synced, highlighted lyrics — sing along together!',
-      'The host controls playback (play/pause/seek); everyone else just watches and sings.',
-      'The host can switch to a new song at any time with "New Song," or end the session for everyone.',
-      'This is just for fun — there\'s no scoring or winner.',
-    ],
-  },
   toad_ball: {
     title: 'Toad Ball',
     rules: [
@@ -226,16 +216,6 @@ const RULES = {
       'Switch weapons: number keys 1–9. Console: ~.',
       'First load can take a little while — the level data downloads once and is cached after that.',
       'On mobile: an on-screen joystick handles movement, and a drag zone on the right handles look/aim — a hint shows the first time you touch it.',
-    ],
-  },
-  micro_racing: {
-    title: 'Micro Racing',
-    rules: [
-      'Real isometric kart racing multiplayer — every player who joins races on the same live track together.',
-      'Accelerate: W or Up. Brake/reverse: S or Down. Steer: A/D or Left/Right.',
-      'The room owner picks the car, track, lap count, and can add AI bots to fill empty slots before starting.',
-      'Race to complete the set number of laps first — live positions and lap times show on the leaderboard.',
-      'Keyboard-only for now — best played on a desktop or laptop.',
     ],
   },
   obby_parkour: {
