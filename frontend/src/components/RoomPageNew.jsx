@@ -93,6 +93,31 @@ const formatChatDate = (dateStr) => {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 };
 
+// Per-room-chat "last read message" marker — localStorage (not the in-memory
+// _roomChatCache above) specifically because it needs to survive a full
+// unmount/remount cycle with certainty: leaving via Taskbar's Leave Call
+// navigates to an entirely different route (VideoWatch etc.), unmounting
+// this component and closing its WS connection, then mounting a fresh
+// instance on return. Keyed the same way _roomChatCache is (`${roomId}:${groupId||'main'}`)
+// so each room/group has its own independent read position.
+const LAST_READ_PREFIX = 'wewatch_room_last_read_';
+const getLastReadId = (cacheKey) => {
+  try {
+    const raw = localStorage.getItem(`${LAST_READ_PREFIX}${cacheKey}`);
+    return raw ? Number(raw) : null;
+  } catch {
+    return null; // localStorage disabled/unavailable — restore just won't work this session
+  }
+};
+const setLastReadId = (cacheKey, messageId) => {
+  if (messageId == null) return;
+  try {
+    localStorage.setItem(`${LAST_READ_PREFIX}${cacheKey}`, String(messageId));
+  } catch {
+    // ignore — same as above
+  }
+};
+
 const RoomPageNew = () => {
   const { id: roomId } = useParams();
   const navigate = useNavigate();
@@ -132,6 +157,9 @@ const RoomPageNew = () => {
   const messagesContainerRef = useRef(null);
   // Tracks current cache key (roomId:groupId) so WS handlers can update cache without stale closure
   const chatCacheKeyRef = useRef(`${roomId}:main`);
+  // Briefly true right after restoreOrScrollToBottom jumps to the first
+  // unread message — see checkScrollPosition for why this exists.
+  const justRestoredRef = useRef(false);
   const headerRef = useRef(null);
   const [mobileHeaderHeight, setMobileHeaderHeight] = useState(80);
   const [openMenuIndex, setOpenMenuIndex] = useState(null);
@@ -155,6 +183,18 @@ const RoomPageNew = () => {
   const [swipingMsgIndex, setSwipingMsgIndex] = useState(null);
   const [swipeX, setSwipeX] = useState(0);
   const [highlightedMessageId, setHighlightedMessageId] = useState(null);
+  // True only while a messages fetch is genuinely in flight with nothing cached
+  // yet to show — drives a spinner instead of the "No messages yet" empty
+  // state, which previously couldn't distinguish "genuinely empty" from
+  // "hasn't loaded yet" on a cold cache (first-ever visit to a room/group).
+  const [isLoadingMessages, setIsLoadingMessages] = useState(() => !_roomChatCache.get(`${roomId}:main`)?.length);
+  // Id of the first message the user hasn't seen yet, restored from the
+  // wewatch_room_last_read_* localStorage marker on the fetch that follows a
+  // fresh mount (e.g. returning from a watch session via Leave Call) — drives
+  // the "New Messages" divider and lets the initial scroll land there instead
+  // of always jumping to the newest message. Cleared once the user reaches
+  // the bottom (see checkScrollPosition/scrollToBottom).
+  const [firstUnreadMessageId, setFirstUnreadMessageId] = useState(null);
 
   // Voice note state
   const [isRecording, setIsRecording] = useState(false);
@@ -767,6 +807,7 @@ const RoomPageNew = () => {
     const cacheKey = `${roomId}:main`;
     const cached = _roomChatCache.get(cacheKey);
     if (cached?.length) setMessages(cached);
+    setIsLoadingMessages(true);
     try {
       const response = await apiClient.get(`/api/rooms/${roomId}/messages`);
       const msgs = response.data.messages || [];
@@ -777,9 +818,11 @@ const RoomPageNew = () => {
       const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
       _roomChatCache.set(cacheKey, capped.slice(-50));
       setMessages(capped);
-      scrollToBottom();
+      restoreOrScrollToBottom(cacheKey, capped);
     } catch (err) {
       console.error('Failed to fetch messages:', err);
+    } finally {
+      setIsLoadingMessages(false);
     }
   };
 
@@ -863,6 +906,10 @@ const RoomPageNew = () => {
   // Handle group selection
   const handleGroupSelect = (groupId) => {
     setSelectedGroupId(groupId);
+    // Clear any unread marker from whichever chat was previously showing —
+    // fetchMessagesForGroup below will compute a fresh one for this group.
+    setFirstUnreadMessageId(null);
+    setUnreadCount(0);
     // Only blank out if this group has no cache — fetchMessagesForGroup will serve cache instantly
     if (!_roomChatCache.get(`${roomId}:${groupId || 'main'}`)?.length) setMessages([]);
     fetchMessagesForGroup(groupId);
@@ -930,6 +977,7 @@ const RoomPageNew = () => {
     const cacheKey = `${roomId}:${groupId || 'main'}`;
     const cached = _roomChatCache.get(cacheKey);
     if (cached?.length) setMessages(cached);
+    setIsLoadingMessages(true);
     try {
       const url = groupId
         ? `/api/rooms/${roomId}/messages?room_group_id=${groupId}`
@@ -939,9 +987,12 @@ const RoomPageNew = () => {
       const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
       _roomChatCache.set(cacheKey, capped.slice(-50));
       setMessages(capped);
+      restoreOrScrollToBottom(cacheKey, capped);
     } catch (err) {
       console.error('Failed to fetch messages:', err);
       toast.error('Failed to load messages');
+    } finally {
+      setIsLoadingMessages(false);
     }
   };
 
@@ -1360,26 +1411,98 @@ const RoomPageNew = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     setUnreadCount(0);
     setHasMention(false);
+    setFirstUnreadMessageId(null);
+  };
+
+  // Jumps to a specific message on initial load (unlike scrollToMessage below,
+  // which is for jumping to a reply target while already viewing the chat) —
+  // instant (no smooth animation, which would look janky snapping through a
+  // long backlog) and positions the target at the TOP of the viewport rather
+  // than centered, reading naturally as "here's where new stuff begins".
+  const jumpToFirstUnread = (messageId) => {
+    const el = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'auto', block: 'start' });
+    setHighlightedMessageId(messageId);
+    setTimeout(() => setHighlightedMessageId(null), 1800);
+  };
+
+  // Called right after every fresh messages fetch (both the main-chat and
+  // per-group fetchers). Restores to the first message the user hasn't seen
+  // yet — per the wewatch_room_last_read_* marker (see getLastReadId above) —
+  // if there is one, instead of always jumping to whatever's newest right
+  // now. This is what makes "Leave Call" -> back on RoomPageNew land you
+  // roughly where you left off rather than always at the bottom, even though
+  // messages may have arrived the whole time you were away in the session
+  // (this component's own WS connection is closed while unmounted, so those
+  // arrivals are only ever discovered via this fresh fetch, not live).
+  // Takes the message list explicitly (not the `messages` state closure) since
+  // this always runs synchronously right after setMessages(msgsList) in the
+  // same tick, before that state update has actually applied.
+  const restoreOrScrollToBottom = (cacheKey, msgsList) => {
+    if (!msgsList.length) return;
+    const lastReadId = getLastReadId(cacheKey);
+    const newest = msgsList[msgsList.length - 1];
+    if (lastReadId != null && lastReadId !== newest.id) {
+      const lastReadIndex = msgsList.findIndex((m) => m.id === lastReadId);
+      // lastReadIndex === -1 means that message fell out of the fetched/capped
+      // window (e.g. a very long time away) — nothing to restore to, fall
+      // through to the normal scroll-to-bottom below.
+      if (lastReadIndex !== -1 && lastReadIndex < msgsList.length - 1) {
+        const firstUnread = msgsList[lastReadIndex + 1];
+        setFirstUnreadMessageId(firstUnread.id);
+        setUnreadCount(msgsList.length - 1 - lastReadIndex);
+        // Suppresses checkScrollPosition's own "at bottom -> mark fully
+        // caught up" logic for a moment — confirmed via real end-to-end
+        // testing to be a genuine, not just theoretical, issue: when the
+        // unread block itself is short (e.g. 5 short messages), landing on
+        // the FIRST unread message already reads as "within 100px of the
+        // true bottom" by that same isAtBottom threshold, which would
+        // otherwise immediately self-clear the very divider/pill this just
+        // set, before the user ever saw it. 2000ms comfortably covers the
+        // instant (non-smooth) jump below plus any scroll events it fires;
+        // ordinary scrolling afterward is completely unaffected.
+        justRestoredRef.current = true;
+        setTimeout(() => { justRestoredRef.current = false; }, 2000);
+        // Deferred: the DOM hasn't committed the just-set messages yet —
+        // document.querySelector would find nothing if called synchronously here.
+        setTimeout(() => jumpToFirstUnread(firstUnread.id), 60);
+        return;
+      }
+    }
+    scrollToBottom();
   };
 
   // Check if user is at bottom of messages
   const checkScrollPosition = () => {
     if (!messagesContainerRef.current) return;
-    
+
     const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 100; // 100px threshold
+    // justRestoredRef guard: see restoreOrScrollToBottom above.
+    const isAtBottom = !justRestoredRef.current && (scrollHeight - scrollTop - clientHeight < 100); // 100px threshold
     setShowScrollButton(!isAtBottom);
-    
+
     // Reset unread count when user manually scrolls to bottom
     if (isAtBottom && unreadCount > 0) {
       setUnreadCount(0);
     }
-    
+    if (isAtBottom && firstUnreadMessageId !== null) {
+      setFirstUnreadMessageId(null);
+    }
+
     // Track the last visible message index when scrolling away from bottom
     if (!isAtBottom && lastVisibleMessageIndexRef.current === null) {
       lastVisibleMessageIndexRef.current = messages.length - 1;
     } else if (isAtBottom) {
       lastVisibleMessageIndexRef.current = null;
+    }
+
+    // Persist "caught up to the newest message" so a later mount (e.g.
+    // returning from a watch session via Leave Call) can restore to this
+    // point via restoreOrScrollToBottom above, instead of always landing on
+    // whatever happens to be newest at that later time.
+    if (isAtBottom && messages.length > 0) {
+      setLastReadId(chatCacheKeyRef.current, messages[messages.length - 1].id);
     }
   };
 
@@ -2803,11 +2926,18 @@ const RoomPageNew = () => {
           style={isMobile ? { paddingTop: `${mobileHeaderHeight + 8}px`, paddingBottom: '110px' } : undefined}
         >
         {messages.length === 0 ? (
-          <div className="text-center text-gray-400 py-8">
-            <FilmIcon className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p className="text-base">No messages yet</p>
-            <p className="text-xs mt-1 opacity-75">Start the conversation!</p>
-          </div>
+          isLoadingMessages ? (
+            <div className="flex flex-col items-center justify-center gap-3 text-gray-400 py-10">
+              <div className="w-7 h-7 rounded-full border-2 border-gray-300 dark:border-gray-700 border-t-purple-500 animate-spin" />
+              <p className="text-sm">Loading messages…</p>
+            </div>
+          ) : (
+            <div className="text-center text-gray-400 py-8">
+              <FilmIcon className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p className="text-base">No messages yet</p>
+              <p className="text-xs mt-1 opacity-75">Start the conversation!</p>
+            </div>
+          )
         ) : (
           messages.map((msg, index) => {
             const isOwnMessage = msg.user_id === currentUser?.id;
@@ -2827,12 +2957,27 @@ const RoomPageNew = () => {
               </div>
             ) : null;
 
+            // Marks the boundary restored from the wewatch_room_last_read_*
+            // marker (see restoreOrScrollToBottom) — everything from here on
+            // arrived since the user's last visit (e.g. while they were away
+            // in a watch session, whose duration this component's own WS
+            // connection is closed for the whole time).
+            const showUnreadDivider = firstUnreadMessageId != null && msg.id === firstUnreadMessageId;
+            const unreadDivider = showUnreadDivider ? (
+              <div className="flex items-center gap-2 my-2 px-1">
+                <div className="flex-1 h-px bg-purple-400/50" />
+                <span className="text-[10px] font-bold uppercase tracking-wide text-purple-500 dark:text-purple-300 px-1 select-none">New Messages</span>
+                <div className="flex-1 h-px bg-purple-400/50" />
+              </div>
+            ) : null;
+
             // System announcements (e.g. VS Battle result)
             if (msg.message_type === 'system') {
               return (
                 <React.Fragment key={index}>
                   {dateDivider}
-                  <div className="flex justify-center my-2">
+                  {unreadDivider}
+                  <div data-message-index={index} data-message-id={msg.id} className="flex justify-center my-2">
                     <div className="bg-gray-100 dark:bg-gray-800/50 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-xs px-4 py-1.5 rounded-full text-center max-w-xs">
                       {msg.message}
                     </div>
@@ -2846,8 +2991,10 @@ const RoomPageNew = () => {
               return (
                 <React.Fragment key={index}>
                   {dateDivider}
+                  {unreadDivider}
                   <div
                     data-message-index={index}
+                    data-message-id={msg.id}
                     className="flex justify-center"
                   >
                     <PollMessage
@@ -2878,6 +3025,7 @@ const RoomPageNew = () => {
             return (
               <React.Fragment key={index}>
                 {dateDivider}
+                {unreadDivider}
                 <div
                   data-message-index={index}
                   data-message-id={msg.id}
