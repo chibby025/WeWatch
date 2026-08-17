@@ -2,9 +2,14 @@
 // placement against a REAL rendering highway — no login, no room, no
 // WebSocket, no need to click through instrument/song pickers each time.
 // Fetches a small synthesized test tone once, builds a real chart from it,
-// and drives the real Three.js engine + the real InstrumentTop/BottomOverlay
-// components directly, so what you see here is pixel-identical to what a
+// and drives the real Three.js engine + the real InstrumentTopOverlay
+// component directly, so what you see here is pixel-identical to what a
 // real player sees — just without any of the game-flow friction.
+//
+// Only the top (full-performer) overlay is a highway concern now — the
+// fretting-hand close-up moved to the loading screen (see
+// InstrumentLoadingSprite/StagedProgress in RhythmHeroGame.jsx), so it's no
+// longer part of this tool.
 //
 // Registered as a persistent route (/dev/rhythm-hero-highway), matching
 // this project's existing SVGComparison/VsBattlePreview dev-tool convention
@@ -12,8 +17,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Game } from '../Games/rhythm/rhythmGameEngine';
 import { generateChart } from '../Games/rhythm/analysis';
-import { InstrumentTopOverlay, InstrumentBottomOverlay } from '../Games/rhythm/InstrumentCloseup';
-import { INSTRUMENT_TOP_SHEETS, INSTRUMENT_BOTTOM_SHEETS } from '../Games/rhythm/spriteSheets';
+import { InstrumentTopOverlay } from '../Games/rhythm/InstrumentCloseup';
+import { INSTRUMENT_TOP_SHEETS } from '../Games/rhythm/spriteSheets';
 
 // Served locally (frontend/public/dev-assets/), not from BunnyCDN — same-origin,
 // so this tool works regardless of the separate BunnyCDN CORS-allowlist gap
@@ -40,7 +45,6 @@ export default function RhythmHeroHighwayPreview() {
   const engineRef = useRef(null);
   const audioCtxRef = useRef(null);
   const topSpriteRef = useRef(null);
-  const bottomSpriteRef = useRef(null);
   const audioBufferRef = useRef(null);
   const chartRef = useRef(null);
   const judgeRef = useRef(null);
@@ -95,7 +99,6 @@ export default function RhythmHeroHighwayPreview() {
       const acc = rollingWindow.length ? rollingWindow.filter(Boolean).length / rollingWindow.length : 1;
       const speed = 0.4 + acc * 0.9;
       topSpriteRef.current?.setSpeed(speed);
-      bottomSpriteRef.current?.setSpeed(speed);
       setSpeedLabel(`${speed.toFixed(2)}x`);
     };
     judgeRef.current = recordJudge;
@@ -124,7 +127,6 @@ export default function RhythmHeroHighwayPreview() {
   const simulate = (kind) => judgeRef.current?.(kind);
 
   const cfg = INSTRUMENT_CONFIG[instrumentId];
-  const bottomSheet = INSTRUMENT_BOTTOM_SHEETS[instrumentId];
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
@@ -155,10 +157,7 @@ export default function RhythmHeroHighwayPreview() {
       <div ref={containerRef} className="flex-1 relative overflow-hidden">
         <canvas ref={canvasRef} className="w-full h-full block" />
         {running && cfg && (
-          <>
-            <InstrumentTopOverlay ref={topSpriteRef} engineRef={engineRef} accentColor={cfg.accent} sheet={INSTRUMENT_TOP_SHEETS[instrumentId]} />
-            {bottomSheet && <InstrumentBottomOverlay ref={bottomSpriteRef} sheet={bottomSheet} />}
-          </>
+          <InstrumentTopOverlay ref={topSpriteRef} engineRef={engineRef} accentColor={cfg.accent} sheet={INSTRUMENT_TOP_SHEETS[instrumentId]} />
         )}
       </div>
     </div>

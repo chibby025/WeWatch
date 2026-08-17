@@ -662,17 +662,27 @@ export default function WhotGame({ gameState, players = [], currentUserId, myHan
 
         {/* ── Wild suit picker overlay ── */}
         {pendingWild && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center rounded-2xl"
+          <div className="absolute inset-0 z-50 flex items-center justify-center rounded-2xl p-3"
             style={{ background:'rgba(0,0,0,0.88)', backdropFilter:'blur(4px)' }}>
-            <div className="bg-gray-900 rounded-2xl p-6 flex flex-col items-center gap-4 shadow-2xl border border-white/10">
-              <p className="text-white font-bold text-base">Choose a suit (Whot!)</p>
-              <div className="flex gap-3">
+            {/* Below sm (640px): w-full + a capped max-width forces the card
+                narrower than the unwrapped 5-button row needs (~312px), which
+                is what actually makes flex-wrap below engage — a flex child
+                with no width constraint just grows to fit its content instead
+                of wrapping, so the cap has to be real. That also guards
+                against the Whot modal itself (only viewport-width on mobile,
+                with overflow-hidden — anything wider gets silently clipped,
+                not scrolled to) ever being narrower still. From sm: up,
+                sm:w-auto/sm:max-w-none removes the cap entirely, restoring
+                the original content-hugging single-row popover unchanged. */}
+            <div className="bg-gray-900 rounded-2xl p-4 sm:p-6 flex flex-col items-center gap-3 sm:gap-4 shadow-2xl border border-white/10 w-full max-w-[19rem] sm:w-auto sm:max-w-none">
+              <p className="text-white font-bold text-base text-center">Choose a suit (Whot!)</p>
+              <div className="flex flex-wrap justify-center gap-2 sm:gap-3">
                 {SUIT_ORDER.map(suit => (
                   <button key={suit} onClick={() => chooseSuit(suit)}
-                    className="flex flex-col items-center gap-2 w-16 h-20 rounded-xl justify-center transition-all hover:scale-105 active:scale-95"
+                    className="flex flex-col items-center gap-1.5 sm:gap-2 w-14 h-16 sm:w-16 sm:h-20 rounded-xl justify-center transition-all hover:scale-105 active:scale-95 shrink-0"
                     style={{ background: `${SUIT_HEX[suit]}22`, border: `2px solid ${SUIT_HEX[suit]}66` }}>
-                    <SuitShape suit={suit} size={32} color={SUIT_HEX[suit]}/>
-                    <span className="text-xs font-semibold" style={{ color: SUIT_HEX[suit] }}>{SUIT_NAMES[suit]}</span>
+                    <SuitShape suit={suit} size={26} color={SUIT_HEX[suit]}/>
+                    <span className="text-[10px] sm:text-xs font-semibold" style={{ color: SUIT_HEX[suit] }}>{SUIT_NAMES[suit]}</span>
                   </button>
                 ))}
               </div>

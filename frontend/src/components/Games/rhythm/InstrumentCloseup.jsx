@@ -1,20 +1,21 @@
-// Top/bottom sprite overlays for the currently-picked instrument — real,
-// user-supplied GIFs decoded once into horizontal PNG sprite sheets (see
-// SpriteFramePlayer for why: a plain <img src="x.gif"> gives JS zero
-// playback control, and this needs to slow down/speed up with rolling
-// accuracy, not just loop at a fixed rate).
+// Sprite renderers for the currently-picked instrument — real, user-supplied
+// GIFs decoded once into horizontal PNG sprite sheets (see SpriteFramePlayer
+// for why: a plain <img src="x.gif"> gives JS zero playback control, and
+// InstrumentTopOverlay needs to slow down/speed up with rolling accuracy,
+// not just loop at a fixed rate).
 //
 // All 4 instruments (guitar/bass/drums/vocals) get InstrumentTopOverlay — a
 // full-performer sprite absolutely positioned OVER the highway itself,
 // camera-tracked to the far end (see getHighwayAnchors in
-// rhythmGameEngine.js), not a separate layout row above it. Guitar/bass
-// additionally get InstrumentBottomOverlay, a fretting-hand close-up at the
-// near/hit-line end — drums/vocals have no equivalent second shot, so the
-// caller only mounts it when INSTRUMENT_BOTTOM_SHEETS has an entry for the
-// current instrument (see spriteSheets.js). Both are siblings of the
-// <canvas> inside its own `relative` container, pointer-events-none
-// throughout so they never intercept clicks/touches meant for the highway
-// or its HUD.
+// rhythmGameEngine.js), not a separate layout row above it. A sibling of the
+// <canvas> inside its own `relative` container, pointer-events-none so it
+// never intercepts clicks/touches meant for the highway or its HUD.
+//
+// Guitar/bass additionally have a fretting-hand close-up (see
+// spriteSheets.js's INSTRUMENT_BOTTOM_SHEETS) — rendered via
+// InstrumentLoadingSprite on the loading screen (below StagedProgress's
+// bar), not as a highway overlay; drums/vocals have no equivalent second
+// shot, so the caller simply doesn't render it for those instruments.
 //
 // Drums/vocals used to render as a small procedural SVG in their own row
 // above the highway instead (no licensed art was available at the time —
@@ -202,24 +203,20 @@ export const InstrumentTopOverlay = forwardRef(function InstrumentTopOverlay({ c
   );
 });
 
-// Fretting-hand close-up, overlaid on the NEAR (bottom, hit-line) end of the
-// highway — same positioning approach as InstrumentTopOverlay, mirrored to
-// the bottom edge. Guitar/bass only (see spriteSheets.js's
+// Fretting-hand close-up — used to be a highway overlay (mirroring
+// InstrumentTopOverlay's positioning approach at the near/hit-line end); now
+// shown on the loading screen instead, directly below StagedProgress's bar,
+// while the room waits for the song to finish loading. Plain, non-anchored,
+// no ref/setSpeed — the highway/beat-sync machinery InstrumentTopOverlay
+// carries makes no sense here, since there's no live performance yet to
+// sync to. Just the raw looping animation at its own default rate, in
+// normal document flow. Guitar/bass only (see spriteSheets.js's
 // INSTRUMENT_BOTTOM_SHEETS) — drums/vocals have no second close-up shot, so
-// the caller simply doesn't mount this for those instruments.
-export const InstrumentBottomOverlay = forwardRef(function InstrumentBottomOverlay({ className, style, sheet }, ref) {
-  const spriteRef = useRef(null);
-  useImperativeHandle(ref, () => ({
-    setSpeed(multiplier) { spriteRef.current?.setSpeed(multiplier); },
-  }), []);
-
+// the caller simply doesn't render this for those instruments.
+export function InstrumentLoadingSprite({ sheet, className }) {
   return (
-    <div
-      className={className ?? 'absolute bottom-0 left-[60%] -translate-x-1/2 h-[18%] sm:h-[22%] pointer-events-none z-[5]'}
-      style={{ filter: 'drop-shadow(0 -4px 10px rgba(0,0,0,0.55))', ...style }}
-    >
+    <div className={className ?? 'h-24 sm:h-32 pointer-events-none'} style={{ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.45))' }}>
       <SpriteFramePlayer
-        ref={spriteRef}
         sheetUrl={sheet.url}
         frameCount={sheet.frameCount}
         frameWidth={sheet.frameWidth}
@@ -229,4 +226,4 @@ export const InstrumentBottomOverlay = forwardRef(function InstrumentBottomOverl
       />
     </div>
   );
-});
+}

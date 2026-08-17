@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { X, Search, Upload, Loader2, Trophy } from 'lucide-react';
 import apiClient, { API_BASE_URL } from '../../services/api';
 import GameRulesButton from './GameRulesButton';
-import { InstrumentTopOverlay, InstrumentBottomOverlay } from './rhythm/InstrumentCloseup';
+import { InstrumentTopOverlay, InstrumentLoadingSprite } from './rhythm/InstrumentCloseup';
 import { INSTRUMENT_TOP_SHEETS, INSTRUMENT_BOTTOM_SHEETS } from './rhythm/spriteSheets';
 import { Game } from './rhythm/rhythmGameEngine';
 import { generateChart } from './rhythm/analysis';
@@ -219,7 +219,8 @@ function useRollingSpriteSpeed(spriteRefs) {
   const windowRef = useRef([]);
   // Snapshotted once on first call, not re-read from the (likely fresh-each-
   // render) spriteRefs argument on every call — the individual refs inside it
-  // (topSpriteRef/bottomSpriteRef) are themselves already stable across
+  // (just topSpriteRef now — the fretting-hand close-up moved to the loading
+  // screen, see InstrumentLoadingSprite) are themselves already stable across
   // renders, so this doesn't need to track a changing array, and doing it
   // this way keeps recordJudge/resetSpriteSpeed's own identities genuinely
   // stable (empty dep arrays) — required so the engine-construction effect
@@ -245,7 +246,13 @@ function useRollingSpriteSpeed(spriteRefs) {
 // percentage bar, since there's no fine-grained byte-level progress to
 // report honestly with only 3 discrete named stages. Shared between the
 // active player's own loading screen and the spectator mirror.
-function StagedProgress({ stage }) {
+//
+// `sheet` is optional — the fretting-hand close-up GIF (guitar/bass only,
+// via spriteSheets.js's INSTRUMENT_BOTTOM_SHEETS), rendered just below the
+// bar via InstrumentLoadingSprite while the room waits. It used to be a
+// highway overlay during actual gameplay; there's no live performance to
+// sync it to during loading, so it's just a plain idle loop here instead.
+function StagedProgress({ stage, sheet }) {
   const stageIndex = LOADING_STAGE_ORDER.indexOf(stage);
   return (
     <div className="flex flex-col items-center gap-6 text-white w-full max-w-xs">
@@ -263,6 +270,7 @@ function StagedProgress({ stage }) {
         <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
         <p className="text-sm text-gray-300 font-medium">{LOADING_STAGE_LABELS[stage] || 'Loading…'}</p>
       </div>
+      {sheet && <InstrumentLoadingSprite sheet={sheet} />}
     </div>
   );
 }
@@ -551,8 +559,10 @@ function WarmPerformanceMirror({
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const topSpriteRef = useRef(null);
-  const bottomSpriteRef = useRef(null);
-  const spriteRefsArr = [topSpriteRef, bottomSpriteRef];
+  // bottomSpriteRef removed — the fretting-hand close-up no longer renders
+  // as a highway overlay (see InstrumentLoadingSprite/StagedProgress), so
+  // there's nothing left to speed-modulate here.
+  const spriteRefsArr = [topSpriteRef];
   const { recordJudge } = useRollingSpriteSpeed(spriteRefsArr);
 
   const instrumentId = liveInfo?.instrument_id ?? selectingInfo?.instrument_id;
@@ -757,16 +767,14 @@ function WarmPerformanceMirror({
         <div ref={containerRef} className="absolute inset-0">
           <canvas ref={canvasRef} className="w-full h-full block" />
         </div>
-        {/* Every instrument gets a top overlay; only guitar/bass additionally
-            get a bottom (fretting-hand close-up) overlay — see
-            spriteSheets.js's INSTRUMENT_BOTTOM_SHEETS. */}
+        {/* Every instrument gets a top (full-performer) overlay on the
+            highway itself. The fretting-hand close-up (guitar/bass only)
+            renders on the loading screen instead, below — see
+            InstrumentLoadingSprite/StagedProgress. */}
         <InstrumentTopOverlay ref={topSpriteRef} engineRef={engineRef} accentColor={instrument.accent} sheet={INSTRUMENT_TOP_SHEETS[instrument.id]} />
-        {INSTRUMENT_BOTTOM_SHEETS[instrument.id] && (
-          <InstrumentBottomOverlay ref={bottomSpriteRef} sheet={INSTRUMENT_BOTTOM_SHEETS[instrument.id]} />
-        )}
         {!ready && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/55">
-            <StagedProgress stage={selectingInfo?.loading_stage ?? 'loading_song'} />
+            <StagedProgress stage={selectingInfo?.loading_stage ?? 'loading_song'} sheet={INSTRUMENT_BOTTOM_SHEETS[instrument.id]} />
           </div>
         )}
         {ready && (
@@ -1045,8 +1053,10 @@ export default function RhythmHeroGame({
   const lyricsRef = useRef([]);
   const lyricsIntervalRef = useRef(null);
   const topSpriteRef = useRef(null);
-  const bottomSpriteRef = useRef(null);
-  const { recordJudge, resetSpriteSpeed } = useRollingSpriteSpeed([topSpriteRef, bottomSpriteRef]);
+  // bottomSpriteRef removed — the fretting-hand close-up no longer renders
+  // as a highway overlay (see InstrumentLoadingSprite/StagedProgress), so
+  // there's nothing left to speed-modulate here.
+  const { recordJudge, resetSpriteSpeed } = useRollingSpriteSpeed([topSpriteRef]);
 
   // isActivePlayer read at broadcast fire-time (not schedule-time) — a
   // debounced rhythm_hero_selecting send scheduled while active could
@@ -1860,20 +1870,18 @@ export default function RhythmHeroGame({
             initialError={selectionError}
           />
         )}
-        {localPhase === 'loading' && <StagedProgress stage={loadingStage} />}
+        {localPhase === 'loading' && <StagedProgress stage={loadingStage} sheet={INSTRUMENT_BOTTOM_SHEETS[instrument?.id]} />}
         {localPhase === 'playing' && (
           <>
             <div ref={containerRef} className="absolute inset-0">
               <canvas ref={canvasRef} className="w-full h-full block" />
             </div>
 
-            {/* Every instrument gets a top overlay; only guitar/bass
-                additionally get a bottom (fretting-hand close-up) overlay —
-                see spriteSheets.js's INSTRUMENT_BOTTOM_SHEETS. */}
+            {/* Every instrument gets a top (full-performer) overlay on the
+                highway itself. The fretting-hand close-up (guitar/bass only)
+                renders on the loading screen instead, above — see
+                InstrumentLoadingSprite/StagedProgress. */}
             <InstrumentTopOverlay ref={topSpriteRef} engineRef={engineRef} accentColor={instrument.accent} sheet={INSTRUMENT_TOP_SHEETS[instrument.id]} />
-            {INSTRUMENT_BOTTOM_SHEETS[instrument.id] && (
-              <InstrumentBottomOverlay ref={bottomSpriteRef} sheet={INSTRUMENT_BOTTOM_SHEETS[instrument.id]} />
-            )}
 
             {isInTournament && (
               <div className="absolute top-14 left-1/2 -translate-x-1/2 z-10 px-4 py-2 bg-purple-700/90 text-white text-sm font-semibold rounded-full shadow pointer-events-none">

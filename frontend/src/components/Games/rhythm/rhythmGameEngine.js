@@ -330,7 +330,24 @@ export class Game {
   _initThree() {
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    // Size from the canvas's own laid-out box (its parent container's real
+    // CSS dimensions), never window.innerWidth/innerHeight — the canvas does
+    // NOT always fill the whole viewport (a header bar sits above it in the
+    // real game UI), and window.innerHeight is additionally unstable on
+    // mobile browsers as the URL bar collapses/expands, which was the root
+    // cause of the highway rendering larger than the visible screen on a
+    // real device (confirmed on a Samsung S22). The third `false` argument
+    // to setSize stops Three.js from writing an inline CSS size onto the
+    // canvas element (its default `updateStyle=true` behavior) — that inline
+    // style would otherwise override the canvas's own `w-full h-full`
+    // Tailwind classes and re-introduce the exact same bug. Leaving the
+    // canvas's displayed size purely CSS-driven (already correctly handled
+    // by its parent's flex/absolute layout) and only using this measurement
+    // to pick a matching WebGL drawing-buffer resolution keeps the two
+    // concerns from ever fighting each other again.
+    const w0 = this.canvas.clientWidth || window.innerWidth;
+    const h0 = this.canvas.clientHeight || window.innerHeight;
+    this.renderer.setSize(w0, h0, false);
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x06030f);
@@ -339,9 +356,8 @@ export class Game {
     // baseFov is the "neutral" FOV a resize should always restore — the
     // combo/Star-Power camera below only ever lerps AWAY from this value,
     // never mutates it directly, so the two mechanisms can't fight.
-    this.baseFov = fovForAspect(window.innerWidth / window.innerHeight);
-    this.camera = new THREE.PerspectiveCamera(
-      this.baseFov, window.innerWidth / window.innerHeight, 0.1, 200);
+    this.baseFov = fovForAspect(w0 / h0);
+    this.camera = new THREE.PerspectiveCamera(this.baseFov, w0 / h0, 0.1, 200);
     this.camera.position.set(0, 7.8, CAMERA_BASE_Z);
     this.camera.lookAt(0, 0, -16);
 
@@ -363,23 +379,39 @@ export class Game {
     // bloom
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(
-      new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.55, 0.12
-    );
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(w0, h0), 0.9, 0.55, 0.12);
     this.composer.addPass(this.bloom);
 
     this._onResize = () => {
-      this.camera.aspect = window.innerWidth / window.innerHeight;
+      // Re-measure the canvas's real box every time, exactly as at
+      // construction — never window.innerWidth/innerHeight (see above). A
+      // momentary 0×0 read (canvas hidden/detached mid-transition) is
+      // ignored rather than applied, since dividing by zero would set
+      // camera.aspect to NaN/Infinity and silently break rendering until
+      // the next real resize happened to fire.
+      const w = this.canvas.clientWidth;
+      const h = this.canvas.clientHeight;
+      if (!w || !h) return;
+      this.camera.aspect = w / h;
       this.baseFov = fovForAspect(this.camera.aspect);
       this.camera.fov = this.baseFov;
       this.camera.updateProjectionMatrix();
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.composer.setSize(window.innerWidth, window.innerHeight);
+      this.renderer.setSize(w, h, false);
+      this.composer.setSize(w, h);
       if (this.waveFx) {
         const d = this.renderer.getDrawingBufferSize(new THREE.Vector2());
         this.waveFx.setResolution(d.x, d.y);
       }
     };
+    // ResizeObserver on the canvas itself is the primary trigger — it fires
+    // for ANY change to the canvas's actual laid-out box (a real window
+    // resize, an orientation change, or a mobile browser's collapsible URL
+    // bar reflowing the page), which is exactly what needs tracking, not
+    // window resize events specifically. window resize is kept too as a
+    // harmless secondary safety net (the handler re-applies the same
+    // already-correct size if the box didn't actually change).
+    this._resizeObserver = new ResizeObserver(this._onResize);
+    this._resizeObserver.observe(this.canvas);
     window.addEventListener('resize', this._onResize);
 
     this._onKeyDown = (e) => this._keyDown(e);
@@ -1125,10 +1157,10 @@ export class Game {
 
   // Projects real 3D world points through the LIVE camera to get their
   // current on-screen position, as a {xPercent, yPercent} pair (0-100,
-  // relative to the canvas). This is how the instrument sprite overlays
-  // (InstrumentTopOverlay/InstrumentBottomOverlay in InstrumentCloseup.jsx)
-  // find the highway's actual far edge and hit-line — a flat CSS percentage
-  // can only ever approximate where those points land on screen, since the camera's
+  // relative to the canvas). This is how the top instrument sprite overlay
+  // (InstrumentTopOverlay in InstrumentCloseup.jsx) finds the highway's
+  // actual far edge — a flat CSS percentage can only ever approximate where
+  // that point lands on screen, since the camera's
   // FOV and position both respond to aspect ratio (fovForAspect) AND move
   // slightly during play (combo sway, Star Power dolly) — reading the real
   // projection is exact regardless of screen size or camera state, and the
@@ -1625,6 +1657,7 @@ export class Game {
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
     if (this._onResize) window.removeEventListener('resize', this._onResize);
+    try { this._resizeObserver?.disconnect(); } catch { /* ignore */ }
     try { this.source?.stop(); } catch { /* already stopped or never started */ }
     try { this.renderer.dispose(); } catch { /* ignore */ }
   }
