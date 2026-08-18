@@ -79,11 +79,11 @@ const PLAYER_HIT_FLASH_DECAY = 3.4; // per-second decay rate — ~0.3s to fade
 //    crowd SIZE to that would empty the venue over one bad note — `rock`
 //    moves gradually instead, the right signal for a slow "buildup".
 const AUDIENCE_REVEAL_FADE = 10; // smoothing window (rock points) around each member's own threshold
-// 8. Dance-burst "arms up" wave — a decaying hype scalar, spiked on streak
+// 8. Dance-burst "hype" wave — a decaying scalar, spiked on streak
 //    milestones / Star Power activation / occasional PERFECT hits, that
-//    gates which audience members raise their arms (via each member's own
-//    continuous dancePhase, not discrete per-burst state — see
-//    _updateAudience) rather than swap all 50 into the same rigid pose.
+//    drives a brief scale/opacity surge across the crowd panels (see
+//    _updateAudience) — a real photo has no second "arms up" pose to swap
+//    to, so the burst reads as the crowd surging/jumping instead.
 const DANCE_BURST_DECAY = 0.5; // per-second decay rate
 // 9. Supernova twinkle pool — ambient background sparkle layered into the
 //    starfield, independent of gameplay performance (always ticking, idle
@@ -109,13 +109,55 @@ const laneX = (lane) => (lane - (LANES - 1) / 2) * LANE_W;
 // Pick a vertical FOV so the highway stays a usable width on tall/narrow
 // (portrait phone) screens. We keep the horizontal FOV roughly constant by
 // raising the vertical FOV as the aspect ratio drops below the 16:9 baseline.
+//
+// Uncapped, this formula grows without bound as the screen gets narrower —
+// confirmed by direct computation for real mobile portrait aspect ratios
+// (~0.46, e.g. 390x844, 414x896, 360x780 phones): it wants ~130° of vertical
+// FOV, far beyond any sane 3D camera range (normal games run 60-100°) and a
+// real source of fisheye-style distortion. MAX_VFOV caps it — real end-to-end
+// testing (see rhythm-hero-mobile-fit investigation, 2026) confirmed the
+// existing camera sway (CAMERA_SWAY_BASE below), which is imperceptible at a
+// normal FOV, becomes a measurable, asymmetric on-screen distortion once the
+// FOV gets this extreme — small off-axis camera positions are disproportion-
+// ately amplified near the edges of a very wide frustum.
+//
+// Capping the FOV alone means the highway no longer shows its full "intended"
+// width on very narrow screens (the horizontal FOV this formula is trying to
+// preserve, BASE_HFOV, is no longer actually achieved once the vertical FOV
+// hits the ceiling) — dollyMultiplierForAspect below computes how much
+// further back the camera needs to sit, at the capped FOV, to recover that
+// same target width instead — see its own comment for the derivation.
 const BASE_VFOV = 58;
 const BASE_ASPECT = 16 / 9;
 const BASE_HFOV = 2 * Math.atan(Math.tan((BASE_VFOV * Math.PI) / 360) * BASE_ASPECT);
-function fovForAspect(aspect) {
+const MAX_VFOV = 92; // sane ceiling — was already an unnamed 92 magic number here
+function idealVfovForAspect(aspect) {
   if (aspect >= BASE_ASPECT) return BASE_VFOV;
-  const v = (2 * Math.atan(Math.tan(BASE_HFOV / 2) / aspect) * 180) / Math.PI;
-  return Math.min(v, 92);
+  return (2 * Math.atan(Math.tan(BASE_HFOV / 2) / aspect) * 180) / Math.PI;
+}
+function fovForAspect(aspect) {
+  return Math.min(idealVfovForAspect(aspect), MAX_VFOV);
+}
+
+// How much further back (as a multiplier on CAMERA_BASE_Z/SP_CAMERA_Z) the
+// camera needs to dolly once fovForAspect's cap has engaged, to recover the
+// same visible highway width the uncapped formula was targeting.
+//
+// Derivation: at the original distance D0, the intended horizontal FOV is
+// always BASE_HFOV (that's the whole point of idealVfovForAspect — see
+// above), giving a target visible width W = 2*D0*tan(BASE_HFOV/2). Once
+// vfov is clamped to MAX_VFOV, the ACTUAL horizontal FOV achieved (given the
+// real aspect ratio) is smaller — actualHFOV = 2*atan(aspect*tan(MAX_VFOV/2))
+// (the direct, non-inverted vfov->hfov relationship Three.js itself uses).
+// To reproduce the same target width W at this narrower actual FOV, solve
+// 2*D1*tan(actualHFOV/2) = W for D1: D1 = D0 * tan(BASE_HFOV/2)/tan(actualHFOV/2).
+// That ratio (independent of D0) is the multiplier returned here.
+function dollyMultiplierForAspect(aspect) {
+  const idealV = idealVfovForAspect(aspect);
+  if (idealV <= MAX_VFOV) return 1; // cap never engages at this aspect — no compensation needed
+  const cappedRad = (MAX_VFOV * Math.PI) / 180;
+  const actualHFOV = 2 * Math.atan(aspect * Math.tan(cappedRad / 2));
+  return Math.tan(BASE_HFOV / 2) / Math.tan(actualHFOV / 2);
 }
 
 // ---------------------------------------------------------------- shaders
@@ -180,80 +222,26 @@ function makeGlowTexture() {
   return new THREE.CanvasTexture(c);
 }
 
-// A simple humanoid silhouette (head + shoulders/torso), soft-edged via a
-// radial-ish alpha falloff so it reads as "shadowy crowd," not a hard cutout.
-// Used for the audience layer — see _buildAudience.
-function makeSilhouetteTexture() {
-  const c = document.createElement('canvas');
-  c.width = 48; c.height = 64;
-  const g = c.getContext('2d');
-  g.fillStyle = '#000';
-  // head
-  g.beginPath();
-  g.arc(24, 16, 10, 0, Math.PI * 2);
-  g.fill();
-  // body — a rounded trapezoid widening toward the base
-  g.beginPath();
-  g.moveTo(14, 28);
-  g.quadraticCurveTo(24, 24, 34, 28);
-  g.lineTo(40, 62);
-  g.quadraticCurveTo(24, 68, 8, 62);
-  g.closePath();
-  g.fill();
-  // soft edge falloff so the silhouette blends rather than hard-cuts
-  g.globalCompositeOperation = 'destination-in';
-  const grad = g.createRadialGradient(24, 36, 6, 24, 36, 40);
-  grad.addColorStop(0, 'rgba(0,0,0,1)');
-  grad.addColorStop(0.75, 'rgba(0,0,0,0.9)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.35)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 48, 64);
-  return new THREE.CanvasTexture(c);
-}
+// Real crowd photo — supplied directly by the user, not sourced from a
+// stock/found asset (a search for a genuinely free, verifiably-licensed
+// animated crowd asset came up empty; see the mobile-framing investigation
+// history for how that search went). A transparent WebP of a crowd shot
+// from behind, dark rim-lit silhouettes holding up glowing phone screens —
+// replaces the old procedural circle+trapezoid placeholder blobs below,
+// which read as crude geometric shapes rather than an actual crowd.
+// Hosted on BunnyCDN alongside every other real asset this game uses
+// (instrument sprite sheets, posters) — same convention, not bundled into
+// the frontend build.
+const AUDIENCE_TEX_URL = 'https://letswatchout.b-cdn.net/games/rhythm/audience-crowd-v1.webp';
+// Real pixel dimensions of the source image (1664x928) — used so every
+// audience sprite's width/height stays correctly proportioned instead of
+// stretching a non-square photo onto an arbitrarily-chosen plane shape.
+const AUDIENCE_TEX_ASPECT = 1664 / 928;
 
-// A "hands up" variant of the silhouette above — head/body drawn at the
-// EXACT same position/size as makeSilhouetteTexture (critical: swapping a
-// sprite's material.map between the two mid-song needs both textures to
-// agree on where the figure sits, or the swap reads as a jump/pop rather
-// than a clean pose change). Elbows bent so the raised arms stay well
-// within the same 48x64 canvas, near head height — used for the audience's
-// dance-burst reveal (see _updateAudience's dancing state).
-function makeSilhouetteArmsUpTexture() {
-  const c = document.createElement('canvas');
-  c.width = 48; c.height = 64;
-  const g = c.getContext('2d');
-  g.fillStyle = '#000';
-  // head — identical to the idle pose
-  g.beginPath();
-  g.arc(24, 16, 10, 0, Math.PI * 2);
-  g.fill();
-  // body — identical to the idle pose
-  g.beginPath();
-  g.moveTo(14, 28);
-  g.quadraticCurveTo(24, 24, 34, 28);
-  g.lineTo(40, 62);
-  g.quadraticCurveTo(24, 68, 8, 62);
-  g.closePath();
-  g.fill();
-  // raised arms, mirrored both sides
-  for (const side of [-1, 1]) {
-    g.beginPath();
-    g.moveTo(24 + side * 10, 30);
-    g.quadraticCurveTo(24 + side * 20, 22, 24 + side * 17, 6);
-    g.lineTo(24 + side * 10, 8);
-    g.quadraticCurveTo(24 + side * 13, 22, 24 + side * 5, 32);
-    g.closePath();
-    g.fill();
-  }
-  // soft edge falloff — same gradient shape as the idle pose
-  g.globalCompositeOperation = 'destination-in';
-  const grad = g.createRadialGradient(24, 36, 6, 24, 36, 40);
-  grad.addColorStop(0, 'rgba(0,0,0,1)');
-  grad.addColorStop(0.75, 'rgba(0,0,0,0.9)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.35)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 48, 64);
-  return new THREE.CanvasTexture(c);
+function makeCrowdTexture() {
+  const tex = new THREE.TextureLoader().load(AUDIENCE_TEX_URL);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 // ----------------------------------------------------- shared instance cache
@@ -287,8 +275,7 @@ function getShared() {
 
   _shared = {
     glowTex: makeGlowTexture(),
-    silhouetteTex: makeSilhouetteTexture(),
-    silhouetteArmsUpTex: makeSilhouetteArmsUpTexture(),
+    crowdTex: makeCrowdTexture(),
     highwayPlane: new THREE.PlaneGeometry(HIGHWAY_W, HIGHWAY_LEN),
     rail: new THREE.BoxGeometry(0.18, 0.3, HIGHWAY_LEN),
     fretRing: new THREE.TorusGeometry(0.68, 0.09, 12, 32),
@@ -326,6 +313,36 @@ export class Game {
     this._initThree();
   }
 
+  // Recomputes baseCameraZ/spCameraZ for the given aspect ratio — call this
+  // any time the aspect ratio changes (construction, resize), before using
+  // either value. See dollyMultiplierForAspect's own comment for the math.
+  _recomputeCameraDistances(aspect) {
+    const mult = dollyMultiplierForAspect(aspect);
+    this.baseCameraZ = CAMERA_BASE_Z * mult;
+    this.spCameraZ = SP_CAMERA_Z * mult;
+    this._lastDollyMultiplier = mult;
+  }
+
+  // DEBUG — deliberately left in (not removed after testing) so this can be
+  // checked on a real device via remote debugging if the mobile-fit issue
+  // this was built to investigate/fix (highway showing only partially on
+  // real phones, e.g. 414x896) isn't actually resolved. Filter the console
+  // by "[RhythmHero Cam]" to isolate these. Fires only on construct/resize
+  // (i.e. rarely — an actual aspect-ratio change), never per-frame, so it's
+  // not spammy on its own; see the separate throttled per-frame sample in
+  // _loop for observing live sway/combo-zoom behavior over time.
+  _logCameraSetupDebug(reason, aspect) {
+    console.log('[RhythmHero Cam]', reason, {
+      aspect: aspect.toFixed(4),
+      idealVfov: idealVfovForAspect(aspect).toFixed(2) + '°',
+      cappedVfov: this.baseFov?.toFixed(2) + '°',
+      capEngaged: idealVfovForAspect(aspect) > MAX_VFOV,
+      dollyMultiplier: this._lastDollyMultiplier?.toFixed(3),
+      baseCameraZ: this.baseCameraZ?.toFixed(2),
+      spCameraZ: this.spCameraZ?.toFixed(2),
+    });
+  }
+
   // ------------------------------------------------------------ three.js
   _initThree() {
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
@@ -357,9 +374,18 @@ export class Game {
     // combo/Star-Power camera below only ever lerps AWAY from this value,
     // never mutates it directly, so the two mechanisms can't fight.
     this.baseFov = fovForAspect(w0 / h0);
+    // baseCameraZ/spCameraZ are the aspect-adjusted (dollied-back) versions
+    // of CAMERA_BASE_Z/SP_CAMERA_Z — see dollyMultiplierForAspect's own
+    // comment. Every "return the camera to its rest position" call site
+    // (here, the per-frame combo/SP target below, and _finish()'s reset)
+    // uses these instead of the raw constants, so the dolly compensation
+    // actually takes effect everywhere the camera can rest, not just here.
+    this._recomputeCameraDistances(w0 / h0);
     this.camera = new THREE.PerspectiveCamera(this.baseFov, w0 / h0, 0.1, 200);
-    this.camera.position.set(0, 7.8, CAMERA_BASE_Z);
+    this.camera.position.set(0, 7.8, this.baseCameraZ);
     this.camera.lookAt(0, 0, -16);
+    this._lastCamDebugLog = 0; // throttle for the periodic runtime sample in _loop
+    this._logCameraSetupDebug('construct', w0 / h0);
 
     this.scene.add(new THREE.AmbientLight(0x8866ff, 0.5));
     this.dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
@@ -395,6 +421,18 @@ export class Game {
       this.camera.aspect = w / h;
       this.baseFov = fovForAspect(this.camera.aspect);
       this.camera.fov = this.baseFov;
+      // Recompute the dolly-adjusted rest distances for the new aspect —
+      // without this, a device rotation (or the mobile URL-bar resize this
+      // whole ResizeObserver setup exists to handle) would update the FOV
+      // cap correctly but leave the camera sitting at whatever distance the
+      // PREVIOUS aspect ratio needed, reintroducing the same cropped-width
+      // problem this dolly compensation exists to fix.
+      this._recomputeCameraDistances(this.camera.aspect);
+      // Snap the Z position immediately (not lerped) on a real resize — the
+      // per-frame lerp further down exists for smooth combo/SP transitions
+      // *during* gameplay, not for catching up to a structural aspect-ratio
+      // change, which should apply at once.
+      this.camera.position.z = this.spActive ? this.spCameraZ : this.baseCameraZ;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(w, h, false);
       this.composer.setSize(w, h);
@@ -402,6 +440,7 @@ export class Game {
         const d = this.renderer.getDrawingBufferSize(new THREE.Vector2());
         this.waveFx.setResolution(d.x, d.y);
       }
+      this._logCameraSetupDebug('resize', this.camera.aspect);
     };
     // ResizeObserver on the canvas itself is the primary trigger — it fires
     // for ANY change to the canvas's actual laid-out box (a real window
@@ -515,58 +554,60 @@ export class Game {
   // trails use (computed once in _loop and passed in) — the crowd visibly
   // brightens/gets louder as a streak builds, easing back once it resets.
   //
-  // Two rows are CORE (always fully visible, unaffected by performance —
+  // Two tiers are CORE (always fully visible, unaffected by performance —
   // the baseline crowd this engine has always shown) and two are BONUS
   // (gated on the rock/accuracy meter in _updateAudience, fading in as the
-  // player does well — a bigger venue for a better performance). Each
-  // member also gets a dancePhase used for the arms-up dance-burst reveal.
+  // player does well — a bigger venue for a better performance).
   _buildAudience() {
     this.audience = [];
-    const coreRows = [
-      { z: -HIGHWAY_LEN * 0.35, scale: 3.4, count: 5, core: true },
-      { z: -HIGHWAY_LEN * 0.55, scale: 2.6, count: 6, core: true },
-    ];
-    const bonusRows = [
-      // Nearer/bigger — front-row fans arriving first as accuracy climbs.
-      { z: -HIGHWAY_LEN * 0.25, scale: 3.8, count: 6, revealFrom: 35, revealTo: 65 },
-      // Further/smaller — the back of the venue filling in for a truly
-      // excellent run.
-      { z: -HIGHWAY_LEN * 0.68, scale: 2.0, count: 8, revealFrom: 60, revealTo: 95 },
+    // Each tier is now ONE wide crowd-photo panel, not many individually
+    // positioned person-blobs the way the old procedural placeholder built
+    // them — the photo already depicts a whole crowd, so stamping it dozens
+    // of times per side would just look like an obviously tiled/repeated
+    // image. z-depth/relative-size/reveal-threshold shape is carried over
+    // from the original 4-row layout (2 always-visible "core" rows nearer
+    // the camera + 2 performance-gated "bonus" rows further back) so the
+    // "the venue fills in as you play well" mechanic is unchanged in
+    // spirit, just built from panels instead of many small sprites.
+    const tiers = [
+      { z: -HIGHWAY_LEN * 0.30, width: 13, core: true },
+      { z: -HIGHWAY_LEN * 0.46, width: 10, core: true },
+      // Reveals as accuracy/streak (rock meter) climbs — nearer/bigger.
+      { z: -HIGHWAY_LEN * 0.58, width: 11, revealAt: 50 },
+      // The back of the venue filling in for a truly excellent run.
+      { z: -HIGHWAY_LEN * 0.72, width: 8, revealAt: 78 },
     ];
     for (const side of [-1, 1]) {
-      for (const row of [...coreRows, ...bonusRows]) {
-        for (let i = 0; i < row.count; i++) {
-          const mat = new THREE.SpriteMaterial({
-            map: this.shared.silhouetteTex, color: 0x000000,
-            transparent: true, opacity: 0.5, depthWrite: false,
-          });
-          const sprite = new THREE.Sprite(mat);
-          const jitter = (Math.random() - 0.5) * 2.2;
-          const baseY = row.scale * 0.5 - 0.3;
-          sprite.position.set(
-            side * (HIGHWAY_W / 2 + 2.5 + i * 0.9) + jitter * 0.3,
-            baseY,
-            row.z + jitter
-          );
-          const s = row.scale * (0.85 + Math.random() * 0.3);
-          sprite.scale.set(s, s, 1);
-          this.scene.add(sprite);
-          // Bonus-row members stagger their own reveal threshold evenly
-          // across the row's [revealFrom, revealTo] range rather than all
-          // popping in at once at the same rock value.
-          const revealAt = row.core ? 0
-            : row.revealFrom + (row.revealTo - row.revealFrom) * (i / Math.max(1, row.count - 1));
-          this.audience.push({
-            sprite, mat, baseY,
-            baseOpacity: 0.32 + Math.random() * 0.15,
-            phase: Math.random() * Math.PI * 2,
-            dancePhase: Math.random() * Math.PI * 2,
-            bobJitter: 0.75 + Math.random() * 0.5,
-            isCore: !!row.core,
-            revealAt,
-            dancing: false,
-          });
-        }
+      for (const tier of tiers) {
+        const mat = new THREE.SpriteMaterial({
+          // A light lavender multiply-tint (not black) — the photo's own
+          // dark figures + neon rim-light already read as "shadowy crowd"
+          // on their own; a heavy dark tint would just crush that detail
+          // into mud. This nudges the color toward the scene's own purple
+          // ambient/fog palette for cohesion without losing it.
+          map: this.shared.crowdTex, color: 0xb4a6ff,
+          transparent: true, opacity: 0.5, depthWrite: false,
+        });
+        const sprite = new THREE.Sprite(mat);
+        const h = tier.width / AUDIENCE_TEX_ASPECT;
+        const baseY = h * 0.42 - 0.6;
+        const jitter = (Math.random() - 0.5) * 1.4;
+        sprite.position.set(
+          side * (HIGHWAY_W / 2 + 1.2 + tier.width / 2),
+          baseY,
+          tier.z + jitter
+        );
+        sprite.scale.set(tier.width, h, 1);
+        this.scene.add(sprite);
+        this.audience.push({
+          sprite, mat, baseY,
+          baseScaleX: tier.width, baseScaleY: h,
+          baseOpacity: 0.4 + Math.random() * 0.12,
+          phase: Math.random() * Math.PI * 2,
+          bobJitter: 0.75 + Math.random() * 0.5,
+          isCore: !!tier.core,
+          revealAt: tier.revealAt ?? 0,
+        });
       }
     }
 
@@ -628,21 +669,16 @@ export class Game {
     for (const a of this.audience) {
       const revealT = this._audienceRevealT(a);
 
-      // Arms-up dance pose — a continuous per-member phase gated by the
-      // overall danceBurst scalar, so a burst naturally reveals a shifting
-      // SUBSET of the crowd (not all 50 in lockstep) and calms back down as
-      // danceBurst decays. Only touches the material when the boolean
-      // actually flips, since swapping `.map` needs needsUpdate=true.
-      const isDancing = danceBurst > 0.15 && (Math.sin(t * 2 + a.dancePhase) + 1) / 2 > 0.5;
-      if (isDancing !== a.dancing) {
-        a.dancing = isDancing;
-        a.mat.map = isDancing ? this.shared.silhouetteArmsUpTex : this.shared.silhouetteTex;
-        a.mat.needsUpdate = true;
-      }
-
-      const bobAmount = beatPulse * a.bobJitter * (isDancing ? 0.13 : 0.09);
+      const bobAmount = beatPulse * a.bobJitter * (0.09 + danceBurst * 0.05);
       a.sprite.position.y = a.baseY + Math.sin(t * 1.6 + a.phase) * 0.02 + bobAmount + cheerBoost * 0.15;
-      a.mat.opacity = revealT * (a.baseOpacity + ambientT * 0.4 + cheerBoost * 0.3);
+      // "Hype" scale pulse in place of the old arms-up texture swap — there's
+      // no second pose photo to swap to for a real image, so a dance burst
+      // instead reads as the crowd surging/jumping via a subtle, per-panel
+      // out-of-phase scale surge (each panel's own `phase` keeps the two
+      // sides/four tiers from pulsing in rigid lockstep).
+      const hype = 1 + danceBurst * 0.05 * (0.6 + 0.4 * Math.sin(t * 3 + a.phase));
+      a.sprite.scale.set(a.baseScaleX * hype, a.baseScaleY * hype, 1);
+      a.mat.opacity = revealT * (a.baseOpacity + ambientT * 0.35 + cheerBoost * 0.3 + danceBurst * 0.15);
     }
     for (const s of this.smoke) {
       s.sprite.position.y += s.drift * dt;
@@ -1171,7 +1207,7 @@ export class Game {
       const v = new THREE.Vector3(x, y, z).project(this.camera);
       return { xPercent: ((v.x + 1) / 2) * 100, yPercent: ((1 - v.y) / 2) * 100 };
     };
-    return {
+    const anchors = {
       // Far edge of the highway plane (see _buildHighway: plane spans
       // HIGHWAY_LEN centered at z = -HIGHWAY_LEN/2 + 5, so its far edge is
       // at z = -HIGHWAY_LEN + 5), at ground level (y=0, the road surface) —
@@ -1180,6 +1216,22 @@ export class Game {
       // The fret/hit-line row, at ground level.
       hitLine: project(0, 0, HIT_Z),
     };
+    // DEBUG — throttled (called every frame by the caller, so this can't log
+    // unconditionally). Directly reports where the performer sprite's own
+    // anchor point (farEdge.xPercent) is landing — if it's meaningfully off
+    // 50% (centered), that's the same camera asymmetry as the highway-width
+    // clipping issue, since both are projected through this identical
+    // camera. Deliberately left in — filter by "[RhythmHero Cam]".
+    const t = performance.now();
+    if (!this._lastAnchorDebugLog || t - this._lastAnchorDebugLog > 1500) {
+      this._lastAnchorDebugLog = t;
+      console.log('[RhythmHero Cam] anchors', {
+        farEdgeXPercent: anchors.farEdge.xPercent.toFixed(2),
+        farEdgeYPercent: anchors.farEdge.yPercent.toFixed(2),
+        offCenterBy: (anchors.farEdge.xPercent - 50).toFixed(2),
+      });
+    }
+    return anchors;
   }
 
   // Per-frame decorative state for the DOM instrument player overlay's own
@@ -1350,7 +1402,7 @@ export class Game {
     this.bloom.strength += ((this.spActive ? 1.5 : 0.9) - this.bloom.strength) * dt * 5;
 
     // 1 + 5. Combo-reactive camera, with an extra Star Power kick layered on
-    // top additively (both only ever pull AWAY from baseFov/CAMERA_BASE_Z, so
+    // top additively (both only ever pull AWAY from baseFov/baseCameraZ, so
     // they never fight a resize, which resets those base values directly).
     const comboT = Math.min(1, this.streak / COMBO_FOV_STREAK_CAP);
     const spFovKick = this.spActive ? SP_FOV_KICK : 0;
@@ -1360,9 +1412,28 @@ export class Game {
 
     const swayAmp = this.spActive ? CAMERA_SWAY_SP : CAMERA_SWAY_BASE;
     this.camera.position.x = Math.sin(now / 4200) * swayAmp;
-    const targetZ = this.spActive ? SP_CAMERA_Z : CAMERA_BASE_Z;
+    // baseCameraZ/spCameraZ (not the raw CAMERA_BASE_Z/SP_CAMERA_Z constants)
+    // — the aspect-dollied rest distances computed in _recomputeCameraDistances.
+    const targetZ = this.spActive ? this.spCameraZ : this.baseCameraZ;
     this.camera.position.z += (targetZ - this.camera.position.z) * Math.min(1, dt * 3);
     this.camera.lookAt(0, 0, -16);
+
+    // DEBUG — throttled runtime sample (not per-frame — would spam the
+    // console), deliberately left in for the same reason as
+    // _logCameraSetupDebug: lets the live sway/combo-zoom behavior actually
+    // be observed on a real device if the mobile-fit fix needs further
+    // diagnosis. Filter by "[RhythmHero Cam]".
+    if (now - this._lastCamDebugLog > 1500) {
+      this._lastCamDebugLog = now;
+      console.log('[RhythmHero Cam] live', {
+        fov: this.camera.fov.toFixed(2) + '°',
+        posX: this.camera.position.x.toFixed(3),
+        posZ: this.camera.position.z.toFixed(3),
+        swayAmp,
+        streak: this.streak,
+        spActive: this.spActive,
+      });
+    }
 
     this.composer.render();
 
@@ -1597,7 +1668,7 @@ export class Game {
     // (e.g. a tight FOV mid-streak, a red miss-flash, a lit trail) would
     // otherwise linger visually behind the results screen.
     this.camera.fov = this.baseFov;
-    this.camera.position.set(0, 7.8, CAMERA_BASE_Z);
+    this.camera.position.set(0, 7.8, this.baseCameraZ);
     this.camera.updateProjectionMatrix();
     for (let i = 0; i < this.frets.length; i++) {
       const f = this.frets[i];
@@ -1609,18 +1680,14 @@ export class Game {
     for (const st of this.streakTrails) { st.flash = 0; st.mat.opacity = 0; st.mesh.visible = false; }
     // Freeze the crowd at its true final size — _audienceRevealT (using the
     // rock value the song actually ended on) rather than a blind reset to
-    // baseOpacity, which would snap every still-hidden bonus member
-    // suddenly visible on the results screen even though they never
-    // actually appeared during play. Any member still stuck mid-dance-burst
-    // also reverts to its idle pose here, since _updateAudience (the only
-    // place that normally corrects this) stops running once ended=true.
+    // baseOpacity, which would snap every still-hidden bonus panel suddenly
+    // visible on the results screen even though it never actually appeared
+    // during play. Scale also resets in case the song ended mid-hype-pulse,
+    // since _updateAudience (the only place that normally corrects this)
+    // stops running once ended=true.
     for (const a of this.audience) {
       a.mat.opacity = this._audienceRevealT(a) * a.baseOpacity;
-      if (a.dancing) {
-        a.dancing = false;
-        a.mat.map = this.shared.silhouetteTex;
-        a.mat.needsUpdate = true;
-      }
+      a.sprite.scale.set(a.baseScaleX, a.baseScaleY, 1);
     }
     this._danceBurst = 0;
     for (const s of this.smoke) { s.mat.opacity = 0.05; }

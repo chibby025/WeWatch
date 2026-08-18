@@ -33,6 +33,7 @@ import KYCSubmissionForm from './components/payment/KYCSubmissionForm';
 import SVGComparison from './components/dev/SVGComparison';
 import VsBattlePreview from './components/dev/VsBattlePreview';
 import RhythmHeroHighwayPreview from './components/dev/RhythmHeroHighwayPreview';
+import RhythmHeroHighwayOnly from './components/dev/RhythmHeroHighwayOnly';
 import ExplorePage from './pages/ExplorePage';
 import BackButtonGuard from './components/BackButtonGuard';
 import GuestViewPage from './pages/GuestViewPage';
@@ -219,6 +220,9 @@ function App() {
           } />
           <Route path="/dev/rhythm-hero-highway" element={
             <RhythmHeroHighwayPreview />
+          } />
+          <Route path="/dev/rhythm-hero-highway-only" element={
+            <RhythmHeroHighwayOnly />
           } />
 
           {/* ✅ ALL DEMO ROUTES COMMENTED OUT */}

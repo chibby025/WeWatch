@@ -717,7 +717,15 @@ function WarmPerformanceMirror({
 
   if (loadError) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
+      /* height:100dvh overrides inset-0's implied 100vh-based height (CSS
+         correctly prioritizes an explicit height over the top+bottom
+         combination) — 100vh sizes against the mobile browser's LAYOUT
+         viewport (assumes the address bar is hidden), which is why this
+         container could render taller than the actually-visible screen on
+         a real phone; 100dvh tracks the real, currently-visible viewport.
+         Same fix already established elsewhere in this codebase for this
+         exact class of bug (index.css, VideoWatch.jsx, LobbyPage.jsx). */
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white" style={{ height: '100dvh' }}>
         <span className="text-6xl">🎸</span>
         <p className="text-lg font-semibold">Couldn't load {playerLabel}'s song</p>
         <button onClick={onClose} className="mt-2 px-5 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors">Close</button>
@@ -728,7 +736,7 @@ function WarmPerformanceMirror({
   const trackName = liveInfo?.track_name;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black select-none">
+    <div className="fixed inset-0 z-50 flex flex-col bg-black select-none" style={{ height: '100dvh' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <h2 className="text-sm font-bold tracking-widest text-purple-400">RHYTHM HERO</h2>
@@ -884,7 +892,7 @@ function SongPickerMirror({ info }) {
 // needs a persistent canvas this component doesn't have).
 function SelectionMirror({ info, playerLabel, onClose, matchFramingText, isSuddenDeath }) {
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black select-none">
+    <div className="fixed inset-0 z-50 flex flex-col bg-black select-none" style={{ height: '100dvh' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <h2 className="text-sm font-bold tracking-widest text-purple-400">RHYTHM HERO</h2>
@@ -937,7 +945,8 @@ function ScoreMirror({ info, matchFramingText, isSuddenDeath }) {
 
   if (info.solo) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-3 text-white">
+      // See the height:100dvh comment on the sibling loadError branch above.
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-3 text-white" style={{ height: '100dvh' }}>
         <Trophy className="w-14 h-14 text-yellow-400" />
         <p className="text-2xl font-bold">Score: {Number(info.score || 0).toLocaleString()}</p>
         {accuracyLine}
@@ -961,7 +970,8 @@ function ScoreMirror({ info, matchFramingText, isSuddenDeath }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
+    // See the height:100dvh comment on the sibling loadError branch above.
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white" style={{ height: '100dvh' }}>
       <Trophy className="w-14 h-14 text-yellow-400" />
       {matchFramingText && <p className="text-xs uppercase tracking-wide text-purple-400 font-semibold">{matchFramingText}</p>}
       {isSuddenDeath && <p className="text-xs uppercase tracking-wide text-red-400 font-bold animate-pulse">⚔️ Sudden Death — replay!</p>}
@@ -1780,7 +1790,15 @@ export default function RhythmHeroGame({
   if (isInTournament && !isMyTurn && myScore === null) {
     const currentPlayerName = hotSeatTournament?.current_player_name ?? '…';
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
+      /* height:100dvh overrides inset-0's implied 100vh-based height (CSS
+         correctly prioritizes an explicit height over the top+bottom
+         combination) — 100vh sizes against the mobile browser's LAYOUT
+         viewport (assumes the address bar is hidden), which is why this
+         container could render taller than the actually-visible screen on
+         a real phone; 100dvh tracks the real, currently-visible viewport.
+         Same fix already established elsewhere in this codebase for this
+         exact class of bug (index.css, VideoWatch.jsx, LobbyPage.jsx). */
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white" style={{ height: '100dvh' }}>
         <span className="text-6xl">⏳</span>
         {matchFramingText && <p className="text-xs uppercase tracking-wide text-purple-400 font-semibold">{matchFramingText}</p>}
         {isSuddenDeath && <p className="text-xs uppercase tracking-wide text-red-400 font-bold animate-pulse">⚔️ Sudden Death — replay!</p>}
@@ -1795,7 +1813,15 @@ export default function RhythmHeroGame({
   // (or, in bracket mode, eliminated from further play).
   if (isInTournament && myScore !== null) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white">
+      /* height:100dvh overrides inset-0's implied 100vh-based height (CSS
+         correctly prioritizes an explicit height over the top+bottom
+         combination) — 100vh sizes against the mobile browser's LAYOUT
+         viewport (assumes the address bar is hidden), which is why this
+         container could render taller than the actually-visible screen on
+         a real phone; 100dvh tracks the real, currently-visible viewport.
+         Same fix already established elsewhere in this codebase for this
+         exact class of bug (index.css, VideoWatch.jsx, LobbyPage.jsx). */
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black gap-4 text-white" style={{ height: '100dvh' }}>
         <Trophy className="w-14 h-14 text-yellow-400" />
         {matchFramingText && <p className="text-xs uppercase tracking-wide text-purple-400 font-semibold">{matchFramingText}</p>}
         {isSuddenDeath && !isEliminated && <p className="text-xs uppercase tracking-wide text-red-400 font-bold animate-pulse">⚔️ Sudden Death — replay!</p>}
@@ -1831,7 +1857,7 @@ export default function RhythmHeroGame({
 
   // 5. Actual gameplay flow — instrument select -> song select -> loading -> playing.
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black select-none">
+    <div className="fixed inset-0 z-50 flex flex-col bg-black select-none" style={{ height: '100dvh' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <h2 className="text-sm font-bold tracking-widest text-purple-400">RHYTHM HERO</h2>
@@ -1913,31 +1939,51 @@ export default function RhythmHeroGame({
               className="absolute top-16 left-1/2 -translate-x-1/2 px-4 py-2 bg-purple-700/90 text-white text-sm font-bold rounded-full pointer-events-none transition-opacity duration-300"
               style={{ opacity: 0 }}
             />
+            {/* Lives in the empty band below the highway's own footprint
+                (the highway only ever occupies roughly the middle third of
+                the screen — see the mobile-framing investigation), not
+                overlaid ON the highway/notes like the previous ambient
+                version — so it no longer needs to be near-invisible (14%
+                opacity) to stay out of the gameplay's way; full readable
+                opacity works now that it has its own dedicated space.
+                Bottom offset is touch-device-conditional so it clears the
+                fret-button row below it rather than sitting on top of it —
+                non-touch devices have no buttons to avoid, so they get a
+                smaller, closer-to-the-edge offset instead. */}
             {currentLyricLine && (
               <div
                 key={currentLyricLine}
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[92%] px-4 text-center text-2xl sm:text-4xl font-black text-white/[0.14] truncate pointer-events-none animate-fade-in"
+                className={`absolute left-1/2 -translate-x-1/2 w-[92%] px-4 text-center text-lg sm:text-2xl font-bold text-white/80 truncate pointer-events-none animate-fade-in ${isTouchDevice ? 'bottom-20 sm:bottom-24' : 'bottom-8 sm:bottom-10'}`}
               >
                 {currentLyricLine}
               </div>
             )}
 
-            {/* Touch fret buttons — real touch devices only */}
+            {/* Touch fret buttons — real touch devices only. Sized down below
+                sm: (w-11/44px + gap-1.5/6px = 6*44+5*6=294px) so the full row
+                of 6 fits within a real narrow phone (~360-375px wide) in one
+                reachable line — the original fixed w-14/gap-3 sizing came to
+                396px, wider than most phones, silently clipped by this
+                container's own overflow-hidden. Deliberately kept as a
+                single unwrapped row (not wrap-to-2-lines, unlike e.g. the
+                Whot suit picker) since a rhythm game's controls need to stay
+                reachable in one glance/reach during fast play. sm: and up
+                keeps the original, larger w-14/gap-3 sizing unchanged. */}
             {isTouchDevice && (
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-3">
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 sm:gap-3">
                 {instrument?.colors.map((color, i) => (
                   <button
                     key={i}
                     onTouchStart={handleFretDown(i)}
                     onTouchEnd={handleFretUp(i)}
                     onTouchCancel={handleFretUp(i)}
-                    className="w-14 h-14 rounded-full border-2 border-white/40 active:scale-90 transition-transform"
+                    className="w-11 h-11 sm:w-14 sm:h-14 rounded-full border-2 border-white/40 active:scale-90 transition-transform"
                     style={{ backgroundColor: `#${color.toString(16).padStart(6, '0')}` }}
                   />
                 ))}
                 <button
                   onTouchStart={handleSpTouch}
-                  className="w-14 h-14 rounded-full border-2 border-white/40 bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-white text-xl active:scale-90 transition-transform"
+                  className="w-11 h-11 sm:w-14 sm:h-14 rounded-full border-2 border-white/40 bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-white text-lg sm:text-xl active:scale-90 transition-transform"
                 >
                   ★
                 </button>

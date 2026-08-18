@@ -129,7 +129,12 @@ export default function RhythmHeroHighwayPreview() {
   const cfg = INSTRUMENT_CONFIG[instrumentId];
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col">
+    /* min-height:100dvh (not Tailwind's min-h-screen, which is 100vh) tracks
+       the real, currently-visible mobile viewport rather than the browser's
+       layout viewport (which assumes the address bar is hidden) — same fix
+       already established elsewhere in this codebase (index.css,
+       VideoWatch.jsx, LobbyPage.jsx) for this exact class of bug. */
+    <div className="bg-black text-white flex flex-col" style={{ minHeight: '100dvh' }}>
       <div className="p-3 flex flex-wrap items-center gap-2 bg-gray-900 border-b border-gray-800">
         <h1 className="text-sm font-bold tracking-widest text-purple-400 mr-2">RHYTHM HERO — HIGHWAY PREVIEW</h1>
         <select
