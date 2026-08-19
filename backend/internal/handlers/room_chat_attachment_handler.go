@@ -31,12 +31,32 @@ var (
 		"image/webp": true,
 	}
 	roomAttachAllowedDocumentTypes = map[string]bool{
-		"application/pdf": true,
+		"application/pdf":    true,
 		"application/msword": true,
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
 		"text/plain": true,
 	}
 )
+
+// extensionForContentType returns the canonical extension for a known image
+// content-type — used after compression, since the actual bytes/content-type
+// can differ from the original upload's filename (a transparent PNG stays
+// PNG, an opaque one becomes JPEG). Falls back to the original filename's
+// own extension for anything not an explicitly-handled image type
+// (documents, or an unexpected image type that reached here unchanged).
+func extensionForContentType(contentType, filename string) string {
+	switch contentType {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	}
+	return strings.ToLower(filepath.Ext(filename))
+}
 
 // UploadRoomChatAttachmentHandler uploads an image or document to BunnyCDN and
 // creates a RoomMessage row with the attachment URL.
@@ -130,8 +150,23 @@ func UploadRoomChatAttachmentHandler(c *gin.Context) {
 		return
 	}
 
+	// Compress images before upload (documents pass through untouched) —
+	// GIF/WebP and any decode failure are left as-is (see CompressChatImage's
+	// own doc comment for why), everything else gets resized/re-encoded.
+	// ext is recomputed from the resulting content-type, not the original
+	// filename, so a PNG-in/JPEG-out (or vice versa, for a transparent
+	// source) round-trip serves with a filename that actually matches its
+	// real content-type.
+	if attachmentType == "image" {
+		var changed bool
+		fileBytes, contentType, changed = utils.CompressChatImage(fileBytes, contentType)
+		if changed {
+			log.Printf("UploadRoomChatAttachmentHandler: image compressed to %s, %d bytes", contentType, len(fileBytes))
+		}
+	}
+
 	// Build a unique BunnyCDN path under room-chat/{roomID}/
-	ext := strings.ToLower(filepath.Ext(file.Filename))
+	ext := extensionForContentType(contentType, file.Filename)
 	uniqueName := fmt.Sprintf("room-chat/%d/%d_%s%s",
 		roomID, time.Now().UnixMilli(), uuid.New().String()[:8], ext)
 
@@ -199,4 +234,3 @@ func UploadRoomChatAttachmentHandler(c *gin.Context) {
 		"created_at":      msg.CreatedAt,
 	})
 }
-

@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -39,7 +40,7 @@ var (
 	}
 
 	AllowedDocumentTypes = map[string]bool{
-		"application/pdf": true,
+		"application/pdf":    true,
 		"application/msword": true,
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
 		"text/plain": true,
@@ -154,7 +155,6 @@ func uploadAttachment(c *gin.Context, attachmentType, uploadFolder string, maxSi
 	timestamp := time.Now().Unix()
 	uniqueID := uuid.New().String()
 	ext := filepath.Ext(file.Filename)
-	newFilename := fmt.Sprintf("%d_%s%s", timestamp, uniqueID, ext)
 
 	// Create user-specific directory
 	uploadDir := filepath.Join("uploads", uploadFolder, fmt.Sprintf("%d", senderID))
@@ -164,14 +164,52 @@ func uploadAttachment(c *gin.Context, attachmentType, uploadFolder string, maxSi
 		return
 	}
 
-	// Full file path
-	filePath := filepath.Join(uploadDir, newFilename)
+	var newFilename, filePath string
 
-	// Save file
-	if err := c.SaveUploadedFile(file, filePath); err != nil {
-		log.Printf("uploadAttachment(%s): Failed to save file: %v", attachmentType, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
-		return
+	if attachmentType == "image" {
+		// Compress before ever writing to disk (rather than saving the
+		// original then overwriting) — one write instead of two, and the
+		// file on disk always has the extension matching its real final
+		// content-type. GIF/WebP and any decode failure pass through
+		// unchanged (see CompressChatImage's own doc comment for why).
+		src, err := file.Open()
+		if err != nil {
+			log.Printf("uploadAttachment(%s): Failed to open uploaded file: %v", attachmentType, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+			return
+		}
+		rawBytes, err := io.ReadAll(src)
+		src.Close()
+		if err != nil {
+			log.Printf("uploadAttachment(%s): Failed to read uploaded file: %v", attachmentType, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+			return
+		}
+		var changed bool
+		var outBytes []byte
+		outBytes, contentType, changed = utils.CompressChatImage(rawBytes, contentType)
+		if changed {
+			log.Printf("uploadAttachment(%s): image compressed %d -> %d bytes (%s)", attachmentType, len(rawBytes), len(outBytes), contentType)
+			ext = extensionForContentType(contentType, file.Filename)
+			file.Size = int64(len(outBytes))
+		} else {
+			outBytes = rawBytes
+		}
+		newFilename = fmt.Sprintf("%d_%s%s", timestamp, uniqueID, ext)
+		filePath = filepath.Join(uploadDir, newFilename)
+		if err := os.WriteFile(filePath, outBytes, 0644); err != nil {
+			log.Printf("uploadAttachment(%s): Failed to save file: %v", attachmentType, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+			return
+		}
+	} else {
+		newFilename = fmt.Sprintf("%d_%s%s", timestamp, uniqueID, ext)
+		filePath = filepath.Join(uploadDir, newFilename)
+		if err := c.SaveUploadedFile(file, filePath); err != nil {
+			log.Printf("uploadAttachment(%s): Failed to save file: %v", attachmentType, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+			return
+		}
 	}
 
 	// Push to BunnyCDN in production — a bare relative URL here resolves against

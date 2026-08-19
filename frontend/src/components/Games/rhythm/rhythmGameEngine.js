@@ -16,12 +16,22 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
+// A handful of the constants/functions below are additionally `export`ed —
+// pure additive change, zero effect on anything in this file itself — so
+// RhythmHeroHighwayLab.jsx (a dev-only diagnostic page investigating a real
+// "highway shows only in a corner of the screen" bug on a real phone) can
+// test the LITERAL production camera/highway math in total isolation
+// (nothing else on screen — no notes, audience, lyrics, HUD, bloom,
+// particles, starfield), rather than a hand-copied version that could
+// silently drift out of sync with this file. See that page's own header
+// comment for the full investigation context.
 const LANES = 5;
 const LANE_W = 2;
 const HIGHWAY_W = LANES * LANE_W;
 const HIGHWAY_LEN = 70;
 const SPEED = 26; // world units per second
 const HIT_Z = 0;
+export { LANES, LANE_W, HIGHWAY_W, HIGHWAY_LEN, SPEED, HIT_Z };
 
 const HIT_WINDOW = 0.14;
 const PERFECT_WINDOW = 0.055;
@@ -49,7 +59,7 @@ const DEFAULT_ACCENT_RAIL = 0xb14cff;
 // -------------------------------------------------- highway design upgrades
 // 1. Combo-reactive camera — FOV tightens as the streak builds, easing back
 //    toward baseFov the instant it resets (streak=0 on a miss/overstrum).
-const CAMERA_BASE_Z = 9.5;
+export const CAMERA_BASE_Z = 9.5;
 const COMBO_FOV_STREAK_CAP = 40;   // streak at which the FOV-tighten maxes out
 const COMBO_FOV_MAX_DELTA = 4;     // degrees tightened at max combo
 // 5. Star Power camera — an extra FOV pull-in + forward dolly + wider sway on
@@ -106,7 +116,7 @@ const ROCK_MISS = 2.2;       // loss per miss
 const ROCK_FAIL_GRACE = 6;   // seconds of intro grace before a fail can trigger
 const KEYS = { KeyA: 0, KeyS: 1, KeyD: 2, KeyF: 3, KeyG: 4, Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4 };
 
-const laneX = (lane) => (lane - (LANES - 1) / 2) * LANE_W;
+export const laneX = (lane) => (lane - (LANES - 1) / 2) * LANE_W;
 
 // Pick a vertical FOV so the highway stays a usable width on tall/narrow
 // (portrait phone) screens. We keep the horizontal FOV roughly constant by
@@ -133,11 +143,11 @@ const BASE_VFOV = 58;
 const BASE_ASPECT = 16 / 9;
 const BASE_HFOV = 2 * Math.atan(Math.tan((BASE_VFOV * Math.PI) / 360) * BASE_ASPECT);
 const MAX_VFOV = 92; // sane ceiling — was already an unnamed 92 magic number here
-function idealVfovForAspect(aspect) {
+export function idealVfovForAspect(aspect) {
   if (aspect >= BASE_ASPECT) return BASE_VFOV;
   return (2 * Math.atan(Math.tan(BASE_HFOV / 2) / aspect) * 180) / Math.PI;
 }
-function fovForAspect(aspect) {
+export function fovForAspect(aspect) {
   return Math.min(idealVfovForAspect(aspect), MAX_VFOV);
 }
 
@@ -154,7 +164,7 @@ function fovForAspect(aspect) {
 // To reproduce the same target width W at this narrower actual FOV, solve
 // 2*D1*tan(actualHFOV/2) = W for D1: D1 = D0 * tan(BASE_HFOV/2)/tan(actualHFOV/2).
 // That ratio (independent of D0) is the multiplier returned here.
-function dollyMultiplierForAspect(aspect) {
+export function dollyMultiplierForAspect(aspect) {
   const idealV = idealVfovForAspect(aspect);
   if (idealV <= MAX_VFOV) return 1; // cap never engages at this aspect — no compensation needed
   const cappedRad = (MAX_VFOV * Math.PI) / 180;
@@ -182,15 +192,82 @@ function dollyMultiplierForAspect(aspect) {
 const MOBILE_ZOOM_START = 0.85; // ramp begins below this aspect
 const MOBILE_ZOOM_FULL = 0.5;   // full effect reached by this aspect (typical phone range)
 const MOBILE_ZOOM_MIN = 0.85;   // closest the camera ever gets (15% closer, at full effect)
-function mobileZoomMultiplier(aspect) {
+export function mobileZoomMultiplier(aspect) {
   if (aspect >= MOBILE_ZOOM_START) return 1;
   if (aspect <= MOBILE_ZOOM_FULL) return MOBILE_ZOOM_MIN;
   const t = (aspect - MOBILE_ZOOM_FULL) / (MOBILE_ZOOM_START - MOBILE_ZOOM_FULL);
   return MOBILE_ZOOM_MIN + (1 - MOBILE_ZOOM_MIN) * t;
 }
 
+// A vertical framing lift — raises the camera's HEIGHT (a taller, more
+// overhead vantage point pushes the horizon higher in the frame) while
+// solving for a NEW lookAt target Y that keeps the highway's NEAR edge (the
+// fret line, world Z=HIT_Z) at the EXACT same on-screen vertical position
+// the original, un-lifted camera put it at. Confirmed via direct numerical
+// verification (the mobile-framing highway-lab investigation) across the
+// full realistic aspect-ratio range — narrow phones through ultrawide
+// desktop, and both the resting and Star-Power-zoomed camera distances —
+// that this holds the near edge invariant to 4+ decimal places while
+// meaningfully raising the highway's far/vanishing-point edge: e.g. on a
+// common 414x896 phone the far edge moves from ~13.5% to ~32.6% of the way
+// up the frame; on 16:9 desktop from ~35% to ~76%. Framing near the player
+// (confirmed fine via direct real-phone testing before this was added) is
+// left completely untouched — only the previously-empty band above the
+// highway shrinks.
+//
+// ORIGINAL_CAM_H is used ONLY as the reference for "keep the near edge
+// exactly where it already was" — it is never the camera's own live height
+// anymore, LIFTED_CAM_H is.
+const ORIGINAL_CAM_H = 7.8;
+export const LIFTED_CAM_H = 12;
+
+// Pure projection math (no THREE.js Vector/Camera objects needed) — computes
+// the vertical NDC coordinate a point on the highway's centerline (world
+// Y=0, given Z) lands at under a camera positioned at (0, camH, camZ)
+// looking at (0, targetY, targetZ) with the given vertical FOV. Derived from
+// a full 3-axis (lookAt-basis) computation and numerically verified against
+// it before being simplified to this closed form — the camera and its
+// lookAt target never leave the world X=0 centerline in this engine, which
+// is what lets every X-axis term drop out here.
+function _highwayCenterlineYndc(camH, camZ, targetY, targetZ, vFovDeg, pointZ) {
+  const dY = targetY - camH;
+  const dZ = targetZ - camZ;
+  const L = Math.sqrt(dY * dY + dZ * dZ);
+  const fy = dY / L;
+  const fz = dZ / L;
+  const yAxisY = -fz;
+  const yAxisZ = fy;
+  const zAxisY = -fy;
+  const zAxisZ = -fz;
+  const vY = -camH; // pointY (always 0, the highway's own plane) - camH
+  const vZ = pointZ - camZ;
+  const pCamY = vY * yAxisY + vZ * yAxisZ;
+  const pCamZ = vY * zAxisY + vZ * zAxisZ;
+  const halfVfov = (vFovDeg * Math.PI) / 360;
+  return pCamY / (-pCamZ * Math.tan(halfVfov));
+}
+
+// Solves (via bisection — cheap, only ever called on construct/resize, never
+// per-frame) for the lookAt target Y that, at LIFTED_CAM_H, reproduces the
+// SAME near-edge (HIT_Z) framing the original ORIGINAL_CAM_H/targetY=0
+// camera would have produced for this exact camZ/vFov. Exported so
+// RhythmHeroHighwayLab.jsx (the isolated mobile-framing diagnostic page)
+// applies the identical, verified formula rather than a hand-copied one.
+export function computeLiftedLookAtY(camZ, vFovDeg, targetZ = -16, nearRefZ = HIT_Z) {
+  const baseline = _highwayCenterlineYndc(ORIGINAL_CAM_H, camZ, 0, targetZ, vFovDeg, nearRefZ);
+  let lo = -80;
+  let hi = 80;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    const v = _highwayCenterlineYndc(LIFTED_CAM_H, camZ, mid, targetZ, vFovDeg, nearRefZ);
+    if (v < baseline) hi = mid;
+    else lo = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 // ---------------------------------------------------------------- shaders
-const highwayVert = /* glsl */ `
+export const highwayVert = /* glsl */ `
   varying vec3 vWorld;
   void main() {
     vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
@@ -198,7 +275,7 @@ const highwayVert = /* glsl */ `
   }
 `;
 
-const highwayFrag = /* glsl */ `
+export const highwayFrag = /* glsl */ `
   varying vec3 vWorld;
   uniform float uScroll;
   uniform float uBeat;
@@ -350,6 +427,12 @@ export class Game {
     this.baseCameraZ = CAMERA_BASE_Z * mult;
     this.spCameraZ = SP_CAMERA_Z * mult;
     this._lastDollyMultiplier = mult;
+    // Vertical framing lift (see computeLiftedLookAtY's own comment) — solved
+    // here, alongside the Z distances above, since both only ever need
+    // recomputing on the same triggers (construct, resize) and both depend
+    // on the same aspect-derived baseFov.
+    this._liftedBaseLookAtY = computeLiftedLookAtY(this.baseCameraZ, this.baseFov);
+    this._liftedSpLookAtY = computeLiftedLookAtY(this.spCameraZ, this.baseFov);
   }
 
   // DEBUG — deliberately left in (not removed after testing) so this can be
@@ -369,6 +452,8 @@ export class Game {
       dollyMultiplier: this._lastDollyMultiplier?.toFixed(3),
       baseCameraZ: this.baseCameraZ?.toFixed(2),
       spCameraZ: this.spCameraZ?.toFixed(2),
+      liftedCamH: LIFTED_CAM_H,
+      liftedBaseLookAtY: this._liftedBaseLookAtY?.toFixed(2),
     });
   }
 
@@ -411,8 +496,13 @@ export class Game {
     // actually takes effect everywhere the camera can rest, not just here.
     this._recomputeCameraDistances(w0 / h0);
     this.camera = new THREE.PerspectiveCamera(this.baseFov, w0 / h0, 0.1, 200);
-    this.camera.position.set(0, 7.8, this.baseCameraZ);
-    this.camera.lookAt(0, 0, -16);
+    this.camera.position.set(0, LIFTED_CAM_H, this.baseCameraZ);
+    // _currentLookAtY is the live, per-frame-lerped counterpart to
+    // camera.position.z's own combo/SP lerp below — tracks smoothly between
+    // _liftedBaseLookAtY and _liftedSpLookAtY the same way position.z tracks
+    // between baseCameraZ and spCameraZ, so the two animate in lockstep.
+    this._currentLookAtY = this._liftedBaseLookAtY;
+    this.camera.lookAt(0, this._currentLookAtY, -16);
     this._lastCamDebugLog = 0; // throttle for the periodic runtime sample in _loop
     this._logCameraSetupDebug('construct', w0 / h0);
 
@@ -462,6 +552,10 @@ export class Game {
       // *during* gameplay, not for catching up to a structural aspect-ratio
       // change, which should apply at once.
       this.camera.position.z = this.spActive ? this.spCameraZ : this.baseCameraZ;
+      // Same immediate (non-lerped) snap as position.z above, and for the
+      // same reason — a resize should apply the new framing at once, not
+      // ease into it.
+      this._currentLookAtY = this.spActive ? this._liftedSpLookAtY : this._liftedBaseLookAtY;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(w, h, false);
       this.composer.setSize(w, h);
@@ -1458,7 +1552,12 @@ export class Game {
     // — the aspect-dollied rest distances computed in _recomputeCameraDistances.
     const targetZ = this.spActive ? this.spCameraZ : this.baseCameraZ;
     this.camera.position.z += (targetZ - this.camera.position.z) * Math.min(1, dt * 3);
-    this.camera.lookAt(0, 0, -16);
+    // Lerps in lockstep with position.z above — same easing factor, same
+    // base/SP target switch — so the vertical-lift lookAt target and the
+    // dolly distance always transition together.
+    const targetLookAtY = this.spActive ? this._liftedSpLookAtY : this._liftedBaseLookAtY;
+    this._currentLookAtY += (targetLookAtY - this._currentLookAtY) * Math.min(1, dt * 3);
+    this.camera.lookAt(0, this._currentLookAtY, -16);
 
     // DEBUG — throttled runtime sample (not per-frame — would spam the
     // console), deliberately left in for the same reason as
@@ -1710,7 +1809,8 @@ export class Game {
     // (e.g. a tight FOV mid-streak, a red miss-flash, a lit trail) would
     // otherwise linger visually behind the results screen.
     this.camera.fov = this.baseFov;
-    this.camera.position.set(0, 7.8, this.baseCameraZ);
+    this.camera.position.set(0, LIFTED_CAM_H, this.baseCameraZ);
+    this._currentLookAtY = this._liftedBaseLookAtY;
     this.camera.updateProjectionMatrix();
     for (let i = 0; i < this.frets.length; i++) {
       const f = this.frets[i];

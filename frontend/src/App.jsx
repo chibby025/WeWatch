@@ -34,6 +34,7 @@ import SVGComparison from './components/dev/SVGComparison';
 import VsBattlePreview from './components/dev/VsBattlePreview';
 import RhythmHeroHighwayPreview from './components/dev/RhythmHeroHighwayPreview';
 import RhythmHeroHighwayOnly from './components/dev/RhythmHeroHighwayOnly';
+import RhythmHeroHighwayLab from './components/dev/RhythmHeroHighwayLab';
 import ExplorePage from './pages/ExplorePage';
 import BackButtonGuard from './components/BackButtonGuard';
 import GuestViewPage from './pages/GuestViewPage';
@@ -223,6 +224,9 @@ function App() {
           } />
           <Route path="/dev/rhythm-hero-highway-only" element={
             <RhythmHeroHighwayOnly />
+          } />
+          <Route path="/dev/rhythm-hero-highway-lab" element={
+            <ProtectedRoute><RhythmHeroHighwayLab /></ProtectedRoute>
           } />
 
           {/* ✅ ALL DEMO ROUTES COMMENTED OUT */}

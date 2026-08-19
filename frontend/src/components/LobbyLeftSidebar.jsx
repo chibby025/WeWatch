@@ -18,6 +18,7 @@ import {
   InformationCircleIcon,
   AdjustmentsHorizontalIcon,
   EyeSlashIcon,
+  BeakerIcon,
 } from '@heroicons/react/24/outline';
 import HelpSupportModal from './HelpSupportModal';
 import SecurityModal from './SecurityModal';
@@ -198,6 +199,18 @@ const LobbyLeftSidebar = ({
       },
       enabled: true,
       badge: 'ADS',
+      highlight: true
+    },
+    {
+      id: 'rhythm_hero_highway_lab',
+      label: 'Rhythm Hero Highway Lab',
+      icon: BeakerIcon,
+      onClick: () => {
+        onClose();
+        navigate('/dev/rhythm-hero-highway-lab');
+      },
+      enabled: true,
+      badge: 'DEV',
       highlight: true
     }] : []),
     {
