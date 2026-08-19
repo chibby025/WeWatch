@@ -72,12 +72,14 @@ const MISS_FLASH_DECAY = 3.2; // per-second decay rate
 //    burst (see getPlayerVisualState / InstrumentCloseup.jsx's InstrumentTopOverlay).
 const PLAYER_HIT_FLASH_DECAY = 3.4; // per-second decay rate — ~0.3s to fade
 
-// 7. Audience count scales with the rock/accuracy meter — a bigger reveal
-//    pool (beyond the always-visible core crowd) fades members in/out as
-//    `rock` crosses each one's own threshold (see _buildAudience). Uses
-//    `rock`, not streak: streak resets to 0 on a single miss, and tying
-//    crowd SIZE to that would empty the venue over one bad note — `rock`
-//    moves gradually instead, the right signal for a slow "buildup".
+// 7. Audience presence is ENTIRELY driven by the rock/accuracy meter — no
+//    tier is ever unconditionally visible; every panel fades in/out as
+//    `rock` crosses its own threshold (see _buildAudience), so a genuinely
+//    bad run can empty the whole venue, not just hold back a reveal pool on
+//    top of an always-present baseline crowd. Uses `rock`, not streak:
+//    streak resets to 0 on a single miss, and tying crowd size to that
+//    would empty the venue over one bad note — `rock` moves gradually
+//    instead, the right signal for a slow "buildup" (or drain).
 const AUDIENCE_REVEAL_FADE = 10; // smoothing window (rock points) around each member's own threshold
 // 8. Dance-burst "hype" wave — a decaying scalar, spiked on streak
 //    milestones / Star Power activation / occasional PERFECT hits, that
@@ -158,6 +160,33 @@ function dollyMultiplierForAspect(aspect) {
   const cappedRad = (MAX_VFOV * Math.PI) / 180;
   const actualHFOV = 2 * Math.atan(aspect * Math.tan(cappedRad / 2));
   return Math.tan(BASE_HFOV / 2) / Math.tan(actualHFOV / 2);
+}
+
+// A SEPARATE, mobile-only "move closer" factor, layered ON TOP of (not
+// instead of) dollyMultiplierForAspect's width-safety compensation above —
+// makes the highway occupy more of the screen's vertical footprint
+// specifically on narrow portrait phones, where a large fraction of the
+// screen was otherwise empty sky/floor. Ramps smoothly from 1 (no change,
+// desktop/tablet-wide aspects — completely untouched) down to
+// MOBILE_ZOOM_MIN as aspect narrows from MOBILE_ZOOM_START to
+// MOBILE_ZOOM_FULL (the latter chosen to land within the real range of
+// common phone aspect ratios — ~0.45-0.55 — rather than requiring an
+// unrealistically extreme aspect to ever reach full effect), then holds flat
+// at the minimum below that so it doesn't keep zooming in further for any
+// even-narrower synthetic test aspect. Deliberately conservative (only
+// partially reclaims the dolly-back margin, not all of it) — moving the
+// camera closer at an already-wide FOV is the exact combination that caused
+// the edge-clipping/distortion this session spent most of its earlier
+// effort fixing, so this only eats into PART of that safety margin. Always
+// re-run the rail-edge margin measurements after changing these constants.
+const MOBILE_ZOOM_START = 0.85; // ramp begins below this aspect
+const MOBILE_ZOOM_FULL = 0.5;   // full effect reached by this aspect (typical phone range)
+const MOBILE_ZOOM_MIN = 0.85;   // closest the camera ever gets (15% closer, at full effect)
+function mobileZoomMultiplier(aspect) {
+  if (aspect >= MOBILE_ZOOM_START) return 1;
+  if (aspect <= MOBILE_ZOOM_FULL) return MOBILE_ZOOM_MIN;
+  const t = (aspect - MOBILE_ZOOM_FULL) / (MOBILE_ZOOM_START - MOBILE_ZOOM_FULL);
+  return MOBILE_ZOOM_MIN + (1 - MOBILE_ZOOM_MIN) * t;
 }
 
 // ---------------------------------------------------------------- shaders
@@ -317,7 +346,7 @@ export class Game {
   // any time the aspect ratio changes (construction, resize), before using
   // either value. See dollyMultiplierForAspect's own comment for the math.
   _recomputeCameraDistances(aspect) {
-    const mult = dollyMultiplierForAspect(aspect);
+    const mult = dollyMultiplierForAspect(aspect) * mobileZoomMultiplier(aspect);
     this.baseCameraZ = CAMERA_BASE_Z * mult;
     this.spCameraZ = SP_CAMERA_Z * mult;
     this._lastDollyMultiplier = mult;
@@ -452,6 +481,20 @@ export class Game {
     this._resizeObserver = new ResizeObserver(this._onResize);
     this._resizeObserver.observe(this.canvas);
     window.addEventListener('resize', this._onResize);
+    // Chrome DevTools' device-emulation override can lag behind this
+    // constructor's own synchronous execution specifically on a page
+    // REFRESH while already in emulated mode (confirmed via real testing —
+    // the canvas can report the true, pre-override window size for a brief
+    // window before DevTools catches up), and nothing above reliably
+    // corrects it afterward unless a genuine resize event happens to fire
+    // (e.g. switching device presets). This self-heals that race
+    // regardless of whether such an event ever comes, by re-running the
+    // exact same resize logic once more a bit after construction, once any
+    // pending override has had time to settle. _onResize's own `if (!w ||
+    // !h) return` guard and its otherwise-idempotent math make this a
+    // harmless no-op on the (common) case where the first read was already
+    // correct.
+    this._resizeSelfHealTimer = setTimeout(this._onResize, 400);
 
     this._onKeyDown = (e) => this._keyDown(e);
     this._onKeyUp = (e) => this._keyUp(e);
@@ -554,28 +597,29 @@ export class Game {
   // trails use (computed once in _loop and passed in) — the crowd visibly
   // brightens/gets louder as a streak builds, easing back once it resets.
   //
-  // Two tiers are CORE (always fully visible, unaffected by performance —
-  // the baseline crowd this engine has always shown) and two are BONUS
-  // (gated on the rock/accuracy meter in _updateAudience, fading in as the
-  // player does well — a bigger venue for a better performance).
+  // All four tiers are performance-gated (no tier is ever unconditionally
+  // visible) — each one fades in/out as the rock/accuracy meter crosses its
+  // own threshold in _updateAudience, so the venue's whole presence tracks
+  // how well the player is actually doing, not just a bonus reveal layered
+  // on top of an always-present baseline crowd.
   _buildAudience() {
     this.audience = [];
-    // Each tier is now ONE wide crowd-photo panel, not many individually
+    // Each tier is one wide crowd-photo panel, not many individually
     // positioned person-blobs the way the old procedural placeholder built
     // them — the photo already depicts a whole crowd, so stamping it dozens
     // of times per side would just look like an obviously tiled/repeated
-    // image. z-depth/relative-size/reveal-threshold shape is carried over
-    // from the original 4-row layout (2 always-visible "core" rows nearer
-    // the camera + 2 performance-gated "bonus" rows further back) so the
-    // "the venue fills in as you play well" mechanic is unchanged in
-    // spirit, just built from panels instead of many small sprites.
+    // image. Reveal thresholds are spread across the rock meter's full 0-100
+    // range, nearest/biggest tier first — since ROCK_START is 80 (see its
+    // own comment), the first three tiers are already visible from the very
+    // start of a song at typical starting performance, and only shrink away
+    // if play is genuinely bad; the furthest/smallest tier (revealAt near
+    // ROCK_START) is a real reward for excellence — it stays empty until the
+    // player actually pushes the meter above its starting point.
     const tiers = [
-      { z: -HIGHWAY_LEN * 0.30, width: 13, core: true },
-      { z: -HIGHWAY_LEN * 0.46, width: 10, core: true },
-      // Reveals as accuracy/streak (rock meter) climbs — nearer/bigger.
-      { z: -HIGHWAY_LEN * 0.58, width: 11, revealAt: 50 },
-      // The back of the venue filling in for a truly excellent run.
-      { z: -HIGHWAY_LEN * 0.72, width: 8, revealAt: 78 },
+      { z: -HIGHWAY_LEN * 0.30, width: 13, revealAt: 20 },
+      { z: -HIGHWAY_LEN * 0.46, width: 10, revealAt: 45 },
+      { z: -HIGHWAY_LEN * 0.58, width: 11, revealAt: 65 },
+      { z: -HIGHWAY_LEN * 0.72, width: 8, revealAt: 88 },
     ];
     for (const side of [-1, 1]) {
       for (const tier of tiers) {
@@ -605,8 +649,7 @@ export class Game {
           baseOpacity: 0.4 + Math.random() * 0.12,
           phase: Math.random() * Math.PI * 2,
           bobJitter: 0.75 + Math.random() * 0.5,
-          isCore: !!tier.core,
-          revealAt: tier.revealAt ?? 0,
+          revealAt: tier.revealAt,
         });
       }
     }
@@ -646,14 +689,13 @@ export class Game {
   // than in cheer() itself so it fades smoothly frame-by-frame instead of
   // as a single step. beatPulse drives the crowd's bob so they're actually
   // moving in time with the music, not a generic idle sine wave.
-  // How "revealed" a given audience member currently is (0-1) — core
-  // members are always fully visible; bonus members fade in/out smoothly
-  // as `rock` crosses their own individual threshold. Shared by
-  // _updateAudience (live, every frame) and _finish (freezing the crowd at
-  // its true final size for the results screen, rather than snapping every
-  // still-hidden bonus member suddenly visible).
+  // How "revealed" a given audience panel currently is (0-1) — every panel
+  // fades in/out smoothly as `rock` crosses its own individual threshold,
+  // no panel is ever unconditionally visible. Shared by _updateAudience
+  // (live, every frame) and _finish (freezing the crowd at its true final
+  // size for the results screen, rather than snapping every still-hidden
+  // panel suddenly visible).
   _audienceRevealT(a) {
-    if (a.isCore) return 1;
     const rock = this.rock ?? ROCK_START;
     return Math.max(0, Math.min(1,
       (rock - (a.revealAt - AUDIENCE_REVEAL_FADE / 2)) / AUDIENCE_REVEAL_FADE));
@@ -1680,7 +1722,7 @@ export class Game {
     for (const st of this.streakTrails) { st.flash = 0; st.mat.opacity = 0; st.mesh.visible = false; }
     // Freeze the crowd at its true final size — _audienceRevealT (using the
     // rock value the song actually ended on) rather than a blind reset to
-    // baseOpacity, which would snap every still-hidden bonus panel suddenly
+    // baseOpacity, which would snap every still-hidden panel suddenly
     // visible on the results screen even though it never actually appeared
     // during play. Scale also resets in case the song ended mid-hype-pulse,
     // since _updateAudience (the only place that normally corrects this)
@@ -1721,6 +1763,7 @@ export class Game {
   dispose() {
     this.running = false;
     cancelAnimationFrame(this._raf);
+    clearTimeout(this._resizeSelfHealTimer);
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
     if (this._onResize) window.removeEventListener('resize', this._onResize);
