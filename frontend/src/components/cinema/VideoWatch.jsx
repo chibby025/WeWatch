@@ -6340,7 +6340,18 @@ export default function VideoWatch() {
               setActiveGame(null);
               setMyHand(null);
             } else {
-              toast.error(message.error);
+              // Rebus Round / Four Frames / Wordsmith already surface a
+              // rejected move inline (a shake + message right at the input,
+              // via gameErrorMsg/gameErrorKey below) — a second generic toast
+              // for the exact same event is redundant and, worse, shows the
+              // raw backend string verbatim (e.g. "move failed: not quite —
+              // try again!") instead of the game's own friendlier copy. Every
+              // other game type has no inline mechanism, so it still needs
+              // this toast as its only error surface.
+              const hasInlineGameError = ['rebus_round', 'four_frames', 'wordsmith'].includes(activeGame?.game_type);
+              if (!hasInlineGameError) {
+                toast.error(message.error);
+              }
               setGameErrorMsg(message.error);
               setGameErrorKey(k => k + 1);
             }

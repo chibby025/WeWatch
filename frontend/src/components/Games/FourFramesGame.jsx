@@ -66,7 +66,11 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
     if (gameErrorKey === lastHandledErrorKeyRef.current) return;
     lastHandledErrorKeyRef.current = gameErrorKey;
     if (!gameErrorMsg) return;
-    setShakeError(gameErrorMsg);
+    // Strip the backend's generic "move failed: " wrapper (see sendError's
+    // call site in websocket_handler.go) — it's meant to give a bare toast
+    // context, but reads redundantly right next to the input where the
+    // rejection reason is already obviously about this guess.
+    setShakeError(gameErrorMsg.replace(/^move failed:\s*/i, ''));
     const t = setTimeout(() => setShakeError(null), 1800);
     return () => clearTimeout(t);
   }, [gameErrorKey, gameErrorMsg]);
@@ -155,8 +159,7 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
       {/* Header */}
       <div className="flex items-center justify-between pl-20 pr-5 py-4 border-b border-gray-800 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-2xl">📸</span>
-          <span className="text-white font-bold text-xl">Four Frames</span>
+          <img src="https://LetsWatchOut.b-cdn.net/games/logos/four_frames.png" alt="Four Frames" className="h-8 sm:h-9 w-auto" />
           {round > 0 && totalRounds > 0 && (
             <span className="text-gray-400 text-sm ml-1">Round {round}/{totalRounds}</span>
           )}

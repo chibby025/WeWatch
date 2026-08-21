@@ -140,7 +140,9 @@ func main() {
 		// Room message attachments
 		&models.RoomMessage{},
 		// Sticker packs (user-created, Telegram imports, community)
-		&models.StickerPack{}, &models.StickerItem{}, &models.UserStickerPack{})
+		&models.StickerPack{}, &models.StickerItem{}, &models.UserStickerPack{},
+		// Cross-device chat scroll-resume position (room/dm/group, shared table)
+		&models.ChatReadPosition{})
 	if err != nil {
 		log.Fatal("Failed to migrate database schema:", err)
 	}
@@ -766,6 +768,10 @@ func main() {
 		// Lobby WebSocket for real-time updates
 		protected.GET("/lobby/ws", handlers.LobbyWebSocketHandler) // GET /api/lobby/ws
 
+		// Cross-device chat scroll-resume position — shared by room chat,
+		// lobby DMs, and lobby groups (see ChatReadPosition's own comment)
+		protected.POST("/chat/read-position", handlers.UpsertReadPositionHandler) // POST /api/chat/read-position
+
 		// Scheduled events management
 		protected.PUT("/scheduled-events/:id", handlers.UpdateScheduledEventHandler)
 		protected.DELETE("/scheduled-events/:id", handlers.DeleteScheduledEventHandler)
@@ -808,6 +814,7 @@ func main() {
 		// --- COMMUNITY EVENTS ROUTES ---
 		// GET is public (handled separately below); POST routes require auth
 		protected.GET("/games/vs-battle/leaderboard", games.GetVsBattleLeaderboardHandler(DB)) // GET /api/games/vs-battle/leaderboard
+		protected.GET("/games/leaderboard", games.GetGamesLeaderboardHandler(DB))              // GET /api/games/leaderboard (multi-game top-10, see gamesLeaderboardConfig)
 		protected.POST("/community-requests", handlers.CreateCommunityRequestHandler)                   // POST /api/community-requests
 		protected.POST("/community-requests/upload-image", handlers.UploadCommunityRequestImageHandler) // POST /api/community-requests/upload-image
 		protected.POST("/community-requests/:id/upvote", handlers.ToggleCommunityRequestUpvoteHandler)  // POST /api/community-requests/:id/upvote

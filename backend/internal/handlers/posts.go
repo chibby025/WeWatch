@@ -35,6 +35,157 @@ func canViewContentRating(rating string, s models.UserSettings) bool {
 	}
 }
 
+// restrictedContentRatings returns the content_rating values the viewer settings
+// exclude — used to push content-rating filtering into a SQL WHERE clause for
+// the cold-pool query (below), where an exact answer (not an approximate
+// Go-side filter) keeps offset-based pagination correct. Must stay logically
+// equivalent to canViewContentRating's own rules.
+func restrictedContentRatings(s models.UserSettings) []string {
+	restricted := []string{}
+	if !s.CanSee13Plus {
+		restricted = append(restricted, "13+")
+	}
+	if !s.CanSee16Plus {
+		restricted = append(restricted, "16+")
+	}
+	if !s.CanSee18Plus {
+		restricted = append(restricted, "18+")
+	}
+	if !s.CanSeeMature {
+		restricted = append(restricted, "Mature")
+	}
+	return restricted
+}
+
+// filterPostsByVisibility applies the author-privacy-setting filter
+// (only_me / friends / public) used by GetDiscoverFeed, batch-fetching
+// settings for exactly the authors present in the given slice. Standalone so
+// both the hot pool and the cold-pool fallback (below) apply the identical
+// rule rather than risk the two paths drifting apart.
+func filterPostsByVisibility(posts []models.Post, currentUserID uint) []models.Post {
+	authorIDSet := make(map[uint]struct{}, len(posts))
+	for _, p := range posts {
+		authorIDSet[p.UserID] = struct{}{}
+	}
+	authorIDs := make([]uint, 0, len(authorIDSet))
+	for id := range authorIDSet {
+		authorIDs = append(authorIDs, id)
+	}
+	settingsByUser := make(map[uint]models.UserSettings, len(authorIDs))
+	if len(authorIDs) > 0 {
+		var batchSettings []models.UserSettings
+		if err := DB.Where("user_id IN ?", authorIDs).Find(&batchSettings).Error; err == nil {
+			for _, s := range batchSettings {
+				settingsByUser[s.UserID] = s
+			}
+		}
+	}
+
+	var filtered []models.Post
+	for _, post := range posts {
+		// No settings row = default to "public" (allow post).
+		if authorSettings, ok := settingsByUser[post.UserID]; ok {
+			switch authorSettings.WhoCanSeePosts {
+			case "only_me":
+				if post.UserID != currentUserID {
+					continue
+				}
+			case "friends":
+				if post.UserID != currentUserID {
+					var friendship models.Friendship
+					err := DB.Where(
+						"((requester_id = ? AND recipient_id = ?) OR (requester_id = ? AND recipient_id = ?)) AND status = ?",
+						currentUserID, post.UserID, post.UserID, currentUserID, "accepted",
+					).First(&friendship).Error
+					if err != nil {
+						continue
+					}
+				}
+			// "public" - show to everyone (no filtering)
+			}
+		}
+		filtered = append(filtered, post)
+	}
+	return filtered
+}
+
+// coldPostsQuery builds the shared WHERE clause for posts older than the hot
+// pool's rolling cutoff — reused by fetchColdPosts and its existence/count
+// probes so they can never disagree on which rows are in scope.
+func coldPostsQuery(cutoff time.Time, searchQuery string, excludedRatings []string) *gorm.DB {
+	query := DB.Model(&models.Post{}).
+		Where("posts.is_public = ? AND posts.deleted_at IS NULL AND posts.created_at <= ?", true, cutoff)
+	if searchQuery != "" {
+		searchPattern := "%" + searchQuery + "%"
+		query = query.Joins("LEFT JOIN users ON posts.user_id = users.id").
+			Where("posts.description ILIKE ? OR users.username ILIKE ?", searchPattern, searchPattern)
+	}
+	if len(excludedRatings) > 0 {
+		query = query.Where("posts.content_rating NOT IN ?", excludedRatings)
+	}
+	return query
+}
+
+// fetchColdPosts fills a page's remaining slots from posts older than the hot
+// pool's cutoff — a plain created_at-ordered, SQL-paginated query (no
+// in-memory global ranking, unlike the hot pool), so it stays cheap
+// regardless of how much historical content accumulates. Content-rating
+// filtering is exact (pushed into SQL via coldPostsQuery); the only source of
+// drift between raw offset and filtered offset is per-author privacy
+// settings, handled by expanding the raw fetch window in a small, hard-capped
+// retry loop rather than ever returning a short page for any reason other
+// than genuinely running out of rows — a short page anywhere but the true end
+// would silently and permanently skip content, since the frontend advances
+// offset by a fixed page size regardless of how many posts a given page
+// actually returned.
+func fetchColdPosts(cutoff time.Time, searchQuery string, excludedRatings []string, currentUserID uint, coldOffset, need int) ([]models.Post, bool) {
+	if need <= 0 {
+		return nil, false
+	}
+	const maxAttempts = 5
+	rawOffset := coldOffset
+	rawLimit := need * 2
+	if rawLimit < 20 {
+		rawLimit = 20
+	}
+
+	collected := make([]models.Post, 0, need)
+	for attempt := 0; attempt < maxAttempts && len(collected) < need; attempt++ {
+		var batch []models.Post
+		coldPostsQuery(cutoff, searchQuery, excludedRatings).
+			Preload("User").Preload("Room").
+			Order("posts.created_at DESC").
+			Offset(rawOffset).Limit(rawLimit).
+			Find(&batch)
+
+		collected = append(collected, filterPostsByVisibility(batch, currentUserID)...)
+		rawOffset += len(batch)
+
+		if len(batch) < rawLimit {
+			// Genuinely ran out of underlying rows — nothing more exists past here.
+			if len(collected) > need {
+				collected = collected[:need]
+			}
+			return collected, false
+		}
+		rawLimit *= 2
+	}
+
+	if len(collected) > need {
+		collected = collected[:need]
+	}
+	return collected, true
+}
+
+// countColdPosts is a cheap indexed COUNT for the API's total field — only
+// ever called once a request actually reaches into the cold pool, never on
+// every hot-pool page.
+func countColdPosts(cutoff time.Time, searchQuery string, excludedRatings []string) int64 {
+	var count int64
+	coldPostsQuery(cutoff, searchQuery, excludedRatings).Count(&count)
+	return count
+}
+
 // CreatePostRequest represents the request body for creating a post
 type CreatePostRequest struct {
 	Description    string   `json:"description"`
@@ -390,53 +541,9 @@ func GetDiscoverFeed(c *gin.Context) {
 		return
 	}
 
-	// ✅ Filter posts based on user privacy settings.
-	// Batch fetch settings for all unique authors in this page to avoid an N+1 query
-	// per post (previously this loop ran len(posts) sequential SELECTs).
-	authorIDSet := make(map[uint]struct{}, len(posts))
-	for _, p := range posts {
-		authorIDSet[p.UserID] = struct{}{}
-	}
-	authorIDs := make([]uint, 0, len(authorIDSet))
-	for id := range authorIDSet {
-		authorIDs = append(authorIDs, id)
-	}
-	settingsByUser := make(map[uint]models.UserSettings, len(authorIDs))
-	if len(authorIDs) > 0 {
-		var batchSettings []models.UserSettings
-		if err := DB.Where("user_id IN ?", authorIDs).Find(&batchSettings).Error; err == nil {
-			for _, s := range batchSettings {
-				settingsByUser[s.UserID] = s
-			}
-		}
-	}
-
-	var filteredPosts []models.Post
-	for _, post := range posts {
-		// No settings row = default to "public" (allow post).
-		if authorSettings, ok := settingsByUser[post.UserID]; ok {
-			switch authorSettings.WhoCanSeePosts {
-			case "only_me":
-				if post.UserID != currentUserID {
-					continue
-				}
-			case "friends":
-				if post.UserID != currentUserID {
-					var friendship models.Friendship
-					err := DB.Where(
-						"((requester_id = ? AND recipient_id = ?) OR (requester_id = ? AND recipient_id = ?)) AND status = ?",
-						currentUserID, post.UserID, post.UserID, currentUserID, "accepted",
-					).First(&friendship).Error
-					if err != nil {
-						continue
-					}
-				}
-			// "public" - show to everyone (no filtering)
-			}
-		}
-
-		filteredPosts = append(filteredPosts, post)
-	}
+	// ✅ Filter posts based on user privacy settings — shared helper, also
+	// reused by the cold-pool fallback below so both paths apply the same rule.
+	filteredPosts := filterPostsByVisibility(posts, currentUserID)
 
 	// Load viewer settings once — covers both age flags and overlay preference.
 	// Zero-value settings (all flags false) is the correct conservative default for
@@ -473,16 +580,53 @@ func GetDiscoverFeed(c *gin.Context) {
 	// compete fairly across all pages rather than winning on a small page.
 	filteredPosts = ScoreAndSortPosts(DB, filteredPosts, currentUserID, viewerSettings.PrimaryRating)
 
-	total := len(filteredPosts)
+	hotTotal := len(filteredPosts)
 	start := offset
-	if start > total {
-		start = total
+	hotEnd := start
+	var pagePosts []models.Post
+	if start < hotTotal {
+		hotEnd = start + limit
+		if hotEnd > hotTotal {
+			hotEnd = hotTotal
+		}
+		pagePosts = append(pagePosts, filteredPosts[start:hotEnd]...)
 	}
-	end := start + limit
-	if end > total {
-		end = total
+
+	total := hotTotal
+	hasMore := hotEnd < hotTotal
+
+	// Cold-pool fallback: engages once this page reaches (or starts beyond)
+	// the end of the ranked hot pool — either to fill remaining slots on a
+	// straddling page, or just to check whether older content exists at all
+	// once the hot pool has been fully paged through. Never runs at all for
+	// a page that's entirely satisfied by the hot pool (the common case).
+	if !hasMore {
+		excludedRatings := restrictedContentRatings(viewerSettings)
+		coldOffset := start - hotTotal
+		if coldOffset < 0 {
+			coldOffset = 0
+		}
+		remaining := limit - len(pagePosts)
+		if remaining > 0 {
+			// We're genuinely drawing from the cold pool this page — its total
+			// belongs in the response regardless of whether this happens to be
+			// the last cold page too (hasMore only reflects "more after this").
+			var coldPosts []models.Post
+			coldPosts, hasMore = fetchColdPosts(cutoff, searchQuery, excludedRatings, currentUserID, coldOffset, remaining)
+			pagePosts = append(pagePosts, coldPosts...)
+			total += int(countColdPosts(cutoff, searchQuery, excludedRatings))
+		} else {
+			// Hot pool ended exactly on this page — cheap existence probe only,
+			// no need for the fuller fetch-and-filter path above. Skip the count
+			// entirely when the probe finds nothing — it would just return 0.
+			var probe []models.Post
+			coldPostsQuery(cutoff, searchQuery, excludedRatings).Limit(1).Find(&probe)
+			hasMore = len(probe) > 0
+			if hasMore {
+				total += int(countColdPosts(cutoff, searchQuery, excludedRatings))
+			}
+		}
 	}
-	pagePosts := filteredPosts[start:end]
 
 	viewerShowMature := viewerSettings.ShowMatureContent
 
@@ -511,7 +655,7 @@ func GetDiscoverFeed(c *gin.Context) {
 		"limit":    limit,
 		"offset":   offset,
 		"total":    total,
-		"has_more": end < total,
+		"has_more": hasMore,
 	})
 }
 

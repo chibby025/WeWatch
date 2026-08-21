@@ -752,6 +752,15 @@ export const getVsBattleLeaderboard = async () => {
   return response.data;
 };
 
+// Get top-10 leaderboards across every eligible game (score-based games
+// ranked by personal-best score, win/loss games ranked by win count) —
+// see backend/internal/handlers/games/games_leaderboard.go's own comment
+// for exactly which games are covered and why others are excluded.
+export const getGamesLeaderboard = async () => {
+  const response = await apiClient.get('/api/games/leaderboard');
+  return response.data;
+};
+
 // Delete a scheduled event
 export const deleteScheduledEvent = async (eventId) => {
   try {

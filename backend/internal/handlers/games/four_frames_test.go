@@ -292,6 +292,91 @@ func TestFourFramesWordBankIntegrity(t *testing.T) {
 	}
 }
 
+// TestFourFramesCheckpointEndsGameEarlyWithClearLeader plays 20 full rounds
+// where player 1 always answers first (and player 2 never answers), then
+// confirms the 20th round's reveal ends the game right there — declaring
+// player 1 the winner — instead of continuing toward the full 82-word bank.
+func TestFourFramesCheckpointEndsGameEarlyWithClearLeader(t *testing.T) {
+	gm := &GameManager{}
+	gs := makeTestFourFramesState(2)
+	defer fakeFourFramesFetcher(t)()
+
+	var gameOver bool
+	var winnerID *uint
+	var err error
+	for i := 0; i < fourFramesCheckpointSize; i++ {
+		if _, _, err = gm.processFourFramesMove(gs, fourFramesTestHostID, "four_frames_start", nil); err != nil {
+			t.Fatalf("round %d: unexpected start error: %v", i+1, err)
+		}
+		round, _ := gs.GameData["round"].(float64)
+		realWord := gs.FourFramesRounds[int(round)-1].Word
+		if _, _, err = gm.processFourFramesMove(gs, 1, "answer", map[string]interface{}{"guess": realWord}); err != nil {
+			t.Fatalf("round %d: unexpected answer error: %v", i+1, err)
+		}
+		gameOver, winnerID, err = gm.processFourFramesMove(gs, fourFramesTestHostID, "reveal", nil)
+		if err != nil {
+			t.Fatalf("round %d: unexpected reveal error: %v", i+1, err)
+		}
+	}
+
+	if !gameOver {
+		t.Fatal("expected the game to end at the round-20 checkpoint with a clear leader")
+	}
+	if winnerID == nil || *winnerID != 1 {
+		t.Fatalf("expected player 1 to be declared the winner, got %v", winnerID)
+	}
+	if gs.GameData["phase"] != "ended" {
+		t.Fatalf("expected phase=ended, got %v", gs.GameData["phase"])
+	}
+}
+
+// TestFourFramesCheckpointContinuesWhenTied alternates which player answers
+// first each round so both end up with an identical score after 20 rounds,
+// then confirms the checkpoint does NOT end the game on a tie — it should
+// behave exactly like any other reveal (phase stays "reveal", not "ended").
+func TestFourFramesCheckpointContinuesWhenTied(t *testing.T) {
+	gm := &GameManager{}
+	gs := makeTestFourFramesState(2)
+	defer fakeFourFramesFetcher(t)()
+
+	var gameOver bool
+	for i := 0; i < fourFramesCheckpointSize; i++ {
+		if _, _, err := gm.processFourFramesMove(gs, fourFramesTestHostID, "four_frames_start", nil); err != nil {
+			t.Fatalf("round %d: unexpected start error: %v", i+1, err)
+		}
+		round, _ := gs.GameData["round"].(float64)
+		realWord := gs.FourFramesRounds[int(round)-1].Word
+
+		first, second := uint(1), uint(2)
+		if i%2 == 1 {
+			first, second = second, first
+		}
+		if _, _, err := gm.processFourFramesMove(gs, first, "answer", map[string]interface{}{"guess": realWord}); err != nil {
+			t.Fatalf("round %d: unexpected first-answer error: %v", i+1, err)
+		}
+		if _, _, err := gm.processFourFramesMove(gs, second, "answer", map[string]interface{}{"guess": realWord}); err != nil {
+			t.Fatalf("round %d: unexpected second-answer error: %v", i+1, err)
+		}
+
+		var err error
+		gameOver, _, err = gm.processFourFramesMove(gs, fourFramesTestHostID, "reveal", nil)
+		if err != nil {
+			t.Fatalf("round %d: unexpected reveal error: %v", i+1, err)
+		}
+	}
+
+	scores, _ := gs.GameData["scores"].(map[string]interface{})
+	if scores["1"] != scores["2"] {
+		t.Fatalf("expected a genuine tie going into the checkpoint, got p1=%v p2=%v", scores["1"], scores["2"])
+	}
+	if gameOver {
+		t.Fatal("expected the checkpoint to NOT end the game when the top score is tied")
+	}
+	if gs.GameData["phase"] != "reveal" {
+		t.Fatalf("expected phase=reveal (game continues), got %v", gs.GameData["phase"])
+	}
+}
+
 func TestFetchFourFramesPhotosRequiresAPIKey(t *testing.T) {
 	t.Setenv("PEXELS_API_KEY", "")
 	_, err := fetchFourFramesPhotos("elephant")

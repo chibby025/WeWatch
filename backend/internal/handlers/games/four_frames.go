@@ -142,6 +142,329 @@ var fourFramesWordBank = []FourFramesRound{
 	{Word: "snowflake"},
 	{Word: "thunderstorm"},
 	{Word: "lightning"},
+
+	// ── Bank expansion (added 2026-08-20) — grown well past the original 82
+	// so a single sitting takes far longer to exhaust the pool and repeats
+	// across sessions become far less noticeable. Same rule as above: only
+	// concrete, unambiguous, commonly-photographed nouns — nothing abstract.
+
+	// More animals
+	{Word: "tiger"},
+	{Word: "lion"},
+	{Word: "zebra"},
+	{Word: "panda"},
+	{Word: "gorilla"},
+	{Word: "cheetah"},
+	{Word: "leopard"},
+	{Word: "rhinoceros", Alternates: []string{"rhino"}},
+	{Word: "hippopotamus", Alternates: []string{"hippo"}},
+	{Word: "crocodile"},
+	{Word: "alligator"},
+	{Word: "wolf"},
+	{Word: "fox"},
+	{Word: "deer"},
+	{Word: "moose"},
+	{Word: "bison"},
+	{Word: "camel"},
+	{Word: "llama"},
+	{Word: "sloth"},
+	{Word: "armadillo"},
+	{Word: "otter"},
+	{Word: "beaver"},
+	{Word: "badger"},
+	{Word: "meerkat"},
+	{Word: "lemur"},
+	{Word: "orangutan"},
+	{Word: "chimpanzee"},
+	{Word: "bat", Alternates: []string{"fruit bat"}},
+	{Word: "eagle"},
+	{Word: "falcon"},
+	{Word: "parrot"},
+	{Word: "toucan"},
+	{Word: "hummingbird"},
+	{Word: "woodpecker"},
+	{Word: "swan"},
+	{Word: "pelican"},
+	{Word: "puffin"},
+	{Word: "stork"},
+	{Word: "ostrich"},
+	{Word: "rooster"},
+	{Word: "turkey"},
+	{Word: "goat"},
+	{Word: "sheep"},
+	{Word: "donkey"},
+	{Word: "rabbit"},
+	{Word: "hamster"},
+	{Word: "guinea pig"},
+	{Word: "ferret"},
+	{Word: "tortoise"},
+	{Word: "iguana"},
+	{Word: "gecko"},
+	{Word: "frog"},
+	{Word: "snail"},
+	{Word: "walrus"},
+	{Word: "orca", Alternates: []string{"killer whale"}},
+	{Word: "shark"},
+	{Word: "stingray"},
+	{Word: "clownfish"},
+	{Word: "crab"},
+	{Word: "lobster"},
+	{Word: "shrimp"},
+	{Word: "seal"},
+	{Word: "mongoose"},
+	{Word: "wombat"},
+	{Word: "platypus"},
+
+	// More food & drink
+	{Word: "burger", Alternates: []string{"hamburger"}},
+	{Word: "hot dog"},
+	{Word: "sandwich"},
+	{Word: "spaghetti"},
+	{Word: "lasagna"},
+	{Word: "dumpling", Alternates: []string{"dumplings"}},
+	{Word: "ramen"},
+	{Word: "burrito"},
+	{Word: "nachos"},
+	{Word: "pretzel"},
+	{Word: "bagel"},
+	{Word: "waffle", Alternates: []string{"waffles"}},
+	{Word: "cupcake"},
+	{Word: "muffin"},
+	{Word: "cookie", Alternates: []string{"cookies"}},
+	{Word: "cake"},
+	{Word: "pie"},
+	{Word: "chocolate bar"},
+	{Word: "candy cane"},
+	{Word: "lollipop"},
+	{Word: "gummy bear", Alternates: []string{"gummy bears"}},
+	{Word: "marshmallow", Alternates: []string{"marshmallows"}},
+	{Word: "cheese wheel", Alternates: []string{"cheese"}},
+	{Word: "grapes"},
+	{Word: "banana"},
+	{Word: "orange fruit", Alternates: []string{"orange"}},
+	{Word: "apple"},
+	{Word: "pineapple"},
+	{Word: "mango"},
+	{Word: "kiwi fruit", Alternates: []string{"kiwi"}},
+	{Word: "cherry", Alternates: []string{"cherries"}},
+	{Word: "blueberry", Alternates: []string{"blueberries"}},
+	{Word: "raspberry", Alternates: []string{"raspberries"}},
+	{Word: "coconut"},
+	{Word: "lemon"},
+	{Word: "lime fruit", Alternates: []string{"lime"}},
+	{Word: "peach"},
+	{Word: "pear"},
+	{Word: "grapefruit"},
+	{Word: "fig"},
+	{Word: "pomegranate"},
+	{Word: "corn on the cob", Alternates: []string{"corn"}},
+	{Word: "carrot"},
+	{Word: "broccoli"},
+	{Word: "mushroom"},
+	{Word: "eggplant"},
+	{Word: "bell pepper"},
+	{Word: "tomato"},
+	{Word: "cucumber"},
+	{Word: "garlic"},
+	{Word: "onion"},
+	{Word: "ginger root", Alternates: []string{"ginger"}},
+	{Word: "chili pepper", Alternates: []string{"chilli pepper"}},
+	{Word: "milk carton"},
+	{Word: "teacup"},
+	{Word: "lemonade"},
+	{Word: "smoothie"},
+	{Word: "milkshake"},
+	{Word: "popsicle"},
+	{Word: "wine glass"},
+	{Word: "champagne"},
+	{Word: "bacon"},
+	{Word: "bread loaf", Alternates: []string{"bread"}},
+
+	// More objects
+	{Word: "scissors"},
+	{Word: "hourglass"},
+	{Word: "magnifying glass"},
+	{Word: "binoculars"},
+	{Word: "microscope"},
+	{Word: "globe"},
+	{Word: "treasure chest"},
+	{Word: "padlock"},
+	{Word: "magnet"},
+	{Word: "hammer"},
+	{Word: "screwdriver"},
+	{Word: "paintbrush"},
+	{Word: "easel"},
+	{Word: "sewing machine"},
+	{Word: "spinning wheel"},
+	{Word: "rocking chair"},
+	{Word: "wheelbarrow"},
+	{Word: "ladder"},
+	{Word: "toolbox"},
+	{Word: "flashlight", Alternates: []string{"torch"}},
+	{Word: "candle"},
+	{Word: "matchbox"},
+	{Word: "pocket watch"},
+	{Word: "wristwatch"},
+	{Word: "sunglasses"},
+	{Word: "suitcase"},
+	{Word: "wallet"},
+	{Word: "handbag"},
+	{Word: "necklace"},
+	{Word: "crown"},
+	{Word: "tiara"},
+	{Word: "trophy cup", Alternates: []string{"trophy"}},
+	{Word: "medal"},
+	{Word: "drum set", Alternates: []string{"drums"}},
+	{Word: "saxophone"},
+	{Word: "trumpet"},
+	{Word: "harp"},
+	{Word: "accordion"},
+	{Word: "tambourine"},
+	{Word: "xylophone"},
+	{Word: "microphone"},
+	{Word: "headphones"},
+	{Word: "boombox"},
+	{Word: "record player"},
+	{Word: "film projector"},
+	{Word: "roller skates"},
+	{Word: "skateboard"},
+	{Word: "surfboard"},
+	{Word: "snowboard"},
+	{Word: "tennis racket"},
+	{Word: "basketball hoop"},
+	{Word: "bowling pin"},
+	{Word: "dartboard"},
+	{Word: "chess board", Alternates: []string{"chessboard"}},
+	{Word: "dice"},
+	{Word: "playing cards"},
+	{Word: "jigsaw puzzle"},
+	{Word: "teddy bear"},
+	{Word: "rubber duck"},
+	{Word: "yo-yo", Alternates: []string{"yoyo"}},
+	{Word: "kaleidoscope"},
+	{Word: "wind chime", Alternates: []string{"wind chimes"}},
+	{Word: "birdhouse"},
+	{Word: "mailbox"},
+	{Word: "fire hydrant"},
+	{Word: "traffic light"},
+	{Word: "park bench"},
+	{Word: "picnic basket"},
+	{Word: "tent", Alternates: []string{"camping tent"}},
+	{Word: "sleeping bag"},
+	{Word: "canteen"},
+	{Word: "fishing rod"},
+
+	// More nature
+	{Word: "mountain peak", Alternates: []string{"mountain"}},
+	{Word: "forest"},
+	{Word: "jungle"},
+	{Word: "meadow"},
+	{Word: "valley"},
+	{Word: "cave"},
+	{Word: "geyser"},
+	{Word: "hot spring"},
+	{Word: "lagoon"},
+	{Word: "lake"},
+	{Word: "river"},
+	{Word: "cliff"},
+	{Word: "beach"},
+	{Word: "tide pool", Alternates: []string{"tidepool"}},
+	{Word: "mangrove"},
+	{Word: "bamboo forest", Alternates: []string{"bamboo"}},
+	{Word: "redwood tree", Alternates: []string{"redwood"}},
+	{Word: "oak tree", Alternates: []string{"oak"}},
+	{Word: "palm tree"},
+	{Word: "willow tree", Alternates: []string{"willow"}},
+	{Word: "autumn leaves", Alternates: []string{"fall leaves"}},
+	{Word: "tulip field", Alternates: []string{"tulips"}},
+	{Word: "lavender field", Alternates: []string{"lavender"}},
+	{Word: "rose"},
+	{Word: "daisy"},
+	{Word: "orchid"},
+	{Word: "lily pad"},
+	{Word: "cattail", Alternates: []string{"cattails"}},
+	{Word: "dew drop", Alternates: []string{"dewdrop"}},
+	{Word: "snowcapped mountain"},
+	{Word: "tornado"},
+	{Word: "hurricane"},
+	{Word: "sunset"},
+	{Word: "starry sky"},
+	{Word: "milky way"},
+	{Word: "comet"},
+	{Word: "shooting star"},
+	{Word: "meteor shower"},
+	{Word: "full moon"},
+	{Word: "crescent moon"},
+	{Word: "solar eclipse"},
+
+	// More places / structures
+	{Word: "skyscraper"},
+	{Word: "barn"},
+	{Word: "farmhouse"},
+	{Word: "cabin"},
+	{Word: "cottage"},
+	{Word: "mosque"},
+	{Word: "temple"},
+	{Word: "church building", Alternates: []string{"church"}},
+	{Word: "stadium"},
+	{Word: "amphitheater", Alternates: []string{"amphitheatre"}},
+	{Word: "colosseum"},
+	{Word: "fountain"},
+	{Word: "clock tower"},
+	{Word: "ferris wheel"},
+	{Word: "carousel", Alternates: []string{"merry go round"}},
+	{Word: "roller coaster"},
+	{Word: "amusement park"},
+	{Word: "museum building", Alternates: []string{"museum"}},
+	{Word: "library building", Alternates: []string{"library"}},
+	{Word: "observatory"},
+	{Word: "dam"},
+	{Word: "aqueduct"},
+	{Word: "tunnel"},
+	{Word: "spiral staircase"},
+	{Word: "gazebo"},
+	{Word: "pier"},
+	{Word: "dock"},
+	{Word: "marketplace stalls", Alternates: []string{"market stall"}},
+	{Word: "circus tent"},
+
+	// More transport
+	{Word: "airplane", Alternates: []string{"aeroplane", "plane"}},
+	{Word: "bus"},
+	{Word: "taxi"},
+	{Word: "tractor"},
+	{Word: "fire truck"},
+	{Word: "ambulance"},
+	{Word: "motorcycle"},
+	{Word: "scooter"},
+	{Word: "canoe"},
+	{Word: "kayak"},
+	{Word: "yacht"},
+	{Word: "cruise ship"},
+	{Word: "tugboat"},
+	{Word: "jet ski"},
+	{Word: "unicycle"},
+	{Word: "go kart"},
+	{Word: "monster truck"},
+	{Word: "tram"},
+	{Word: "subway train"},
+	{Word: "race car"},
+	{Word: "bulldozer"},
+	{Word: "crane machine", Alternates: []string{"construction crane"}},
+	{Word: "forklift"},
+
+	// More weather / phenomena
+	{Word: "rainstorm"},
+	{Word: "hailstorm"},
+	{Word: "fog"},
+	{Word: "frost"},
+	{Word: "icicle", Alternates: []string{"icicles"}},
+	{Word: "blizzard"},
+	{Word: "sandstorm"},
+	{Word: "whirlwind"},
+	{Word: "double rainbow"},
+	{Word: "sun rays", Alternates: []string{"sunrays"}},
+	{Word: "storm clouds"},
 }
 
 // fourFramesShuffledRounds returns a shuffled copy of the full word bank —
@@ -251,6 +574,37 @@ func fetchFourFramesPhotos(word string) ([]string, error) {
 // production code never reassigns this.
 var fourFramesPhotoFetcher = fetchFourFramesPhotos
 
+// fourFramesCheckpointSize — the word bank is far too long to play
+// through in one sitting, so the game is paced in sets of this many rounds:
+// at every checkpoint, if a single player is clearly ahead, the game ends
+// right there instead of always running to the end of the bank.
+const fourFramesCheckpointSize = 20
+
+// fourFramesLeaderInfo computes the current sole leader (nil if the top score
+// is tied between 2+ players) and their score. Shared by four_frames_end
+// (which accepts a 0-point sole leader, since that's an explicit host
+// action) and the checkpoint below (which additionally requires a strictly
+// positive score, so a set nobody scored in never auto-ends the game on a
+// coin-flip "winner").
+func fourFramesLeaderInfo(gameState *GameSessionState) (leaderID *uint, leaderScore float64) {
+	scores, _ := gameState.GameData["scores"].(map[string]interface{})
+	var bestScore float64 = -1
+	var winners []uint
+	for _, p := range gameState.Players {
+		s, _ := scores[fmt.Sprintf("%d", p.UserID)].(float64)
+		if s > bestScore {
+			bestScore = s
+			winners = []uint{p.UserID}
+		} else if s == bestScore {
+			winners = append(winners, p.UserID)
+		}
+	}
+	if len(winners) != 1 {
+		return nil, bestScore
+	}
+	return &winners[0], bestScore
+}
+
 // ── Move processing ──────────────────────────────────────────────────────────
 
 func (gm *GameManager) processFourFramesMove(gameState *GameSessionState, playerID uint, moveType string, moveData map[string]interface{}) (gameOver bool, winnerID *uint, err error) {
@@ -346,6 +700,16 @@ func (gm *GameManager) processFourFramesMove(gameState *GameSessionState, player
 			alts[i] = a
 		}
 		gameState.GameData["revealed_alternates"] = alts
+
+		// Checkpoint: every fourFramesCheckpointSize rounds, end the game
+		// early if a single player is clearly ahead, rather than always
+		// playing through the entire word bank in one sitting.
+		if int(round)%fourFramesCheckpointSize == 0 {
+			if leaderID, leaderScore := fourFramesLeaderInfo(gameState); leaderID != nil && leaderScore > 0 {
+				gameState.GameData["phase"] = "ended"
+				return true, leaderID, nil
+			}
+		}
 		return false, nil, nil
 
 	case "four_frames_end":
@@ -355,22 +719,7 @@ func (gm *GameManager) processFourFramesMove(gameState *GameSessionState, player
 		if playerID != hostID {
 			return false, nil, fmt.Errorf("only the host can end the game")
 		}
-		scores, _ := gameState.GameData["scores"].(map[string]interface{})
-		var bestScore float64 = -1
-		var winners []uint
-		for _, p := range gameState.Players {
-			s, _ := scores[fmt.Sprintf("%d", p.UserID)].(float64)
-			if s > bestScore {
-				bestScore = s
-				winners = []uint{p.UserID}
-			} else if s == bestScore {
-				winners = append(winners, p.UserID)
-			}
-		}
-		var wID *uint
-		if len(winners) == 1 {
-			wID = &winners[0]
-		}
+		wID, _ := fourFramesLeaderInfo(gameState)
 		gameState.GameData["phase"] = "ended"
 		return true, wID, nil
 

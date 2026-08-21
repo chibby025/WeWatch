@@ -42,9 +42,23 @@ function RebusPatternDisplay({ pattern }) {
   return (
     <div className="flex flex-col items-center gap-3 py-2">
       {lines.map((line, li) => (
-        <div key={li} className="flex items-center justify-center gap-1.5 flex-wrap px-4">
+        <div key={li} className="flex items-center justify-center gap-2 flex-wrap px-4">
           {line.map((tok, ti) => (
-            <span key={ti} style={tokenStyle(tok)}>{tok.text}</span>
+            tok.image ? (
+              // Photo-compound half — a real photo fetched live from Pexels
+              // (see rebus_round.go's rebusPhotoCompoundSpecs), not readable
+              // text. The player has to recognize the object before combining
+              // it with the text half — that's the actual fix for puzzles
+              // like "EGG + SHELL" being a trivial concatenation to read.
+              <img
+                key={ti}
+                src={tok.image}
+                alt=""
+                className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-xl border border-gray-700 shadow-lg"
+              />
+            ) : (
+              <span key={ti} style={tokenStyle(tok)}>{tok.text}</span>
+            )
           ))}
         </div>
       ))}
@@ -90,7 +104,11 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
     if (gameErrorKey === lastHandledErrorKeyRef.current) return;
     lastHandledErrorKeyRef.current = gameErrorKey;
     if (!gameErrorMsg) return;
-    setShakeError(gameErrorMsg);
+    // Strip the backend's generic "move failed: " wrapper (see sendError's
+    // call site in websocket_handler.go) — it's meant to give a bare toast
+    // context, but reads redundantly right next to the input where the
+    // rejection reason is already obviously about this guess.
+    setShakeError(gameErrorMsg.replace(/^move failed:\s*/i, ''));
     const t = setTimeout(() => setShakeError(null), 1800);
     return () => clearTimeout(t);
   }, [gameErrorKey, gameErrorMsg]);
@@ -137,13 +155,17 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
     onMove({ move_type: 'rebus_start' });
     setIsSendingNext(true);
     if (nextRoundTimeoutRef.current) clearTimeout(nextRoundTimeoutRef.current);
+    // Some puzzles ("photo compounds") fetch a real photo from Pexels live on
+    // the backend when this move is processed — a slower, network-dependent
+    // step compared to the purely local puzzle picks the rest of the bank
+    // uses, so this window matches Four Frames' own identical reasoning.
     nextRoundTimeoutRef.current = setTimeout(() => {
       nextRoundTimeoutRef.current = null;
       setIsSendingNext(false);
       if (roundRef.current === sentAtRound) {
         toast.error('Failed to start the next puzzle — tap the button to retry.');
       }
-    }, 5000);
+    }, 8000);
   };
 
   const sendGuess = () => {

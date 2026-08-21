@@ -51,6 +51,7 @@ import Coachmark from './Coachmark';
 import { checkDateOfBirth, updateDateOfBirth, getRoomJoinRequests } from '../services/api';
 import TwemojiText from './TwemojiText';
 import { parseTwemoji } from '../utils/twemoji';
+import { useChatReadPosition } from '../hooks/useChatReadPosition';
 // TODO: Review MediaBanner integration later - currently commented out for future use
 // import MediaBanner from './MediaBanner';
 
@@ -93,30 +94,12 @@ const formatChatDate = (dateStr) => {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 };
 
-// Per-room-chat "last read message" marker — localStorage (not the in-memory
-// _roomChatCache above) specifically because it needs to survive a full
-// unmount/remount cycle with certainty: leaving via Taskbar's Leave Call
-// navigates to an entirely different route (VideoWatch etc.), unmounting
-// this component and closing its WS connection, then mounting a fresh
-// instance on return. Keyed the same way _roomChatCache is (`${roomId}:${groupId||'main'}`)
-// so each room/group has its own independent read position.
-const LAST_READ_PREFIX = 'wewatch_room_last_read_';
-const getLastReadId = (cacheKey) => {
-  try {
-    const raw = localStorage.getItem(`${LAST_READ_PREFIX}${cacheKey}`);
-    return raw ? Number(raw) : null;
-  } catch {
-    return null; // localStorage disabled/unavailable — restore just won't work this session
-  }
-};
-const setLastReadId = (cacheKey, messageId) => {
-  if (messageId == null) return;
-  try {
-    localStorage.setItem(`${LAST_READ_PREFIX}${cacheKey}`, String(messageId));
-  } catch {
-    // ignore — same as above
-  }
-};
+// Per-room-chat "last read message" marker — now server-side, cross-device
+// (ChatReadPosition, via useChatReadPosition), replacing the localStorage-
+// only marker this used to be. Keyed the same way _roomChatCache is
+// (`${roomId}:${groupId||'main'}`) so each room/group has its own
+// independent read position — matches the backend's own conversation_key
+// construction for conversation_type="room".
 
 const RoomPageNew = () => {
   const { id: roomId } = useParams();
@@ -295,6 +278,16 @@ const RoomPageNew = () => {
   useEffect(() => {
     chatCacheKeyRef.current = `${roomId}:${selectedGroupId || 'main'}`;
   }, [roomId, selectedGroupId]);
+
+  // Cross-device read-position tracking (see useChatReadPosition's own
+  // comment) — a plain, reactive string (not chatCacheKeyRef's own ref
+  // value) so the hook's internal reset-on-conversation-change effect
+  // actually fires when the room or selected group changes.
+  const readPositionKey = `${roomId}:${selectedGroupId || 'main'}`;
+  const { markAtBottom, observeContainer } = useChatReadPosition({
+    conversationType: 'room',
+    conversationKey: readPositionKey,
+  });
   const [isGroupEditModalOpen, setIsGroupEditModalOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [isUserGroupMember, setIsUserGroupMember] = useState(false);
@@ -818,7 +811,7 @@ const RoomPageNew = () => {
       const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
       _roomChatCache.set(cacheKey, capped.slice(-50));
       setMessages(capped);
-      restoreOrScrollToBottom(cacheKey, capped);
+      restoreOrScrollToBottom(cacheKey, capped, response.data.last_read_message_id);
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
@@ -987,7 +980,7 @@ const RoomPageNew = () => {
       const capped = msgs.length > 200 ? msgs.slice(msgs.length - 200) : msgs;
       _roomChatCache.set(cacheKey, capped.slice(-50));
       setMessages(capped);
-      restoreOrScrollToBottom(cacheKey, capped);
+      restoreOrScrollToBottom(cacheKey, capped, response.data.last_read_message_id);
     } catch (err) {
       console.error('Failed to fetch messages:', err);
       toast.error('Failed to load messages');
@@ -1428,20 +1421,21 @@ const RoomPageNew = () => {
   };
 
   // Called right after every fresh messages fetch (both the main-chat and
-  // per-group fetchers). Restores to the first message the user hasn't seen
-  // yet — per the wewatch_room_last_read_* marker (see getLastReadId above) —
-  // if there is one, instead of always jumping to whatever's newest right
-  // now. This is what makes "Leave Call" -> back on RoomPageNew land you
-  // roughly where you left off rather than always at the bottom, even though
-  // messages may have arrived the whole time you were away in the session
-  // (this component's own WS connection is closed while unmounted, so those
-  // arrivals are only ever discovered via this fresh fetch, not live).
+  // per-group fetchers), with the server-provided last_read_message_id from
+  // that same response (see useChatReadPosition/ChatReadPosition). Restores
+  // to the first message the user hasn't seen yet, cross-device, instead of
+  // always jumping to whatever's newest right now. This is what makes
+  // "Leave Call" -> back on RoomPageNew (or opening on a different device
+  // entirely) land you roughly where you left off rather than always at the
+  // bottom, even though messages may have arrived the whole time you were
+  // away (this component's own WS connection is closed while unmounted, so
+  // those arrivals are only ever discovered via this fresh fetch, not live).
   // Takes the message list explicitly (not the `messages` state closure) since
   // this always runs synchronously right after setMessages(msgsList) in the
   // same tick, before that state update has actually applied.
-  const restoreOrScrollToBottom = (cacheKey, msgsList) => {
+  const restoreOrScrollToBottom = (cacheKey, msgsList, serverLastReadId) => {
     if (!msgsList.length) return;
-    const lastReadId = getLastReadId(cacheKey);
+    const lastReadId = serverLastReadId ?? null;
     const newest = msgsList[msgsList.length - 1];
     if (lastReadId != null && lastReadId !== newest.id) {
       const lastReadIndex = msgsList.findIndex((m) => m.id === lastReadId);
@@ -1498,11 +1492,14 @@ const RoomPageNew = () => {
     }
 
     // Persist "caught up to the newest message" so a later mount (e.g.
-    // returning from a watch session via Leave Call) can restore to this
-    // point via restoreOrScrollToBottom above, instead of always landing on
-    // whatever happens to be newest at that later time.
+    // returning from a watch session via Leave Call, or opening on a
+    // different device entirely) can restore to this point via
+    // restoreOrScrollToBottom above, instead of always landing on whatever
+    // happens to be newest at that later time. The continuous mid-scroll
+    // case (scrolled past messages without reaching the bottom) is handled
+    // separately by the IntersectionObserver wired up below.
     if (isAtBottom && messages.length > 0) {
-      setLastReadId(chatCacheKeyRef.current, messages[messages.length - 1].id);
+      markAtBottom(messages[messages.length - 1].id);
     }
   };
 
@@ -1555,6 +1552,19 @@ const RoomPageNew = () => {
       observer.disconnect();
     };
   }, [messages, unreadCount]);
+
+  // Cross-device read-position tracking (useChatReadPosition) — a separate
+  // IntersectionObserver from the cosmetic unread-count one above (that one
+  // only watches while unreadCount>0 and only the tail of the list; this one
+  // needs to run continuously, for every message, regardless of unread
+  // state, since ongoing reading of newly-arrived messages must keep
+  // advancing the marker too). Re-attaches on every messages change so
+  // newly-rendered message elements get observed.
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container || messages.length === 0) return;
+    observeContainer(container);
+  }, [messages, observeContainer]);
 
   const handleSendMessage = async (e) => {
     e.preventDefault();

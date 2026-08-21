@@ -41,7 +41,6 @@ func GetVsBattleLeaderboardHandler(db *gorm.DB) gin.HandlerFunc {
 			WHERE gs.game_type = 'vs_battle'
 			  AND gs.status IN ('completed', 'forfeited')
 			  AND gs.ended_at IS NOT NULL
-			  AND gs.deleted_at IS NULL
 			GROUP BY u.id, u.username, u.avatar_url
 			HAVING COUNT(*) >= 1
 			ORDER BY wins DESC, win_rate DESC, total_games DESC

@@ -4,7 +4,7 @@ import apiClient, { API_BASE_URL } from '../../services/api';
 import GameRulesButton from './GameRulesButton';
 import { InstrumentTopOverlay, InstrumentLoadingSprite } from './rhythm/InstrumentCloseup';
 import { INSTRUMENT_TOP_SHEETS, INSTRUMENT_BOTTOM_SHEETS } from './rhythm/spriteSheets';
-import { Game } from './rhythm/rhythmGameEngine';
+import { Game, pickRandomStageId } from './rhythm/rhythmGameEngine';
 import { generateChart } from './rhythm/analysis';
 
 // ── Instrument configs — purely cosmetic per-instance colors passed into the
@@ -567,6 +567,11 @@ function WarmPerformanceMirror({
 
   const instrumentId = liveInfo?.instrument_id ?? selectingInfo?.instrument_id;
   const instrument = INSTRUMENTS.find((i) => i.id === instrumentId) || INSTRUMENTS[0];
+  // Same early-availability fallback chain as instrumentId above — stage is
+  // picked and broadcast at the exact same moment (handleInstrumentPick), so
+  // it's available via selectingInfo just as early, well before liveInfo
+  // (rhythm_hero_start) actually fires.
+  const stageId = liveInfo?.stage_id ?? selectingInfo?.stage_id;
 
   // Constructs the engine exactly once, as soon as the canvas exists —
   // regardless of whether liveInfo is active yet. Never re-runs; a genuinely
@@ -596,6 +601,7 @@ function WarmPerformanceMirror({
       instrumentColors: instrument.colors,
       highwayAccentColor: instrument.accent,
       highwayAccentColorRail: instrument.accentRail,
+      stageId,
       readOnly: true,
     });
 
@@ -739,7 +745,7 @@ function WarmPerformanceMirror({
     <div className="fixed inset-0 z-50 flex flex-col bg-black select-none" style={{ height: '100dvh' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <h2 className="text-sm font-bold tracking-widest text-purple-400">RHYTHM HERO</h2>
+          <img src="https://LetsWatchOut.b-cdn.net/games/logos/rhythm_hero.png" alt="Rhythm Hero" className="h-6 sm:h-7 w-auto shrink-0" />
           <span className="text-xs text-gray-500 truncate">— {playerLabel}{trackName ? ` · ${trackName}` : ''}</span>
           {ready && liveInfo?.difficulty && (
             <span className="text-[10px] uppercase tracking-wide text-purple-300 bg-purple-900/50 px-1.5 py-0.5 rounded shrink-0">
@@ -895,7 +901,7 @@ function SelectionMirror({ info, playerLabel, onClose, matchFramingText, isSudde
     <div className="fixed inset-0 z-50 flex flex-col bg-black select-none" style={{ height: '100dvh' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <h2 className="text-sm font-bold tracking-widest text-purple-400">RHYTHM HERO</h2>
+          <img src="https://LetsWatchOut.b-cdn.net/games/logos/rhythm_hero.png" alt="Rhythm Hero" className="h-6 sm:h-7 w-auto shrink-0" />
           <span className="text-xs text-gray-500 truncate">— {playerLabel} is choosing…</span>
         </div>
         <button onClick={onClose} className="px-2 py-1 text-xs bg-white/20 hover:bg-white/30 rounded"><X className="w-3.5 h-3.5" /></button>
@@ -1115,6 +1121,13 @@ export default function RhythmHeroGame({
   const [localPhase, setLocalPhase] = useState('instrument'); // instrument -> song -> loading -> playing
   const [instrument, setInstrument] = useState(null);
   const [difficulty, setDifficulty] = useState('medium'); // 'easy' | 'medium' | 'hard' | 'expert'
+  // Picked once per turn, at the same moment as instrument (handleInstrumentPick
+  // below) — a second, independent visual-skinning axis (see STAGES in
+  // rhythmGameEngine.js). Broadcast alongside instrument_id via sendSelecting
+  // so every connected spectator (including WarmPerformanceMirror's own early,
+  // pre-warmed construction) renders the SAME stage for this performance,
+  // not an independently re-randomized one.
+  const [stageId, setStageId] = useState(null);
   const [songMeta, setSongMeta] = useState(null); // {trackName, artistName}
   const [songAudioUrl, setSongAudioUrl] = useState(null); // null for an uploaded file — see the broadcast section below
   const [songSource, setSongSource] = useState('search'); // 'search' | 'upload'
@@ -1203,6 +1216,7 @@ export default function RhythmHeroGame({
     prefetchedAudioRef.current = { url: null, buffer: null, promise: null };
     setLocalPhase('instrument');
     setInstrument(null);
+    setStageId(null);
     setDifficulty('medium');
     setSongMeta(null);
     setSongAudioUrl(null);
@@ -1217,7 +1231,7 @@ export default function RhythmHeroGame({
     resetSpriteSpeed();
     turnKeyRef.current = Math.random().toString(36).slice(2);
     sendSelecting(
-      { phase: 'instrument', instrument_id: null, difficulty: 'medium', tab: 'search', title: '', artist: '', uploadTitle: '', results: null, is_searching: false, search_error: null, loading_stage: null, audio_url: null, turn_key: turnKeyRef.current },
+      { phase: 'instrument', instrument_id: null, stage_id: null, difficulty: 'medium', tab: 'search', title: '', artist: '', uploadTitle: '', results: null, is_searching: false, search_error: null, loading_stage: null, audio_url: null, turn_key: turnKeyRef.current },
       { immediate: true }
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1247,9 +1261,11 @@ export default function RhythmHeroGame({
   }, []);
 
   const handleInstrumentPick = useCallback((ins) => {
+    const picked = pickRandomStageId();
     setInstrument(ins);
+    setStageId(picked);
     setLocalPhase('song');
-    sendSelecting({ phase: 'song', instrument_id: ins.id }, { immediate: true });
+    sendSelecting({ phase: 'song', instrument_id: ins.id, stage_id: picked }, { immediate: true });
   }, [sendSelecting]);
 
   const handleDifficultyChange = useCallback((d) => {
@@ -1413,6 +1429,7 @@ export default function RhythmHeroGame({
       instrumentColors: instrument.colors,
       highwayAccentColor: instrument.accent,
       highwayAccentColorRail: instrument.accentRail,
+      stageId,
     });
     engineRef.current = engine;
 
@@ -1427,6 +1444,7 @@ export default function RhythmHeroGame({
     if (isActivePlayer && songAudioUrl) {
       onRhythmHeroBroadcast?.('rhythm_hero_start', {
         instrument_id: instrument.id,
+        stage_id: stageId,
         song_source: songSource,
         track_name: meta.trackName,
         artist_name: meta.artistName,
@@ -1453,7 +1471,7 @@ export default function RhythmHeroGame({
       }, 250);
     }
 
-  }, [localPhase, pendingGameData, instrument, isInTournament, onTournamentScore, getAudioCtx, isActivePlayer, songAudioUrl, songSource, onRhythmHeroBroadcast, currentUserId, difficulty, currentUsername, recordJudge]);
+  }, [localPhase, pendingGameData, instrument, stageId, isInTournament, onTournamentScore, getAudioCtx, isActivePlayer, songAudioUrl, songSource, onRhythmHeroBroadcast, currentUserId, difficulty, currentUsername, recordJudge]);
 
   // Owns the whole fetch/decode/lyrics/upload/chart-generation pipeline —
   // relocated here from SongPicker so the loading screen it drives is one
@@ -1615,13 +1633,14 @@ export default function RhythmHeroGame({
     prefetchedAudioRef.current = { url: null, buffer: null, promise: null };
     setLocalPhase('instrument');
     setInstrument(null);
+    setStageId(null);
     setDifficulty('medium');
     setSongMeta(null);
     setSongAudioUrl(null);
     setSongSource('search');
     turnKeyRef.current = Math.random().toString(36).slice(2);
     sendSelecting(
-      { phase: 'instrument', instrument_id: null, difficulty: 'medium', tab: 'search', title: '', artist: '', uploadTitle: '', results: null, is_searching: false, search_error: null, loading_stage: null, audio_url: null, turn_key: turnKeyRef.current },
+      { phase: 'instrument', instrument_id: null, stage_id: null, difficulty: 'medium', tab: 'search', title: '', artist: '', uploadTitle: '', results: null, is_searching: false, search_error: null, loading_stage: null, audio_url: null, turn_key: turnKeyRef.current },
       { immediate: true }
     );
   }, [closeAudioCtx, sendSelecting, onRhythmHeroBroadcast, resetSpriteSpeed]);
@@ -1647,6 +1666,32 @@ export default function RhythmHeroGame({
   const handleFretDown = useCallback((lane) => (e) => { e.preventDefault(); engineRef.current?.pressLane(lane); }, []);
   const handleFretUp = useCallback((lane) => (e) => { e.preventDefault(); engineRef.current?.releaseLane(lane); }, []);
   const handleSpTouch = useCallback((e) => { e.preventDefault(); engineRef.current?.activateStarPower(); }, []);
+
+  // Keep each fret button positioned directly under the highway ring it
+  // actually controls — driven live from the engine's own camera projection
+  // (getLaneScreenXFractions), not a fixed evenly-spaced guess. Writes
+  // straight to each button's style.left via a ref, bypassing React state,
+  // so this can run every animation frame without triggering a re-render.
+  const fretButtonRefs = useRef([]);
+  useEffect(() => {
+    if (!isTouchDevice || localPhase !== 'playing') return;
+    let raf;
+    const tick = () => {
+      const fractions = engineRef.current?.getLaneScreenXFractions?.();
+      const containerWidth = containerRef.current?.offsetWidth;
+      if (fractions && containerWidth) {
+        fractions.forEach((frac, i) => {
+          const btn = fretButtonRefs.current[i];
+          if (!btn) return;
+          const clamped = Math.max(0.03, Math.min(0.97, frac));
+          btn.style.left = `${clamped * containerWidth}px`;
+        });
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isTouchDevice, localPhase]);
 
   const handleProceedTournament = useCallback(() => {
     if (scoreSubmitted || myScore === null) return;
@@ -1860,7 +1905,7 @@ export default function RhythmHeroGame({
     <div className="fixed inset-0 z-50 flex flex-col bg-black select-none" style={{ height: '100dvh' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <h2 className="text-sm font-bold tracking-widest text-purple-400">RHYTHM HERO</h2>
+          <img src="https://LetsWatchOut.b-cdn.net/games/logos/rhythm_hero.png" alt="Rhythm Hero" className="h-6 sm:h-7 w-auto shrink-0" />
           {songMeta?.trackName && <span className="text-xs text-gray-500 truncate">— {songMeta.trackName}</span>}
           {localPhase === 'playing' && (
             <span className="text-[10px] uppercase tracking-wide text-purple-300 bg-purple-900/50 px-1.5 py-0.5 rounded shrink-0">
@@ -1959,35 +2004,48 @@ export default function RhythmHeroGame({
               </div>
             )}
 
-            {/* Touch fret buttons — real touch devices only. Sized down below
-                sm: (w-11/44px + gap-1.5/6px = 6*44+5*6=294px) so the full row
-                of 6 fits within a real narrow phone (~360-375px wide) in one
-                reachable line — the original fixed w-14/gap-3 sizing came to
-                396px, wider than most phones, silently clipped by this
-                container's own overflow-hidden. Deliberately kept as a
-                single unwrapped row (not wrap-to-2-lines, unlike e.g. the
-                Whot suit picker) since a rhythm game's controls need to stay
-                reachable in one glance/reach during fast play. sm: and up
-                keeps the original, larger w-14/gap-3 sizing unchanged. */}
+            {/* Touch fret buttons — real touch devices only, exactly 5 (one
+                per lane). Each button's `left` is written directly by the
+                fretButtonRefs effect above, driven by the engine's live
+                camera projection — so they sit under the real rings rather
+                than an arbitrary evenly-spaced guess, and the row's actual
+                width/spacing is whatever the highway itself renders at
+                (typically most of the screen at the near hit-line), not a
+                cramped fixed budget. Buttons are `absolute` inside a full-
+                width `relative` band rather than a flex row, since each one
+                now needs an independent computed position, not a shared gap.
+                Sized up from the old 44px mobile default now that spacing is
+                no longer squeezed to fit a fixed row width. */}
             {isTouchDevice && (
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 sm:gap-3">
+              <div className="absolute inset-x-0 bottom-4 h-14 sm:h-16 pointer-events-none">
                 {instrument?.colors.map((color, i) => (
                   <button
                     key={i}
+                    ref={(el) => { fretButtonRefs.current[i] = el; }}
                     onTouchStart={handleFretDown(i)}
                     onTouchEnd={handleFretUp(i)}
                     onTouchCancel={handleFretUp(i)}
-                    className="w-11 h-11 sm:w-14 sm:h-14 rounded-full border-2 border-white/40 active:scale-90 transition-transform"
-                    style={{ backgroundColor: `#${color.toString(16).padStart(6, '0')}` }}
+                    className="absolute bottom-0 -translate-x-1/2 w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 border-white/40 active:scale-90 transition-transform pointer-events-auto"
+                    style={{ backgroundColor: `#${color.toString(16).padStart(6, '0')}`, left: `${(i / 4) * 100}%` }}
                   />
                 ))}
-                <button
-                  onTouchStart={handleSpTouch}
-                  className="w-11 h-11 sm:w-14 sm:h-14 rounded-full border-2 border-white/40 bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-white text-lg sm:text-xl active:scale-90 transition-transform"
-                >
-                  ★
-                </button>
               </div>
+            )}
+
+            {/* Star Power activation — deliberately NOT part of the fret row
+                (it was previously a visually-identical 6th circle sitting
+                right next to lane 5, an easy mis-tap during fast play).
+                Placed next to its own SP meter instead, both spatially
+                separated from the lane-tapping zone and directly tied to the
+                indicator that tells you when it's actually worth pressing. */}
+            {isTouchDevice && (
+              <button
+                onTouchStart={handleSpTouch}
+                className="absolute top-11 right-3 w-11 h-11 rounded-xl border-2 border-white/40 bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-white text-base active:scale-90 transition-transform pointer-events-auto"
+                aria-label="Activate Star Power"
+              >
+                ★
+              </button>
             )}
 
             {!isInTournament && finalStats && (

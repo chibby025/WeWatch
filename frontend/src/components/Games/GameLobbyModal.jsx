@@ -902,6 +902,14 @@ export default function GameLobbyModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <style>{`
+        @keyframes gameLobbyExplainerFade {
+          0%   { opacity: 0; transform: translate(-50%, -4px); }
+          15%  { opacity: 1; transform: translate(-50%, 2px); }
+          78%  { opacity: 1; transform: translate(-50%, 2px); }
+          100% { opacity: 0; transform: translate(-50%, -4px); }
+        }
+      `}</style>
       <div className={`bg-gray-800 shadow-2xl w-full ${
         isWideLayout
           ? 'rounded-xl mx-4 max-w-5xl max-h-[92vh] flex flex-col overflow-hidden'
@@ -954,12 +962,28 @@ export default function GameLobbyModal({
               </div>
             ) : (
               <>
-                {/* Title of the centered game */}
-                <h3 className={`text-center text-white font-bold truncate transition-all ${
-                  isWideLayout ? 'text-xl mb-2' : isLandscape ? 'text-sm mb-1' : 'text-base sm:text-lg mb-1 sm:mb-2'
-                }`}>
-                  {selectedGameData?.name}
-                </h3>
+                {/* Title of the centered game, plus a brief self-dismissing
+                    explainer bubble — keyed by game id so swiping to a new
+                    game restarts the animation fresh (no timers/state needed,
+                    the keyframe itself fades in, holds, then fades out). */}
+                <div className="relative">
+                  <h3 className={`text-center text-white font-bold truncate transition-all ${
+                    isWideLayout ? 'text-xl mb-2' : isLandscape ? 'text-sm mb-1' : 'text-base sm:text-lg mb-1 sm:mb-2'
+                  }`}>
+                    {selectedGameData?.name}
+                  </h3>
+                  {selectedGameData && (
+                    <div
+                      key={selectedGame}
+                      className="absolute left-1/2 top-full z-40 pointer-events-none"
+                      style={{ animation: 'gameLobbyExplainerFade 1.5s ease-in-out forwards' }}
+                    >
+                      <div className="bg-black/85 backdrop-blur-md text-white rounded-lg px-3 py-1.5 shadow-xl border border-white/10 max-w-[220px] sm:max-w-[260px] text-center">
+                        <p className="text-[10px] sm:text-[11px] leading-snug">{selectedGameData.description}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* Poster fan */}
                 <div ref={carouselRef} className="relative overflow-hidden" style={{ height: cardW * 1.46 + (isWideLayout ? 28 : isLandscape ? 10 : 20) }}>

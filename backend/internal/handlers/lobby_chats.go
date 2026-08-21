@@ -130,7 +130,9 @@ func GetLobbyChatMessagesHandler(c *gin.Context) {
 
 	log.Printf("GetLobbyChatMessagesHandler: Fetched %d messages between user %d and user %d", len(messages), currentUserID, otherUserID)
 
-	c.JSON(http.StatusOK, gin.H{"messages": messages})
+	readPosition := GetReadPosition(db, currentUserID, "dm", strconv.FormatUint(otherUserID, 10))
+
+	c.JSON(http.StatusOK, gin.H{"messages": messages, "last_read_message_id": readPosition})
 }
 
 // SendLobbyChatMessageRequest defines the request body for sending a lobby chat

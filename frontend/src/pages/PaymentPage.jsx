@@ -636,227 +636,235 @@ const PaymentPage = () => {
           </div>
         )}
 
-        {/* Balance Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        {/* Balance Overview — always a 3-column row, mobile and desktop alike */}
+        <div className="grid grid-cols-3 gap-2 sm:gap-6 mb-6 sm:mb-8">
           {/* Tokens Balance */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-gray-600">Token Balance</h3>
-              <CurrencyDollarIcon className="h-6 w-6 text-blue-600" />
+          <div className="bg-white rounded-lg shadow p-2.5 sm:p-6">
+            <div className="flex items-center justify-between mb-1 sm:mb-2">
+              <h3 className="text-[10px] sm:text-sm font-medium text-gray-600 leading-tight">Token Balance</h3>
+              <CurrencyDollarIcon className="h-3.5 w-3.5 sm:h-6 sm:w-6 text-blue-600 flex-shrink-0" />
             </div>
-            <p className="text-3xl font-bold text-gray-900">{((wallet?.token_balance || 0) / 100).toFixed(2)} 🪙</p>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-base sm:text-3xl font-bold text-gray-900">{((wallet?.token_balance || 0) / 100).toFixed(2)} 🪙</p>
+            <p className="hidden sm:block text-sm text-gray-500 mt-1">
               Platform currency for tickets & donations
             </p>
             <button
               onClick={() => setShowPurchaseTokensModal(true)}
-              className="mt-4 w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center text-sm"
+              className="mt-2 sm:mt-4 w-full bg-blue-600 text-white px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center text-[10px] sm:text-sm"
             >
-              <PlusIcon className="h-4 w-4 mr-1" />
+              <PlusIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 flex-shrink-0" />
               Buy Tokens
             </button>
             <button
               onClick={() => setShowDonateModal(true)}
-              className="mt-2 w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white px-4 py-2 rounded-lg hover:from-purple-700 hover:to-pink-700 flex items-center justify-center text-sm"
+              className="mt-1.5 sm:mt-2 w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg hover:from-purple-700 hover:to-pink-700 flex items-center justify-center text-[10px] sm:text-sm"
             >
-              <GiftIcon className="h-4 w-4 mr-1" />
+              <GiftIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 flex-shrink-0" />
               Donate Tokens
             </button>
           </div>
 
           {/* Gateway Earnings */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-gray-600">Gateway Earnings</h3>
-              <CreditCardIcon className="h-6 w-6 text-green-600" />
+          <div className="bg-white rounded-lg shadow p-2.5 sm:p-6">
+            <div className="flex items-center justify-between mb-1 sm:mb-2">
+              <h3 className="text-[10px] sm:text-sm font-medium text-gray-600 leading-tight">Gateway Earnings</h3>
+              <CreditCardIcon className="h-3.5 w-3.5 sm:h-6 sm:w-6 text-green-600 flex-shrink-0" />
             </div>
-            <p className="text-3xl font-bold text-gray-900">₦{totalEarnings.toLocaleString()}</p>
-            <p className="text-sm text-gray-500 mt-1">Available to withdraw</p>
+            <p className="text-base sm:text-3xl font-bold text-gray-900 truncate">₦{totalEarnings.toLocaleString()}</p>
+            <p className="hidden sm:block text-sm text-gray-500 mt-1">Available to withdraw</p>
           </div>
 
           {/* Total Available to Withdraw */}
-          <div className="bg-white rounded-lg shadow p-6 bg-gradient-to-br from-green-500 to-green-600 text-white">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium">Available to Withdraw</h3>
-              <ArrowDownTrayIcon className="h-6 w-6" />
+          <div className="bg-white rounded-lg shadow p-2.5 sm:p-6 bg-gradient-to-br from-green-500 to-green-600 text-white">
+            <div className="flex items-center justify-between mb-1 sm:mb-2">
+              <h3 className="text-[10px] sm:text-sm font-medium leading-tight">Available to Withdraw</h3>
+              <ArrowDownTrayIcon className="h-3.5 w-3.5 sm:h-6 sm:w-6 flex-shrink-0" />
             </div>
-            <p className="text-3xl font-bold">
+            <p className="text-base sm:text-3xl font-bold truncate">
               ₦{(
                 ((wallet?.token_balance || 0) / 100 * TOKEN_WITHDRAWAL_RATE) + totalEarnings
               ).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
             </p>
-            <p className="text-xs mt-1 opacity-90">
+            <p className="hidden sm:block text-xs mt-1 opacity-90">
               {((wallet?.token_balance || 0) / 100).toFixed(2)} tokens (₦{((wallet?.token_balance || 0) / 100 * TOKEN_WITHDRAWAL_RATE).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}) + Gateway ₦{totalEarnings.toLocaleString()}
             </p>
             <button
               onClick={() => setShowWithdrawModal(true)}
               disabled={((wallet?.token_balance || 0) === 0) && (totalEarnings === 0)}
-              className="mt-3 w-full bg-white text-green-600 px-4 py-2 rounded-lg font-medium hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="mt-2 sm:mt-3 w-full bg-white text-green-600 px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg font-medium hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-[10px] sm:text-sm"
             >
-              {(((wallet?.token_balance || 0) === 0) && (totalEarnings === 0)) ? 'No Funds Available' : 'Withdraw Funds'}
+              <span className="hidden sm:inline">
+                {(((wallet?.token_balance || 0) === 0) && (totalEarnings === 0)) ? 'No Funds Available' : 'Withdraw Funds'}
+              </span>
+              <span className="sm:hidden">
+                {(((wallet?.token_balance || 0) === 0) && (totalEarnings === 0)) ? 'No Funds' : 'Withdraw'}
+              </span>
             </button>
           </div>
         </div>
 
-        {/* My Tickets Section */}
-        <div className="bg-white rounded-lg shadow mb-8">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-bold text-gray-900">🎟️ My Tickets</h2>
-            <p className="text-sm text-gray-600 mt-1">Paid tickets for upcoming events</p>
-          </div>
-          <div className="p-6">
-            {ticketsLoading ? (
-              <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
-                <p className="text-gray-600 mt-4">Loading tickets...</p>
-              </div>
-            ) : eventTickets.length === 0 ? (
-              <div className="text-center py-12 bg-gray-50 rounded-lg">
-                <p className="text-gray-500">No tickets purchased yet</p>
-                <p className="text-sm text-gray-400 mt-2">Browse rooms to find paid events</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {eventTickets.map((ticket) => (
-                  <div key={ticket.id} className="border rounded-lg overflow-hidden hover:shadow-lg transition-shadow">
-                    {/* Ticket Image */}
-                    <div className="relative h-48 bg-gradient-to-br from-purple-500 to-blue-600">
-                      <img 
-                        src={ticket.ticket_image} 
-                        alt="Ticket" 
-                        className="w-full h-full object-cover opacity-90"
-                      />
-                      {ticket.is_early_bird && (
-                        <div className="absolute top-2 right-2 bg-yellow-400 text-yellow-900 px-2 py-1 rounded-full text-xs font-bold">
-                          🎉 Early Bird
-                        </div>
-                      )}
-                      {ticket.is_gift && ticket.gifted_by && (
-                        <div className="absolute top-2 left-2 bg-pink-500 text-white px-2 py-1 rounded-full text-xs font-bold">
-                          🎁 Gift from @{ticket.gifted_by.username}
-                        </div>
-                      )}
-                      {ticket.is_starting_soon && (
-                        <div className="absolute bottom-2 left-2 bg-red-500 text-white px-3 py-1 rounded-full text-xs font-bold animate-pulse">
-                          ⏰ Starting Soon!
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Ticket Details */}
-                    <div className="p-4">
-                      <h3 className="font-bold text-lg text-gray-900 mb-1">{ticket.event.title}</h3>
-                      <p className="text-sm text-gray-600 mb-2">{ticket.event.room_name || `Room #${ticket.event.room_id}`}</p>
-                      
-                      <div className="space-y-2 text-sm">
-                        <div className="flex items-center text-gray-700">
-                          <ClockIcon className="h-4 w-4 mr-2" />
-                          {new Date(ticket.event.start_time).toLocaleString()}
-                        </div>
-                        
-                        <div className="flex items-center text-green-600 font-medium">
-                          <span className="mr-2">💰</span>
-                          {ticket.ticket_price_tokens / 100} tokens
-                          {ticket.is_early_bird && (
-                            <span className="ml-2 text-xs text-yellow-600">(Early Bird Savings!)</span>
-                          )}
-                        </div>
-                        
-                        <div className="flex items-center text-gray-600">
-                          <span className="mr-2">📅</span>
-                          Purchased {new Date(ticket.created_at).toLocaleDateString()}
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => navigate(`/rooms/${ticket.event.room_id}`)}
-                        className="mt-4 w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg font-medium transition-colors"
-                      >
-                        View Event
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* My RSVPs Section */}
-        <div className="bg-white rounded-lg shadow mb-8">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-bold text-gray-900">✅ My RSVPs</h2>
-            <p className="text-sm text-gray-600 mt-1">Free event reservations</p>
-          </div>
-          <div className="p-6">
-            {ticketsLoading ? (
-              <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                <p className="text-gray-600 mt-4">Loading RSVPs...</p>
-              </div>
-            ) : eventRSVPs.length === 0 ? (
-              <div className="text-center py-12 bg-gray-50 rounded-lg">
-                <p className="text-gray-500">No RSVPs yet</p>
-                <p className="text-sm text-gray-400 mt-2">RSVP to free events in rooms you join</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {eventRSVPs.map((rsvp) => (
-                  <div key={rsvp.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h3 className="font-bold text-lg text-gray-900">{rsvp.event.title}</h3>
-                        <p className="text-sm text-gray-600">{rsvp.event.room_name || `Room #${rsvp.event.room_id}`}</p>
-                        
-                        <div className="mt-3 space-y-2 text-sm">
-                          <div className="flex items-center text-gray-700">
-                            <ClockIcon className="h-4 w-4 mr-2" />
-                            {new Date(rsvp.event.start_time).toLocaleString()}
-                          </div>
-                          
-                          <div className="flex items-center text-green-600 font-medium">
-                            <CheckCircleIcon className="h-4 w-4 mr-2" />
-                            Free Event
-                          </div>
-                          
-                          <div className="flex items-center text-gray-600">
-                            <span className="mr-2">📅</span>
-                            RSVP'd {new Date(rsvp.created_at).toLocaleDateString()}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Ticket Preview Image */}
-                      <div className="ml-4">
-                        <img 
-                          src={rsvp.ticket_image} 
-                          alt="Event Type" 
-                          className="w-20 h-20 object-cover rounded-lg"
+        {/* My Tickets & RSVPs — side by side row, mobile and desktop alike */}
+        <div className="grid grid-cols-2 gap-2 sm:gap-6 mb-8">
+          {/* My Tickets Section */}
+          <div className="bg-white rounded-lg shadow">
+            <div className="px-3 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
+              <h2 className="text-sm sm:text-xl font-bold text-gray-900">🎟️ My Tickets</h2>
+              <p className="hidden sm:block text-sm text-gray-600 mt-1">Paid tickets for upcoming events</p>
+            </div>
+            <div className="p-2 sm:p-6">
+              {ticketsLoading ? (
+                <div className="text-center py-6 sm:py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 sm:h-12 sm:w-12 border-b-2 border-purple-600 mx-auto"></div>
+                  <p className="text-gray-600 mt-3 sm:mt-4 text-xs sm:text-base">Loading...</p>
+                </div>
+              ) : eventTickets.length === 0 ? (
+                <div className="text-center py-6 sm:py-12 bg-gray-50 rounded-lg px-2">
+                  <p className="text-gray-500 text-xs sm:text-base">No tickets purchased yet</p>
+                  <p className="hidden sm:block text-sm text-gray-400 mt-2">Browse rooms to find paid events</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:gap-4">
+                  {eventTickets.map((ticket) => (
+                    <div key={ticket.id} className="border rounded-lg overflow-hidden hover:shadow-lg transition-shadow">
+                      {/* Ticket Image */}
+                      <div className="relative h-24 sm:h-40 bg-gradient-to-br from-purple-500 to-blue-600">
+                        <img
+                          src={ticket.ticket_image}
+                          alt="Ticket"
+                          className="w-full h-full object-cover opacity-90"
                         />
+                        {ticket.is_early_bird && (
+                          <div className="absolute top-1 right-1 sm:top-2 sm:right-2 bg-yellow-400 text-yellow-900 px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-full text-[9px] sm:text-xs font-bold">
+                            🎉 Early Bird
+                          </div>
+                        )}
+                        {ticket.is_gift && ticket.gifted_by && (
+                          <div className="absolute top-1 left-1 sm:top-2 sm:left-2 bg-pink-500 text-white px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-full text-[9px] sm:text-xs font-bold truncate max-w-[90%]">
+                            🎁 Gift from @{ticket.gifted_by.username}
+                          </div>
+                        )}
+                        {ticket.is_starting_soon && (
+                          <div className="absolute bottom-1 left-1 sm:bottom-2 sm:left-2 bg-red-500 text-white px-2 py-0.5 sm:px-3 sm:py-1 rounded-full text-[9px] sm:text-xs font-bold animate-pulse">
+                            ⏰ Starting Soon!
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Ticket Details */}
+                      <div className="p-2 sm:p-4">
+                        <h3 className="font-bold text-xs sm:text-lg text-gray-900 mb-1 truncate">{ticket.event.title}</h3>
+                        <p className="text-[10px] sm:text-sm text-gray-600 mb-1 sm:mb-2 truncate">{ticket.event.room_name || `Room #${ticket.event.room_id}`}</p>
+
+                        <div className="space-y-1 sm:space-y-2 text-[10px] sm:text-sm">
+                          <div className="flex items-center text-gray-700">
+                            <ClockIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
+                            <span className="truncate">{new Date(ticket.event.start_time).toLocaleString()}</span>
+                          </div>
+
+                          <div className="flex items-center text-green-600 font-medium">
+                            <span className="mr-1 sm:mr-2">💰</span>
+                            {ticket.ticket_price_tokens / 100} tokens
+                            {ticket.is_early_bird && (
+                              <span className="hidden sm:inline ml-2 text-xs text-yellow-600">(Early Bird Savings!)</span>
+                            )}
+                          </div>
+
+                          <div className="hidden sm:flex items-center text-gray-600">
+                            <span className="mr-2">📅</span>
+                            Purchased {new Date(ticket.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => navigate(`/rooms/${ticket.event.room_id}`)}
+                          className="mt-2 sm:mt-4 w-full bg-purple-600 hover:bg-purple-700 text-white py-1.5 sm:py-2 rounded-lg font-medium transition-colors text-[10px] sm:text-sm"
+                        >
+                          View Event
+                        </button>
                       </div>
                     </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
-                    <div className="mt-4 flex gap-3">
-                      <button
-                        onClick={() => navigate(`/rooms/${rsvp.event.room_id}`)}
-                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-medium transition-colors"
-                      >
-                        View Event
-                      </button>
-                      
-                      {rsvp.can_cancel && (
+          {/* My RSVPs Section */}
+          <div className="bg-white rounded-lg shadow">
+            <div className="px-3 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
+              <h2 className="text-sm sm:text-xl font-bold text-gray-900">✅ My RSVPs</h2>
+              <p className="hidden sm:block text-sm text-gray-600 mt-1">Free event reservations</p>
+            </div>
+            <div className="p-2 sm:p-6">
+              {ticketsLoading ? (
+                <div className="text-center py-6 sm:py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 sm:h-12 sm:w-12 border-b-2 border-blue-600 mx-auto"></div>
+                  <p className="text-gray-600 mt-3 sm:mt-4 text-xs sm:text-base">Loading...</p>
+                </div>
+              ) : eventRSVPs.length === 0 ? (
+                <div className="text-center py-6 sm:py-12 bg-gray-50 rounded-lg px-2">
+                  <p className="text-gray-500 text-xs sm:text-base">No RSVPs yet</p>
+                  <p className="hidden sm:block text-sm text-gray-400 mt-2">RSVP to free events in rooms you join</p>
+                </div>
+              ) : (
+                <div className="space-y-3 sm:space-y-4">
+                  {eventRSVPs.map((rsvp) => (
+                    <div key={rsvp.id} className="border rounded-lg p-2 sm:p-4 hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-bold text-xs sm:text-lg text-gray-900 truncate">{rsvp.event.title}</h3>
+                          <p className="text-[10px] sm:text-sm text-gray-600 truncate">{rsvp.event.room_name || `Room #${rsvp.event.room_id}`}</p>
+
+                          <div className="mt-1.5 sm:mt-3 space-y-1 sm:space-y-2 text-[10px] sm:text-sm">
+                            <div className="flex items-center text-gray-700">
+                              <ClockIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
+                              <span className="truncate">{new Date(rsvp.event.start_time).toLocaleString()}</span>
+                            </div>
+
+                            <div className="flex items-center text-green-600 font-medium">
+                              <CheckCircleIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
+                              Free Event
+                            </div>
+
+                            <div className="hidden sm:flex items-center text-gray-600">
+                              <span className="mr-2">📅</span>
+                              RSVP'd {new Date(rsvp.created_at).toLocaleDateString()}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Ticket Preview Image */}
+                        <div className="flex-shrink-0">
+                          <img
+                            src={rsvp.ticket_image}
+                            alt="Event Type"
+                            className="w-10 h-10 sm:w-20 sm:h-20 object-cover rounded-lg"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-2 sm:mt-4 flex gap-1.5 sm:gap-3">
                         <button
-                          onClick={() => handleCancelRSVP(rsvp.scheduled_event_id, rsvp.id)}
-                          className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium transition-colors"
+                          onClick={() => navigate(`/rooms/${rsvp.event.room_id}`)}
+                          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-1.5 sm:py-2 rounded-lg font-medium transition-colors text-[10px] sm:text-sm"
                         >
-                          Cancel RSVP
+                          View Event
                         </button>
-                      )}
+
+                        {rsvp.can_cancel && (
+                          <button
+                            onClick={() => handleCancelRSVP(rsvp.scheduled_event_id, rsvp.id)}
+                            className="px-2 sm:px-4 py-1.5 sm:py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-medium transition-colors text-[10px] sm:text-sm whitespace-nowrap"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

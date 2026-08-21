@@ -56,6 +56,48 @@ const DEFAULT_FRET_COLORS = [0x3fe34a, 0xff3b30, 0xffd60a, 0x2f7cff, 0xff9500];
 const DEFAULT_ACCENT = 0x8a2be2;
 const DEFAULT_ACCENT_RAIL = 0xb14cff;
 
+// Stage visual themes — a SECOND, independent skinning axis from the
+// instrument colors above. Deliberately scoped to environment/mood
+// elements only (scene background, fog, the highway floor's own base
+// tint, starfield tint, sun-disc color, ambient light color) — never the
+// highway's accent/rail colors (those stay per-INSTRUMENT, exactly as
+// today, via options.highwayAccentColor/highwayAccentColorRail — mixing
+// "which stage" into "which instrument" would break an established mental
+// model) and never any geometry/camera math (all of that stays fully
+// shared between stages, preserving every FOV/dolly/lift fix already
+// verified via the mobile-framing highway-lab investigation). Picked once
+// per song in RhythmHeroGame.jsx (see pickRandomStageId), never mid-
+// performance — same reasoning `instrument` itself is locked for a whole
+// turn.
+export const STAGES = {
+  cosmic: {
+    id: 'cosmic',
+    label: 'Cosmic Void',
+    sceneBackground: 0x06030f,
+    fogColor: 0x06030f,
+    highwayBaseColor: [0.018, 0.012, 0.045],
+    starColor: 0xbbaaff,
+    sunColor: 0x5a2bd4,
+    ambientLightColor: 0x8866ff,
+  },
+  sunset: {
+    id: 'sunset',
+    label: 'Retrowave Sunset',
+    sceneBackground: 0x1f0a12,
+    fogColor: 0x1f0a12,
+    highwayBaseColor: [0.05, 0.014, 0.012],
+    starColor: 0xffb399,
+    sunColor: 0xff5533,
+    ambientLightColor: 0xff9966,
+  },
+};
+export const DEFAULT_STAGE_ID = 'cosmic';
+
+export function pickRandomStageId() {
+  const ids = Object.keys(STAGES);
+  return ids[Math.floor(Math.random() * ids.length)];
+}
+
 // -------------------------------------------------- highway design upgrades
 // 1. Combo-reactive camera — FOV tightens as the streak builds, easing back
 //    toward baseFov the instant it resets (streak=0 on a miss/overstrum).
@@ -281,12 +323,13 @@ export const highwayFrag = /* glsl */ `
   uniform float uBeat;
   uniform vec3 uLineColor;
   uniform float uPulse;
+  uniform vec3 uBaseColor;
 
   void main() {
     float x = vWorld.x;
     float z = vWorld.z;
 
-    vec3 col = vec3(0.018, 0.012, 0.045);
+    vec3 col = uBaseColor;
 
     // lane dividers every 2 units, edges brightest
     float fx = fract((x + 5.0) / 2.0);
@@ -407,6 +450,9 @@ export class Game {
     this.fretColors = options.instrumentColors || DEFAULT_FRET_COLORS;
     this.accentColor = options.highwayAccentColor ?? DEFAULT_ACCENT;
     this.accentColorRail = options.highwayAccentColorRail ?? DEFAULT_ACCENT_RAIL;
+    // Stage visual theme — a second, independent skinning axis from the
+    // instrument colors above (see STAGES's own comment).
+    this.stage = STAGES[options.stageId] || STAGES[DEFAULT_STAGE_ID];
     // Spectator instances (mirroring another player's broadcast performance)
     // must never attach real keyboard listeners of their own — a spectator's
     // own stray keypresses shouldn't drive a highway that's supposed to be a
@@ -481,8 +527,8 @@ export class Game {
     this.renderer.setSize(w0, h0, false);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x06030f);
-    this.scene.fog = new THREE.Fog(0x06030f, 32, 78);
+    this.scene.background = new THREE.Color(this.stage.sceneBackground);
+    this.scene.fog = new THREE.Fog(this.stage.fogColor, 32, 78);
 
     // baseFov is the "neutral" FOV a resize should always restore — the
     // combo/Star-Power camera below only ever lerps AWAY from this value,
@@ -506,7 +552,7 @@ export class Game {
     this._lastCamDebugLog = 0; // throttle for the periodic runtime sample in _loop
     this._logCameraSetupDebug('construct', w0 / h0);
 
-    this.scene.add(new THREE.AmbientLight(0x8866ff, 0.5));
+    this.scene.add(new THREE.AmbientLight(this.stage.ambientLightColor, 0.5));
     this.dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
     this.dirLight.position.set(4, 12, 6);
     this.scene.add(this.dirLight);
@@ -598,11 +644,13 @@ export class Game {
   }
 
   _buildHighway() {
+    const [br, bg, bb] = this.stage.highwayBaseColor;
     this.highwayUniforms = {
       uScroll: { value: 0 },
       uBeat: { value: SPEED * 0.5 },
       uLineColor: { value: new THREE.Color(this.accentColor) },
       uPulse: { value: 0 },
+      uBaseColor: { value: new THREE.Color(br, bg, bb) },
     };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.highwayUniforms,
@@ -886,7 +934,7 @@ export class Game {
     // sharing it costs nothing visually while skipping the 1400-point
     // Math.random() loop on every single Game() construction.
     const starMat = new THREE.PointsMaterial({
-      color: 0xbbaaff, size: 0.35, map: this.glowTex,
+      color: this.stage.starColor, size: 0.35, map: this.glowTex,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     });
     this.stars = new THREE.Points(this.shared.starGeo, starMat);
@@ -895,7 +943,7 @@ export class Game {
     // horizon glow disc
     const sun = new THREE.Mesh(
       this.shared.sunDisc,
-      new THREE.MeshBasicMaterial({ color: 0x5a2bd4, transparent: true, opacity: 0.35 })
+      new THREE.MeshBasicMaterial({ color: this.stage.sunColor, transparent: true, opacity: 0.35 })
     );
     sun.position.set(0, 6, -85);
     this.scene.add(sun);
@@ -1288,6 +1336,19 @@ export class Game {
     const lane = KEYS[e.code];
     if (lane === undefined) return;
     this.releaseLane(lane);
+  }
+
+  // Projects each fret ring's real 3D position through the current camera to
+  // get its on-screen X, expressed as a 0..1 fraction of canvas width — lets
+  // a DOM touch-button row line up with the rings it actually controls
+  // instead of an arbitrary evenly-spaced guess. Stays correct through
+  // anything that moves the camera (Star Power's FOV/Z dolly, idle sway,
+  // aspect-driven FOV changes on resize) since it's recomputed fresh from
+  // live camera state on every call, not cached.
+  getLaneScreenXFractions() {
+    if (!this.frets || !this.camera) return null;
+    this.camera.updateMatrixWorld(true);
+    return this.frets.map((f) => (f.group.position.clone().project(this.camera).x + 1) / 2);
   }
 
   // public input API — drives the same logic as the keyboard, so on-screen

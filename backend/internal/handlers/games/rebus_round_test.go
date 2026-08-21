@@ -1,6 +1,7 @@
 package games
 
 import (
+	"fmt"
 	"testing"
 	"wewatch-backend/internal/models"
 )
@@ -262,8 +263,15 @@ func TestRebusPuzzleBankIntegrity(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for i, p := range rebusPuzzleBank {
-		if len(p.Pattern) == 0 {
+		// Photo-compound puzzles (PhotoWord != "") deliberately have an empty
+		// Pattern at bank-build time — it's assembled at rebus_start once the
+		// real photo has been fetched live from Pexels. Everything else must
+		// still have a real, pre-built pattern.
+		if len(p.Pattern) == 0 && p.PhotoWord == "" {
 			t.Errorf("puzzle %d has an empty pattern", i)
+		}
+		if p.PhotoWord != "" && p.TextWord == "" {
+			t.Errorf("puzzle %d (%q) is a photo-compound with no text half", i, p.Answer)
 		}
 		norm := rebusNormalize(p.Answer)
 		if norm == "" {
@@ -399,5 +407,133 @@ func TestRebusBankGrewSubstantially(t *testing.T) {
 	const minExpected = 80
 	if len(rebusPuzzleBank) < minExpected {
 		t.Errorf("expected the combined bank to have grown well past the original 31 entries (>= %d), got %d", minExpected, len(rebusPuzzleBank))
+	}
+}
+
+// fakeRebusPhotoFetcher swaps in a deterministic, network-free stand-in for
+// rebusPhotoFetcher for the duration of one test — restore() must be
+// deferred by the caller to avoid leaking the fake into later tests. Mirrors
+// fakeFourFramesFetcher's exact shape.
+func fakeRebusPhotoFetcher(t *testing.T) (restore func()) {
+	t.Helper()
+	original := rebusPhotoFetcher
+	rebusPhotoFetcher = func(word string) (string, error) {
+		return "https://images.pexels.com/fake/" + word + ".jpg", nil
+	}
+	return func() { rebusPhotoFetcher = original }
+}
+
+func TestRebusPhotoCompoundSpecsWellFormed(t *testing.T) {
+	if len(rebusPhotoCompoundSpecs) < 10 {
+		t.Fatalf("expected a reasonably sized photo-compound list, got only %d entries", len(rebusPhotoCompoundSpecs))
+	}
+	for i, s := range rebusPhotoCompoundSpecs {
+		if s.photoWord == "" {
+			t.Errorf("spec %d (%q) has an empty photoWord", i, s.answer)
+		}
+		if s.textWord == "" {
+			t.Errorf("spec %d (%q) has an empty textWord", i, s.answer)
+		}
+		if s.answer == "" {
+			t.Errorf("spec %d has an empty answer", i)
+		}
+		// toPuzzle() must deliberately leave Pattern empty — it's assembled
+		// live at rebus_start, not at bank-build time.
+		p := s.toPuzzle()
+		if len(p.Pattern) != 0 {
+			t.Errorf("spec %d (%q) unexpectedly produced a non-empty Pattern from toPuzzle()", i, s.answer)
+		}
+	}
+}
+
+// findRebusPhotoCompoundIndex locates the first photo-compound puzzle in gs's
+// (unshuffled) puzzle list, for tests that need to target one deterministically.
+func findRebusPhotoCompoundIndex(t *testing.T, gs *GameSessionState) int {
+	t.Helper()
+	for i, p := range gs.RebusPuzzles {
+		if p.PhotoWord != "" {
+			return i
+		}
+	}
+	t.Fatal("no photo-compound puzzle found in the test puzzle bank")
+	return -1
+}
+
+// TestRebusStartAssemblesPhotoCompoundPattern jumps straight to a known
+// photo-compound puzzle, starts it, and confirms the resulting
+// current_pattern contains a real image token plus the text half in the
+// right order (respecting PhotoFirst) — and that the real answer is still
+// accepted by rebusAnswerMatches despite the pattern never containing the
+// answer text itself.
+func TestRebusStartAssemblesPhotoCompoundPattern(t *testing.T) {
+	gm := &GameManager{}
+	gs := makeTestRebusState(2)
+	defer fakeRebusPhotoFetcher(t)()
+
+	idx := findRebusPhotoCompoundIndex(t, gs)
+	puzzle := gs.RebusPuzzles[idx]
+	gs.GameData["round"] = float64(idx)
+
+	if _, _, err := gm.processRebusRoundMove(gs, rebusTestHostID, "rebus_start", nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	pattern, ok := gs.GameData["current_pattern"].([]RebusToken)
+	if !ok || len(pattern) != 3 {
+		t.Fatalf("expected a 3-token pattern (photo, connector, text), got %#v", gs.GameData["current_pattern"])
+	}
+
+	var imageTok, textTok RebusToken
+	var imageIdx int
+	for i, tok := range pattern {
+		if tok.Image != "" {
+			imageTok = tok
+			imageIdx = i
+		} else if !tok.Op {
+			textTok = tok
+		}
+	}
+	if imageTok.Image == "" {
+		t.Fatalf("expected one token to carry a real photo URL, got %#v", pattern)
+	}
+	if textTok.Text != puzzle.TextWord {
+		t.Fatalf("expected the text half to be %q, got %q", puzzle.TextWord, textTok.Text)
+	}
+	wantImageFirst := puzzle.PhotoFirst
+	gotImageFirst := imageIdx == 0
+	if wantImageFirst != gotImageFirst {
+		t.Fatalf("expected PhotoFirst=%v to place the image at index 0, but image was at index %d", puzzle.PhotoFirst, imageIdx)
+	}
+
+	// The pattern itself never contains readable answer text (only the photo
+	// URL + one text half + a connector) — confirm the real answer is still
+	// accepted server-side regardless.
+	if !rebusAnswerMatches(puzzle, puzzle.Answer) {
+		t.Fatalf("expected the real answer %q to be accepted", puzzle.Answer)
+	}
+}
+
+// TestRebusStartSurfacesAFriendlyErrorWhenPexelsFailsForPhotoCompound mirrors
+// TestFourFramesStartSurfacesAFriendlyErrorWhenPexelsFails — a Pexels outage
+// must produce a clear, actionable error rather than a raw network error, and
+// must leave the round counter untouched so the same puzzle can be retried.
+func TestRebusStartSurfacesAFriendlyErrorWhenPexelsFailsForPhotoCompound(t *testing.T) {
+	gm := &GameManager{}
+	gs := makeTestRebusState(2)
+	idx := findRebusPhotoCompoundIndex(t, gs)
+	gs.GameData["round"] = float64(idx)
+
+	original := rebusPhotoFetcher
+	rebusPhotoFetcher = func(word string) (string, error) {
+		return "", fmt.Errorf("simulated Pexels outage")
+	}
+	defer func() { rebusPhotoFetcher = original }()
+
+	_, _, err := gm.processRebusRoundMove(gs, rebusTestHostID, "rebus_start", nil)
+	if err == nil {
+		t.Fatal("expected an error when the Pexels fetch fails")
+	}
+	if gs.GameData["round"] != float64(idx) {
+		t.Fatalf("expected round to stay unchanged at %d after a failed start, got %v", idx, gs.GameData["round"])
 	}
 }

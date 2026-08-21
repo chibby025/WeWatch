@@ -2444,10 +2444,21 @@ func DeleteRoomHandler(c *gin.Context) {
 		}
 	}
 
-	// Verify user is the host
+	// Verify user is the host or a super_admin — matches the exact
+	// permission model LobbyPage.jsx's own delete-room menu item already
+	// gates on (room.host_id === authenticatedUserID || role === 'super_admin'),
+	// and the same host-or-admin pattern UpdateRoomHandler/EndWatchSessionHandler
+	// already use elsewhere in this file.
 	if room.HostID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can delete the room"})
-		return
+		var requestingUser models.User
+		if err := DB.Select("id, role").First(&requestingUser, userID).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Server error"})
+			return
+		}
+		if requestingUser.Role != "super_admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only the room host can delete the room"})
+			return
+		}
 	}
 
 	// Cascade delete all related records in a transaction

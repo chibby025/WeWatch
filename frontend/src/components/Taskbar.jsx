@@ -395,6 +395,12 @@ const Taskbar = ({
   // Only relevant during a game — always reset back to the full pill once
   // the game ends, so nobody is left wondering where the taskbar went.
   const [isMinimized, setIsMinimized] = useState(false);
+  // True only during the brief shrink-and-fade transition, before isMinimized
+  // itself flips — lets the full pill render one last time with a scale/opacity
+  // animation applied, instead of the pill vanishing and the square popping in
+  // as two disconnected, unanimated swaps.
+  const [isMinimizing, setIsMinimizing] = useState(false);
+  const minimizeAnimTimerRef = useRef(null);
   const [minimizedPos, setMinimizedPos] = useState(null); // {x,y} in viewport px, lazily seeded on first minimize
   const dragStateRef = useRef(null); // { startX, startY, originX, originY, moved }
   // Auto-restore when a game ends so players don't lose the taskbar after a match.
@@ -467,11 +473,23 @@ const Taskbar = ({
     y: Math.min(Math.max(y, 8), window.innerHeight - MINIMIZED_SIZE - 8),
   });
 
+  // Plays the shrink-and-fade transition on the full pill, then swaps to the
+  // minimized square once the animation has actually had time to run.
+  const animateIntoMinimized = () => {
+    clearTimeout(minimizeAnimTimerRef.current);
+    setIsMinimizing(true);
+    minimizeAnimTimerRef.current = setTimeout(() => {
+      setIsMinimized(true);
+      setIsMinimizing(false);
+      minimizeAnimTimerRef.current = null;
+    }, 280);
+  };
+
   const handleMinimizeClick = () => {
     if (!minimizedPos) {
       setMinimizedPos(clampToViewport(window.innerWidth - MINIMIZED_SIZE - 16, window.innerHeight - 90));
     }
-    setIsMinimized(true);
+    animateIntoMinimized();
   };
 
   // Auto-minimize the pill when a game starts so game bottom controls aren't obscured.
@@ -483,10 +501,15 @@ const Taskbar = ({
         x: Math.min(Math.max(window.innerWidth - 52 - 16, 8), window.innerWidth - 52 - 8),
         y: Math.min(Math.max(window.innerHeight - 90, 8), window.innerHeight - 52 - 8),
       });
-      setIsMinimized(true);
+      animateIntoMinimized();
     }, 500);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); clearTimeout(minimizeAnimTimerRef.current); };
   }, [gameSessionId]);
+
+  // Unmount-safety: cancel any pending minimize-transition timer.
+  useEffect(() => {
+    return () => clearTimeout(minimizeAnimTimerRef.current);
+  }, []);
 
   const handleMinimizedPointerDown = (e) => {
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -640,6 +663,16 @@ const Taskbar = ({
     cursor: pillDragRef.current?.moved ? 'grabbing' : 'grab',
     touchAction: 'none',
   };
+
+  // Shrink-and-fade the full pill down toward the square before swapping to
+  // it — appended onto (not replacing) the transform above so the pill still
+  // shrinks from wherever it currently sits, dragged or centered alike.
+  if (isMinimizing) {
+    taskbarStyle.transform = `${taskbarStyle.transform} scale(0.06)`;
+    taskbarStyle.opacity = 0;
+    taskbarStyle.pointerEvents = 'none';
+    taskbarStyle.transition = 'transform 0.28s cubic-bezier(0.55,0,0.85,0.35), opacity 0.28s ease';
+  }
 
   if (isMinimized && minimizedPos) {
     return (

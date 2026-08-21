@@ -249,13 +249,16 @@ func GetLobbyGroupMessagesHandler(c *gin.Context) {
 		Order("created_at ASC").
 		Find(&messages)
 
-	// Update last_read_at
+	// Update last_read_at — still used for the group-list unread-count
+	// badge, unrelated to (and untouched by) the new scroll-resume feature.
 	now := time.Now()
 	db.Model(&models.LobbyGroupMember{}).
 		Where("group_id = ? AND user_id = ?", groupID, userID).
 		Update("last_read_at", now)
 
-	c.JSON(http.StatusOK, gin.H{"messages": messages})
+	readPosition := GetReadPosition(db, userID, "group", strconv.FormatUint(uint64(groupID), 10))
+
+	c.JSON(http.StatusOK, gin.H{"messages": messages, "last_read_message_id": readPosition})
 }
 
 // ────────────────────────────────────────────

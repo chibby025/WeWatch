@@ -30,6 +30,7 @@ import EventsPreviewModal from './EventsPreviewModal';
 import SessionPreview from './SessionPreview';
 import { useAuth } from '../contexts/AuthContext';
 import LobbyMessageBubble from './lobby/LobbyMessageBubble';
+import { useChatReadPosition } from '../hooks/useChatReadPosition';
 import WatchOutModal from './lobby/WatchOutModal';
 import CircleOfFriendsSphere from './lobby/CircleOfFriendsSphere';
 import LobbyAttachModal from './lobby/LobbyAttachModal';
@@ -465,6 +466,7 @@ const LobbyPage = () => {
   const [communityEventsData, setCommunityEventsData] = useState({ scheduledEvents: [], requests: [] });
   const [leaderboardData, setLeaderboardData] = useState([]);
   const [vsBattleLeaderboardData, setVsBattleLeaderboardData] = useState([]);
+  const [gamesLeaderboardData, setGamesLeaderboardData] = useState([]);
   const [showCommunityEventsView, setShowCommunityEventsView] = useState(false);
   const communityEventsTuneRef = React.useRef(null);
   const [communityCardVisible, setCommunityCardVisible] = React.useState(false);
@@ -865,6 +867,99 @@ const LobbyPage = () => {
   const scrollToBottomChat = () => {
     chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  // Cross-device read-position tracking (useChatReadPosition) — one shared
+  // hook instance dynamically re-targeted at whichever of the two chat
+  // views (DM or group) is actually open, matching chatMessagesEndRef's own
+  // shared-ref convention above (only one of the two is ever mounted at a
+  // time). Container ref is likewise shared between both views' scroll
+  // containers.
+  const chatScrollContainerRef = React.useRef(null);
+  const [firstUnreadMessageId, setFirstUnreadMessageId] = useState(null);
+  const justRestoredChatRef = React.useRef(false);
+  const activeReadPositionType = chatView === 'group_messages' ? 'group' : chatView === 'messages' ? 'dm' : null;
+  const activeReadPositionKey = chatView === 'group_messages' ? selectedGroup?.id : chatView === 'messages' ? selectedChatUser?.id : null;
+  const { markAtBottom, observeContainer } = useChatReadPosition({
+    conversationType: activeReadPositionType,
+    conversationKey: activeReadPositionKey,
+    enabled: !!activeReadPositionType && activeReadPositionKey != null,
+  });
+
+  // Jumps to a specific message on initial load — instant (no smooth
+  // animation, which would look janky snapping through a long backlog) and
+  // positions the target at the TOP of the viewport rather than centered,
+  // reading naturally as "here's where new stuff begins". Mirrors
+  // RoomPageNew.jsx's own jumpToFirstUnread exactly, for visual consistency
+  // across all three chat surfaces.
+  const jumpToChatFirstUnread = (messageId) => {
+    const el = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'auto', block: 'start' });
+    setFirstUnreadMessageId(messageId);
+    justRestoredChatRef.current = true;
+    setTimeout(() => { justRestoredChatRef.current = false; }, 2000);
+    setTimeout(() => setFirstUnreadMessageId(null), 1800);
+  };
+
+  // Called right after every fresh messages fetch (DM or group). Restores
+  // to the first message the user hasn't seen yet, cross-device — see
+  // ChatReadPosition/useChatReadPosition — instead of always jumping to
+  // whatever's newest right now.
+  const restoreChatOrScrollToBottom = (msgsList, serverLastReadId) => {
+    if (!msgsList.length) {
+      scrollToBottomChat();
+      return;
+    }
+    const newest = msgsList[msgsList.length - 1];
+    if (serverLastReadId != null && serverLastReadId !== newest.id) {
+      const lastReadIndex = msgsList.findIndex((m) => m.id === serverLastReadId);
+      if (lastReadIndex !== -1 && lastReadIndex < msgsList.length - 1) {
+        const firstUnread = msgsList[lastReadIndex + 1];
+        setTimeout(() => jumpToChatFirstUnread(firstUnread.id), 60);
+        return;
+      }
+    }
+    scrollToBottomChat();
+  };
+
+  // Whichever conversation's messages are actually on screen right now —
+  // both the at-bottom scroll listener and the IntersectionObserver
+  // attachment below need this to know what "the newest message" is and
+  // when new [data-message-id] elements have rendered.
+  const activeChatMessages = useMemo(() => {
+    if (chatView === 'group_messages') return groupMessages[selectedGroup?.id] || [];
+    if (chatView === 'messages') return chatMessages[selectedChatUser?.id] || [];
+    return [];
+  }, [chatView, groupMessages, selectedGroup?.id, chatMessages, selectedChatUser?.id]);
+
+  // At-bottom detection — sitting at the newest message without actively
+  // scrolling (e.g. a short conversation that fits on screen) never
+  // triggers the IntersectionObserver below, so this is the other half of
+  // useChatReadPosition's "two signals" design (see its own comment).
+  useEffect(() => {
+    const container = chatScrollContainerRef.current;
+    if (!container || activeChatMessages.length === 0) return undefined;
+    const handleScroll = () => {
+      if (justRestoredChatRef.current) return;
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
+      if (isAtBottom) {
+        markAtBottom(activeChatMessages[activeChatMessages.length - 1].id);
+      }
+    };
+    container.addEventListener('scroll', handleScroll);
+    handleScroll();
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [activeChatMessages, markAtBottom]);
+
+  // Continuous mid-scroll tracking — re-attaches whenever the active
+  // conversation's messages change so newly-rendered [data-message-id]
+  // elements get observed too.
+  useEffect(() => {
+    const container = chatScrollContainerRef.current;
+    if (!container || activeChatMessages.length === 0) return;
+    observeContainer(container);
+  }, [activeChatMessages, observeContainer]);
 
   // Close ellipsis menu when clicking outside
   useEffect(() => {
@@ -1468,6 +1563,16 @@ const LobbyPage = () => {
     }
   };
 
+  const fetchGamesLeaderboard = async () => {
+    try {
+      const { getGamesLeaderboard } = await import('../services/api');
+      const data = await getGamesLeaderboard();
+      setGamesLeaderboardData(data.games || []);
+    } catch {
+      // Non-critical — fail silently
+    }
+  };
+
   // ✅ STEP 1: Pre-fetch first 10 sessions + trailers on lobby mount (background)
   const prefetchWatchingNowContent = async () => {
     try {
@@ -1762,7 +1867,7 @@ const LobbyPage = () => {
       
       // Clear unread count when opening chat
       setUnreadCounts(prev => ({ ...prev, [actualUserId]: 0 }));
-      scrollToBottomChat();
+      restoreChatOrScrollToBottom(messages, response.data.last_read_message_id);
     } catch (err) {
       console.error('Failed to fetch chat messages:', err);
       // Initialize empty message array for new friendships
@@ -2000,13 +2105,15 @@ const LobbyPage = () => {
     window.history.pushState({ wewatch: true, chatView: 'group_messages', groupId: group.id }, '');
     try {
       const data = await getLobbyGroupMessages(group.id);
-      setGroupMessages(prev => ({ ...prev, [group.id]: data.messages || [] }));
+      const msgs = data.messages || [];
+      setGroupMessages(prev => ({ ...prev, [group.id]: msgs }));
       setGroupUnreadCounts(prev => ({ ...prev, [group.id]: 0 }));
+      restoreChatOrScrollToBottom(msgs, data.last_read_message_id);
     } catch (err) {
       console.error('Failed to fetch group messages:', err);
       setGroupMessages(prev => ({ ...prev, [group.id]: [] }));
+      setTimeout(() => chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     }
-    setTimeout(() => chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
   };
 
   const handleSendGroupMessage = async (e) => {
@@ -2793,6 +2900,7 @@ const LobbyPage = () => {
       fetchCommunityEvents();
       fetchLeaderboard();
       fetchVsBattleLeaderboard();
+      fetchGamesLeaderboard();
       fetchUpcomingEventsCount();
       prefetchWatchingNowContent();
     }, 700);
@@ -3710,7 +3818,7 @@ const LobbyPage = () => {
       setRooms(prevRooms => prevRooms.filter(room => room.id !== roomId));
     } catch (err) {
       console.error('Error deleting room:', err);
-      setError('Failed to delete room. Please try again.');
+      setError(err.response?.data?.error || 'Failed to delete room. Please try again.');
       const data = await getRooms();
       setRooms(data.rooms || []);
     } finally {
@@ -4560,19 +4668,41 @@ const LobbyPage = () => {
                       if (roomLongPressActive.current) { roomLongPressActive.current = false; return; }
                       navigate(`/rooms/${room.id}`, { state: { roomData: room } });
                     }}
-                    onTouchStart={() => {
+                    onTouchStart={(e) => {
                       prefetchRoom(room.id);
                       roomLongPressActive.current = false;
+                      const rect = e.currentTarget.getBoundingClientRect();
                       roomLongPressRef.current = setTimeout(() => {
                         roomLongPressActive.current = true;
+                        // Anchored near the 3-dot button's own on-screen spot
+                        // (absolute top-2 right-2) so the menu appears in the
+                        // same place whether it's opened by tapping that
+                        // button or long-pressing the card — previously this
+                        // only set openMenuRoomId, never openMenuPosition,
+                        // and the menu below is gated on BOTH being set, so
+                        // long-press never actually opened anything.
+                        setOpenMenuPosition({ top: rect.top + 44, right: window.innerWidth - rect.right + 8 });
                         setOpenMenuRoomId(room.id);
                         if (navigator.vibrate) navigator.vibrate(50);
                       }, 500);
                     }}
                     onTouchMove={() => { if (roomLongPressRef.current) { clearTimeout(roomLongPressRef.current); roomLongPressRef.current = null; } }}
                     onTouchEnd={() => { if (roomLongPressRef.current) { clearTimeout(roomLongPressRef.current); roomLongPressRef.current = null; } }}
+                    onMouseDown={(e) => {
+                      if (e.button !== 0) return; // primary button only — don't hijack right/middle click
+                      prefetchRoom(room.id);
+                      roomLongPressActive.current = false;
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      roomLongPressRef.current = setTimeout(() => {
+                        roomLongPressActive.current = true;
+                        setOpenMenuPosition({ top: rect.top + 44, right: window.innerWidth - rect.right + 8 });
+                        setOpenMenuRoomId(room.id);
+                      }, 500);
+                    }}
+                    onMouseUp={() => { if (roomLongPressRef.current) { clearTimeout(roomLongPressRef.current); roomLongPressRef.current = null; } }}
+                    onMouseLeave={() => { if (roomLongPressRef.current) { clearTimeout(roomLongPressRef.current); roomLongPressRef.current = null; } }}
                   >
-                  {/* 3-dot button — visible on hover (desktop) and after long-press (mobile) */}
+                  {/* 3-dot button — visible on hover (desktop) and after long-press/hold (mobile+desktop) */}
                   <button
                     className="room-menu absolute top-2 right-2 z-10 p-1.5 rounded-full bg-black/10 dark:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
                     onClick={(e) => {
@@ -4588,7 +4718,13 @@ const LobbyPage = () => {
                     }}
                     title="More options"
                   >
-                    <EllipsisVerticalIcon className="w-4 h-4 text-gray-700 dark:text-gray-200" />
+                    {/* The card itself does go dark (dark:bg-gray-800), but
+                        this button's own pill background is a translucent
+                        WHITE overlay (dark:bg-white/10) regardless of mode —
+                        so a light icon (text-gray-200) sat on a light-ish
+                        pill, both nearly the same tone. Keeping the icon
+                        dark in both modes matches that light pill. */}
+                    <EllipsisVerticalIcon className="w-4 h-4 text-gray-700 dark:text-black" />
                   </button>
                   {/* Room Card inner — identical to original */}
                   <div className="flex items-center p-3 sm:p-4 gap-3 sm:gap-5">
@@ -5242,6 +5378,7 @@ const LobbyPage = () => {
                   requests={communityEventsData.requests}
                   leaderboard={leaderboardData}
                   vsBattleLeaderboard={vsBattleLeaderboardData}
+                  gamesLeaderboard={gamesLeaderboardData}
                   currentUser={currentUser}
                   apiBaseUrl={API_BASE_URL}
                   onRSVP={(event) => { setSelectedEventForCalendar(event); setIsCalendarModalOpen(true); }}
@@ -5843,7 +5980,7 @@ const LobbyPage = () => {
                   </div>
 
                   {/* Messages */}
-                  <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 sm:space-y-3 bg-gray-50 dark:bg-gray-900 custom-sleek-scrollbar">
+                  <div ref={chatScrollContainerRef} className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 sm:space-y-3 bg-gray-50 dark:bg-gray-900 custom-sleek-scrollbar">
                     {(groupMessages[selectedGroup.id] || []).length === 0 ? (
                       <div className="text-center py-6 sm:py-10 text-gray-500 dark:text-gray-400">
                         <p className="text-xs sm:text-sm">No messages yet</p>
@@ -5863,19 +6000,24 @@ const LobbyPage = () => {
                           );
                         }
                         result.push(
-                          <LobbyMessageBubble
+                          <div
                             key={msg.id || index}
-                            message={msg}
-                            isOwn={msg.sender_id === currentUser?.id}
-                            currentUser={currentUser}
-                            onEdit={() => {}}
-                            onDelete={() => {}}
-                            onVotePoll={() => {}}
-                            onViewUser={() => {}}
-                            liveRooms={liveRooms}
-                            endedSessionIds={endedSessionIds}
-                            showSenderName={true}
-                          />
+                            data-message-id={msg.id}
+                            className={firstUnreadMessageId === msg.id ? 'ring-2 ring-purple-400 rounded-xl transition-shadow duration-1000' : ''}
+                          >
+                            <LobbyMessageBubble
+                              message={msg}
+                              isOwn={msg.sender_id === currentUser?.id}
+                              currentUser={currentUser}
+                              onEdit={() => {}}
+                              onDelete={() => {}}
+                              onVotePoll={() => {}}
+                              onViewUser={() => {}}
+                              liveRooms={liveRooms}
+                              endedSessionIds={endedSessionIds}
+                              showSenderName={true}
+                            />
+                          </div>
                         );
                         return result;
                       })
@@ -6561,6 +6703,7 @@ const LobbyPage = () => {
                     
                     {/* Messages */}
                     <div
+                      ref={chatScrollContainerRef}
                       className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 sm:space-y-3 bg-gray-50 dark:bg-gray-900 custom-sleek-scrollbar"
                       style={{
                         scrollbarWidth: 'thin',
@@ -6586,19 +6729,24 @@ const LobbyPage = () => {
                             );
                           }
                           result.push(
-                            <LobbyMessageBubble
+                            <div
                               key={msg.id || index}
-                              message={msg}
-                              isOwn={msg.sender_id === currentUser?.id}
-                              currentUser={currentUser}
-                              onEdit={handleEditMessage}
-                              onDelete={handleDeleteMessage}
-                              onVotePoll={handleVotePoll}
-                              onViewUser={() => setLightboxAvatarUser(selectedChatUser)}
-                              onReply={(msg) => { setReplyingTo(msg); setTimeout(() => document.querySelector('textarea[placeholder="What do wanna do today?"]')?.focus(), 50); }}
-                              liveRooms={liveRooms}
-                              endedSessionIds={endedSessionIds}
-                            />
+                              data-message-id={msg.id}
+                              className={firstUnreadMessageId === msg.id ? 'ring-2 ring-purple-400 rounded-xl transition-shadow duration-1000' : ''}
+                            >
+                              <LobbyMessageBubble
+                                message={msg}
+                                isOwn={msg.sender_id === currentUser?.id}
+                                currentUser={currentUser}
+                                onEdit={handleEditMessage}
+                                onDelete={handleDeleteMessage}
+                                onVotePoll={handleVotePoll}
+                                onViewUser={() => setLightboxAvatarUser(selectedChatUser)}
+                                onReply={(msg) => { setReplyingTo(msg); setTimeout(() => document.querySelector('textarea[placeholder="What do wanna do today?"]')?.focus(), 50); }}
+                                liveRooms={liveRooms}
+                                endedSessionIds={endedSessionIds}
+                              />
+                            </div>
                           );
                           return result;
                         })
@@ -7638,6 +7786,7 @@ const LobbyPage = () => {
               requests={communityEventsData.requests}
               leaderboard={leaderboardData}
               vsBattleLeaderboard={vsBattleLeaderboardData}
+              gamesLeaderboard={gamesLeaderboardData}
               currentUser={currentUser}
               apiBaseUrl={API_BASE_URL}
               onRSVP={(event) => { setShowCommunityEventsView(false); setSelectedEventForCalendar(event); setIsCalendarModalOpen(true); }}

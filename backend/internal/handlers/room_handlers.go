@@ -143,9 +143,18 @@ func GetRoomMessages(c *gin.Context) {
 
 	// Optional: Filter by room group (query parameter)
 	roomGroupIDStr := c.Query("room_group_id")
-	
+
+	// conversationKey mirrors the exact "<roomId>:<groupId|main>" shape the
+	// room-chat frontend's own (now-replaced) localStorage read-position
+	// marker already used — see ChatReadPosition's own doc comment.
+	groupKeyPart := "main"
+	if roomGroupIDStr != "" && roomGroupIDStr != "null" && roomGroupIDStr != "main" {
+		groupKeyPart = roomGroupIDStr
+	}
+	conversationKey := fmt.Sprintf("%d:%s", roomID, groupKeyPart)
+
 	query := DB.Where("room_id = ?", uint(roomID))
-	
+
 	if roomGroupIDStr != "" {
 		if roomGroupIDStr == "null" || roomGroupIDStr == "main" {
 			// Main chat (no group) - only messages where room_group_id IS NULL
@@ -188,7 +197,14 @@ func GetRoomMessages(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"messages": messages})
+	var readPosition *uint
+	if userIDValue, exists := c.Get("user_id"); exists {
+		if userID, ok := userIDValue.(uint); ok {
+			readPosition = GetReadPosition(DB, userID, "room", conversationKey)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"messages": messages, "last_read_message_id": readPosition})
 }
 
 // CreateRoomMessage creates a new persistent message in a room

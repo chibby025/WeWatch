@@ -40,7 +40,7 @@ const LeaderboardCard = ({ rooms = [], fullscreen = false }) => {
       <div className="w-full h-full flex flex-col items-center justify-center gap-3 px-6 text-center bg-gradient-to-br from-gray-900 to-black">
         <span className="text-4xl">🏆</span>
         <p className="text-white/60 text-sm">No rooms with enough ratings yet.</p>
-        <p className="text-white/40 text-xs">Rate more sessions to unlock the leaderboard!</p>
+        <p className="text-white/40 text-xs">Rate more sessions to unlock Room Ratings!</p>
       </div>
     );
   }
@@ -86,12 +86,14 @@ const LeaderboardCard = ({ rooms = [], fullscreen = false }) => {
                 </div>
               </div>
 
-              {/* Content rating icon — own column */}
-              {fullscreen && room.content_rating && RATING_ICON[room.content_rating] && (
+              {/* Content rating icon — own column. Shown in both the compact
+                  carousel card and the fullscreen view; slightly smaller
+                  compact so it doesn't crowd the narrower card. */}
+              {room.content_rating && RATING_ICON[room.content_rating] && (
                 <img
                   src={RATING_ICON[room.content_rating]}
                   alt={room.content_rating}
-                  className="flex-shrink-0 w-8 h-8 object-contain"
+                  className={`flex-shrink-0 object-contain ${fullscreen ? 'w-8 h-8' : 'w-6 h-6'}`}
                 />
               )}
 

@@ -3,6 +3,7 @@ import ScheduledEventPreviewCard from './ScheduledEventPreviewCard';
 import CommunityRequestCard from './CommunityRequestCard';
 import LeaderboardCard from './LeaderboardCard';
 import VsBattleLeaderboardCard from './VsBattleLeaderboardCard';
+import GamesLeaderboardCard from './GamesLeaderboardCard';
 import MakeRequestSheet from './MakeRequestSheet';
 import { PlusCircleIcon, CalendarDaysIcon, MegaphoneIcon, TrophyIcon } from '@heroicons/react/24/outline';
 import { PlayIcon } from '@heroicons/react/24/solid';
@@ -68,7 +69,7 @@ const RATING_ICON = {
   'Mature':      '/icons/Mature Rating Icon.webp',
 };
 
-function buildInterleavedCards(events, requests, leaderboard, vsBattleLeaderboard) {
+function buildInterleavedCards(events, requests, leaderboard, vsBattleLeaderboard, gamesLeaderboard) {
   const cards = [];
   const max = Math.max(events.length, requests.length);
   for (let i = 0; i < max; i++) {
@@ -82,6 +83,12 @@ function buildInterleavedCards(events, requests, leaderboard, vsBattleLeaderboar
   // VS Battle player leaderboard
   if (vsBattleLeaderboard && vsBattleLeaderboard.length > 0) {
     cards.push({ type: 'vs_battle_leaderboard', data: vsBattleLeaderboard });
+  }
+  // Cross-game leaderboard — only worth a slot once at least one covered
+  // game actually has a completed session somewhere (matches
+  // GamesLeaderboardCard's own "anyDataAtAll" empty-state check).
+  if (gamesLeaderboard && gamesLeaderboard.some(g => g.entries?.length > 0)) {
+    cards.push({ type: 'games_leaderboard', data: gamesLeaderboard });
   }
   return cards;
 }
@@ -105,13 +112,14 @@ const CommunityEventsCard = ({
   requests           = [],
   leaderboard        = [],
   vsBattleLeaderboard = [],
+  gamesLeaderboard    = [],
   currentUser,
   apiBaseUrl,
   onRSVP,
   onNewRequest,
   fixedBottom,
 }) => {
-  const cards = buildInterleavedCards(scheduledEvents, requests, leaderboard, vsBattleLeaderboard);
+  const cards = buildInterleavedCards(scheduledEvents, requests, leaderboard, vsBattleLeaderboard, gamesLeaderboard);
   const [showLeaderboardPanel, setShowLeaderboardPanel] = useState(false);
 
   const [currentIndex,     setCurrentIndex]     = useState(0);
@@ -306,7 +314,7 @@ const CommunityEventsCard = ({
               className="flex items-center justify-center w-10 h-10 rounded-full
                 bg-amber-500/20 hover:bg-amber-500/30 active:scale-90
                 border border-amber-500/40 transition-colors flex-shrink-0"
-              title="Room Leaderboard"
+              title="Room Ratings"
             >
               <TrophyIcon className="w-5 h-5 text-amber-400" />
             </button>
@@ -320,7 +328,7 @@ const CommunityEventsCard = ({
               <div className="flex items-center gap-2">
                 <span className="text-xl">🏆</span>
                 <div>
-                  <p className="text-white font-bold text-sm">Room Leaderboard</p>
+                  <p className="text-white font-bold text-sm">Room Ratings</p>
                   <p className="text-white/45 text-[10px]">Top rated rooms by community</p>
                 </div>
               </div>
@@ -437,7 +445,7 @@ const CommunityEventsCard = ({
                     boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
                   }}>
                     <TrophyIcon style={{ width: 12, height: 12, color: '#fff', flexShrink: 0 }} />
-                    <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>Room Leaderboard</span>
+                    <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>Room Ratings</span>
                   </div>
                 </>
               ) : card.type === 'vs_battle_leaderboard' ? (
@@ -453,6 +461,21 @@ const CommunityEventsCard = ({
                   }}>
                     <span style={{ fontSize: 12, lineHeight: 1, flexShrink: 0 }}>⚔️</span>
                     <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>VS Battle Rankings</span>
+                  </div>
+                </>
+              ) : card.type === 'games_leaderboard' ? (
+                <>
+                  <GamesLeaderboardCard games={card.data} />
+                  <div style={{
+                    position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+                    zIndex: 46, display: 'flex', alignItems: 'center', gap: 4,
+                    whiteSpace: 'nowrap', pointerEvents: 'none',
+                    background: 'linear-gradient(135deg, #065f46, #059669)',
+                    borderRadius: '0 0 10px 10px', padding: '3px 10px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+                  }}>
+                    <span style={{ fontSize: 12, lineHeight: 1, flexShrink: 0 }}>🎮</span>
+                    <span style={{ color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>Games Leaderboard</span>
                   </div>
                 </>
               ) : (
@@ -555,6 +578,10 @@ const CommunityEventsCard = ({
               <span className="flex-shrink-0 text-white text-xs font-black px-2 py-0.5 rounded-lg bg-red-700">
                 ⚔️ VS Battle
               </span>
+            ) : cur?.type === 'games_leaderboard' ? (
+              <span className="flex-shrink-0 text-white text-xs font-black px-2 py-0.5 rounded-lg bg-emerald-700">
+                🎮 Games
+              </span>
             ) : (
               <>
                 {cur?.data?.content_rating && RATING_ICON[cur.data.content_rating] && (
@@ -577,6 +604,8 @@ const CommunityEventsCard = ({
                   ? `${cur.data.length} rooms ranked by community`
                   : cur?.type === 'vs_battle_leaderboard'
                   ? `Top ${cur.data.length} VS Battle fighters`
+                  : cur?.type === 'games_leaderboard'
+                  ? `${cur.data.filter(g => g.entries?.length > 0).length} games ranked`
                   : cur?.data?.title}
               </p>
             </div>
@@ -643,6 +672,30 @@ const CommunityEventsCard = ({
                   ))}
                 </p>
               </div>
+            ) : cur?.type === 'games_leaderboard' ? (
+              (() => {
+                // No single selected game at this level (that's the card's
+                // own dropdown state) — preview whichever game currently has
+                // the most ranked players, as a representative sample.
+                const top = [...cur.data].filter(g => g.entries?.length > 0)
+                  .sort((a, b) => b.entries.length - a.entries.length)[0];
+                if (!top) return null;
+                return (
+                  <div className="flex-1 min-w-0 overflow-hidden">
+                    <p className="marquee-text text-white/70 text-xs" style={{ '--mx': '-50%' }}>
+                      <span className="text-emerald-300 font-semibold">{top.label}</span>
+                      {' · '}
+                      {top.entries.slice(0, 3).map((e, i) => (
+                        <span key={e.user_id}>
+                          {i > 0 && <span className="text-white/30"> · </span>}
+                          <span className="text-emerald-400 font-semibold">#{i + 1}</span>
+                          {' '}<span className="text-white/80">@{e.username}</span>
+                        </span>
+                      ))}
+                    </p>
+                  </div>
+                );
+              })()
             ) : cur?.type === 'request' ? (
               <>
                 <div className="flex-1 min-w-0 overflow-hidden">
@@ -709,7 +762,7 @@ const CommunityEventsCard = ({
               <div className="flex items-center gap-2">
                 <span className="text-xl">🏆</span>
                 <div>
-                  <p className="text-white font-bold text-sm">Room Leaderboard</p>
+                  <p className="text-white font-bold text-sm">Room Ratings</p>
                   <p className="text-white/45 text-[10px]">Top rooms by community rating</p>
                 </div>
               </div>
@@ -719,6 +772,14 @@ const CommunityEventsCard = ({
                 <div>
                   <p className="text-white font-bold text-sm">VS Battle Rankings</p>
                   <p className="text-white/45 text-[10px]">Top fighters by wins</p>
+                </div>
+              </div>
+            ) : fullscreenCard.type === 'games_leaderboard' ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🎮</span>
+                <div>
+                  <p className="text-white font-bold text-sm">Games Leaderboard</p>
+                  <p className="text-white/45 text-[10px]">Top 10 per game — score or wins</p>
                 </div>
               </div>
             ) : (
@@ -745,6 +806,9 @@ const CommunityEventsCard = ({
             )}
             {fullscreenCard.type === 'vs_battle_leaderboard' && (
               <VsBattleLeaderboardCard players={fullscreenCard.data} />
+            )}
+            {fullscreenCard.type === 'games_leaderboard' && (
+              <GamesLeaderboardCard games={fullscreenCard.data} />
             )}
             {fullscreenCard.type === 'request' && (
               <CommunityRequestCard

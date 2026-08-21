@@ -44,6 +44,15 @@
 // that disagree if this is a canvas-sizing bug rather than a camera-framing
 // one.
 //
+// Round 3: a second toggle ("stage: …", bottom-center) switches between the
+// STAGES visual themes defined in rhythmGameEngine.js (Cosmic Void vs
+// Retrowave Sunset) — the swappable-highway-look feature built on top of
+// this whole investigation once the framing itself was confirmed solid.
+// Applies the same scene background/fog/highway-base-tint/ambient-light
+// colors the real Game class now uses per stage, so this is the intended
+// place to judge a new stage's palette on a real phone before it's used in
+// the actual game (where it's picked at random once per song).
+//
 // Access: linked only from LobbyLeftSidebar.jsx's super-admin-only menu.
 // Gated at the page level too (redirects a non-super-admin visitor) since
 // this is reachable on the real production deployment once pushed.
@@ -61,6 +70,8 @@ import {
   SPEED,
   CAMERA_BASE_Z,
   LIFTED_CAM_H,
+  STAGES,
+  DEFAULT_STAGE_ID,
   laneX,
   fovForAspect,
   idealVfovForAspect,
@@ -90,9 +101,13 @@ const GUITAR_ACCENT_RAIL = 0xb14cff;
 // see the real engine's own comment on this; the same ResizeObserver +
 // resize-self-heal-timer pattern for the same Chrome DevTools race).
 class HighwayLabEngine {
-  constructor(canvas, onDebug) {
+  constructor(canvas, onDebug, stageId) {
     this.canvas = canvas;
     this.onDebug = onDebug;
+    // Same STAGES config the real engine uses — see its own comment in
+    // rhythmGameEngine.js. Resolved once, at construction, matching how the
+    // real Game class also locks stage in for the whole instance lifetime.
+    this.stage = STAGES[stageId] || STAGES[DEFAULT_STAGE_ID];
     this._raf = 0;
     this._initThree();
   }
@@ -126,6 +141,7 @@ class HighwayLabEngine {
       baseCameraZ: this.baseCameraZ.toFixed(2),
       liftedCamH: LIFTED_CAM_H,
       liftedLookAtY: this._liftedLookAtY?.toFixed(2),
+      stage: this.stage.id,
     };
     console.log('[HighwayLab]', info);
     this.onDebug?.(info);
@@ -143,8 +159,8 @@ class HighwayLabEngine {
     this.renderer.setSize(w0, h0, false);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x06030f);
-    this.scene.fog = new THREE.Fog(0x06030f, 32, 78);
+    this.scene.background = new THREE.Color(this.stage.sceneBackground);
+    this.scene.fog = new THREE.Fog(this.stage.fogColor, 32, 78);
 
     this.baseFov = fovForAspect(w0 / h0);
     this._recomputeCameraDistance(w0 / h0);
@@ -153,7 +169,7 @@ class HighwayLabEngine {
     this._liftedLookAtY = computeLiftedLookAtY(this.baseCameraZ, this.baseFov);
     this.camera.lookAt(0, this._liftedLookAtY, -16);
 
-    this.scene.add(new THREE.AmbientLight(0x8866ff, 0.5));
+    this.scene.add(new THREE.AmbientLight(this.stage.ambientLightColor, 0.5));
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
     dirLight.position.set(4, 12, 6);
     this.scene.add(dirLight);
@@ -190,11 +206,13 @@ class HighwayLabEngine {
   }
 
   _buildHighway() {
+    const [br, bg, bb] = this.stage.highwayBaseColor;
     this.highwayUniforms = {
       uScroll: { value: 0 },
       uBeat: { value: SPEED * 0.5 },
       uLineColor: { value: new THREE.Color(GUITAR_ACCENT) },
       uPulse: { value: 0 },
+      uBaseColor: { value: new THREE.Color(br, bg, bb) },
     };
     const mat = new THREE.ShaderMaterial({
       uniforms: this.highwayUniforms,
@@ -308,6 +326,14 @@ export default function RhythmHeroHighwayLab() {
     ? 'bare'
     : 'wrapped';
 
+  // Same reasoning as mode above (read once from the URL, switched via a
+  // full reload) — lets Stage 2 (or any future stage) be visually judged
+  // here, on a real phone, before it ever reaches the real game.
+  const stageParam = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('stage')
+    : null;
+  const stageId = STAGES[stageParam] ? stageParam : DEFAULT_STAGE_ID;
+
   useEffect(() => {
     if (!currentUser) {
       navigate('/');
@@ -324,15 +350,24 @@ export default function RhythmHeroHighwayLab() {
     if (startedRef.current) return;
     startedRef.current = true;
     if (!canvasRef.current) return;
-    engineRef.current = new HighwayLabEngine(canvasRef.current, setDebugInfo);
+    engineRef.current = new HighwayLabEngine(canvasRef.current, setDebugInfo, stageId);
     // No cleanup — see startedRef's comment above for why.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
   if (!currentUser || currentUser.role !== 'super_admin') return null;
 
+  // Both toggles preserve the OTHER param — switching stage shouldn't reset
+  // mode, and vice versa — so the two axes stay independently comparable.
   const toggleMode = () => {
     const next = mode === 'wrapped' ? 'bare' : 'wrapped';
-    window.location.href = `/dev/rhythm-hero-highway-lab?mode=${next}`;
+    window.location.href = `/dev/rhythm-hero-highway-lab?mode=${next}&stage=${stageId}`;
+  };
+  const stageIds = Object.keys(STAGES);
+  const toggleStage = () => {
+    const idx = stageIds.indexOf(stageId);
+    const next = stageIds[(idx + 1) % stageIds.length];
+    window.location.href = `/dev/rhythm-hero-highway-lab?mode=${mode}&stage=${next}`;
   };
 
   // Shared across both layout branches below — the toggle buttons and debug
@@ -350,6 +385,12 @@ export default function RhythmHeroHighwayLab() {
         className="absolute bottom-2 left-2 z-30 px-2 h-8 rounded-full bg-black/50 text-white/80 text-[10px] font-mono flex items-center justify-center"
       >
         mode: {mode}
+      </button>
+      <button
+        onClick={toggleStage}
+        className="absolute bottom-2 left-1/2 -translate-x-1/2 z-30 px-2 h-8 rounded-full bg-black/50 text-white/80 text-[10px] font-mono flex items-center justify-center"
+      >
+        stage: {STAGES[stageId]?.label ?? stageId}
       </button>
     </>
   );

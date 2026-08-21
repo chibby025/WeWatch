@@ -1,8 +1,13 @@
 package games
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
+	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -20,6 +25,7 @@ import (
 // strings, which this codebase avoids by convention.
 type RebusToken struct {
 	Text   string  `json:"text"`
+	Image  string  `json:"image,omitempty"`  // when set, the frontend renders a photo instead of text — see rtImg
 	Scale  float64 `json:"scale,omitempty"`  // font-size multiplier; 0 means "use default 1.0"
 	Sup    bool    `json:"sup,omitempty"`    // superscript (raised)
 	Sub    bool    `json:"sub,omitempty"`    // subscript (lowered)
@@ -36,6 +42,13 @@ type RebusPuzzle struct {
 	Answer     string
 	Alternates []string
 	Hint       string
+	// Photo-compound puzzles (see rebusPhotoCompoundSpec below) leave Pattern
+	// empty at shuffle time — the real photo URL isn't known until rebus_start
+	// fetches it live from Pexels, mirroring Four Frames' own round-start
+	// fetch. PhotoWord being non-empty is what marks a puzzle as needing this.
+	PhotoWord  string
+	PhotoFirst bool // true: the fetched photo token comes before TextWord; false: after
+	TextWord   string
 }
 
 func rt(text string) RebusToken                     { return RebusToken{Text: text} }
@@ -48,6 +61,7 @@ func rtBreak(text string) RebusToken                { return RebusToken{Text: te
 func rtMirror(text string) RebusToken               { return RebusToken{Text: text, Mirror: true} }
 func rtFlip(text string) RebusToken                 { return RebusToken{Text: text, Flip: true} }
 func rtStrike(text string) RebusToken               { return RebusToken{Text: text, Strike: true} }
+func rtImg(url string) RebusToken                   { return RebusToken{Image: url} }
 
 // ── Procedural generators ────────────────────────────────────────────────────
 // The 6 pattern "kinds" below (letter-scale, whole-word-scale, compound,
@@ -166,23 +180,22 @@ var rebusGeneratedSpecs = []rebusGenSpec{
 	{kind: "wholeScale", words: []string{"FRY"}, scale: 0.5, answer: "small fry"},
 	{kind: "wholeScale", words: []string{"CHANGE"}, scale: 0.5, answer: "small change"},
 
-	// Compound words
+	// Compound words. Entries where BOTH halves would be strong, unambiguous
+	// photo subjects have been moved to rebusPhotoCompoundSpecs below instead
+	// (real Pexels photo for one half + text for the other — the actual fix
+	// for the "EGG + SHELL"-style giveaway, since fully-spelled-out text on
+	// both sides makes the answer a trivial concatenation with zero lateral
+	// thinking required). What's left here is the entries where at least one
+	// half is a preposition/particle or otherwise unphotographable concept
+	// (OVER, UP, DOWN, IN, OUT, work, news, print, etc.) — those genuinely
+	// can't benefit from the photo treatment.
 	{kind: "compound", words: []string{"MOON", "SHINE"}, answer: "moonshine"},
 	{kind: "compound", words: []string{"SUN", "SET"}, answer: "sunset"},
 	{kind: "compound", words: []string{"SUN", "RISE"}, answer: "sunrise"},
-	{kind: "compound", words: []string{"AIR", "PLANE"}, answer: "airplane"},
-	{kind: "compound", words: []string{"FOOT", "BALL"}, answer: "football"},
-	{kind: "compound", words: []string{"BASKET", "BALL"}, answer: "basketball"},
 	{kind: "compound", words: []string{"BASE", "BALL"}, answer: "baseball"},
 	{kind: "compound", words: []string{"BLACK", "BOARD"}, answer: "blackboard"},
-	{kind: "compound", words: []string{"KEY", "BOARD"}, answer: "keyboard"},
 	{kind: "compound", words: []string{"NOTE", "BOOK"}, answer: "notebook"},
-	{kind: "compound", words: []string{"BACK", "PACK"}, answer: "backpack"},
 	{kind: "compound", words: []string{"WATER", "FALL"}, answer: "waterfall"},
-	{kind: "compound", words: []string{"WATER", "MELON"}, answer: "watermelon"},
-	{kind: "compound", words: []string{"BUTTER", "FLY"}, answer: "butterfly"},
-	{kind: "compound", words: []string{"HONEY", "MOON"}, answer: "honeymoon"},
-	{kind: "compound", words: []string{"HONEY", "BEE"}, answer: "honeybee"},
 	{kind: "compound", words: []string{"DAY", "LIGHT"}, answer: "daylight"},
 	{kind: "compound", words: []string{"DAY", "DREAM"}, answer: "daydream"},
 	{kind: "compound", words: []string{"NIGHT", "MARE"}, answer: "nightmare"},
@@ -193,21 +206,13 @@ var rebusGeneratedSpecs = []rebusGenSpec{
 	{kind: "compound", words: []string{"GRAND", "FATHER"}, answer: "grandfather"},
 	{kind: "compound", words: []string{"GRAND", "MOTHER"}, answer: "grandmother"},
 	{kind: "compound", words: []string{"CLASS", "ROOM"}, answer: "classroom"},
-	{kind: "compound", words: []string{"BED", "ROOM"}, answer: "bedroom"},
-	{kind: "compound", words: []string{"BOOK", "SHELF"}, answer: "bookshelf"},
 	{kind: "compound", words: []string{"FOOT", "PRINT"}, answer: "footprint"},
 	{kind: "compound", words: []string{"FINGER", "PRINT"}, answer: "fingerprint"},
 	{kind: "compound", words: []string{"SNOW", "MAN"}, answer: "snowman"},
-	{kind: "compound", words: []string{"SNOW", "BALL"}, answer: "snowball"},
-	{kind: "compound", words: []string{"RAIN", "COAT"}, answer: "raincoat"},
-	{kind: "compound", words: []string{"SEA", "SHELL"}, answer: "seashell"},
 	{kind: "compound", words: []string{"LIGHT", "HOUSE"}, answer: "lighthouse"},
 	{kind: "compound", words: []string{"FIRE", "WORK"}, answer: "firework"},
-	{kind: "compound", words: []string{"CAMP", "FIRE"}, answer: "campfire"},
 	{kind: "compound", words: []string{"THUNDER", "STORM"}, answer: "thunderstorm"},
-	{kind: "compound", words: []string{"RAIL", "ROAD"}, answer: "railroad"},
 	{kind: "compound", words: []string{"NEWS", "PAPER"}, answer: "newspaper"},
-	{kind: "compound", words: []string{"TOOTH", "BRUSH"}, answer: "toothbrush"},
 	{kind: "compound", words: []string{"LEFT", "OVER"}, answer: "leftover"},
 	{kind: "compound", words: []string{"HANG", "OVER"}, answer: "hangover"},
 	{kind: "compound", words: []string{"TAKE", "OVER"}, answer: "takeover"},
@@ -239,6 +244,82 @@ var rebusGeneratedSpecs = []rebusGenSpec{
 	{kind: "sup", words: []string{"LIFT"}, answer: "uplift"},
 	{kind: "sup", words: []string{"BEAT"}, answer: "upbeat"},
 	{kind: "sup", words: []string{"FRONT"}, answer: "upfront"},
+
+	// ── Bank expansion (added 2026-08-20) — same generator categories, more
+	// word/answer pairs. Cheap to add (no new hand-drawn token art, no photo
+	// fetch), which is exactly why this is the fastest lever for growing the
+	// bank without new infrastructure.
+	{kind: "grow", words: []string{"NUMBER"}, answer: "growing number"},
+	{kind: "grow", words: []string{"DEMAND"}, answer: "growing demand"},
+	{kind: "grow", words: []string{"THREAT"}, answer: "growing threat"},
+	{kind: "grow", words: []string{"TENSION"}, answer: "growing tension"},
+	{kind: "grow", words: []string{"AWARENESS"}, answer: "growing awareness"},
+	{kind: "grow", words: []string{"INTEREST"}, answer: "growing interest"},
+	{kind: "grow", words: []string{"NEED"}, answer: "growing need"},
+
+	{kind: "shrink", words: []string{"ECONOMY"}, answer: "shrinking economy"},
+	{kind: "shrink", words: []string{"DEMAND"}, answer: "shrinking demand"},
+	{kind: "shrink", words: []string{"FOREST"}, answer: "shrinking forest"},
+	{kind: "shrink", words: []string{"GLACIER"}, answer: "shrinking glacier"},
+	{kind: "shrink", words: []string{"SALES"}, answer: "shrinking sales"},
+	{kind: "shrink", words: []string{"PROFIT"}, answer: "shrinking profit"},
+
+	{kind: "wholeScale", words: []string{"NAME"}, scale: 2.2, answer: "big name"},
+	{kind: "wholeScale", words: []string{"PICTURE"}, scale: 2.2, answer: "big picture"},
+	{kind: "wholeScale", words: []string{"BREAK"}, scale: 2.2, answer: "big break"},
+	{kind: "wholeScale", words: []string{"LEAGUE"}, scale: 2.2, answer: "big league"},
+	{kind: "wholeScale", words: []string{"TOWN"}, scale: 0.5, answer: "small town"},
+	{kind: "wholeScale", words: []string{"BUSINESS"}, scale: 0.5, answer: "small business"},
+	{kind: "wholeScale", words: []string{"WORLD"}, scale: 0.5, answer: "small world"},
+	{kind: "wholeScale", words: []string{"STEPS"}, scale: 0.5, answer: "small steps"},
+	{kind: "wholeScale", words: []string{"POTATOES"}, scale: 0.5, answer: "small potatoes"},
+
+	{kind: "sub", words: []string{"CAST"}, answer: "downcast"},
+	{kind: "sub", words: []string{"RIGHT"}, answer: "downright"},
+	{kind: "sub", words: []string{"SIZE"}, answer: "downsize"},
+	{kind: "sub", words: []string{"TIME"}, answer: "downtime"},
+	{kind: "sub", words: []string{"WARD"}, answer: "downward"},
+	{kind: "sub", words: []string{"HILL"}, answer: "downhill"},
+	{kind: "sub", words: []string{"LOAD"}, answer: "download"},
+
+	{kind: "sup", words: []string{"LOAD"}, answer: "upload"},
+	{kind: "sup", words: []string{"HOLD"}, answer: "uphold"},
+	{kind: "sup", words: []string{"HILL"}, answer: "uphill"},
+	{kind: "sup", words: []string{"RIGHT"}, answer: "upright"},
+	{kind: "sup", words: []string{"WARD"}, answer: "upward"},
+	{kind: "sup", words: []string{"DATE"}, answer: "update"},
+	{kind: "sup", words: []string{"SET"}, answer: "upset"},
+	{kind: "sup", words: []string{"TIGHT"}, answer: "uptight"},
+	{kind: "sup", words: []string{"ROOT"}, answer: "uproot"},
+	{kind: "sup", words: []string{"TOWN"}, answer: "uptown"},
+	{kind: "sup", words: []string{"SHOT"}, answer: "upshot"},
+
+	// Text compounds using OVER/UNDER/IN/OUT — deliberately kept as plain
+	// text (not converted to photo-compounds, unlike the noun+noun entries
+	// above) since none of these prefixes are photographable on their own.
+	{kind: "compound", words: []string{"OVER", "SEAS"}, answer: "overseas"},
+	{kind: "compound", words: []string{"OVER", "HEAD"}, answer: "overhead"},
+	{kind: "compound", words: []string{"OVER", "LOOK"}, answer: "overlook"},
+	{kind: "compound", words: []string{"OVER", "DUE"}, answer: "overdue"},
+	{kind: "compound", words: []string{"OVER", "FLOW"}, answer: "overflow"},
+	{kind: "compound", words: []string{"OVER", "WHELM"}, answer: "overwhelm"},
+	{kind: "compound", words: []string{"OVER", "ALL"}, answer: "overall"},
+	{kind: "compound", words: []string{"UNDER", "DOG"}, answer: "underdog"},
+	{kind: "compound", words: []string{"UNDER", "GROUND"}, answer: "underground"},
+	{kind: "compound", words: []string{"UNDER", "WATER"}, answer: "underwater"},
+	{kind: "compound", words: []string{"UNDER", "WEAR"}, answer: "underwear"},
+	{kind: "compound", words: []string{"UNDER", "GO"}, answer: "undergo"},
+	{kind: "compound", words: []string{"UNDER", "MINE"}, answer: "undermine"},
+	{kind: "compound", words: []string{"IN", "COME"}, answer: "income"},
+	{kind: "compound", words: []string{"IN", "PUT"}, answer: "input"},
+	{kind: "compound", words: []string{"IN", "SIGHT"}, answer: "insight"},
+	{kind: "compound", words: []string{"OUT", "COME"}, answer: "outcome"},
+	{kind: "compound", words: []string{"OUT", "LOOK"}, answer: "outlook"},
+	{kind: "compound", words: []string{"OUT", "LINE"}, answer: "outline"},
+	{kind: "compound", words: []string{"OUT", "BREAK"}, answer: "outbreak"},
+	{kind: "compound", words: []string{"OUT", "FIT"}, answer: "outfit"},
+	{kind: "compound", words: []string{"OUT", "GROW"}, answer: "outgrow"},
+	{kind: "compound", words: []string{"OUT", "LAST"}, answer: "outlast"},
 }
 
 func rebusGeneratedBank() []RebusPuzzle {
@@ -248,6 +329,130 @@ func rebusGeneratedBank() []RebusPuzzle {
 	}
 	return out
 }
+
+// rebusPhotoCompoundSpec — the real fix for the "EGG + SHELL" giveaway: one
+// half of the compound is a real photo, fetched live from Pexels at
+// rebus_start (reusing the exact fetch mechanism four_frames.go already
+// proved out — fetchSingleRebusPhoto below is a smaller, one-photo sibling of
+// fetchFourFramesPhotos), the other half stays plain styled text. The player
+// has to recognize the photographed object and name it before they can
+// combine it with the text half — genuine visual decoding instead of reading
+// two fully-spelled-out labels and concatenating them.
+//
+// Deliberately only ONE half needs to be a strong, unambiguous, commonly-
+// photographed noun (not both) — requiring two good photo subjects per entry
+// would cut this list down substantially. photoWord is the actual Pexels
+// search term, which sometimes differs from the literal compound-half text
+// (e.g. "backpack" rather than the ambiguous bare "pack") to get a clean,
+// unambiguous result — see fourFramesWordBank's own comment for why word
+// choice matters this much for a live photo search.
+//
+// Entries where NEITHER half is a concrete, unambiguous noun (a preposition/
+// particle half like "OVER" in "takeover", "UP" in "upstairs", or an
+// abstract half like "news", "print", "thunder") aren't eligible for this
+// treatment at all — those stay as plain text compounds in
+// rebusGeneratedSpecs/rebusHandAuthoredBank above instead.
+type rebusPhotoCompoundSpec struct {
+	photoWord  string
+	photoFirst bool // true: photo comes before the text half in the pattern; false: after
+	textWord   string
+	answer     string
+	alternates []string
+}
+
+var rebusPhotoCompoundSpecs = []rebusPhotoCompoundSpec{
+	{photoWord: "egg", photoFirst: true, textWord: "SHELL", answer: "eggshell"},
+	{photoWord: "shell", photoFirst: false, textWord: "SEA", answer: "seashell"},
+	{photoWord: "car", photoFirst: true, textWord: "PET", answer: "carpet"},
+	{photoWord: "flower", photoFirst: false, textWord: "SUN", answer: "sunflower"},
+	{photoWord: "moon", photoFirst: true, textWord: "LIGHT", answer: "moonlight"},
+	{photoWord: "honey jar", photoFirst: true, textWord: "MOON", answer: "honeymoon"},
+	{photoWord: "bee", photoFirst: false, textWord: "HONEY", answer: "honeybee"},
+	{photoWord: "castle", photoFirst: false, textWord: "SAND", answer: "sandcastle"},
+	{photoWord: "jet aircraft", photoFirst: false, textWord: "AIR", answer: "airplane"},
+	{photoWord: "foot", photoFirst: true, textWord: "BALL", answer: "football"},
+	{photoWord: "wicker basket", photoFirst: true, textWord: "BALL", answer: "basketball"},
+	{photoWord: "key", photoFirst: true, textWord: "BOARD", answer: "keyboard"},
+	{photoWord: "hiking backpack", photoFirst: false, textWord: "BACK", answer: "backpack"},
+	{photoWord: "melon", photoFirst: false, textWord: "WATER", answer: "watermelon"},
+	{photoWord: "buttered toast", photoFirst: true, textWord: "FLY", answer: "butterfly"},
+	{photoWord: "bed", photoFirst: true, textWord: "ROOM", answer: "bedroom"},
+	{photoWord: "book", photoFirst: true, textWord: "SHELF", answer: "bookshelf"},
+	{photoWord: "coat", photoFirst: false, textWord: "RAIN", answer: "raincoat"},
+	{photoWord: "bonfire", photoFirst: true, textWord: "CAMP", answer: "campfire"},
+	{photoWord: "train tracks", photoFirst: true, textWord: "ROAD", answer: "railroad"},
+	{photoWord: "tooth", photoFirst: true, textWord: "BRUSH", answer: "toothbrush"},
+	{photoWord: "snow", photoFirst: true, textWord: "BALL", answer: "snowball"},
+}
+
+func (s rebusPhotoCompoundSpec) toPuzzle() RebusPuzzle {
+	return RebusPuzzle{
+		Answer:     s.answer,
+		Alternates: s.alternates,
+		PhotoWord:  s.photoWord,
+		PhotoFirst: s.photoFirst,
+		TextWord:   s.textWord,
+	}
+}
+
+func rebusPhotoCompoundBank() []RebusPuzzle {
+	out := make([]RebusPuzzle, len(rebusPhotoCompoundSpecs))
+	for i, s := range rebusPhotoCompoundSpecs {
+		out[i] = s.toPuzzle()
+	}
+	return out
+}
+
+// fetchSingleRebusPhoto fetches exactly one photo URL from Pexels for a
+// photo-compound puzzle's photographed half — a smaller sibling of
+// fetchFourFramesPhotos (which needs exactly 4 for a 2x2 grid); both live in
+// the same games package and share fourFramesHTTPClient/pexelsPhotoResponse
+// rather than duplicating the client setup.
+func fetchSingleRebusPhoto(word string) (string, error) {
+	apiKey := os.Getenv("PEXELS_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("PEXELS_API_KEY is not configured")
+	}
+
+	endpoint := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(word) + "&per_page=1&orientation=square"
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to build Pexels request: %w", err)
+	}
+	req.Header.Set("Authorization", apiKey)
+
+	resp, err := fourFramesHTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("Pexels request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("Pexels returned status %d for query %q", resp.StatusCode, word)
+	}
+
+	var parsed pexelsPhotoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return "", fmt.Errorf("failed to decode Pexels response: %w", err)
+	}
+	if len(parsed.Photos) == 0 {
+		return "", fmt.Errorf("Pexels returned no photos for query %q", word)
+	}
+	u := parsed.Photos[0].Src.Large
+	if u == "" {
+		u = parsed.Photos[0].Src.Medium
+	}
+	if u == "" {
+		return "", fmt.Errorf("Pexels photo had no usable URL for query %q", word)
+	}
+	return u, nil
+}
+
+// rebusPhotoFetcher — indirected through a package var (defaulting to the
+// real Pexels call above), mirroring fourFramesPhotoFetcher exactly, so tests
+// can substitute a fake, deterministic fetcher instead of hitting the real
+// network/needing a real API key.
+var rebusPhotoFetcher = fetchSingleRebusPhoto
 
 // rebusHandAuthoredBank — bespoke puzzles that don't fit any of the
 // procedural generators above (stacked idioms, mirror/flip, phonetic, color,
@@ -301,25 +506,9 @@ var rebusHandAuthoredBank = []RebusPuzzle{
 		Hint:    "Four of the same small word, added together.",
 	},
 	{
-		Pattern: []RebusToken{rt("CAR"), rtOp("+"), rt("PET")},
-		Answer:  "carpet",
-	},
-	{
-		Pattern: []RebusToken{rt("SUN"), rtOp("+"), rt("FLOWER")},
-		Answer:  "sunflower",
-	},
-	{
 		Pattern: []RebusToken{rt("CAT"), rtOp("+"), rt("NAP")},
 		Answer:  "catnap",
 		Hint:    "A short sleep, named after a sneaky pet.",
-	},
-	{
-		Pattern: []RebusToken{rt("SAND"), rtOp("+"), rt("CASTLE")},
-		Answer:  "sandcastle",
-	},
-	{
-		Pattern: []RebusToken{rt("MOON"), rtOp("+"), rt("LIGHT")},
-		Answer:  "moonlight",
 	},
 	{
 		Pattern: []RebusToken{rt("RAIN"), rtOp("+"), rt("BOW")},
@@ -405,10 +594,6 @@ var rebusHandAuthoredBank = []RebusPuzzle{
 		Hint:    "A strikethrough means \"the opposite of\".",
 	},
 	{
-		Pattern: []RebusToken{rt("EGG"), rtOp("+"), rt("SHELL")},
-		Answer:  "eggshell",
-	},
-	{
 		Pattern: []RebusToken{rtColor("ONCE", "#60a5fa"), rt(" IN A "), rtColor("MOON", "#60a5fa")},
 		Answer:  "once in a blue moon",
 		Hint:    "The color of two of the words is the clue.",
@@ -420,7 +605,7 @@ var rebusHandAuthoredBank = []RebusPuzzle{
 // init via a fresh backing array (not append(rebusHandAuthoredBank, ...)
 // directly) so growing the generated bank later can never alias/corrupt
 // rebusHandAuthoredBank's own underlying array.
-var rebusPuzzleBank = append(append([]RebusPuzzle{}, rebusHandAuthoredBank...), rebusGeneratedBank()...)
+var rebusPuzzleBank = append(append(append([]RebusPuzzle{}, rebusHandAuthoredBank...), rebusGeneratedBank()...), rebusPhotoCompoundBank()...)
 
 // rebusNormalize strips case, punctuation, and extra whitespace so "Growing-Old!",
 // "growing old", and "GROWING  OLD" all compare equal. Deliberately no fuzzy
@@ -492,9 +677,27 @@ func (gm *GameManager) processRebusRoundMove(gameState *GameSessionState, player
 			return false, nil, fmt.Errorf("no more puzzles — end the game to see results")
 		}
 		puzzle := gameState.RebusPuzzles[nextIdx]
+		pattern := puzzle.Pattern
+		if puzzle.PhotoWord != "" {
+			// Photo-compound puzzle — Pattern was left empty at shuffle time;
+			// fetch the real photo now (same live-fetch-at-round-start shape
+			// as four_frames_start) and assemble the final pattern from it.
+			photoURL, ferr := rebusPhotoFetcher(puzzle.PhotoWord)
+			if ferr != nil {
+				log.Printf("⚠️ [RebusRound] Pexels fetch failed for %q: %v", puzzle.PhotoWord, ferr)
+				return false, nil, fmt.Errorf("couldn't load the picture for this puzzle — try again")
+			}
+			photoTok := rtImg(photoURL)
+			textTok := rt(puzzle.TextWord)
+			if puzzle.PhotoFirst {
+				pattern = []RebusToken{photoTok, rtOp("+"), textTok}
+			} else {
+				pattern = []RebusToken{textTok, rtOp("+"), photoTok}
+			}
+		}
 		gameState.GameData["phase"] = "puzzle"
 		gameState.GameData["round"] = float64(nextIdx + 1)
-		gameState.GameData["current_pattern"] = puzzle.Pattern
+		gameState.GameData["current_pattern"] = pattern
 		gameState.GameData["correct_order"] = []interface{}{}
 		gameState.GameData["revealed_answer"] = ""
 		gameState.GameData["revealed_alternates"] = []interface{}{}
