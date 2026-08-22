@@ -26,7 +26,14 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 // silently drift out of sync with this file. See that page's own header
 // comment for the full investigation context.
 const LANES = 5;
-const LANE_W = 2;
+// Bumped from 2 -> 2.3 (a modest ~15% wider highway) — the FOV system above
+// (fovForAspect/idealVfovForAspect) uses fixed angular targets derived from
+// BASE_VFOV/BASE_ASPECT alone, never from HIGHWAY_W, so widening the lanes
+// here genuinely widens the highway on screen rather than being silently
+// auto-compensated back to the same footprint by the camera. HIGHWAY_W-driven
+// geometry (floor plane, rails, audience/sprite positions — all below) scales
+// with it automatically, so this is a single, self-consistent lever.
+const LANE_W = 2.3;
 const HIGHWAY_W = LANES * LANE_W;
 const HIGHWAY_LEN = 70;
 const SPEED = 26; // world units per second

@@ -63,10 +63,55 @@ type HotSeatTournament struct {
 
 	// Mode is "flat" (default) or "bracket". Bracket-only fields below are unused
 	// (zero-value) in flat mode.
-	Mode            string           `json:"mode"`
+	Mode            string            `json:"mode"`
 	Bracket         [][]*HotSeatMatch `json:"-"` // not sent whole; current match is exposed via payloadLocked
-	CurrentRoundIdx int              `json:"-"`
-	CurrentMatchIdx int              `json:"-"`
+	CurrentRoundIdx int               `json:"-"`
+	CurrentMatchIdx int               `json:"-"`
+}
+
+// golfHolesPerRound must match GOLF_HOLES_PER_ROUND in the frontend's
+// GolfGame.jsx -- kept in sync manually, since the actual course (a
+// procedurally generated round of this many holes) is built entirely
+// client-side inside the golf fork's own iframe, with nothing shared
+// between the two codebases to derive this constant from automatically.
+const golfHolesPerRound = 9
+
+// isGolfMathematicallyDecidedLocked reports whether the best score recorded
+// so far is already unbeatable by every participant who hasn't taken their
+// turn yet, even in the best theoretically possible outcome for them: an
+// ace (1 stroke) on every single hole of the round. This is a deliberately
+// conservative, airtight bound -- not a "probably decided" heuristic --
+// mirroring the same never-risk-a-false-positive design already used for
+// Wordsmith's mathematically-decided early end. Because 1-stroke-per-hole is
+// such a generous floor, this will rarely actually trigger for realistic
+// scores; that's an accepted, intentional tradeoff for correctness, not a
+// bug -- a false "not yet decided" just costs a few more ordinary turns,
+// while a false "decided" would incorrectly end a match someone could still
+// have won. Golf-only (checked by GameType), and flat mode only -- a bracket
+// match is always decided the instant both sides have scored, with no
+// "remaining players catching up" concept to short-circuit. Caller holds hm.mu.
+func isGolfMathematicallyDecidedLocked(t *HotSeatTournament) bool {
+	if t.GameType != "golf" {
+		return false
+	}
+	var bestPlayed *HotSeatParticipant
+	anyRemaining := false
+	for _, p := range t.Participants {
+		if !p.Played {
+			anyRemaining = true
+			continue
+		}
+		if bestPlayed == nil || p.Score < bestPlayed.Score {
+			bestPlayed = p
+		}
+	}
+	if bestPlayed == nil || !anyRemaining {
+		return false
+	}
+	// Every not-yet-played participant's absolute best possible outcome is
+	// one stroke per hole for the whole round -- true regardless of how
+	// well/badly designed the procedurally generated holes turn out to be.
+	return bestPlayed.Score < golfHolesPerRound
 }
 
 type HotSeatManager struct {
@@ -247,6 +292,16 @@ func (hm *HotSeatManager) RecordScore(roomID uint, playerID uint, score int) {
 
 	// Broadcast score update.
 	hm.broadcastScoreLocked(t, current)
+
+	// Golf only: if the best score so far is already unbeatable by anyone
+	// who hasn't played yet (even with a flawless remaining round), end the
+	// match now instead of forcing the rest through turns that can no
+	// longer change the outcome.
+	if isGolfMathematicallyDecidedLocked(t) {
+		log.Printf("🏌️ [HotSeat] Golf tournament #%d in room %d is mathematically decided — ending early", t.ID, t.RoomID)
+		hm.finalizeLocked(t)
+		return
+	}
 
 	// Advance to next unplayed participant.
 	t.CurrentIndex++
@@ -547,10 +602,22 @@ func (hm *HotSeatManager) ForfeitTournament(roomID, forfeitingPlayerID uint) {
 // finalizeLocked picks the winner (highest score, or lowest if
 // t.LowerIsBetter — e.g. golf stroke count; ties go to whoever played
 // first), broadcasts tournament_complete, and cleans up. Flat mode only.
+//
+// Only ever considers participants who actually played: this used to be
+// safe to skip since finalizeLocked was only reachable once every
+// participant's CurrentIndex had been exhausted (everyone had a real
+// score) — the golf mathematically-decided early end (see
+// isGolfMathematicallyDecidedLocked) is the first path that can call this
+// with participants still at their zero-value Score/Played=false, and for
+// a LowerIsBetter game an unplayed 0 would otherwise always incorrectly
+// "win" against any real recorded score.
 func (hm *HotSeatManager) finalizeLocked(t *HotSeatTournament) {
 	t.Status = "completed"
 	var best *HotSeatParticipant
 	for _, p := range t.Participants {
+		if !p.Played {
+			continue
+		}
 		if best == nil {
 			best = p
 			continue

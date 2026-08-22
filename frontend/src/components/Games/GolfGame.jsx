@@ -3,24 +3,29 @@
 // Golf Mania", MIT), hosted separately (Vercel) since it needs its own
 // SvelteKit build pipeline, same isolation rationale as DOOM/Quake3. The
 // fork itself has no WeWatch-specific code beyond a bridge in
-// GameScreen.svelte/+page.svelte/Stage.svelte: `?embed=1` auto-starts the
-// always-local Practice Course (skips the course picker, never needs
-// Firestore), and it posts exactly one `golf:finished` message per turn
-// (total strokes across however many holes were played — either all of
-// them, or up to an early quit) followed by `golf:exit`. It also posts
-// throttled `golf:live` position updates while the ball is moving, and has
-// a matching `?spectate=1` read-only mode that renders the SAME
-// deterministic course geometry with a non-physics ball driven purely by
-// relayed position — a genuine, real 3D live mirror for spectators, not
-// just a status card. This component relays golf:live between the two
-// iframes via the same generic relay_packet WS mechanism ToadBallGame.jsx/
-// FowlPlayGame.jsx already established.
+// GameScreen.svelte/+page.svelte/Stage.svelte: `?embed=1&seed=&holes=`
+// skips the course picker and builds a fresh N-hole course entirely
+// client-side via the fork's own ProceduralGenerator (never needs
+// Firestore), deterministic from the seed so every turn within one match —
+// each a separate iframe load — plays the identical round. It posts exactly
+// one `golf:finished` message per turn (total strokes across however many
+// holes were played — either all of them, or up to an early quit) followed
+// by `golf:exit`. It also posts throttled `golf:live` position updates while
+// the ball is moving, and has a matching `?spectate=1` read-only mode that
+// renders the SAME deterministic course geometry (same seed) with a
+// non-physics ball driven purely by relayed position — a genuine, real 3D
+// live mirror for spectators, not just a status card. This component relays
+// golf:live between the two iframes via the same generic relay_packet WS
+// mechanism ToadBallGame.jsx/FowlPlayGame.jsx already established.
 import { useEffect, useRef, useState } from 'react';
 import GameRulesButton from './GameRulesButton';
 
 const GOLF_ORIGIN = 'https://wewatch-golf.vercel.app';
-const GOLF_URL = `${GOLF_ORIGIN}/game?embed=1`;
-const GOLF_SPECTATE_URL = `${GOLF_ORIGIN}/game?spectate=1`;
+// Must match golfHolesPerRound in the backend's hot_seat_tournament.go —
+// kept in sync manually (the course itself is generated entirely
+// client-side inside the fork's own iframe, so there's no shared config to
+// derive this from automatically).
+const GOLF_HOLES_PER_ROUND = 9;
 
 // Arcade: solo play, or a hot-seat tournament (players take turns on the room
 // host's own device — see ToadBallGame.jsx for the established precedent
@@ -42,6 +47,19 @@ export default function GolfGame({
   const scoreReportedRef = useRef(false);
   const iframeRef = useRef(null);
   const spectatorIframeRef = useRef(null);
+
+  // One seed per match, generated once when this component mounts (it
+  // persists for the whole hot-seat tournament — only the inner iframe's
+  // `key` changes per turn, see GameOverlay.jsx keying the whole overlay on
+  // game_session_id). Every turn's iframe URL reuses the same seed, so every
+  // player plays the identical procedurally generated course — a fair
+  // total-strokes comparison, not each player getting a different random
+  // round. The spectator mirror needs the exact same seed too, or it'd
+  // render a completely different course than the one actually being played.
+  const seedRef = useRef(Math.floor(Math.random() * 2 ** 31));
+  const golfCourseParams = `&seed=${seedRef.current}&holes=${GOLF_HOLES_PER_ROUND}`;
+  const GOLF_URL = `${GOLF_ORIGIN}/game?embed=1${golfCourseParams}`;
+  const GOLF_SPECTATE_URL = `${GOLF_ORIGIN}/game?spectate=1${golfCourseParams}`;
 
   const isInTournament = !!hotSeatTournament;
   const isMyTurn = isInTournament && hotSeatTournament.current_player_id === currentUserId;

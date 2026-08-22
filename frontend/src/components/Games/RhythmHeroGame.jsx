@@ -114,6 +114,19 @@ function resolveMediaUrl(url) {
   return url.startsWith('http') ? url : `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
+// Lightens (positive amount) or darkens (negative) a '#rrggbb' color —
+// used to build the 3D-bevel gradient/shadow on the touch fret buttons from
+// each instrument's own base color, rather than hardcoding a fixed palette
+// per instrument.
+function shadeColor(hex, amount) {
+  const num = parseInt(hex.slice(1), 16);
+  const r = (num >> 16) & 0xff, g = (num >> 8) & 0xff, b = num & 0xff;
+  const target = amount < 0 ? 0 : 255;
+  const p = Math.abs(amount);
+  const mix = (c) => Math.round((target - c) * p) + c;
+  return `#${((1 << 24) + (mix(r) << 16) + (mix(g) << 8) + mix(b)).toString(16).slice(1)}`;
+}
+
 function formatDuration(seconds) {
   if (!seconds && seconds !== 0) return '';
   const m = Math.floor(seconds / 60);
@@ -745,13 +758,8 @@ function WarmPerformanceMirror({
     <div className="fixed inset-0 z-50 flex flex-col bg-black select-none" style={{ height: '100dvh' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <img src="https://LetsWatchOut.b-cdn.net/games/logos/rhythm_hero.png" alt="Rhythm Hero" className="h-6 sm:h-7 w-auto shrink-0" />
+          <img src="https://LetsWatchOut.b-cdn.net/games/logos/rhythm_hero.png" alt="Rhythm Hero" className="h-12 sm:h-7 w-auto shrink-0" />
           <span className="text-xs text-gray-500 truncate">— {playerLabel}{trackName ? ` · ${trackName}` : ''}</span>
-          {ready && liveInfo?.difficulty && (
-            <span className="text-[10px] uppercase tracking-wide text-purple-300 bg-purple-900/50 px-1.5 py-0.5 rounded shrink-0">
-              {DIFFICULTIES.find((d) => d.id === liveInfo.difficulty)?.label ?? liveInfo.difficulty}
-            </span>
-          )}
         </div>
         <div className="flex gap-2 flex-shrink-0">
           <button onClick={() => setShowLeaderboard(true)} className="px-2 py-1 text-xs bg-white/20 hover:bg-white/30 rounded"><Trophy className="w-3.5 h-3.5" /></button>
@@ -901,7 +909,7 @@ function SelectionMirror({ info, playerLabel, onClose, matchFramingText, isSudde
     <div className="fixed inset-0 z-50 flex flex-col bg-black select-none" style={{ height: '100dvh' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <img src="https://LetsWatchOut.b-cdn.net/games/logos/rhythm_hero.png" alt="Rhythm Hero" className="h-6 sm:h-7 w-auto shrink-0" />
+          <img src="https://LetsWatchOut.b-cdn.net/games/logos/rhythm_hero.png" alt="Rhythm Hero" className="h-12 sm:h-7 w-auto shrink-0" />
           <span className="text-xs text-gray-500 truncate">— {playerLabel} is choosing…</span>
         </div>
         <button onClick={onClose} className="px-2 py-1 text-xs bg-white/20 hover:bg-white/30 rounded"><X className="w-3.5 h-3.5" /></button>
@@ -1672,6 +1680,18 @@ export default function RhythmHeroGame({
   // (getLaneScreenXFractions), not a fixed evenly-spaced guess. Writes
   // straight to each button's style.left via a ref, bypassing React state,
   // so this can run every animation frame without triggering a re-render.
+  //
+  // On a narrow phone, the real projected lane positions can end up closer
+  // together than the buttons themselves are wide, which reads as visual
+  // overlap — a real reported issue, not just a hypothetical. Rather than
+  // only shrinking the buttons (which fights the "make them prominent"
+  // goal), each frame also enforces a hard minimum center-to-center gap: if
+  // the real positions are too cramped for the current button size, fall
+  // back to an evenly-spaced row (centered on the same midpoint, then
+  // nudged back on-screen if it would run off an edge) instead of letting
+  // adjacent buttons collide. Wide screens/desktop never hit this fallback —
+  // the real ring positions already have plenty of room there.
+  const FRET_BTN_GAP_PX = 10;
   const fretButtonRefs = useRef([]);
   useEffect(() => {
     if (!isTouchDevice || localPhase !== 'playing') return;
@@ -1679,12 +1699,28 @@ export default function RhythmHeroGame({
     const tick = () => {
       const fractions = engineRef.current?.getLaneScreenXFractions?.();
       const containerWidth = containerRef.current?.offsetWidth;
-      if (fractions && containerWidth) {
-        fractions.forEach((frac, i) => {
+      const firstBtn = fretButtonRefs.current[0];
+      if (fractions && containerWidth && firstBtn) {
+        const btnSize = firstBtn.offsetWidth || 56;
+        const minSpacing = btnSize + FRET_BTN_GAP_PX;
+        let positions = fractions.map((frac) => Math.max(0.03, Math.min(0.97, frac)) * containerWidth);
+        const span = positions[positions.length - 1] - positions[0];
+        const neededSpan = minSpacing * (positions.length - 1);
+        if (span < neededSpan) {
+          const center = (positions[0] + positions[positions.length - 1]) / 2;
+          const halfSpan = neededSpan / 2;
+          positions = positions.map((_, i) => center - halfSpan + i * minSpacing);
+          const margin = btnSize / 2 + 4;
+          let shift = 0;
+          if (positions[0] < margin) shift = margin - positions[0];
+          else if (positions[positions.length - 1] > containerWidth - margin) {
+            shift = (containerWidth - margin) - positions[positions.length - 1];
+          }
+          if (shift !== 0) positions = positions.map((x) => x + shift);
+        }
+        positions.forEach((x, i) => {
           const btn = fretButtonRefs.current[i];
-          if (!btn) return;
-          const clamped = Math.max(0.03, Math.min(0.97, frac));
-          btn.style.left = `${clamped * containerWidth}px`;
+          if (btn) btn.style.left = `${x}px`;
         });
       }
       raf = requestAnimationFrame(tick);
@@ -1905,13 +1941,8 @@ export default function RhythmHeroGame({
     <div className="fixed inset-0 z-50 flex flex-col bg-black select-none" style={{ height: '100dvh' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <img src="https://LetsWatchOut.b-cdn.net/games/logos/rhythm_hero.png" alt="Rhythm Hero" className="h-6 sm:h-7 w-auto shrink-0" />
+          <img src="https://LetsWatchOut.b-cdn.net/games/logos/rhythm_hero.png" alt="Rhythm Hero" className="h-12 sm:h-7 w-auto shrink-0" />
           {songMeta?.trackName && <span className="text-xs text-gray-500 truncate">— {songMeta.trackName}</span>}
-          {localPhase === 'playing' && (
-            <span className="text-[10px] uppercase tracking-wide text-purple-300 bg-purple-900/50 px-1.5 py-0.5 rounded shrink-0">
-              {DIFFICULTIES.find((d) => d.id === difficulty)?.label ?? difficulty}
-            </span>
-          )}
           <GameRulesButton gameType="rhythm_hero" className="text-gray-500" />
         </div>
         <div className="flex gap-2 flex-shrink-0">
@@ -2018,17 +2049,27 @@ export default function RhythmHeroGame({
                 no longer squeezed to fit a fixed row width. */}
             {isTouchDevice && (
               <div className="absolute inset-x-0 bottom-4 h-14 sm:h-16 pointer-events-none">
-                {instrument?.colors.map((color, i) => (
-                  <button
-                    key={i}
-                    ref={(el) => { fretButtonRefs.current[i] = el; }}
-                    onTouchStart={handleFretDown(i)}
-                    onTouchEnd={handleFretUp(i)}
-                    onTouchCancel={handleFretUp(i)}
-                    className="absolute bottom-0 -translate-x-1/2 w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 border-white/40 active:scale-90 transition-transform pointer-events-auto"
-                    style={{ backgroundColor: `#${color.toString(16).padStart(6, '0')}`, left: `${(i / 4) * 100}%` }}
-                  />
-                ))}
+                {instrument?.colors.map((color, i) => {
+                  const hex = `#${color.toString(16).padStart(6, '0')}`;
+                  const light = shadeColor(hex, 0.4);
+                  const dark = shadeColor(hex, -0.35);
+                  const rim = shadeColor(hex, -0.55);
+                  return (
+                    <button
+                      key={i}
+                      ref={(el) => { fretButtonRefs.current[i] = el; }}
+                      onTouchStart={handleFretDown(i)}
+                      onTouchEnd={handleFretUp(i)}
+                      onTouchCancel={handleFretUp(i)}
+                      className="rh-fret-btn absolute bottom-0 w-14 h-14 sm:w-16 sm:h-16 rounded-full pointer-events-auto"
+                      style={{
+                        left: `${(i / 4) * 100}%`,
+                        background: `radial-gradient(circle at 34% 28%, ${light} 0%, ${hex} 55%, ${dark} 100%)`,
+                        boxShadow: `0 4px 0 ${rim}, 0 7px 10px rgba(0,0,0,0.45), inset 0 2px 3px rgba(255,255,255,0.55), inset 0 -3px 5px rgba(0,0,0,0.35)`,
+                      }}
+                    />
+                  );
+                })}
               </div>
             )}
 
@@ -2041,11 +2082,47 @@ export default function RhythmHeroGame({
             {isTouchDevice && (
               <button
                 onTouchStart={handleSpTouch}
-                className="absolute top-11 right-3 w-11 h-11 rounded-xl border-2 border-white/40 bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-white text-base active:scale-90 transition-transform pointer-events-auto"
+                className="rh-sp-btn absolute top-11 right-3 w-11 h-11 rounded-xl flex items-center justify-center text-white text-base pointer-events-auto"
+                style={{
+                  background: 'radial-gradient(circle at 34% 28%, #7dd8ff 0%, #22a4e8 55%, #0e6db8 100%)',
+                  boxShadow: '0 4px 0 #084a80, 0 7px 10px rgba(0,0,0,0.45), inset 0 2px 3px rgba(255,255,255,0.55), inset 0 -3px 5px rgba(0,0,0,0.35)',
+                }}
                 aria-label="Activate Star Power"
               >
                 ★
               </button>
+            )}
+
+            {/* 3D "pressed in" bevel for the touch fret + Star Power buttons —
+                a real CSS :active rule rather than JS-managed inline style,
+                so it engages/reverts automatically per-touch with no ref
+                bookkeeping (the button's imperative style.left write above
+                only ever touches `left`, never `transform`/`boxShadow`, so
+                there's nothing for this rule to fight with). Centering
+                (translateX(-50%)) for the fret buttons lives here too, not
+                as a Tailwind utility class, so there's a single owner for
+                that button's transform and no cascade-order ambiguity with
+                the :active override below. */}
+            {isTouchDevice && (
+              <style>{`
+                .rh-fret-btn {
+                  transform: translateX(-50%);
+                  transition: transform 0.08s ease, filter 0.08s ease, box-shadow 0.08s ease;
+                }
+                .rh-fret-btn:active {
+                  transform: translateX(-50%) translateY(3px) scale(0.95) !important;
+                  filter: brightness(0.88);
+                  box-shadow: 0 1px 0 rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.35), inset 0 2px 4px rgba(0,0,0,0.4) !important;
+                }
+                .rh-sp-btn {
+                  transition: transform 0.08s ease, filter 0.08s ease, box-shadow 0.08s ease;
+                }
+                .rh-sp-btn:active {
+                  transform: translateY(3px) scale(0.95) !important;
+                  filter: brightness(0.88);
+                  box-shadow: 0 1px 0 rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.35), inset 0 2px 4px rgba(0,0,0,0.4) !important;
+                }
+              `}</style>
             )}
 
             {!isInTournament && finalStats && (

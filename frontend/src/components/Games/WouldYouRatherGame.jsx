@@ -96,7 +96,7 @@ export default function WouldYouRatherGame({ gameState, players, currentUserId, 
   const isHost     = players[0]?.user_id === currentUserId;
   const phase      = gs.phase || 'presenting';
   const round      = gs.round || 1;
-  const total      = gs.total_rounds || 25;
+  const total      = gs.total_rounds || 1;
   const optionA    = gs.option_a || '';
   const optionB    = gs.option_b || '';
   const votes      = gs.votes || {};
