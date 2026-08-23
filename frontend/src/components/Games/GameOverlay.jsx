@@ -410,6 +410,7 @@ export default function GameOverlay({ activeGame, currentUserId, roomId, session
           onMove={handleMove}
           onClose={onClose}
           onEndGame={onEndGame}
+          onPostResult={onPostResult}
         />
       );
 

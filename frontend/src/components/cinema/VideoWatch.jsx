@@ -8198,6 +8198,7 @@ export default function VideoWatch() {
           // so the taskbar can adapt (shorter auto-hide while a game is up).
           hasOpenModal={isLiveShareWizardOpen}
           currentGame={activeGame}
+          isGameLobbyOpen={isGameLobbyOpen}
           isChatActive={showChatHome || isChatOpen}
           onQuizClick={handleQuizClick}
           activeQuizCount={activeQuiz ? 1 : 0}

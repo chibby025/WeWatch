@@ -600,9 +600,16 @@ func (h *GameWebSocketHandler) handleGameMove(client interface{}, data map[strin
 	}
 
 	roomID := cf.GetRoomID()
-	// Broadcast updated state. If the game just ended, endGameLocked already sent
-	// game_state_update + game_ended, so BroadcastGameState is a no-op (game removed).
-	h.gameManager.BroadcastGameState(roomID)
+	// The game_state_update broadcast for this move already happened inside
+	// ProcessMove itself (game_manager.go), atomically with the state mutation,
+	// while gm.mu was still held — not here. Broadcasting it here instead, after
+	// ProcessMove had already released the lock, used to leave a real race: two
+	// players' moves land on two different goroutines, and nothing guaranteed
+	// this second, unlocked broadcast step would fire in the same order the
+	// mutations actually happened, so clients could end up seeing a stale
+	// current_turn/board that momentarily disagreed with the server (and with
+	// each other) — reported as "the Scrabble game sometimes gets the turn
+	// wrong and locks both players out."
 	// Card games only: the acting player's own hand may have changed (a card
 	// removed on play, a card added on draw) — refresh it privately. A no-op for
 	// every other game type (GetPlayerHand finds no Hands map and returns false).

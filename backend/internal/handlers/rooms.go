@@ -767,6 +767,9 @@ func EndWatchSessionHandler(c *gin.Context) {
 			hub.rhythmHeroLeaderboardMutex.Lock()
 			delete(hub.rhythmHeroLeaderboard, session.RoomID)
 			hub.rhythmHeroLeaderboardMutex.Unlock()
+			hub.gameLobbyBrowsingMutex.Lock()
+			delete(hub.gameLobbyBrowsing, session.RoomID)
+			hub.gameLobbyBrowsingMutex.Unlock()
 		}
 
 		tx := DB.Begin()
@@ -1048,6 +1051,9 @@ func AutoEndSession(sessionID string) error {
 		hub.rhythmHeroLeaderboardMutex.Lock()
 		delete(hub.rhythmHeroLeaderboard, session.RoomID)
 		hub.rhythmHeroLeaderboardMutex.Unlock()
+		hub.gameLobbyBrowsingMutex.Lock()
+		delete(hub.gameLobbyBrowsing, session.RoomID)
+		hub.gameLobbyBrowsingMutex.Unlock()
 	}
 
 	log.Printf("🗑️ AutoEndSession: Found %d temporary media items to delete for session %s", len(tempItems), sessionID)

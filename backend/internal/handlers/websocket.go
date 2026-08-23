@@ -209,6 +209,19 @@ type Hub struct {
     rhythmHeroLeaderboard      map[uint][]RhythmHeroLeaderboardEntry
     rhythmHeroLeaderboardMutex sync.RWMutex
 
+    // Live "host is browsing the Start-a-Game picker" state (game_lobby_browsing
+    // broadcasts) — same real gap rhythmHeroLive above closes, for the same
+    // reason: this is a raw room broadcast with zero other persistence (see the
+    // handleMessage case), so a member joining mid-browse never learns the host
+    // has the picker open at all, let alone which game is currently centered,
+    // until the host's next carousel move re-fires the broadcast. Set when the
+    // host opens/cycles the picker, deleted the moment they close it (mirroring
+    // rhythm_hero_end's own cleanup) and at the same 3 session-end cleanup
+    // sites as rhythmHeroLive, as a safety net for an abandoned/crashed tab
+    // that never sends an explicit close.
+    gameLobbyBrowsing      map[uint][]byte
+    gameLobbyBrowsingMutex sync.RWMutex
+
     // ── Phase 3 observability counters ──────────────────────────────────────
     // Incremented wherever a channel-full "default: drop" branch already existed.
     // Lets /api/admin/hub-stats answer "is the Hub falling behind?" without
@@ -308,6 +321,8 @@ func NewHub() *Hub {
 		rhythmHeroLiveMutex: sync.RWMutex{},
 		rhythmHeroLeaderboard:      make(map[uint][]RhythmHeroLeaderboardEntry),
 		rhythmHeroLeaderboardMutex: sync.RWMutex{},
+		gameLobbyBrowsing:          make(map[uint][]byte),
+		gameLobbyBrowsingMutex:     sync.RWMutex{},
 	}
 }
 
@@ -1095,6 +1110,24 @@ func (h *Hub) JoinWatchSession(sessionID string, client *Client) error {
             case client.send <- OutgoingMessage{Data: rhythmHeroLiveBytes, IsBinary: false}:
             default:
                 log.Printf("⚠️ [JoinWatchSession] rhythm_hero rehydration dropped — client.send full for user %d", client.userID)
+            }
+        }
+
+        // Game Lobby browsing rehydration — same real gap as rhythm_hero above,
+        // for the same reason: game_lobby_browsing is a raw room broadcast with
+        // no other persistence, so a member joining while the host already has
+        // the "Start a Game" picker open would otherwise see nothing until the
+        // host's next carousel move. Harmless to send to every joining client
+        // regardless of role — the host/admin's own frontend never renders the
+        // read-only mirror this drives (gated on !isHost && !isAdmin there).
+        hub.gameLobbyBrowsingMutex.RLock()
+        gameLobbyBrowsingBytes, hasGameLobbyBrowsing := hub.gameLobbyBrowsing[client.roomID]
+        hub.gameLobbyBrowsingMutex.RUnlock()
+        if hasGameLobbyBrowsing {
+            select {
+            case client.send <- OutgoingMessage{Data: gameLobbyBrowsingBytes, IsBinary: false}:
+            default:
+                log.Printf("⚠️ [JoinWatchSession] game_lobby_browsing rehydration dropped — client.send full for user %d", client.userID)
             }
         }
 
@@ -2890,6 +2923,9 @@ func CleanupStaleSessions() {
 			hub.rhythmHeroLeaderboardMutex.Lock()
 			delete(hub.rhythmHeroLeaderboard, session.RoomID)
 			hub.rhythmHeroLeaderboardMutex.Unlock()
+			hub.gameLobbyBrowsingMutex.Lock()
+			delete(hub.gameLobbyBrowsing, session.RoomID)
+			hub.gameLobbyBrowsingMutex.Unlock()
 
 			var room models.Room
 			isTemporary := false
@@ -6535,8 +6571,31 @@ func (client *Client) handleMessage(message []byte) {
     // relayed live so every room member sees what the host is currently looking
     // at (letting everyone weigh in on what to play before the host commits).
     // Purely ephemeral UI state, same trust/no-persistence model as
-    // sync_heartbeat — raw passthrough, no server-side bookkeeping needed.
+    // sync_heartbeat — no DB write. Unlike sync_heartbeat, this DOES need a
+    // small in-memory cache (hub.gameLobbyBrowsing, mirroring rhythmHeroLive)
+    // so a member who joins the room WHILE the host is already mid-browse
+    // gets rehydrated with the current state (see JoinWatchSession) instead
+    // of seeing nothing until the host's next carousel move happens to fire —
+    // a real, previously-unhandled gap, since this broadcast is edge-triggered
+    // (only sent on change) and a late joiner never received the earlier edge.
     if msg.Type == "game_lobby_browsing" {
+        // is_open lives nested under "data" for this message type (unlike
+        // sync_heartbeat's flat shape above) — matches exactly what
+        // VideoWatch.jsx's handleGameLobbyCarouselChange sends.
+        var glb struct {
+            Data struct {
+                IsOpen bool `json:"is_open"`
+            } `json:"data"`
+        }
+        if err := json.Unmarshal(message, &glb); err == nil {
+            client.hub.gameLobbyBrowsingMutex.Lock()
+            if glb.Data.IsOpen {
+                client.hub.gameLobbyBrowsing[client.roomID] = message
+            } else {
+                delete(client.hub.gameLobbyBrowsing, client.roomID)
+            }
+            client.hub.gameLobbyBrowsingMutex.Unlock()
+        }
         client.hub.BroadcastToRoom(client.roomID, OutgoingMessage{Data: message, IsBinary: false}, client)
         return
     }

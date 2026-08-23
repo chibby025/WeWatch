@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
-import { X, Clock, Trophy, Send, ChevronRight } from 'lucide-react';
+import {
+  X, Clock, Trophy, Send, ChevronRight, ImageOff,
+  ArrowUp, LogIn, LogOut, Power, Check, RefreshCw, Flag, Undo2, DollarSign, Eye,
+} from 'lucide-react';
 import GameRulesButton from './GameRulesButton';
 import GameWinnerBanner from './GameWinnerBanner';
 
 const PUZZLE_SECONDS = 40;
+const REBUS_SET_SIZE = 20; // mirrors rebusSetSize in backend/internal/handlers/games/rebus_round.go
+const REBUS_LOGO_URL = '/images/rebus-round-logo-v2.webp';
 
 // ── Token-based pattern renderer ─────────────────────────────────────────────
 // Puzzles arrive as a flat array of small style-flag tokens (see
@@ -13,7 +18,13 @@ const PUZZLE_SECONDS = 40;
 // everything else is a plain styled inline span.
 function tokenStyle(tok) {
   const style = {
-    fontSize: tok.op ? '1.1rem' : `${(tok.scale || 1) * 1.9}rem`,
+    // Base bumped 2.3rem -> 3.4rem: a short single-word/plain-text puzzle
+    // (e.g. a simple sub/sup or compound entry) used to render as a small
+    // line of text lost inside the much taller puzzle card, reading as a big
+    // empty gap around it. This is deliberately independent of the image
+    // token's own base size (.rebus-img below) — text and photos are sized
+    // for their own legibility, not to match each other pixel-for-pixel.
+    fontSize: tok.op ? '1.3rem' : `${(tok.scale || 1) * 3.4}rem`,
     fontWeight: tok.op ? 500 : 700,
     color: tok.op ? '#9ca3af' : (tok.color || '#f8fafc'),
     textDecoration: tok.strike ? 'line-through' : undefined,
@@ -30,6 +41,121 @@ function tokenStyle(tok) {
   return style;
 }
 
+// Base image size (before any per-token scale multiplier) — deliberately
+// large: puzzle photos need to be legible at a glance on a phone screen, not
+// squinted at after a pinch-zoom. Combined with tok.scale via a CSS custom
+// property (--rebus-img-scale) rather than a fixed Tailwind size, since scale
+// is a continuous multiplier (0.5–2.2) coming straight from the backend, not
+// one of a fixed set of breakpoint sizes.
+function imageTokenStyle(tok) {
+  const scale = tok.scale || 1;
+  const style = {
+    '--rebus-img-scale': scale,
+  };
+  if (tok.sup) style.transform = 'translateY(-38%)';
+  if (tok.sub) style.transform = 'translateY(38%)';
+  return style;
+}
+
+// Local icon set for RebusToken.icon — mirrors backend/internal/handlers/
+// games/rebus_round.go's own doc comment on rebusMixedCompoundSpecs exactly.
+// These render instantly (no live fetch, unlike RebusImageToken below) for
+// directional/symbolic word-halves (OUT/IN/UP/OFF/BACK/CHECK/SPIN/END/PAY/
+// LOOK) that aren't honestly a "photo of a noun".
+const REBUS_ICON_MAP = {
+  'arrow-up': ArrowUp,
+  'log-in': LogIn,
+  'log-out': LogOut,
+  power: Power,
+  check: Check,
+  refresh: RefreshCw,
+  flag: Flag,
+  undo: Undo2,
+  dollar: DollarSign,
+  eye: Eye,
+};
+
+// Icon/swatch tokens share .rebus-img's sizing (via className) so they sit
+// visually consistent alongside a real photo half in the same compound —
+// same rounded/bordered card, just an icon or a flat color instead of a
+// live-fetched image inside it.
+function RebusIconToken({ tok }) {
+  const Icon = REBUS_ICON_MAP[tok.icon];
+  return (
+    <div
+      className="rebus-img flex items-center justify-center rounded-2xl border-2 border-gray-700 bg-gray-900 shadow-xl"
+      style={imageTokenStyle(tok)}
+    >
+      {Icon ? <Icon className="w-1/2 h-1/2 text-purple-300" strokeWidth={2} /> : <ImageOff className="w-8 h-8 text-gray-600" />}
+    </div>
+  );
+}
+
+function RebusSwatchToken({ tok }) {
+  return (
+    <div
+      className="rebus-img rounded-2xl border-2 border-gray-700 shadow-xl"
+      style={{ ...imageTokenStyle(tok), background: tok.swatch }}
+    />
+  );
+}
+
+const IMAGE_RETRY_MAX = 3;
+const IMAGE_RETRY_DELAYS_MS = [500, 1200, 2200]; // increasing backoff per retry
+
+// A real photo fetched live from Pexels (see rebus_round.go's
+// rebusPhotoCompoundSpecs/rebusIconSpecs), not readable text — the player
+// has to recognize the object. A single load failure used to be permanent
+// (no onError handler existed at all) even though most real-world failures
+// are a transient network/CDN blip, not a genuinely dead URL — this retries
+// with backoff before falling back to a placeholder tile, mirroring Four
+// Frames' identical PhotoCell retry logic.
+function RebusImageToken({ tok }) {
+  const [attempt, setAttempt] = useState(0);
+  const [gaveUp, setGaveUp] = useState(false);
+  const retryTimerRef = useRef(null);
+
+  useEffect(() => {
+    setAttempt(0);
+    setGaveUp(false);
+    return () => { if (retryTimerRef.current) clearTimeout(retryTimerRef.current); };
+  }, [tok.image]);
+
+  const handleError = () => {
+    if (attempt >= IMAGE_RETRY_MAX) {
+      setGaveUp(true);
+      return;
+    }
+    const delay = IMAGE_RETRY_DELAYS_MS[attempt] || IMAGE_RETRY_DELAYS_MS[IMAGE_RETRY_DELAYS_MS.length - 1];
+    retryTimerRef.current = setTimeout(() => setAttempt(a => a + 1), delay);
+  };
+
+  if (gaveUp) {
+    // Same scale/position treatment as a real image, so a failed icon-style
+    // puzzle ("big wig") still occupies roughly the right visual space
+    // instead of collapsing to nothing.
+    return (
+      <div
+        className="rebus-img flex items-center justify-center rounded-2xl border-2 border-gray-700 bg-gray-900"
+        style={imageTokenStyle(tok)}
+      >
+        <ImageOff className="w-8 h-8 text-gray-600" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      key={attempt}
+      src={tok.image}
+      alt=""
+      className="rebus-img object-cover rounded-2xl border-2 border-gray-700 shadow-xl"
+      style={imageTokenStyle(tok)}
+      onError={handleError}
+    />
+  );
+}
+
 function RebusPatternDisplay({ pattern }) {
   if (!pattern || pattern.length === 0) {
     return <div className="text-gray-600 text-sm">Loading puzzle…</div>;
@@ -40,22 +166,20 @@ function RebusPatternDisplay({ pattern }) {
     lines[lines.length - 1].push(tok);
   });
   return (
-    <div className="flex flex-col items-center gap-3 py-2">
+    <div className="flex flex-col items-center gap-4 py-2">
       {lines.map((line, li) => (
-        <div key={li} className="flex items-center justify-center gap-2 flex-wrap px-4">
+        <div key={li} className="flex items-center justify-center gap-3 flex-wrap px-2">
           {line.map((tok, ti) => (
             tok.image ? (
-              // Photo-compound half — a real photo fetched live from Pexels
-              // (see rebus_round.go's rebusPhotoCompoundSpecs), not readable
-              // text. The player has to recognize the object before combining
-              // it with the text half — that's the actual fix for puzzles
-              // like "EGG + SHELL" being a trivial concatenation to read.
-              <img
-                key={ti}
-                src={tok.image}
-                alt=""
-                className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-xl border border-gray-700 shadow-lg"
-              />
+              // For a scaled/positioned icon replacing what would otherwise
+              // be styled text (rebusIconSpecs — "big wig", "downtown"), the
+              // same size/position trick applies to the image itself via
+              // --rebus-img-scale + the translateY set in imageTokenStyle.
+              <RebusImageToken key={ti} tok={tok} />
+            ) : tok.icon ? (
+              <RebusIconToken key={ti} tok={tok} />
+            ) : tok.swatch ? (
+              <RebusSwatchToken key={ti} tok={tok} />
             ) : (
               <span key={ti} style={tokenStyle(tok)}>{tok.text}</span>
             )
@@ -85,11 +209,23 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
   const totalPuzzles = Number(gs.total_puzzles) || 0;
   const revealedAnswer = gs.revealed_answer || '';
   const revealedAlternates = gs.revealed_alternates || [];
+  const setCompleteNoWinner = !!gs.set_complete_no_winner;
 
   const players = gameState?.players || [];
   const isHostUser = (gameState?.host_id ?? players[0]?.user_id) === currentUserId;
   const isPlayer = players.some(p => p.user_id === currentUserId);
   const isLastRound = totalPuzzles > 0 && round >= totalPuzzles;
+
+  // Puzzles are gated into sets of REBUS_SET_SIZE (see rebusSetSize in
+  // backend/internal/handlers/games/rebus_round.go) — purely a display
+  // concern here; the backend is the sole authority on when a set boundary
+  // actually triggers a win check. The header shows progress WITHIN the
+  // current set (e.g. "Puzzle 7/20"), not against the full 300-puzzle bank —
+  // "127/300" is a meaningless number to a player when the game only ever
+  // plays in 20-question batches before checking for a winner.
+  const currentSetNumber = round > 0 ? Math.ceil(round / REBUS_SET_SIZE) : 1;
+  const totalSets = totalPuzzles > 0 ? Math.ceil(totalPuzzles / REBUS_SET_SIZE) : 0;
+  const positionInSet = round > 0 ? ((round - 1) % REBUS_SET_SIZE) + 1 : 0;
 
   const myCorrectEntry = correctOrder.find(e => Number(e.user_id) === currentUserId);
   const alreadySolvedThisRound = !!myCorrectEntry;
@@ -198,10 +334,14 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
       {/* Header */}
       <div className="flex items-center justify-between pl-20 pr-5 py-4 border-b border-gray-800 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-2xl">🖼️</span>
-          <span className="text-white font-bold text-xl">Rebus Round</span>
+          {/* 150% of the original h-11/h-14 base (44px/56px) — scaled back
+              down from an earlier 300% pass that was too large. */}
+          <img src={REBUS_LOGO_URL} alt="Rebus Round" className="h-[66px] sm:h-[84px] w-auto object-contain" />
           {round > 0 && totalPuzzles > 0 && (
-            <span className="text-gray-400 text-sm ml-1">Puzzle {round}/{totalPuzzles}</span>
+            <span className="text-gray-400 text-sm ml-1">
+              Puzzle {positionInSet}/{REBUS_SET_SIZE}
+              {totalSets > 1 && <> · Set {currentSetNumber}/{totalSets}</>}
+            </span>
           )}
         </div>
         <div className="flex items-center gap-1">
@@ -265,7 +405,7 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
 
         {/* Puzzle / Reveal */}
         {(phase === 'puzzle' || phase === 'reveal') && (
-          <div className="w-full max-w-xl">
+          <div className="w-full max-w-xl sm:max-w-2xl lg:max-w-3xl">
             {phase === 'puzzle' && (
               <div className="flex items-center gap-3 mb-4">
                 <Clock className={`w-4 h-4 flex-shrink-0 ${timeLeft <= 8 ? 'text-red-400 animate-pulse' : 'text-gray-400'}`} />
@@ -281,8 +421,17 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
               </div>
             )}
 
-            {/* Puzzle card */}
-            <div className="bg-gray-800 rounded-2xl p-6 mb-4 shadow-lg min-h-[140px] flex items-center justify-center">
+            {/* Puzzle card — sized generously so a puzzle carrying 1-2 real
+                photos (plus a scaled/positioned image icon puzzle) is legible
+                at a glance on a phone, not something that needs pinch-zoom.
+                Mobile: padding trimmed (p-5 -> p-3) and min-height raised
+                (170px -> 260px) so the card reads as tall/portrait rather
+                than a wide rectangle, with less padding "wasted" around the
+                now-bigger .rebus-img photos (see the style block above) —
+                a short plain-text puzzle still benefits from the taller
+                minimum too, paired with the bigger base text size in
+                tokenStyle above. */}
+            <div className="bg-gray-800 rounded-2xl p-3 sm:p-8 mb-4 shadow-lg min-h-[260px] sm:min-h-[280px] flex items-center justify-center">
               <RebusPatternDisplay pattern={pattern} />
             </div>
 
@@ -312,6 +461,11 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
                 <p className="text-white text-2xl font-black capitalize">{revealedAnswer}</p>
                 {revealedAlternates.length > 0 && (
                   <p className="text-gray-500 text-xs mt-1">Also accepted: {revealedAlternates.join(', ')}</p>
+                )}
+                {setCompleteNoWinner && !isLastRound && (
+                  <p className="text-purple-300 text-xs font-semibold mt-3 bg-purple-900/30 border border-purple-700/40 rounded-lg px-3 py-2 inline-block">
+                    Set {currentSetNumber} complete — no clear leader yet. Moving to set {currentSetNumber + 1} of {totalSets}…
+                  </p>
                 )}
               </div>
             )}
@@ -396,6 +550,21 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
           40%, 80% { transform: translateX(6px); }
         }
         .animate-shake { animation: rebusShake 0.4s ease-in-out; }
+        /* Base image size before the per-token scale multiplier — generous
+           on purpose (see the puzzle-card sizing comment above) so photo
+           puzzles read clearly on a phone with no zoom needed. Mobile base
+           bumped 112px -> 160px so a 2-photo compound genuinely fills the
+           card instead of looking small/rectangular inside it. */
+        .rebus-img {
+          width: calc(160px * var(--rebus-img-scale, 1));
+          height: calc(160px * var(--rebus-img-scale, 1));
+        }
+        @media (min-width: 640px) {
+          .rebus-img {
+            width: calc(150px * var(--rebus-img-scale, 1));
+            height: calc(150px * var(--rebus-img-scale, 1));
+          }
+        }
       `}</style>
 
       {phase === 'ended' && (

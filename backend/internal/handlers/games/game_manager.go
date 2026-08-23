@@ -235,6 +235,11 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 			gameState.GameData[k] = v
 		}
 		gameState.GameSession.GameState = gameState.GameData
+	case "pool":
+		for k, v := range poolInitialGameData() {
+			gameState.GameData[k] = v
+		}
+		gameState.GameSession.GameState = gameState.GameData
 	case "sudoku":
 		ensureSudokuState(gameState)
 		gameState.GameSession.GameState = gameState.GameData
@@ -262,6 +267,23 @@ func (gm *GameManager) StartGame(roomID uint, hostID uint, sessionID *uint, game
 		gameState.GameData["chips"] = map[string]interface{}{}
 		gameState.GameData["payouts"] = map[string]interface{}{}
 		gameState.GameData["history"] = []interface{}{}
+		gameState.GameSession.GameState = gameState.GameData
+	case "would_you_rather":
+		// Fixes a real bug: without this, gameState.GameData stays a fresh empty
+		// map (see the GameSessionState field comments above) and the FIRST
+		// "vote" move's ensureWyrState (would_you_rather.go) sees phase==nil and
+		// calls wyrInitialState again — which reshuffles via rand.Perm and picks
+		// a brand-new random first question, different from whatever question
+		// initializeGameState already put on GameSession.GameState (and thus
+		// already showed everyone in the initial game_started broadcast). The
+		// visible symptom: the question players see at the very start silently
+		// swaps to a different one the moment anyone casts the first vote.
+		// Seeding GameData here (same pattern already used by wordsmith/
+		// crazy_eights/etc. just above) means ensureWyrState's phase!=nil check
+		// short-circuits on that first move, so the question never changes.
+		for k, v := range wyrInitialState(len(players)) {
+			gameState.GameData[k] = v
+		}
 		gameState.GameSession.GameState = gameState.GameData
 	}
 
@@ -318,10 +340,12 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 	// Skip DB writes for these volatile moves to avoid thousands of writes per minute.
 	// jigsaw's piece_drag is the same idea at a much lower rate (~10-12 Hz,
 	// only while a piece is actively being dragged) — a live position update,
-	// not a discrete game action worth persisting to the move history.
-	volatileRT := map[string]bool{"state_sync": true, "paddle_move": true, "mallet_move": true, "piece_drag": true}
+	// not a discrete game action worth persisting to the move history. pool's
+	// shot_progress is the same idea again (~10 Hz, only while a shot is
+	// actively rolling) — see processPoolShotProgress in pool.go.
+	volatileRT := map[string]bool{"state_sync": true, "paddle_move": true, "mallet_move": true, "piece_drag": true, "shot_progress": true}
 	isVolatile := volatileRT[moveType] &&
-		(gameState.GameSession.GameType == "ping_pong" || gameState.GameSession.GameType == "air_hockey" || gameState.GameSession.GameType == "jigsaw")
+		(gameState.GameSession.GameType == "ping_pong" || gameState.GameSession.GameType == "air_hockey" || gameState.GameSession.GameType == "jigsaw" || gameState.GameSession.GameType == "pool")
 
 	gameMove := &models.GameMove{
 		GameSessionID: gameSessionID,
@@ -488,6 +512,27 @@ func (gm *GameManager) ProcessMove(gameSessionID uint, playerID uint, moveType s
 		if err := gm.endGameLocked(gameSessionID, winnerID, "completed"); err != nil {
 			log.Printf("⚠️ [GameManager] Failed to end game: %v", err)
 		}
+	} else {
+		// Broadcast the freshly-mutated state HERE, while gm.mu is still held for
+		// this whole call, rather than releasing the lock and letting the caller
+		// (websocket_handler.go's handleGameMove) call the separate
+		// BroadcastGameState afterward. That gap was a real, confirmed race: two
+		// players' moves land on two different goroutines, each briefly holding
+		// gm.mu just long enough to mutate (e.g. advance CurrentTurn), then
+		// release it and broadcast in a SEPARATE, unlocked step. Nothing
+		// guarantees those two broadcasts go out to clients in the same order the
+		// two mutations actually happened in — a slower goroutine's
+		// now-stale broadcast could land at a client AFTER a newer one, silently
+		// overwriting the correct "whose turn is it" state with an outdated one.
+		// Every client (including the two players who just moved) would then
+		// disagree with the server and with each other about whose turn it
+		// really is — exactly the "both players stuck, neither can play, one
+		// gets 'not your turn'" bug reported for Wordsmith. Broadcasting from
+		// inside the same critical section that performed the mutation makes
+		// the two operations atomic with respect to any other goroutine also
+		// going through ProcessMove, so broadcast order is now guaranteed to
+		// match mutation order.
+		gm.broadcastGameStateLocked(gameState)
 	}
 
 	return nil
@@ -752,12 +797,33 @@ func (gm *GameManager) CancelDisconnectTimer(userID uint) {
 // BroadcastGameState sends the current game state to all room members as a text frame.
 // Must use BroadcastJSON (text), NOT BroadcastToRoomBinary — binary frames are routed
 // to the video handler on the frontend and silently dropped.
+//
+// Only safe to call when the caller does NOT already hold gm.mu (it acquires its
+// own read lock via GetActiveGame). A caller that already holds gm.mu — e.g.
+// ProcessMove after mutating state, or startVSCounterTimeout's timer callback —
+// must call broadcastGameStateLocked directly instead, using the gameState
+// pointer it already has; calling this method from inside an already-held
+// gm.mu.Lock() would deadlock (sync.RWMutex's RLock() blocks on any pending/held
+// Lock(), including one held by the very same goroutine).
 func (gm *GameManager) BroadcastGameState(roomID uint) error {
 	gameState, exists := gm.GetActiveGame(roomID)
 	if !exists {
 		return nil // game already ended; endGameLocked already broadcast the final state
 	}
+	gm.broadcastGameStateLocked(gameState)
+	return nil
+}
 
+// broadcastGameStateLocked builds and sends the game_state_update broadcast for
+// gameState. Performs no locking of its own — the caller must already hold
+// gm.mu (for read or write). Exists so a mutation and its resulting broadcast
+// can happen atomically within the same gm.mu critical section: broadcasting
+// only after releasing the lock (the old behavior) left a real gap where two
+// concurrent movers' mutate-then-broadcast sequences could interleave, so the
+// two resulting broadcasts didn't necessarily reach clients in the same order
+// the mutations actually happened — clients could end up disagreeing with the
+// server (and each other) about whose turn it was.
+func (gm *GameManager) broadcastGameStateLocked(gameState *GameSessionState) {
 	message := map[string]interface{}{
 		"type":            "game",
 		"action":          "game_state_update",
@@ -773,9 +839,8 @@ func (gm *GameManager) BroadcastGameState(roomID uint) error {
 	if hub, ok := gm.hub.(interface {
 		BroadcastJSON(uint, map[string]interface{})
 	}); ok {
-		hub.BroadcastJSON(roomID, message)
+		hub.BroadcastJSON(gameState.GameSession.RoomID, message)
 	}
-	return nil
 }
 
 // startVSCounterTimeout schedules a server-side backstop for a vs_battle
@@ -821,7 +886,17 @@ func (gm *GameManager) startVSCounterTimeout(gameSessionID uint, roomID uint, du
 			log.Printf("⚠️ [GameManager] Failed to persist vs_battle counter-timeout state: %v", err)
 		}
 		log.Printf("🎮 [GameManager] VS Battle counter window in game %d expired unanswered — auto-resolved", gameSessionID)
-		_ = gm.BroadcastGameState(roomID)
+		// Must use the unlocked helper, not the public BroadcastGameState — this
+		// callback already holds gm.mu.Lock() (deferred unlock above), and
+		// BroadcastGameState's GetActiveGame call acquires a fresh gm.mu.RLock(),
+		// which would block forever waiting on the write lock this very
+		// goroutine is still holding (a self-deadlock, since only this same
+		// goroutine's own deferred Unlock() could ever release it). This was a
+		// real, unconditional freeze of the entire GameManager — every future
+		// StartGame/ProcessMove call across every room blocks on gm.mu forever —
+		// triggered any time a VS Battle counter window actually times out
+		// unanswered, not just a theoretical risk.
+		gm.broadcastGameStateLocked(gameState)
 	})
 	gm.counterTimers.Store(gameSessionID, timer)
 }

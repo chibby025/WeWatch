@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import EmotePicker from './cinema/ui/EmotePicker';
 import EmojiImage from './cinema/ui/EmojiImage';
 import AudioSettingsDropdown from './AudioSettingsDropdown';
-import { playMicOnSound, playMicOffSound } from '../utils/audio';
+import { playMicOnSound, playMicOffSound, playLeaveCallClickSound } from '../utils/audio';
 import Coachmark from './Coachmark';
 
 // Import SVG icons
@@ -211,6 +211,9 @@ const Taskbar = ({
   roomChatUnreadCount = 0, // unread count for the shared room/session chat
   // Used only to shorten the auto-hide window while a game is active (see hideDelayMs).
   currentGame,
+  // True while the Game Lobby picker (GameLobbyModal) is open — before any
+  // game has actually started. Drives the top-right auto-minimize below.
+  isGameLobbyOpen = false,
   // Video element ref — when provided, shows a volume button on the right edge of the pill
   videoRef = null,
   // Compact mode — slightly smaller pill (used in Lecture Hall to avoid crowding the 3D scene)
@@ -492,6 +495,35 @@ const Taskbar = ({
     animateIntoMinimized();
   };
 
+  // Auto-minimize the pill to a top-right corner while the Game Lobby picker
+  // is open (before any game has actually started) — clicking the Games icon
+  // in LeftSidebar opens GameLobbyModal, whose own poster carousel/footer
+  // controls occupy the same lower-screen region the pill normally sits in.
+  // Deliberately a different corner (top-right) from the in-game minimize
+  // below (bottom-right) so the two states read differently at a glance —
+  // "picking a game" vs. "playing one". Always forces the top-right position
+  // on open, rather than reusing whatever minimizedPos a prior minimize left
+  // behind, since this is a specific, deliberately-triggered UI moment,
+  // not a generic "was minimized at some point" state. On close, clears
+  // minimizedPos back to null so whichever happens next starts clean: either
+  // this same effect restores the full pill (no game was started), or the
+  // game-start effect right below computes its own fresh bottom-right
+  // default instead of wrongly inheriting this top-right spot.
+  const prevGameLobbyOpenRef = useRef(isGameLobbyOpen);
+  useEffect(() => {
+    if (isGameLobbyOpen && !prevGameLobbyOpenRef.current) {
+      setMinimizedPos({
+        x: Math.min(Math.max(window.innerWidth - MINIMIZED_SIZE - 16, 8), window.innerWidth - MINIMIZED_SIZE - 8),
+        y: 60,
+      });
+      animateIntoMinimized();
+    } else if (!isGameLobbyOpen && prevGameLobbyOpenRef.current) {
+      setMinimizedPos(null);
+      if (!gameSessionId) setIsMinimized(false);
+    }
+    prevGameLobbyOpenRef.current = isGameLobbyOpen;
+  }, [isGameLobbyOpen, gameSessionId]);
+
   // Auto-minimize the pill when a game starts so game bottom controls aren't obscured.
   // Snaps to bottom-right corner on first minimize; preserves any position the user later dragged it to.
   useEffect(() => {
@@ -752,6 +784,10 @@ const Taskbar = ({
           small
           mobile={isMobile}
           onClick={async () => {
+            // Immediate, local click feedback — fired synchronously, not
+            // awaited alongside the leave/cleanup below, so it isn't cut
+            // short if that navigates away from this page quickly.
+            playLeaveCallClickSound();
             if (onLeaveCall) {
               try {
                 console.log('🔌 [Taskbar] Leave Call clicked, awaiting handler...');

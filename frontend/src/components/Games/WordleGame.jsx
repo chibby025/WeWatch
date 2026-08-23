@@ -35,6 +35,11 @@ const CSS = `
     0%,100% { transform: translateY(0);    }
     40%     { transform: translateY(-18px);}
   }
+  @keyframes wdlCaretBlink {
+    0%, 45% { opacity: 1; }
+    50%, 95% { opacity: 0; }
+    100% { opacity: 1; }
+  }
 `;
 
 // Tile for the main (self) grid
@@ -107,6 +112,58 @@ function OpponentGrid({ pKey, guesses, results, eliminated, winnerKey, username 
   );
 }
 
+// Mobile-only opponent display: each of the up-to-MAX_GUESSES rows (normally
+// stacked vertically, 6 rows tall) is "unrolled" into one continuous
+// horizontally-scrollable strip instead — reclaims the vertical space the
+// original OpponentGrid used, which on mobile stacked below the player's own
+// grid and pushed everything (keyboard/controls) further down the screen.
+// Auto-scrolls to reveal the newest completed guess the moment this opponent
+// submits one, so you don't have to manually swipe to see what just happened.
+function OpponentStripMobile({ pKey, guesses, results, eliminated, winnerKey, username }) {
+  const elim = eliminated.includes(pKey);
+  const won  = winnerKey === pKey;
+  const scrollRef = useRef(null);
+  const prevLenRef = useRef(guesses.length);
+
+  useEffect(() => {
+    if (guesses.length > prevLenRef.current) {
+      const newestGroup = scrollRef.current?.children?.[guesses.length - 1];
+      newestGroup?.scrollIntoView({ behavior: 'smooth', inline: 'end', block: 'nearest' });
+    }
+    prevLenRef.current = guesses.length;
+  }, [guesses.length]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
+      <p style={{
+        fontSize: 10, fontWeight: 600,
+        color: won ? '#538d4e' : elim ? '#f87171' : '#9ca3af',
+      }}>
+        {username} {won ? '🏆' : elim ? '💀' : ''}
+      </p>
+      <div
+        ref={scrollRef}
+        style={{
+          display: 'flex', gap: 10, width: '100%', overflowX: 'auto',
+          scrollSnapType: 'x proximity', paddingBottom: 2, WebkitOverflowScrolling: 'touch',
+        }}
+      >
+        {Array.from({ length: MAX_GUESSES }, (_, row) => (
+          <div key={row} style={{ display: 'flex', gap: 2, flexShrink: 0, scrollSnapAlign: 'end' }}>
+            {Array.from({ length: WORD_LEN }, (_, col) => (
+              <SmallTile
+                key={col}
+                letter={guesses[row]?.[col] || ''}
+                feedback={results[row]?.[col] || ''}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function WordleGame({ gameState, players, currentUserId, onMove, onClose, onEndGame, onPostResult }) {
   const [currentInput, setInput]   = useState('');
   const [shake, setShake]          = useState(false);
@@ -115,6 +172,10 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
   const [bounceRow, setBounceRow]  = useState(-1);
   const [popSet, setPopSet]        = useState(new Set());
   const [hintPending, setHintPending] = useState(false);
+  // Tracks whether the hidden native-keyboard input currently has focus —
+  // drives the mobile "tap to type" control's cursor/box preview so tapping
+  // it shows an active input state immediately, before any letter is typed.
+  const [isInputFocused, setIsInputFocused] = useState(false);
 
   // Read directly from props — no useState copy, avoids the one-render-behind bug
   const gs = gameState?.game_state;
@@ -217,6 +278,16 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
   useEffect(() => {
     const handler = (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // The hidden native input (see nativeInputRef below) has its own
+      // onChange/onKeyDown handling every keystroke while it's focused — a
+      // real keydown bubbles up to window regardless of which element
+      // received it, so without this guard every letter/backspace/enter got
+      // processed TWICE whenever that input had focus (typing "D" produced
+      // "DD", backspace deleted two characters, Enter could double-submit).
+      // Checking document.activeElement directly (not React state) avoids
+      // any risk of a stale/lagging focus flag at the exact moment a
+      // keystroke fires.
+      if (document.activeElement === nativeInputRef.current) return;
       pressKey(e.key.toUpperCase() === 'BACKSPACE' ? '⌫' : e.key.toUpperCase());
     };
     window.addEventListener('keydown', handler);
@@ -316,6 +387,8 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
           value={currentInput}
           onChange={handleNativeInputChange}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); pressKey('ENTER'); } }}
+          onFocus={() => setIsInputFocused(true)}
+          onBlur={() => setIsInputFocused(false)}
           disabled={isOver || isElim || phase !== 'playing'}
           aria-hidden="true"
           tabIndex={-1}
@@ -448,22 +521,30 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
             })}
           </div>
 
-          {/* Opponents */}
+          {/* Opponents — a horizontally-swipeable strip per opponent on
+              mobile (see OpponentStripMobile), the original vertical 6-row
+              grid unchanged on desktop. alignSelf: 'stretch' overrides the
+              row's own alignItems: 'center' so this container actually gets
+              the full width it needs to scroll within, instead of shrinking
+              to its content like a centered child normally would. */}
           {others.length > 0 && (
-            <div className="flex flex-col gap-5">
+            <div
+              className={isMobile ? 'flex flex-col gap-4' : 'flex flex-col gap-5'}
+              style={isMobile ? { width: '100%', alignSelf: 'stretch' } : undefined}
+            >
               {others.map(p => {
                 const pKey = String(p.user_id);
-                return (
-                  <OpponentGrid
-                    key={pKey}
-                    pKey={pKey}
-                    guesses={toStringArray(gs?.guesses?.[pKey])}
-                    results={toStringArray(gs?.results?.[pKey])}
-                    eliminated={eliminated}
-                    winnerKey={winnerKey}
-                    username={p.username}
-                  />
-                );
+                const commonProps = {
+                  pKey,
+                  guesses: toStringArray(gs?.guesses?.[pKey]),
+                  results: toStringArray(gs?.results?.[pKey]),
+                  eliminated,
+                  winnerKey,
+                  username: p.username,
+                };
+                return isMobile
+                  ? <OpponentStripMobile key={pKey} {...commonProps} />
+                  : <OpponentGrid key={pKey} {...commonProps} />;
               })}
             </div>
           )}
@@ -521,8 +602,11 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
             {isMobile ? (
               /* Mobile: Delete | tap-to-type | Enter — letters come from the
                  device's own keyboard (auto-opened on mount where the browser
-                 allows it, or via tapping the grid/this strip otherwise). */
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center', width: '100%', maxWidth: 340, padding: '0 4px' }}>
+                 allows it, or via tapping the grid/this strip otherwise).
+                 Stretched to use most of the viewport width (was capped at a
+                 narrow 340px) with larger icons, so the whole strip is a
+                 comfortable, easy-to-hit target on a real phone. */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center', width: '100%', maxWidth: Math.min(460, vw - 16), padding: '0 4px' }}>
                 {hintData && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#22d3ee', fontSize: 11, fontWeight: 600 }}>
                     <span>💡 Position {hintData.position + 1} is</span>
@@ -531,51 +615,66 @@ export default function WordleGame({ gameState, players, currentUserId, onMove, 
                     </span>
                   </div>
                 )}
-                <div style={{ display: 'flex', gap: 6, alignItems: 'stretch', width: '100%' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', width: '100%' }}>
                   <button
                     onPointerDown={e => { e.preventDefault(); pressKey('⌫'); }}
                     style={{
-                      width: 46, height: 60, background: '#818384', borderRadius: 6, border: 'none',
-                      color: '#fff', fontWeight: 700, fontSize: 18, cursor: 'pointer', userSelect: 'none',
+                      width: 58, height: 68, background: '#818384', borderRadius: 8, border: 'none',
+                      color: '#fff', fontWeight: 700, fontSize: 26, cursor: 'pointer', userSelect: 'none',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                     }}
                   >⌫</button>
                   {/* Live preview of what's being typed on the native keyboard — the
                       Wordle grid up top can end up hidden behind the on-screen keyboard
                       once it opens, so this stays visible right next to the controls.
-                      Shows filled letters + underscore placeholders for the rest;
-                      clears back to the "Tap to type" placeholder on submit (currentInput
-                      resets to '' after a valid guess, same as the grid's own preview). */}
+                      Tapping focuses the hidden input immediately (isInputFocused=true)
+                      and switches straight to a boxed preview with a blinking caret at
+                      the next-to-type position — shows an active "you're typing now"
+                      state even before the first letter lands, not just once
+                      currentInput has content. Each typed letter appears in its own
+                      corresponding box, mirroring the same currentInput state the main
+                      grid's current row already reads from. */}
                   <button
                     onPointerDown={e => { e.preventDefault(); focusNativeInput(); }}
                     style={{
-                      flex: 1, height: 60, background: currentInput ? '#1e1e20' : '#2a2a2c',
-                      borderRadius: 6, border: `1px solid ${currentInput ? '#666' : '#444'}`,
-                      color: currentInput ? '#fff' : '#9ca3af',
-                      fontWeight: 700, cursor: 'pointer', userSelect: 'none',
+                      flex: 1, height: 68, background: '#2a2a2c',
+                      borderRadius: 8, border: `1px solid ${isInputFocused ? '#888' : '#444'}`,
+                      cursor: 'pointer', userSelect: 'none',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      minWidth: 0,
+                      minWidth: 0, padding: '0 6px',
                     }}
                   >
-                    {currentInput ? (
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        {Array.from({ length: WORD_LEN }, (_, i) => currentInput[i] || '_').map((ch, i) => (
-                          <span key={i} style={{ fontSize: 20, letterSpacing: 0, opacity: ch === '_' ? 0.3 : 1, width: 14, textAlign: 'center' }}>
-                            {ch}
-                          </span>
-                        ))}
+                    {(isInputFocused || currentInput) ? (
+                      <div style={{ display: 'flex', gap: 4, width: '100%', justifyContent: 'center' }}>
+                        {Array.from({ length: WORD_LEN }, (_, i) => currentInput[i] || '').map((ch, i) => {
+                          const isCaretPos = isInputFocused && i === currentInput.length;
+                          return (
+                            <div key={i} style={{
+                              width: 30, height: 40, borderRadius: 4,
+                              background: '#121213',
+                              border: `2px solid ${ch ? '#888' : isCaretPos ? '#22d3ee' : '#3a3a3c'}`,
+                              color: '#fff', fontWeight: 700, fontSize: 20,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              flexShrink: 0,
+                            }}>
+                              {ch || (isCaretPos ? (
+                                <span style={{ width: 2, height: 20, background: '#22d3ee', animation: 'wdlCaretBlink 1s step-end infinite' }} />
+                              ) : '')}
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600 }}>
-                        <span>⌨️</span><span>Tap to type</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, color: '#9ca3af' }}>
+                        <span style={{ fontSize: 16 }}>⌨️</span><span>Tap to type</span>
                       </div>
                     )}
                   </button>
                   <button
                     onPointerDown={e => { e.preventDefault(); pressKey('ENTER'); }}
                     style={{
-                      width: 46, height: 60, background: '#538d4e', borderRadius: 6, border: 'none',
-                      color: '#fff', fontWeight: 700, fontSize: 10, cursor: 'pointer', userSelect: 'none',
+                      width: 58, height: 68, background: '#538d4e', borderRadius: 8, border: 'none',
+                      color: '#fff', fontWeight: 700, fontSize: 32, cursor: 'pointer', userSelect: 'none',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                     }}
                   >↵</button>

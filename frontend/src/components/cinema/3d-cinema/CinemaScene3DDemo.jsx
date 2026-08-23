@@ -6110,6 +6110,7 @@ export default function CinemaScene3DDemo() {
         onToggleLeftSidebar={() => setIsLeftSidebarOpen(prev => !prev)}
         toggleAudio={toggleAudio}
         hasOpenModal={isLiveShareWizardOpen} // ✅ Prevent taskbar from showing during wizard
+        isGameLobbyOpen={isGameLobbyOpen}
         isChatActive={isChatOpen || showChatHome}
         isMediaPlaying={isPlaying || isImmersiveMode}
         showSeatMarkers={showSeatMarkers}

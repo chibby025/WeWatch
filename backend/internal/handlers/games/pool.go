@@ -28,6 +28,13 @@ import (
 //                   from the real table every shot. A ball absent from this map (and
 //                   not newly pocketed either) means "off table, not yet placed" —
 //                   used for the cue ball during ball-in-hand.
+//   live_ball_positions  map[string]{x,y,vx,vy} — ephemeral, in-progress snapshot
+//                   while a shot is still rolling on the shooter's device (see
+//                   processPoolShotProgress). Purely cosmetic — the receiving
+//                   side uses it to animate the balls smoothly via velocity-
+//                   based extrapolation instead of only ever seeing the final
+//                   teleport. Never read for foul/turn/win logic, and always
+//                   deleted the moment the real "shot" report lands.
 //
 // Ball IDs: 1-7 = solids, 8 = eight-ball, 9-15 = stripes, 0 = cue ball.
 //
@@ -37,21 +44,64 @@ import (
 //         The client runs physics and reports what happened; server validates
 //         and advances state. Perfect for a social game — no authoritative
 //         physics server needed.
+//   shot_progress — { live_ball_positions: {"id": {x,y,vx,vy}, ...} }
+//         Sent ~10/sec by the shooter's own device while the balls are still
+//         rolling, purely a live visual relay for everyone else — see
+//         processPoolShotProgress. Registered as volatile in game_manager.go
+//         (like ping_pong's state_sync), so it never touches the DB.
+
+// poolInitialGameData is the full starting GameData for a fresh pool game —
+// called from two places: GameManager.StartGame (so the very FIRST
+// game_started broadcast, before any shot has ever happened, already
+// carries the correct rack — see the real bug this closes, documented on
+// ball_positions below) and, as a defensive fallback, processPoolMove's own
+// lazy-init (the established pattern this whole games package uses
+// elsewhere for the same "GameData is a fresh empty runtime map, never
+// auto-seeded from initializeGameState" gap — see the Othello/Checkers
+// history in CLAUDE.md).
+func poolInitialGameData() map[string]interface{} {
+	return map[string]interface{}{
+		"breaking":      true,
+		"open_table":    true,
+		"pocketed":      []interface{}{},
+		"p0_type":       "",
+		"p1_type":       "",
+		"eight_potted":  false,
+		"last_foul":     "",
+		"last_pocketed": []interface{}{},
+		"cue_pos_x":     0.25,
+		"cue_pos_y":     0.5,
+		// Real bug, confirmed by reading the embedded engine's own bridge
+		// script (wewatch-bridge.js): on sync_state, any ball whose ID is
+		// absent from ball_positions is treated as "already pocketed" and
+		// moved off-table — there is no "no data yet, trust your own rack"
+		// case. Leaving this map empty at game start (the original
+		// behavior) meant the very first sync — sent the instant the
+		// iframe reports ready, before any shot has ever happened — told
+		// the engine all 15 balls were gone, hiding the entire rack and
+		// leaving only the cue ball visible/interactive. Seeded here with
+		// the real initial 8-ball triangle rack instead, so the first sync
+		// is genuinely correct rather than "nothing yet".
+		"ball_positions": poolInitialRack(),
+	}
+}
 
 func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uint, moveType string, moveData map[string]interface{}) (gameOver bool, winnerID *uint, err error) {
-	// Lazy-init
+	// Lazy-init — defensive fallback only; StartGame (game_manager.go) is
+	// the primary seeding path now, see poolInitialGameData's own comment.
 	if _, ok := gameState.GameData["breaking"]; !ok {
-		gameState.GameData["breaking"] = true
-		gameState.GameData["open_table"] = true
-		gameState.GameData["pocketed"] = []interface{}{}
-		gameState.GameData["p0_type"] = ""
-		gameState.GameData["p1_type"] = ""
-		gameState.GameData["eight_potted"] = false
-		gameState.GameData["last_foul"] = ""
-		gameState.GameData["last_pocketed"] = []interface{}{}
-		gameState.GameData["cue_pos_x"] = 0.25
-		gameState.GameData["cue_pos_y"] = 0.5
-		gameState.GameData["ball_positions"] = map[string]interface{}{}
+		for k, v := range poolInitialGameData() {
+			gameState.GameData[k] = v
+		}
+	}
+
+	// Live, in-progress shot relay — cosmetic only, no foul/turn/win logic
+	// touched. See processPoolShotProgress's own doc comment for the full
+	// design (paired with game_manager.go's volatileRT entry, this move type
+	// skips the DB move-history + game_state persistence writes since it's a
+	// high-frequency, purely transient visual stream, not a real move).
+	if moveType == "shot_progress" {
+		return processPoolShotProgress(gameState, moveData)
 	}
 
 	if moveType != "shot" {
@@ -75,22 +125,7 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 	// Malformed/missing entries are simply skipped (that ball just won't be
 	// repositioned this round rather than erroring the whole shot out).
 	ballPositionsRaw, _ := moveData["ball_positions"].(map[string]interface{})
-	ballPositions := map[string]interface{}{}
-	for idStr, posRaw := range ballPositionsRaw {
-		posMap, ok := posRaw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		px, okX := posMap["x"].(float64)
-		py, okY := posMap["y"].(float64)
-		if !okX || !okY {
-			continue
-		}
-		ballPositions[idStr] = map[string]interface{}{
-			"x": math.Max(0, math.Min(1, px)),
-			"y": math.Max(0, math.Min(1, py)),
-		}
-	}
+	ballPositions := parsePoolBallPositions(ballPositionsRaw, false)
 
 	var pocketedIDs []int
 	for _, v := range pocketedRaw {
@@ -159,30 +194,11 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 		}
 	}
 
-	if eightPotted {
-		// Sinking the 8 ends the game — legal only when all your own balls are cleared.
-		myBalls := poolPlayerBalls(myType)
-		allCleared := true
-		for _, b := range myBalls {
-			if !alreadyPocketed[b] {
-				allCleared = false
-				break
-			}
-		}
-		if !allCleared || foul != "" {
-			// Illegal 8-pot: opponent wins.
-			oppID := &gameState.Players[opponentIdx].UserID
-			gameState.GameData["eight_potted"] = true
-			gameState.GameData["last_foul"] = "early_eight"
-			return true, oppID, nil
-		}
-		// Legal 8-pot: current player wins.
-		myID := &gameState.Players[playerIdx].UserID
-		gameState.GameData["eight_potted"] = true
-		return true, myID, nil
-	}
-
-	// Assign ball types on first non-cue pocket after break (open table)
+	// Assign ball types on first non-cue pocket after break (open table).
+	// Deliberately runs BEFORE the eight-ball legality check below — a shot
+	// that establishes AND/OR clears the shooter's own group in the very
+	// same stroke as potting the 8-ball needs myType (and openTable)
+	// already resolved for that check to judge it correctly.
 	if openTable && foul == "" && !breaking {
 		for _, id := range newlyPocketed {
 			if id == 8 {
@@ -212,20 +228,19 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 		}
 	}
 
-	// Did the player legally pocket one of their own balls?
-	if foul == "" {
-		for _, id := range newlyPocketed {
-			if id == 8 {
-				continue
-			}
-			if openTable || poolBallType(id) == myType {
-				pocketTurn = true
-				break
-			}
-		}
-	}
-
-	// Merge newly pocketed into the set
+	// Merge newly pocketed into the set and persist the shooter's reported
+	// final board (positions/cue/pocketed list) UNCONDITIONALLY, before the
+	// eight-ball win/loss check below — deliberately moved ahead of that
+	// check (was previously below it, reached only on a non-eight-ball
+	// shot). Both eight-ball branches below `return` immediately once the
+	// win/loss is decided; with this block still below them, a game-ending
+	// 8-ball shot would decide the winner correctly but never actually
+	// persist the fact that the 8-ball (and anything else pocketed in that
+	// same stroke) left the table — a real, confirmed bug where the losing/
+	// winning player's OPPONENT correctly saw who won, but their own board
+	// kept showing the 8-ball (and e.g. a game-winning last money-ball)
+	// still sitting on the table, since sync_state's ball_positions payload
+	// never updated for that final shot.
 	for _, id := range newlyPocketed {
 		alreadyPocketed[id] = true
 	}
@@ -246,6 +261,61 @@ func (gm *GameManager) processPoolMove(gameState *GameSessionState, playerID uin
 	gameState.GameData["cue_pos_x"] = math.Max(0, math.Min(1, cueX))
 	gameState.GameData["cue_pos_y"] = math.Max(0, math.Min(1, cueY))
 	gameState.GameData["ball_positions"] = ballPositions
+	// A late joiner's rehydration reads GameData wholesale — never leave a
+	// stale mid-shot snapshot sitting next to the now-fresh authoritative
+	// positions once the real, final report has landed.
+	delete(gameState.GameData, "live_ball_positions")
+
+	if eightPotted {
+		// Illegal in two cases: any other foul already happened this shot,
+		// or the table is STILL open — meaning no group has ever been
+		// established for anyone (not even by this same shot, checked just
+		// above), so there's no "own group" that could possibly have been
+		// cleared. Real 8-ball rules: the 8 can only be legally sunk once a
+		// player's own group is both established and fully cleared — this
+		// is the fix for a real, confirmed bug where an open-table 8-ball
+		// pot was always ruled a legal win (myType=="" made
+		// poolPlayerBalls return an empty slice, so the old "all cleared"
+		// loop below never ran and silently defaulted to "cleared").
+		illegal8 := foul != "" || openTable
+		if !illegal8 {
+			myBalls := poolPlayerBalls(myType)
+			// Check against alreadyPocketed, which by this point already
+			// has newlyPocketed merged in above — legally clearing your
+			// last remaining ball and potting the 8 in the same stroke is
+			// a real, common, legal win.
+			for _, b := range myBalls {
+				if !alreadyPocketed[b] {
+					illegal8 = true
+					break
+				}
+			}
+		}
+		if illegal8 {
+			// Illegal 8-pot: opponent wins.
+			oppID := &gameState.Players[opponentIdx].UserID
+			gameState.GameData["eight_potted"] = true
+			gameState.GameData["last_foul"] = "early_eight"
+			return true, oppID, nil
+		}
+		// Legal 8-pot: current player wins.
+		myID := &gameState.Players[playerIdx].UserID
+		gameState.GameData["eight_potted"] = true
+		return true, myID, nil
+	}
+
+	// Did the player legally pocket one of their own balls?
+	if foul == "" {
+		for _, id := range newlyPocketed {
+			if id == 8 {
+				continue
+			}
+			if openTable || poolBallType(id) == myType {
+				pocketTurn = true
+				break
+			}
+		}
+	}
 
 	// Turn logic: player keeps the table on a legal pocket; otherwise turn passes.
 	// pool is in selfManagedTurn — game_manager does NOT apply the +1 advance.
@@ -285,6 +355,39 @@ func poolOppositeType(t string) string {
 	return "solids"
 }
 
+// poolInitialRack returns the standard 8-ball triangle rack (balls 1-15) in
+// the same fractional (0-1) table coordinates the frontend/engine use
+// (cue ball excluded — its own default lives separately in cue_pos_x/y
+// above, at fx≈0.244, matching this same coordinate space). Not hand-
+// computed: extracted directly from the real deployed engine's own
+// Rack.eightBall() geometry (src/utils/rack.ts in the tailuge/billiards
+// fork) via a live Playwright session reading window.container.table.balls
+// right after construction — the exact same real positions a fresh table
+// actually starts with, including the engine's own tiny per-ball jitter
+// baked in as a one-time snapshot (cosmetically identical to a real rack;
+// not worth re-deriving per game the way e.g. Wordsmith's tile bag needs
+// genuine per-game randomness for fairness — a pool rack's starting
+// position has no fairness stakes either way).
+func poolInitialRack() map[string]interface{} {
+	return map[string]interface{}{
+		"1":  map[string]interface{}{"x": 0.7559, "y": 0.4999},
+		"2":  map[string]interface{}{"x": 0.7765, "y": 0.5248},
+		"3":  map[string]interface{}{"x": 0.8385, "y": 0.4018},
+		"4":  map[string]interface{}{"x": 0.8180, "y": 0.5247},
+		"5":  map[string]interface{}{"x": 0.7973, "y": 0.4512},
+		"6":  map[string]interface{}{"x": 0.8387, "y": 0.5487},
+		"7":  map[string]interface{}{"x": 0.8179, "y": 0.5737},
+		"8":  map[string]interface{}{"x": 0.7973, "y": 0.5001},
+		"9":  map[string]interface{}{"x": 0.8178, "y": 0.4755},
+		"10": map[string]interface{}{"x": 0.8178, "y": 0.4263},
+		"11": map[string]interface{}{"x": 0.7765, "y": 0.4754},
+		"12": map[string]interface{}{"x": 0.8386, "y": 0.4510},
+		"13": map[string]interface{}{"x": 0.8386, "y": 0.5000},
+		"14": map[string]interface{}{"x": 0.7972, "y": 0.5492},
+		"15": map[string]interface{}{"x": 0.8387, "y": 0.5981},
+	}
+}
+
 // poolPlayerBalls returns the ball IDs (1-7 or 9-15) for a given type.
 func poolPlayerBalls(t string) []int {
 	if t == "solids" {
@@ -294,4 +397,62 @@ func poolPlayerBalls(t string) []int {
 		return []int{9, 10, 11, 12, 13, 14, 15}
 	}
 	return nil
+}
+
+// parsePoolBallPositions clamps and validates a raw {id: {x,y[,vx,vy]}} map
+// exactly as the "shot" handler already did inline — factored out so
+// processPoolShotProgress (below) can reuse the identical clamping/
+// malformed-entry-skipping behavior instead of a second, potentially
+// drifting copy. Malformed/missing entries are simply skipped (that ball
+// just won't be included this round, same "don't error the whole report
+// out over one bad entry" policy the original inline version already had).
+// Velocity fields are read but NOT clamped to [0,1] the way position is —
+// clamping a delta the same way as an absolute coordinate would be wrong;
+// a stray huge value is harmless since the frontend's own extrapolation cap
+// already bounds how far wrong it could ever visually drift.
+func parsePoolBallPositions(raw map[string]interface{}, withVelocity bool) map[string]interface{} {
+	out := map[string]interface{}{}
+	for idStr, posRaw := range raw {
+		posMap, ok := posRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		px, okX := posMap["x"].(float64)
+		py, okY := posMap["y"].(float64)
+		if !okX || !okY {
+			continue
+		}
+		entry := map[string]interface{}{
+			"x": math.Max(0, math.Min(1, px)),
+			"y": math.Max(0, math.Min(1, py)),
+		}
+		if withVelocity {
+			if vx, ok := posMap["vx"].(float64); ok {
+				entry["vx"] = vx
+			}
+			if vy, ok := posMap["vy"].(float64); ok {
+				entry["vy"] = vy
+			}
+		}
+		out[idStr] = entry
+	}
+	return out
+}
+
+// processPoolShotProgress relays a live, in-progress shot snapshot (the
+// shooter's own device, sent roughly every ~100ms while the balls are still
+// rolling — see wewatch-bridge.js's sendShotProgress) to every other
+// connected client, purely cosmetic — no foul/turn/win logic is touched,
+// which stays exclusively owned by the "shot" case above once the shot
+// genuinely settles. Registered as volatile in game_manager.go's
+// ProcessMove (gated to gameType=="pool"), so — like ping_pong's
+// state_sync/air_hockey's mallet_move before it — this never creates a
+// game_moves row and never persists gameState.GameData to the DB; it only
+// flows through the same atomic broadcastGameStateLocked every other move
+// already uses, so every client sees it in the correct order relative to
+// any other pool move.
+func processPoolShotProgress(gameState *GameSessionState, moveData map[string]interface{}) (bool, *uint, error) {
+	liveRaw, _ := moveData["live_ball_positions"].(map[string]interface{})
+	gameState.GameData["live_ball_positions"] = parsePoolBallPositions(liveRaw, true)
+	return false, nil, nil
 }

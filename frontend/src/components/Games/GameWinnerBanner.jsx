@@ -28,6 +28,7 @@ const GAME_LABELS = {
   toad_ball: 'Toad Ball',
   golf: 'Mini Golf',
   rhythm_hero: 'Rhythm Hero',
+  pool: '8-Ball Pool',
 };
 
 /**

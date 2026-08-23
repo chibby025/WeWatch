@@ -5,22 +5,58 @@ import GameRulesButton from './GameRulesButton';
 import GameWinnerBanner from './GameWinnerBanner';
 
 const ROUND_SECONDS = 45;
+const FOUR_FRAMES_SET_SIZE = 20; // mirrors fourFramesCheckpointSize in backend/internal/handlers/games/four_frames.go
+
+const IMAGE_RETRY_MAX = 3;
+const IMAGE_RETRY_DELAYS_MS = [500, 1200, 2200]; // increasing backoff per retry
 
 // One photo cell in the 2x2 grid — real photos fetched server-side from the
 // Pexels API (see backend/internal/handlers/games/four_frames.go), so unlike
-// Rebus Round's token renderer there's no custom drawing here, just an <img>
-// with a graceful fallback if a given URL ever fails to load.
+// Rebus Round's token renderer there's no custom drawing here, just an <img>.
+// A single load failure used to be permanent (an ImageOff placeholder for
+// the rest of the round) even though most real-world failures here are a
+// transient network/CDN blip, not a genuinely dead URL — now retries with
+// backoff before giving up, and forces a real re-fetch (not a browser-cached
+// failure) via a cache-busting query param on each retry.
 function PhotoCell({ url }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [url]); // reset the fallback when a new round's photo arrives
+  const [attempt, setAttempt] = useState(0);
+  const [gaveUp, setGaveUp] = useState(false);
+  const retryTimerRef = useRef(null);
+
+  useEffect(() => {
+    // A new round's photo arrived — reset retry state for it.
+    setAttempt(0);
+    setGaveUp(false);
+    return () => { if (retryTimerRef.current) clearTimeout(retryTimerRef.current); };
+  }, [url]);
+
+  const handleError = () => {
+    if (attempt >= IMAGE_RETRY_MAX) {
+      setGaveUp(true);
+      return;
+    }
+    const delay = IMAGE_RETRY_DELAYS_MS[attempt] || IMAGE_RETRY_DELAYS_MS[IMAGE_RETRY_DELAYS_MS.length - 1];
+    retryTimerRef.current = setTimeout(() => setAttempt(a => a + 1), delay);
+  };
+
   return (
     <div className="aspect-square rounded-xl overflow-hidden bg-gray-900 flex items-center justify-center">
-      {url && !failed ? (
+      {url && !gaveUp ? (
+        // key={attempt} forces React to tear down and recreate the <img>
+        // element on each retry — a genuinely fresh network request rather
+        // than the browser reusing whatever in-memory Image object just
+        // failed. Deliberately not appending a cache-busting query param to
+        // the URL itself: most transient failures (network blip, dropped
+        // connection) were never actually cached as a "success" response in
+        // the first place, and modifying a Pexels CDN URL with an
+        // unrecognized param is an untested risk not worth taking for the
+        // rarer case a bare retry wouldn't already fix.
         <img
+          key={attempt}
           src={url}
           alt=""
           className="w-full h-full object-cover"
-          onError={() => setFailed(true)}
+          onError={handleError}
         />
       ) : (
         <ImageOff className="w-8 h-8 text-gray-700" />
@@ -48,11 +84,21 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
   const totalRounds = Number(gs.total_rounds) || 0;
   const revealedAnswer = gs.revealed_answer || '';
   const revealedAlternates = gs.revealed_alternates || [];
+  const setCompleteNoWinner = !!gs.set_complete_no_winner;
 
   const players = gameState?.players || [];
   const isHostUser = (gameState?.host_id ?? players[0]?.user_id) === currentUserId;
   const isPlayer = players.some(p => p.user_id === currentUserId);
   const isLastRound = totalRounds > 0 && round >= totalRounds;
+
+  // Rounds are gated into checkpoints of FOUR_FRAMES_SET_SIZE (see
+  // fourFramesCheckpointSize in backend/internal/handlers/games/four_frames.go)
+  // — the header shows progress WITHIN the current checkpoint (e.g. "Round
+  // 7/20"), not against the whole ~380-word bank, which is a meaningless
+  // number given the game only ever plays in 20-round batches.
+  const currentSetNumber = round > 0 ? Math.ceil(round / FOUR_FRAMES_SET_SIZE) : 1;
+  const totalSets = totalRounds > 0 ? Math.ceil(totalRounds / FOUR_FRAMES_SET_SIZE) : 0;
+  const positionInSet = round > 0 ? ((round - 1) % FOUR_FRAMES_SET_SIZE) + 1 : 0;
 
   const myCorrectEntry = correctOrder.find(e => Number(e.user_id) === currentUserId);
   const alreadySolvedThisRound = !!myCorrectEntry;
@@ -161,7 +207,10 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
         <div className="flex items-center gap-3">
           <img src="https://LetsWatchOut.b-cdn.net/games/logos/four_frames.png" alt="Four Frames" className="h-8 sm:h-9 w-auto" />
           {round > 0 && totalRounds > 0 && (
-            <span className="text-gray-400 text-sm ml-1">Round {round}/{totalRounds}</span>
+            <span className="text-gray-400 text-sm ml-1">
+              Round {positionInSet}/{FOUR_FRAMES_SET_SIZE}
+              {totalSets > 1 && <> · Set {currentSetNumber}/{totalSets}</>}
+            </span>
           )}
         </div>
         <div className="flex items-center gap-1">
@@ -274,6 +323,11 @@ export default function FourFramesGame({ gameState, currentUserId, onMove, onClo
                 <p className="text-white text-2xl font-black capitalize">{revealedAnswer}</p>
                 {revealedAlternates.length > 0 && (
                   <p className="text-gray-500 text-xs mt-1">Also accepted: {revealedAlternates.join(', ')}</p>
+                )}
+                {setCompleteNoWinner && !isLastRound && (
+                  <p className="text-purple-300 text-xs font-semibold mt-3 bg-purple-900/30 border border-purple-700/40 rounded-lg px-3 py-2 inline-block">
+                    Set {currentSetNumber} complete — no clear leader yet. Moving to set {currentSetNumber + 1} of {totalSets}…
+                  </p>
                 )}
               </div>
             )}

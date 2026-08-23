@@ -26,6 +26,8 @@ import (
 type RebusToken struct {
 	Text   string  `json:"text"`
 	Image  string  `json:"image,omitempty"`  // when set, the frontend renders a photo instead of text — see rtImg
+	Icon   string  `json:"icon,omitempty"`   // when set, the frontend renders a named local icon (e.g. "arrow-up") — see rtIcon. No live fetch, no ambiguity risk, used for directional/symbolic prefixes (OUT/IN/UP/OFF/BACK) and pictograms (checkmark, refresh, flag, dollar sign) that aren't honestly a "photo of a noun".
+	Swatch string  `json:"swatch,omitempty"` // when set, the frontend renders a solid color chip instead of text — see rtSwatch. Used for color-word halves (BLACK/WHITE/BLUE/...).
 	Scale  float64 `json:"scale,omitempty"`  // font-size multiplier; 0 means "use default 1.0"
 	Sup    bool    `json:"sup,omitempty"`    // superscript (raised)
 	Sub    bool    `json:"sub,omitempty"`    // subscript (lowered)
@@ -42,13 +44,75 @@ type RebusPuzzle struct {
 	Answer     string
 	Alternates []string
 	Hint       string
-	// Photo-compound puzzles (see rebusPhotoCompoundSpec below) leave Pattern
-	// empty at shuffle time — the real photo URL isn't known until rebus_start
-	// fetches it live from Pexels, mirroring Four Frames' own round-start
-	// fetch. PhotoWord being non-empty is what marks a puzzle as needing this.
+	// Live-fetch puzzles leave Pattern empty at shuffle time — the real
+	// photo(s) aren't known until rebus_start fetches them from Pexels,
+	// mirroring Four Frames' own round-start fetch. PhotoWord being non-empty
+	// is what marks a puzzle as needing this; which of the other fields are
+	// also set determines the final shape assembled in rebus_start:
+	//   PhotoWord alone                -> one styled image, replacing what
+	//                                      would otherwise be a scaled/
+	//                                      positioned text word (see
+	//                                      PhotoScale/PhotoSub/PhotoSup below)
+	//   PhotoWord + TextWord            -> photo + text compound (the
+	//                                      original "EGG + SHELL" fix)
+	//   PhotoWord + PhotoWordB          -> two-photo compound — the stronger
+	//                                      fix: neither half is spelled-out
+	//                                      text, so there's nothing to just
+	//                                      read and concatenate
 	PhotoWord  string
-	PhotoFirst bool // true: the fetched photo token comes before TextWord; false: after
-	TextWord   string
+	PhotoWordB string // set -> two-photo compound (mutually exclusive with TextWord)
+	TextWord   string // set -> photo + text compound (mutually exclusive with PhotoWordB)
+	PhotoFirst bool   // ordering: does the PhotoWord token come first?
+
+	// Only meaningful when PhotoWord is set alone (no PhotoWordB/TextWord) —
+	// carries the same visual trick the token would have had as styled text
+	// (see rtGenWholeWordScale/rtGenSub/rtGenSup) onto the fetched image
+	// instead, so e.g. "big wig" becomes a large wig *photo*, not large text.
+	PhotoScale float64
+	PhotoSub   bool
+	PhotoSup   bool
+
+	// PartA/PartB — a more general 2-part compound than PhotoWord/PhotoWordB/
+	// TextWord above: each half can independently be plain text, a named
+	// local icon, a solid color swatch, or a live photo (see
+	// RebusCompoundPart). Both nil for every puzzle type above (zero risk to
+	// their already-proven assembly path) — set together only for the
+	// icon/swatch-driven compound conversions in rebusMixedCompoundSpecs
+	// below. rebus_start assembles PartA + "+" + PartB in that order.
+	PartA, PartB *RebusCompoundPart
+}
+
+// RebusCompoundPart — one half of a PartA/PartB mixed compound. Exactly one
+// field should be set. Icon/Swatch resolve instantly (no fetch, no
+// ambiguity risk); Photo is live-fetched from Pexels at rebus_start exactly
+// like PhotoWord/PhotoWordB above.
+type RebusCompoundPart struct {
+	Text   string
+	Icon   string
+	Swatch string
+	Photo  string
+}
+
+// resolveRebusCompoundPart turns one RebusCompoundPart into its final
+// RebusToken. Text/Icon/Swatch are pure data, resolved instantly; Photo
+// goes through the same live rebusPhotoFetcher used by PhotoWord/PhotoWordB
+// elsewhere in this file, so it can fail the same way (a real network/
+// Pexels error) — the caller (rebus_start) surfaces that identically.
+func resolveRebusCompoundPart(part RebusCompoundPart) (RebusToken, error) {
+	switch {
+	case part.Photo != "":
+		url, err := rebusPhotoFetcher(part.Photo)
+		if err != nil {
+			return RebusToken{}, err
+		}
+		return rtImg(url), nil
+	case part.Icon != "":
+		return rtIcon(part.Icon), nil
+	case part.Swatch != "":
+		return rtSwatch(part.Swatch), nil
+	default:
+		return rt(part.Text), nil
+	}
 }
 
 func rt(text string) RebusToken                     { return RebusToken{Text: text} }
@@ -62,6 +126,8 @@ func rtMirror(text string) RebusToken               { return RebusToken{Text: te
 func rtFlip(text string) RebusToken                 { return RebusToken{Text: text, Flip: true} }
 func rtStrike(text string) RebusToken               { return RebusToken{Text: text, Strike: true} }
 func rtImg(url string) RebusToken                   { return RebusToken{Image: url} }
+func rtIcon(name string) RebusToken                 { return RebusToken{Icon: name} }
+func rtSwatch(hex string) RebusToken                { return RebusToken{Swatch: hex} }
 
 // ── Procedural generators ────────────────────────────────────────────────────
 // The 6 pattern "kinds" below (letter-scale, whole-word-scale, compound,
@@ -172,47 +238,38 @@ var rebusGeneratedSpecs = []rebusGenSpec{
 	{kind: "shrink", words: []string{"ICE"}, answer: "shrinking ice"},
 	{kind: "shrink", words: []string{"POPULATION"}, answer: "shrinking population"},
 
-	// Whole-word big/small scale
+	// Whole-word big/small scale. WIG/CHANGE/TOWN/WORLD/STEPS/POTATOES moved
+	// to rebusIconSpecs below — each is a concrete, photographable noun, so
+	// "big wig" etc. now shows a genuinely large *photo*, not large text.
+	// What's left here (SHOT, TIME, PRINT, FRY, NAME, PICTURE, BREAK, LEAGUE,
+	// BUSINESS) is idiomatic/abstract — no honest photo represents "a big
+	// name" or "small print" (referring to text size) without misleading.
 	{kind: "wholeScale", words: []string{"SHOT"}, scale: 2.2, answer: "big shot"},
 	{kind: "wholeScale", words: []string{"TIME"}, scale: 2.2, answer: "big time"},
-	{kind: "wholeScale", words: []string{"WIG"}, scale: 2.2, answer: "big wig"},
 	{kind: "wholeScale", words: []string{"PRINT"}, scale: 0.5, answer: "small print"},
 	{kind: "wholeScale", words: []string{"FRY"}, scale: 0.5, answer: "small fry"},
-	{kind: "wholeScale", words: []string{"CHANGE"}, scale: 0.5, answer: "small change"},
 
-	// Compound words. Entries where BOTH halves would be strong, unambiguous
-	// photo subjects have been moved to rebusPhotoCompoundSpecs below instead
-	// (real Pexels photo for one half + text for the other — the actual fix
-	// for the "EGG + SHELL"-style giveaway, since fully-spelled-out text on
-	// both sides makes the answer a trivial concatenation with zero lateral
-	// thinking required). What's left here is the entries where at least one
-	// half is a preposition/particle or otherwise unphotographable concept
-	// (OVER, UP, DOWN, IN, OUT, work, news, print, etc.) — those genuinely
-	// can't benefit from the photo treatment.
-	{kind: "compound", words: []string{"MOON", "SHINE"}, answer: "moonshine"},
-	{kind: "compound", words: []string{"SUN", "SET"}, answer: "sunset"},
-	{kind: "compound", words: []string{"SUN", "RISE"}, answer: "sunrise"},
-	{kind: "compound", words: []string{"BASE", "BALL"}, answer: "baseball"},
-	{kind: "compound", words: []string{"BLACK", "BOARD"}, answer: "blackboard"},
-	{kind: "compound", words: []string{"NOTE", "BOOK"}, answer: "notebook"},
-	{kind: "compound", words: []string{"WATER", "FALL"}, answer: "waterfall"},
+	// Compound words. Entries where at least one half is a strong,
+	// unambiguous photo subject have been moved to rebusPhotoCompoundSpecs
+	// below instead (real Pexels photo for one or both halves — the actual
+	// fix for the "EGG + SHELL"-style giveaway, since fully-spelled-out text
+	// on both sides makes the answer a trivial concatenation with zero
+	// lateral thinking required). Re-audited a second time (2026-08-23,
+	// prompted by a direct "why can't we use images" question) — moved 15
+	// more entries (SUN+SET/RISE, MOON+SHINE, WATER+FALL, FOOT/FINGER+PRINT,
+	// OVER+TIME, HOME+WORK/TOWN, HEART+BREAK/BEAT, BACK+STAGE, MID+NIGHT,
+	// HAND+OUT, CROSS+ROADS — see rebusPhotoCompoundSpecs) once a genuinely
+	// clean, unambiguous noun on at least one side was found. What's left
+	// here is genuinely stuck as text: every remaining entry has at least
+	// one preposition/particle (OVER, UP, DOWN, IN, OUT) or abstract/
+	// idiomatic half (work, news already moved, print, an etymology-
+	// mismatched half like MARE in "nightmare" — literally a horse, but not
+	// what the word means) that can't honestly be photographed without
+	// misleading the player.
 	{kind: "compound", words: []string{"DAY", "LIGHT"}, answer: "daylight"},
 	{kind: "compound", words: []string{"DAY", "DREAM"}, answer: "daydream"},
 	{kind: "compound", words: []string{"NIGHT", "MARE"}, answer: "nightmare"},
-	{kind: "compound", words: []string{"UP", "STAIRS"}, answer: "upstairs"},
-	{kind: "compound", words: []string{"DOWN", "STAIRS"}, answer: "downstairs"},
-	{kind: "compound", words: []string{"OUT", "SIDE"}, answer: "outside"},
-	{kind: "compound", words: []string{"IN", "SIDE"}, answer: "inside"},
-	{kind: "compound", words: []string{"GRAND", "FATHER"}, answer: "grandfather"},
-	{kind: "compound", words: []string{"GRAND", "MOTHER"}, answer: "grandmother"},
-	{kind: "compound", words: []string{"CLASS", "ROOM"}, answer: "classroom"},
-	{kind: "compound", words: []string{"FOOT", "PRINT"}, answer: "footprint"},
-	{kind: "compound", words: []string{"FINGER", "PRINT"}, answer: "fingerprint"},
-	{kind: "compound", words: []string{"SNOW", "MAN"}, answer: "snowman"},
-	{kind: "compound", words: []string{"LIGHT", "HOUSE"}, answer: "lighthouse"},
 	{kind: "compound", words: []string{"FIRE", "WORK"}, answer: "firework"},
-	{kind: "compound", words: []string{"THUNDER", "STORM"}, answer: "thunderstorm"},
-	{kind: "compound", words: []string{"NEWS", "PAPER"}, answer: "newspaper"},
 	{kind: "compound", words: []string{"LEFT", "OVER"}, answer: "leftover"},
 	{kind: "compound", words: []string{"HANG", "OVER"}, answer: "hangover"},
 	{kind: "compound", words: []string{"TAKE", "OVER"}, answer: "takeover"},
@@ -220,8 +277,6 @@ var rebusGeneratedSpecs = []rebusGenSpec{
 	{kind: "compound", words: []string{"SLEEP", "OVER"}, answer: "sleepover"},
 	{kind: "compound", words: []string{"TURN", "OVER"}, answer: "turnover"},
 	{kind: "compound", words: []string{"PUSH", "OVER"}, answer: "pushover"},
-	{kind: "compound", words: []string{"OVER", "COAT"}, answer: "overcoat"},
-	{kind: "compound", words: []string{"OVER", "TIME"}, answer: "overtime"},
 
 	// Repeat-count (uni-/bi-/tri-/du-)
 	{kind: "repeat", words: []string{"CYCLE"}, count: 1, answer: "unicycle"},
@@ -230,16 +285,20 @@ var rebusGeneratedSpecs = []rebusGenSpec{
 	{kind: "repeat", words: []string{"ANGLE"}, count: 3, answer: "triangle"},
 
 	// Sub (down-) / Sup (up-) prefix, without ever spelling "down"/"up"
-	{kind: "sub", words: []string{"FALL"}, answer: "downfall"},
+	// STREAM/WIND/HILL (sub) and STREAM/HILL/DATE/ROOT/TOWN (sup) moved to
+	// rebusIconSpecs below — each is a literal, safe noun (a real stream,
+	// a real hill, etc.), unlike ROAR/SHOT here, which would be misleading
+	// if photographed literally ("uproar" isn't a lion's roar, "upshot"
+	// isn't a camera shot). FALL/"downfall" also moved to rebusIconSpecs
+	// (2026-08-23) — a "person falling" photo, positioned low, sidesteps
+	// the original season-ambiguity concern (a bare "fall" search risked
+	// autumn foliage) the same way the mixed-compound FALL entries above do.
 	{kind: "sub", words: []string{"GRADE"}, answer: "downgrade"},
 	{kind: "sub", words: []string{"PLAY"}, answer: "downplay"},
 	{kind: "sub", words: []string{"SIDE"}, answer: "downside"},
-	{kind: "sub", words: []string{"STREAM"}, answer: "downstream"},
 	{kind: "sub", words: []string{"TURN"}, answer: "downturn"},
-	{kind: "sub", words: []string{"WIND"}, answer: "downwind"},
 	{kind: "sup", words: []string{"GRADE"}, answer: "upgrade"},
 	{kind: "sup", words: []string{"ROAR"}, answer: "uproar"},
-	{kind: "sup", words: []string{"STREAM"}, answer: "upstream"},
 	{kind: "sup", words: []string{"TURN"}, answer: "upturn"},
 	{kind: "sup", words: []string{"LIFT"}, answer: "uplift"},
 	{kind: "sup", words: []string{"BEAT"}, answer: "upbeat"},
@@ -268,63 +327,171 @@ var rebusGeneratedSpecs = []rebusGenSpec{
 	{kind: "wholeScale", words: []string{"PICTURE"}, scale: 2.2, answer: "big picture"},
 	{kind: "wholeScale", words: []string{"BREAK"}, scale: 2.2, answer: "big break"},
 	{kind: "wholeScale", words: []string{"LEAGUE"}, scale: 2.2, answer: "big league"},
-	{kind: "wholeScale", words: []string{"TOWN"}, scale: 0.5, answer: "small town"},
 	{kind: "wholeScale", words: []string{"BUSINESS"}, scale: 0.5, answer: "small business"},
-	{kind: "wholeScale", words: []string{"WORLD"}, scale: 0.5, answer: "small world"},
-	{kind: "wholeScale", words: []string{"STEPS"}, scale: 0.5, answer: "small steps"},
-	{kind: "wholeScale", words: []string{"POTATOES"}, scale: 0.5, answer: "small potatoes"},
 
 	{kind: "sub", words: []string{"CAST"}, answer: "downcast"},
 	{kind: "sub", words: []string{"RIGHT"}, answer: "downright"},
 	{kind: "sub", words: []string{"SIZE"}, answer: "downsize"},
-	{kind: "sub", words: []string{"TIME"}, answer: "downtime"},
+	// TIME/"downtime" moved to rebusIconSpecs below (a clock photo, positioned
+	// low) — unlike "big time" above (an idiom about magnitude, not a literal
+	// clock), "downtime" genuinely means idle/paused *time*, so a clock is an
+	// honest, unambiguous visual for it — same formula already used for
+	// "update" (photoWord: "calendar", sup) just below in that list.
 	{kind: "sub", words: []string{"WARD"}, answer: "downward"},
-	{kind: "sub", words: []string{"HILL"}, answer: "downhill"},
 	{kind: "sub", words: []string{"LOAD"}, answer: "download"},
 
 	{kind: "sup", words: []string{"LOAD"}, answer: "upload"},
 	{kind: "sup", words: []string{"HOLD"}, answer: "uphold"},
-	{kind: "sup", words: []string{"HILL"}, answer: "uphill"},
 	{kind: "sup", words: []string{"RIGHT"}, answer: "upright"},
 	{kind: "sup", words: []string{"WARD"}, answer: "upward"},
-	{kind: "sup", words: []string{"DATE"}, answer: "update"},
 	{kind: "sup", words: []string{"SET"}, answer: "upset"},
 	{kind: "sup", words: []string{"TIGHT"}, answer: "uptight"},
-	{kind: "sup", words: []string{"ROOT"}, answer: "uproot"},
-	{kind: "sup", words: []string{"TOWN"}, answer: "uptown"},
 	{kind: "sup", words: []string{"SHOT"}, answer: "upshot"},
 
 	// Text compounds using OVER/UNDER/IN/OUT — deliberately kept as plain
 	// text (not converted to photo-compounds, unlike the noun+noun entries
-	// above) since none of these prefixes are photographable on their own.
-	{kind: "compound", words: []string{"OVER", "SEAS"}, answer: "overseas"},
-	{kind: "compound", words: []string{"OVER", "HEAD"}, answer: "overhead"},
-	{kind: "compound", words: []string{"OVER", "LOOK"}, answer: "overlook"},
+	// moved to rebusPhotoCompoundSpecs above) since the non-prefix half here
+	// is also abstract/verb-shaped, not a concrete photographable noun.
 	{kind: "compound", words: []string{"OVER", "DUE"}, answer: "overdue"},
 	{kind: "compound", words: []string{"OVER", "FLOW"}, answer: "overflow"},
 	{kind: "compound", words: []string{"OVER", "WHELM"}, answer: "overwhelm"},
 	{kind: "compound", words: []string{"OVER", "ALL"}, answer: "overall"},
-	{kind: "compound", words: []string{"UNDER", "DOG"}, answer: "underdog"},
-	{kind: "compound", words: []string{"UNDER", "GROUND"}, answer: "underground"},
-	{kind: "compound", words: []string{"UNDER", "WATER"}, answer: "underwater"},
 	{kind: "compound", words: []string{"UNDER", "WEAR"}, answer: "underwear"},
 	{kind: "compound", words: []string{"UNDER", "GO"}, answer: "undergo"},
 	{kind: "compound", words: []string{"UNDER", "MINE"}, answer: "undermine"},
-	{kind: "compound", words: []string{"IN", "COME"}, answer: "income"},
-	{kind: "compound", words: []string{"IN", "PUT"}, answer: "input"},
-	{kind: "compound", words: []string{"IN", "SIGHT"}, answer: "insight"},
-	{kind: "compound", words: []string{"OUT", "COME"}, answer: "outcome"},
-	{kind: "compound", words: []string{"OUT", "LOOK"}, answer: "outlook"},
-	{kind: "compound", words: []string{"OUT", "LINE"}, answer: "outline"},
-	{kind: "compound", words: []string{"OUT", "BREAK"}, answer: "outbreak"},
-	{kind: "compound", words: []string{"OUT", "FIT"}, answer: "outfit"},
-	{kind: "compound", words: []string{"OUT", "GROW"}, answer: "outgrow"},
-	{kind: "compound", words: []string{"OUT", "LAST"}, answer: "outlast"},
+
+	// ── New content, added alongside the image conversions above to grow
+	// the bank toward ~300 total puzzles (see rebusPuzzleBank's own comment
+	// for the full breakdown). Same 6 generator categories — no new content
+	// infrastructure needed, just more word/answer rows.
+	{kind: "compound", words: []string{"CROSS", "WORD"}, answer: "crossword"},
+	{kind: "compound", words: []string{"HEAD", "ACHE"}, answer: "headache"},
+	{kind: "compound", words: []string{"HEAD", "LINE"}, answer: "headline"},
+	{kind: "compound", words: []string{"SIDE", "WALK"}, answer: "sidewalk"},
+	{kind: "compound", words: []string{"SIDE", "TRACK"}, answer: "sidetrack"},
+	{kind: "compound", words: []string{"CROSS", "FIRE"}, answer: "crossfire"},
+	{kind: "compound", words: []string{"WEEK", "DAY"}, answer: "weekday"},
+	{kind: "compound", words: []string{"MID", "TERM"}, answer: "midterm"},
+	{kind: "compound", words: []string{"ON", "GOING"}, answer: "ongoing"},
+
+	{kind: "grow", words: []string{"HUNGER"}, answer: "growing hunger"},
+	{kind: "grow", words: []string{"PRESSURE"}, answer: "growing pressure"},
+	{kind: "grow", words: []string{"SUSPICION"}, answer: "growing suspicion"},
+	{kind: "grow", words: []string{"COMMUNITY"}, answer: "growing community"},
+	{kind: "grow", words: []string{"FANBASE"}, answer: "growing fanbase"},
+	{kind: "grow", words: []string{"REALIZATION"}, answer: "growing realization"},
+	{kind: "shrink", words: []string{"AUDIENCE"}, answer: "shrinking audience"},
+	{kind: "shrink", words: []string{"WORKFORCE"}, answer: "shrinking workforce"},
+	{kind: "shrink", words: []string{"SUPPLY"}, answer: "shrinking supply"},
+	{kind: "shrink", words: []string{"PATIENCE"}, answer: "shrinking patience"},
+	{kind: "shrink", words: []string{"HABITAT"}, answer: "shrinking habitat"},
+	{kind: "shrink", words: []string{"MEMBERSHIP"}, answer: "shrinking membership"},
+	{kind: "repeat", words: []string{"LATERAL"}, count: 2, answer: "bilateral"},
+	{kind: "repeat", words: []string{"LINGUAL"}, count: 2, answer: "bilingual"},
+	{kind: "repeat", words: []string{"PARTITE"}, count: 3, answer: "tripartite"},
+	{kind: "repeat", words: []string{"POD"}, count: 2, answer: "bipod"},
+	{kind: "repeat", words: []string{"POD"}, count: 3, answer: "tripod"},
+	{kind: "sub", words: []string{"BEAT"}, answer: "downbeat"},
+	{kind: "sub", words: []string{"SPIN"}, answer: "downspin"},
+	{kind: "sub", words: []string{"SHIFT"}, answer: "downshift"},
+	{kind: "sup", words: []string{"BRINGING"}, answer: "upbringing"},
+	{kind: "sup", words: []string{"RISING"}, answer: "uprising"},
+	{kind: "sup", words: []string{"SURGE"}, answer: "upsurge"},
+	{kind: "sup", words: []string{"SWING"}, answer: "upswing"},
+	{kind: "sup", words: []string{"WARDS"}, answer: "upwards"},
+
+	// ── Second content-expansion pass (added toward the ~300 target).
+	{kind: "grow", words: []string{"MOVEMENT"}, answer: "growing movement"},
+	{kind: "grow", words: []string{"DIVIDE"}, answer: "growing divide"},
+	{kind: "grow", words: []string{"WORKLOAD"}, answer: "growing workload"},
+	{kind: "grow", words: []string{"RIVALRY"}, answer: "growing rivalry"},
+	{kind: "grow", words: []string{"EXCITEMENT"}, answer: "growing excitement"},
+	{kind: "grow", words: []string{"FRUSTRATION"}, answer: "growing frustration"},
+	{kind: "grow", words: []string{"CURIOSITY"}, answer: "growing curiosity"},
+	{kind: "shrink", words: []string{"OZONE"}, answer: "shrinking ozone"},
+	{kind: "shrink", words: []string{"WAISTLINE"}, answer: "shrinking waistline"},
+	{kind: "shrink", words: []string{"WAGES"}, answer: "shrinking wages"},
+	{kind: "shrink", words: []string{"REVENUE"}, answer: "shrinking revenue"},
+	{kind: "shrink", words: []string{"TEAM"}, answer: "shrinking team"},
+	{kind: "shrink", words: []string{"DEFICIT"}, answer: "shrinking deficit"},
+	{kind: "wholeScale", words: []string{"MOUTH"}, scale: 2.2, answer: "big mouth"},
+	{kind: "wholeScale", words: []string{"DATA"}, scale: 2.2, answer: "big data"},
+	{kind: "repeat", words: []string{"COLOR"}, count: 3, answer: "tricolor", alternates: []string{"tricolour"}},
+	{kind: "repeat", words: []string{"NOMIAL"}, count: 2, answer: "binomial"},
+	{kind: "repeat", words: []string{"VALVE"}, count: 2, answer: "bivalve"},
+	{kind: "repeat", words: []string{"FOCAL"}, count: 2, answer: "bifocal"},
+	{kind: "repeat", words: []string{"PLANE"}, count: 2, answer: "biplane"},
+	{kind: "sub", words: []string{"GRADED"}, answer: "downgraded"},
+	{kind: "sub", words: []string{"HEARTED"}, answer: "downhearted"},
+	{kind: "sup", words: []string{"COMING"}, answer: "upcoming"},
+	{kind: "sup", words: []string{"LIFTING"}, answer: "uplifting"},
+	{kind: "sup", words: []string{"SIDE"}, answer: "upside"},
+	{kind: "sup", words: []string{"START"}, answer: "upstart"},
+	{kind: "compound", words: []string{"DRAW", "BACK"}, answer: "drawback"},
 }
 
 func rebusGeneratedBank() []RebusPuzzle {
 	out := make([]RebusPuzzle, len(rebusGeneratedSpecs))
 	for i, s := range rebusGeneratedSpecs {
+		out[i] = s.toPuzzle()
+	}
+	return out
+}
+
+// rebusIconSpec — the typography-trick equivalent of a photo-compound: a
+// wholeScale/sub/sup puzzle whose single word is a concrete, safe-to-
+// photograph noun gets a real Pexels photo instead of styled text, carrying
+// the exact same visual trick (the *image* is now what's oversized/
+// undersized/raised/lowered) — "big wig" becomes a large wig photo, not
+// large text; "downtown" becomes a town photo sitting low on the line.
+// Every entry here was moved out of rebusGeneratedSpecs above specifically
+// because its word is a literal, unambiguous noun — anything idiomatic or
+// abstract (big shot, downfall, uproar) stays text there instead, since a
+// literal photo of those would misrepresent the actual meaning.
+type rebusIconSpec struct {
+	kind       string // "wholeScale" | "sub" | "sup"
+	photoWord  string
+	scale      float64 // wholeScale only
+	answer     string
+	alternates []string
+	hint       string
+}
+
+func (s rebusIconSpec) toPuzzle() RebusPuzzle {
+	p := RebusPuzzle{Answer: s.answer, Alternates: s.alternates, Hint: s.hint, PhotoWord: s.photoWord}
+	switch s.kind {
+	case "wholeScale":
+		p.PhotoScale = s.scale
+	case "sub":
+		p.PhotoSub = true
+	case "sup":
+		p.PhotoSup = true
+	}
+	return p
+}
+
+var rebusIconSpecs = []rebusIconSpec{
+	{kind: "wholeScale", photoWord: "wig", scale: 2.2, answer: "big wig", alternates: []string{"bigwig"}},
+	{kind: "wholeScale", photoWord: "coins", scale: 0.5, answer: "small change"},
+	{kind: "wholeScale", photoWord: "small town street", scale: 0.5, answer: "small town"},
+	{kind: "wholeScale", photoWord: "globe", scale: 0.5, answer: "small world"},
+	{kind: "wholeScale", photoWord: "footprints in sand", scale: 0.5, answer: "small steps"},
+	{kind: "wholeScale", photoWord: "potatoes", scale: 0.5, answer: "small potatoes"},
+	{kind: "sub", photoWord: "river stream", answer: "downstream"},
+	{kind: "sub", photoWord: "wind blowing trees", answer: "downwind"},
+	{kind: "sup", photoWord: "river stream", answer: "upstream"},
+	{kind: "sup", photoWord: "calendar", answer: "update"},
+	{kind: "sup", photoWord: "plant root", answer: "uproot"},
+	{kind: "sup", photoWord: "small town street", answer: "uptown"},
+	{kind: "sub", photoWord: "green hill", answer: "downhill"},
+	{kind: "sup", photoWord: "green hill", answer: "uphill"},
+	{kind: "sub", photoWord: "clock", answer: "downtime"},
+	{kind: "sub", photoWord: "person falling", answer: "downfall"},
+}
+
+func rebusIconBank() []RebusPuzzle {
+	out := make([]RebusPuzzle, len(rebusIconSpecs))
+	for i, s := range rebusIconSpecs {
 		out[i] = s.toPuzzle()
 	}
 	return out
@@ -354,35 +521,132 @@ func rebusGeneratedBank() []RebusPuzzle {
 // rebusGeneratedSpecs/rebusHandAuthoredBank above instead.
 type rebusPhotoCompoundSpec struct {
 	photoWord  string
-	photoFirst bool // true: photo comes before the text half in the pattern; false: after
-	textWord   string
+	photoFirst bool // true: PhotoWord's token comes first in the pattern; false: after
+	textWord   string // set for a photo+text compound (mutually exclusive with photoWordB)
+	photoWordB string // set for a two-photo compound (mutually exclusive with textWord)
 	answer     string
 	alternates []string
 }
 
+// Two-photo entries (photoWordB set): neither half is spelled-out text, so
+// there's nothing to just read and concatenate — the real fix for the
+// "EGG + SHELL"-as-plain-text giveaway, one level stronger than photo+text.
+// Every one of these started as a photo+text compound; upgraded once it was
+// confirmed the text half is ALSO a strong, unambiguous, safe-to-photograph
+// noun (no idiom/etymology mismatch risk — see the two left as photo+text
+// below for the two cases where the second half genuinely isn't one).
 var rebusPhotoCompoundSpecs = []rebusPhotoCompoundSpec{
-	{photoWord: "egg", photoFirst: true, textWord: "SHELL", answer: "eggshell"},
-	{photoWord: "shell", photoFirst: false, textWord: "SEA", answer: "seashell"},
-	{photoWord: "car", photoFirst: true, textWord: "PET", answer: "carpet"},
-	{photoWord: "flower", photoFirst: false, textWord: "SUN", answer: "sunflower"},
-	{photoWord: "moon", photoFirst: true, textWord: "LIGHT", answer: "moonlight"},
-	{photoWord: "honey jar", photoFirst: true, textWord: "MOON", answer: "honeymoon"},
-	{photoWord: "bee", photoFirst: false, textWord: "HONEY", answer: "honeybee"},
-	{photoWord: "castle", photoFirst: false, textWord: "SAND", answer: "sandcastle"},
+	{photoWord: "egg", photoFirst: true, photoWordB: "seashell", answer: "eggshell"},
+	{photoWord: "seashell", photoFirst: false, photoWordB: "ocean wave", answer: "seashell"},
+	{photoWord: "car", photoFirst: true, photoWordB: "dog", answer: "carpet"},
+	{photoWord: "flower", photoFirst: false, photoWordB: "sun sky", answer: "sunflower"},
+	{photoWord: "moon", photoFirst: true, photoWordB: "lit lightbulb", answer: "moonlight"},
+	{photoWord: "honey jar", photoFirst: true, photoWordB: "full moon", answer: "honeymoon"},
+	{photoWord: "bee", photoFirst: false, photoWordB: "honey jar", answer: "honeybee"},
+	{photoWord: "castle", photoFirst: false, photoWordB: "sand dune", answer: "sandcastle"},
+	// AIR has no clean literal noun photo (it's the sky/atmosphere) — left as
+	// photo+text rather than forcing a misleading second image.
 	{photoWord: "jet aircraft", photoFirst: false, textWord: "AIR", answer: "airplane"},
-	{photoWord: "foot", photoFirst: true, textWord: "BALL", answer: "football"},
-	{photoWord: "wicker basket", photoFirst: true, textWord: "BALL", answer: "basketball"},
-	{photoWord: "key", photoFirst: true, textWord: "BOARD", answer: "keyboard"},
+	{photoWord: "foot", photoFirst: true, photoWordB: "ball", answer: "football"},
+	{photoWord: "wicker basket", photoFirst: true, photoWordB: "basketball", answer: "basketball"},
+	{photoWord: "key", photoFirst: true, photoWordB: "wooden board", answer: "keyboard"},
+	// BACK (the body part) reads oddly as an isolated photo next to a
+	// backpack — left as photo+text.
 	{photoWord: "hiking backpack", photoFirst: false, textWord: "BACK", answer: "backpack"},
-	{photoWord: "melon", photoFirst: false, textWord: "WATER", answer: "watermelon"},
-	{photoWord: "buttered toast", photoFirst: true, textWord: "FLY", answer: "butterfly"},
-	{photoWord: "bed", photoFirst: true, textWord: "ROOM", answer: "bedroom"},
-	{photoWord: "book", photoFirst: true, textWord: "SHELF", answer: "bookshelf"},
-	{photoWord: "coat", photoFirst: false, textWord: "RAIN", answer: "raincoat"},
-	{photoWord: "bonfire", photoFirst: true, textWord: "CAMP", answer: "campfire"},
-	{photoWord: "train tracks", photoFirst: true, textWord: "ROAD", answer: "railroad"},
-	{photoWord: "tooth", photoFirst: true, textWord: "BRUSH", answer: "toothbrush"},
-	{photoWord: "snow", photoFirst: true, textWord: "BALL", answer: "snowball"},
+	{photoWord: "melon", photoFirst: false, photoWordB: "water splash", answer: "watermelon"},
+	{photoWord: "buttered toast", photoFirst: true, photoWordB: "housefly", answer: "butterfly"},
+	{photoWord: "bed", photoFirst: true, photoWordB: "bedroom interior", answer: "bedroom"},
+	{photoWord: "book", photoFirst: true, photoWordB: "wooden shelf", answer: "bookshelf"},
+	{photoWord: "coat", photoFirst: false, photoWordB: "rain storm", answer: "raincoat"},
+	{photoWord: "bonfire", photoFirst: true, photoWordB: "campsite", answer: "campfire"},
+	{photoWord: "train tracks", photoFirst: true, photoWordB: "road", answer: "railroad"},
+	{photoWord: "tooth", photoFirst: true, photoWordB: "hairbrush", answer: "toothbrush"},
+	{photoWord: "snow", photoFirst: true, photoWordB: "ball", answer: "snowball"},
+
+	// New entries converted directly from the plain-text "compound" list
+	// below (rebusGeneratedSpecs) — each has at least one strong,
+	// unambiguous, literal photographable noun. Where only one half
+	// qualifies, textWord carries the other (unphotographable/abstract)
+	// half as before.
+	{photoWord: "baseball", photoFirst: false, textWord: "BASE", answer: "baseball"},
+	{photoWord: "book", photoFirst: false, textWord: "NOTE", answer: "notebook"},
+	{photoWord: "staircase", photoFirst: false, textWord: "UP", answer: "upstairs"},
+	{photoWord: "staircase", photoFirst: false, textWord: "DOWN", answer: "downstairs"},
+	{photoWord: "elderly man", photoFirst: false, textWord: "GRAND", answer: "grandfather"},
+	{photoWord: "elderly woman", photoFirst: false, textWord: "GRAND", answer: "grandmother"},
+	{photoWord: "classroom", photoFirst: false, textWord: "CLASS", answer: "classroom"},
+	{photoWord: "snow", photoFirst: true, photoWordB: "person silhouette", answer: "snowman"},
+	{photoWord: "lit lamp", photoFirst: true, photoWordB: "house", answer: "lighthouse"},
+	{photoWord: "lightning bolt", photoFirst: true, photoWordB: "storm clouds", answer: "thunderstorm"},
+	{photoWord: "newspaper", photoFirst: false, textWord: "NEWS", answer: "newspaper"},
+	{photoWord: "coat", photoFirst: false, textWord: "OVER", answer: "overcoat"},
+	{photoWord: "ocean", photoFirst: false, textWord: "OVER", answer: "overseas"},
+	{photoWord: "human head", photoFirst: false, textWord: "OVER", answer: "overhead"},
+	{photoWord: "dog", photoFirst: false, textWord: "UNDER", answer: "underdog"},
+	{photoWord: "underwater scene", photoFirst: false, textWord: "UNDER", answer: "underwater"},
+	{photoWord: "soil ground", photoFirst: false, textWord: "UNDER", answer: "underground"},
+
+	// Fixes for the two hand-authored puzzles that mixed a plain text word
+	// with an emoji (RAIN+BOW stays text — "bow" is too ambiguous a photo
+	// subject on its own; CAT+NAP gets a real photo for CAT).
+	{photoWord: "cat", photoFirst: true, textWord: "NAP", answer: "catnap"},
+	{photoWord: "open book", photoFirst: true, photoWordB: "worm", answer: "bookworm", alternates: []string{"book worm"}},
+
+	// ── New two-photo entries (added toward the ~300 target) — every one
+	// checked to be a literal decomposition, not an etymology coincidence
+	// (see the "nightmare"/"firecracker" cautions elsewhere in this file).
+	{photoWord: "rain storm", photoFirst: true, photoWordB: "water droplet", answer: "raindrop"},
+	{photoWord: "sun sky", photoFirst: true, photoWordB: "sunglasses", answer: "sunglasses"},
+	{photoWord: "human eye", photoFirst: true, photoWordB: "ball", answer: "eyeball"},
+	{photoWord: "human ear", photoFirst: true, photoWordB: "ring jewelry", answer: "earring"},
+	{photoWord: "human arm", photoFirst: true, photoWordB: "chair", answer: "armchair"},
+	{photoWord: "hand", photoFirst: true, photoWordB: "handbag", answer: "handbag"},
+	{photoWord: "ocean", photoFirst: true, photoWordB: "seahorse", answer: "seahorse"},
+	{photoWord: "ocean", photoFirst: true, photoWordB: "seaweed", answer: "seaweed"},
+	{photoWord: "ocean", photoFirst: true, photoWordB: "beach shore", answer: "seashore"},
+	{photoWord: "ocean", photoFirst: true, photoWordB: "seagull", answer: "seagull"},
+	{photoWord: "flames", photoFirst: true, photoWordB: "firewood logs", answer: "firewood"},
+	{photoWord: "flames", photoFirst: true, photoWordB: "firefighter", answer: "firefighter"},
+	{photoWord: "windy trees", photoFirst: true, photoWordB: "windmill", answer: "windmill"},
+	{photoWord: "honey jar", photoFirst: true, photoWordB: "honeycomb", answer: "honeycomb"},
+	{photoWord: "rain", photoFirst: true, photoWordB: "rainforest", answer: "rainforest"},
+	{photoWord: "snow", photoFirst: true, photoWordB: "snowflake closeup", answer: "snowflake"},
+	{photoWord: "sandpaper texture", photoFirst: false, photoWordB: "paper sheet", answer: "sandpaper"},
+	{photoWord: "teacup", photoFirst: true, photoWordB: "cake", answer: "cupcake"},
+	{photoWord: "frying pan", photoFirst: true, photoWordB: "cake", answer: "pancake"},
+	{photoWord: "cheese block", photoFirst: true, photoWordB: "cake", answer: "cheesecake"},
+	{photoWord: "goldfish", photoFirst: true, photoWordB: "glass bowl", answer: "fishbowl"},
+
+	// ── Second re-audit of rebusGeneratedSpecs' plain-text compounds
+	// (2026-08-23) — 15 more entries moved here once a genuinely clean,
+	// unambiguous noun was found on at least one side. Reuses several
+	// photoWord terms already established elsewhere in this file (moon,
+	// sun sky, water splash, foot, hand, road, small town street) rather
+	// than inventing new search terms — confirmed safe: fetchSingleRebusPhoto
+	// is called independently per puzzle, so the same term appearing in
+	// multiple entries just means two separate live fetches, never a
+	// shared/cached result that could leak one puzzle's photo into another.
+	{photoWord: "sun sky", photoFirst: true, textWord: "SET", answer: "sunset"},
+	{photoWord: "sun sky", photoFirst: true, textWord: "RISE", answer: "sunrise"},
+	{photoWord: "moon", photoFirst: true, textWord: "SHINE", answer: "moonshine"},
+	{photoWord: "water splash", photoFirst: true, textWord: "FALL", answer: "waterfall"},
+	{photoWord: "foot", photoFirst: true, textWord: "PRINT", answer: "footprint"},
+	{photoWord: "finger", photoFirst: true, textWord: "PRINT", answer: "fingerprint"},
+	// OVER has no honest noun photo (a preposition) — TIME does, via the
+	// same clock proxy already used for "downtime" (rebusIconSpecs).
+	{photoWord: "clock", photoFirst: false, textWord: "OVER", answer: "overtime"},
+	{photoWord: "house", photoFirst: true, textWord: "WORK", answer: "homework"},
+	{photoWord: "house", photoFirst: true, photoWordB: "small town street", answer: "hometown"},
+	// "heart shape" (a stylized Valentine heart), not a literal anatomical
+	// photo — keeps this light/safe for a casual game.
+	{photoWord: "heart shape", photoFirst: true, textWord: "BREAK", answer: "heartbreak"},
+	{photoWord: "heart shape", photoFirst: true, textWord: "BEAT", answer: "heartbeat"},
+	// BACK stays text here (directional "behind", not the body part) —
+	// STAGE is the strong, unambiguous noun.
+	{photoWord: "theater stage", photoFirst: false, textWord: "BACK", answer: "backstage"},
+	{photoWord: "night sky stars", photoFirst: false, textWord: "MID", answer: "midnight"},
+	{photoWord: "hand", photoFirst: true, textWord: "OUT", answer: "handout"},
+	{photoWord: "road", photoFirst: false, textWord: "CROSS", answer: "crossroads"},
 }
 
 func (s rebusPhotoCompoundSpec) toPuzzle() RebusPuzzle {
@@ -390,6 +654,7 @@ func (s rebusPhotoCompoundSpec) toPuzzle() RebusPuzzle {
 		Answer:     s.answer,
 		Alternates: s.alternates,
 		PhotoWord:  s.photoWord,
+		PhotoWordB: s.photoWordB,
 		PhotoFirst: s.photoFirst,
 		TextWord:   s.textWord,
 	}
@@ -403,49 +668,191 @@ func rebusPhotoCompoundBank() []RebusPuzzle {
 	return out
 }
 
-// fetchSingleRebusPhoto fetches exactly one photo URL from Pexels for a
+// ── Mixed-visual compounds (added 2026-08-23) ────────────────────────────────
+// A second re-audit of the plain-text "word+word" compounds still left in
+// rebusGeneratedSpecs, prompted by a direct "why can't these use images"
+// question. The blocker for most of them wasn't that no image exists at all
+// — it's that words like OUT/IN/UP/OFF/BACK/CHECK/SPIN/END aren't literal
+// *nouns* a Pexels search can honestly represent; they're directional/
+// symbolic concepts. Rather than force a misleading stock photo, these use
+// a small fixed set of local icons (rtIcon) instead — no live fetch, no risk
+// of an ambiguous/wrong search result, and arguably more universally legible
+// than a photo would be for a pure symbol anyway (an arrow unambiguously
+// means "up"; a stock photo tagged "up" could be almost anything). Color
+// words (BLACK/WHITE/BLUE) get a plain swatch chip (rtSwatch) for the same
+// reason — a solid color IS the literal, unambiguous representation, no
+// photo needed.
+//
+// Valid icon names (rendered by RebusPatternDisplay's RebusIconToken,
+// frontend RebusRoundGame.jsx): "arrow-up" (UP), "log-in" (IN — entering),
+// "log-out" (OUT — exiting), "power" (OFF — a power/toggle switch), "check"
+// (CHECK — a checkmark), "refresh" (SPIN — rotation), "flag" (END — a
+// finish-line flag), "undo" (BACK — a backward-curving arrow, used for the
+// "in return/backward" sense of "back", not the body part — none of the
+// remaining BACK-compounds mean the literal body part), "dollar" (PAY),
+// "eye" (LOOK — deliberately distinct from "check"/checkmark).
+//
+// Same literal-syllable-spelling philosophy already established throughout
+// rebusPhotoCompoundSpecs above (e.g. moonshine's photo has nothing to do
+// with illegally distilled liquor, just spells out MOON+SHINE) — the image
+// represents the word-PART, not necessarily the compound's final idiomatic
+// meaning. Entries where the WHOLE compound's meaning has no honest
+// connection to either half at all (nightmare/undermine/drawback — a photo
+// there risks actively suggesting a wrong, specific, memorable wrong
+// direction, not just an unrelated-but-harmless one) are deliberately left
+// out and stay plain text in rebusGeneratedSpecs, unchanged.
+type rebusMixedCompoundSpec struct {
+	a, b       RebusCompoundPart
+	answer     string
+	alternates []string
+}
+
+func (s rebusMixedCompoundSpec) toPuzzle() RebusPuzzle {
+	a, b := s.a, s.b
+	return RebusPuzzle{Answer: s.answer, Alternates: s.alternates, PartA: &a, PartB: &b}
+}
+
+var rebusMixedCompoundSpecs = []rebusMixedCompoundSpec{
+	{a: RebusCompoundPart{Swatch: "#0a0a0a"}, b: RebusCompoundPart{Text: "BOARD"}, answer: "blackboard"},
+	{a: RebusCompoundPart{Icon: "log-out"}, b: RebusCompoundPart{Text: "SIDE"}, answer: "outside"},
+	{a: RebusCompoundPart{Icon: "log-in"}, b: RebusCompoundPart{Text: "SIDE"}, answer: "inside"},
+	{a: RebusCompoundPart{Text: "OVER"}, b: RebusCompoundPart{Icon: "eye"}, answer: "overlook"},
+	{a: RebusCompoundPart{Icon: "log-in"}, b: RebusCompoundPart{Text: "COME"}, answer: "income"},
+	{a: RebusCompoundPart{Icon: "log-in"}, b: RebusCompoundPart{Text: "PUT"}, answer: "input"},
+	{a: RebusCompoundPart{Icon: "log-in"}, b: RebusCompoundPart{Text: "SIGHT"}, answer: "insight"},
+	{a: RebusCompoundPart{Icon: "log-out"}, b: RebusCompoundPart{Text: "COME"}, answer: "outcome"},
+	{a: RebusCompoundPart{Icon: "log-out"}, b: RebusCompoundPart{Icon: "eye"}, answer: "outlook"},
+	{a: RebusCompoundPart{Icon: "log-out"}, b: RebusCompoundPart{Text: "LINE"}, answer: "outline"},
+	{a: RebusCompoundPart{Icon: "log-out"}, b: RebusCompoundPart{Text: "BREAK"}, answer: "outbreak"},
+	{a: RebusCompoundPart{Icon: "log-out"}, b: RebusCompoundPart{Text: "FIT"}, answer: "outfit"},
+	{a: RebusCompoundPart{Icon: "log-out"}, b: RebusCompoundPart{Photo: "small plant sprout"}, answer: "outgrow"},
+	{a: RebusCompoundPart{Icon: "log-out"}, b: RebusCompoundPart{Text: "LAST"}, answer: "outlast"},
+	// Reuses "house" from rebusPhotoCompoundSpecs' homework/hometown entries.
+	{a: RebusCompoundPart{Photo: "house"}, b: RebusCompoundPart{Text: "SICK"}, answer: "homesick"},
+	{a: RebusCompoundPart{Icon: "undo"}, b: RebusCompoundPart{Photo: "soil ground"}, answer: "background"},
+	{a: RebusCompoundPart{Icon: "undo"}, b: RebusCompoundPart{Photo: "flames"}, answer: "backfire"},
+	{a: RebusCompoundPart{Text: "WEEK"}, b: RebusCompoundPart{Icon: "flag"}, answer: "weekend"},
+	{a: RebusCompoundPart{Icon: "power"}, b: RebusCompoundPart{Photo: "coiled metal spring"}, answer: "offspring"},
+	{a: RebusCompoundPart{Icon: "power"}, b: RebusCompoundPart{Text: "SET"}, answer: "offset"},
+	{a: RebusCompoundPart{Icon: "arrow-up"}, b: RebusCompoundPart{Text: "KEEP"}, answer: "upkeep"},
+	{a: RebusCompoundPart{Swatch: "#2563eb"}, b: RebusCompoundPart{Text: "PRINT"}, answer: "blueprint"},
+	{a: RebusCompoundPart{Swatch: "#0a0a0a"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "blackout"},
+	{a: RebusCompoundPart{Swatch: "#ffffff"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "whiteout"},
+	{a: RebusCompoundPart{Photo: "flames"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "burnout"},
+	{a: RebusCompoundPart{Text: "WORK"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "workout"},
+	{a: RebusCompoundPart{Text: "DROP"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "dropout"},
+	{a: RebusCompoundPart{Icon: "check"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "checkout"},
+	{a: RebusCompoundPart{Photo: "person lying down"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "layout"},
+	// A "person falling" photo, unlike a bare "fall" search, doesn't risk
+	// being read as the autumn season instead.
+	{a: RebusCompoundPart{Photo: "person falling"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "fallout"},
+	{a: RebusCompoundPart{Text: "KNOCK"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "knockout"},
+	{a: RebusCompoundPart{Text: "BREAK"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "breakout"},
+	{a: RebusCompoundPart{Icon: "refresh"}, b: RebusCompoundPart{Icon: "power"}, answer: "spinoff"},
+	{a: RebusCompoundPart{Photo: "soccer player kicking ball"}, b: RebusCompoundPart{Icon: "power"}, answer: "kickoff"},
+	{a: RebusCompoundPart{Text: "STAND"}, b: RebusCompoundPart{Icon: "power"}, answer: "standoff"},
+	{a: RebusCompoundPart{Text: "TAKE"}, b: RebusCompoundPart{Icon: "power"}, answer: "takeoff"},
+	{a: RebusCompoundPart{Text: "PLAY"}, b: RebusCompoundPart{Icon: "power"}, answer: "playoff"},
+	{a: RebusCompoundPart{Text: "SHOW"}, b: RebusCompoundPart{Icon: "power"}, answer: "showoff"},
+	{a: RebusCompoundPart{Photo: "person running"}, b: RebusCompoundPart{Icon: "power"}, answer: "runoff"},
+	{a: RebusCompoundPart{Text: "SET"}, b: RebusCompoundPart{Icon: "undo"}, answer: "setback"},
+	{a: RebusCompoundPart{Text: "FEED"}, b: RebusCompoundPart{Icon: "undo"}, answer: "feedback"},
+	{a: RebusCompoundPart{Text: "COME"}, b: RebusCompoundPart{Icon: "undo"}, answer: "comeback"},
+	{a: RebusCompoundPart{Photo: "person throwing"}, b: RebusCompoundPart{Icon: "undo"}, answer: "throwback"},
+	{a: RebusCompoundPart{Icon: "dollar"}, b: RebusCompoundPart{Icon: "undo"}, answer: "payback"},
+	{a: RebusCompoundPart{Icon: "eye"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "lookout"},
+	{a: RebusCompoundPart{Text: "HIDE"}, b: RebusCompoundPart{Icon: "log-out"}, answer: "hideout"},
+	{a: RebusCompoundPart{Text: "CUT"}, b: RebusCompoundPart{Icon: "undo"}, answer: "cutback"},
+	{a: RebusCompoundPart{Text: "ROLL"}, b: RebusCompoundPart{Icon: "undo"}, answer: "rollback"},
+}
+
+func rebusMixedCompoundBank() []RebusPuzzle {
+	out := make([]RebusPuzzle, len(rebusMixedCompoundSpecs))
+	for i, s := range rebusMixedCompoundSpecs {
+		out[i] = s.toPuzzle()
+	}
+	return out
+}
+
+// rebusPexelsMaxAttempts / rebusPexelsRetryDelay — a transient Pexels/network
+// hiccup (the actual reported cause of "poor loading images") shouldn't force
+// the whole round-start to fail and make the host click "Start" again; retry
+// the fetch itself a couple of times first. Deliberately retries on ANY
+// error (network failure, non-200 status, bad JSON, too few usable photos)
+// rather than trying to classify which errors are "worth" retrying — every
+// case here is either transient or so rare that one more attempt is cheap
+// insurance, and a genuinely persistent failure (e.g. no API key configured)
+// still surfaces the same clear error after the retries are exhausted.
+const rebusPexelsMaxAttempts = 3
+
+var rebusPexelsRetryDelay = 300 * time.Millisecond
+
+// rebusWithPexelsRetry calls fn up to rebusPexelsMaxAttempts times, pausing
+// rebusPexelsRetryDelay between attempts, returning the last error if every
+// attempt fails. Generic so both fetchFourFramesPhotos ([]string) and
+// fetchSingleRebusPhoto (string) can share one retry loop instead of each
+// hand-rolling its own.
+func rebusWithPexelsRetry[T any](fn func() (T, error)) (T, error) {
+	var result T
+	var lastErr error
+	for attempt := 1; attempt <= rebusPexelsMaxAttempts; attempt++ {
+		result, lastErr = fn()
+		if lastErr == nil {
+			return result, nil
+		}
+		if attempt < rebusPexelsMaxAttempts {
+			time.Sleep(rebusPexelsRetryDelay)
+		}
+	}
+	return result, lastErr
+}
+
+// fetchSingleRebusPhoto fetches one usable photo URL from Pexels for a
 // photo-compound puzzle's photographed half — a smaller sibling of
 // fetchFourFramesPhotos (which needs exactly 4 for a 2x2 grid); both live in
 // the same games package and share fourFramesHTTPClient/pexelsPhotoResponse
-// rather than duplicating the client setup.
+// rather than duplicating the client setup. Requests a handful of candidates
+// (not just the single top result) so a top hit with no usable Large/Medium
+// URL doesn't fail the whole fetch outright — falls through to the next one.
 func fetchSingleRebusPhoto(word string) (string, error) {
 	apiKey := os.Getenv("PEXELS_API_KEY")
 	if apiKey == "" {
 		return "", fmt.Errorf("PEXELS_API_KEY is not configured")
 	}
 
-	endpoint := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(word) + "&per_page=1&orientation=square"
-	req, err := http.NewRequest("GET", endpoint, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to build Pexels request: %w", err)
-	}
-	req.Header.Set("Authorization", apiKey)
+	return rebusWithPexelsRetry(func() (string, error) {
+		endpoint := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(word) + "&per_page=5&orientation=square"
+		req, err := http.NewRequest("GET", endpoint, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to build Pexels request: %w", err)
+		}
+		req.Header.Set("Authorization", apiKey)
 
-	resp, err := fourFramesHTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("Pexels request failed: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := fourFramesHTTPClient.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("Pexels request failed: %w", err)
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Pexels returned status %d for query %q", resp.StatusCode, word)
-	}
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("Pexels returned status %d for query %q", resp.StatusCode, word)
+		}
 
-	var parsed pexelsPhotoResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", fmt.Errorf("failed to decode Pexels response: %w", err)
-	}
-	if len(parsed.Photos) == 0 {
-		return "", fmt.Errorf("Pexels returned no photos for query %q", word)
-	}
-	u := parsed.Photos[0].Src.Large
-	if u == "" {
-		u = parsed.Photos[0].Src.Medium
-	}
-	if u == "" {
-		return "", fmt.Errorf("Pexels photo had no usable URL for query %q", word)
-	}
-	return u, nil
+		var parsed pexelsPhotoResponse
+		if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+			return "", fmt.Errorf("failed to decode Pexels response: %w", err)
+		}
+		for _, p := range parsed.Photos {
+			u := p.Src.Large
+			if u == "" {
+				u = p.Src.Medium
+			}
+			if u != "" {
+				return u, nil
+			}
+		}
+		return "", fmt.Errorf("Pexels returned no usable photo for query %q", word)
+	})
 }
 
 // rebusPhotoFetcher — indirected through a package var (defaulting to the
@@ -505,11 +912,9 @@ var rebusHandAuthoredBank = []RebusPuzzle{
 		Answer:  "forget",
 		Hint:    "Four of the same small word, added together.",
 	},
-	{
-		Pattern: []RebusToken{rt("CAT"), rtOp("+"), rt("NAP")},
-		Answer:  "catnap",
-		Hint:    "A short sleep, named after a sneaky pet.",
-	},
+	// CAT+NAP and BOOK+🐛 moved to rebusPhotoCompoundSpecs — both now use a
+	// real photo instead of mixing plain text (or, for BOOK, text mixed with
+	// an emoji for the *other* half) with a picture.
 	{
 		Pattern: []RebusToken{rt("RAIN"), rtOp("+"), rt("BOW")},
 		Answer:  "rainbow",
@@ -517,11 +922,6 @@ var rebusHandAuthoredBank = []RebusPuzzle{
 	{
 		Pattern: []RebusToken{rt("⭐"), rtOp("+"), rt("🐟")},
 		Answer:  "starfish",
-	},
-	{
-		Pattern: []RebusToken{rt("BOOK"), rtOp("+"), rt("🐛")},
-		Answer:  "bookworm",
-		Hint:    "Someone who loves reading + a small crawling critter.",
 	},
 	{
 		Pattern: []RebusToken{rt("🔥"), rtOp("+"), rt("🪰")},
@@ -601,11 +1001,12 @@ var rebusHandAuthoredBank = []RebusPuzzle{
 }
 
 // rebusPuzzleBank — the full combined set (hand-authored + procedurally
-// generated) that rebusShuffledPuzzles() draws from. Computed once at package
-// init via a fresh backing array (not append(rebusHandAuthoredBank, ...)
-// directly) so growing the generated bank later can never alias/corrupt
-// rebusHandAuthoredBank's own underlying array.
-var rebusPuzzleBank = append(append(append([]RebusPuzzle{}, rebusHandAuthoredBank...), rebusGeneratedBank()...), rebusPhotoCompoundBank()...)
+// generated + icon + photo-compound) that rebusShuffledPuzzles() draws from.
+// Computed once at package init via a fresh backing array (not
+// append(rebusHandAuthoredBank, ...) directly) so growing any of the other
+// banks later can never alias/corrupt rebusHandAuthoredBank's own underlying
+// array. Sized to land at ~300 total across all four sources.
+var rebusPuzzleBank = append(append(append(append(append([]RebusPuzzle{}, rebusHandAuthoredBank...), rebusGeneratedBank()...), rebusIconBank()...), rebusPhotoCompoundBank()...), rebusMixedCompoundBank()...)
 
 // rebusNormalize strips case, punctuation, and extra whitespace so "Growing-Old!",
 // "growing old", and "GROWING  OLD" all compare equal. Deliberately no fuzzy
@@ -638,6 +1039,93 @@ func rebusAnswerMatches(p RebusPuzzle, guess string) bool {
 		}
 	}
 	return false
+}
+
+// ── Wrong-guess hints, shared by Rebus Round and Four Frames ────────────────
+// Both games track each player's own wrong-guess count for the CURRENT round
+// only (reset at every *_start move) — a hint only ever appears in that
+// player's own rejection message, matching how these rejections were already
+// private per-move-sender before this feature existed. Escalates gently: the
+// very first wrong guess gets no hint at all (don't spoil an easy puzzle on
+// the first miss), the second reveals a hint, the third+ also reveals the
+// first letter.
+const (
+	rebusHintAfterAttempt      = 2 // show a hint starting on this wrong attempt
+	rebusFirstLetterAfterAttempt = 3 // also reveal the first letter starting here
+)
+
+// rebusIncrementWrongAttempts reads/writes gameState.GameData[stateKey] (a
+// map[string]interface{} keyed by player ID string) and returns the new
+// count for playerID — the same shape both games use, just under their own
+// key ("wrong_attempts") so tracking never collides across a room running
+// two different games (not possible today, but keeps the key namespaced).
+func rebusIncrementWrongAttempts(gameState *GameSessionState, stateKey string, playerID uint) int {
+	raw, _ := gameState.GameData[stateKey].(map[string]interface{})
+	if raw == nil {
+		raw = map[string]interface{}{}
+	}
+	key := fmt.Sprintf("%d", playerID)
+	count, _ := raw[key].(float64)
+	count++
+	raw[key] = count
+	gameState.GameData[stateKey] = raw
+	return int(count)
+}
+
+// rebusResetWrongAttempts clears the per-round tracking map — called from
+// both games' *_start handlers alongside their other per-round resets.
+func rebusResetWrongAttempts(gameState *GameSessionState, stateKey string) {
+	gameState.GameData[stateKey] = map[string]interface{}{}
+}
+
+// rebusGenericHint produces a hint from the answer text alone, for puzzles
+// with no hand-authored Hint — which is most of them (300 Rebus puzzles and
+// the entire Four Frames word bank have no per-entry Hint at all). Reports
+// word/letter counts rather than anything that could read as a spoiler.
+func rebusGenericHint(answer string) string {
+	words := strings.Fields(answer)
+	if len(words) == 0 {
+		return ""
+	}
+	if len(words) == 1 {
+		return fmt.Sprintf("it's %d letters", len([]rune(words[0])))
+	}
+	lens := make([]string, len(words))
+	total := 0
+	for i, w := range words {
+		n := len([]rune(w))
+		lens[i] = fmt.Sprintf("%d", n)
+		total += n
+	}
+	return fmt.Sprintf("it's %d words (%s letters)", len(words), strings.Join(lens, "+"))
+}
+
+// rebusHintForAttempt builds the full wrong-guess suffix for the given
+// attempt count — "" before rebusHintAfterAttempt, otherwise the puzzle's own
+// authored hint (falling back to rebusGenericHint when none was authored),
+// plus a first-letter reveal once attemptCount reaches
+// rebusFirstLetterAfterAttempt. answer/authoredHint are passed separately
+// (rather than a RebusPuzzle) so the identical logic works for Four Frames'
+// FourFramesRound too, without either game needing the other's struct type.
+func rebusHintForAttempt(answer, authoredHint string, attemptCount int) string {
+	if attemptCount < rebusHintAfterAttempt {
+		return ""
+	}
+	hint := authoredHint
+	if hint == "" {
+		hint = rebusGenericHint(answer)
+	}
+	if attemptCount >= rebusFirstLetterAfterAttempt {
+		trimmed := strings.TrimSpace(answer)
+		if trimmed != "" {
+			first := []rune(trimmed)[0]
+			hint = fmt.Sprintf("%s, starts with '%s'", hint, strings.ToUpper(string(first)))
+		}
+	}
+	if hint == "" {
+		return ""
+	}
+	return " Hint: " + hint
 }
 
 // rebusShuffledPuzzles returns a shuffled copy of the full bank — called once
@@ -679,21 +1167,59 @@ func (gm *GameManager) processRebusRoundMove(gameState *GameSessionState, player
 		puzzle := gameState.RebusPuzzles[nextIdx]
 		pattern := puzzle.Pattern
 		if puzzle.PhotoWord != "" {
-			// Photo-compound puzzle — Pattern was left empty at shuffle time;
-			// fetch the real photo now (same live-fetch-at-round-start shape
-			// as four_frames_start) and assemble the final pattern from it.
+			// Live-fetch puzzle — Pattern was left empty at shuffle time; fetch
+			// the real photo(s) now (same live-fetch-at-round-start shape as
+			// four_frames_start) and assemble the final pattern. Three shapes,
+			// depending on which other fields are set — see RebusPuzzle's own
+			// doc comment.
 			photoURL, ferr := rebusPhotoFetcher(puzzle.PhotoWord)
 			if ferr != nil {
 				log.Printf("⚠️ [RebusRound] Pexels fetch failed for %q: %v", puzzle.PhotoWord, ferr)
 				return false, nil, fmt.Errorf("couldn't load the picture for this puzzle — try again")
 			}
 			photoTok := rtImg(photoURL)
-			textTok := rt(puzzle.TextWord)
-			if puzzle.PhotoFirst {
-				pattern = []RebusToken{photoTok, rtOp("+"), textTok}
-			} else {
-				pattern = []RebusToken{textTok, rtOp("+"), photoTok}
+			switch {
+			case puzzle.PhotoWordB != "":
+				photoURLB, ferrB := rebusPhotoFetcher(puzzle.PhotoWordB)
+				if ferrB != nil {
+					log.Printf("⚠️ [RebusRound] Pexels fetch failed for %q: %v", puzzle.PhotoWordB, ferrB)
+					return false, nil, fmt.Errorf("couldn't load the picture for this puzzle — try again")
+				}
+				photoTokB := rtImg(photoURLB)
+				if puzzle.PhotoFirst {
+					pattern = []RebusToken{photoTok, rtOp("+"), photoTokB}
+				} else {
+					pattern = []RebusToken{photoTokB, rtOp("+"), photoTok}
+				}
+			case puzzle.TextWord != "":
+				textTok := rt(puzzle.TextWord)
+				if puzzle.PhotoFirst {
+					pattern = []RebusToken{photoTok, rtOp("+"), textTok}
+				} else {
+					pattern = []RebusToken{textTok, rtOp("+"), photoTok}
+				}
+			default:
+				// Single styled image — replaces what would otherwise be a
+				// scaled/positioned text word (rebusIconSpecs).
+				photoTok.Scale = puzzle.PhotoScale
+				photoTok.Sub = puzzle.PhotoSub
+				photoTok.Sup = puzzle.PhotoSup
+				pattern = []RebusToken{photoTok}
 			}
+		} else if puzzle.PartA != nil && puzzle.PartB != nil {
+			// Mixed-visual compound (rebusMixedCompoundSpecs) — each half
+			// independently resolves to text/icon/swatch/photo.
+			tokA, ferrA := resolveRebusCompoundPart(*puzzle.PartA)
+			if ferrA != nil {
+				log.Printf("⚠️ [RebusRound] Pexels fetch failed for mixed compound part %+v: %v", puzzle.PartA, ferrA)
+				return false, nil, fmt.Errorf("couldn't load the picture for this puzzle — try again")
+			}
+			tokB, ferrB := resolveRebusCompoundPart(*puzzle.PartB)
+			if ferrB != nil {
+				log.Printf("⚠️ [RebusRound] Pexels fetch failed for mixed compound part %+v: %v", puzzle.PartB, ferrB)
+				return false, nil, fmt.Errorf("couldn't load the picture for this puzzle — try again")
+			}
+			pattern = []RebusToken{tokA, rtOp("+"), tokB}
 		}
 		gameState.GameData["phase"] = "puzzle"
 		gameState.GameData["round"] = float64(nextIdx + 1)
@@ -702,6 +1228,7 @@ func (gm *GameManager) processRebusRoundMove(gameState *GameSessionState, player
 		gameState.GameData["revealed_answer"] = ""
 		gameState.GameData["revealed_alternates"] = []interface{}{}
 		gameState.GameData["started_at"] = float64(time.Now().UnixMilli())
+		rebusResetWrongAttempts(gameState, "wrong_attempts")
 		return false, nil, nil
 
 	case "answer":
@@ -731,7 +1258,8 @@ func (gm *GameManager) processRebusRoundMove(gameState *GameSessionState, player
 
 		puzzle := gameState.RebusPuzzles[idx]
 		if !rebusAnswerMatches(puzzle, guess) {
-			return false, nil, fmt.Errorf("not quite — try again!")
+			attempts := rebusIncrementWrongAttempts(gameState, "wrong_attempts", playerID)
+			return false, nil, fmt.Errorf("not quite — try again!%s", rebusHintForAttempt(puzzle.Answer, puzzle.Hint, attempts))
 		}
 
 		rank := len(correctOrderRaw)
@@ -767,6 +1295,26 @@ func (gm *GameManager) processRebusRoundMove(gameState *GameSessionState, player
 			alts[i] = a
 		}
 		gameState.GameData["revealed_alternates"] = alts
+		gameState.GameData["set_complete_no_winner"] = false
+
+		// Puzzles are gated into sets of rebusSetSize (20): once a set
+		// finishes, check whether someone has pulled decisively ahead. If so,
+		// the game ends right here — no need to grind through the remaining
+		// sets once the outcome is already settled. If it's a tie (including
+		// everyone still at 0), play continues into the next set. The very
+		// last set reaching this same "no sole leader" state is exactly a
+		// draw — no special-casing needed, since round hitting
+		// len(RebusPuzzles) already routes to the existing "Show Results"
+		// flow, which computes the identical tie-is-a-draw result via
+		// rebusWinnerFromScores below.
+		isSetBoundary := int(round) > 0 && int(round)%rebusSetSize == 0
+		if isSetBoundary {
+			if winner := rebusWinnerFromScores(gameState); winner != nil {
+				gameState.GameData["phase"] = "ended"
+				return true, winner, nil
+			}
+			gameState.GameData["set_complete_no_winner"] = true
+		}
 		return false, nil, nil
 
 	case "rebus_end":
@@ -776,26 +1324,42 @@ func (gm *GameManager) processRebusRoundMove(gameState *GameSessionState, player
 		if playerID != hostID {
 			return false, nil, fmt.Errorf("only the host can end the game")
 		}
-		scores, _ := gameState.GameData["scores"].(map[string]interface{})
-		var bestScore float64 = -1
-		var winners []uint
-		for _, p := range gameState.Players {
-			s, _ := scores[fmt.Sprintf("%d", p.UserID)].(float64)
-			if s > bestScore {
-				bestScore = s
-				winners = []uint{p.UserID}
-			} else if s == bestScore {
-				winners = append(winners, p.UserID)
-			}
-		}
-		var wID *uint
-		if len(winners) == 1 {
-			wID = &winners[0]
-		}
+		wID := rebusWinnerFromScores(gameState)
 		gameState.GameData["phase"] = "ended"
 		return true, wID, nil
 
 	default:
 		return false, nil, fmt.Errorf("unknown rebus_round move type: %s", moveType)
 	}
+}
+
+// rebusSetSize gates puzzles into batches — after every rebusSetSize'th
+// puzzle is revealed, the game checks whether someone has pulled decisively
+// ahead (rebusWinnerFromScores) before letting play continue into the next
+// batch. 300 total puzzles / 20 per set = 15 sets exactly.
+const rebusSetSize = 20
+
+// rebusWinnerFromScores returns the sole highest-scoring player, or nil if
+// there's a tie (including everyone still at 0 — the very first check ever
+// run naturally lands here, since every player starts at bestScore's initial
+// sentinel simultaneously). Shared by the reveal-time set-boundary check and
+// rebus_end, so "no clear leader" always means the same thing regardless of
+// which of the two triggers it.
+func rebusWinnerFromScores(gameState *GameSessionState) *uint {
+	scores, _ := gameState.GameData["scores"].(map[string]interface{})
+	var bestScore float64 = -1
+	var winners []uint
+	for _, p := range gameState.Players {
+		s, _ := scores[fmt.Sprintf("%d", p.UserID)].(float64)
+		if s > bestScore {
+			bestScore = s
+			winners = []uint{p.UserID}
+		} else if s == bestScore {
+			winners = append(winners, p.UserID)
+		}
+	}
+	if len(winners) == 1 {
+		return &winners[0]
+	}
+	return nil
 }

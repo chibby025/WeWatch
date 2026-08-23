@@ -515,57 +515,62 @@ var fourFramesHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 // fetchFourFramesPhotos calls the real Pexels search API server-side (the API
 // key is a secret — this must never run client-side, unlike OpenTDB/LRCLIB
-// which need no key at all) and returns up to 4 photo URLs for word. Returns
-// an error if PEXELS_API_KEY isn't configured, the request fails, or Pexels
-// returns fewer than 4 usable photos for this word.
+// which need no key at all) and returns 4 photo URLs for word. Wrapped in
+// rebusWithPexelsRetry (see rebus_round.go) so a transient network/Pexels
+// hiccup doesn't fail the whole round-start outright, and requests a wider
+// candidate pool (15, not 6) so a handful of results with no usable
+// Large/Medium URL — or a weak, off-topic top hit — still leaves enough
+// good candidates to fill all 4 slots from Pexels' own relevance ranking.
 func fetchFourFramesPhotos(word string) ([]string, error) {
 	apiKey := os.Getenv("PEXELS_API_KEY")
 	if apiKey == "" {
 		return nil, fmt.Errorf("PEXELS_API_KEY is not configured")
 	}
 
-	endpoint := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(word) + "&per_page=6&orientation=square"
-	req, err := http.NewRequest("GET", endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build Pexels request: %w", err)
-	}
-	req.Header.Set("Authorization", apiKey)
-
-	resp, err := fourFramesHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("Pexels request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Pexels returned status %d for query %q", resp.StatusCode, word)
-	}
-
-	var parsed pexelsPhotoResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("failed to decode Pexels response: %w", err)
-	}
-
-	var urls []string
-	for _, p := range parsed.Photos {
-		// Prefer a square-ish crop (large) for a consistent 2x2 grid on the
-		// frontend; medium is Pexels' own fallback if large is ever empty.
-		u := p.Src.Large
-		if u == "" {
-			u = p.Src.Medium
+	return rebusWithPexelsRetry(func() ([]string, error) {
+		endpoint := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(word) + "&per_page=15&orientation=square"
+		req, err := http.NewRequest("GET", endpoint, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build Pexels request: %w", err)
 		}
-		if u != "" {
-			urls = append(urls, u)
-		}
-		if len(urls) == 4 {
-			break
-		}
-	}
+		req.Header.Set("Authorization", apiKey)
 
-	if len(urls) < 4 {
-		return nil, fmt.Errorf("Pexels returned only %d usable photo(s) for query %q, need 4", len(urls), word)
-	}
-	return urls, nil
+		resp, err := fourFramesHTTPClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("Pexels request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("Pexels returned status %d for query %q", resp.StatusCode, word)
+		}
+
+		var parsed pexelsPhotoResponse
+		if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+			return nil, fmt.Errorf("failed to decode Pexels response: %w", err)
+		}
+
+		var urls []string
+		for _, p := range parsed.Photos {
+			// Prefer a square-ish crop (large) for a consistent 2x2 grid on the
+			// frontend; medium is Pexels' own fallback if large is ever empty.
+			u := p.Src.Large
+			if u == "" {
+				u = p.Src.Medium
+			}
+			if u != "" {
+				urls = append(urls, u)
+			}
+			if len(urls) == 4 {
+				break
+			}
+		}
+
+		if len(urls) < 4 {
+			return nil, fmt.Errorf("Pexels returned only %d usable photo(s) for query %q, need 4", len(urls), word)
+		}
+		return urls, nil
+	})
 }
 
 // fourFramesPhotoFetcher — indirected through a package var (defaulting to
@@ -635,6 +640,7 @@ func (gm *GameManager) processFourFramesMove(gameState *GameSessionState, player
 		gameState.GameData["revealed_answer"] = ""
 		gameState.GameData["revealed_alternates"] = []interface{}{}
 		gameState.GameData["started_at"] = float64(time.Now().UnixMilli())
+		rebusResetWrongAttempts(gameState, "wrong_attempts")
 		return false, nil, nil
 
 	case "answer":
@@ -664,7 +670,8 @@ func (gm *GameManager) processFourFramesMove(gameState *GameSessionState, player
 
 		fr := gameState.FourFramesRounds[idx]
 		if !fourFramesAnswerMatches(fr, guess) {
-			return false, nil, fmt.Errorf("not quite — try again!")
+			attempts := rebusIncrementWrongAttempts(gameState, "wrong_attempts", playerID)
+			return false, nil, fmt.Errorf("not quite — try again!%s", rebusHintForAttempt(fr.Word, fr.Hint, attempts))
 		}
 
 		rank := len(correctOrderRaw)
@@ -700,15 +707,20 @@ func (gm *GameManager) processFourFramesMove(gameState *GameSessionState, player
 			alts[i] = a
 		}
 		gameState.GameData["revealed_alternates"] = alts
+		gameState.GameData["set_complete_no_winner"] = false
 
 		// Checkpoint: every fourFramesCheckpointSize rounds, end the game
 		// early if a single player is clearly ahead, rather than always
-		// playing through the entire word bank in one sitting.
+		// playing through the entire word bank in one sitting. Mirrors Rebus
+		// Round's identical set-boundary gate (rebusSetSize/reveal case) —
+		// set_complete_no_winner lets the frontend tell the player why
+		// nothing decisive happened yet, instead of a silent continue.
 		if int(round)%fourFramesCheckpointSize == 0 {
 			if leaderID, leaderScore := fourFramesLeaderInfo(gameState); leaderID != nil && leaderScore > 0 {
 				gameState.GameData["phase"] = "ended"
 				return true, leaderID, nil
 			}
+			gameState.GameData["set_complete_no_winner"] = true
 		}
 		return false, nil, nil
 

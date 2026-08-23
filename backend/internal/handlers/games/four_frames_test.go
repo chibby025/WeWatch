@@ -2,6 +2,7 @@ package games
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"wewatch-backend/internal/models"
 )
@@ -382,5 +383,29 @@ func TestFetchFourFramesPhotosRequiresAPIKey(t *testing.T) {
 	_, err := fetchFourFramesPhotos("elephant")
 	if err == nil {
 		t.Fatal("expected fetchFourFramesPhotos to fail with no API key configured")
+	}
+}
+
+// TestFourFramesAnswerWrongIncludesHintFromSecondAttempt mirrors Rebus
+// Round's identical test — shared rebusIncrementWrongAttempts/
+// rebusHintForAttempt wiring, confirmed working for this game too. No entry
+// in fourFramesWordBank has an authored Hint, so this also exercises the
+// generic (letter-count) fallback for real, not just the authored-hint path
+// Rebus Round's own version already covers.
+func TestFourFramesAnswerWrongIncludesHintFromSecondAttempt(t *testing.T) {
+	gm := &GameManager{}
+	gs := makeTestFourFramesState(2)
+	gs.GameData["round"] = float64(1)
+	gs.GameData["phase"] = "puzzle"
+	word := gs.FourFramesRounds[0].Word
+
+	_, _, err1 := gm.processFourFramesMove(gs, fourFramesTestHostID, "answer", map[string]interface{}{"guess": "definitely wrong"})
+	if err1 == nil || strings.Contains(err1.Error(), "Hint:") {
+		t.Fatalf("expected the first wrong guess to carry no hint, got %v", err1)
+	}
+	_, _, err2 := gm.processFourFramesMove(gs, fourFramesTestHostID, "answer", map[string]interface{}{"guess": "still wrong"})
+	wantHint := "Hint: " + rebusGenericHint(word)
+	if err2 == nil || !strings.Contains(err2.Error(), wantHint) {
+		t.Fatalf("expected the second wrong guess to include %q, got %v", wantHint, err2)
 	}
 }
