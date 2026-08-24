@@ -965,14 +965,23 @@ export default function PingPongGame({ gameState, players, currentUserId, onMove
       )}
 
       {/* Canvas — fills remaining space with aspect ratio preserved */}
-      <div className="flex-1 relative flex items-center justify-center overflow-hidden px-2 py-1">
+      <div className="flex-1 min-h-0 relative flex items-center justify-center overflow-hidden px-2 py-1">
         <canvas
           ref={canvasRef}
           width={W}
           height={H}
           onMouseMove={handlePointerMove}
           onTouchMove={handlePointerMove}
-          style={{ width: '100%', maxWidth: `${W}px`, height: 'auto', cursor: 'none', touchAction: 'none', display: 'block' }}
+          style={{
+            maxWidth: '100%',
+            maxHeight: '100%',
+            width: 'auto',
+            height: 'auto',
+            aspectRatio: `${W} / ${H}`,
+            cursor: 'none',
+            touchAction: 'none',
+            display: 'block',
+          }}
         />
 
         {/* Serving pause — replaces the old instant/flickery goal flash with a

@@ -378,6 +378,71 @@ func TestFourFramesCheckpointContinuesWhenTied(t *testing.T) {
 	}
 }
 
+// TestPexelsAltLooksRelevant uses the exact real alt-text strings captured
+// live from api.pexels.com on 2026-08 for a "bat" search — the confirmed real
+// case this filter exists to catch (a genuine bat photo mixed with a
+// baseball-game photo and an unrelated insect photo, all returned for the
+// same bare "bat" query).
+func TestPexelsAltLooksRelevant(t *testing.T) {
+	cases := []struct {
+		name string
+		word string
+		alt  string
+		want bool
+	}{
+		{
+			name: "real bat photo passes",
+			word: "flying bat",
+			alt:  "Intimate close-up showing common big-eared bats hanging in Gamboa, Panama. Detailed view of nocturnal wildlife.",
+			want: true,
+		},
+		{
+			name: "baseball photo correctly rejected for a bat query",
+			word: "flying bat",
+			alt:  "Action-packed baseball game capture in Chicago, featuring players in a thrilling match.",
+			want: false,
+		},
+		{
+			name: "unrelated insect photo correctly rejected",
+			word: "flying bat",
+			alt:  "A true bug contemplates leaping off the bridge.",
+			want: false,
+		},
+		{
+			name: "empty alt text is never penalized",
+			word: "elephant",
+			alt:  "",
+			want: true,
+		},
+		{
+			name: "case and punctuation differences still match",
+			word: "Elephant",
+			alt:  "A GRAY ELEPHANT, standing in a field!",
+			want: true,
+		},
+		{
+			name: "multi-word query matches on any one overlapping word",
+			word: "hot air balloon",
+			alt:  "Colorful balloon festival at sunrise.",
+			want: true,
+		},
+		{
+			name: "multi-word query with zero overlap is rejected",
+			word: "hot air balloon",
+			alt:  "A red sports car parked on a city street.",
+			want: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := pexelsAltLooksRelevant(c.word, c.alt)
+			if got != c.want {
+				t.Errorf("pexelsAltLooksRelevant(%q, %q) = %v, want %v", c.word, c.alt, got, c.want)
+			}
+		})
+	}
+}
+
 func TestFetchFourFramesPhotosRequiresAPIKey(t *testing.T) {
 	t.Setenv("PEXELS_API_KEY", "")
 	_, err := fetchFourFramesPhotos("elephant")

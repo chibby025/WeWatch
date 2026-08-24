@@ -176,7 +176,18 @@ var fourFramesWordBank = []FourFramesRound{
 	{Word: "lemur"},
 	{Word: "orangutan"},
 	{Word: "chimpanzee"},
-	{Word: "bat", Alternates: []string{"fruit bat"}},
+	// "bat" removed entirely (2026-08) — genuinely, not just once, confirmed
+	// live against the real Pexels API across 5 different search phrasings
+	// ("bat", "flying bat", "bat animal", "vampire bat", "bat wings"), every
+	// one of which returned mostly baseball, birds, random zoo animals, or
+	// Halloween-costume photos rather than the animal — no query phrasing
+	// reliably fixed it, so rather than ship a known-unreliable puzzle this
+	// entry is dropped instead of "fixed" with a disambiguation that doesn't
+	// actually work. See pexelsAltLooksRelevant's own doc comment for the
+	// general-purpose filter added alongside this — that filter does work
+	// well for ordinary unambiguous nouns (confirmed live for "elephant":
+	// 4/4 genuinely correct matches, zero fallback needed); "bat" was a
+	// genuine outlier, not evidence the filter itself is unreliable.
 	{Word: "eagle"},
 	{Word: "falcon"},
 	{Word: "parrot"},
@@ -503,6 +514,7 @@ func fourFramesScoreRank(rank int) float64 {
 
 type pexelsPhotoResponse struct {
 	Photos []struct {
+		Alt string `json:"alt"`
 		Src struct {
 			Large    string `json:"large"`
 			Medium   string `json:"medium"`
@@ -512,6 +524,39 @@ type pexelsPhotoResponse struct {
 }
 
 var fourFramesHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
+// pexelsAltLooksRelevant is a soft relevance check against Pexels' own alt
+// text for a photo (a short description Pexels attaches to most, though not
+// all, photos). Confirmed live (2026-08) that this genuinely catches real
+// mismatches for an ordinary, unambiguous word: a search for "elephant"
+// returns 4/4 correct elephant photos cleanly, while a ambiguous word like
+// the former "bat" entry (removed from fourFramesWordBank — see its own
+// comment) returned a real bat photo ALONGSIDE a baseball game photo and an
+// unrelated insect photo, all for the same query — Pexels' own relevance
+// ranking alone was the only signal this pipeline used before, with zero
+// validation that a result actually depicts the word searched for.
+// Deliberately a soft preference, not a hard filter — see both call sites:
+// alt text isn't always present or perfectly worded, and being too strict
+// would make "not enough usable photos" fire far more often, trading one
+// reliability problem for another. This filter alone can't rescue every
+// genuinely pathological word (a word whose own alt-text vocabulary overlaps
+// multiple unrelated subjects, like "bat" did) — for those, removing the word
+// is the more honest fix; see the word-bank comment for that specific case.
+func pexelsAltLooksRelevant(word, alt string) bool {
+	if strings.TrimSpace(alt) == "" {
+		return true // no alt text to judge by — don't penalize what can't be checked
+	}
+	altNorm := rebusNormalize(alt)
+	for _, w := range strings.Fields(rebusNormalize(word)) {
+		if len(w) < 3 {
+			continue // skip tiny connector words ("a", "of") that would match almost anything
+		}
+		if strings.Contains(altNorm, w) {
+			return true
+		}
+	}
+	return false
+}
 
 // fetchFourFramesPhotos calls the real Pexels search API server-side (the API
 // key is a secret — this must never run client-side, unlike OpenTDB/LRCLIB
@@ -550,7 +595,11 @@ func fetchFourFramesPhotos(word string) ([]string, error) {
 			return nil, fmt.Errorf("failed to decode Pexels response: %w", err)
 		}
 
-		var urls []string
+		// Two passes: relevant (alt text plausibly matches the word) fill the 4
+		// slots first; fallback (off-topic or no-alt-text) photos only get used
+		// if relevant ones alone don't reach 4 — never fail the round just
+		// because the relevance filter was stricter than the pool could satisfy.
+		var relevant, fallback []string
 		for _, p := range parsed.Photos {
 			// Prefer a square-ish crop (large) for a consistent 2x2 grid on the
 			// frontend; medium is Pexels' own fallback if large is ever empty.
@@ -558,12 +607,24 @@ func fetchFourFramesPhotos(word string) ([]string, error) {
 			if u == "" {
 				u = p.Src.Medium
 			}
-			if u != "" {
-				urls = append(urls, u)
+			if u == "" {
+				continue
 			}
+			if pexelsAltLooksRelevant(word, p.Alt) {
+				relevant = append(relevant, u)
+			} else {
+				fallback = append(fallback, u)
+			}
+			if len(relevant) == 4 {
+				break
+			}
+		}
+		urls := relevant
+		for _, u := range fallback {
 			if len(urls) == 4 {
 				break
 			}
+			urls = append(urls, u)
 		}
 
 		if len(urls) < 4 {

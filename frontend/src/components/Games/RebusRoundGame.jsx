@@ -190,15 +190,36 @@ function RebusPatternDisplay({ pattern }) {
   );
 }
 
+const GUESS_STUCK_TIMEOUT_MS = 6000;
+
 export default function RebusRoundGame({ gameState, currentUserId, onMove, onClose, onPostResult, gameErrorMsg, gameErrorKey }) {
   const [guess, setGuess] = useState('');
   const [timeLeft, setTimeLeft] = useState(PUZZLE_SECONDS);
   const [isSendingNext, setIsSendingNext] = useState(false);
   const [shakeError, setShakeError] = useState(null);
+  // True from the moment a guess is sent until either a server response
+  // arrives (correct or rejected) or the stuck-detection timeout below fires.
+  // Real gap this closes: neither sendGuess nor the input/button had any
+  // "in flight" concept before — a player could double-submit before the
+  // first response arrived, and on a slow/reconnecting connection (see
+  // useWebSocket's own message queueing, which can silently delay a send for
+  // as long as a reconnect takes) the button just sat there looking dead
+  // with zero indication anything was happening, indistinguishable from the
+  // guess never having been sent at all.
+  const [isSubmittingGuess, setIsSubmittingGuess] = useState(false);
   const revealSentRef = useRef(false);
   const nextRoundTimeoutRef = useRef(null);
   const lastHandledErrorKeyRef = useRef(gameErrorKey);
   const inputRef = useRef(null);
+  const guessStuckTimeoutRef = useRef(null);
+  const localShakeTimeoutRef = useRef(null);
+
+  const clearGuessStuckTimeout = () => {
+    if (guessStuckTimeoutRef.current) {
+      clearTimeout(guessStuckTimeoutRef.current);
+      guessStuckTimeoutRef.current = null;
+    }
+  };
 
   const gs = gameState?.game_state || {};
   const phase = gs.phase || 'waiting';
@@ -239,7 +260,16 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
   useEffect(() => {
     if (gameErrorKey === lastHandledErrorKeyRef.current) return;
     lastHandledErrorKeyRef.current = gameErrorKey;
+    // A real response arrived (even one unrelated to this specific guess) —
+    // whatever "submitting" state we were in is no longer meaningful, so
+    // release the input regardless of whether gameErrorMsg is set below.
+    clearGuessStuckTimeout();
+    setIsSubmittingGuess(false);
     if (!gameErrorMsg) return;
+    // A real server error takes precedence over any pending LOCAL shake
+    // (e.g. the "too slow"/"connection may be slow" messages below) — cancel
+    // that timer so it can't clear THIS message out from under it later.
+    if (localShakeTimeoutRef.current) { clearTimeout(localShakeTimeoutRef.current); localShakeTimeoutRef.current = null; }
     // Strip the backend's generic "move failed: " wrapper (see sendError's
     // call site in websocket_handler.go) — it's meant to give a bare toast
     // context, but reads redundantly right next to the input where the
@@ -249,14 +279,31 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
     return () => clearTimeout(t);
   }, [gameErrorKey, gameErrorMsg]);
 
+  // The guess was accepted (correct_order now includes me) — release the
+  // "submitting" state the same way a rejection would, just via the success
+  // path instead of gameErrorKey.
+  useEffect(() => {
+    if (alreadySolvedThisRound) {
+      clearGuessStuckTimeout();
+      setIsSubmittingGuess(false);
+    }
+  }, [alreadySolvedThisRound]);
+
   // Clear the input + stuck-detection guard whenever a new puzzle starts.
   useEffect(() => {
     if (phase === 'puzzle') {
       setGuess('');
       revealSentRef.current = false;
       setTimeLeft(PUZZLE_SECONDS);
+      clearGuessStuckTimeout();
+      setIsSubmittingGuess(false);
     }
   }, [round, phase]);
+
+  useEffect(() => () => {
+    clearGuessStuckTimeout();
+    if (localShakeTimeoutRef.current) clearTimeout(localShakeTimeoutRef.current);
+  }, []);
 
   useEffect(() => {
     if (nextRoundTimeoutRef.current) {
@@ -304,10 +351,40 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
     }, 8000);
   };
 
+  const localShake = (msg) => {
+    setShakeError(msg);
+    if (localShakeTimeoutRef.current) clearTimeout(localShakeTimeoutRef.current);
+    localShakeTimeoutRef.current = setTimeout(() => setShakeError(null), 1800);
+  };
+
   const sendGuess = () => {
     const trimmed = guess.trim();
-    if (!trimmed || !isPlayer || phase !== 'puzzle' || alreadySolvedThisRound) return;
+    if (!trimmed || !isPlayer || alreadySolvedThisRound || isSubmittingGuess) return;
+    if (phase !== 'puzzle') {
+      // The round ended (timer ran out, or the host revealed) in the moment
+      // between the player typing and hitting send — this is a real,
+      // client-side-only case with no server round-trip involved, so there's
+      // nothing for the normal gameErrorKey pipeline to report. Without this,
+      // the click/Enter silently no-ops here with zero feedback — reading
+      // exactly like "the game ignored my wrong answer," even though nothing
+      // was ever sent.
+      localShake('Too slow — this puzzle already ended!');
+      return;
+    }
+    setIsSubmittingGuess(true);
     onMove({ move_type: 'answer', guess: trimmed });
+    // Stuck-detection: if neither a correct-answer state change nor a
+    // rejection error arrives within a few seconds, release the input and
+    // say so plainly instead of leaving the button looking dead with no
+    // explanation — the real gap on a slow/reconnecting connection, where
+    // useWebSocket's own message queueing can silently delay a send for as
+    // long as the reconnect takes with zero UI feedback otherwise.
+    clearGuessStuckTimeout();
+    guessStuckTimeoutRef.current = setTimeout(() => {
+      guessStuckTimeoutRef.current = null;
+      setIsSubmittingGuess(false);
+      localShake('Still waiting on your last guess — connection may be slow. Try again.');
+    }, GUESS_STUCK_TIMEOUT_MS);
   };
 
   const sendReveal = () => {
@@ -485,15 +562,16 @@ export default function RebusRoundGame({ gameState, currentUserId, onMove, onClo
                         onChange={(e) => setGuess(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') sendGuess(); }}
                         placeholder="Type your guess…"
-                        className="flex-1 bg-gray-900/70 border border-gray-700 focus:border-purple-500 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-base focus:outline-none"
+                        disabled={isSubmittingGuess}
+                        className="flex-1 bg-gray-900/70 border border-gray-700 focus:border-purple-500 rounded-xl px-4 py-3 text-white placeholder-gray-500 text-base focus:outline-none disabled:opacity-60"
                         autoComplete="off"
                       />
                       <button
                         onClick={sendGuess}
-                        disabled={!guess.trim()}
-                        className="px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl transition-colors flex-shrink-0"
+                        disabled={!guess.trim() || isSubmittingGuess}
+                        className="px-4 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl transition-colors flex-shrink-0 min-w-[52px] flex items-center justify-center"
                       >
-                        <Send className="w-5 h-5" />
+                        {isSubmittingGuess ? <span className="text-xs font-medium">Sending…</span> : <Send className="w-5 h-5" />}
                       </button>
                     </div>
                     {shakeError && <p className="text-red-400 text-xs font-medium">{shakeError}</p>}

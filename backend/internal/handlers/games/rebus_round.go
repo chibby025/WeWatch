@@ -821,7 +821,10 @@ func fetchSingleRebusPhoto(word string) (string, error) {
 	}
 
 	return rebusWithPexelsRetry(func() (string, error) {
-		endpoint := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(word) + "&per_page=5&orientation=square"
+		// per_page bumped 5 -> 10: with the relevance check below, a wider
+		// candidate pool gives the filter a real chance to find a genuinely
+		// on-topic photo instead of settling for whatever came back first.
+		endpoint := "https://api.pexels.com/v1/search?query=" + url.QueryEscape(word) + "&per_page=10&orientation=square"
 		req, err := http.NewRequest("GET", endpoint, nil)
 		if err != nil {
 			return "", fmt.Errorf("failed to build Pexels request: %w", err)
@@ -842,14 +845,30 @@ func fetchSingleRebusPhoto(word string) (string, error) {
 		if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 			return "", fmt.Errorf("failed to decode Pexels response: %w", err)
 		}
+		// Two passes, mirroring fetchFourFramesPhotos: prefer a photo whose alt
+		// text plausibly matches the word (see pexelsAltLooksRelevant's own doc
+		// comment for the confirmed real "bat" -> baseball-photo mismatch this
+		// closes); fall back to the first usable URL regardless of relevance
+		// only if nothing in the pool passes — never fail the puzzle outright
+		// just because the relevance filter was stricter than the pool allows.
+		var fallback string
 		for _, p := range parsed.Photos {
 			u := p.Src.Large
 			if u == "" {
 				u = p.Src.Medium
 			}
-			if u != "" {
+			if u == "" {
+				continue
+			}
+			if pexelsAltLooksRelevant(word, p.Alt) {
 				return u, nil
 			}
+			if fallback == "" {
+				fallback = u
+			}
+		}
+		if fallback != "" {
+			return fallback, nil
 		}
 		return "", fmt.Errorf("Pexels returned no usable photo for query %q", word)
 	})

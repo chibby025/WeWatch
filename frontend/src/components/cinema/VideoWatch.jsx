@@ -6217,19 +6217,47 @@ export default function VideoWatch() {
             // A stale/late update arriving after the user already closed the game
             // (activeGame === null) must not resurrect it — `...(prev || {})` used to
             // spread an empty object in that case, producing a truthy result regardless.
-            setActiveGame(prev => prev ? {
-              ...prev,
-              game_session_id: message.game_session_id,
-              game_type:       message.game_type,
-              host_id:         message.host_id ?? prev?.host_id,
-              status:          message.status,
-              current_turn:    message.current_turn,
-              players:         message.players,
-              game_state:      message.game_state,
-              winner_id:       message.winner_id ?? prev?.winner_id ?? null,
-            } : null);
+            //
+            // Separately, a stale/late update must also never overwrite a DIFFERENT,
+            // newer game session's state. Under a bad connection, a game_state_update
+            // broadcast for the game that just ended can be delayed just long enough to
+            // arrive AFTER a brand-new game has already started in the same room — the
+            // old code here only checked "is there currently an active game at all",
+            // never "does this message actually belong to it", so a late update from
+            // the just-ended game would silently overwrite the fresh game's board/hand/
+            // turn state with the old game's leftovers. Reported as: starting a new Whot
+            // round appears to "continue from where the last one stopped". game_session_id
+            // is always present on every game_state_update (see broadcastGameStateLocked
+            // in game_manager.go), so it's the reliable way to tell the two apart.
+            setActiveGame(prev => {
+              if (!prev) return null;
+              if (message.game_session_id != null && message.game_session_id !== prev.game_session_id) {
+                return prev;
+              }
+              return {
+                ...prev,
+                game_session_id: message.game_session_id,
+                game_type:       message.game_type,
+                host_id:         message.host_id ?? prev?.host_id,
+                status:          message.status,
+                current_turn:    message.current_turn,
+                players:         message.players,
+                game_state:      message.game_state,
+                winner_id:       message.winner_id ?? prev?.winner_id ?? null,
+              };
+            });
           }
           if (_gAction === 'game_ended') {
+            // Same stale-broadcast risk as game_state_update just above: a
+            // game_ended for the game session that JUST finished can arrive late
+            // (bad network) after a brand-new game session has already started in
+            // this room. Left unguarded, it would mark the fresh game "finished"
+            // with the OLD game's winner/game_state, and misreport a "Challenge
+            // Friends" result for a game the user isn't even playing anymore.
+            if (message.data?.game_session_id != null && activeGame?.game_session_id != null
+              && message.data.game_session_id !== activeGame.game_session_id) {
+              break;
+            }
             console.log('🎮 [VideoWatch] Game ended:', message.data);
             const winnerId  = message.data?.winner_id;
             const plyrs     = message.data?.players || [];
